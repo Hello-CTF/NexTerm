@@ -424,6 +424,11 @@ describe("MountPanel 窄屏结构", () => {
 });
 
 describe("凭据 overlay dock 选中后收起", () => {
+  // 凭据是全局工具标签, 统一落入「工具」工作区, 不在默认工作区里
+  function allTabs() {
+    return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
+  }
+
   it("≤820px 视口点凭据行后左 dock 收起并打开详情", async () => {
     setViewportWidth(320);
     mounted = mountWithClient(createElement(CredentialsSidebar));
@@ -436,8 +441,9 @@ describe("凭据 overlay dock 选中后收起", () => {
     click(row);
 
     await waitFor(() => expect(useUi.getState().leftOpen).toBe(false));
-    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
-    expect(tabs.some((t) => t.kind === "credentials" && t.credId === "c1")).toBe(true);
+    await waitFor(() =>
+      expect(allTabs().some((t) => t.kind === "credentials" && t.credId === "c1")).toBe(true),
+    );
   });
 
   it("宽视口点凭据行不收起左 dock", async () => {
@@ -451,10 +457,9 @@ describe("凭据 overlay dock 选中后收起", () => {
     if (!row) throw new Error("credential row not found");
     click(row);
 
-    await waitFor(() => {
-      const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
-      expect(tabs.some((t) => t.kind === "credentials")).toBe(true);
-    });
+    await waitFor(() =>
+      expect(allTabs().some((t) => t.kind === "credentials")).toBe(true),
+    );
     expect(useUi.getState().leftOpen).toBe(true);
   });
 });

@@ -189,6 +189,7 @@ type transcriptChunkObject struct {
 	Seq   int64  `json:"seq"`
 	TabID string `json:"tabId"`
 	TS    int64  `json:"ts"`
+	Kind  int    `json:"kind,omitempty"`
 	Data  []byte `json:"data"`
 }
 

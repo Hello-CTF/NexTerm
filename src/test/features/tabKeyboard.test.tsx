@@ -138,58 +138,68 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("workspace tab strip keyboard support", () => {
-  it("exposes tablist/tab roles with aria-selected and roving tabindex", async () => {
+describe("workspace switcher", () => {
+  function switcherButton(): HTMLButtonElement {
+    const button = mounted?.container.querySelector<HTMLButtonElement>(
+      'header button[aria-haspopup="menu"]',
+    );
+    if (!button) throw new Error("workspace switcher not found");
+    return button;
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    return [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')];
+  }
+
+  it("lists every workspace in a labeled menu and switches on select", async () => {
     mounted = mountApp();
     await flush();
 
-    const list = tablist(mounted.container, "工作区");
-    const [first, second] = tabsOf(list);
-    expect(first.getAttribute("aria-selected")).toBe("true");
-    expect(first.tabIndex).toBe(0);
-    expect(second.getAttribute("aria-selected")).toBe("false");
-    expect(second.tabIndex).toBe(-1);
+    const switcher = switcherButton();
+    expect(switcher.getAttribute("aria-label")).toContain("ws-1");
+    click(switcher);
 
-    const panel = document.getElementById(first.getAttribute("aria-controls") ?? "");
-    expect(panel?.getAttribute("role")).toBe("tabpanel");
-    expect(panel?.getAttribute("aria-labelledby")).toBe(first.id);
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.getAttribute("aria-label")).toBe("工作区");
+    const labels = menuItems().map((i) => i.textContent ?? "");
+    expect(labels.some((t) => t.includes("ws-1"))).toBe(true);
+    expect(labels.some((t) => t.includes("ws-2"))).toBe(true);
+
+    const target = menuItems().find((i) => i.textContent?.includes("ws-2"));
+    click(target as HTMLButtonElement);
+    await flush();
+    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("switches workspaces with ArrowRight/ArrowLeft/Home/End and moves focus", async () => {
+  it("closes a workspace from the switcher menu", async () => {
     mounted = mountApp();
     await flush();
 
-    const list = tablist(mounted.container, "工作区");
-    const first = tabByText(list, "ws-1");
-    act(() => first.focus());
-
-    keyDown(first, "ArrowRight");
-    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
-    expect(document.activeElement).toBe(tabByText(list, "ws-2"));
-    expect(tabByText(list, "ws-2").getAttribute("aria-selected")).toBe("true");
-
-    keyDown(document.activeElement as HTMLElement, "End");
-    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
-    keyDown(document.activeElement as HTMLElement, "Home");
-    expect(useUi.getState().activeWorkspaceId).toBe("ws1");
-    expect(document.activeElement).toBe(first);
-
-    keyDown(first, "ArrowLeft");
-    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
-    keyDown(document.activeElement as HTMLElement, "Enter");
-    expect(useUi.getState().activeWorkspaceId).toBe("ws2");
-  });
-
-  it("closes a workspace from a real, labeled button", async () => {
-    mounted = mountApp();
-    await flush();
-
-    const list = tablist(mounted.container, "工作区");
-    const close = list.querySelector<HTMLButtonElement>('button[aria-label="关闭工作区 ws-1"]');
-    expect(close).not.toBeNull();
+    click(switcherButton());
+    const close = menuItems().find((i) => i.textContent?.includes("关闭「ws-1」"));
+    expect(close).toBeTruthy();
     click(close as HTMLButtonElement);
     await waitFor(() => expect(useUi.getState().workspaces).toHaveLength(1));
     expect(useUi.getState().activeWorkspaceId).toBe("ws2");
+  });
+
+  it("menu is keyboard navigable and Escape closes it", async () => {
+    mounted = mountApp();
+    await flush();
+
+    click(switcherButton());
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
+    expect(menu).not.toBeNull();
+
+    const first = menuItems()[0];
+    expect(document.activeElement).toBe(first);
+    keyDown(first, "ArrowDown");
+    expect(document.activeElement).toBe(menuItems()[1]);
+
+    keyDown(document.activeElement as HTMLElement, "Escape");
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
   });
 });
 

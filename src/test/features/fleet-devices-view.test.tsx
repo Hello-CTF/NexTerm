@@ -320,7 +320,7 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(text).toContain("第 2 步");
     expect(text).toContain("随登录自动启动");
     expect(text).toContain("第 3 步");
-    expect(text).toContain("设备显示「在线」");
+    expect(text).toContain("设备会出现在下方列表里并显示「在线」");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
       `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,

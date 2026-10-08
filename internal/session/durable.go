@@ -12,6 +12,7 @@ type durableGridSource interface {
 type DurableTranscriptOffsetStore interface {
 	DurableTranscriptCatchUpBytes(tabID string) int64
 	PersistDurableTranscriptOffset(tabID string, offset int64)
+	DeleteDurableTranscriptOffset(tabID string)
 }
 
 type durableTranscriptOffsetSource = DurableTranscriptOffsetStore

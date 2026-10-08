@@ -317,18 +317,29 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsVie
     const staleSessions = deferred<(typeof SESSION)[]>();
     const staleVault = deferred<{ initialized: boolean; unlocked: boolean }>();
     mocks.sessionList.mockImplementation(() => staleSessions.promise);
-    mocks.vaultStatus.mockImplementation(() => staleVault.promise);
+    // 只有刷新按钮发出的那一次请求挂在途; 登出后 resetQueries 触发的重取属于新会话,
+    // 真实服务端会给 401, 不能让它也挂在旧账号的响应上。
+    let staleVaultTaken = false;
+    mocks.vaultStatus.mockImplementation(() => {
+      if (!staleVaultTaken) {
+        staleVaultTaken = true;
+        return staleVault.promise;
+      }
+      return authed ? Promise.resolve({ initialized: true, unlocked: true }) : Promise.reject(UNAUTH);
+    });
     const refreshBtn = document.querySelector<HTMLElement>(
       'button[title="刷新会话列表与凭据库状态"]',
     );
     expect(refreshBtn).not.toBeNull();
     click(refreshBtn as HTMLElement);
 
+    authed = false;
     await logout();
     expect(useAuth.getState().gate).toBe("login");
     expect(useUi.getState().sessions).toEqual([]);
 
-    // 迟到的旧账号响应现在才到: 序号已递增, 回写必须被丢弃
+    // 迟到的旧账号响应现在才到: 会话列表序号已递增, vault-status 在途 fetch 已被
+    // resetQueries 取消, 两边的回写都必须被丢弃
     await act(async () => {
       staleSessions.resolve([SESSION]);
       staleVault.resolve({ initialized: true, unlocked: true });

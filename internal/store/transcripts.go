@@ -34,8 +34,15 @@ type TranscriptChunkRow struct {
 	Seq   int64
 	TabID string
 	TS    int64
+	Kind  int
 	Data  []byte
 }
+
+const (
+	TranscriptChunkKindOutput = 0
+	TranscriptChunkKindInput  = 1
+	TranscriptChunkKindResize = 2
+)
 
 type TranscriptMatch struct {
 	Seq     int64
@@ -97,8 +104,8 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	var totalBytes, totalChunks int64
 	for _, chunk := range chunks {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(transcript_id, seq, tab_id, ts, data) VALUES(?,?,?,?,?)`,
-			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Data); err != nil {
+(transcript_id, seq, tab_id, ts, kind, data) VALUES(?,?,?,?,?,?)`,
+			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
 			return dbError(err)
 		}
 		totalBytes += int64(len(chunk.Data))
@@ -210,7 +217,7 @@ func (s *Store) TranscriptChunks(ctx context.Context, transcriptID string, after
 	if maxBytes <= 0 || maxBytes > 8<<20 {
 		maxBytes = 1 << 20
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, tab_id, ts, data FROM transcript_chunk
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, tab_id, ts, kind, data FROM transcript_chunk
 WHERE transcript_id=? AND seq>=? ORDER BY seq LIMIT 4096`, transcriptID, afterSeq)
 	if err != nil {
 		return nil, dbError(err)
@@ -220,7 +227,7 @@ WHERE transcript_id=? AND seq>=? ORDER BY seq LIMIT 4096`, transcriptID, afterSe
 	budget := maxBytes
 	for rows.Next() {
 		var chunk TranscriptChunkRow
-		if err := rows.Scan(&chunk.Seq, &chunk.TabID, &chunk.TS, &chunk.Data); err != nil {
+		if err := rows.Scan(&chunk.Seq, &chunk.TabID, &chunk.TS, &chunk.Kind, &chunk.Data); err != nil {
 			return nil, dbError(err)
 		}
 		result = append(result, chunk)
@@ -246,7 +253,7 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, query
 		maxScanBytes = 8 << 20
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT seq, ts, data FROM transcript_chunk
-WHERE transcript_id=? ORDER BY seq LIMIT 8192`, transcriptID)
+WHERE transcript_id=? AND kind=? ORDER BY seq LIMIT 8192`, transcriptID, TranscriptChunkKindOutput)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -577,8 +584,8 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 	}
 	for _, chunk := range content {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(transcript_id, seq, tab_id, ts, data) VALUES (?,?,?,?,?)`,
-			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Data); err != nil {
+(transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?)`,
+			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
 			return dbError(err)
 		}
 	}
@@ -673,8 +680,8 @@ truncated=excluded.truncated, content_omitted=excluded.content_omitted`,
 	}
 	for _, chunk := range chunks {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(transcript_id, seq, tab_id, ts, data) VALUES (?,?,?,?,?)`,
-			row.ID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Data); err != nil {
+(transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?)`,
+			row.ID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
 			return dbError(err)
 		}
 	}

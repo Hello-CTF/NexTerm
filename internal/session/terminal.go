@@ -280,5 +280,9 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return writeAll(channel, data)
+	if err := writeAll(channel, data); err != nil {
+		return err
+	}
+	m.transcriptInput(ctx, tab, data)
+	return nil
 }

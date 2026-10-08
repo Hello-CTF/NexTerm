@@ -71,7 +71,7 @@ function FleetUnsupported() {
             </div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
               {demo
-                ? "演示模式不连接真实服务器, 设备接入走的是真实账号与 HTTP 合同, 这里不会伪造设备列表或接入码。请用浏览器模式连接真实服务器。"
+                ? "演示模式不连接真实服务器, 不会伪造设备列表或接入码。请用浏览器模式连接真实服务器后使用设备管理。"
                 : "桌面端是本地优先模式, 没有账号体系; 设备管理仅在浏览器模式连接服务器并登录后可用。"}
             </div>
           </div>
@@ -319,7 +319,7 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
           </div>
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-neutral-300">
-            <label className="flex items-center gap-1.5" title="期望自启动: 服务端保存的期望状态, 设备 reconcile 时对齐">
+            <label className="flex items-center gap-1.5" title="期望自启动: 服务端保存的期望状态, 设备 agent 下次连接时对齐">
               <input
                 type="checkbox"
                 checked={agent.desired_autostart}
@@ -361,7 +361,7 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
 
       {!agent && !revoked && (
         <div className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-          该设备不是通过 agent 接入的, 没有运行状态与指标。
+          该设备没有安装设备 agent, 没有运行状态与指标。
         </div>
       )}
     </section>
@@ -511,6 +511,32 @@ export function DevicesView() {
     setDevices((prev) => (prev === null ? prev : prev.map((d) => (d.id === id ? { ...d, ...patch } : d))));
   };
 
+  const jumpToBaseUrls = () => {
+    document.getElementById("fleet-base-urls")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelector<HTMLInputElement>('input[aria-label="新接入地址"]')?.focus({ preventScroll: true });
+  };
+
+  const copyCommandRow = (key: string, command: string, what: string) => (
+    <div key={key} className="flex flex-wrap items-center gap-2">
+      <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
+      <button
+        type="button"
+        className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+        onClick={() => copyText(command, pushToast, what)}
+      >
+        <IconCopy size={11} />
+        复制
+      </button>
+    </div>
+  );
+
+  const enrollRows = issued ? baseUrls.map((entry) => copyCommandRow(entry.url, enrollCommand(entry.url, Boolean(entry.insecure), issued.code), "接入命令")) : null;
+  const oneLineRows =
+    issued && serverVersion
+      ? baseUrls.map((entry) => copyCommandRow(entry.url, oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion), "一键安装命令"))
+      : null;
+  const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
+
   return (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
@@ -522,7 +548,7 @@ export function DevicesView() {
         {error && devices !== null && <span className="nx-hint text-red-300">刷新失败 · {error}</span>}
         <div className="nx-spacer" />
         <button
-          className="nx-btn nx-btn-outline nx-btn-sm"
+          className={`nx-btn nx-btn-sm ${devices !== null && devices.length === 0 ? "nx-btn-primary" : "nx-btn-outline"}`}
           onClick={() => {
             setEnrollOpen(!enrollOpen);
           }}
@@ -547,11 +573,10 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  接入分三步: 1) 在这里签发一次性接入码; 2) 在设备上用{" "}
-                  <code className="nx-code">nexterm-server agent enroll</code> 把接入码兑换成设备凭证; 3) 用{" "}
-                  <code className="nx-code">nexterm-server agent install</code> 把 agent 装成随登录自启的 per-user 服务。
-                  接入码单次使用, 到期自动作废; 凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
-                  若服务端版本可读, 全新 Linux 机器 (无需已装二进制) 还有一行安装可选, 自动完成下载、校验、注册与服务安装。
+                  接入一台新设备分三步: 1) 在设备上用普通用户执行接入命令, 把接入码兑换成设备凭证并装好设备
+                  agent(后台服务); 2) 回到本页点「我已完成, 刷新」, 设备出现后显示「在线」; 3) 在设备卡片上点
+                  「终端」即可远程控制。先在这里签发一次性接入码, 接入命令在签发后给出。接入码单次使用,
+                  到期自动作废; 设备凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
@@ -600,76 +625,71 @@ export function DevicesView() {
                   </button>
                 </div>
                 <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
-                  <div className="text-[12px] text-neutral-200">
-                    第 1 步 · 在设备上执行 enroll 命令, 把接入码兑换成设备凭证 (命令面向 Linux/macOS 普通用户环境, 适配 systemd --user / launchd per-user; 多个接入地址按顺序尝试, 第一个可达的即接入点):
-                  </div>
-                  {baseUrls.length === 0 && (
-                    <div className="text-[12px] text-amber-300">
-                      {isAdmin
-                        ? "还没有配置接入地址: 先在下方「接入地址」里添加并保存, 否则设备无法接入。"
-                        : "管理员还没有配置接入地址, 请联系管理员配置后再接入。"}
+                  {baseUrls.length === 0 ? (
+                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-amber-300">
+                      {isAdmin ? (
+                        <>
+                          <span>第 1 步 · 还没有配置接入地址, 设备无法接入, 也无法生成接入命令。</span>
+                          <button
+                            type="button"
+                            className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+                            onClick={jumpToBaseUrls}
+                          >
+                            去配置接入地址
+                          </button>
+                        </>
+                      ) : (
+                        <span>第 1 步 · 管理员还没有配置接入地址, 请联系管理员配置后再接入。</span>
+                      )}
                     </div>
-                  )}
-                  {baseUrls.map((entry) => {
-                    const command = enrollCommand(entry.url, Boolean(entry.insecure), issued.code);
-                    return (
-                      <div key={entry.url} className="flex flex-wrap items-center gap-2">
-                        <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
-                        <button
-                          type="button"
-                          className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-                          onClick={() => copyText(command, pushToast, "接入命令")}
-                        >
-                          <IconCopy size={11} />
-                          复制
-                        </button>
+                  ) : serverVersion ? (
+                    <>
+                      <div className="text-[12px] text-neutral-200">
+                        第 1 步 · 在设备上用<b>普通用户</b>执行一键命令 (全新 Linux 机器, x86_64/aarch64, 无需已装二进制):
+                        自动下载校验 v{serverVersion} 发布包并装入 ~/.local/bin, 然后把设备 agent(后台服务)注册到本机、装成随登录自动启动。
                       </div>
-                    );
-                  })}
-                  <div className="text-[12px] text-neutral-200">第 2 步 · 执行 install 命令, 把 agent 安装为 per-user 服务, 之后随登录自动启动:</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">
-                      {installCommand()}
-                    </code>
+                      {oneLineRows}
+                      <div className="text-[11.5px] text-neutral-400">
+                        本页面不会替你安装, 也不会感知安装是否成功, 结果以设备上的输出为准。
+                      </div>
+                      <div className="text-[12px] text-neutral-200">
+                        设备上已装 nexterm-server 时, 也可以分两条命令接入 (多个接入地址按顺序尝试, 第一个可达的即接入点):
+                      </div>
+                      {enrollRows}
+                      <div className="text-[12px] text-neutral-200">第二条, 把设备 agent 装成随登录自动启动的后台服务 (适配 systemd --user / launchd):</div>
+                      {installRow}
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-[12px] text-neutral-200">
+                        第 1 步 · 在设备上用<b>普通用户</b>依次执行两条命令 (Linux/macOS, 多个接入地址按顺序尝试, 第一个可达的即接入点):
+                        第一条把接入码兑换成设备凭证。
+                      </div>
+                      {enrollRows}
+                      <div className="text-[12px] text-neutral-200">第二条, 把设备 agent(后台服务)装成随登录自动启动 (适配 systemd --user / launchd):</div>
+                      {installRow}
+                      <div className="text-[11.5px] text-neutral-400">本页面不会替你安装, 结果以设备上的输出为准。</div>
+                    </>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
+                    <span className="text-[12px] text-neutral-200">第 2 步 · 在设备上看到「注册成功」后, 点这里刷新:</span>
                     <button
                       type="button"
-                      className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-                      onClick={() => copyText(installCommand(), pushToast, "安装命令")}
+                      className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+                      disabled={loading}
+                      onClick={() => void load()}
                     >
-                      <IconCopy size={11} />
-                      复制
+                      <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
+                      我已完成, 刷新
                     </button>
+                    <span className="nx-hint text-[11.5px]">设备会出现在下方列表里并显示「在线」。</span>
+                  </div>
+                  <div className="text-[12px] text-neutral-200">
+                    第 3 步 · 远程控制: 在设备卡片上点「终端」, 在这台设备上打开远程终端。设备 agent 会定期上报心跳与系统指标 (默认每 60 秒一次)。
                   </div>
                   <div className="text-[11.5px] text-neutral-400">
-                    第 3 步 · 确认接入: 在设备上看到「注册成功」, 回到本页点「刷新」后设备显示「在线」; agent 会定期上报心跳与系统指标 (默认每 60 秒一次)。
-                    此页面不会替你安装, 也不会再次显示接入码; 数据目录默认取 XDG 数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
+                    此页面不会再次显示接入码; 数据目录默认取用户数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
                   </div>
-                  {serverVersion && (
-                    <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
-                      <div className="text-[12px] text-neutral-200">
-                        全新 Linux 机器 (x86_64/aarch64, 无需已装二进制) 可用一行安装替代上面两步: 自动下载校验 v{serverVersion} 发布资产, 装入 ~/.local/bin, 注册并安装 per-user 服务:
-                      </div>
-                      {baseUrls.map((entry) => {
-                        const command = oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion);
-                        return (
-                          <div key={entry.url} className="flex flex-wrap items-center gap-2">
-                            <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
-                            <button
-                              type="button"
-                              className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-                              onClick={() => copyText(command, pushToast, "一键安装命令")}
-                            >
-                              <IconCopy size={11} />
-                              复制
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <div className="text-[11.5px] text-neutral-400">
-                        安装结果以设备上脚本输出为准: 本页面不会替你安装, 也不会感知安装是否成功。
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -689,7 +709,7 @@ export function DevicesView() {
 
         {devices !== null && devices.length === 0 && !error && (
           <div className="nx-hint py-2 text-center text-[12px]">
-            还没有设备接入: 点右上角「接入新设备」签发接入码, 按面板里的三步在设备上完成 enroll 与 install。
+            还没有设备接入: 点右上角「接入新设备」, 按面板里的三步完成接入。
           </div>
         )}
 
@@ -707,7 +727,9 @@ export function DevicesView() {
           />
         ))}
 
-        <BaseUrlsSection entries={baseUrls} isAdmin={Boolean(isAdmin)} onSaved={setBaseUrls} />
+        <div id="fleet-base-urls">
+          <BaseUrlsSection entries={baseUrls} isAdmin={Boolean(isAdmin)} onSaved={setBaseUrls} />
+        </div>
       </div>
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">

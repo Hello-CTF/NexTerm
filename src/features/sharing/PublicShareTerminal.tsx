@@ -4,6 +4,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
+import { XTERM_DARK_THEME } from "../terminal/xtermTheme";
+import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
+
 export interface PublicShareTerminalHandle {
   write: (bytes: Uint8Array) => void;
   focus: () => void;
@@ -14,32 +17,6 @@ export interface PublicShareTerminalProps {
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onHandle?: (handle: PublicShareTerminalHandle) => void;
 }
-
-const PUBLIC_TERM_THEME = {
-  background: "#101217",
-  foreground: "#c6cbd6",
-  cursorAccent: "#101217",
-  selectionBackground: "#2c3e5d",
-  scrollbarSliderBackground: "#31363f",
-  scrollbarSliderHoverBackground: "#3e444f",
-  scrollbarSliderActiveBackground: "#4d5563",
-  black: "#101217",
-  brightBlack: "#5c6472",
-  red: "#e87b7b",
-  brightRed: "#f0a0a0",
-  green: "#7fd6a4",
-  brightGreen: "#a3e6bd",
-  yellow: "#e9c489",
-  brightYellow: "#f0d6a4",
-  blue: "#79a8f8",
-  brightBlue: "#9dc0fb",
-  magenta: "#b79ce8",
-  brightMagenta: "#cdb9f0",
-  cyan: "#7fc7d6",
-  brightCyan: "#a3dbe6",
-  white: "#c6cbd6",
-  brightWhite: "#eef1f6",
-};
 
 export function PublicShareTerminal(props: PublicShareTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -59,7 +36,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 14,
       cursorBlink: true,
-      theme: PUBLIC_TERM_THEME,
+      theme: XTERM_DARK_THEME,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -79,14 +56,14 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
     fitLocal();
 
     const dataDisposable = term.onData((data) => onInputRef.current(data));
-    const selectionDisposable = term.onSelectionChange(() => {
-      const text = term.getSelection();
-      if (!text) return;
-      navigator.clipboard?.writeText(text).then(
-        () => onSelectionCopyRef.current?.(text, null),
-        (error) => onSelectionCopyRef.current?.("", error),
-      );
+    const autoCopy = createSelectionAutoCopy({
+      isEnabled: () => true,
+      getSelection: () => term.getSelection(),
+      onCopied: (text) => onSelectionCopyRef.current?.(text, null),
+      onError: (error) => onSelectionCopyRef.current?.("", error),
+      delayMs: 0,
     });
+    const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
 
     const ro = new ResizeObserver(() => fitLocal());
     ro.observe(host);
@@ -105,6 +82,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       window.visualViewport?.removeEventListener("resize", onWindowResize);
       dataDisposable.dispose();
       selectionDisposable.dispose();
+      autoCopy.dispose();
       term.dispose();
       termRef.current = null;
     };

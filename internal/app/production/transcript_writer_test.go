@@ -792,3 +792,194 @@ func TestTranscriptWriterCrashBeforeFlushDoesNotSuppressUnflushed(t *testing.T) 
 		t.Fatalf("only flushed output may be persisted: %+v", chunks)
 	}
 }
+
+func TestTranscriptWriterShutdownDrainsEnqueuedChunks(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: discardTranscriptLogger()})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = writer.Shutdown(ctx)
+	})
+	writer.SessionStarted(ctx, transcriptIdentity("session-drain"))
+	writer.SessionOutput(ctx, "", "session-drain", "tab-1", []byte("queued-one\r\n"))
+	writer.SessionInput(ctx, "session-drain", "tab-1", []byte("typed\r"))
+	writer.SessionResize(ctx, "session-drain", "tab-1", 120, 40)
+	writer.SessionOutput(ctx, "", "session-drain", "tab-1", []byte("queued-two\r\n"))
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one transcript, got %+v", rows)
+	}
+	row := rows[0]
+	if row.Chunks != 4 || row.EndedAt == nil {
+		t.Fatalf("shutdown must drain queued chunks and end the session: %+v", row)
+	}
+	chunks := readTranscriptAll(t, database, row.ID)
+	if len(chunks) != 4 {
+		t.Fatalf("expected 4 drained chunks, got %+v", chunks)
+	}
+	wantKinds := []int{
+		store.TranscriptChunkKindOutput, store.TranscriptChunkKindInput,
+		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
+	}
+	for index, chunk := range chunks {
+		if chunk.Seq != int64(index) || chunk.Kind != wantKinds[index] {
+			t.Fatalf("chunk %d = seq %d kind %d, want kind %d", index, chunk.Seq, chunk.Kind, wantKinds[index])
+		}
+	}
+	if string(chunks[0].Data) != "queued-one\r\n" || string(chunks[3].Data) != "queued-two\r\n" {
+		t.Fatalf("drained content mismatch: %q %q", chunks[0].Data, chunks[3].Data)
+	}
+}
+
+func TestTranscriptWriterShutdownDropsLateItemsWithoutWedging(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := startTestWriter(t, database, transcriptWriterConfig{})
+	writer.SessionStarted(ctx, transcriptIdentity("session-late"))
+	writer.SessionOutput(ctx, "", "session-late", "tab-1", []byte("before-shutdown\r\n"))
+	writer.SessionEnded(ctx, "session-late")
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	lateDone := make(chan struct{})
+	go func() {
+		defer close(lateDone)
+		writer.SessionOutput(ctx, "", "session-late", "tab-1", []byte("after-shutdown\r\n"))
+		writer.SessionEnded(ctx, "session-late")
+	}()
+	select {
+	case <-lateDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("enqueue after shutdown must not wedge")
+	}
+
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Chunks != 1 || rows[0].EndedAt == nil {
+		t.Fatalf("late items must not be persisted: %+v", rows)
+	}
+}
+
+func TestTranscriptWriterRecordsInputAndResizeInOrder(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := startTestWriter(t, database, transcriptWriterConfig{})
+	writer.SessionStarted(ctx, transcriptIdentity("session-kinds"))
+	writer.SessionResize(ctx, "session-kinds", "tab-1", 80, 24)
+	writer.SessionOutput(ctx, "tab-1", "session-kinds", "tab-1", []byte("output-one\r\n"))
+	writer.SessionInput(ctx, "session-kinds", "tab-1", []byte("ls -la\r"))
+	writer.SessionResize(ctx, "session-kinds", "tab-1", 120, 40)
+	writer.SessionOutput(ctx, "tab-1", "session-kinds", "tab-1", []byte("output-two\r\n"))
+	writer.SessionEnded(ctx, "session-kinds")
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one transcript, got %+v", rows)
+	}
+	chunks := readTranscriptAll(t, database, rows[0].ID)
+	if len(chunks) != 5 {
+		t.Fatalf("expected 5 chunks, got %+v", chunks)
+	}
+	wantKinds := []int{
+		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput, store.TranscriptChunkKindInput,
+		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
+	}
+	for index, chunk := range chunks {
+		if chunk.Seq != int64(index) || chunk.Kind != wantKinds[index] {
+			t.Fatalf("chunk %d = seq %d kind %d, want kind %d", index, chunk.Seq, chunk.Kind, wantKinds[index])
+		}
+	}
+	if string(chunks[0].Data) != `{"cols":80,"rows":24}` || string(chunks[3].Data) != `{"cols":120,"rows":40}` {
+		t.Fatalf("resize payload must encode the geometry: %q %q", chunks[0].Data, chunks[3].Data)
+	}
+	if string(chunks[2].Data) != "ls -la\r" {
+		t.Fatalf("input chunk payload: %q", chunks[2].Data)
+	}
+	offset, err := database.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len("output-one\r\n") + len("output-two\r\n")); offset != want {
+		t.Fatalf("durable offset = %d, want only output bytes %d", offset, want)
+	}
+}
+
+func TestTranscriptWriterTruncationStopsInputAndResize(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := startTestWriter(t, database, transcriptWriterConfig{MaxSessionBytes: 2048})
+	writer.SessionStarted(ctx, transcriptIdentity("session-cap-kinds"))
+	payload := bytes.Repeat([]byte("z"), 1024)
+	writer.SessionOutput(ctx, "", "session-cap-kinds", "tab-1", payload)
+	writer.SessionInput(ctx, "session-cap-kinds", "tab-1", payload)
+	writer.SessionResize(ctx, "session-cap-kinds", "tab-1", 120, 40)
+	writer.SessionOutput(ctx, "", "session-cap-kinds", "tab-1", []byte("after-cap"))
+	writer.SessionEnded(ctx, "session-cap-kinds")
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !rows[0].Truncated {
+		t.Fatalf("expected one truncated transcript, got %+v", rows)
+	}
+	chunks := readTranscriptAll(t, database, rows[0].ID)
+	if len(chunks) != 3 {
+		t.Fatalf("expected 2 payload chunks plus one marker, got %+v", chunks)
+	}
+	if chunks[0].Kind != store.TranscriptChunkKindOutput || chunks[1].Kind != store.TranscriptChunkKindInput {
+		t.Fatalf("payload kinds before the cap: %+v", chunks)
+	}
+	marker := chunks[2]
+	if marker.Kind != store.TranscriptChunkKindOutput || !bytes.Contains(marker.Data, []byte("size limit reached")) {
+		t.Fatalf("truncation marker must be an output chunk: %+v", marker)
+	}
+}

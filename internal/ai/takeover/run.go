@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
@@ -460,21 +461,10 @@ func (m *Manager) handleInterrupt(iterCtx context.Context, state *runState, cont
 		state.pendingMu.Lock()
 		state.pending = &pending{callID: interaction.CallID, nonce: context.ID}
 		state.pendingMu.Unlock()
-		args := withNonce(json.RawMessage(interaction.Args), context.ID)
+		args := hitl.WithNonce(json.RawMessage(interaction.Args), context.ID)
 		return state.emit(iterCtx, agent.Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: context.ID, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview})
 	}
 	return errors.New("收到无法识别的接管 interrupt")
-}
-
-func withNonce(raw json.RawMessage, nonce string) json.RawMessage {
-	var fields map[string]any
-	_ = json.Unmarshal(raw, &fields)
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	fields["confirmationNonce"] = nonce
-	encoded, _ := json.Marshal(fields)
-	return encoded
 }
 
 func takeoverPrefix(value string, limit int) (string, bool) {

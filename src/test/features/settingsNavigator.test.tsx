@@ -58,8 +58,31 @@ function nav(): HTMLElement {
 }
 
 function chips(): HTMLButtonElement[] {
-  return [...nav().querySelectorAll("button")];
+  const strip = nav().querySelector<HTMLElement>('[data-testid="settings-nav-chips"]');
+  if (!strip) throw new Error("narrow-screen chip strip not found");
+  return [...strip.querySelectorAll("button")];
 }
+
+function toc(): HTMLElement {
+  const el = nav().querySelector<HTMLElement>('[data-testid="settings-nav-toc"]');
+  if (!el) throw new Error("wide-screen section toc not found");
+  return el;
+}
+
+function tocButtons(): HTMLButtonElement[] {
+  return [...toc().querySelectorAll<HTMLButtonElement>("button.nx-chip")];
+}
+
+function tocToggle(): HTMLButtonElement {
+  const el = toc().querySelector<HTMLButtonElement>('button[aria-label$="设置目录"]');
+  if (!el) throw new Error("toc collapse toggle not found");
+  return el;
+}
+
+const SECTION_LABELS = [
+  "外观", "终端", "AI 模型", "AI 拦截", "长期记忆", "定时任务",
+  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键",
+];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,11 +111,8 @@ describe("设置分区导航", () => {
   it("渲染全部分区小标签,目标分区都真实存在", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    const labels = chips().map((c) => c.textContent?.trim());
-    expect(labels).toEqual([
-      "外观", "终端", "AI 模型", "AI 拦截", "长期记忆", "定时任务",
-      "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键",
-    ]);
+    expect(chips().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
     const ids = [
       "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-cron", "settings-vault", "settings-known-hosts",
@@ -114,6 +134,87 @@ describe("设置分区导航", () => {
     const vaultChip = chips().find((c) => c.textContent?.trim() === "凭据保护")!;
     click(vaultChip);
     expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+  });
+
+  it("宽屏目录点击直达对应分区并标记当前分区", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const target = document.getElementById("settings-vault")!;
+    const vaultEntry = tocButtons().find((c) => c.textContent?.trim() === "凭据保护")!;
+    click(vaultEntry);
+    expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(vaultEntry.getAttribute("aria-current")).toBe("true");
+    expect(vaultEntry.className).toContain("nx-chip-accent");
+  });
+
+  it("宽屏目录折叠后只保留开关与当前分区摘要,展开后恢复全部分区", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const toggle = tocToggle();
+    expect(toggle.getAttribute("aria-label")).toBe("收起设置目录");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    click(tocButtons().find((c) => c.textContent?.trim() === "凭据保护")!);
+    click(toggle);
+    await flush();
+    expect(tocToggle().getAttribute("aria-label")).toBe("展开设置目录");
+    expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(tocButtons().length).toBe(0);
+    const summary = toc().querySelector("span");
+    expect(summary?.textContent).toBe("凭据保护");
+
+    click(tocToggle());
+    await flush();
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
+    expect(toc().querySelector("span")).toBeNull();
+  });
+
+  it("右侧内容滚动后宽屏目录高亮跟随当前分区", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const scrollContainer = mounted.container.querySelector<HTMLElement>("div.overflow-y-auto");
+    expect(scrollContainer).not.toBeNull();
+
+    // 模拟滚动位置: ai-model 是最后一个顶部越过阈值的分区, 其余排在阈值外或更靠上
+    const offsets: Record<string, number> = {
+      "settings-appearance": -300,
+      "settings-terminal": -120,
+      "settings-ai-model": 30,
+    };
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const top =
+        this === scrollContainer ? 0 : this.id in offsets ? offsets[this.id] : 1000;
+      return {
+        top,
+        bottom: top + 100,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    // rAF 同步化: 滚动监听经 requestAnimationFrame 合帧, 测试内同步执行以便立即断言
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    act(() => {
+      scrollContainer!.dispatchEvent(new Event("scroll"));
+    });
+
+    const current = tocButtons().find((c) => c.getAttribute("aria-current") === "true");
+    expect(current?.textContent?.trim()).toBe("AI 模型");
+    expect(
+      tocButtons()
+        .find((c) => c.textContent?.trim() === "AI 模型")
+        ?.className.includes("nx-chip-accent"),
+    ).toBe(true);
   });
 });
 
@@ -171,7 +272,7 @@ describe("统一登录入口(Web 未登录)", () => {
     expect(text).not.toContain("去登录");
     // 分享卡保留说明但没有任何按钮
     const share = document.getElementById("settings-share")!;
-    expect(share.textContent).toContain("登录后可以把你接入的守护主机分享给其他注册用户");
+    expect(share.textContent).toContain("登录后可以把你接入的设备分享给其他注册用户");
     expect(share.querySelectorAll("button").length).toBe(0);
     // 唯一的登录按钮打开账号门
     click(loginButtons[0]);

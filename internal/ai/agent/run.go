@@ -668,7 +668,7 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 			return err
 		}
 		r.updateRunStatus(current, store.RunStatusInterrupted)
-		args := withNonce(json.RawMessage(interaction.Args), request.Nonce)
+		args := hitl.WithNonce(json.RawMessage(interaction.Args), request.Nonce)
 		switch kind {
 		case hitl.KindConfirm:
 			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
@@ -708,17 +708,6 @@ func interactionValue(value any) (tools.Interaction, bool) {
 		}
 	}
 	return tools.Interaction{}, false
-}
-
-func withNonce(raw json.RawMessage, nonce string) json.RawMessage {
-	var fields map[string]any
-	_ = json.Unmarshal(raw, &fields)
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	fields["confirmationNonce"] = nonce
-	encoded, _ := json.Marshal(fields)
-	return encoded
 }
 
 func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer string, total usage.Usage) error {

@@ -168,14 +168,14 @@ describe("ImportReportView 跳过明细", () => {
     expect(text).toContain("跳过（本机较新） 2");
   });
 
-  it("存在跳过时给出 NTP 时钟要求；无跳过时不出该提示", () => {
+  it("存在跳过时给出时钟准确要求；无跳过时不出该提示", () => {
     mounted = view({ title: "拉取结果", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 1 } });
-    expect(mounted.container.textContent).toContain("NTP 同步");
+    expect(mounted.container.textContent).toContain("请保持各设备时钟准确");
     mounted.unmount();
 
     mounted = view({ title: "拉取结果", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 0 } });
     const text = mounted.container.textContent ?? "";
-    expect(text).not.toContain("NTP 同步");
+    expect(text).not.toContain("请保持各设备时钟准确");
     expect(text).toContain("跳过（本机较新） 0");
   });
 
@@ -212,8 +212,8 @@ describe("ImportReportView 跳过明细", () => {
   });
 });
 
-describe("SyncCard 对照区 NTP 提示", () => {
-  it("对照台在展示同步状态处给出 NTP 时钟要求", async () => {
+describe("SyncCard 对照区时钟提示", () => {
+  it("对照台在展示同步状态处给出时钟准确要求", async () => {
     const { useAuth } = await import("../features/auth/store");
     syncV2Mocks.ids.mockResolvedValue({
       protocol: 2,
@@ -251,8 +251,8 @@ describe("SyncCard 对照区 NTP 提示", () => {
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("web-01"));
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("NTP 同步");
-    expect(text).toContain("不检测也不校正时钟偏移");
+    expect(text).toContain("请保持各设备时钟准确");
+    expect(text).toContain("时钟不准时「较新」判定可能不符合预期");
     useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
   });
 });

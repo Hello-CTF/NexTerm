@@ -27,3 +27,5 @@ lazycat/image/nexterm-server
 lazycat/.lzc-cli-*
 lazycat/.review-body.json
 lazycat/image/lzc-build-image-context.tar
+
+/reference/

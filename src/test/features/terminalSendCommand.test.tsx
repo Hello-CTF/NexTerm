@@ -219,7 +219,7 @@ describe("TerminalPane 命令输入的真实发送反馈", () => {
 
     await clickMenuItem("命令输入");
     await waitFor(() =>
-      expect(toastTexts().some((t) => t.includes("终端正在其他设备上操作中"))).toBe(true),
+      expect(toastTexts().some((t) => t.includes("终端正由其他设备操作"))).toBe(true),
     );
 
     expect(mocks.write).not.toHaveBeenCalled();

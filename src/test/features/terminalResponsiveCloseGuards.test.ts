@@ -156,7 +156,7 @@ describe("close = detach (M111)", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach");
     expect(useUi.getState().workspaces).toEqual([]);
-    expect(toastText()).toContain("2 个终端已转入后台");
+    expect(toastText()).toContain("2 个终端转入后台");
   });
 
   it("confirms before killing docker exec tabs on workspace close, cancel keeps everything with zero IPC", async () => {
@@ -170,7 +170,7 @@ describe("close = detach (M111)", () => {
     const [message] = mocks.ask.mock.calls[0];
     expect(message).toContain("1 个");
     expect(message).toContain("容器 exec");
-    expect(message).toContain("无法恢复");
+    expect(message).toContain("将结束进程");
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces).toHaveLength(1);
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual(tabs);
@@ -181,7 +181,7 @@ describe("close = detach (M111)", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(useUi.getState().workspaces).toEqual([]);
-    expect(toastText()).toContain("1 个不支持后台的终端已结束");
+    expect(toastText()).toContain("1 个进程已结束");
   });
 
   it("confirms before killing docker exec tabs on unsplit, cancel keeps the split with zero IPC", async () => {

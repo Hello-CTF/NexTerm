@@ -3,6 +3,8 @@
 
 import { argon2idKey } from "./argon2";
 
+export { bytesToBase64 } from "../../ui/base64";
+
 const DEK_LENGTH = 32;
 const NONCE_LENGTH = 12;
 const TAG_LENGTH = 16;
@@ -44,12 +46,6 @@ export function randomBytes(length: number): Uint8Array {
   const out = new Uint8Array(length);
   crypto.getRandomValues(out);
   return out;
-}
-
-export function bytesToBase64(data: Uint8Array): string {
-  let binary = "";
-  for (const b of data) binary += String.fromCharCode(b);
-  return btoa(binary);
 }
 
 export function base64ToBytes(text: string): Uint8Array {

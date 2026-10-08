@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./features/reactTestUtils";
+import { click, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -45,9 +45,11 @@ vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 vi.mock("../features/settings/SettingsView", async () => {
   const { createElement: h } = await import("react");
+  const { useQuery } = await import("@tanstack/react-query");
   return {
-    SettingsView: () =>
-      h(
+    SettingsView: () => {
+      const status = useQuery({ queryKey: ["vault-status"], queryFn: () => mocks.vaultStatus() });
+      return h(
         "div",
         null,
         h("section", { className: "nx-card" }, h("span", { className: "nx-card-title" }, "终端")),
@@ -55,8 +57,14 @@ vi.mock("../features/settings/SettingsView", async () => {
           "section",
           { className: "nx-card" },
           h("span", { className: "nx-card-title" }, "凭据保护"),
+          h(
+            "span",
+            { "data-testid": "settings-vault-state" },
+            status.data?.initialized ? "已初始化" : "未初始化",
+          ),
         ),
-      ),
+      );
+    },
   };
 });
 
@@ -64,9 +72,10 @@ import App from "../app/App";
 import { useUi } from "../app/store";
 
 let mounted: MountedView | undefined;
+let client: QueryClient | undefined;
 
 function mountApp(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, createElement(App)));
 }
 
@@ -144,14 +153,15 @@ describe("状态栏凭据库状态", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("较早工作区存在隐藏设置页时仍滚动当前工作区的设置页", async () => {
+  it("存在隐藏设置页的其他工作区时仍滚动当前工作区的设置页", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     useUi.setState({
       workspaces: [
         {
+          // 迁移前遗留: 设置页还寄生在主机工作区里, 保持隐藏不参与滚动
           id: "ws-a",
-          kind: "tools",
-          title: "工具A",
+          kind: "session",
+          title: "web-01",
           panes: [
             {
               id: "pane-a",
@@ -166,7 +176,7 @@ describe("状态栏凭据库状态", () => {
         {
           id: "ws-b",
           kind: "tools",
-          title: "工具B",
+          title: "工具",
           panes: [{ id: "pane-b", tabs: [], activeTabId: null }],
           activePaneId: "pane-b",
           splitRatio: 0.5,
@@ -188,8 +198,10 @@ describe("状态栏凭据库状态", () => {
     click(vaultStatusControl() as HTMLElement);
     await flush();
 
+    // 设置标签统一落入「工具」工作区并成为活动工作区
     const wsB = useUi.getState().workspaces.find((w) => w.id === "ws-b");
     expect(wsB?.panes.flatMap((p) => p.tabs).some((t) => t.kind === "settings")).toBe(true);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
     const visibleCard = [
       ...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card"),
     ].find((c) => c.textContent?.includes("凭据保护"));
@@ -228,10 +240,29 @@ describe("状态栏凭据库状态", () => {
   it("状态拉取失败时展示不可用，不给出开启保护入口", async () => {
     mocks.vaultStatus.mockRejectedValue(new Error("boom"));
     mounted = mountApp();
-    await flush();
+    // react-query 的失败态经其内部调度落地, 单个 flush 不足以保证时序
+    await flushUntil(() => vaultStatusControl()?.textContent === "凭据库不可用");
 
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("SPAN");
     expect(control?.textContent).toBe("凭据库不可用");
+  });
+
+  it("别处完成初始化后，已打开的设置页经共享 vault-status query 自动刷新", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
+    mounted = mountApp();
+    await flush();
+
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+    expect(openTabKinds()).toContain("settings");
+    const state = () => document.querySelector('[data-testid="settings-vault-state"]');
+    expect(state()?.textContent).toBe("未初始化");
+
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
+    await act(() => client!.invalidateQueries({ queryKey: ["vault-status"] }));
+    await flush();
+
+    expect(state()?.textContent).toBe("已初始化");
   });
 });

@@ -225,3 +225,55 @@ func TestTranscriptHostsCommandIncludesDeletedAssets(t *testing.T) {
 		t.Fatalf("unexpected host DTO: %+v", host)
 	}
 }
+
+func TestTranscriptReadReturnsChunkKinds(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "web-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := transcriptDispatcher(t, database, session.NewManager(session.Config{}))
+	id := "01JTRANSCRIPTKIND000000001"
+	if err := database.TranscriptStart(ctx, store.TranscriptRow{
+		ID: id, SessionID: "session-seed", AssetID: asset.ID, AssetName: "web-01", AssetKind: "ssh", StartedAt: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TranscriptAppendChunks(ctx, id, []store.TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-seed", TS: 1001, Kind: store.TranscriptChunkKindResize, Data: []byte(`{"cols":80,"rows":24}`)},
+		{Seq: 1, TabID: "tab-seed", TS: 1002, Kind: store.TranscriptChunkKindOutput, Data: []byte("visible ")},
+		{Seq: 2, TabID: "tab-seed", TS: 1003, Kind: store.TranscriptChunkKindInput, Data: []byte("secret-input")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchStoreTest(dispatcher, "transcript_read", `{"id":"`+id+`","afterSeq":0,"maxBytes":1048576}`)
+	var read transcriptReadResult
+	requireStoreTestResponse(t, response, &read)
+	if len(read.Chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %+v", read)
+	}
+	wantKinds := []int{store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput, store.TranscriptChunkKindInput}
+	for index, chunk := range read.Chunks {
+		if chunk.Kind != wantKinds[index] {
+			t.Fatalf("chunk %d kind = %d, want %d", index, chunk.Kind, wantKinds[index])
+		}
+	}
+
+	response = dispatchStoreTest(dispatcher, "transcript_search", `{"id":"`+id+`","query":"secret-input"}`)
+	var matches []transcriptMatchDTO
+	requireStoreTestResponse(t, response, &matches)
+	if len(matches) != 0 {
+		t.Fatalf("search must not scan input chunks: %+v", matches)
+	}
+	response = dispatchStoreTest(dispatcher, "transcript_search", `{"id":"`+id+`","query":"visible"}`)
+	requireStoreTestResponse(t, response, &matches)
+	if len(matches) != 1 || matches[0].Seq != 1 {
+		t.Fatalf("output must stay searchable: %+v", matches)
+	}
+}

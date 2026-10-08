@@ -315,6 +315,65 @@ describe("TranscriptHistoryPanel", () => {
     expect(text).not.toContain("\u001b");
     expect(text).not.toContain("�");
   });
+
+  it("renders only output chunks; input and resize never enter the text stream", async () => {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [
+        { seq: 0, tabId: "tab-1", ts: 1700000000000, kind: 0, dataBase64: b64("before\r\n") },
+        { seq: 1, tabId: "tab-1", ts: 1700000000001, kind: 1, dataBase64: b64("secret-input\u001b[3") },
+        { seq: 2, tabId: "tab-1", ts: 1700000000002, kind: 2, dataBase64: b64('{"cols":120,"rows":40}') },
+        { seq: 3, tabId: "tab-1", ts: 1700000000003, kind: 0, dataBase64: b64("1mafter\r\n") },
+      ],
+      nextSeq: 4,
+      done: true,
+      totalBytes: 42,
+    });
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("1mafter"));
+    const text = mounted.container.querySelector("pre")?.textContent ?? "";
+    expect(text).toContain("before");
+    expect(text).toContain("1mafter");
+    expect(text).not.toContain("secret");
+    expect(text).not.toContain("cols");
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("�");
+  });
+
+  it("keeps search jump targets on rendered output chunks", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [
+        { seq: 0, tabId: "tab-1", ts: 1700000000000, kind: 1, dataBase64: b64("typed-but-hidden\r") },
+        { seq: 1, tabId: "tab-1", ts: 1700000000001, kind: 0, dataBase64: b64("needle here\r\n") },
+      ],
+      nextSeq: 2,
+      done: true,
+      totalBytes: 42,
+    });
+    mocks.transcriptSearch.mockResolvedValue([{ seq: 1, ts: 1700000000001, preview: "needle here" }]);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flushUntil(() => mounted!.container.querySelector("pre") !== null);
+    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索终端记录"]');
+    setInputValue(input!, "needle");
+    const searchButton = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "搜索");
+    click(searchButton!);
+    await flushUntil(() =>
+      [...mounted!.container.querySelectorAll("button")].some((b) => b.textContent?.includes("#2")),
+    );
+    const matchButton = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("needle here"));
+    expect(matchButton).not.toBeUndefined();
+    click(matchButton!);
+    await flush();
+    const target = mounted.container.querySelector('[data-chunk-seq="1"]');
+    expect(target).not.toBeNull();
+    expect(target?.textContent).toContain("needle here");
+  });
 });
 
 describe("transcriptText", () => {

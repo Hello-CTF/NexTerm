@@ -1,11 +1,6 @@
-import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  aiApi,
-  vaultApi,
-  type AiPermissionConfig,
-  type VaultStatus,
-} from "../../ipc/commands";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
@@ -23,6 +18,8 @@ import { ShareCard } from "./ShareCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
+  IconChevronLeft,
+  IconChevronRight,
   IconClose,
   IconInfo,
   IconLock,
@@ -71,28 +68,58 @@ export function SettingsView() {
     fatal?: string;
   } | null>(null);
 
-  const [vault, setVault] = useState<VaultStatus | null>(null);
   const [protPwd, setProtPwd] = useState("");
   const [pendingEnable, setPendingEnable] = useState(false);
   const [autoLockDraft, setAutoLockDraft] = useState("");
 
   const qc = useQueryClient();
-  const refreshVault = () => {
-    void qc.invalidateQueries({ queryKey: ["vault-status"] });
-    return vaultApi
-      .status()
-      .then(setVault)
-      .catch(() => undefined);
-  };
-  useEffect(() => {
-    void vaultApi
-      .status()
-      .then(setVault)
-      .catch(() => undefined);
-  }, []);
+  // refetchOnWindowFocus 关闭: 窗口聚焦触发的重取会用服务端旧值覆盖正在编辑的自动锁定草稿,
+  // 刷新只跟随保存/头部按钮等显式 invalidate。
+  const vault = useQuery({
+    queryKey: ["vault-status"],
+    queryFn: () => vaultApi.status(),
+    refetchOnWindowFocus: false,
+  }).data ?? null;
+  const refreshVault = () => void qc.invalidateQueries({ queryKey: ["vault-status"] });
   useEffect(() => {
     setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
   }, [vault]);
+
+  const [navOpen, setNavOpen] = useState(true);
+  const [activeSection, setActiveSection] = useState<string>(SETTINGS_SECTIONS[0].id);
+  const jump = (id: string) => {
+    setActiveSection(id);
+    jumpToSection(id);
+  };
+
+  // 目录高亮跟随右侧内容滚动: 滚动容器内最后一个顶部越过阈值的分区即当前分区。
+  // 点击跳转的乐观高亮与滚动收敛到同一分区, 跳转与折叠行为不变。
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    let frame: number | null = null;
+    const update = () => {
+      frame = null;
+      const top = el.getBoundingClientRect().top;
+      let current: string = SETTINGS_SECTIONS[0].id;
+      for (const s of SETTINGS_SECTIONS) {
+        const node = el.querySelector<HTMLElement>(`#${s.id}`);
+        if (node && node.getBoundingClientRect().top - top <= 64) current = s.id;
+      }
+      setActiveSection((prev) => (prev === current ? prev : current));
+    };
+    const onScroll = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(update);
+    };
+    update();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   const saveAutoLock = () => {
     const trimmed = autoLockDraft.trim();
@@ -105,7 +132,6 @@ export function SettingsView() {
       .setAutoLock(minutes)
       .then(() => {
         pushToast("success", minutes === 0 ? "已禁用闲置自动锁定" : `闲置 ${minutes} 分钟后自动锁定`);
-        if (vault) setVault({ ...vault, autoLockMinutes: minutes });
         void qc.invalidateQueries({ queryKey: ["vault-status"] });
       })
       .catch((e) => pushToast("error", describeError(e)));
@@ -195,7 +221,7 @@ export function SettingsView() {
     : "";
 
   return (
-    <div className="nx-pane h-full overflow-y-auto">
+    <div className="nx-pane h-full">
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
@@ -207,35 +233,74 @@ export function SettingsView() {
         )}
       </div>
 
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
-        {DEMO && (
-          <section className="nx-alert nx-alert-info flex items-start gap-2.5">
-            <IconInfo size={15} className="mt-0.5 shrink-0" />
-            <div>
-              <b>当前是演示模式。</b>
-              资产、容器、数据库、终端、AI 回复全部来自前端内置的假数据，不会连接任何真实服务器，
-              输入的内容也不会外发。想接真实后端请启动桌面端或 nexterm-server（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
-            </div>
-          </section>
-        )}
-
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
           aria-label="设置分区"
-          className="sticky top-0 z-10 -mx-5 border-b border-neutral-800/60 bg-[var(--nx-bg-pane)] px-5 py-1.5"
+          className={`z-10 flex shrink-0 flex-col border-b border-neutral-800/60 bg-[var(--nx-bg-pane)] md:overflow-y-auto md:border-b-0 md:border-r ${
+            navOpen ? "md:w-56" : "md:w-16"
+          }`}
         >
-          <div className="flex gap-1.5 overflow-x-auto">
+          <div
+            className="flex gap-1.5 overflow-x-auto px-5 py-1.5 md:hidden"
+            data-testid="settings-nav-chips"
+          >
             {SETTINGS_SECTIONS.map((s) => (
               <button
                 key={s.id}
                 type="button"
                 className="nx-chip shrink-0"
-                onClick={() => jumpToSection(s.id)}
+                onClick={() => jump(s.id)}
               >
                 {s.label}
               </button>
             ))}
           </div>
+          <div
+            className="hidden md:flex md:flex-col md:gap-1 md:p-2"
+            data-testid="settings-nav-toc"
+          >
+            <button
+              type="button"
+              className="nx-icon-btn nx-icon-btn-sm self-end"
+              aria-label={navOpen ? "收起设置目录" : "展开设置目录"}
+              aria-expanded={navOpen}
+              title={navOpen ? "收起目录" : "展开目录"}
+              onClick={() => setNavOpen((v) => !v)}
+            >
+              {navOpen ? <IconChevronLeft size={13} /> : <IconChevronRight size={13} />}
+            </button>
+            {navOpen ? (
+              SETTINGS_SECTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`nx-chip text-left ${s.id === activeSection ? "nx-chip-accent" : ""}`}
+                  aria-current={s.id === activeSection ? "true" : undefined}
+                  onClick={() => jump(s.id)}
+                >
+                  {s.label}
+                </button>
+              ))
+            ) : (
+              <span className="pt-2 text-center text-[11px] text-neutral-400">
+                {SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.label}
+              </span>
+            )}
+          </div>
         </nav>
+
+        <div className="min-w-0 flex-1 overflow-y-auto" ref={contentRef}>
+          <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
+            {DEMO && (
+              <section className="nx-alert nx-alert-info flex items-start gap-2.5">
+                <IconInfo size={15} className="mt-0.5 shrink-0" />
+                <div>
+                  <b>当前是演示模式。</b>
+                  资产、容器、数据库、终端、AI 回复全部来自前端内置的假数据，不会连接任何真实服务器，
+                  输入的内容也不会外发。想接真实后端请启动桌面端或 nexterm-server（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
+                </div>
+              </section>
+            )}
 
         <div id="settings-appearance" className="scroll-mt-12">
           <AppearanceCard />
@@ -560,6 +625,8 @@ export function SettingsView() {
 
         <div id="settings-shortcuts" className="scroll-mt-12">
           <ShortcutsCard />
+        </div>
+          </div>
         </div>
       </div>
     </div>

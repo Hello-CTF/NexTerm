@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -152,6 +153,25 @@ func TestFileHostKeyStorePersistsAndConflicts(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if err := json.Unmarshal(data, &disk); err != nil || disk["version"] != float64(1) {
 		t.Fatalf("store is not versioned JSON: %v, %s", err, data)
+	}
+}
+
+func TestFileHostKeyStoreWritesIndentedJSON(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "hostkeys.json")
+	store, err := NewFileHostKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutHostKey(ctx, newHostKey("example.test", 22, hostKeyForTest(t)), false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("\n  \"version\": 1")) {
+		t.Fatalf("host key store is not indented JSON:\n%s", data)
 	}
 }
 

@@ -894,7 +894,7 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.textContent).toContain("软删除，可恢复");
+    expect(modal.textContent).toContain("关联的凭据会保留");
     await closeModal(modal, "取消");
     expect(mocks.assetDelete).not.toHaveBeenCalled();
 

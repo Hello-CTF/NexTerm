@@ -287,8 +287,7 @@ export function MemoryCard() {
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">允许模型使用记忆工具</div>
             <p className="nx-hint mt-0.5">
-              开启后模型可以自己保存 / 查找 / 遗忘记忆（memory_save / memory_list /
-              memory_recall / memory_forget）；计划模式与子代理不可用。
+              开启后模型可以自己保存 / 查找 / 遗忘记忆；计划模式与子代理不可用。
             </p>
           </div>
           <input
@@ -490,8 +489,7 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆按属主（{MEMORY_SCOPE.tenant} / {MEMORY_SCOPE.subject}）隔离存储，
-        与 AI 运行使用的是同一份；其它属主读不到也改不到这里的内容。
+        记忆按属主隔离存储，与 AI 运行使用的是同一份；其它属主读不到也改不到这里的内容。
       </p>
     </section>
   );

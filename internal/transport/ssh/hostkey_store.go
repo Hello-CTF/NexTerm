@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/atomicfile"
 )
 
 type MemoryHostKeyStore struct {
@@ -124,37 +127,14 @@ func (s *FileHostKeyStore) write(ctx context.Context, keys []HostKey) error {
 		}
 		return keys[i].KeyType < keys[j].KeyType
 	})
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".hostkeys-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	encoder := json.NewEncoder(tmp)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(diskHostKeys{Version: 1, Keys: keys}); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return atomicfile.Write(s.path, 0o600, func(writer io.Writer) error {
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(diskHostKeys{Version: 1, Keys: keys}); err != nil {
+			return err
+		}
+		return ctx.Err()
+	})
 }
 
 func selectHostKeys(keys []HostKey, host string, port int) []HostKey {

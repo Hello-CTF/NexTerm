@@ -353,12 +353,6 @@ export const IconLocate = (p: IconProps) => (
   </Svg>
 );
 
-export const IconFilter = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M4 5h16l-6.2 7.3v6.2L10.2 20.5v-8.2z" />
-  </Svg>
-);
-
 export const IconList = (p: IconProps) => (
   <Svg {...p}>
     <path d="M8.5 6h12M8.5 12h12M8.5 18h12" />
@@ -378,14 +372,6 @@ export const IconEdit = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 20h9" />
     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
-  </Svg>
-);
-
-export const IconExternal = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M14 4h6v6" />
-    <path d="M20 4 11.5 12.5" />
-    <path d="M19 14.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4.5" />
   </Svg>
 );
 
@@ -506,13 +492,6 @@ export const IconLock = (p: IconProps) => (
   </Svg>
 );
 
-export const IconUnlock = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="4" y="10" width="16" height="11" rx="2.6" />
-    <path d="M8 10V7a4 4 0 0 1 7.6-1.8" />
-  </Svg>
-);
-
 export const IconEye = (p: IconProps) => (
   <Svg {...p}>
     <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" />
@@ -578,14 +557,6 @@ export const IconNetwork = (p: IconProps) => (
 export const IconActivity = (p: IconProps) => (
   <Svg {...p}>
     <path d="M3 12.5h3.6l2.6-6.4 3.6 12 2.6-5.6H21" />
-  </Svg>
-);
-
-export const IconCpu = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="5" y="5" width="14" height="14" rx="2.4" />
-    <rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1.2" />
-    <path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9H5M2.5 15H5M19 9h2.5M19 15h2.5" />
   </Svg>
 );
 

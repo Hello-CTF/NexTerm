@@ -471,7 +471,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
         </div>
         <p className="nx-hint">
           设备「{device.name}」已添加到你的账号。输入账号密码完成登录,这台设备的会话将绑定到该设备,
-          之后可在「设置 → 登录设备」里查看或吊销。
+          之后可在「设置 → 账号同步」的「账号」卡「登录设备」里查看或吊销。
         </p>
         <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
         <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
@@ -493,7 +493,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用配对码添加设备</span>
       </div>
       <p className="nx-hint">
-        在另一台已登录设备的「设置 → 登录设备」里点「添加设备」,生成一次性配对码(15 分钟内有效)。
+        在另一台已登录设备的「设置 → 账号同步」→「账号」卡里点「添加设备」,生成一次性配对码(15 分钟内有效)。
         在这里输入配对码,把账号添加到这台设备。
       </p>
       <Field label="配对码" value={code} onChange={setCode} mono placeholder="另一台设备上显示的配对码" autoComplete="off" />

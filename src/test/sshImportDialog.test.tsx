@@ -183,7 +183,7 @@ describe("SSH 导入对话框", () => {
     expect(text).toContain("新增");
     expect(text).toContain("重复 · 跳过");
     expect(text).toContain("别名冲突");
-    expect(text).toContain("host-pattern-skipped");
+    expect(text).toContain("通配 Host 已跳过");
     expect(text).toContain("3 台主机（1 台可新增）");
 
     const bastionBox = mounted.container.querySelector<HTMLInputElement>(
@@ -289,7 +289,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     );
   });
 
-  it("预览显示数量并默认勾选安全项；一键导入只提交安全项，不含手动 skip 与冲突覆盖", async () => {
+  it("预览显示数量并默认勾选可新增项；一键导入只提交可新增项，不含手动 skip 与冲突覆盖", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "~/.ssh 目录");
     clickButton(mounted.container, "预览");
@@ -331,7 +331,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
       skipped: 0,
       warnings: [],
     });
-    clickButton(mounted.container, "一键导入全部安全项 (1)");
+    clickButton(mounted.container, "一键导入全部可新增项 (1)");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
     expect(mocks.apply).toHaveBeenCalledWith({

@@ -120,7 +120,12 @@ export function transcriptPayload(t: TranscriptSummary, content: TranscriptChunk
     return o;
   }
   if (content.length > 0) {
-    o.content = content.map((c) => ({ seq: c.seq, tabId: c.tabId, ts: c.ts, data: c.dataBase64 }));
+    o.content = content.map((c) => {
+      const entry: Record<string, unknown> = { seq: c.seq, tabId: c.tabId, ts: c.ts };
+      if (c.kind) entry.kind = c.kind;
+      entry.data = c.dataBase64;
+      return entry;
+    });
   }
   return o;
 }

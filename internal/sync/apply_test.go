@@ -196,8 +196,12 @@ func TestApplyObjectsMultiKind(t *testing.T) {
 		{ID: victimID, Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{TargetKind: KindGroup, DeletedAt: 200})},
 		{ID: transcriptID, Kind: KindTranscript, Payload: applyPayload(t, transcriptObject{
 			ID: transcriptID, SessionID: ids.New(), AssetID: "asset-1", AssetName: "web-01", AssetKind: "ssh",
-			StartedAt: endedAt - 500, EndedAt: endedAt, Bytes: 6, Chunks: 1,
-			Content: []transcriptChunkObject{{Seq: 0, TabID: "tab-1", TS: endedAt - 400, Data: []byte("output")}},
+			StartedAt: endedAt - 500, EndedAt: endedAt, Bytes: 32, Chunks: 3,
+			Content: []transcriptChunkObject{
+				{Seq: 0, TabID: "tab-1", TS: endedAt - 400, Data: []byte("output")},
+				{Seq: 1, TabID: "tab-1", TS: endedAt - 300, Kind: 1, Data: []byte("input")},
+				{Seq: 2, TabID: "tab-1", TS: endedAt - 200, Kind: 2, Data: []byte(`{"cols":80,"rows":24}`)},
+			},
 		})},
 	}
 	result := mustApplyObjects(t, instance, objects...)
@@ -234,8 +238,37 @@ func TestApplyObjectsMultiKind(t *testing.T) {
 		t.Fatalf("transcript=%+v err=%v", transcript, err)
 	}
 	chunks, err := instance.db.TranscriptChunks(ctx, transcriptID, 0, 1<<20)
-	if err != nil || len(chunks) != 1 || string(chunks[0].Data) != "output" {
+	if err != nil || len(chunks) != 3 || string(chunks[0].Data) != "output" {
 		t.Fatalf("chunks=%+v err=%v", chunks, err)
+	}
+	if chunks[0].Kind != 0 || chunks[1].Kind != 1 || chunks[2].Kind != 2 {
+		t.Fatalf("synced chunk kinds lost: %+v", chunks)
+	}
+}
+
+func TestTranscriptChunkObjectKindJSONCompat(t *testing.T) {
+	payload, err := marshalObject(transcriptObject{
+		ID: ids.New(), AssetID: "asset-1", StartedAt: 1, EndedAt: 2,
+		Content: []transcriptChunkObject{
+			{Seq: 0, TabID: "tab-1", TS: 1, Data: []byte("out")},
+			{Seq: 1, TabID: "tab-1", TS: 2, Kind: 1, Data: []byte("in")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), `"kind":0`) {
+		t.Fatalf("output kind must be omitted to keep payload bytes stable: %s", payload)
+	}
+	if !strings.Contains(string(payload), `"kind":1`) {
+		t.Fatalf("input kind must be carried: %s", payload)
+	}
+	var decoded transcriptObject
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Content) != 2 || decoded.Content[0].Kind != 0 || decoded.Content[1].Kind != 1 {
+		t.Fatalf("roundtrip lost kinds: %+v", decoded.Content)
 	}
 }
 

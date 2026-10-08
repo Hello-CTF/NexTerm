@@ -727,11 +727,11 @@ function rowLabel(r: Row): { text: string; tone: string; hint: string } {
     case "remote-only":
       return { text: "仅云端", tone: "", hint: "本机还没有这条。其他设备推送的。" };
     case "same":
-      return { text: "已一致", tone: "nx-badge-green", hint: "两边修订号相同。" };
+      return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
-      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机这份修订号更新,推送会覆盖云端。" };
+      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机这份更新,推送会覆盖云端。" };
     case "remote-newer":
-      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端这份修订号更新。" };
+      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端这份更新。" };
     case "local-deleted":
       return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
     case "remote-deleted":
@@ -1057,9 +1057,7 @@ function CompareConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">账号同步</span>
         <span className="nx-badge nx-badge-green">已解锁</span>
-        <span className="nx-hint">
-          游标 seq {cursor.seq || "—"} · 云端 {remote?.length ?? "…"} 个对象
-        </span>
+        <span className="nx-hint">云端 {remote?.length ?? "…"} 个对象</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
           <IconRefresh size={12} className={busy === "refresh" ? "animate-spin" : ""} />
@@ -1085,7 +1083,7 @@ function CompareConsole() {
 
       <p className="nx-hint mb-3">
         本机数据与云端密文副本的对比(在本机解密后比较,服务端看不到内容)。
-        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按修订号+载荷 hash 裁决,删除会随删除标记同步)。
+        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按最后修改时间裁决,删除会随删除标记同步)。
       </p>
 
       {kindOptIn && (
@@ -1180,8 +1178,8 @@ function CompareConsole() {
         <div>
           会话记录(终端录像)默认不同步;要同步某一条,到「终端历史」里对那条单独打开同步开关。
           已知主机与 AI 模型档案同样默认不同步,需要时在上方单独开启;关闭开关不会删除云端已有副本。
-          冲突按修订号(最后修改时间)裁决,协议假设各设备时钟已经 <b>NTP 同步</b>,
-          不检测也不校正时钟偏移;时钟不准时「较新」判定可能不符合预期。
+          冲突按最后修改时间裁决,请保持各设备时钟准确(系统默认的自动对时即可);
+          时钟不准时「较新」判定可能不符合预期。
         </div>
       </div>
     </section>

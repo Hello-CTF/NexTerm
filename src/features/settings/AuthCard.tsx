@@ -9,6 +9,7 @@ import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { formatTime } from "../../ui/format";
 import {
   IconCheckCircle,
   IconCopy,
@@ -21,11 +22,6 @@ import {
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
-
-function formatTime(ms: number): string {
-  if (!ms) return "从未";
-  return new Date(ms).toLocaleString();
-}
 
 export function AuthCard() {
   const { pushToast } = useUi();

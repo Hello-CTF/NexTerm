@@ -656,7 +656,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   aria-level={1}
                   aria-selected={isSel}
                   tabIndex={0}
-                  className={`nx-files-row flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 focus-within:[&_.nx-row-actions]:flex ${
+                  className={`nx-row-reserve-actions flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 ${
                     isSel ? "bg-blue-500/[0.14]" : "hover:bg-neutral-800/50"
                   }`}
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, position: "absolute", top: 0, left: 0, right: 0 }}

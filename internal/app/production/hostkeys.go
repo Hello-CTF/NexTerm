@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sync"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/atomicfile"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
 )
@@ -104,31 +105,11 @@ func (s *productionHostKeyStore) Remove(ctx context.Context, id string) error {
 }
 
 func writeProductionHostKeyFile(path string, file productionHostKeyFile) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".hostkeys-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := json.NewEncoder(temporary).Encode(file); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, path)
+	return atomicfile.Write(path, 0o600, func(writer io.Writer) error {
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(file)
+	})
 }
 
 var _ ssh.HostKeyStore = (*productionHostKeyStore)(nil)

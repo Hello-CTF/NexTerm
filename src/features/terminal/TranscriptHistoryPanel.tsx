@@ -25,6 +25,7 @@ import {
   stripAnsi,
   type TranscriptDecoder,
 } from "./transcriptText";
+import { TranscriptReplayView } from "./TranscriptReplayView";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
@@ -92,6 +93,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"text" | "replay">("text");
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
 
@@ -164,7 +166,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const decodeChunks = useCallback((incoming: TranscriptChunk[], reachedDone: boolean) => {
     const decoder = decoderRef.current;
     if (!decoder) return;
-    const sorted = [...incoming].sort((a, b) => a.seq - b.seq);
+    const sorted = incoming.filter((chunk) => (chunk.kind ?? 0) === 0).sort((a, b) => a.seq - b.seq);
     const decoded = sorted.map((chunk) => ({
       seq: chunk.seq,
       ts: chunk.ts,
@@ -498,32 +500,62 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
-            <div className="relative flex-1">
-              <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
-              <input
-                className="nx-input nx-input-sm w-full pl-7"
-                placeholder="在选中的记录里搜索…"
-                aria-label="搜索终端记录"
-                value={query}
-                disabled={!selected}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void runSearch();
-                  }
-                }}
-              />
+            {viewMode === "text" ? (
+              <>
+                <div className="relative flex-1">
+                  <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
+                  <input
+                    className="nx-input nx-input-sm w-full pl-7"
+                    placeholder="在选中的记录里搜索…"
+                    aria-label="搜索终端记录"
+                    value={query}
+                    disabled={!selected}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void runSearch();
+                      }
+                    }}
+                  />
+                </div>
+                <button
+                  className="nx-btn nx-btn-ghost nx-btn-sm"
+                  disabled={!selected || searching}
+                  onClick={() => void runSearch()}
+                >
+                  {searching ? <IconRefresh size={12} className="animate-spin" /> : <IconSearch size={12} />}
+                  搜索
+                </button>
+              </>
+            ) : (
+              <span className="flex-1 text-[11px] text-neutral-500">
+                回放模式：按录制时间轴重放终端输出，输入不会在回放中显示
+              </span>
+            )}
+            <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label="记录视图">
+              {(["text", "replay"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  role="tab"
+                  aria-selected={viewMode === mode}
+                  className={`px-2 py-1 text-[11px] ${
+                    viewMode === mode
+                      ? "bg-neutral-700/70 text-neutral-100"
+                      : "text-neutral-400 hover:bg-neutral-800/60"
+                  }`}
+                  onClick={() => setViewMode(mode)}
+                >
+                  {mode === "text" ? "文本" : "回放"}
+                </button>
+              ))}
             </div>
-            <button
-              className="nx-btn nx-btn-ghost nx-btn-sm"
-              disabled={!selected || searching}
-              onClick={() => void runSearch()}
-            >
-              {searching ? <IconRefresh size={12} className="animate-spin" /> : <IconSearch size={12} />}
-              搜索
-            </button>
           </div>
+
+          {viewMode === "replay" && selected ? (
+            <TranscriptReplayView transcriptId={selected.id} />
+          ) : (
+            <>
 
           {(matches !== null || searchError) && (
             <div className="max-h-[140px] shrink-0 overflow-auto border-b border-neutral-800/60">
@@ -577,6 +609,8 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
               </pre>
             )}
           </div>
+            </>
+          )}
 
           <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 px-3 py-2 text-[11px] text-neutral-500">
             <IconClock size={11} />
@@ -587,10 +621,10 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                 {selected.truncated && " · 已达到大小上限，后续输出未记录"}
               </>
             ) : (
-              "终端输出会自动记录，按会话留存"
+              "终端会话会自动记录（含键盘输入），按会话留存"
             )}
             <div className="nx-spacer" />
-            {selected && !done && (
+            {selected && !done && viewMode === "text" && (
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 disabled={loadingMore}

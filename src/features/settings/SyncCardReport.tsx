@@ -14,7 +14,7 @@ export function SyncReportView({ data }: { data: SyncReport }) {
       <div className="mb-1 font-semibold">同步结果</div>
       <div className="font-mono text-[11px]">
         拉取 {data.pulled} · 应用 {data.applied} · 推送 {data.pushed} · 跳过 {data.pullSkipped} ·
-        解密失败 {data.decryptFailed} · 冲突 {data.conflicts} · 游标 seq {data.seq}
+        解密失败 {data.decryptFailed} · 冲突 {data.conflicts}
       </div>
       {data.warnings && data.warnings.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">
@@ -87,8 +87,8 @@ export function ImportReportView({
       )}
       {data.skippedNewer > 0 && (
         <p className="nx-hint mt-2 text-[11px]">
-          冲突按修订号（最后修改时间）裁决，协议假设各设备时钟已经 NTP 同步，不检测也不校正时钟偏移；
-          时钟不准时「较新」判定可能不符合预期。要覆盖较新的一份，导入时勾选「强制覆盖较新的本机条目」。
+          冲突按最后修改时间裁决,请保持各设备时钟准确(系统默认的自动对时即可);
+          时钟不准时「较新」判定可能不符合预期。要覆盖较新的一份,导入时勾选「强制覆盖较新的本机条目」。
         </p>
       )}
       {data.warnings.length > 0 && (

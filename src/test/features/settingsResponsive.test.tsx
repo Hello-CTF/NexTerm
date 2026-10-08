@@ -85,6 +85,26 @@ afterEach(() => {
 });
 
 describe("SettingsView 响应式结构", () => {
+  it("窄屏保留顶部横向 chips,宽屏为左侧目录 + 右侧独立滚动内容", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const nav = mounted.container.querySelector<HTMLElement>('nav[aria-label="设置分区"]');
+    expect(nav).toBeTruthy();
+    const chips = nav!.querySelector<HTMLElement>('[data-testid="settings-nav-chips"]');
+    expect(chips?.className).toContain("md:hidden");
+    const toc = nav!.querySelector<HTMLElement>('[data-testid="settings-nav-toc"]');
+    expect(toc?.className).toContain("hidden");
+    expect(toc?.className).toContain("md:flex");
+    expect(nav!.className).toContain("md:border-r");
+    const root = mounted.container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("nx-pane");
+    expect(root.className).not.toContain("overflow-y-auto");
+    const scroller = mounted.container.querySelector<HTMLElement>("div.overflow-y-auto");
+    expect(scroller).toBeTruthy();
+    expect(scroller!.querySelector("#settings-vault")).not.toBeNull();
+    expect(scroller!.querySelector("#settings-shortcuts")).not.toBeNull();
+  });
+
   it("快捷键网格窄屏单列、≥480px 双列", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();

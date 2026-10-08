@@ -230,6 +230,7 @@ export interface TranscriptChunk {
   seq: number;
   tabId: string;
   ts: number;
+  kind?: number;
   dataBase64: string;
 }
 

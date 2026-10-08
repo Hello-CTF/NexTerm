@@ -9,7 +9,7 @@ import { IconClose, IconKey, IconLoader } from "../../ui/icons";
 
 const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] = [
   { value: "terminal_write", label: "终端写入", hint: "AI 替你输入：按键直接发进终端" },
-  { value: "session_exec", label: "命令执行", hint: "AI 直接在设备上运行命令；常规执行不再逐次确认，拦截命中或拿不准仍会问你" },
+  { value: "session_exec", label: "命令执行", hint: "AI 直接在设备上运行命令；授权后不再逐次确认，被拦截规则判为禁止的仍会拒绝" },
 ];
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
@@ -68,7 +68,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时，原本要逐次确认的不再逐次确认，只读模式下也会被放开；拦截规则命中或拿不准的仍会问你（只读模式下会被拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
+      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时不再逐次确认，只读模式下也会放行。被拦截规则判为禁止的操作不在授权范围内，始终拒绝；其余未授权操作按当前权限模式处理（读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -119,7 +119,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认；只读模式下这两类常规操作也会被放开。授权不覆盖拦截规则命中或拿不准的操作：读写与完全静默下仍会问你，只读下仍会被拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
+        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。被拦截规则判为禁止的操作不在授权范围内，始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
       </div>
 
       {loadError && (

@@ -52,7 +52,7 @@ import {
   type KeybindingActionId,
 } from "./keybindings";
 import { connectWithHostKeyConfirm } from "./hostKeys";
-import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT, WEB } from "../demo";
 import {
@@ -100,6 +100,7 @@ import {
   IconBox,
   IconCheckCircle,
   IconChevronLeft,
+  IconChevronDown,
   IconClock,
   IconClose,
   IconCode,
@@ -159,6 +160,25 @@ function workspaceIcon(w: Workspace) {
   if (w.kind === "db") return w.dbKind === "redis" ? IconLayers : IconDatabase;
   if (w.kind === "tools") return IconSettings;
   return assetIcon(w.assetKind ?? "ssh");
+}
+
+function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | undefined }) {
+  if (status === undefined) return null;
+  const tone =
+    status === "connected" ? "is-ok" : status === "failed" ? "is-bad" : "is-warn";
+  return (
+    <span className={`nx-ws-status ${tone}`} role="img" aria-label={sessionStatusText(status)}>
+      {status === "connected" ? (
+        <IconCheckCircle size={11} />
+      ) : status === "failed" ? (
+        <IconXCircle size={11} />
+      ) : status === "disconnected" ? (
+        <IconInfo size={11} />
+      ) : (
+        <IconLoader size={11} className="animate-spin" />
+      )}
+    </span>
+  );
 }
 
 function tabIcon(t: AppTab) {
@@ -371,7 +391,7 @@ function useAiToastInset(active: boolean): void {
       if (!input) return;
       const top = input.getBoundingClientRect().top;
       if (top <= 0) return;
-      const stack = parseFloat(getComputedStyle(root).getPropertyValue("--nx-header-stack")) || 70;
+      const stack = parseFloat(getComputedStyle(root).getPropertyValue("--nx-header-stack")) || 36;
       root.style.setProperty("--nx-ai-toast-max", `${Math.max(140, Math.round(top - 12 - stack - 8))}px`);
     };
     measure();
@@ -510,10 +530,21 @@ export default function App() {
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const queryClient = useQueryClient();
-  const [vaultStatus, setVaultStatus] = useState<{ text: string; uninitialized: boolean }>({
-    text: "…",
-    uninitialized: false,
-  });
+  // 状态栏凭据库状态直接订阅共享的 ["vault-status"] query, 与设置页同源;
+  // 不再维护本地 state + 序号守卫的分叉副本。
+  const vaultQuery = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
+  const vaultStatus = vaultQuery.data
+    ? {
+        uninitialized: !vaultQuery.data.initialized,
+        text: !vaultQuery.data.initialized
+          ? "凭据库未初始化"
+          : vaultQuery.data.unlocked
+            ? "凭据库已解锁"
+            : "凭据库已锁定",
+      }
+    : vaultQuery.isError
+      ? { text: "凭据库不可用", uninitialized: false }
+      : { text: "…", uninitialized: false };
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const syncLink = useQuery({
     queryKey: ["sync-link"],
@@ -567,6 +598,7 @@ export default function App() {
   }, [connectFocusRevision, viewport.overlaySidebars]);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
+  const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const terminalKeysVisible =
     viewport.terminalKeys &&
     (ws?.panes.some((p) => {
@@ -680,28 +712,6 @@ export default function App() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
-  const vaultStatusSeq = useRef(0);
-  const refreshVaultStatus = useCallback(() => {
-    const seq = ++vaultStatusSeq.current;
-    void vaultApi
-      .status()
-      .then((v) => {
-        if (seq !== vaultStatusSeq.current) return;
-        setVaultStatus({
-          uninitialized: !v.initialized,
-          text: !v.initialized
-            ? "凭据库未初始化"
-            : v.unlocked
-              ? "凭据库已解锁"
-              : "凭据库已锁定",
-        });
-      })
-      .catch(() => {
-        if (seq !== vaultStatusSeq.current) return;
-        setVaultStatus({ text: "凭据库不可用", uninitialized: false });
-      });
-  }, []);
-
   // 序号守卫: auth 转换(登录/登出)时在途旧请求可能迟到, 不允许覆盖新会话拉到的数据。
   const sessionsSeq = useRef(0);
   const refreshSessions = useCallback(() => {
@@ -714,13 +724,12 @@ export default function App() {
       .catch(() => undefined);
   }, [setSessions]);
 
-  // 登出/会话过期时先递增两个序号使在途响应全部失效, 再清空状态: 旧账号的慢请求
-  // 迟到后不得回写(否则 seq 未变, 迟到的旧数据会覆盖清空结果)。
+  // 登出/会话过期时先递增序号使在途响应全部失效, 再清空状态: 旧账号的慢请求
+  // 迟到后不得回写(否则 seq 未变, 迟到的旧数据会覆盖清空结果)。凭据库状态由
+  // 上方共享 vault-status query 的 resetQueries 一并清空重取, 这里不再单独维护。
   const clearSessionScopedState = useCallback(() => {
     sessionsSeq.current += 1;
-    vaultStatusSeq.current += 1;
     setSessions([]);
-    setVaultStatus({ text: "…", uninitialized: false });
   }, [setSessions]);
 
   const openVaultProtection = useCallback(() => {
@@ -801,35 +810,68 @@ export default function App() {
     void openLocalTerminal();
   }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
 
-  const openWsMenu = useCallback(
-    (w: Workspace, x: number, y: number) => {
-      const tabs = w.panes.flatMap((p) => p.tabs);
-      const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
-      const blocked = countBlockedTerminals(tabs, w.assetKind);
-      const items: MenuItem[] = [
-        {
+  const openWorkspaceSwitcher = useCallback(
+    (anchor: HTMLElement) => {
+      const rect = anchor.getBoundingClientRect();
+      const items: MenuItem[] = workspaces.map((w) => {
+        const Icon = workspaceIcon(w);
+        const status = sessions.find((s) => s.id === w.sessionId)?.status;
+        const tabCount = w.panes.flatMap((p) => p.tabs).length;
+        return {
           kind: "item",
-          label: "关闭工作区",
+          label: w.title,
+          icon: <Icon size={12} />,
+          hint: [
+            w.kind === "tools" ? "工具" : null,
+            w.panes.length > 1 ? "已分屏" : null,
+            status ? sessionStatusText(status) : null,
+            `${tabCount} 个标签`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          onSelect: () => setActiveWorkspace(w.id),
+        };
+      });
+      if (workspaces.length > 0) items.push({ kind: "separator" });
+      items.push({
+        kind: "item",
+        label: "新建工作区…",
+        icon: <IconPlus size={12} />,
+        hint: "在左侧资产树里双击一台主机",
+        onSelect: () => {
+          setLeftMode("assets");
+          setLeftOpen(true);
+          pushToast("info", "双击左侧资产，就会为这台主机开一个新的工作区");
+        },
+      });
+      if (ws) {
+        const tabs = ws.panes.flatMap((p) => p.tabs);
+        const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
+        const blocked = countBlockedTerminals(tabs, ws.assetKind);
+        items.push({
+          kind: "item",
+          label: `关闭「${ws.title}」`,
           icon: <IconClose size={12} />,
           hint:
             blocked > 0
               ? `${running} 个运行中 · ${blocked} 个将结束进程`
               : "运行中的终端转入后台",
-          onSelect: () => void closeWorkspace(w.id),
-        },
-        {
+          disabled: !ws.closable,
+          onSelect: () => void closeWorkspace(ws.id),
+        });
+        items.push({
           kind: "item",
           label: "结束全部终端进程…",
           icon: <IconStop size={12} />,
           hint: running > 0 ? `${running} 个正在运行` : "没有运行中的终端",
           danger: true,
           disabled: running === 0,
-          onSelect: () => void requestKillWorkspaceTerminals(w.id),
-        },
-      ];
-      setWsMenu({ x, y, title: w.title, items });
+          onSelect: () => void requestKillWorkspaceTerminals(ws.id),
+        });
+      }
+      setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [closeWorkspace],
+    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, setLeftMode, setLeftOpen, pushToast],
   );
 
   const runSyncNow = useCallback(async () => {
@@ -981,8 +1023,7 @@ export default function App() {
 
   useEffect(() => {
     refreshSessions();
-    refreshVaultStatus();
-  }, [refreshSessions, refreshVaultStatus]);
+  }, [refreshSessions]);
 
   // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的账号级请求全部
   // 吃到 401; resetQueries 会取消在途的旧 fetch 再重取(invalidateQueries 在 data 为空时会
@@ -1000,7 +1041,6 @@ export default function App() {
         if (s.gate === "ready" && prev.gate !== "loading") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
           refreshSessions();
-          refreshVaultStatus();
         } else if (prev.gate === "ready" && s.gate === "login") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
           clearSessionScopedState();
@@ -1011,7 +1051,7 @@ export default function App() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [queryClient, refreshSessions, refreshVaultStatus, clearSessionScopedState]);
+  }, [queryClient, refreshSessions, clearSessionScopedState]);
 
   useEffect(() => {
     if (!DEMO) return;
@@ -1054,8 +1094,6 @@ export default function App() {
       }
     })();
   }, []);
-
-  const crumb = [ws?.title ?? "未连接", active?.title ?? "工作区"];
 
   const bindings = useKeybindings();
   const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
@@ -1245,121 +1283,79 @@ export default function App() {
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <div
-            className={`nx-tabstrip is-top ${TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : ""}`}
+          <header
+            className={`flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
+              TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : "pl-3.5"
+            }`}
             data-wails-drag-region style={wailsDragRegionStyle}
           >
-            {workspaces.length === 0 && (
-              <span className="px-1 text-xs text-neutral-500" data-wails-drag-region style={wailsDragRegionStyle}>
+            <span
+              className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
+              data-wails-drag-region style={wailsDragRegionStyle}
+            >
+              NexTerm
+            </span>
+            {ws ? (
+              <>
+                <button
+                  type="button"
+                  className="nx-ws-switch"
+                  style={wailsNoDragRegionStyle}
+                  aria-haspopup="menu"
+                  aria-label={`切换工作区，当前 ${ws.title}`}
+                  title="切换工作区"
+                  onClick={(event) => openWorkspaceSwitcher(event.currentTarget)}
+                >
+                  {ActiveWsIcon ? <ActiveWsIcon size={13} /> : null}
+                  <span className="truncate">{ws.title}</span>
+                  <WorkspaceStatusGlyph status={sessions.find((s) => s.id === ws.sessionId)?.status} />
+                  <IconChevronDown size={12} />
+                </button>
+                <span
+                  className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
+                  data-wails-drag-region style={wailsDragRegionStyle}
+                >
+                  <span className="text-neutral-600" data-wails-drag-region style={wailsDragRegionStyle}>
+                    /
+                  </span>
+                  <span
+                    className="truncate font-medium text-neutral-300"
+                    data-wails-drag-region style={wailsDragRegionStyle}
+                  >
+                    {active?.title ?? "工作区"}
+                  </span>
+                </span>
+              </>
+            ) : (
+              <span
+                className="text-xs text-neutral-500"
+                data-wails-drag-region style={wailsDragRegionStyle}
+              >
                 还没有工作区，双击左侧资产连接一台主机
               </span>
             )}
-            <div className="nx-tabstrip-scroll">
-            <div
-              role="tablist"
-              aria-label="工作区"
-              className="flex items-center gap-[3px]"
-              style={wailsNoDragRegionStyle}
-            >
-              {workspaces.map((w) => {
-                const Icon = workspaceIcon(w);
-                const isActive = w.id === ws?.id;
-                const status = sessions.find((s) => s.id === w.sessionId)?.status;
-                const tone =
-                  status === undefined
-                    ? null
-                    : status === "connected"
-                      ? "is-ok"
-                      : status === "failed"
-                        ? "is-bad"
-                        : "is-warn";
-                return (
-                  <div
-                    key={w.id}
-                    role="tab"
-                    data-tab-id={w.id}
-                    id={`nx-ws-tab-${w.id}`}
-                    aria-selected={isActive}
-                    aria-controls={`nx-ws-panel-${w.id}`}
-                    tabIndex={isActive ? 0 : -1}
-                    className={`nx-ws ${isActive ? "is-active" : ""}`}
-                    style={wailsNoDragRegionStyle}
-                    onClick={() => setActiveWorkspace(w.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      openWsMenu(w, e.clientX, e.clientY);
-                    }}
-                    onKeyDown={(e) =>
-                      handleTablistKeyDown(
-                        e,
-                        workspaces.map((x) => x.id),
-                        w.id,
-                        setActiveWorkspace,
-                      )
-                    }
-                    title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
-                      w.panes.length > 1 ? " · 已分屏" : ""
-                    }${status ? ` · ${sessionStatusText(status)}` : ""}`}
-                  >
-                    <Icon size={13} />
-                    <span className="truncate">{w.title}</span>
-                    {tone && status && (
-                      <span
-                        className={`nx-ws-status ${tone}`}
-                        role="img"
-                        aria-label={sessionStatusText(status)}
-                      >
-                        {status === "connected" ? (
-                          <IconCheckCircle size={11} />
-                        ) : status === "failed" ? (
-                          <IconXCircle size={11} />
-                        ) : status === "disconnected" ? (
-                          <IconInfo size={11} />
-                        ) : (
-                          <IconLoader size={11} className="animate-spin" />
-                        )}
-                      </span>
-                    )}
-                    {w.closable && (
-                      <button
-                        type="button"
-                        className="nx-tab-close"
-                        style={wailsNoDragRegionStyle}
-                        aria-label={`关闭工作区 ${w.title}`}
-                        title={`关闭工作区（${
-                          countBlockedTerminals(w.panes.flatMap((p) => p.tabs), w.assetKind) > 0
-                            ? "部分终端将结束进程"
-                            : "运行中的终端转入后台"
-                        }）`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void closeWorkspace(w.id);
-                        }}
-                      >
-                        <IconClose size={10} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            </div>
+            <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
             <button
-              className="nx-tab-new"
-              style={wailsNoDragRegionStyle}
-              title="新建工作区：在左侧资产树里双击一台主机"
-              aria-label="新建工作区"
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
+              title="刷新会话列表与凭据库状态"
+              aria-label="刷新会话列表与凭据库状态"
               onClick={() => {
-                setLeftMode("assets");
-                setLeftOpen(true);
-                pushToast("info", "双击左侧资产，就会为这台主机开一个新的工作区");
+                refreshSessions();
+                void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
               }}
             >
-              <IconPlus size={13} />
+              <IconActivity size={15} />
             </button>
-            <div className="nx-spacer min-w-0" data-wails-drag-region style={wailsDragRegionStyle} />
+            <button
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
+              title={`命令面板 (${kbLabel("commandPalette")})`}
+              aria-label={`命令面板 (${kbLabel("commandPalette")})`}
+              onClick={() => setPaletteOpen(true)}
+            >
+              <IconCommand size={15} />
+            </button>
             {TRANSPORT === "desktop" && !isMac() && (
-              <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
+              <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最小化"
@@ -1377,8 +1373,7 @@ export default function App() {
                   <IconMaximize size={12} />
                 </button>
                 <button
-                  className="nx-icon-btn is-danger"
-                  style={wailsNoDragRegionStyle}
+                  className="nx-icon-btn is-danger" style={wailsNoDragRegionStyle}
                   title="关闭"
                   aria-label="关闭窗口"
                   onClick={() => void closeWindow()}
@@ -1387,52 +1382,6 @@ export default function App() {
                 </button>
               </div>
             )}
-          </div>
-
-          <header
-            className="flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 pl-3.5"
-            data-wails-drag-region style={wailsDragRegionStyle}
-          >
-            <span
-              className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
-              data-wails-drag-region style={wailsDragRegionStyle}
-            >
-              NexTerm
-            </span>
-            <span
-              className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
-              data-wails-drag-region style={wailsDragRegionStyle}
-            >
-              <span className="truncate" data-wails-drag-region style={wailsDragRegionStyle}>
-                {crumb[0]}
-              </span>
-              <span className="text-neutral-600" data-wails-drag-region style={wailsDragRegionStyle}>
-                /
-              </span>
-              <span className="truncate font-medium text-neutral-300" data-wails-drag-region style={wailsDragRegionStyle}>
-                {crumb[1]}
-              </span>
-            </span>
-            <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
-            <button
-              className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title="刷新会话列表与凭据库状态"
-              aria-label="刷新会话列表与凭据库状态"
-              onClick={() => {
-                refreshSessions();
-                refreshVaultStatus();
-              }}
-            >
-              <IconActivity size={15} />
-            </button>
-            <button
-              className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title={`命令面板 (${kbLabel("commandPalette")})`}
-              aria-label={`命令面板 (${kbLabel("commandPalette")})`}
-              onClick={() => setPaletteOpen(true)}
-            >
-              <IconCommand size={15} />
-            </button>
           </header>
 
         <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
@@ -1498,9 +1447,7 @@ export default function App() {
                 return (
                   <div
                     key={w.id}
-                    role="tabpanel"
                     id={`nx-ws-panel-${w.id}`}
-                    aria-labelledby={`nx-ws-tab-${w.id}`}
                     className={wsActive ? "h-full min-h-0" : "hidden"}
                   >
                     <SplitStack

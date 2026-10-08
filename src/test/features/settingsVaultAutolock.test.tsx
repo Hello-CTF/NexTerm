@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -54,9 +54,10 @@ const MASTER_VAULT = {
 const DPAPI_VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 30 };
 
 let mounted: MountedView | undefined;
+let client: QueryClient | undefined;
 
 function withClient(node: React.ReactElement): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
@@ -89,6 +90,19 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
     expect(mocks.setAutoLock).toHaveBeenCalledWith(5);
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "闲置 5 分钟后自动锁定");
+    await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
+  });
+
+  it("别处变更 vault-status 后经共享 query 自动刷新，无需重新挂载", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => autoLockInput() !== null);
+    expect(autoLockInput()!.value).toBe("30");
+
+    mocks.vaultStatus.mockResolvedValue(DPAPI_VAULT);
+    await act(() => client!.invalidateQueries({ queryKey: ["vault-status"] }));
+    await flush();
+
+    expect(autoLockInput()).toBeNull();
   });
 
   it("0 表示禁用并照常保存", async () => {

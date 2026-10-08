@@ -119,7 +119,7 @@ describe("MemoryCard", () => {
     expect(text).toContain("operations");
     expect(text).toContain("m-1");
     expect(text).toContain("1 条");
-    expect(text).toContain("local / default");
+    expect(text).toContain("记忆按属主隔离存储");
     expect(mocks.settings).toHaveBeenCalledWith(SCOPE);
     expect(mocks.index).toHaveBeenCalledWith(SCOPE);
   });

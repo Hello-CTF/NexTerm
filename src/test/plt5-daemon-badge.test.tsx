@@ -19,7 +19,7 @@ function badgeText(durable: boolean, sessionKind?: string): string {
 
 describe("Daemon", () => {
   it("shows the daemon badge for durable tabs", () => {
-    expect(badgeText(true, "ssh")).toContain("守护进程");
+    expect(badgeText(true, "ssh")).toContain("守护终端");
   });
 
   it("shows the direct-connection badge for volatile tabs", () => {

@@ -1,5 +1,7 @@
 // 设备管理视图的展示格式化助手: 字节/时长/相对时间。
 
+export { formatTime } from "../../ui/format";
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
@@ -23,11 +25,6 @@ export function formatUptime(seconds: number): string {
   if (h > 0) return `${h} 小时 ${m} 分`;
   if (m > 0) return `${m} 分 ${s} 秒`;
   return `${s} 秒`;
-}
-
-export function formatTime(ms: number): string {
-  if (!ms) return "从未";
-  return new Date(ms).toLocaleString();
 }
 
 export function relativeTime(ms: number, now: number): string {

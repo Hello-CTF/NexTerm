@@ -21,3 +21,7 @@ func (o durableTranscriptOffsets) DurableTranscriptCatchUpBytes(tabID string) in
 func (o durableTranscriptOffsets) PersistDurableTranscriptOffset(tabID string, offset int64) {
 	_ = o.database.DurableTranscriptOffsetSet(context.Background(), tabID, offset)
 }
+
+func (o durableTranscriptOffsets) DeleteDurableTranscriptOffset(tabID string) {
+	_ = o.database.DurableTranscriptOffsetDelete(context.Background(), tabID)
+}

@@ -61,7 +61,7 @@ function mountApp(): MountedView {
 }
 
 function statusImg(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('[role="tab"] .nx-ws-status[role="img"]');
+  return document.querySelector<HTMLElement>('.nx-ws-status[role="img"]');
 }
 
 beforeEach(() => {

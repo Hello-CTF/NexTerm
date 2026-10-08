@@ -237,7 +237,7 @@ func (e *Engine) transcriptPayload(ctx context.Context, transcript store.Transcr
 	object.Content = make([]transcriptChunkObject, 0, len(chunks))
 	for _, chunk := range chunks {
 		object.Content = append(object.Content, transcriptChunkObject{
-			Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Data: chunk.Data,
+			Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data,
 		})
 	}
 	object.Bytes = transcript.Bytes
@@ -771,7 +771,7 @@ func (e *Engine) applyTranscriptObject(ctx context.Context, plaintext []byte, re
 	}
 	chunks := make([]store.TranscriptChunkRow, 0, len(payload.Content))
 	for _, chunk := range payload.Content {
-		chunks = append(chunks, store.TranscriptChunkRow{Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Data: chunk.Data})
+		chunks = append(chunks, store.TranscriptChunkRow{Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data})
 	}
 	if err := e.store.TranscriptInsertSynced(ctx, row, chunks); err != nil {
 		report.warnf("会话记录 %s 应用失败: %v", payload.ID, err)
@@ -787,7 +787,7 @@ func (e *Engine) upgradeTranscriptContent(ctx context.Context, transcriptID stri
 func chunksToRows(chunks []transcriptChunkObject) []store.TranscriptChunkRow {
 	rows := make([]store.TranscriptChunkRow, 0, len(chunks))
 	for _, chunk := range chunks {
-		rows = append(rows, store.TranscriptChunkRow{Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Data: chunk.Data})
+		rows = append(rows, store.TranscriptChunkRow{Seq: chunk.Seq, TabID: chunk.TabID, TS: chunk.TS, Kind: chunk.Kind, Data: chunk.Data})
 	}
 	return rows
 }

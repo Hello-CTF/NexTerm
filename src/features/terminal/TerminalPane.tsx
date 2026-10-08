@@ -231,7 +231,7 @@ export function TerminalPane({
         const now = Date.now();
         if (opts?.fromCommand || now - observerHintAt.current > 4000) {
           observerHintAt.current = now;
-          pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
+          pushToast("info", "终端正由其他设备操作，点「接管控制」可接手");
         }
       };
       if (isObserver) {
@@ -575,7 +575,7 @@ export function TerminalPane({
     async (files: File[]) => {
       if (!kernelTabId) return;
       if (isObserver) {
-        pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
+        pushToast("info", "终端正由其他设备操作，点「接管控制」可接手");
         return;
       }
       setImagePaste({ phase: "uploading", message: `正在上传 ${files.length} 张图片到服务端图床（限时公开链接）…` });
@@ -1108,7 +1108,7 @@ export function TerminalPane({
                 {control.exited
                   ? "终端进程已结束"
                   : control.controller
-                    ? "终端正在其他设备上操作中"
+                    ? "终端正由其他设备操作"
                     : "当前无人操作"}
               </span>
               {control.exited ? (

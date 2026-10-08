@@ -1,21 +1,12 @@
 export type EncChoice = "auto" | "utf-8" | "gbk";
 
-const BASE64_CHUNK_BYTES = 32_766;
+export { bytesToBase64 } from "../../ui/base64";
 
 export function bytesFromBase64(encoded: string): Uint8Array {
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
-}
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  const chunks: string[] = [];
-  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_BYTES) {
-    const chunk = bytes.subarray(i, i + BASE64_CHUNK_BYTES);
-    chunks.push(btoa(String.fromCharCode(...chunk)));
-  }
-  return chunks.join("");
 }
 
 function decodeFatal(bytes: Uint8Array, encoding: "utf-8" | "gbk"): string {

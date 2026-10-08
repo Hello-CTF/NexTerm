@@ -83,6 +83,18 @@ describe("transcriptPayload 与 Go transcriptObject 逐字节一致", () => {
     const payload = transcriptPayload(summary({ id: "t-2" }), []);
     expect(marshalSyncPayload(payload)).toBe(fixtureText("transcriptZeroChunks"));
   });
+
+  it("chunk kind: output 省略 kind,input/resize 在 ts 与 data 之间携带 kind", () => {
+    const payload = transcriptPayload(
+      summary({ id: "t1", sessionId: "s1", assetId: "a1", bytes: 26, chunks: 3 }),
+      [
+        { seq: 1, tabId: "tab-1", ts: 10, kind: 0, dataBase64: "b3V0" },
+        { seq: 2, tabId: "tab-1", ts: 11, kind: 1, dataBase64: "aW4=" },
+        { seq: 3, tabId: "tab-1", ts: 12, kind: 2, dataBase64: "eyJjb2xzIjo4MCwicm93cyI6MjR9" },
+      ],
+    );
+    expect(marshalSyncPayload(payload)).toBe(fixtureText("transcriptKinds"));
+  });
 });
 
 describe("其余对象载荷与 Go 逐字节一致", () => {

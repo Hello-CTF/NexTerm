@@ -54,6 +54,7 @@ type transcriptItem struct {
 	tabID     string
 	durableID string
 	ts        int64
+	chunkKind int
 	data      []byte
 	info      session.TranscriptInfo
 }
@@ -186,6 +187,24 @@ func (w *transcriptWriter) SessionOutput(ctx context.Context, durableID, session
 	})
 }
 
+func (w *transcriptWriter) SessionInput(ctx context.Context, sessionID, tabID string, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemChunk, chunkKind: store.TranscriptChunkKindInput,
+		sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli(), data: bytes.Clone(data),
+	})
+}
+
+func (w *transcriptWriter) SessionResize(ctx context.Context, sessionID, tabID string, cols, rows uint32) {
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemChunk, chunkKind: store.TranscriptChunkKindResize,
+		sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli(),
+		data: []byte(fmt.Sprintf(`{"cols":%d,"rows":%d}`, cols, rows)),
+	})
+}
+
 func (w *transcriptWriter) SessionEnded(ctx context.Context, sessionID string) {
 	w.enqueue(ctx, transcriptItem{kind: transcriptItemEnd, sessionID: sessionID, ts: time.Now().UnixMilli()})
 }
@@ -195,6 +214,11 @@ func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
 		ctx = context.Background()
 	}
 	w.queueMu.Lock()
+	if w.closed {
+		w.queueMu.Unlock()
+		w.logger.Warn("transcript item dropped: writer already shut down", "sessionId", item.sessionID, "tabId", item.tabID, "itemKind", item.kind)
+		return
+	}
 	ticket := w.nextTicket
 	w.nextTicket++
 	if item.kind != transcriptItemChunk {
@@ -362,7 +386,7 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 				period.durableBytes[item.durableID] += int64(len(item.data))
 			}
 			period.pending = append(period.pending, store.TranscriptChunkRow{
-				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Data: item.data,
+				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Kind: item.chunkKind, Data: item.data,
 			})
 			period.nextSeq++
 			period.bytes += int64(len(item.data))

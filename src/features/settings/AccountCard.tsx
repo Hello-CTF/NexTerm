@@ -6,6 +6,7 @@ import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { formatTime } from "../../ui/format";
 import {
   IconCheckCircle,
   IconInfo,
@@ -14,11 +15,6 @@ import {
   IconShield,
   IconXCircle,
 } from "../../ui/icons";
-
-function formatTime(ms: number): string {
-  if (!ms) return "从未";
-  return new Date(ms).toLocaleString();
-}
 
 function stateBadge(user: AccountUser): { text: string; tone: string } {
   if (user.state === "disabled") return { text: "已禁用", tone: "nx-badge-red" };

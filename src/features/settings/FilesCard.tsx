@@ -135,7 +135,7 @@ export function FilesCard() {
     : serviceDefault === "configured"
       ? "当前没有覆盖值；生效的是服务端 --public-base-url 或 NEXTERM_PUBLIC_BASE_URL 提供的默认 URL（实际值以服务端为准），新链接形如 <默认 URL>/files/image/…。"
       : serviceDefault === "unset"
-        ? "没有覆盖值，服务端也未配置默认 URL：新链接使用同源相对路径 /files/image/…。此设置只用于文件公开链接，与同步、舰队、API、LLM 的地址相互独立。"
+        ? "没有覆盖值，服务端也未配置默认 URL：新链接使用同源相对路径 /files/image/…。此设置只用于文件公开链接，与账号同步、设备管理等地址相互独立。"
         : "当前没有覆盖值；若服务端配置了 --public-base-url 或 NEXTERM_PUBLIC_BASE_URL 则以其为准，否则新链接使用同源相对路径 /files/image/…。";
 
   return (

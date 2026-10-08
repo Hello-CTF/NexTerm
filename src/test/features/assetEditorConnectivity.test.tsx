@@ -108,6 +108,19 @@ function saveButton(): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function advancedToggle(): HTMLButtonElement {
+  const button = mounted!.container.querySelector<HTMLButtonElement>(
+    "button[aria-expanded][aria-controls]",
+  );
+  if (!button) throw new Error("advanced options toggle not found");
+  return button;
+}
+
+function expandAdvanced(): void {
+  const toggle = advancedToggle();
+  if (toggle.getAttribute("aria-expanded") !== "true") click(toggle);
+}
+
 function createdPayload(): Record<string, unknown> {
   expect(mocks.create).toHaveBeenCalledOnce();
   return mocks.create.mock.calls[0]![0] as Record<string, unknown>;
@@ -145,6 +158,7 @@ describe("AssetEditor SSH 连接能力", () => {
       { id: "d1", kind: "docker", name: "容器宿主机", host: "10.0.0.2", port: 22 },
     ]);
     mountEditor();
+    expandAdvanced();
     await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
     const jumpSelect = findSelect("不使用跳板机");
     const labels = [...jumpSelect.options].map((option) => option.textContent);
@@ -199,6 +213,7 @@ describe("AssetEditor SSH 连接能力", () => {
   it("Agent 转发默认关闭，勾选后保存 forwardAgent 与 socket", async () => {
     mountEditor();
     await flush();
+    expandAdvanced();
     const checkbox = mounted!.container.querySelector('input[aria-label="Agent 转发"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     click(checkbox);
@@ -220,6 +235,7 @@ describe("AssetEditor SSH 连接能力", () => {
     await flush();
     setSelectValue(findSelect("密码"), "key");
     await flush();
+    expandAdvanced();
     setInputValue(findInput("选择或输入私钥路径"), "/home/u/.ssh/id_ed25519");
     setInputValue(findInput("id_ed25519-cert.pub"), "/home/u/.ssh/id_ed25519-cert.pub");
     fillName("cert-user");
@@ -254,6 +270,7 @@ describe("AssetEditor SSH 连接能力", () => {
     } as unknown as Asset;
     mountEditor(initial);
     await flush();
+    expandAdvanced();
     setInputValue(findInput("nc %h %p"), "nc %h %p");
     click(saveButton());
     await flushUntil(() => mocks.update.mock.calls.length > 0);
@@ -262,5 +279,99 @@ describe("AssetEditor SSH 连接能力", () => {
       connectTimeout: 30,
       proxyCommand: "nc %h %p",
     });
+  });
+});
+
+describe("AssetEditor SSH 高级选项折叠", () => {
+  const baseAsset = {
+    id: "a9",
+    kind: "ssh",
+    name: "web-01",
+    host: "10.0.0.8",
+    port: 22,
+    username: "root",
+    authKind: "password",
+    credId: null,
+    keyPath: null,
+    groupId: null,
+    options: {},
+    tags: "",
+    note: "",
+    sort: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    deletedAt: null,
+    builtin: false,
+  } as unknown as Asset;
+
+  it("新建资产默认折叠，高级项不进 DOM", async () => {
+    mountEditor();
+    await flush();
+    const toggle = advancedToggle();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeNull();
+    const hasJumpSelect = [...mounted!.container.querySelectorAll("select")].some((s) =>
+      [...s.options].some((o) => o.textContent?.includes("不使用跳板机")),
+    );
+    expect(hasJumpSelect).toBe(false);
+  });
+
+  it("编辑含跳板机配置的资产时自动展开", async () => {
+    const initial = { ...baseAsset, options: { jumpAssetId: "j1" } };
+    mocks.listAssets.mockResolvedValue([
+      { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
+    ]);
+    mountEditor(initial);
+    await flush();
+    const toggle = advancedToggle();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).not.toBeNull();
+    await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
+    expect(findSelect("不使用跳板机").value).toBe("j1");
+  });
+
+  it("编辑含 Agent 转发的资产时自动展开", async () => {
+    const initial = { ...baseAsset, options: { forwardAgent: true } };
+    mountEditor(initial);
+    await flush();
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("true");
+    const checkbox = mounted!.container.querySelector(
+      'input[aria-label="Agent 转发"]',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
+  });
+
+  it("编辑无高级配置的资产时保持折叠", async () => {
+    mountEditor(baseAsset);
+    await flush();
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("切换折叠不丢表单 state", async () => {
+    mountEditor();
+    await flush();
+    expandAdvanced();
+    await flush();
+    setInputValue(findInput("nc %h %p"), "nc -X 5 %h %p");
+    const checkbox = mounted!.container.querySelector(
+      'input[aria-label="Agent 转发"]',
+    ) as HTMLInputElement;
+    click(checkbox);
+    await flush();
+
+    click(advancedToggle());
+    await flush();
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
+
+    expandAdvanced();
+    await flush();
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(findInput("nc %h %p").value).toBe("nc -X 5 %h %p");
+    const recheck = mounted!.container.querySelector(
+      'input[aria-label="Agent 转发"]',
+    ) as HTMLInputElement;
+    expect(recheck.checked).toBe(true);
+    expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
   });
 });

@@ -9,14 +9,14 @@ export function Daemon({ durable, sessionKind }: DaemonProps) {
     return (
       <span
         className="nx-badge nx-badge-green"
-        title="进程由 NexTerm 守护进程托管：断开连接或重启应用后，可在「后台会话」接管"
+        title="进程由 NexTerm 后台托管：断开连接或重启应用后，可在「后台会话」接管"
       >
-        守护进程
+        守护终端
       </span>
     );
   }
   return (
-    <span className="nx-badge" title="直接连接：进程随会话断开而退出，不会被守护进程托管">
+    <span className="nx-badge" title="直接连接：进程随会话断开而退出，不会转入后台会话">
       直接连接
     </span>
   );

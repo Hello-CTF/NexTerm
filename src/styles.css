@@ -949,11 +949,6 @@
     height: 0;
   }
 
-  .nx-tabstrip.is-top {
-    min-height: 36px;
-    padding: 0 6px 0 8px;
-  }
-
   .nx-tabstrip.is-sub {
     background: color-mix(in srgb, var(--color-neutral-900) 94%, var(--color-neutral-950));
   }
@@ -990,30 +985,27 @@
     background: color-mix(in srgb, var(--color-accent) 60%, transparent);
   }
 
-  .nx-ws {
+  .nx-ws-switch {
     display: inline-flex;
-    max-width: 200px;
-    flex: 0 0 auto;
+    max-width: 220px;
+    min-width: 0;
+    flex: 0 1 auto;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 8px 0 10px;
-    border: 1px solid transparent;
+    height: 26px;
+    padding: 0 7px 0 9px;
+    border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
     border-radius: var(--radius-md);
-    color: var(--nx-fg-soft);
-    font-size: calc(12.5px * var(--nx-ui-text-factor));
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
+    font-size: calc(12px * var(--nx-ui-text-factor));
+    font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
   }
-  .nx-ws:hover {
+  .nx-ws-switch:hover {
     background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent);
     color: var(--nx-fg-emphasis);
-  }
-  .nx-ws.is-active {
-    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
-    background: var(--nx-bg-raised);
-    color: var(--nx-fg-strong);
-    font-weight: 500;
   }
 
   .nx-ws-status {
@@ -1072,9 +1064,7 @@
     color: var(--nx-fg-tertiary);
   }
   .nx-tab:hover .nx-tab-close,
-  .nx-tab.is-active .nx-tab-close,
-  .nx-ws:hover .nx-tab-close,
-  .nx-ws.is-active .nx-tab-close {
+  .nx-tab.is-active .nx-tab-close {
     display: inline-flex;
   }
   .nx-tab-close:hover {
@@ -1244,18 +1234,14 @@
     align-items: center;
     gap: 2px;
   }
-  .nx-row:hover .nx-row-actions,
-  .nx-row.is-selected .nx-row-actions {
-    display: flex;
-  }
 
-  .nx-files-row .nx-row-actions {
+  .nx-row-reserve-actions .nx-row-actions {
     display: flex;
     visibility: hidden;
   }
-  .nx-files-row:hover .nx-row-actions,
-  .nx-files-row.is-selected .nx-row-actions,
-  .nx-files-row:focus-within .nx-row-actions {
+  .nx-row-reserve-actions:hover .nx-row-actions,
+  .nx-row-reserve-actions.is-selected .nx-row-actions,
+  .nx-row-reserve-actions:focus-within .nx-row-actions {
     visibility: visible;
   }
 
@@ -1917,7 +1903,7 @@
 :root {
   --nx-kb-inset: 0px;
   --nx-keys-h: 46px;
-  --nx-header-stack: 70px;
+  --nx-header-stack: 36px;
 }
 
 .nx-statusbar {
@@ -2250,7 +2236,7 @@
 @media (pointer: coarse) {
   :root {
     --nx-keys-h: 53px;
-    --nx-header-stack: 81px;
+    --nx-header-stack: 47px;
   }
 
   .nx-rail-btn {
@@ -2288,6 +2274,10 @@
     height: 44px;
   }
 
+  .nx-row-reserve-actions .nx-row-actions {
+    visibility: visible;
+  }
+
   .nx-split-handle {
     height: 10px;
   }
@@ -2312,7 +2302,7 @@
   }
 
   .nx-tab,
-  .nx-ws {
+  .nx-ws-switch {
     min-height: 44px;
   }
 

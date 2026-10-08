@@ -52,5 +52,3 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
-      - name: Deployed URL remains an M47 real-target acceptance input
-        run: echo "${{ steps.deployment.outputs.page_url }} deployed; run M47 real-target acceptance before marking deployed Pages passed"

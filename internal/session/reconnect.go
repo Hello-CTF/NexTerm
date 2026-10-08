@@ -274,6 +274,25 @@ type replacementChannel struct {
 	durable base.DurableAttachment
 }
 
+type reconnectResize struct {
+	tab  *Tab
+	cols uint32
+	rows uint32
+}
+
+// reconnectGeometryLocked returns the tab's effective terminal geometry,
+// preferring the grid's desired size over the last applied size. Callers must
+// hold tab.mu.
+func reconnectGeometryLocked(tab *Tab) (cols, rows uint32) {
+	cols, rows = tab.cols, tab.rows
+	if tab.grid != nil {
+		if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
+			cols, rows = uint32(desired.Cols), uint32(desired.Rows)
+		}
+	}
+	return cols, rows
+}
+
 func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]struct{}, generation uint64) (bool, error) {
 	m.mu.Lock()
 	session.mu.Lock()
@@ -285,7 +304,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	start := make([]*Tab, 0, len(opened))
 	controls := make([]ControlEvent, 0, len(opened)+len(gone))
 	exits := make([]ExitEvent, 0, len(gone))
+	resizes := make([]reconnectResize, 0, len(opened))
 	var retired []base.DurableAttachment
+	var goneOffsets []string
 	for tab, replacement := range opened {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
@@ -304,8 +325,10 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			tab.durable = replacement.durable
 			tab.setGenerationLocked(generation)
 			tab.exited = false
+			cols, rows := reconnectGeometryLocked(tab)
 			controls = append(controls, tab.controlEventLocked())
 			start = append(start, tab)
+			resizes = append(resizes, reconnectResize{tab: tab, cols: cols, rows: rows})
 			delete(opened, tab)
 		}
 		tab.mu.Unlock()
@@ -316,6 +339,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
 				tab.durable = nil
+				goneOffsets = append(goneOffsets, tab.ID)
 			}
 			tab.exited = true
 			exits = append(exits, tab.exitEventLocked(nil))
@@ -336,7 +360,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 					}
 				}
 				tab.exited = false
+				cols, rows := reconnectGeometryLocked(tab)
 				controls = append(controls, tab.controlEventLocked())
+				resizes = append(resizes, reconnectResize{tab: tab, cols: cols, rows: rows})
 			}
 			tab.mu.Unlock()
 		}
@@ -357,7 +383,13 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	for _, attachment := range retired {
 		_ = attachment.Close()
 	}
+	for _, tabID := range goneOffsets {
+		m.deleteDurableTranscriptOffset(tabID)
+	}
 	m.transcriptStarted(reconnectCtx, session)
+	for _, resize := range resizes {
+		m.transcriptResize(reconnectCtx, resize.tab, resize.cols, resize.rows)
+	}
 	for _, exit := range exits {
 		m.emit(context.Background(), TopicTerminalExit, exit)
 	}

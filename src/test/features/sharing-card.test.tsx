@@ -230,7 +230,7 @@ afterEach(() => {
 });
 
 describe("分享卡片 · 创建入口与角色", () => {
-  it("超管与普通用户都有新建入口, 设备下拉只列守护主机, 全程不访问 /admin/users", async () => {
+  it("超管与普通用户都有新建入口, 设备下拉只列接入设备, 全程不访问 /admin/users", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
@@ -241,7 +241,7 @@ describe("分享卡片 · 创建入口与角色", () => {
 
     const deviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]');
     expect(deviceSelect).not.toBeNull();
-    // 只有守护主机 (agent 在线且终端开启、未吊销) 可分享
+    // 只有接入设备 (装有设备 agent 且终端开启、未吊销) 可分享
     expect([...(deviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-01", "web-02"]);
     expect(recipientInput()).toBeDefined();
     expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
@@ -263,7 +263,7 @@ describe("分享卡片 · 创建入口与角色", () => {
     const calls = route(shareHandler());
     seedUser(null);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
@@ -279,7 +279,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("这台服务器关闭了账号功能(--auth=off), 终端分享不可用");
-    expect(text).not.toContain("登录后可以把你接入的守护主机分享给其他注册用户");
+    expect(text).not.toContain("登录后可以把你接入的设备分享给其他注册用户");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
@@ -311,7 +311,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     const calls = route(shareHandler());
     seedUser(null, "on");
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
@@ -322,7 +322,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     const calls = route(shareHandler());
     seedUser(null, "loopback");
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);

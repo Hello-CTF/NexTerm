@@ -1,8 +1,8 @@
 // 终端分享卡片 (SHARE158): WEB 账号模式下的真实分享管理界面。
 // 数据全部来自真实 HTTP 合同 (internal/fleet/server/sharing_http.go 与 http.go):
 // - 主机分享 (POST/GET /share/host-shares + /share/host-shares/{id}/revoke):
-//   注册用户把 daemon 主机分享给另一个注册用户, 对方在有效期内经 host agent
-//   新建终端, 全程不接触主机密码或私钥。创建体收 recipient_username, 由服务端
+//   注册用户把接入设备 (装有设备 agent 的主机) 分享给另一个注册用户, 对方在有效期内经
+//   设备 agent 新建终端, 全程不接触主机密码或私钥。创建体收 recipient_username, 由服务端
 //   精确解析 (大小写不敏感), 前端不需要用户目录 (/admin/users 仅超管),
 //   普通设备 owner 与超管同一创建路径; 有效期选项全部落在服务端 1 分钟-30 天
 //   边界内。
@@ -25,6 +25,7 @@ import { useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { formatTime } from "../../ui/format";
 import {
   IconGlobe,
   IconInfo,
@@ -42,11 +43,6 @@ const SHARE_TTL_OPTIONS = [
   { label: "7 天", ms: 7 * 24 * 60 * 60_000 },
   { label: "30 天", ms: 30 * 24 * 60 * 60_000 },
 ];
-
-function formatTime(ms: number): string {
-  if (!ms) return "从未";
-  return new Date(ms).toLocaleString();
-}
 
 function shortId(id: string): string {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
@@ -74,7 +70,7 @@ function ShareUnsupported() {
       </div>
       <p className="nx-hint">
         {demo
-          ? "演示模式不连接真实服务器, 不会伪造分享列表。终端分享走真实账号与 HTTP 合同, 请用浏览器模式连接真实服务器。"
+          ? "演示模式不连接真实服务器, 不会伪造分享列表。终端分享需要真实账号, 请用浏览器模式连接真实服务器。"
           : "桌面端是本地优先模式, 没有账号体系; 终端分享仅在浏览器模式连接服务器并登录后可用。"}
       </p>
     </section>
@@ -89,7 +85,7 @@ function ShareLoginHint() {
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
       </div>
-      <p className="nx-hint">登录后可以把你接入的守护主机分享给其他注册用户, 并管理已创建的公开链接。</p>
+      <p className="nx-hint">登录后可以把你接入的设备分享给其他注册用户, 并管理已创建的公开链接。</p>
     </section>
   );
 }
@@ -212,8 +208,8 @@ function ShareManagement() {
   if (!user) return <ShareLoginHint />;
 
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
-  // 服务端要求分享目标是 daemon 主机 (device_agent 行 + 终端开启), 已吊销设备不可分享。
-  const daemonDevices = (devices ?? []).filter((d) => d.revoked_at === 0 && d.agent && d.agent.terminal_enabled);
+  // 服务端要求分享目标是接入设备 (device_agent 行 + 终端开启), 已吊销设备不可分享。
+  const shareableDevices = (devices ?? []).filter((d) => d.revoked_at === 0 && d.agent && d.agent.terminal_enabled);
 
   const submitCreate = async () => {
     const recipient = recipientUsername.trim();
@@ -301,7 +297,7 @@ function ShareManagement() {
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享把一台守护主机交给另一个注册用户: 对方在有效期内通过主机 agent 新建终端, 全程不接触你的主机密码或私钥。
+        主机分享把你的一台接入设备交给另一个注册用户: 对方在有效期内通过设备 agent 新建终端, 全程不接触你的主机密码或私钥。
         公开链接绑定一个实时会话, 有效期内持有链接的人都能打开; 链接只能在这里查看与吊销。
       </p>
 
@@ -315,7 +311,7 @@ function ShareManagement() {
               onChange={(e) => setDeviceId(e.target.value)}
             >
               <option value="">选择主机</option>
-              {daemonDevices.map((d) => (
+              {shareableDevices.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>
@@ -357,8 +353,8 @@ function ShareManagement() {
               {creating ? "创建中…" : "创建分享"}
             </button>
           </div>
-          {devices !== null && daemonDevices.length === 0 && (
-            <p className="nx-hint text-[11px]">没有可分享的守护主机: 需要已接入 agent 且远程终端开启的设备 (见「设备管理」)。</p>
+          {devices !== null && shareableDevices.length === 0 && (
+            <p className="nx-hint text-[11px]">没有可分享的设备: 需要先接入设备 agent 且开启远程终端 (见「设备管理」)。</p>
           )}
           {createError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
@@ -460,7 +456,7 @@ function ShareManagement() {
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
           列表由服务端按账号过滤: 普通用户看到自己授予/接收的分享与自建的公开链接, 超管看全部。吊销立即生效;
-          分享与链接都不接触主机密码或私钥, 对方通过主机 agent 新建终端。
+          分享与链接都不接触主机密码或私钥, 对方通过设备 agent 新建终端。
         </div>
       </div>
     </section>

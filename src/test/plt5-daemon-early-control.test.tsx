@@ -198,11 +198,11 @@ describe("TerminalPane early control state", () => {
       durable: true,
     });
     expect(badge("/srv/www/app")).toBeNull();
-    expect(badge("守护进程")).toBeNull();
+    expect(badge("守护终端")).toBeNull();
 
     attach("kernel-9");
     expect(badge("/srv/www/app")).not.toBeNull();
-    expect(badge("守护进程")).not.toBeNull();
+    expect(badge("守护终端")).not.toBeNull();
   });
 
   it("ignores cached state that belongs to another tab", async () => {
@@ -225,7 +225,7 @@ describe("TerminalPane early control state", () => {
 
     attach("kernel-9");
     expect(badge("/elsewhere")).toBeNull();
-    expect(badge("守护进程")).toBeNull();
+    expect(badge("守护终端")).toBeNull();
     expect(badge("直接连接")).not.toBeNull();
   });
 
@@ -263,6 +263,6 @@ describe("TerminalPane early control state", () => {
     attach("kernel-9");
     expect(badge("/fresh")).not.toBeNull();
     expect(badge("/stale")).toBeNull();
-    expect(badge("守护进程")).not.toBeNull();
+    expect(badge("守护终端")).not.toBeNull();
   });
 });

@@ -17,6 +17,8 @@ import {
 } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import {
+  IconActivity,
+  IconClock,
   IconCommand,
   IconCopy,
   IconDatabase,
@@ -25,6 +27,7 @@ import {
   IconEyeOff,
   IconFolderOpen,
   IconHistory,
+  IconKey,
   IconMonitor,
   IconNetwork,
   IconPlug,
@@ -272,6 +275,35 @@ export function CommandPalette({
         hint: "AI / 凭据库",
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: "设置", closable: true }),
+      },
+      {
+        id: "background",
+        label: "打开后台会话",
+        hint: "转入后台的终端进程",
+        icon: IconActivity,
+        run: () => addTab({ id: "background", kind: "background", title: "后台会话", closable: true }),
+      },
+      {
+        id: "history",
+        label: "打开终端历史",
+        hint: "回看和搜索终端输出",
+        icon: IconClock,
+        run: () => addTab({ id: "history", kind: "history", title: "终端历史", closable: true }),
+      },
+      {
+        id: "devices",
+        label: "打开设备管理",
+        hint: "装了 agent 的设备",
+        icon: IconMonitor,
+        run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
+      },
+      {
+        id: "credentials-view",
+        label: "打开凭据视图",
+        hint: "集中查看已保存凭据",
+        icon: IconKey,
+        run: () =>
+          addTab({ id: "tab-credentials-view", kind: "credentialsText", title: "凭据视图", credView: "text", closable: true }),
       },
       ...(
         [

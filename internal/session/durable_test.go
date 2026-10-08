@@ -107,6 +107,14 @@ func (p *fakeDurableProvider) PersistDurableTranscriptOffset(tabID string, offse
 	}
 }
 
+func (p *fakeDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if record := p.records[tabID]; record != nil {
+		record.transcribed = 0
+	}
+}
+
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
 	channel := newFakeChannel(0)
 	channel.id = id

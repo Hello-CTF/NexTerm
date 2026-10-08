@@ -55,6 +55,18 @@ export interface AppTab {
 
 export type WorkspaceKind = "session" | "db" | "tools";
 
+// 全局工具标签统一落入唯一的「工具」工作区, 不寄生主机/数据库工作区。
+export const TOOL_TAB_KINDS: ReadonlySet<PaneKind> = new Set<PaneKind>([
+  "settings",
+  "audit",
+  "devices",
+  "deviceTerminal",
+  "background",
+  "history",
+  "credentials",
+  "credentialsText",
+]);
+
 export interface Pane {
   id: string;
   tabs: AppTab[];
@@ -455,15 +467,23 @@ export const useUi = create<UiState>((set, get) => ({
     const target = workspaces.find((w) => w.id === id);
     if (!target) return;
     const tabs = target.panes.flatMap((p) => p.tabs);
-    if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
-    if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`, target.assetKind))) return;
-    if (!(await disconnectDbTabs(tabs))) return;
+    const summary = collectWorkspaceClose(tabs, target.assetKind);
+    if (!(await confirmWorkspaceClose(summary, target.title))) return;
+    const outcome = await executeWorkspaceClose(summary);
+    if (outcome.dbFailed > 0) {
+      get().pushToast(
+        "error",
+        `「${target.title}」保持打开：${outcome.dbFailed}/${summary.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
+      );
+      return;
+    }
     const next = workspaces.filter((w) => w.id !== id);
     set({
       workspaces: next,
       activeWorkspaceId:
         activeWorkspaceId === id ? (next.length ? next[next.length - 1].id : null) : activeWorkspaceId,
     });
+    pushWorkspaceCloseToast(target.title, outcome);
   },
 
   splitWorkspace: (workspaceId) => {
@@ -760,6 +780,9 @@ function resolveWorkspaceId(
   st: { workspaces: Workspace[]; sessions: SessionInfo[]; activeWorkspaceId: string | null },
 ): string {
   const { ensureWorkspace } = useUi.getState();
+  if (TOOL_TAB_KINDS.has(tab.kind)) {
+    return ensureWorkspace({ kind: "tools", title: "工具" });
+  }
   if (tab.sessionId) {
     const hit = st.workspaces.find((w) => w.sessionId === tab.sessionId);
     if (hit) return hit.id;
@@ -1020,6 +1043,113 @@ async function disconnectDbTabs(tabs: AppTab[]): Promise<boolean> {
     `${failed.length}/${connIds.length} 个数据库断开失败：${describeError(failed[0].reason)}`,
   );
   return false;
+}
+
+interface WorkspaceCloseSummary {
+  dirty: AppTab[];
+  detachable: AppTab[];
+  blocked: AppTab[];
+  blockedKinds: string;
+  cleanup: AppTab[];
+  dbConnIds: string[];
+}
+
+interface WorkspaceCloseOutcome {
+  detached: number;
+  killed: number;
+  failed: number;
+  failureText?: string;
+  dbFailed: number;
+  dbError?: string;
+}
+
+function collectWorkspaceClose(tabs: AppTab[], assetKind?: string): WorkspaceCloseSummary {
+  const { sessions } = useUi.getState();
+  const live = tabs.filter(isRunningTerminal);
+  const blocked = live.filter((t) => detachBlockOf(t, sessions, assetKind) !== null);
+  const blockedKinds = [
+    ...new Set(
+      blocked
+        .map((t) => detachBlockOf(t, sessions, assetKind))
+        .filter((b): b is "exec" | "winrm" | "local" | "unknown" => b !== null),
+    ),
+  ]
+    .map(detachBlockLabel)
+    .join("、");
+  return {
+    dirty: dirtyFileEditors(tabs),
+    detachable: live.filter((t) => detachBlockOf(t, sessions, assetKind) === null),
+    blocked,
+    blockedKinds,
+    cleanup: tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited),
+    dbConnIds: [
+      ...new Set(tabs.filter((t) => t.kind === "db" && t.connId).map((t) => t.connId as string)),
+    ],
+  };
+}
+
+// confirmWorkspaceClose 把 dirty 编辑器与 blocked 终端合并成一次汇总确认;
+// 取消时不发出任何 IPC, 也不关闭任何标签。
+async function confirmWorkspaceClose(
+  summary: WorkspaceCloseSummary,
+  title: string,
+): Promise<boolean> {
+  if (summary.dirty.length === 0 && summary.blocked.length === 0) return true;
+  const lines: string[] = [];
+  if (summary.dirty.length > 0) {
+    lines.push(
+      `· ${summary.dirty.length} 个文件尚未保存，关闭后会丢失改动：${summary.dirty.map((t) => t.title).join("、")}`,
+    );
+  }
+  if (summary.blocked.length > 0) {
+    lines.push(`· ${summary.blocked.length} 个${summary.blockedKinds}终端不支持转入后台，将结束进程`);
+  }
+  if (summary.detachable.length > 0) {
+    lines.push(`· ${summary.detachable.length} 个运行中的终端将转入后台`);
+  }
+  const { ask } = await import("../ui/dialogs");
+  return ask(`${lines.join("\n")}\n仍要继续？`, { title: `关闭「${title}」`, kind: "warning" });
+}
+
+async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<WorkspaceCloseOutcome> {
+  const results = await Promise.allSettled([
+    ...summary.detachable.map((t) => terminalApi.closeTab(t.tabId as string, "detach")),
+    ...summary.blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+    ...summary.cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+  ]);
+  const dbResults = await Promise.allSettled(summary.dbConnIds.map((connId) => dbApi.disconnect(connId)));
+  const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  const dbFailed = dbResults.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  const killStart = summary.detachable.length;
+  return {
+    detached: results.filter((r, i) => r.status === "fulfilled" && i < killStart).length,
+    killed: results.filter(
+      (r, i) => r.status === "fulfilled" && i >= killStart && i < killStart + summary.blocked.length,
+    ).length,
+    failed: failed.length,
+    failureText: failed[0] ? describeError(failed[0].reason) : undefined,
+    dbFailed: dbFailed.length,
+    dbError: dbFailed[0] ? describeError(dbFailed[0].reason) : undefined,
+  };
+}
+
+// pushWorkspaceCloseToast 一次关闭只发一条汇总 toast: 有失败发错误, 否则有终端动向才发一条信息。
+function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome): void {
+  const { pushToast } = useUi.getState();
+  const parts: string[] = [];
+  if (outcome.detached > 0) parts.push(`${outcome.detached} 个终端转入后台，可在「后台会话」接管`);
+  if (outcome.killed > 0) parts.push(`${outcome.killed} 个进程已结束`);
+  if (outcome.failed > 0) {
+    pushToast(
+      "error",
+      `关闭「${title}」：${outcome.failed} 个终端操作失败：${outcome.failureText}${
+        parts.length > 0 ? `（${parts.join("，")}）` : ""
+      }`,
+    );
+    return;
+  }
+  if (parts.length === 0) return;
+  pushToast("info", `已关闭「${title}」：${parts.join("，")}`);
 }
 
 export function closeActionHint(t: AppTab): string | undefined {

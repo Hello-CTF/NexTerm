@@ -231,7 +231,7 @@ describe("SyncCard 桌面端状态", () => {
 });
 
 describe("SyncReportView v2 报告", () => {
-  it("展示计数、游标与警告", async () => {
+  it("展示计数与警告", async () => {
     mounted = mount(
       createElement(SyncReportView, {
         data: {
@@ -253,7 +253,6 @@ describe("SyncReportView v2 报告", () => {
     expect(t).toContain("应用 2");
     expect(t).toContain("推送 4");
     expect(t).toContain("解密失败 1");
-    expect(t).toContain("游标 seq 11");
     expect(t).toContain("对象 a1 解密失败,已隔离");
   });
 

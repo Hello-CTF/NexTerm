@@ -281,7 +281,7 @@ describe("AssetTree keyboard navigation", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
 
     const asset = itemByText(mounted!.container, "web-1");
-    expect(asset.className).toContain("focus-within:");
+    expect(asset.className).toContain("nx-row-reserve-actions");
     const actions = [...asset.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")];
     expect(actions.map((b) => b.getAttribute("aria-label"))).toEqual([
       "连接 web-1",
@@ -379,7 +379,7 @@ describe("FileTree keyboard navigation", () => {
     expect(controls.length).toBeGreaterThan(0);
     expect(controls.every((b) => b.getAttribute("aria-label"))).toBe(true);
     const row = itemByText(mounted!.container, "notes.txt");
-    expect(row.className).toContain("focus-within:");
+    expect(row.className).toContain("nx-row-reserve-actions");
     const labels = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map(
       (b) => b.getAttribute("aria-label"),
     );

@@ -153,6 +153,9 @@ describe("history tab in the layout pane contract", () => {
     const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(dto)));
     expect(parsed).not.toBeNull();
 
+    // 全局工具标签统一迁入「工具」工作区, 搬空的原工作区不再保留
+    expect(parsed?.workspaces).toHaveLength(1);
+    expect(parsed?.workspaces[0].kind).toBe("tools");
     const pane = parsed?.workspaces[0].panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
     expect(pane?.activeTabId).toBe("history");
@@ -167,18 +170,26 @@ describe("history tab in the layout pane contract", () => {
       persistedLayout([workspace([panelTab("history", "history", "终端历史")], "history")]),
     );
     expect(parsed?.workspaces).toHaveLength(1);
+    expect(parsed?.workspaces[0].kind).toBe("tools");
     expect(parsed?.workspaces[0].panes[0].tabs.map((t) => t.kind)).toEqual(["history"]);
     expect(parsed?.workspaces[0].panes[0].activeTabId).toBe("history");
-    expect(parsed?.activeWorkspaceId).toBe("ws");
+    expect(parsed?.activeWorkspaceId).toBe("ws-tools");
+  });
+
+  it("sanitizeLayout is idempotent for already-migrated layouts", async () => {
+    const { layout } = await openTab();
+    const once = layout.sanitizeLayout(persistedLayout([workspace(toolTabs(), "history")]));
+    const twice = layout.sanitizeLayout(JSON.parse(JSON.stringify(once)));
+    expect(twice).toEqual(once);
   });
 
   it("boot application preserves the history tab and its active position", async () => {
     server.data = JSON.stringify(persistedLayout([workspace(toolTabs(), "history")]));
     const { store } = await openTab();
 
-    const pane = store.getState().workspaces[0].panes[0];
-    expect(pane.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
-    expect(pane.activeTabId).toBe("history");
+    const pane = store.getState().workspaces.find((w) => w.kind === "tools")?.panes[0];
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
+    expect(pane?.activeTabId).toBe("history");
     expect(findTab(store.getState(), "history")?.title).toBe("终端历史");
   });
 
@@ -194,9 +205,9 @@ describe("history tab in the layout pane contract", () => {
     await vi.waitFor(() => {
       expect(findTab(store.getState(), "history")?.title).toBe("终端历史");
     });
-    const pane = store.getState().workspaces[0].panes[0];
-    expect(pane.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
-    expect(pane.activeTabId).toBe("history");
+    const pane = store.getState().workspaces.find((w) => w.kind === "tools")?.panes[0];
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
+    expect(pane?.activeTabId).toBe("history");
   });
 
   it("conflict layout application preserves the history tab and refreshes to the server copy", async () => {
@@ -210,9 +221,9 @@ describe("history tab in the layout pane contract", () => {
     await layout.flushLayout();
 
     const state = store.getState();
-    const pane = state.workspaces[0].panes[0];
-    expect(pane.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
-    expect(pane.activeTabId).toBe("history");
+    const pane = state.workspaces.find((w) => w.kind === "tools")?.panes[0];
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
+    expect(pane?.activeTabId).toBe("history");
     expect(state.leftWidth).toBe(248);
     expect(state.toasts.some((t) => t.text.includes("布局已在其他设备上更新"))).toBe(true);
   });

@@ -109,10 +109,10 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {snippets.data?.map((s) => (
-            <div key={s.id} className="nx-row group mb-0.5">
+            <div key={s.id} className="nx-row nx-row-reserve-actions mb-0.5">
               <IconCommand size={13} className="shrink-0 text-neutral-500" />
               <span className="min-w-0 flex-1 truncate text-[12.5px]">{s.name}</span>
-              <span className="nx-row-actions [@media(pointer:coarse)]:flex">
+              <span className="nx-row-actions">
                 <button
                   className="nx-icon-btn nx-icon-btn-sm"
                   title="插入到当前终端"

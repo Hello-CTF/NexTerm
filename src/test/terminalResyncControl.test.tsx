@@ -214,7 +214,7 @@ describe("terminal control resync compensation", () => {
       await flush();
     });
     expect(harness.listLive).toHaveBeenCalledTimes(1);
-    expect(overlayText("终端正在其他设备上操作中")).toBeNull();
+    expect(overlayText("终端正由其他设备操作")).toBeNull();
 
     fireResync();
     await act(async () => {
@@ -222,7 +222,7 @@ describe("terminal control resync compensation", () => {
     });
 
     expect(harness.listLive).toHaveBeenCalledTimes(2);
-    expect(overlayText("终端正在其他设备上操作中")).not.toBeNull();
+    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
   });
 
   it("marks the tab exited when the resync refresh finds the process gone", async () => {
@@ -269,14 +269,14 @@ describe("terminal control resync compensation", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(overlayText("终端正在其他设备上操作中")).not.toBeNull();
+    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
 
     stale.resolve([liveTab({ controller: "me" })]);
     await act(async () => {
       await flush();
     });
 
-    expect(overlayText("终端正在其他设备上操作中")).not.toBeNull();
+    expect(overlayText("终端正由其他设备操作")).not.toBeNull();
   });
 
   it("drops the listLive response when the kernel tab switched before it returned", async () => {
@@ -303,7 +303,7 @@ describe("terminal control resync compensation", () => {
       await flush();
     });
 
-    expect(overlayText("终端正在其他设备上操作中")).toBeNull();
+    expect(overlayText("终端正由其他设备操作")).toBeNull();
     expect(overlayText("终端进程已结束")).toBeNull();
   });
 });

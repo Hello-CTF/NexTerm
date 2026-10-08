@@ -719,7 +719,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               aria-expanded={isDir ? open : undefined}
               aria-selected={isSel}
               tabIndex={0}
-              className={`nx-row nx-files-row group focus-within:[&_.nx-row-actions]:flex ${isSel ? "is-selected" : ""}`}
+              className={`nx-row nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => {
                 setSelected(entry.path);

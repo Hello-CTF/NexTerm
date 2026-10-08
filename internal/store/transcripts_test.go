@@ -623,3 +623,97 @@ func TestVisibleBytesC1GoldenParityAcrossChunks(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptChunkKindRoundtripAndSearchOnlyOutput(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Kind: TranscriptChunkKindOutput, Data: []byte("visible ")},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Kind: TranscriptChunkKindInput, Data: []byte("secret-input ")},
+		TranscriptChunkRow{Seq: 2, TabID: "tab", TS: 1003, Kind: TranscriptChunkKindResize, Data: []byte(`{"cols":80,"rows":24}`)},
+		TranscriptChunkRow{Seq: 3, TabID: "tab", TS: 1004, Data: []byte("tail")},
+	)
+
+	chunks, err := db.TranscriptChunks(ctx, id, 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 4 {
+		t.Fatalf("expected 4 chunks, got %+v", chunks)
+	}
+	wantKinds := []int{TranscriptChunkKindOutput, TranscriptChunkKindInput, TranscriptChunkKindResize, TranscriptChunkKindOutput}
+	for index, chunk := range chunks {
+		if chunk.Kind != wantKinds[index] {
+			t.Fatalf("chunk %d kind = %d, want %d", index, chunk.Kind, wantKinds[index])
+		}
+	}
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("secret-input"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("search must not scan input chunks: %+v", matches)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("cols"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("search must not scan resize chunks: %+v", matches)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("visible"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 0 {
+		t.Fatalf("output chunks must stay searchable: %+v", matches)
+	}
+}
+
+func TestTranscriptSyncedContentPreservesKind(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	ended := ids.NowMS() - 1000
+	row := TranscriptRow{
+		ID: ids.New(), SessionID: ids.New(), AssetID: "asset-9", AssetName: "db-01", AssetKind: "ssh",
+		StartedAt: ended - 500, EndedAt: &ended, ContentOmitted: true,
+	}
+	content := []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-1", TS: ended - 400, Kind: TranscriptChunkKindOutput, Data: []byte("out")},
+		{Seq: 1, TabID: "tab-1", TS: ended - 300, Kind: TranscriptChunkKindInput, Data: []byte("in")},
+		{Seq: 2, TabID: "tab-1", TS: ended - 200, Kind: TranscriptChunkKindResize, Data: []byte(`{"cols":80,"rows":24}`)},
+	}
+	if err := db.TranscriptInsertSynced(ctx, row, content); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := db.TranscriptChunks(ctx, row.ID, 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 synced chunks, got %+v", chunks)
+	}
+	for index, want := range []int{TranscriptChunkKindOutput, TranscriptChunkKindInput, TranscriptChunkKindResize} {
+		if chunks[index].Kind != want {
+			t.Fatalf("synced chunk %d kind = %d, want %d", index, chunks[index].Kind, want)
+		}
+	}
+
+	replacement := []TranscriptChunkRow{
+		{Seq: 0, TabID: "tab-1", TS: ended - 400, Kind: TranscriptChunkKindInput, Data: []byte("in2")},
+		{Seq: 1, TabID: "tab-1", TS: ended - 300, Kind: TranscriptChunkKindOutput, Data: []byte("out2")},
+	}
+	if err := db.TranscriptReplaceContent(ctx, row.ID, 5, 2, false, replacement); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err = db.TranscriptChunks(ctx, row.ID, 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 2 || chunks[0].Kind != TranscriptChunkKindInput || chunks[1].Kind != TranscriptChunkKindOutput {
+		t.Fatalf("replaced content lost kinds: %+v", chunks)
+	}
+}

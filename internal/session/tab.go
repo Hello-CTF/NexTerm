@@ -181,6 +181,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = durableAttachment.Kill(context.Background())
+			m.deleteDurableTranscriptOffset(tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -260,6 +261,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if m.offsets != nil {
 			if options.Durable.Recover {
 				tab.catchUpRemaining = m.offsets.DurableTranscriptCatchUpBytes(tabID)
+				if tab.catchUpRemaining > 0 {
+					m.logger.Info("durable transcript catch-up armed; skipping already-recorded replay bytes", "tab", tabID, "bytes", tab.catchUpRemaining)
+				}
 			} else {
 				m.offsets.PersistDurableTranscriptOffset(tabID, 0)
 			}
@@ -311,6 +315,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if err != nil {
 		return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 	}
+	m.transcriptResize(ctx, tab, cols, rows)
 	if kind == KindWinRM {
 		if err := m.feed(ctx, tab, generation, winRMBanner); err != nil {
 			return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
@@ -667,7 +672,11 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return writeAll(channel, data)
+	if err := writeAll(channel, data); err != nil {
+		return err
+	}
+	m.transcriptInput(ctx, tab, data)
+	return nil
 }
 
 func writeAll(writer io.Writer, data []byte) error {
@@ -748,7 +757,11 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	if err != nil {
 		return mapGridError(err)
 	}
-	return mapGridError(grid.Wait(ctx, revision))
+	if err := mapGridError(grid.Wait(ctx, revision)); err != nil {
+		return err
+	}
+	m.transcriptResize(ctx, tab, cols, rows)
+	return nil
 }
 
 func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (base.ExecResult, error) {
@@ -826,6 +839,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			tab.mu.Unlock()
 			return err
 		}
+		m.deleteDurableTranscriptOffset(id)
 	} else {
 		m.mu.Unlock()
 	}

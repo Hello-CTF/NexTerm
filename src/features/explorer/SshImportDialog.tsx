@@ -19,8 +19,22 @@ const ACTION_LABELS: Record<string, string> = {
   add: "新增",
   "skip-duplicate": "重复 · 跳过",
   "conflict-alias": "别名冲突",
-  "conflict-endpoint": "端点冲突",
-  "blocked-jump": "跳板阻断",
+  "conflict-endpoint": "地址冲突",
+  "blocked-jump": "跳板机不可导入",
+};
+
+const DIAGNOSTIC_LABELS: Record<string, string> = {
+  "host-pattern-skipped": "通配 Host 已跳过",
+  "match-skipped": "Match 块已跳过",
+  "key-unreadable": "文件无法读取",
+  "symlink-unresolved": "符号链接无法解析",
+  "symlink-escape": "符号链接指向目录外",
+  "limit-truncated": "超出数量上限",
+  "home-missing": "SSH 目录不存在",
+  "config-unparsed": "配置文件解析失败",
+  "termius-key-unparsed": "Termius 密钥无法解析",
+  "unsupported-file": "不支持的文件类型",
+  "encrypted-key-unreadable": "加密私钥无法读取",
 };
 
 function defaultAction(action: string): SshImportItemAction {
@@ -83,7 +97,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       (action) => action !== "skip",
     );
 
-  // 一键导入只提交当前仍为选中状态的安全项；手动 skip 与冲突行的覆盖选择都不包含，覆盖需走「导入选中项」
+  // 一键导入只提交当前仍为选中状态的可新增项；手动 skip 与冲突行的覆盖选择都不包含，覆盖需走「导入选中项」
   const quickImportHosts =
     preview === null
       ? []
@@ -341,7 +355,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             )}
             {phase === "preview" && importableCount > 0 && (
               <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
-                一键导入全部安全项 ({importableCount})
+                一键导入全部可新增项 ({importableCount})
               </button>
             )}
             {phase === "preview" && (
@@ -439,7 +453,7 @@ function PreviewBody({
               <div key={index} className="flex items-start gap-2 text-[11.5px] text-neutral-500">
                 <IconAlert size={12} className="mt-0.5 shrink-0" />
                 <span>
-                  <span className="text-neutral-400">{diagnostic.code}</span> · {diagnostic.message}
+                  <span className="text-neutral-400">{DIAGNOSTIC_LABELS[diagnostic.code] ?? diagnostic.code}</span> · {diagnostic.message}
                 </span>
               </div>
             ))}

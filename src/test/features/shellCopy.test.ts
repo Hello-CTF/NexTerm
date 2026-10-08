@@ -18,6 +18,7 @@ vi.mock("../../ipc/commands", () => ({
 
 import { modHint, setMacPlatform } from "../../app/platform";
 import { sessionStatusText, useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
+import { setFileEditorDirty } from "../../features/files/editorGuards";
 import { describeError } from "../../ui/errorText";
 import type { SessionInfo } from "../../ipc/commands";
 
@@ -39,10 +40,6 @@ function ws(panes: Pane[]): Workspace {
     splitRatio: 0.5,
     closable: true,
   };
-}
-
-function toastText(): string {
-  return useUi.getState().toasts.map((t) => t.text).join("\n");
 }
 
 describe("describeError", () => {
@@ -141,7 +138,7 @@ describe("closeWorkspace 批量关闭", () => {
     mocks.ask.mockResolvedValue(true);
   });
 
-  it("关闭失败 toast 用「关闭失败」并带中文标签诊断", async () => {
+  it("关闭失败 toast 汇总为一条并带中文标签诊断", async () => {
     const tab = terminal();
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -153,6 +150,63 @@ describe("closeWorkspace 批量关闭", () => {
 
     await useUi.getState().closeWorkspace("ws");
 
-    expect(toastText()).toContain("1/1 个终端关闭失败：资源不存在：tab not found");
+    const toasts = useUi.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe("error");
+    expect(toasts[0].text).toContain("1 个终端操作失败：资源不存在：tab not found");
+    // 取消之外的路径也只发一条: 工作区仍被关闭, 不再补发转入后台等第二条
+    expect(useUi.getState().workspaces).toHaveLength(0);
+  });
+
+  it("取消汇总确认时零 IPC、零关闭", async () => {
+    const tab = terminal();
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
+      activeWorkspaceId: "ws",
+      sessions: [sessionInfo("winrm")],
+      toasts: [],
+    });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+    expect(useUi.getState().toasts).toHaveLength(0);
+  });
+
+  it("dirty 与 blocked 合并为一次汇总确认", async () => {
+    const tab = terminal();
+    const dirtyTab: AppTab = {
+      id: "file-1",
+      kind: "files",
+      title: "notes.txt",
+      sessionId: "s",
+      path: "/notes.txt",
+      closable: true,
+    };
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs: [tab, dirtyTab], activeTabId: tab.id }])],
+      activeWorkspaceId: "ws",
+      sessions: [sessionInfo("winrm")],
+      toasts: [],
+    });
+    setFileEditorDirty("s", "/notes.txt", true);
+    mocks.ask.mockResolvedValueOnce(true);
+    mocks.closeTab.mockResolvedValue(undefined);
+
+    await useUi.getState().closeWorkspace("ws");
+    setFileEditorDirty("s", "/notes.txt", false);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("尚未保存");
+    expect(message).toContain("notes.txt");
+    expect(message).toContain("WinRM 非交互");
+    expect(useUi.getState().workspaces).toHaveLength(0);
+    const toasts = useUi.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].text).toContain("1 个进程已结束");
   });
 });

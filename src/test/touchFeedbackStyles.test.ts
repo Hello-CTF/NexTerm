@@ -74,8 +74,8 @@ describe("coarse pointer form controls", () => {
     expect(layer).toMatch(/\.nx-check\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
   });
 
-  it("tabs, workspace tabs, segment items and the AI send button meet 44px", () => {
-    expect(coarse).toMatch(/\.nx-tab,\s*\.nx-ws\s*\{[^}]*min-height:\s*44px/);
+  it("tabs, the workspace switcher, segment items and the AI send button meet 44px", () => {
+    expect(coarse).toMatch(/\.nx-tab,\s*\.nx-ws-switch\s*\{[^}]*min-height:\s*44px/);
     expect(coarse).toMatch(/\.nx-segment-item\s*\{[^}]*min-height:\s*44px/);
     expect(coarse).toMatch(/\.nx-send-btn\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
   });
@@ -91,7 +91,7 @@ describe("coarse pointer form controls", () => {
     expect(fields).not.toBeNull();
     expect(fields![1]).toMatch(/height:\s*30px/);
     expect(css).toMatch(/\.nx-tab\s*\{[^}]*height:\s*28px/);
-    expect(css).toMatch(/\.nx-ws\s*\{[^}]*height:\s*28px/);
+    expect(css).toMatch(/\.nx-ws-switch\s*\{[^}]*height:\s*26px/);
     expect(rule(css, ".nx-segment-item")).toMatch(/height:\s*24px/);
     expect(rule(css, ".nx-send-btn")).toMatch(/width:\s*30px/);
     expect(rule(css, ".nx-send-btn")).toMatch(/height:\s*30px/);
@@ -139,8 +139,8 @@ describe("toast placement rules", () => {
   });
 
   it("toast top offset follows the shared header stack variable", () => {
-    expect(css).toMatch(/--nx-keys-h:\s*46px;\s*--nx-header-stack:\s*70px;/);
-    expect(rule(coarse, ":root")).toMatch(/--nx-header-stack:\s*81px/);
+    expect(css).toMatch(/--nx-keys-h:\s*46px;\s*--nx-header-stack:\s*36px;/);
+    expect(rule(coarse, ":root")).toMatch(/--nx-header-stack:\s*47px/);
     for (const body of [
       rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts'),
       rule(narrow, ".nx-app[data-nx-ai] .nx-toasts"),

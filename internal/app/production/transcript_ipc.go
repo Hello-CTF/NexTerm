@@ -39,6 +39,7 @@ type transcriptChunkDTO struct {
 	Seq        int64  `json:"seq"`
 	TabID      string `json:"tabId"`
 	TS         int64  `json:"ts"`
+	Kind       int    `json:"kind"`
 	DataBase64 string `json:"dataBase64"`
 }
 
@@ -135,6 +136,7 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 						Seq:        chunk.Seq,
 						TabID:      chunk.TabID,
 						TS:         chunk.TS,
+						Kind:       chunk.Kind,
 						DataBase64: base64.StdEncoding.EncodeToString(chunk.Data),
 					})
 					result.NextSeq = chunk.Seq + 1

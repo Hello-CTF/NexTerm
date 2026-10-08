@@ -1,0 +1,1 @@
+ALTER TABLE transcript_chunk ADD COLUMN kind INTEGER NOT NULL DEFAULT 0;
