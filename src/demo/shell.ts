@@ -254,7 +254,7 @@ export class DemoShell {
           this.out(`${RED}mkdir: cannot create directory '${target}': No such file or directory${RESET}`);
           return "ok";
         }
-        if (fsTree[path]) {
+        if (fsTree[path] || fsTree[parent]?.some((e) => e.path === path)) {
           this.out(`${RED}mkdir: cannot create directory '${target}': File exists${RESET}`);
           return "ok";
         }

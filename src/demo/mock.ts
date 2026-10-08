@@ -267,9 +267,6 @@ function isLoopbackHost(host: string): boolean {
 
 const DEMO_NGINX_PATH = "/etc/nginx/nginx.conf";
 const DEMO_TAKEOVER_TOKEN = "demo-takeover";
-const DEMO_NGINX_BEFORE = "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;";
-const DEMO_NGINX_AFTER =
-  "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;";
 let liveConvId: string | undefined;
 
 function newTabId(prefix = "t"): string {
@@ -804,11 +801,29 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     const callId = `call-${uid("c")}`;
     const creating = /新建|创建/.test(question);
     const path = creating ? "/etc/nginx/conf.d/upload.conf" : DEMO_NGINX_PATH;
-    const before = creating ? "" : DEMO_NGINX_BEFORE;
+    const current = creating ? "" : (fsFileContent[path] ?? "");
+    const plan = demoNginxPlan(current);
+    const verb = creating ? "新建" : "修改";
+
+    if (!creating && plan.changes.length === 0) {
+      const text =
+        current.includes("worker_processes auto;") &&
+        current.includes("server_tokens off;") &&
+        current.includes("client_max_body_size 64m;")
+          ? `检查过了，\`${path}\` 已经是目标状态：\`worker_processes auto\`、\`server_tokens off\`、\`client_max_body_size 64m\` 都在，无需变更。`
+          : `检查过了，\`${path}\` 无需变更。`;
+      later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
+      later(900, () => {
+        pushEvent(channel, { type: "delta", text });
+        finish(text);
+      });
+      return;
+    }
+
+    const before = creating ? "" : plan.changes.map((c) => c.before).filter((l) => l).join("\n");
     const after = creating
       ? "client_max_body_size 64m;\nproxy_read_timeout 120s;\n"
-      : DEMO_NGINX_AFTER;
-    const verb = creating ? "新建" : "修改";
+      : plan.changes.map((c) => c.after).join("\n");
 
     later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
     [0.25, 0.5, 0.75, 1].forEach((frac, i) => {
@@ -854,8 +869,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         finish(text);
         return;
       }
-      const current = creating ? "" : (fsFileContent[path] ?? "");
-      const next = creating ? after : applyDemoNginxEdit(current);
+      const next = creating ? after : plan.next;
       if (!creating) {
         fsFileContent[`${path}.nexterm-bak`] = current;
         upsertDemoFileEntry(`${path}.nexterm-bak`, current);
@@ -877,11 +891,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       const text = creating
         ? [`已${verb} \`${path}\`：`, "", "- 整份都是新增内容（原文件不存在）", "", "改错了直接删掉这个文件即可。"].join("\n")
         : [
-            `已按你的授权改掉 \`${path}\` 的三处配置：`,
+            `已按你的授权改掉 \`${path}\` 的${["一", "两", "三"][plan.changes.length - 1]}处配置：`,
             "",
-            "- `worker_processes 1` → `auto`",
-            "- `server_tokens on` → `off`（不再对外报版本号）",
-            "- 新增 `client_max_body_size 64m`",
+            ...plan.changes.map((c) => `- ${c.note}`),
             "",
             "要回滚就用同目录的 `.nexterm-bak`。",
           ].join("\n");
@@ -1072,10 +1084,25 @@ function md5Hex(data: Uint8Array): string {
     .join("");
 }
 
-function applyDemoNginxEdit(content: string): string {
-  return content
-    .replace("worker_processes 1;", "worker_processes auto;")
-    .replace("server_tokens on;", "server_tokens off;\n    client_max_body_size 64m;");
+function demoNginxPlan(current: string): { next: string; changes: { before: string; after: string; note: string }[] } {
+  const changes: { before: string; after: string; note: string }[] = [];
+  let next = current;
+  if (next.includes("worker_processes 1;")) {
+    changes.push({ before: "worker_processes 1;", after: "worker_processes auto;", note: "`worker_processes 1` → `auto`" });
+    next = next.replace("worker_processes 1;", "worker_processes auto;");
+  }
+  if (next.includes("server_tokens on;")) {
+    changes.push({ before: "server_tokens on;", after: "server_tokens off;", note: "`server_tokens on` → `off`（不再对外报版本号）" });
+    next = next.replace("server_tokens on;", "server_tokens off;");
+  }
+  if (!next.includes("client_max_body_size")) {
+    const anchor = next.match(/\n([ \t]*)server_tokens [^;]+;/);
+    if (anchor) {
+      next = next.replace(anchor[0], `${anchor[0]}\n${anchor[1]}client_max_body_size 64m;`);
+      changes.push({ before: "", after: `${anchor[1]}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });
+    }
+  }
+  return { next, changes };
 }
 
 function upsertDemoFileEntry(path: string, content: string) {
@@ -2212,7 +2239,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         pushEvent(a.channel, {
           type: "done",
           answer:
-            "先被 unattended-upgrades 占着 dpkg 锁，停掉它之后 nginx 装上了；`systemctl is-active` 返回 active，本机 80 端口返回 200。全程 4 步的屏幕内容都在上面的「读取屏幕」里。",
+            "先被 unattended-upgrades 占着 dpkg 锁，停掉它之后 nginx 装上了；`systemctl is-active` 返回 active，本机 80 端口返回 200。最近一屏见上面的「读取屏幕」。",
         }),
       );
       return { jobId, token: DEMO_TAKEOVER_TOKEN };

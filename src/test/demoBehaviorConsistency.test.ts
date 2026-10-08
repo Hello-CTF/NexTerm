@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
 import { DemoShell } from "../demo/shell";
 import { fsFileContent, fsTree } from "../demo/data";
+import { createConversationStream } from "../features/ai/conversationStream";
+import type { ChatItem } from "../features/ai/conversation";
 
 beforeEach(() => {
   vi.stubGlobal("window", globalThis);
@@ -93,6 +95,8 @@ describe("demo AI 授权写入真实落到演示文件系统", () => {
       expect(confirm.reason).toBe("文件系统写操作");
       expect(String(confirm.rendered)).not.toContain("第 1 次");
       expect(String(confirm.rendered)).not.toContain("请求写权限");
+      const preview = confirm.preview as { before: string; after: string };
+      for (const line of preview.before.split("\n")) expect(original).toContain(line);
 
       await mockInvoke("ai_confirm", { jobId: started.jobId, callId: confirm.id, decision: "allow" });
       const done = await waitFor(events, "done");
@@ -101,6 +105,7 @@ describe("demo AI 授权写入真实落到演示文件系统", () => {
       expect(fsFileContent[path]).toContain("server_tokens off;");
       expect(fsFileContent[path]).toContain("client_max_body_size 64m");
       expect(fsFileContent[path]).not.toContain("worker_processes 1;");
+      for (const line of preview.after.split("\n")) expect(fsFileContent[path]).toContain(line);
       expect(fsFileContent[backup]).toBe(original);
       expect(fsTree["/etc/nginx"]?.some((e) => e.path === backup)).toBe(true);
       expect(String(done.answer)).toContain("三处配置");
@@ -111,6 +116,44 @@ describe("demo AI 授权写入真实落到演示文件系统", () => {
       fsTree["/etc/nginx"] = treeBefore;
     }
   }, 15000);
+
+  it("第二次授权修改同一文件：预览与结果基于当前内容，已达标时明确无需变更", async () => {
+    const path = "/etc/nginx/nginx.conf";
+    const backup = `${path}.nexterm-bak`;
+    const original = fsFileContent[path];
+    const treeBefore = [...(fsTree["/etc/nginx"] ?? [])];
+    try {
+      const first = collectEvents();
+      const started = (await mockInvoke("ai_chat", {
+        conversationId: "conv-write-twice",
+        message: "把 nginx 配置改一下",
+        channel: first.channel,
+      })) as { jobId: string };
+      const confirm = await waitFor(first.events, "confirmRequired");
+      await mockInvoke("ai_confirm", { jobId: started.jobId, callId: confirm.id, decision: "allow" });
+      await waitFor(first.events, "done");
+      const afterFirst = fsFileContent[path];
+      expect(afterFirst).toContain("worker_processes auto;");
+
+      const second = collectEvents();
+      await mockInvoke("ai_chat", {
+        conversationId: "conv-write-twice",
+        message: "把 nginx 配置改一下",
+        channel: second.channel,
+      });
+      const done = await waitFor(second.events, "done");
+      expect(second.events.some((e) => e.type === "confirmRequired")).toBe(false);
+      expect(second.events.some((e) => e.type === "fileChange")).toBe(false);
+      expect(String(done.answer)).toContain("无需变更");
+      expect(String(done.answer)).not.toContain("三处配置");
+      expect(fsFileContent[path]).toBe(afterFirst);
+      expect(fsFileContent[backup]).toBe(original);
+    } finally {
+      fsFileContent[path] = original;
+      delete fsFileContent[backup];
+      fsTree["/etc/nginx"] = treeBefore;
+    }
+  }, 20000);
 
   it("新建文件的授权写入同样真实创建文件", async () => {
     const path = "/etc/nginx/conf.d/upload.conf";
@@ -190,6 +233,14 @@ describe("demo shell 文案与行为一致", () => {
     delete fsTree["/data/app/tmpdemo"];
     fsTree["/data/app"] = fsTree["/data/app"].filter((e) => e.path !== "/data/app/tmpdemo");
   });
+
+  it("mkdir 遇到既有文件或既有目录都报 File exists 且文件树不变", () => {
+    const before = [...(fsTree["/etc/nginx"] ?? [])];
+    const out = runShell(["mkdir /etc/nginx/nginx.conf", "mkdir /etc/nginx"]);
+    expect(out.match(/File exists/g)).toHaveLength(2);
+    expect(fsTree["/etc/nginx/nginx.conf"]).toBeUndefined();
+    expect(fsTree["/etc/nginx"]).toEqual(before);
+  });
 });
 
 describe("demo 终端 attach 提示与资产一致", () => {
@@ -227,4 +278,34 @@ describe("demo 终端 attach 提示与资产一致", () => {
     expect(second).not.toContain("回放");
     expect(second).toContain("demo@localhost");
   }, 15000);
+});
+
+describe("demo takeover 屏幕事件链与 conversation stream 一致", () => {
+  it("mock 发 4 屏，stream 只保留最近一屏，结尾文案与真实保留一致", async () => {
+    const { events, channel } = collectEvents();
+    await mockInvoke("ai_takeover_run", { instruction: "安装 nginx 并启动", channel });
+    const done = await waitFor(events, "done", 12_000);
+    expect(events.filter((e) => e.type === "screen")).toHaveLength(4);
+    expect(String(done.answer)).toContain("最近一屏");
+
+    let frames: (() => void)[] = [];
+    const s = createConversationStream((cb) => {
+      frames.push(cb);
+      return () => {
+        frames = frames.filter((f) => f !== cb);
+      };
+    });
+    s.beginRun(1);
+    for (const ev of events) s.pushEvent(1, ev);
+    const pending = frames;
+    frames = [];
+    for (const cb of pending) cb();
+
+    const screens = s
+      .getState()
+      .items.filter((i): i is Extract<ChatItem, { role: "tool" }> => i.role === "tool" && i.name === "read_screen");
+    expect(screens).toHaveLength(1);
+    expect(screens[0].text).toContain("systemctl is-active");
+    expect(screens[0].text).not.toContain("apt-get install");
+  }, 20000);
 });
