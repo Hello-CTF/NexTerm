@@ -34,7 +34,6 @@ function gatesPassed(report) {
     && report.assertions.every((item) => item.status === "passed");
 }
 
-const reports = [];
 const artifacts = [];
 let failed = false;
 for (const name of expected) {
@@ -51,7 +50,6 @@ for (const name of expected) {
     continue;
   }
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-  reports.push(report);
   const bytes = fs.statSync(file).size;
   const sha256 = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   const intact = report.artifact.size_bytes === bytes && report.artifact.sha256 === sha256;
@@ -60,30 +58,13 @@ for (const name of expected) {
   artifacts.push({ name, size_bytes: bytes, sha256, report_status: report.status, intact, status: passed ? "passed" : "failed" });
 }
 const finalReportNames = new Set(expected.map((name) => `${name}.artifact.json`));
-const supportingReports = fs.readdirSync(directory).filter((name) => name.endsWith(".artifact.json") && !finalReportNames.has(name)).map((name) => {
+for (const name of fs.readdirSync(directory)) {
+  if (!name.endsWith(".artifact.json") || finalReportNames.has(name)) continue;
   const report = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
   if (!gatesPassed(report) || report.version !== version) failed = true;
-  return { file: name, id: report.id, status: report.status, comparisons: report.comparisons };
-});
+}
 const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|tar\.gz)$/.test(name) && !expected.includes(name));
 if (unexpected.length) failed = true;
-const gaps = JSON.parse(fs.readFileSync(path.join(ROOT, ".github/acceptance/real-target-gaps.json"), "utf8"));
-const evidence = {
-  schema_version: 2,
-  version,
-  status: failed ? "failed" : "passed-with-explicit-real-target-gaps",
-  expected_artifact_count: expected.length,
-  artifacts,
-  unexpected_artifacts: unexpected,
-  gate_rule: "each candidate passes only on file integrity (reported sha256/size match), target identity (artifact id and version) and real content/static/cgo assertions; Rust and custom-Go size comparisons are informational only and never gate release (user decision 2026-10-03)",
-  non_gates: "CI gates release on one ordinary go test run, frontend lint/test with tsc riding the reproducible frontend build, bindings drift, static wiring/manifest checks and native production builds with artifact evidence; race instrumentation, production-tagged duplicate suites, build-harness unit tests, real-browser acceptance and standalone Windows supervisor/SSH jobs are not CI release gates and remain local on-demand checks (user decision 2026-10-04)",
-  reports,
-  supporting_reports: supportingReports,
-  real_target_acceptance: gaps,
-  lazycat_pages: { status: "deferred-to-M47", entry_points: ["scripts/build.mjs", "scripts/pack-linux-server.sh", "scripts/verify-manifest-injects.py", ".github/workflows/pages.yml"] },
-};
-fs.writeFileSync(path.join(directory, "release-evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`);
 fs.writeFileSync(path.join(directory, "SHA256SUMS"), `${artifacts.filter((item) => item.sha256).map((item) => `${item.sha256}  ${item.name}`).join("\n")}\n`);
-fs.copyFileSync(path.join(ROOT, ".github/acceptance/real-target-gaps.json"), path.join(directory, "real-target-gaps.json"));
-console.warn(`release evidence: ${evidence.status}; ${artifacts.filter((item) => item.status === "passed").length}/${expected.length} final artifacts passed`);
+console.warn(`release evidence: ${failed ? "failed" : "passed"}; ${artifacts.filter((item) => item.status === "passed").length}/${expected.length} final artifacts passed`);
 if (failed) process.exit(1);

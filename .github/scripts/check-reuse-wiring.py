@@ -371,10 +371,17 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
                if template not in evidence_text or template not in UPLOAD_TEXT]
     check("release-upload expects the same 8 packages as the evidence gate", not drifted,
           f"drifted={drifted}")
-    missing_evidence = [name for name in ("SHA256SUMS", "release-evidence.json", "real-target-gaps.json")
-                        if name not in UPLOAD_TEXT]
-    check("release-upload expects the 3 evidence files", not missing_evidence,
+    missing_evidence = [name for name in ("SHA256SUMS",) if name not in UPLOAD_TEXT]
+    check("release-upload expects SHA256SUMS", not missing_evidence,
           f"missing={missing_evidence}")
+    removed_assets = [name for name in ("release-evidence.json", "real-target-gaps.json")
+                      if name in UPLOAD_TEXT or name in evidence_text]
+    check("release pipeline requires no removed JSON evidence assets", not removed_assets,
+          f"still required={removed_assets}")
+    notes_run = str(find_step(release["jobs"]["publish"], "Assemble release notes").get("run", ""))
+    check("release notes advertise no removed JSON assets",
+          "release-evidence.json" not in notes_run and "real-target-gaps.json" not in notes_run,
+          f"run={notes_run!r}")
     for env_name in ("GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"):
         check(f"release-upload.mjs reads {env_name}", env_name in UPLOAD_TEXT)
     check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
