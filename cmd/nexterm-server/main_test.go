@@ -365,13 +365,14 @@ func TestServerProcessRejectsInvalidAuthMode(t *testing.T) {
 
 func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
 	binary := buildServerBinary(t)
-	start := func(t *testing.T, listen string, syncOnly bool) (*testServerProcess, string) {
+	start := func(t *testing.T, listen string, syncOnly bool, extraArgs ...string) (*testServerProcess, string) {
 		t.Helper()
 		dataDir := t.TempDir()
 		args := []string{"--listen", listen, "--data-dir", dataDir}
 		if syncOnly {
 			args = append(args, "--sync-only")
 		}
+		args = append(args, extraArgs...)
 		cmd := exec.Command(binary, args...)
 		cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
 		buffer := &syncBuffer{}
@@ -437,6 +438,36 @@ func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
 			t.Fatalf("loopback listen triggered exposure warning: %q", output)
 		}
 	})
+
+	// 暴露警告必须如实反映 auth 模式: auth=off 不得谎称已启用访问控制,
+	// on/loopback(非回环监听等同 on) 保留账号会话口径。
+	for _, tc := range []struct {
+		name     string
+		syncOnly bool
+		auth     string
+		detail   string
+		absent   string
+	}{
+		{"full-auth-off", false, "--auth=off", "访问控制已关闭（--auth=off）", "已启用访问控制"},
+		{"sync-only-auth-off", true, "--auth=off", "onlyServer 模式（--auth=off）", "持有账号会话的人可以同步"},
+		{"full-auth-on", false, "--auth=on", "完整版已启用访问控制", "访问控制已关闭"},
+		{"full-auth-loopback", false, "--auth=loopback", "完整版已启用访问控制", "访问控制已关闭"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			healthAddress := loopbackAddress(t)
+			listen := strings.Replace(healthAddress, "127.0.0.1", "0.0.0.0", 1)
+			process, _ := start(t, listen, tc.syncOnly, tc.auth)
+			defer process.stop(t)
+			waitForHealth(t, process, healthAddress)
+			output := process.output.String()
+			if !strings.Contains(output, "WARNING: NexTerm is listening on non-loopback address "+listen) || !strings.Contains(output, tc.detail) {
+				t.Fatalf("exposure warning missing %q with %s: %q", tc.detail, tc.auth, output)
+			}
+			if strings.Contains(output, tc.absent) {
+				t.Fatalf("wording %q must not appear with %s: %q", tc.absent, tc.auth, output)
+			}
+		})
+	}
 }
 
 func buildServerBinary(t *testing.T) string {
