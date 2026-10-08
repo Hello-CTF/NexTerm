@@ -775,7 +775,72 @@ async function statesFormsAcceptance(page) {
     })()`);
     assert.ok(nameInput);
     await page.send("Input.insertText", { text: "web-99" });
-    await setSwitches(page, { slow: 900 });
+
+    // M214 合同：主机留空时保存被校验拦截——不进入保存、不发 asset_create、守卫文案不出现
+    await page.evaluate(`(() => {
+      const modal = document.querySelector('.nx-modal');
+      [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存").click();
+    })()`);
+    await page.waitFor(`[...document.querySelectorAll('.nx-modal [role="alert"]')].some((el) => el.textContent?.trim() === "请填写主机")`);
+    const blocked = await page.evaluate(`(() => {
+      const modal = document.querySelector('.nx-modal');
+      const host = modal.querySelector('input[placeholder="1.2.3.4"]');
+      const port = modal.querySelector('input[type="number"]');
+      const describedBy = (input) => {
+        const id = input?.getAttribute("aria-describedby");
+        return id ? document.getElementById(id)?.textContent?.trim() ?? null : null;
+      };
+      const btn = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存中…" || b.textContent?.trim() === "保存");
+      return {
+        hostError: describedBy(host),
+        portError: describedBy(port),
+        btnText: btn?.textContent?.trim() ?? null,
+        btnDisabled: btn?.disabled ?? null,
+        assetCreateCalls: window.__nxCallCounts?.asset_create ?? 0,
+        vaultNotInit: window.__NEXTERM_VAULT_NOT_INIT__ ?? false,
+        ipcCounts: { ...(window.__nxCallCounts ?? {}) },
+      };
+    })()`);
+    assert.equal(blocked.hostError, "请填写主机", "主机留空保存必须内联报错");
+    assert.equal(blocked.portError, null, "默认端口 22 不应报错");
+    assert.equal(blocked.btnText, "保存", "未进入保存时不得显示保存中守卫");
+    assert.equal(blocked.btnDisabled, true, "校验未过时保存按钮必须禁用");
+    assert.equal(blocked.assetCreateCalls, 0, "校验拦截不得发出 asset_create");
+    assert.equal(blocked.vaultNotInit, false, "vault 应处于已初始化状态");
+
+    // 修正主机后立即通过校验（失焦触发），保存按钮恢复可点
+    await page.evaluate(`document.querySelector('.nx-modal input[placeholder="1.2.3.4"]').focus()`);
+    await page.send("Input.insertText", { text: "10.0.0.8" });
+    await page.evaluate(`document.activeElement?.blur()`);
+    await page.waitFor(`(() => {
+      const modal = document.querySelector('.nx-modal');
+      const btn = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存");
+      return Boolean(btn && !btn.disabled);
+    })()`);
+
+    // 失败落态：IPC 报错后守卫退出、内联错误保留表单、按钮恢复可点
+    await setSwitches(page, { fail: ["asset_create"] });
+    await page.evaluate(`(() => {
+      const modal = document.querySelector('.nx-modal');
+      [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存").click();
+    })()`);
+    await page.waitFor(`document.querySelector('.nx-modal')?.textContent.includes("验收注入失败")`);
+    const errored = await page.evaluate(`(() => {
+      const modal = document.querySelector('.nx-modal');
+      const btn = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存中…" || b.textContent?.trim() === "保存");
+      return {
+        text: btn?.textContent?.trim() ?? null,
+        disabled: btn?.disabled ?? null,
+        modalOpen: Boolean(modal),
+      };
+    })()`);
+    assert.equal(errored.text, "保存", "保存失败后守卫必须退出");
+    assert.equal(errored.disabled, false, "保存失败后按钮恢复可点");
+    assert.equal(errored.modalOpen, true, "保存失败后表单必须保留");
+
+    // 真实保存中：三连点只发一次 asset_create，守卫仅在保存中出现
+    const callsBefore = await page.evaluate(`window.__nxCallCounts?.asset_create ?? 0`);
+    await setSwitches(page, { fail: [], slow: 900 });
     await page.evaluate(`(() => {
       const modal = document.querySelector('.nx-modal');
       const btn = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存");
@@ -791,15 +856,17 @@ async function statesFormsAcceptance(page) {
     })()`);
     assert.equal(inFlight.disabled, true, "save button must disable while saving");
     assert.equal(inFlight.text, "保存中…");
-    await page.waitFor(`(window.__nxCallCounts?.asset_create ?? 0) >= 1`);
+    await page.waitFor(`(window.__nxCallCounts?.asset_create ?? 0) >= ${callsBefore + 1}`);
     const calls = await page.evaluate(`window.__nxCallCounts?.asset_create ?? 0`);
-    assert.equal(calls, 1, `double-click must not duplicate asset_create (got ${calls})`);
+    assert.equal(calls, callsBefore + 1, `double-click must not duplicate asset_create (got ${calls - callsBefore} new calls)`);
     await page.waitFor(`!document.querySelector('.nx-modal')`, 15_000);
     await page.waitFor(`document.body.textContent.includes("web-99")`, 15_000);
     const savedToast = await page.evaluate(`document.body.textContent.includes("web-99")`);
     assert.equal(savedToast, true, "asset should appear in the tree after the slow save lands");
+    const savedTarget = await page.evaluate(`document.body.textContent.includes("10.0.0.8:22")`);
+    assert.equal(savedTarget, true, "保存的资产必须以 主机:端口 落入资产树");
     await setSwitches(page, { slow: 0 });
-    return { evidence: { inFlight, calls } };
+    return { evidence: { blocked, errored, inFlight, calls } };
   });
 
   await pass("model-reload-failure-after-success", async () => {
