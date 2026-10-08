@@ -289,7 +289,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     );
   });
 
-  it("预览显示数量并默认勾选安全项；一键导入保留手动 skip 与冲突选择", async () => {
+  it("预览显示数量并默认勾选安全项；一键导入只提交安全项，不含手动 skip 与冲突覆盖", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "~/.ssh 目录");
     clickButton(mounted.container, "预览");
@@ -297,6 +297,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
+    expect(text).toContain("导入 SSH 主机与密钥");
     expect(text).toContain("3 台主机（1 台可新增）");
     expect(text).toContain("2 个密钥（2 个可新增）");
     const bastionBox = mounted.container.querySelector<HTMLInputElement>(
@@ -322,23 +323,25 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     setSelectValue(strategy, "overwrite");
     await flush();
 
+    mocks.apply.mockResolvedValue({
+      assetsCreated: 0,
+      assetsUpdated: 0,
+      credentialsCreated: 1,
+      credentialsUpdated: 0,
+      skipped: 0,
+      warnings: [],
+    });
     clickButton(mounted.container, "一键导入全部安全项 (1)");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
     expect(mocks.apply).toHaveBeenCalledWith({
       source: "ssh-home",
       path: undefined,
-      hosts: [
-        { id: "h0", action: "skip" },
-        { id: "h1", action: "skip" },
-        { id: "h2", action: "overwrite" },
-      ],
-      keys: [
-        { id: "k0", action: "import" },
-        { id: "k1", action: "skip" },
-      ],
+      hosts: [],
+      keys: [{ id: "k0", action: "import" }],
     });
-    expect(mounted.container.textContent).toContain("新增主机 2");
+    await flush();
+    expect(mounted.container.textContent).toContain("新增密钥 1");
   });
 
   it("凭据库未初始化且用户取消初始化时中止导入", async () => {
