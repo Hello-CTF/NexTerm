@@ -361,6 +361,8 @@ func TestAccountHTTPCSRFAndOriginRules(t *testing.T) {
 
 	if call := fixture.call(t, http.MethodPost, "/auth/logout", nil, session, "", nil); call.status != http.StatusForbidden {
 		t.Fatalf("csrf missing status=%d", call.status)
+	} else if message, _ := call.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "CSRF") {
+		t.Fatalf("csrf missing message=%q, want CSRF keyword", message)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, session, "", nil); call.status != http.StatusOK {
 		t.Fatalf("read exempt from csrf status=%d", call.status)
@@ -494,7 +496,7 @@ func TestAccountHTTPPasswordChange(t *testing.T) {
 
 	newSalt := currentDEKSalt(t, fixture, session)
 	if oldSalt == newSalt {
-		t.Fatal("密码变更必须重包 DEK 信封")
+		t.Fatal("密码变更必须重包账号加密密钥")
 	}
 }
 
@@ -778,6 +780,8 @@ func TestAccountHTTPDEKUploadOnce(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodPost, "/auth/dek", upload, dave, dave.csrf, nil); call.status != http.StatusConflict {
 		t.Fatalf("dek re-upload status=%d", call.status)
+	} else if failure := call.body["error"].(map[string]any); failure["code"] != "bad_param" || !strings.Contains(failure["message"].(string), "账号加密密钥已存在") {
+		t.Fatalf("dek re-upload failure=%v", failure)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusOK {
 		t.Fatalf("dek after upload status=%d", call.status)

@@ -185,7 +185,7 @@ func (s *Service) fleetGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if s.authOff {
-			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "--auth=off 下设备管理已关闭")))
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "当前为共享工作区模式（未启用账号登录），设备管理不可用")))
 			return
 		}
 		if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
@@ -201,7 +201,7 @@ func (s *Service) requireFleetSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := identityFrom(r)
 		if identity == nil {
-			writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "会话无效或缺失")))
+			writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "会话无效或缺失，请重新登录")))
 			return
 		}
 		if identity.State == account.StateResetRequired {
@@ -216,7 +216,7 @@ func (s *Service) requireFleetCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := identityFrom(r)
 		if identity == nil || !fleetCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
-			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败")))
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败：页面已过期，请刷新后重试")))
 			return
 		}
 		next.ServeHTTP(w, r)

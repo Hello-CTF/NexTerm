@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,7 +44,7 @@ func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
 	config.Options.Auth = AuthLoopback
 	_, httpServer := newTestHTTP(t, config)
 
-	post := func(host string) int {
+	post := func(host string) (int, string) {
 		t.Helper()
 		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 		if err != nil {
@@ -55,8 +56,9 @@ func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		return response.StatusCode
+		return response.StatusCode, string(body)
 	}
 
 	for host, expected := range map[string]int{
@@ -67,9 +69,12 @@ func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
 		"127.0.0.1":      http.StatusOK,
 		"[::1]":          http.StatusOK,
 	} {
-		if status := post(host); status != expected {
+		if status, _ := post(host); status != expected {
 			t.Errorf("Host %q = %d, want %d", host, status, expected)
 		}
+	}
+	if _, body := post("evil.com"); !strings.Contains(body, "::1") {
+		t.Errorf("misdirected body=%q, want ::1 hint", body)
 	}
 }
 

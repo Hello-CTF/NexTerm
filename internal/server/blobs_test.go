@@ -185,7 +185,7 @@ func TestBlobBodyLimitRejectsOversizedUploads(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "maximum allowed size") {
+	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "大小限制") {
 		t.Fatalf("oversized status = %d: %s", response.StatusCode, body)
 	}
 
@@ -201,7 +201,7 @@ func TestBlobBodyLimitRejectsOversizedUploads(t *testing.T) {
 	}
 	body, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "maximum allowed size") {
+	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "大小限制") {
 		t.Fatalf("chunked oversized status = %d: %s", response.StatusCode, body)
 	}
 
@@ -244,14 +244,14 @@ func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
 	response := persist("big.bin", 65)
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "quota exceeded") {
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "配额已用尽") {
 		t.Fatalf("known-length quota status = %d: %s", response.StatusCode, body)
 	}
 	second := decodeStagedBlob(t, persist("b.bin", 64))
 	response = persist("c.bin", 1)
 	body, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "quota exceeded") {
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "配额已用尽") {
 		t.Fatalf("full quota status = %d: %s", response.StatusCode, body)
 	}
 
@@ -348,7 +348,7 @@ func TestBlobPersistDiskThresholdRejects(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "disk usage exceeds threshold") {
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "磁盘使用率超过阈值") {
 		t.Fatalf("disk threshold status = %d: %s", response.StatusCode, body)
 	}
 
@@ -372,7 +372,7 @@ func TestBlobPersistDiskThresholdRejects(t *testing.T) {
 	}
 	body, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "disk usage unavailable") {
+	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "磁盘用量获取失败") {
 		t.Fatalf("disk stat failure status = %d: %s", response.StatusCode, body)
 	}
 }

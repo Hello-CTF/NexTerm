@@ -49,7 +49,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 						return
 					}
 					if unsafeAccountMethod(r) && !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
-						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败"))
+						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 						return
 					}
 					ctx := withAccountIdentity(r.Context(), identity)
@@ -60,7 +60,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 				}
 			}
 		}
-		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "访问令牌无效或缺失"))
+		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 	})
 }
 
@@ -112,11 +112,11 @@ func webSocketAuthToken(r *http.Request) (string, bool) {
 func (s *Server) admitWebSocket(w http.ResponseWriter, r *http.Request) bool {
 	authorized, err := s.authorizeWebSocket(r)
 	if err != nil {
-		http.Error(w, "token verifier unavailable", http.StatusInternalServerError)
+		http.Error(w, "令牌校验器不可用，请稍后重试", http.StatusInternalServerError)
 		return false
 	}
 	if !authorized {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, sessionReloginMessage, http.StatusUnauthorized)
 		return false
 	}
 	return true
