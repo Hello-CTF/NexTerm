@@ -14,6 +14,10 @@ const (
 	CommandBundleRead  = "sync_bundle_read"
 	CommandBundleWrite = "sync_bundle_write"
 
+	CommandDigest = "sync_digest"
+	CommandExport = "sync_export"
+	CommandImport = "sync_import"
+
 	CommandTranscriptSyncOptIn = "transcript_sync_opt_in"
 
 	CommandKindOptInGet = "sync_kind_opt_in_get"
@@ -127,6 +131,11 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.WriteBundleFileWithOptions(ctx, input.Path, input.Content, BundleWriteOptions{Password: input.Password})
 			})
 		},
+		// 资产包摘要/导出/导入: 桌面端与服务器端同一实现, 操作当前后端资产库;
+		// 会话与 CSRF 由 /rpc 传输层在账号模式下把关, 离线共享工作区(无账号)保持匿名可用。
+		func() error {
+			return s.registerBundleCommands(dispatcher)
+		},
 		// 浏览器收集读取: 离线共享工作区(无账号)保持匿名可用, 会话与 CSRF 由 /rpc 传输层在账号模式下把关。
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandCollectAssets, func(ctx context.Context, _ *ipc.Call, input CollectAssetsRequest) (CollectAssetsResult, error) {
@@ -178,4 +187,40 @@ func (s *Service) requireDesktop() error {
 		return ipc.NewError(ipc.CodeUnsupported, "该同步操作只在桌面端可用")
 	}
 	return nil
+}
+
+// registerBundleCommands 注册资产包三命令; 主命令面与对端命令面共用同一组处理器。
+func (s *Service) registerBundleCommands(dispatcher *ipc.Dispatcher) error {
+	registrations := []func() error{
+		func() error {
+			return ipc.Register(dispatcher, CommandDigest, func(ctx context.Context, _ *ipc.Call, _ struct{}) (SyncDigest, error) {
+				return s.Digest(ctx)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandExport, func(ctx context.Context, _ *ipc.Call, input ExportBundleRequest) (SyncBundle, error) {
+				return s.ExportBundle(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandImport, func(ctx context.Context, _ *ipc.Call, input ImportBundleRequest) (ImportReport, error) {
+				return s.ImportBundle(ctx, input)
+			})
+		},
+	}
+	for _, register := range registrations {
+		if err := register(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PeerDispatcher 返回同步对端命令面(资产包三命令), 供 surface probe 枚举与同步专用部署挂载。
+func (s *Service) PeerDispatcher() (*ipc.Dispatcher, error) {
+	dispatcher := ipc.NewDispatcher()
+	if err := s.registerBundleCommands(dispatcher); err != nil {
+		return nil, err
+	}
+	return dispatcher, nil
 }
