@@ -170,7 +170,7 @@ describe("M134 AI copy", () => {
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 加密后保存在本机，不会上传到任何服务器。");
+    expect(text).toContain("API Key 加密后保存在本机，只在发起请求时发向你配置的模型端点，不会上传到 NexTerm 的服务器。");
     expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();

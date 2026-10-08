@@ -172,7 +172,7 @@ describe("SettingsView 响应式结构", () => {
     await flush();
     clickButton(mounted.container, "添加一条规则");
     const input = mounted.container.querySelector<HTMLInputElement>(
-      'input[placeholder="例如 kubectl delete"]',
+      'input[placeholder*="Enter 保存"]',
     );
     expect(input).toBeTruthy();
     setInputValue(input!, "rm -rf /");

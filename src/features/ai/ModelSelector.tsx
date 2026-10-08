@@ -80,6 +80,8 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
       >
         {busy ? (
           <IconLoader size={11} className="animate-spin" />
+        ) : active ? (
+          <IconCheck size={11} className="text-green-300" />
         ) : (
           <IconPlus size={11} />
         )}

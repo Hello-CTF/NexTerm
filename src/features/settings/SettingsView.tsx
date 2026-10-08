@@ -128,6 +128,7 @@ export function SettingsView() {
     setRuleDraft(rulePrefill);
     setRuleDraftOpen(true);
     useUi.getState().setAiRulePrefill(null);
+    document.getElementById("settings-ai-rules")?.scrollIntoView({ block: "start" });
   }, [rulePrefill]);
 
   const saveRules = async (rules: string[]) => {
@@ -328,7 +329,7 @@ export function SettingsView() {
             )}
           </div>
           <p className="nx-hint mb-3.5">
-            命中即拦截，静默模式同样生效；子串匹配，忽略大小写。
+            命令命中规则后每次先向你确认（只读模式下直接拒绝）；子串匹配，忽略大小写。
           </p>
 
           <div className="mb-1.5 flex flex-col gap-1">
@@ -363,7 +364,7 @@ export function SettingsView() {
               <input
                 autoFocus
                 className="nx-input nx-input-sm w-full font-mono"
-                placeholder="例如 kubectl delete"
+                placeholder="例如 kubectl delete，Enter 保存，Esc 取消"
                 value={ruleDraft}
                 onChange={(e) => setRuleDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -376,7 +377,6 @@ export function SettingsView() {
                     setRuleDraftOpen(false);
                   }
                 }}
-                onBlur={addRule}
               />
             )}
             {aiPerm && aiPerm.dangerRules.length === 0 && !ruleDraftOpen && (

@@ -2,14 +2,15 @@
 // M195 验收: 设置分区导航(小标签直达、键盘可达)与统一登录入口
 // (Web 未登录时全设置页只有一个登录按钮; 账号/同步/分享不再各放一个)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
     getPermission: vi.fn(),
+    setPermission: vi.fn(),
     vaultStatus: vi.fn(),
     toast: vi.fn(),
   };
@@ -21,7 +22,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     aiApi: {
       getPermission: mocks.getPermission,
-      setPermission: vi.fn(),
+      setPermission: mocks.setPermission,
       testProvider: vi.fn(),
     },
     vaultApi: {
@@ -113,6 +114,34 @@ describe("设置分区导航", () => {
     const vaultChip = chips().find((c) => c.textContent?.trim() === "凭据保护")!;
     click(vaultChip);
     expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+  });
+});
+
+describe("AI 拦截规则草稿", () => {
+  it("预填草稿定位到规则区且失焦不静默保存，Enter 才写入", async () => {
+    useUi.setState({ aiRulePrefill: "kubectl delete" });
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+
+    expect(useUi.getState().aiRulePrefill).toBeNull();
+    const section = document.getElementById("settings-ai-rules")!;
+    expect(section.scrollIntoView).toHaveBeenCalled();
+    const draft = section.querySelector<HTMLInputElement>('input[placeholder*="Enter 保存"]')!;
+    expect(draft.value).toBe("kubectl delete");
+
+    act(() => draft.blur());
+    await flush();
+    expect(mocks.setPermission).not.toHaveBeenCalled();
+    expect(section.querySelector('input[placeholder*="Enter 保存"]')).not.toBeNull();
+
+    setInputValue(draft, "kubectl delete pod");
+    act(() => {
+      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(mocks.setPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ dangerRules: ["kubectl delete pod"] }),
+    );
   });
 });
 

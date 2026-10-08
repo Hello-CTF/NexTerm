@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { AiRunDto, AiUsageSummaryRow } from "../ipc/types";
 import { aggregateUsageRows, runErrorStats, UsageRing } from "../features/ai/UsageRing";
-import { click, flush, mount } from "./features/reactTestUtils";
+import { click, clickButton, flush, mount } from "./features/reactTestUtils";
 
 const summaryRows: AiUsageSummaryRow[] = [
   { source: "chat", profileId: "p-a", runs: 2, tokensIn: 100, tokensOut: 50, cacheCreationTokens: 10, averageLatencyMs: 1000 },
@@ -57,6 +57,19 @@ describe("aggregateUsageRows", () => {
     expect(chat.tokensIn).toBe(0);
     expect(title.runs).toBe(0);
     expect(aggregateUsageRows([]).chat.runs).toBe(0);
+  });
+
+  it("keeps cron and subagent usage out of chat totals", () => {
+    const { chat, cron, subagent } = aggregateUsageRows([
+      { source: "chat", profileId: "p", runs: 2, tokensIn: 100, tokensOut: 50, cacheCreationTokens: 0, averageLatencyMs: 1000 },
+      { source: "cron", profileId: "p", runs: 3, tokensIn: 300, tokensOut: 150, cacheCreationTokens: 0, averageLatencyMs: 2000 },
+      { source: "subagent", profileId: "p", runs: 4, tokensIn: 400, tokensOut: 200, cacheCreationTokens: 0, averageLatencyMs: 500 },
+    ]);
+    expect(chat.runs).toBe(2);
+    expect(cron.runs).toBe(3);
+    expect(cron.tokensIn).toBe(300);
+    expect(subagent.runs).toBe(4);
+    expect(subagent.tokensOut).toBe(200);
   });
 });
 
@@ -153,6 +166,31 @@ describe("UsageRing details", () => {
     await flush();
     expect(view.container.textContent ?? "").toContain("用量汇总加载失败");
     expect(loadSummary).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("retries the summary load from the failure row", async () => {
+    const loadSummary = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(summaryRows);
+    const view = mount(
+      createElement(UsageRing, {
+        runs: [run({ id: "a", retries: 1 })],
+        loadSummary,
+      }),
+    );
+    click(view.container.querySelector("button")!);
+    await flush();
+    expect(view.container.textContent ?? "").toContain("用量汇总加载失败");
+
+    clickButton(view.container, "重试");
+    await flush();
+    const text = view.container.textContent ?? "";
+    expect(loadSummary).toHaveBeenCalledTimes(2);
+    expect(text).not.toContain("用量汇总加载失败");
+    expect(text).toContain("对话 4 次");
+    expect(text).toContain("（全部会话）");
     view.unmount();
   });
 });

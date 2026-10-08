@@ -230,14 +230,20 @@ describe("AiSidebar session restore", () => {
     );
   });
 
-  it("keeps the persisted id when the message reload fails transiently", async () => {
+  it("keeps the persisted id and offers retry when the message reload fails transiently", async () => {
     localStorage.setItem(CONVERSATION_KEY, "conv-1");
-    mocks.messages.mockRejectedValue(new Error("会话库不可用"));
+    mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(textOf(view!)).toContain("会话加载失败 · 会话库不可用");
+    expect(textOf(view!)).not.toContain("命令与输出全程留痕");
     expect(localStorage.getItem(CONVERSATION_KEY)).toBe("conv-1");
+
+    clickButton(view!.container, "重试");
+    await flushReplay();
+    expect(textOf(view!)).toContain("旧问题");
+    expect(textOf(view!)).not.toContain("会话加载失败");
   });
 
   it("replays an interrupted run with a pending question into the restored session", async () => {
