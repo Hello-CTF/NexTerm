@@ -857,6 +857,8 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除选中的 2 个镜像");
     expect(modal.textContent).toContain("镜像本体");
+    expect(modal.textContent).toContain("最后一个标签");
+    expect(modal.textContent).toContain("镜像本体会一并删除");
     expect(modal.textContent).toContain("不能再用它创建容器");
     expect(modal.textContent).toContain("仍可用来创建容器");
     await closeModal(modal, "取消");
@@ -885,6 +887,8 @@ describe("dockerRedact helpers", () => {
     expect(redactUrlCredentials("postgres://admin:s3cret@db:5432/app")).toBe(
       `postgres://admin:${REDACTED_MARK}@db:5432/app`,
     );
+    expect(redactUrlCredentials("redis://:pass@host:6379")).toBe(`redis://:${REDACTED_MARK}@host:6379`);
+    expect(redactUrlCredentials("redis://:@host:6379")).toBe("redis://:@host:6379");
     expect(redactUrlCredentials("https://example.com/x")).toBe("https://example.com/x");
     expect(redactUrlCredentials("postgres://admin@db:5432/app")).toBe("postgres://admin@db:5432/app");
     expect(redactUrlCredentials("no url here")).toBe("no url here");
@@ -895,18 +899,29 @@ describe("dockerRedact helpers", () => {
       Name: "/db",
       Config: {
         Image: "postgres:16",
-        Env: ["DATABASE_URL=postgres://admin:s3cret@db:5432/app", "REPLICA_URL=mysql://root:pw@replica/db"],
-        Labels: { "metrics.url": "http://user:hunter2@metrics:9090/metrics" },
+        Env: [
+          "DATABASE_URL=postgres://admin:s3cret@db:5432/app",
+          "REPLICA_URL=mysql://root:pw@replica/db",
+          "REDIS_URL=redis://:topsecret@cache:6379",
+        ],
+        Labels: {
+          "metrics.url": "http://user:hunter2@metrics:9090/metrics",
+          "cache.dsn": "redis://:labelpass@cache:6379",
+        },
       },
       Mounts: [],
     };
     const vm = buildInspectViewModel(raw);
     expect(vm.env[0].value).toBe(`postgres://admin:${REDACTED_MARK}@db:5432/app`);
     expect(vm.env[1].value).toBe(`mysql://root:${REDACTED_MARK}@replica/db`);
+    expect(vm.env[2].value).toBe(`redis://:${REDACTED_MARK}@cache:6379`);
     expect(vm.labels[0].value).toBe(`http://user:${REDACTED_MARK}@metrics:9090/metrics`);
+    expect(vm.labels[1].value).toBe(`redis://:${REDACTED_MARK}@cache:6379`);
     expect(vm.json).not.toContain("s3cret");
     expect(vm.json).not.toContain("hunter2");
     expect(vm.json).not.toContain("pw@replica");
+    expect(vm.json).not.toContain("topsecret");
+    expect(vm.json).not.toContain("labelpass");
     expect(vm.json).toContain("DATABASE_URL");
   });
 

@@ -276,7 +276,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       consequence = "无标签的镜像会删除镜像本体；删除后本机不再有这些镜像，不能再用它们创建容器。";
     } else {
       consequence =
-        "无标签的镜像会删除镜像本体，删除后本机不再有该镜像，不能再用它创建容器；其余镜像只删除对应标签，同一镜像若还有其他标签仍可用来创建容器。";
+        "无标签的镜像会删除镜像本体，删除后本机不再有该镜像，不能再用它创建容器；其余镜像删除的是对应标签，若某个镜像被删的是最后一个标签，镜像本体会一并删除，不能再用它创建容器；还有其他标签的镜像仍可用来创建容器。";
     }
     if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n${consequence}`, { kind: "warning" })))
       return;

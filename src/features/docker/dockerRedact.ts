@@ -45,7 +45,7 @@ export function isSensitiveName(name: string): boolean {
   return words.some((w) => SENSITIVE_SUBSTRINGS.some((s) => w.includes(s)));
 }
 
-const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^/@\s:]+):([^/@\s]+)@/gi;
+const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^/@\s:]*):([^/@\s]+)@/gi;
 
 export function redactUrlCredentials(text: string): string {
   if (!text.includes("://")) return text;
