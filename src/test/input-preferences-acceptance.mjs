@@ -304,8 +304,8 @@ async function boot(page, { clearStorage = true } = {}) {
   }
 }
 
-async function openSettingsViaPalette(page) {
-  await pressCtrlShift(page, "p", 80);
+async function openSettingsViaPalette(page, { key = "p", vk = 80 } = {}) {
+  await pressCtrlShift(page, key, vk);
   await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
   await page.send("Input.insertText", { text: "设置" });
   await page.waitFor(
@@ -374,10 +374,21 @@ async function inputPreferenceAcceptance(page) {
       };
     })()`);
     const mod = evidence.labels[0]?.startsWith("⌘") ? "⌘" : "Ctrl";
-    assert.equal(evidence.rowCount, 12, JSON.stringify(evidence));
-    assert.ok(evidence.labels.includes(`${mod}+Shift+P`), JSON.stringify(evidence.labels));
-    assert.ok(evidence.labels.includes(`${mod}+1…9`), JSON.stringify(evidence.labels));
-    assert.ok(evidence.labels.includes(`${mod}+F`), JSON.stringify(evidence.labels));
+    const expectedLabels = [
+      `${mod}+Shift+P`,
+      `${mod}+Shift+K`,
+      `${mod}+T`,
+      `${mod}+B`,
+      `${mod}+J`,
+      `${mod}+W`,
+      `${mod}+\\`,
+      `${mod}+1…9`,
+      `${mod}+F`,
+      "Esc",
+      `${mod}+Shift+S`,
+    ];
+    assert.equal(evidence.rowCount, expectedLabels.length, JSON.stringify(evidence));
+    assert.deepEqual(evidence.labels, expectedLabels, JSON.stringify(evidence.labels));
     assert.equal(evidence.syncNowKbd, `${mod}+Shift+S`, `syncNow default must be Mod+Shift+s: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.syncNowText?.includes("立即同步账号数据"), `syncNow row label missing: ${JSON.stringify(evidence.syncNowText)}`);
     assert.equal(evidence.autoCopyChecked, false, "selection auto-copy must default to off");
@@ -401,7 +412,7 @@ async function inputPreferenceAcceptance(page) {
     await page.waitFor(
       "Boolean(document.querySelector('[role=\"tablist\"][aria-label=\"工作区\"] [role=\"tab\"]') && document.querySelector('.xterm'))",
     );
-    await openSettingsViaPalette(page);
+    await openSettingsViaPalette(page, { key: "o", vk: 79 });
     const persisted = await page.evaluate(rowKbd("commandPalette"));
     assert.equal(persisted, `${mod}+Shift+O`, "rebound shortcut must persist across reloads");
 
@@ -565,7 +576,7 @@ async function inputPreferenceAcceptance(page) {
     const mod = evidence.syncNowKbd?.startsWith("⌘") ? "⌘" : "Ctrl";
     assert.equal(evidence.tracks, 1, `390px must be single column: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.docScrollWidth <= evidence.innerWidth, JSON.stringify(evidence));
-    assert.equal(evidence.editButtonCount, 12);
+    assert.equal(evidence.editButtonCount, 11);
     assert.equal(evidence.syncNowKbd, `${mod}+Shift+S`, `syncNow row must render default Mod+Shift+s at 390px: ${JSON.stringify(evidence)}`);
     assert.equal(evidence.reachable, true, JSON.stringify(evidence));
     assert.equal(evidence.syncNowReachable, true, JSON.stringify(evidence));
