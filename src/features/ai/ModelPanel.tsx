@@ -78,6 +78,7 @@ export function ModelManager({
   const [models, setModels] = useState<string[]>([]);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [presets, setPresets] = useState<string[]>([]);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [circuitNonce, setCircuitNonce] = useState(0);
@@ -107,13 +108,19 @@ export function ModelManager({
     }
   };
 
+  const loadPresets = useCallback(async () => {
+    try {
+      setPresets(await modelApi.presets());
+      setPresetsError(null);
+    } catch (e) {
+      setPresetsError(describeError(e));
+    }
+  }, []);
+
   useEffect(() => {
     void reload();
-    void modelApi
-      .presets()
-      .then(setPresets)
-      .catch(() => undefined);
-  }, []);
+    void loadPresets();
+  }, [loadPresets]);
 
   const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
@@ -338,6 +345,14 @@ export function ModelManager({
               </>
             )}
           </div>
+          {presetsError && (
+            <div className="mt-2 flex items-center gap-1.5 text-[10.5px]">
+              <span className="min-w-0 flex-1 truncate text-red-300">预设加载失败 · {presetsError}</span>
+              <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void loadPresets()}>
+                重试
+              </button>
+            </div>
+          )}
           {presets.length > 0 && (
             <div className="mt-2">
               <div className="mb-1 text-[10.5px] text-neutral-500">快速填充（预设）</div>
@@ -599,7 +614,7 @@ export function ModelManager({
               </label>
 
               <div className="nx-hint mt-0.5">
-                API Key 加密后保存在本机，不会上传到任何服务器。
+                API Key 加密后保存在本机，只在发起请求时发向你配置的模型端点，不会上传到 NexTerm 的服务器。
               </div>
             </div>
           ) : (
@@ -737,20 +752,17 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
         ) : !status ? (
           "暂停状态加载中…"
         ) : (
-          <>
-            <span
-              className={
-                state === "open"
-                  ? "text-red-300"
-                  : state === "closed"
-                    ? "text-[var(--nx-fg-warning)]"
-                    : undefined
-              }
-            >
-              {circuitStatusText(status, now)}
-            </span>
-            <span className="text-neutral-500">；与对话里的「可重试」标记无关</span>
-          </>
+          <span
+            className={
+              state === "open"
+                ? "text-red-300"
+                : state === "closed"
+                  ? "text-[var(--nx-fg-warning)]"
+                  : undefined
+            }
+          >
+            {circuitStatusText(status, now)}
+          </span>
         )}
       </span>
       <button

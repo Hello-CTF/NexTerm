@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ask, promptText } from "../../ui/dialogs";
+import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { aiApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
@@ -81,6 +81,8 @@ const MODE_LABEL: Record<AiPermissionMode, string> = {
   read_write: "读写",
   silent: "完全静默",
 };
+
+const PLAN_MODE_HINT = "先出方案，批准后执行";
 
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
   allow: "已允许一次",
@@ -225,6 +227,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [planMode, setPlanMode] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
+  const [conversationError, setConversationError] = useState<string | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
   const updateConversationId = (id: string | undefined) => {
     conversationIdRef.current = id;
@@ -540,17 +543,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     void replayHitl(generation, resumable.run.id);
   };
 
-  useEffect(() => {
-    const id = loadPersistedConversationId();
-    if (!id) return;
-    const startSeq = runSequenceRef.current;
-    updateConversationId(id);
-    void (async () => {
+  const restoreConversation = useCallback(
+    async (id: string) => {
+      const startSeq = runSequenceRef.current;
+      updateConversationId(id);
       try {
         const list = await aiApi.conversationList();
         if (conversationIdRef.current !== id) return;
         if (!list.some((c) => c.id === id)) {
           updateConversationId(undefined);
+          setConversationError(null);
           return;
         }
       } catch {
@@ -563,15 +565,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           aiApi.messages(id),
           aiApi.runs(id).catch((): AiRunDto[] => []),
         ]);
-      } catch {
+      } catch (e) {
+        if (conversationIdRef.current !== id) return;
+        setConversationError(describeError(e));
         return;
       }
       if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
+      setConversationError(null);
       stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
       if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
       void restoreConversationRuns(id, runs);
-    })();
-  }, []);
+    },
+    [stream],
+  );
+
+  useEffect(() => {
+    const id = loadPersistedConversationId();
+    if (!id) return;
+    void restoreConversation(id);
+  }, [restoreConversation]);
 
   const hydrateMessageIds = async (convId: string) => {
     try {
@@ -954,6 +966,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
       updateConversationId(id);
+      setConversationError(null);
       setEditing(null);
       setHistoryOpen(false);
       void restoreConversationRuns(id, runs);
@@ -969,6 +982,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     updateConversationId(undefined);
     setConversationRuns([]);
+    setConversationError(null);
     setEditing(null);
     stream.reset();
     setHistoryOpen(false);
@@ -1018,6 +1032,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (conversationIdRef.current === c.id) {
       deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
+      setConversationError(null);
       setEditing(null);
       if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
@@ -1064,10 +1079,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       { multiLine: true },
     );
     if (!instruction) return;
-    const allowWrite = await ask(
-      "允许 AI 直接操作这台终端吗？\n\n确定 = 允许：AI 可以替你敲命令\n取消 = 只读：AI 只能看，不能敲",
-      { title: "终端接管（实验性功能）", kind: "warning" },
-    );
+    const choice = await askChoice("允许 AI 直接操作这台终端吗？", {
+      title: "终端接管（实验性功能）",
+      level: "warning",
+      choices: [
+        { key: "allow", label: "允许", hint: "AI 可以替你敲命令", primary: true },
+        { key: "readonly", label: "只读", hint: "AI 只能看，不能敲" },
+        { key: "abort", label: "退出", hint: "不启动接管", danger: true },
+      ],
+    });
+    if (choice !== "allow" && choice !== "readonly") return;
+    const allowWrite = choice === "allow";
 
     if (aiBusy || aiRunBlocksStart(activeRunRef.current)) {
       pushToast("info", "另一轮 AI 仍在运行，请先停止再接管");
@@ -1226,8 +1248,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           />
           <span className="shrink-0 font-mono text-[10.5px] text-neutral-500" aria-live="polite">
             {searchQuery.trim()
-              ? `${matchCursor >= 0 ? matchCursor + 1 : 0}/${searchMatches.length}`
-              : "0/0"}
+              ? searchMatches.length > 0
+                ? `${matchCursor >= 0 ? matchCursor + 1 : 0}/${searchMatches.length}`
+                : "无匹配"
+              : ""}
           </span>
           <button
             className="nx-icon-btn nx-icon-btn-sm shrink-0"
@@ -1346,7 +1370,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
           <button
             className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
-            title={planMode ? "方案阶段只读调研，批准后才执行" : "先出方案，批准后执行"}
+            title={PLAN_MODE_HINT}
             onClick={() => setPlanMode((v) => !v)}
           >
             <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
@@ -1359,7 +1383,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
           </button>
           <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
-            {planMode ? "先出方案，批准后执行；期间只读" : "直接执行"}
+            {planMode ? `${PLAN_MODE_HINT}；期间只读` : "直接执行"}
           </div>
 
           <div className="mb-2 flex items-center gap-1.5">
@@ -1399,7 +1423,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           aria-label="AI 对话记录"
           className="h-full space-y-2.5 overflow-y-auto p-3"
         >
-          {conv.items.length === 0 && (
+          {conv.items.length === 0 && conversationError && (
+            <div className="flex flex-col items-center gap-3 px-2 pt-10 text-center">
+              <span className="nx-empty-icon">
+                <IconAlert size={19} />
+              </span>
+              <div className="text-xs text-red-300">会话加载失败 · {conversationError}</div>
+              <button
+                className="nx-btn nx-btn-outline nx-btn-xs"
+                onClick={() => {
+                  const id = conversationIdRef.current;
+                  if (id) void restoreConversation(id);
+                }}
+              >
+                <IconRefresh size={11} />
+                重试
+              </button>
+            </div>
+          )}
+          {conv.items.length === 0 && !conversationError && (
             <div className="flex flex-col items-center gap-3 px-2 pt-10 text-center">
               <span className="nx-empty-icon">
                 <IconBot size={19} />
@@ -1443,7 +1485,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                不想每次都弹这个？把它加为拦截规则，或在权限设置里调整模式。
+                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本会话允许此类」，或在权限设置里调模式。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -1586,14 +1628,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/90">
             <IconList size={10} className="shrink-0" />
-            <span className="truncate">计划模式 · 先出方案，你批准了再动手</span>
+            <span className="truncate">计划模式 · {PLAN_MODE_HINT}</span>
           </div>
         )}
         {editing && (
           <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">
             <IconEdit size={10} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              {editSubmitting ? "正在替换并重新发送…" : "编辑重发：此后的消息与运行会被替换"}
+              {editSubmitting ? "正在替换并重新发送…" : "编辑重发：这条消息之后的消息与运行会被删除"}
             </span>
             <button
               className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
@@ -1755,7 +1797,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             className={`nx-icon-btn nx-icon-btn-sm ${
               perm?.mode === "silent" ? "is-active" : ""
             } ${permOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-            title={`AI 权限：${MODE_LABEL[perm?.mode ?? "read_write"]}（点击设置）`}
+            title={`AI 权限与模式：${MODE_LABEL[perm?.mode ?? "read_write"]}（含计划模式，点击设置）`}
             onClick={() => setPermOpen((v) => !v)}
           >
             <IconShield size={13} />
@@ -1844,7 +1886,7 @@ function statusText(s: StatusLine): string {
   if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期的命令输出…";
   if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
   if (s.phase === "tool_args") {
-    return `${preparingLabel(s.tool)} · 已生成 ${formatBytes(s.chars ?? 0)}`;
+    return `${preparingLabel(s.tool)} · 已生成参数 ${formatBytes(s.chars ?? 0)}`;
   }
   return s.detail ?? s.phase;
 }
@@ -2078,7 +2120,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
-          {open ? "收起" : `展开完整输出（${full.length} 字符）`}
+          {open ? "收起" : `展开完整输出（${full.length} 字）`}
         </button>
       )}
     </div>

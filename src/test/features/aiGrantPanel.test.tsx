@@ -144,14 +144,31 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(rowFor("生产 Web").textContent).toContain("未授权");
   });
 
-  it("撤销授权后立即恢复未授权并提示", async () => {
+  it("撤销授权前弹出显式确认，确认后恢复未授权并按权限模式说明后果", async () => {
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
     await mountPanel();
     expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
     clickButton(rowFor("生产 Web"), "撤销");
-    await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
+    await flushUntil(() => mocks.grantRevoke.mock.calls.length > 0);
+    expect(mocks.ask).toHaveBeenCalledOnce();
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("生产 Web");
+    expect(message).toContain("读写模式下恢复逐次确认");
+    expect(message).toContain("完全静默模式下直接执行不逐次问");
+    expect(message).toContain("只读与无人值守模式下会被拒绝");
     expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-1");
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已撤销"));
+    await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("按当前权限模式处理"));
+  });
+
+  it("取消撤销确认则不发起撤销", async () => {
+    mocks.ask.mockResolvedValue(false);
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
+    await mountPanel();
+    clickButton(rowFor("生产 Web"), "撤销");
+    await flush();
+    expect(mocks.grantRevoke).not.toHaveBeenCalled();
+    expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
   });
 
   it("列表加载失败展示错误并可重试", async () => {

@@ -237,13 +237,13 @@ describe("ModelManager circuit runtime status", () => {
     vi.useRealTimers();
   });
 
-  it("运行态为零值 DTO 时展示正常运行，并明确与「可重试」标记区分", async () => {
+  it("运行态为零值 DTO 时展示正常运行", async () => {
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 0, openUntil: null });
     await mountManager(demoProfile());
 
     expect(mocks.circuitStatus).toHaveBeenCalledWith("m-deepseek");
     expect(view!.container.textContent).toContain("运行正常：暂无连续失败");
-    expect(view!.container.textContent).toContain("与对话里的「可重试」标记无关");
+    expect(view!.container.textContent).not.toContain("可重试");
   });
 
   it("熔断中展示连续失败数与冷却剩余时间", async () => {

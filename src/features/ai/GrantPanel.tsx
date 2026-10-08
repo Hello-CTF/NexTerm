@@ -17,6 +17,15 @@ const KIND_LABEL: Record<AiGrantKind, string> = {
   session_exec: "命令执行",
 };
 
+const ASSET_KIND_LABEL: Record<string, string> = {
+  ssh: "SSH",
+  winrm: "WinRM",
+  local: "本地终端",
+  docker: "Docker",
+  mysql: "MySQL",
+  redis: "Redis",
+};
+
 export function GrantPanel({ onClose }: { onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
   const [assets, setAssets] = useState<Asset[] | null>(null);
@@ -76,6 +85,12 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   };
 
   const revoke = async (asset: Asset) => {
+    const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k]).join("、");
+    const confirmed = await ask(
+      `撤销「${asset.name}」的设备授权？\n\n撤销后，AI 在该设备上的${scope || "终端写入、命令执行"}不再享受长期授权，按当前权限模式处理：读写模式下恢复逐次确认，完全静默模式下直接执行不逐次问，只读与无人值守模式下会被拒绝。授权记录会从本安装（服务器）上删除。`,
+      { kind: "warning" },
+    );
+    if (!confirmed) return;
     setBusy((prev) => ({ ...prev, [asset.id]: true }));
     try {
       await grantApi.revoke(asset.id);
@@ -84,7 +99,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         delete next[asset.id];
         return next;
       });
-      pushToast("success", `已撤销「${asset.name}」的设备授权`);
+      pushToast("success", `已撤销「${asset.name}」的设备授权，相关操作按当前权限模式处理`);
     } catch (e) {
       pushToast("error", `撤销授权失败：${describeError(e)}`);
     } finally {
@@ -130,7 +145,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
           <div key={asset.id} className="mb-1 rounded-lg border border-neutral-800/60 px-2 py-1.5">
             <div className="flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{asset.name}</span>
-              <span className="nx-count">{asset.kind}</span>
+              <span className="nx-count">{ASSET_KIND_LABEL[asset.kind] ?? asset.kind}</span>
               {grant ? (
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"

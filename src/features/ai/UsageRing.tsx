@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiRunDto, AiUsageSummaryRow } from "../../ipc/types";
 
 export interface AiUsage {
@@ -65,11 +65,16 @@ function safeCount(value: number): number {
 export function aggregateUsageRows(rows: AiUsageSummaryRow[]): {
   chat: SceneUsage;
   title: SceneUsage;
+  cron: SceneUsage;
+  subagent: SceneUsage;
 } {
   const chat = emptySceneUsage();
   const title = emptySceneUsage();
+  const cron = emptySceneUsage();
+  const subagent = emptySceneUsage();
   for (const row of rows) {
-    const target = row.source === "title" ? title : chat;
+    const target =
+      row.source === "title" ? title : row.source === "cron" ? cron : row.source === "subagent" ? subagent : chat;
     const runs = safeCount(row.runs);
     const weighted = target.averageLatencyMs * target.runs + safeCount(row.averageLatencyMs) * runs;
     target.runs += runs;
@@ -78,7 +83,7 @@ export function aggregateUsageRows(rows: AiUsageSummaryRow[]): {
     target.cacheCreationTokens += safeCount(row.cacheCreationTokens);
     target.averageLatencyMs = target.runs > 0 ? Math.round(weighted / target.runs) : 0;
   }
-  return { chat, title };
+  return { chat, title, cron, subagent };
 }
 
 export interface RunErrorStats {
@@ -144,10 +149,16 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [detailsOpen]);
 
+  const loadSummaryRows = useCallback(() => {
+    if (!loadSummary) return;
+    setSummaryFailed(false);
+    loadSummary().then(setSummaryRows).catch(() => setSummaryFailed(true));
+  }, [loadSummary]);
+
   const toggleDetails = () => {
     setDetailsOpen((open) => !open);
     if (!detailsOpen && loadSummary && summaryRows === null && !summaryFailed) {
-      loadSummary().then(setSummaryRows).catch(() => setSummaryFailed(true));
+      loadSummaryRows();
     }
   };
 
@@ -239,7 +250,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
       </span>
 
       {detailsAvailable && detailsOpen ? (
-        <UsageDetails runs={runs} summaryRows={summaryRows} summaryFailed={summaryFailed} />
+        <UsageDetails runs={runs} summaryRows={summaryRows} summaryFailed={summaryFailed} onRetrySummary={loadSummaryRows} />
       ) : null}
     </span>
   );
@@ -249,10 +260,12 @@ function UsageDetails({
   runs,
   summaryRows,
   summaryFailed,
+  onRetrySummary,
 }: {
   runs?: AiRunDto[];
   summaryRows: AiUsageSummaryRow[] | null;
   summaryFailed: boolean;
+  onRetrySummary: () => void;
 }) {
   const errorStats = runs ? runErrorStats(runs) : null;
   const scenes = summaryRows ? aggregateUsageRows(summaryRows) : null;
@@ -269,15 +282,34 @@ function UsageDetails({
         <>
           <span className="block text-neutral-300">
             对话 {scenes.chat.runs} 次 · 输入 {formatTokens(scenes.chat.tokensIn)} · 输出{" "}
-            {formatTokens(scenes.chat.tokensOut)}
+            {formatTokens(scenes.chat.tokensOut)}（全部会话）
           </span>
+          {scenes.cron.runs > 0 ? (
+            <span className="block text-neutral-300">
+              定时任务 {scenes.cron.runs} 次 · 输入 {formatTokens(scenes.cron.tokensIn)} · 输出{" "}
+              {formatTokens(scenes.cron.tokensOut)}（全部会话）
+            </span>
+          ) : null}
+          {scenes.subagent.runs > 0 ? (
+            <span className="block text-neutral-300">
+              子任务 {scenes.subagent.runs} 次 · 输入 {formatTokens(scenes.subagent.tokensIn)} · 输出{" "}
+              {formatTokens(scenes.subagent.tokensOut)}（全部会话）
+            </span>
+          ) : null}
           <span className="block text-neutral-500">
             标题 {scenes.title.runs} 次 · 输入 {formatTokens(scenes.title.tokensIn)} · 输出{" "}
             {formatTokens(scenes.title.tokensOut)}（单独计，不入对话总量）
           </span>
         </>
       ) : null}
-      {summaryFailed ? <span className="block text-red-300">用量汇总加载失败</span> : null}
+      {summaryFailed ? (
+        <span className="flex items-center gap-1.5">
+          <span className="text-red-300">用量汇总加载失败</span>
+          <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={onRetrySummary}>
+            重试
+          </button>
+        </span>
+      ) : null}
       {!errorStats && !scenes && !summaryFailed ? (
         <span className="block text-neutral-500">加载中…</span>
       ) : null}

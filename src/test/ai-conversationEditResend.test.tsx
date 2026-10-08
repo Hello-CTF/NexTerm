@@ -203,7 +203,7 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     expect(composerOf(view!).value).toBe("第一问");
-    expect(text()).toContain("编辑重发：此后的消息与运行会被替换");
+    expect(text()).toContain("编辑重发：这条消息之后的消息与运行会被删除");
 
     setInputValue(composerOf(view!), "第一问（改）");
     clickButton(view!.container, "替换并重新发送");
@@ -213,7 +213,7 @@ describe("AiSidebar edit and resend", () => {
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "conv-1", message: "第一问（改）" }),
     );
-    expect(text()).not.toContain("编辑重发：此后的消息与运行会被替换");
+    expect(text()).not.toContain("编辑重发：这条消息之后的消息与运行会被删除");
   });
 
   it("旧消息截断后的 UI：锚点原文保留，其后的回答/工具/后续消息全部移除", async () => {
@@ -328,7 +328,7 @@ describe("AiSidebar edit and resend", () => {
     expect(mocks.chat).not.toHaveBeenCalled();
     expect(text()).toContain("第一答");
     expect(text()).toContain("输出摘要");
-    expect(text()).toContain("编辑重发：此后的消息与运行会被替换");
+    expect(text()).toContain("编辑重发：这条消息之后的消息与运行会被删除");
     expect(composerOf(view!).value).toBe("第一问（改）");
   });
 
@@ -404,7 +404,7 @@ describe("AiSidebar edit and resend", () => {
 
     expect(mocks.editResend).not.toHaveBeenCalled();
     expect(mocks.chat).not.toHaveBeenCalled();
-    expect(text()).not.toContain("编辑重发：此后的消息与运行会被替换");
+    expect(text()).not.toContain("编辑重发：这条消息之后的消息与运行会被删除");
     expect(composerOf(view!).value).toBe("第一问");
   });
 });

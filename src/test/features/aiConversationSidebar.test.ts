@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   overview: vi.fn(),
   promptText: vi.fn(),
   ask: vi.fn(),
+  askChoice: vi.fn(),
   takeoverEnter: vi.fn(),
   takeoverRun: vi.fn(),
   takeoverExit: vi.fn(),
@@ -73,7 +74,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
     return () => mocks.reopens.delete(channel);
   },
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
+vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
 import { useUi } from "../../app/store";
@@ -224,6 +225,7 @@ describe("AiSidebar conversation stream UX", () => {
     mocks.messages.mockResolvedValue([]);
     mocks.promptText.mockResolvedValue("安装 nginx");
     mocks.ask.mockResolvedValue(true);
+    mocks.askChoice.mockResolvedValue("allow");
     mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
     mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
     mocks.takeoverExit.mockResolvedValue(undefined);
@@ -607,6 +609,31 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("接管结束：装好了");
     expect(textOf(view!)).toContain("接管已完成");
+    expect(useUi.getState().takeover).toBeNull();
+  });
+
+  it("takeover 三选：退出则不启动接管", async () => {
+    mocks.askChoice.mockResolvedValueOnce("abort");
+    click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
+    await flush();
+    await flush();
+    expect(mocks.askChoice).toHaveBeenCalledOnce();
+    const options = mocks.askChoice.mock.calls[0][1] as { choices: { key: string }[] };
+    expect(options.choices.map((c) => c.key)).toEqual(["allow", "readonly", "abort"]);
+    expect(mocks.takeoverEnter).not.toHaveBeenCalled();
+    expect(mocks.takeoverRun).not.toHaveBeenCalled();
+    expect(useUi.getState().takeover).toBeNull();
+  });
+
+  it("takeover 三选：只读则以 allowWrite=false 启动", async () => {
+    mocks.askChoice.mockResolvedValueOnce("readonly");
+    click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
+    await flush();
+    await flush();
+    expect(mocks.takeoverRun).toHaveBeenCalledWith(expect.objectContaining({ allowWrite: false }));
+    expect(useUi.getState().takeover?.allowWrite).toBe(false);
+    emit({ type: "done", answer: "看完了" });
+    await flush();
     expect(useUi.getState().takeover).toBeNull();
   });
 

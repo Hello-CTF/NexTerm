@@ -53,13 +53,13 @@ describe("takeoverEndedIn", () => {
 
   it("上一次结束标记与本次 EnterBanner 同屏时本次仍存活", () => {
     const text =
-      "[接管结束: 任务完成]\r\n[AI 正在操作此终端 — 按 Esc 或任意键夺回]\r\ndeploy@web-01:~$ ";
+      "[接管结束: 任务完成]\r\n[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\ndeploy@web-01:~$ ";
     expect(takeoverEndedIn(text)).toBe(false);
   });
 
   it("EnterBanner 之后又出现结束标记才算已结束", () => {
     const text =
-      "[AI 正在操作此终端 — 按 Esc 或任意键夺回]\r\n$ \r\n[接管结束: 用户退出]\r\n$ ";
+      "[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\n$ \r\n[接管结束: 用户退出]\r\n$ ";
     expect(takeoverEndedIn(text)).toBe(true);
   });
 
