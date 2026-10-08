@@ -601,12 +601,12 @@ async function hostKeyAcceptance(page, state) {
     }
     if (!menuOpen) throw new Error("terminal context menu did not open");
     const clicked = await page.evaluate(`(() => {
-      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("重新连接"));
+      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("重连会话"));
       if (!item) return false;
       item.click();
       return true;
     })()`);
-    assert.equal(clicked, true, "menu item 重新连接 missing");
+    assert.equal(clicked, true, "menu item 重连会话 missing");
     await page.waitFor(`${toastText}.includes("正在重连")`, 15_000);
     assert.equal(await page.evaluate(dialogPresent), false, "probe-less backend must fall back without a dialog");
     return { evidence: { note: "session_probe_host_key lands with M157; until the rebase the menu reconnect must degrade to the plain reconnect" } };

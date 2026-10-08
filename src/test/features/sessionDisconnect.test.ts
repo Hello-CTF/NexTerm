@@ -90,14 +90,16 @@ describe("session disconnect confirmation", () => {
     expect(await runningTerminalCount("s1")).toBe(1);
   });
 
-  it("asks with the affected terminal count before disconnecting", async () => {
+  it("asks with the total count and states consequences per terminal kind", async () => {
     seed([terminal("a"), terminal("b")]);
 
     await disconnectSessionWithConfirm("s1", "web-01");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const [message, options] = mocks.ask.mock.calls[0];
-    expect(message).toContain("2 个正在运行的终端");
+    expect(message).toContain("2 个正在运行的终端里");
+    expect(message).toContain("普通终端的进程会被结束，无法恢复");
+    expect(message).toContain("守护终端会留在「后台会话」，之后可接管");
     expect(message).toContain("web-01");
     expect(options.kind).toBe("warning");
     expect(mocks.disconnect).toHaveBeenCalledWith("s1");
@@ -110,7 +112,7 @@ describe("session disconnect confirmation", () => {
     await disconnectSessionWithConfirm("s1", "web-01");
 
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("2 个正在运行的终端");
+    expect(message).toContain("2 个正在运行的终端里");
   });
 
   it("does not recount a local tab whose backend twin already exited", async () => {
@@ -126,7 +128,7 @@ describe("session disconnect confirmation", () => {
     await disconnectSessionWithConfirm("s1", "web-01");
 
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("1 个正在运行的终端");
+    expect(message).toContain("1 个正在运行的终端里");
   });
 
   it("cancelling the confirmation keeps the connection", async () => {

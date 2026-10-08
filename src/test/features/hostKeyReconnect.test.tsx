@@ -286,7 +286,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.ask.mockResolvedValue(false);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 10.0.0.8:22");
     await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
@@ -307,7 +307,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
@@ -333,7 +333,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
@@ -354,7 +354,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.ask.mockResolvedValue(false);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 jump.example:22");
     expect(mocks.ask.mock.calls[0]?.[0]).toContain("SHA256:jumpfp");
@@ -380,7 +380,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
@@ -400,7 +400,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     mocks.reconnect.mockResolvedValue(true);
     await flush();
 
-    await clickTerminalMenuItem("重新连接");
+    await clickTerminalMenuItem("重连会话");
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
   });

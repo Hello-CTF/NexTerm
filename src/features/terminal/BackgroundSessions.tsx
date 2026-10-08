@@ -100,7 +100,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
   const kill = async (info: LiveTabInfo) => {
     const ok = await ask(
       `结束「${info.sessionName}」的这个后台终端？\n\n正在里面跑的进程会被终止，无法恢复。`,
-      { kind: "warning" },
+      { title: "结束进程", kind: "warning" },
     );
     if (!ok) return;
     setBusy((b) => ({ ...b, [info.tabId]: "kill" }));
@@ -146,7 +146,6 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
               <th style={{ width: 190 }}>所属会话</th>
               <th style={{ width: 130 }}>终端</th>
               <th>最近输出</th>
-              <th style={{ width: 96 }}>状态</th>
               <th style={{ width: 208 }} />
             </tr>
           </thead>
@@ -163,9 +162,6 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                     </td>
                     <td>
                       <span className="nx-skeleton w-2/3" />
-                    </td>
-                    <td>
-                      <span className="nx-skeleton w-3/5" />
                     </td>
                     <td>
                       <span className="nx-skeleton ml-auto w-32" />
@@ -186,12 +182,6 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                     {t.cols}×{t.rows}
                   </td>
                   <td className="text-neutral-400">{ago(t.lastOutputMsAgo)}</td>
-                  <td>
-                    <span className="nx-badge nx-badge-green">
-                      <span className="nx-dot" />
-                      运行中
-                    </span>
-                  </td>
                   <td className="nx-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <button
@@ -227,14 +217,14 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
             })}
             {error && (
               <tr>
-                <td colSpan={5} className="nx-table-empty text-red-300">
+                <td colSpan={4} className="nx-table-empty text-red-300">
                   读取后台会话失败：{error}
                 </td>
               </tr>
             )}
             {!error && items !== null && list.length === 0 && (
               <tr>
-                <td colSpan={5} className="nx-table-empty">
+                <td colSpan={4} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
                     关闭运行中的 SSH 终端标签不会结束里面的进程：它会留在这里继续运行，随时可以点「接管」接回。

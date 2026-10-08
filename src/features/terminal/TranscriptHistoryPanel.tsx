@@ -292,7 +292,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const removeTranscript = async (summary: TranscriptSummary) => {
     const ok = await ask(
       `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n记录内容将从数据库中移除，无法恢复。`,
-      { kind: "warning" },
+      { title: "删除终端记录", kind: "warning" },
     );
     if (!ok) return;
     try {
@@ -404,10 +404,14 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                     </td>
                     <td className="nx-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {summary.endedAt !== null && (
+                        {summary.endedAt !== null ? (
                           <button
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
-                            title={summary.syncOptIn ? "这条记录已开启同步，点击关闭" : "开启这条记录的同步"}
+                            title={
+                              summary.syncOptIn
+                                ? "这条记录已开启同步（经账号同步到你的其他设备），点击关闭"
+                                : "经账号把这条记录同步到你的其他设备（端到端加密）"
+                            }
                             aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -415,6 +419,19 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                             }}
                           >
                             {summary.syncOptIn ? "已同步" : "同步"}
+                          </button>
+                        ) : (
+                          <button
+                            className="nx-btn nx-btn-ghost nx-btn-xs"
+                            disabled
+                            title={
+                              summary.active
+                                ? "进行中的记录在结束后才能开启同步"
+                                : "这条记录没有结束时间，不能开启同步"
+                            }
+                            aria-label="同步不可用"
+                          >
+                            同步
                           </button>
                         )}
                         <span className={badgeClass(summary)}>
