@@ -80,10 +80,13 @@ function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
 export function FileTree({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
-  const [root, setRoot] = useState(HOME);
+  const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const homeSupported = sessionKind !== "winrm";
+  const [root, setRoot] = useState(() =>
+    useUi.getState().sessions.find((s) => s.id === sessionId)?.kind === "winrm" ? "/" : HOME,
+  );
   const [expanded, setExpanded] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [homeSupported, setHomeSupported] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -123,15 +126,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       retry: false,
     })),
   });
-
-  const rootQuery = results[0];
-
-  useEffect(() => {
-    if (root !== HOME || !rootQuery?.isError) return;
-    setHomeSupported(false);
-    setRoot("/");
-    pushToast("info", "当前后端不支持 ~ 展开，文件树已改从根目录 / 开始");
-  }, [root, rootQuery?.isError, pushToast]);
 
   const dirMap = useMemo(() => {
     const map = new Map<string, FileEntryDto[]>();
@@ -596,12 +590,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-tree-caret"
-          title={
-            homeSupported
-              ? "回到家目录 (~)"
-              : "该后端不支持 ~ 展开（本地和 SFTP 后端都不支持）"
-          }
-          aria-label={homeSupported ? "回到家目录 (~)" : "该后端不支持 ~ 展开"}
+          title={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
+          aria-label={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
           disabled={!homeSupported || root === HOME}
           onClick={() => {
             if (homeSupported) setRoot(HOME);

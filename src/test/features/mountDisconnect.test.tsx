@@ -84,15 +84,15 @@ function mountPanelWithDialogHost(): MountedView {
   );
 }
 
-describe("断开挂载确认（R42 审计结论：显式 info）", () => {
-  it("renders a plain info dialog (role=dialog, not alertdialog), cancel aborts", async () => {
+describe("断开挂载确认（warning 级别）", () => {
+  it("renders a warning alertdialog, cancel aborts", async () => {
     mounted = mountPanelWithDialogHost();
     await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
 
     clickButton(mounted!.container, "断开");
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
     const modal = mounted!.container.querySelector(".nx-modal")!;
-    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.querySelector(".nx-modal-body")?.textContent).toContain("断开 Z:？");
 
     clickButton(modal, "取消");
@@ -100,14 +100,14 @@ describe("断开挂载确认（R42 审计结论：显式 info）", () => {
     expect(mocks.remove).not.toHaveBeenCalled();
   });
 
-  it("confirm proceeds through the same info dialog", async () => {
+  it("confirm proceeds through the same warning dialog", async () => {
     mounted = mountPanelWithDialogHost();
     await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
 
     clickButton(mounted!.container, "断开");
     await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
     const modal = mounted!.container.querySelector(".nx-modal")!;
-    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.getAttribute("role")).toBe("alertdialog");
 
     clickButton(modal, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));

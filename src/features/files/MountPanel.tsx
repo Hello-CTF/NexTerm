@@ -152,7 +152,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   };
 
   const remove = async (point: string) => {
-    if (!(await ask(`断开 ${point}？`, { kind: "info" }))) return;
+    if (!(await ask(`断开 ${point}？`, { kind: "warning" }))) return;
     try {
       await mountApi.remove(point, sessionId);
       refresh();
