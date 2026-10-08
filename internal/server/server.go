@@ -55,8 +55,10 @@ type DBHealthSource interface {
 }
 
 type Config struct {
-	Options        Options
-	Dispatcher     *ipc.Dispatcher
+	Options    Options
+	Dispatcher *ipc.Dispatcher
+	// PeerDispatcher 是同步对端命令面(资产包三命令), 只在 sync-only 部署挂载到 /sync/rpc 并计入健康。
+	PeerDispatcher *ipc.Dispatcher
 	Environment    ipc.Environment
 	Tokens         TokenVerifier
 	Accounts       *account.Accounts
@@ -84,6 +86,7 @@ type Config struct {
 type Server struct {
 	options         Options
 	dispatcher      *ipc.Dispatcher
+	peerDispatcher  *ipc.Dispatcher
 	environment     ipc.Environment
 	tokens          TokenVerifier
 	accounts        *account.Accounts
@@ -236,7 +239,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
+		options: config.Options, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		tokens: config.Tokens, accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
@@ -280,6 +283,13 @@ func (s *Server) routes(config Config) http.Handler {
 		mux.Handle("POST /sync/v2/ids", s.accountGuard(s.requireAccountSession(inject(config.SyncObjects))))
 	}
 	if s.options.SyncOnly {
+		// 对端同步 RPC 面: 仅 digest/export/import 三命令, 与账号 RPC 同一套会话与 CSRF 把关;
+		// Host 与 Origin 边界由 transportGuard 统一施加。完整版不挂此面(/rpc 已含三命令)。
+		if config.PeerDispatcher != nil && s.accounts != nil {
+			peerRPC := ipc.NewRPCHandler(config.PeerDispatcher, s.environment)
+			peerRPC.MaxBytes = config.MaxRPCBytes
+			mux.Handle("POST /sync/rpc", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(peerRPC))))
+		}
 		return mux
 	}
 
@@ -362,7 +372,11 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	commands := s.dispatcher.Len()
 	if s.options.SyncOnly {
+		// sync-only 只挂对端命令面, 健康如实上报其真实命令数(未挂载时为 0)。
 		commands = 0
+		if s.peerDispatcher != nil && s.accounts != nil {
+			commands = s.peerDispatcher.Len()
+		}
 	}
 	var imageLinks *ImageLinkHealth
 	if s.images != nil {

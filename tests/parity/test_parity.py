@@ -295,5 +295,34 @@ class GoSelfcheckSurfaceTest(unittest.TestCase):
         self.assertIn("go-surface-probe", selfcheck)
 
 
+class SyncOnlyPeerSurfaceTest(unittest.TestCase):
+    def test_server_mounts_peer_rpc_only_in_sync_only_with_account_boundaries(self):
+        source = (ROOT / "internal/server/server.go").read_text(encoding="utf-8")
+        mount = 'mux.Handle("POST /sync/rpc", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(peerRPC))))'
+        self.assertIn(mount, source)
+        gate = source.index("if s.options.SyncOnly {")
+        mount_at = source.index(mount)
+        self.assertGreater(mount_at, gate)
+        self.assertLess(mount_at, source.index("return mux", mount_at))
+        self.assertIn("s.peerDispatcher.Len()", source)
+
+    def test_server_binary_wires_the_production_peer_dispatcher(self):
+        source = (ROOT / "cmd/nexterm-server/main.go").read_text(encoding="utf-8")
+        self.assertIn("application.Services.Sync.PeerDispatcher()", source)
+        self.assertIn("PeerDispatcher: peerDispatcher", source)
+
+    def test_baseline_records_the_three_command_sync_only_contract(self):
+        report = load(BASELINE / "go-selfcheck.json")
+        surface = report["runtime"]["command_surface"]
+        self.assertEqual(surface["peer_commands_count"], 3)
+        self.assertEqual(surface["sync_only_commands"], ["sync_digest", "sync_export", "sync_import"])
+        self.assertEqual(surface["health_sync_only_commands"], 3)
+        observations = report["runtime"]["sync_only_server"]
+        health = next(entry["health"] for entry in observations if "health" in entry)
+        self.assertTrue(health["syncOnly"])
+        self.assertEqual(health["commands"], 3)
+        self.assertIn({"sync_only_rpc_status": 404}, observations)
+
+
 if __name__ == "__main__":
     unittest.main()
