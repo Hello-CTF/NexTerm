@@ -877,6 +877,16 @@ async function hostKeyAcceptance(page, state) {
       const data = dto.data == null ? "" : JSON.stringify(dto.data);
       return data.includes(${JSON.stringify(FILES_TAB_ID)}) && data.includes('"leftMode":"files"');
     })()`, 15_000);
+    // 记录 fs_list 请求次数：not_found 不应触发 retry:1 的自动重试（死会话只应请求一次）。
+    await page.send("Network.enable");
+    const fsListPosts = [];
+    page.socket.addEventListener("message", (event) => {
+      const m = JSON.parse(String(event.data));
+      if (m.method === "Network.requestWillBeSent" && m.params?.request?.method === "POST") {
+        const post = String(m.params?.request?.postData ?? "");
+        if (post.includes('"fs_list"')) fsListPosts.push(post);
+      }
+    });
     await restartWithNewHostKey(state);
     await openApp(page, state.server.origin);
     await page.waitFor(`${wsTabCount} >= 1`, 15_000);
@@ -928,6 +938,25 @@ async function hostKeyAcceptance(page, state) {
     assert.ok(
       !treeDead.buttons.includes("重试"),
       `deleted session must not offer the futile retry in the tree: ${JSON.stringify(treeDead)}`,
+    );
+    const deadSessionId = await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const st = useUi.getState();
+      for (const w of st.workspaces) {
+        for (const p of w.panes) {
+          const t = p.tabs.find((t) => t.id === ${JSON.stringify(FILES_TAB_ID)});
+          if (t) return t.sessionId;
+        }
+      }
+      return null;
+    })()`);
+    assert.ok(deadSessionId, "files tab must still point at the dead session before reconnect");
+    await sleep(3000);
+    const deadFsListCalls = fsListPosts.filter((p) => p.includes(deadSessionId)).length;
+    assert.equal(
+      deadFsListCalls,
+      1,
+      `not_found must not trigger the retry:1 automatic retry: exactly one fs_list for the dead session: ${JSON.stringify(fsListPosts)}`,
     );
     const shot = await screenshot(page, "hostkey-filebrowser-dead-session.png");
 
@@ -1028,7 +1057,7 @@ async function hostKeyAcceptance(page, state) {
       treeRecovered && !treeRecovered.dead && treeRecovered.buttons.includes("重试") && !treeRecovered.buttons.includes("重新连接这台主机"),
       `tree must follow the synced workspace session back to a transient retry state: ${JSON.stringify(treeRecovered)}`,
     );
-    return { evidence: { deadState, treeDead, dialog: text.split("\n")[0], recoveredState, treeRecovered, screenshot: shot } };
+    return { evidence: { deadState, treeDead, deadFsListCalls, dialog: text.split("\n")[0], recoveredState, treeRecovered, screenshot: shot } };
   });
 }
 

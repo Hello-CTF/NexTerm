@@ -200,14 +200,18 @@ function BrowserFromStore() {
 }
 
 function mountFromStore(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+  });
   return mount(
     createElement(QueryClientProvider, { client }, createElement(BrowserFromStore)),
   );
 }
 
 function mountStandalone(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+  });
   return mount(
     createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
   );
@@ -435,13 +439,15 @@ describe("FileBrowser 会话已删除", () => {
 });
 
 describe("FileBrowser 瞬时文件错误", () => {
-  it("保留真实错误与「重试」，重试成功恢复，不引导重新连接", async () => {
+  it("保留真实错误与「重试」，自动重试一次仍失败后展示，手动重试成功恢复，不引导重新连接", async () => {
     seedWorkspace({ assetId: "asset-1" });
+    mocks.list.mockRejectedValueOnce({ code: "sftp", message: "SFTP：连接被对端重置" });
     mocks.list.mockRejectedValueOnce({ code: "sftp", message: "SFTP：连接被对端重置" });
     mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));
     mounted = mountFromStore();
 
     await waitFor(() => expect(panel()?.textContent).toContain("连接被对端重置"));
+    expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(buttonTexts()).toContain("重试");
     expect(buttonTexts()).not.toContain("重新连接这台主机");
     expect(toolbarButton("上传")?.disabled).toBe(false);
@@ -450,9 +456,45 @@ describe("FileBrowser 瞬时文件错误", () => {
     clickButton(mounted.container, "重试");
 
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mocks.list).toHaveBeenCalledTimes(3);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
     await flush();
     expect(panel()).toBeNull();
+  });
+});
+
+describe("FileBrowser 生产重试策略（retry: 1）", () => {
+  function mountProductionRetry(): MountedView {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: 1, retryDelay: 0, refetchOnWindowFocus: false } },
+    });
+    return mount(
+      createElement(QueryClientProvider, { client }, createElement(BrowserFromStore)),
+    );
+  }
+
+  it("not_found 不再自动重试：只调用一次 fsApi.list 即显示死会话面板", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mounted = mountProductionRetry();
+
+    await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    expect(mocks.list).toHaveBeenCalledWith(SID, "~");
+  });
+
+  it("瞬时错误保留一次自动重试：失败后共调用两次，之后重试可恢复", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.list.mockRejectedValue({ code: "sftp", message: "SFTP：连接被对端重置" });
+    mounted = mountProductionRetry();
+
+    await waitFor(() => expect(panel()?.textContent).toContain("连接被对端重置"));
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+
+    mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));
+    clickButton(mounted.container, "重试");
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mocks.list).toHaveBeenCalledTimes(3);
   });
 });

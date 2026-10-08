@@ -83,6 +83,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     queryKey: ["fs", sessionId, path],
     queryFn: () => fsApi.list(sessionId, path),
     refetchOnWindowFocus: false,
+    retry: (failureCount, error) =>
+      (error as { code?: string } | null)?.code === "not_found" ? false : failureCount < 1,
   });
 
   const list = entries.data ?? [];
