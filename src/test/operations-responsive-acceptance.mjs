@@ -333,6 +333,118 @@ async function checkRedis(page, vp, label) {
   return { evidence: m };
 }
 
+async function checkRedisConsole(page, label) {
+  await connectAsset(page, "redis-cache");
+  await page.waitFor(`document.body.textContent.includes("products:all")`);
+
+  const cmdPane = `[...document.querySelectorAll(".nx-pane")].find((p) => p.textContent.includes("命令台"))`;
+  const hitCmdInput = `(() => {
+    ${RECT_HELPER}
+    const pane = ${cmdPane};
+    const input = pane ? pane.querySelector('input[aria-label="Redis 命令"]') : null;
+    return { rect: __nxRect(input), hit: __nxHit(input) };
+  })()`;
+
+  const beforeSelect = await page.evaluate(hitCmdInput);
+  assert.equal(beforeSelect.hit.ok, true, `${label}: redis command input not hittable before key selection: ${JSON.stringify(beforeSelect)}`);
+
+  await page.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.nx-row')].find((r) => r.textContent?.includes('products:all'));
+    if (!row) throw new Error("redis key row not found");
+    row.click();
+  })()`);
+  await page.waitFor(`document.body.textContent.includes("秒后过期")`);
+
+  const guidance = await page.evaluate(`(() => {
+    const pane = ${cmdPane};
+    return pane ? pane.textContent : "";
+  })()`);
+  assert.ok(guidance.includes("执行前会要求确认"), `${label}: dangerous-command guidance must be retained`);
+  assert.ok(guidance.includes("不支持引号"), `${label}: argument-split guidance must be retained`);
+
+  const runCommand = async (text) => {
+    await page.evaluate(`(() => {
+      const pane = ${cmdPane};
+      const input = pane.querySelector('input[aria-label="Redis 命令"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      setter.call(input, ${JSON.stringify(text)});
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const btn = [...pane.querySelectorAll("button")].find((b) => b.textContent?.trim() === "执行");
+      if (!btn) throw new Error("执行 button not found");
+      btn.click();
+    })()`);
+  };
+
+  await runCommand("PING");
+  await page.waitFor(`(() => {
+    const pre = ${cmdPane}.querySelector('pre[role="status"]');
+    return Boolean(pre && pre.textContent.includes("PONG"));
+  })()`);
+
+  const afterRun = await page.evaluate(`(() => {
+    ${RECT_HELPER}
+    const pane = ${cmdPane};
+    const input = pane.querySelector('input[aria-label="Redis 命令"]');
+    const out = pane.querySelector('pre[role="status"]');
+    const region = out ? out.closest(".overflow-auto") : null;
+    const outRect = __nxRect(out);
+    const regionRect = __nxRect(region);
+    const visible = Boolean(outRect && regionRect && outRect.bottom <= regionRect.bottom + 1 && outRect.bottom > regionRect.top);
+    return { rect: __nxRect(input), hit: __nxHit(input), outRect, regionRect, visible };
+  })()`);
+  assert.equal(afterRun.hit.ok, true, `${label}: redis command input not hittable after command output rendered: ${JSON.stringify(afterRun)}`);
+  assert.equal(afterRun.visible, true, `${label}: command output must be visible inside the console scroll region: ${JSON.stringify(afterRun)}`);
+
+  await runCommand("FLUSHALL");
+  await page.waitFor(`Boolean(document.querySelector(".nx-overlay .nx-modal"))`);
+  const gate = await page.evaluate(`(() => {
+    ${RECT_HELPER}
+    const modal = document.querySelector(".nx-overlay .nx-modal");
+    const cancel = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消");
+    return { text: modal.textContent, rect: __nxRect(modal), innerHeight: window.innerHeight, cancelHit: __nxHit(cancel) };
+  })()`);
+  assert.ok(gate.text.includes("FLUSHALL"), `${label}: dangerous-command confirm dialog must name the command: ${JSON.stringify(gate)}`);
+  assert.ok(gate.rect.top >= 0 && gate.rect.bottom <= gate.innerHeight, `${label}: confirm dialog must fit the viewport: ${JSON.stringify(gate.rect)}`);
+  assert.equal(gate.cancelHit.ok, true, `${label}: confirm dialog cancel must be hittable: ${JSON.stringify(gate)}`);
+  await page.evaluate(`(() => {
+    const modal = document.querySelector(".nx-overlay .nx-modal");
+    [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消").click();
+  })()`);
+  await page.waitFor(`!document.querySelector(".nx-overlay .nx-modal")`);
+  const afterCancel = await page.evaluate(`(() => {
+    const pre = ${cmdPane}.querySelector('pre[role="status"]');
+    return pre ? pre.textContent : "";
+  })()`);
+  assert.ok(afterCancel.includes("PONG") && !afterCancel.includes("未内置"), `${label}: cancelled FLUSHALL must not execute: ${JSON.stringify(afterCancel)}`);
+
+  await page.evaluate(`(() => {
+    const pane = ${cmdPane};
+    const btn = [...pane.querySelectorAll("button")].find((b) => b.textContent?.trim() === "改过期时间");
+    if (!btn) throw new Error("改过期时间 button not found");
+    btn.click();
+  })()`);
+  await page.waitFor(`Boolean(document.querySelector(".nx-overlay .nx-modal input"))`);
+  const ttl = await page.evaluate(`(() => {
+    ${RECT_HELPER}
+    const modal = document.querySelector(".nx-overlay .nx-modal");
+    const input = modal.querySelector("input");
+    const cancel = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消");
+    return { text: modal.textContent, value: input.value, rect: __nxRect(modal), innerHeight: window.innerHeight, cancelHit: __nxHit(cancel) };
+  })()`);
+  assert.ok(ttl.text.includes("填 0 会立即删除该键"), `${label}: TTL dialog must keep the delete warning: ${JSON.stringify(ttl)}`);
+  assert.ok(/^\d+$/.test(ttl.value), `${label}: TTL dialog must prefill the current TTL: ${JSON.stringify(ttl)}`);
+  assert.ok(ttl.rect.top >= 0 && ttl.rect.bottom <= ttl.innerHeight, `${label}: TTL dialog must fit the viewport: ${JSON.stringify(ttl.rect)}`);
+  assert.equal(ttl.cancelHit.ok, true, `${label}: TTL dialog cancel must be hittable: ${JSON.stringify(ttl)}`);
+  await page.evaluate(`(() => {
+    const modal = document.querySelector(".nx-overlay .nx-modal");
+    [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消").click();
+  })()`);
+  await page.waitFor(`!document.querySelector(".nx-overlay .nx-modal")`);
+
+  await screenshot(page, `redis-console-${label}.png`);
+  return { evidence: { beforeSelect, afterRun, gate: gate.rect, ttl: ttl.rect } };
+}
+
 async function checkMysql(page, vp, label) {
   await connectAsset(page, "db-prod");
   await page.waitFor(
@@ -586,6 +698,10 @@ async function operationsResponsiveAcceptance(page) {
   await setViewport(page, { ...VIEWPORTS[2], touch: true });
   await boot(page, { theme: "dark" });
   await pass("touch-targets@390x844", () => checkTouchTargets(page, "390x844-touch"));
+
+  await setViewport(page, VIEWPORTS[3]);
+  await boot(page, { theme: "dark" });
+  await pass("redis-console@568x320", () => checkRedisConsole(page, "568x320"));
 }
 
 let vite;
@@ -613,7 +729,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    viewports: VIEWPORTS.map((vp) => vp.label).concat(["390x844-touch", "320x568-light", "390x844-light"]),
+    viewports: VIEWPORTS.map((vp) => vp.label).concat(["390x844-touch", "320x568-light", "390x844-light", "568x320-console"]),
   },
   checks,
   harness_errors: harnessErrors,

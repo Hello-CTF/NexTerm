@@ -2233,6 +2233,20 @@
   }
 }
 
+@media (max-height: 480px) {
+  .nx-redis-console {
+    max-height: 55%;
+  }
+
+  .nx-redis-pane .nx-empty {
+    padding: 8px 12px;
+  }
+
+  .nx-redis-pane .nx-empty-icon {
+    display: none;
+  }
+}
+
 @media (pointer: coarse) {
   :root {
     --nx-keys-h: 53px;
