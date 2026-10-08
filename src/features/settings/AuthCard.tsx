@@ -157,8 +157,8 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录只建立连接并完成配置,本身不上传也不下载;资产、分组、片段的同步由你在下方「账号同步」台手动触发
-          (推送到云端 / 拉取并应用)。不登录也能继续本地使用。
+          登录只建立连接并完成配置;下方「账号同步」台会读取云端副本进行对比,但不会自动推送或应用,
+          推送到云端 / 拉取并应用由你手动触发。不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"

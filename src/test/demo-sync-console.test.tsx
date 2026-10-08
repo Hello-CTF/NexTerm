@@ -31,7 +31,7 @@ describe("演示同步台 · 文案对齐真实同步台", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("推送到云端 (2)");
-    expect(text).toContain("拉取并应用 (0)");
+    expect(text).toContain("拉取并应用 (1)");
     expect(text).not.toContain("从云端拉取");
     expect(text).toContain("手动推送到云端或拉取并应用");
 

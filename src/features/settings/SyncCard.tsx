@@ -1227,7 +1227,7 @@ function DemoSyncConsole() {
         </button>
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled>
           <IconDownload size={12} />
-          拉取并应用 (0)
+          拉取并应用 (1)
         </button>
       </div>
     </section>
