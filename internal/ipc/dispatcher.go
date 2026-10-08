@@ -72,7 +72,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, request Request, environment 
 	response = Failure(NormalizeError(fmt.Errorf("command dispatch did not run")))
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			response = Failure(NormalizeError(fmt.Errorf("command %s panicked: %v", request.Command, recovered)))
+			response = Failure(WrapError(CodeInternal, "处理请求时发生内部异常，请重试", fmt.Errorf("command %s panicked: %v", request.Command, recovered)))
 		}
 	}()
 
@@ -80,7 +80,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, request Request, environment 
 	handler, ok := d.handlers[request.Command]
 	d.mu.RUnlock()
 	if !ok {
-		return Failure(NewError(CodeNotFound, "未找到命令: "+request.Command))
+		return Failure(WrapError(CodeNotFound, "当前版本不支持该操作，请刷新或更新应用后重试", fmt.Errorf("unknown command %q", request.Command)))
 	}
 
 	args := request.Args

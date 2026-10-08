@@ -19,7 +19,7 @@ type AgentRunner interface {
 type AgentExecutor struct {
 	Runner AgentRunner
 
-	ScopeFor func(Trigger) tools.Scope
+	ScopeFor func(Trigger) (tools.Scope, error)
 }
 
 var _ Executor = (*AgentExecutor)(nil)
@@ -31,7 +31,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 	stream := newTerminalStream()
 	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: "cron", ModelProfileID: trigger.ModelProfileID}
 	if e.ScopeFor != nil {
-		args.Scope = e.ScopeFor(trigger)
+		scope, err := e.ScopeFor(trigger)
+		if err != nil {
+			return fmt.Errorf("无法查询会话的终端范围，本次定时运行已终止，请确认会话仍然存在后重试: %w", err)
+		}
+		args.Scope = scope
 	}
 	response, err := e.Runner.Start(guard.WithUnattended(ctx), args, agent.StaticStream(stream))
 	if err != nil {

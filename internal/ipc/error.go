@@ -28,7 +28,6 @@ const (
 	CodeNotController    Code = "not_controller"
 	CodeNeedsConfirm     Code = "needs_confirm"
 	CodeTimeout          Code = "timeout"
-	CodeAIProvider       Code = "ai_provider"
 	CodeCrypto           Code = "crypto"
 	CodeInternal         Code = "internal"
 )
@@ -74,6 +73,10 @@ func (e *Error) WithDetail(detail any) *Error {
 
 func BadParam(cause error) *Error {
 	return WrapError(CodeBadParam, "参数错误: "+cause.Error(), cause)
+}
+
+func badDecode(cause error) *Error {
+	return WrapError(CodeBadParam, "请求参数格式不正确，请检查输入后重试", cause)
 }
 
 func NormalizeError(err error) *Error {

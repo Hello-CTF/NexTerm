@@ -8,15 +8,15 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("cron job not found")
-	ErrConflict         = errors.New("cron job revision conflict")
-	ErrJobLimit         = errors.New("cron job session limit reached")
-	ErrJobRunning       = errors.New("cron job is running")
-	ErrAlreadyRunning   = errors.New("cron scheduler is already running")
-	ErrInvalidSchedule  = errors.New("invalid cron schedule")
-	ErrStorage          = errors.New("cron storage failure")
-	ErrExecutionTimeout = errors.New("cron execution timeout")
-	ErrLeaseLost        = errors.New("cron job lease lost")
+	ErrNotFound         = errors.New("定时任务不存在，可能已被删除，请刷新后重试")
+	ErrConflict         = errors.New("定时任务已被其他操作修改，请刷新后重试")
+	ErrJobLimit         = errors.New("当前会话的定时任务数量已达上限，请删除不再需要的任务后再创建")
+	ErrJobRunning       = errors.New("任务正在运行中，请等待本次运行结束后再操作")
+	ErrAlreadyRunning   = errors.New("定时任务调度器已在运行")
+	ErrInvalidSchedule  = errors.New("定时表达式无效，请检查格式（分 时 日 月 周，如 0 9 * * *）")
+	ErrStorage          = errors.New("定时任务存储失败，请重试")
+	ErrExecutionTimeout = errors.New("定时任务执行超时")
+	ErrLeaseLost        = errors.New("定时任务租约丢失，本次运行已中断")
 )
 
 type StorageError struct {

@@ -68,8 +68,8 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
 		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "all healthy"})
 	}}
-	executor := &AgentExecutor{Runner: runner, ScopeFor: func(trigger Trigger) tools.Scope {
-		return tools.Scope{SessionID: trigger.SessionID, AssetID: "asset-1"}
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(trigger Trigger) (tools.Scope, error) {
+		return tools.Scope{SessionID: trigger.SessionID, AssetID: "asset-1"}, nil
 	}}
 	if err := executor.Execute(context.Background(), testTrigger()); err != nil {
 		t.Fatalf("execute = %v; want success", err)
@@ -88,6 +88,37 @@ func TestAgentExecutorRunsToDone(t *testing.T) {
 	}
 	if !runner.unattended[0] {
 		t.Fatal("run was not marked unattended")
+	}
+}
+
+func TestAgentExecutorFailsHonestlyWhenScopeQueryFails(t *testing.T) {
+	runner := &fakeAgentRunner{}
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+		return tools.Scope{}, errors.New("conversation store offline")
+	}}
+	err := executor.Execute(context.Background(), testTrigger())
+	if err == nil || !strings.Contains(err.Error(), "无法查询会话的终端范围") {
+		t.Fatalf("execute error = %v; want an honest scope-query failure", err)
+	}
+	if !strings.Contains(err.Error(), "conversation store offline") {
+		t.Fatalf("execute error = %v; want the cause preserved", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.args) != 0 {
+		t.Fatalf("started %d runs; want none when the scope query fails", len(runner.args))
+	}
+}
+
+func TestAgentExecutorAllowsLegitimatelyEmptyScope(t *testing.T) {
+	runner := &fakeAgentRunner{emit: func(stream agent.Stream) {
+		_ = stream.Send(context.Background(), agent.Event{Type: "done", Answer: "ok"})
+	}}
+	executor := &AgentExecutor{Runner: runner, ScopeFor: func(Trigger) (tools.Scope, error) {
+		return tools.Scope{}, nil
+	}}
+	if err := executor.Execute(context.Background(), testTrigger()); err != nil {
+		t.Fatalf("execute = %v; want success with an empty scope", err)
 	}
 }
 

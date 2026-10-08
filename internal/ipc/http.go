@@ -39,11 +39,11 @@ func (h *RPCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	var request Request
 	if err := decoder.Decode(&request); err != nil {
-		_ = json.NewEncoder(w).Encode(Failure(BadParam(err)))
+		_ = json.NewEncoder(w).Encode(Failure(badDecode(err)))
 		return
 	}
 	if err := ensureJSONEnd(decoder); err != nil {
-		_ = json.NewEncoder(w).Encode(Failure(BadParam(err)))
+		_ = json.NewEncoder(w).Encode(Failure(badDecode(err)))
 		return
 	}
 

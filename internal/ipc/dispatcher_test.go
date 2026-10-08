@@ -86,6 +86,12 @@ func TestDispatcherResponseContracts(t *testing.T) {
 	if response.Error == nil || response.Error.Code != CodeNotFound {
 		t.Fatalf("unknown command error = %+v", response.Error)
 	}
+	if strings.Contains(response.Error.Message, "missing") {
+		t.Fatalf("unknown command message leaks command name: %q", response.Error.Message)
+	}
+	if cause := response.Error.Unwrap(); cause == nil || !strings.Contains(cause.Error(), "missing") {
+		t.Fatalf("unknown command cause should preserve the command name, got %v", cause)
+	}
 	if err := dispatcher.RegisterRaw("null", func(context.Context, *Call) (any, error) { return nil, nil }); err == nil {
 		t.Fatal("duplicate registration succeeded")
 	}
@@ -107,13 +113,25 @@ func TestDispatcherReturnsBadParamsAndContainsPanics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response := dispatcher.Dispatch(context.Background(), Request{Command: "echo", Args: json.RawMessage(`{"name":`)}, Environment{})
+	response := dispatcher.Dispatch(context.Background(), Request{Command: "echo", Args: json.RawMessage(`{"name":123}`)}, Environment{})
 	if response.Error == nil || response.Error.Code != CodeBadParam {
 		t.Fatalf("bad parameter error = %+v", response.Error)
 	}
+	if strings.Contains(response.Error.Message, "json:") || strings.Contains(response.Error.Message, "Go struct") {
+		t.Fatalf("bad parameter message leaks decoder details: %q", response.Error.Message)
+	}
+	if cause := response.Error.Unwrap(); cause == nil || !strings.Contains(cause.Error(), "json:") {
+		t.Fatalf("bad parameter cause should preserve the decode error, got %v", cause)
+	}
 	response = dispatcher.Dispatch(context.Background(), Request{Command: "panic"}, Environment{})
-	if response.Error == nil || response.Error.Code != CodeInternal || !strings.Contains(response.Error.Message, "boom") {
+	if response.Error == nil || response.Error.Code != CodeInternal {
 		t.Fatalf("panic error = %+v", response.Error)
+	}
+	if strings.Contains(response.Error.Message, "boom") || strings.Contains(response.Error.Message, "panic") {
+		t.Fatalf("panic message leaks internals: %q", response.Error.Message)
+	}
+	if cause := response.Error.Unwrap(); cause == nil || !strings.Contains(cause.Error(), "boom") {
+		t.Fatalf("panic cause should preserve the panic value, got %v", cause)
 	}
 }
 
