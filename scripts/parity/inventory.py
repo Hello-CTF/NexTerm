@@ -13,7 +13,12 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "testdata/parity/inventory.json"
 RUST_REGISTRY = ROOT / "testdata/parity/rust-registry.json"
-FRONTEND_COMMANDS = ROOT / "src/ipc/commands.ts"
+FRONTEND_FACADE = [
+    ROOT / "src/ipc/commands.ts",
+    ROOT / "src/ipc/cron.ts",
+    ROOT / "src/ipc/grantApi.ts",
+    ROOT / "src/ipc/memory.ts",
+]
 FRONTEND_EVENTS = ROOT / "src/ipc/events.ts"
 FRONTEND_LAYOUT = ROOT / "src/app/layout.ts"
 
@@ -42,8 +47,8 @@ def rust_commands(registry: dict[str, Any]) -> list[dict[str, Any]]:
     return entries
 
 
-def frontend_commands() -> list[dict[str, Any]]:
-    text = FRONTEND_COMMANDS.read_text(encoding="utf-8")
+def frontend_calls(path: pathlib.Path) -> list[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8")
     calls = []
     for match in re.finditer(r"\bcall\b", text):
         index = match.end()
@@ -87,10 +92,15 @@ def frontend_commands() -> list[dict[str, Any]]:
             {
                 "name": command,
                 "accessor": f"{api}.{method}",
-                "source": rel(FRONTEND_COMMANDS),
+                "source": rel(path),
                 "line": line_at(text, match.start()),
             }
         )
+    return calls
+
+
+def frontend_commands() -> list[dict[str, Any]]:
+    calls = [call for path in FRONTEND_FACADE for call in frontend_calls(path)]
     if not calls:
         raise RuntimeError("frontend command extraction returned no entries")
     return calls
@@ -207,7 +217,7 @@ def generate() -> dict[str, Any]:
                 "entries": rust,
             },
             "frontend_facade": {
-                "source": rel(FRONTEND_COMMANDS),
+                "sources": [rel(path) for path in FRONTEND_FACADE],
                 "method_count": len(frontend),
                 "unique_command_count": len(frontend_names),
                 "entries": frontend,

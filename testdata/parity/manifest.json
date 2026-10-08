@@ -30,8 +30,8 @@
       "path": "testdata/parity/inventory.json",
       "role": "source-derived command/event/stream feature inventory",
       "status": "generated",
-      "bytes": 75531,
-      "sha256": "5a0f4cbb5886edf5f4d4f4da1fe9cff3cab4b0ed503a39d0384d972451f47126"
+      "bytes": 81137,
+      "sha256": "ee9fda2e32f1d292f6325a6be062338d7f5afaf38625c22f14f2ed73eed6de24"
     },
     {
       "path": "testdata/parity/go-aliases.json",

@@ -1318,9 +1318,7 @@
       "id": "sync_origin",
       "go_name": "sync_origin",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.origin"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
@@ -1348,9 +1346,7 @@
       "id": "sync_token",
       "go_name": "sync_token",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.token"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
@@ -1358,9 +1354,7 @@
       "id": "sync_token_rotate",
       "go_name": "sync_token_rotate",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.rotateToken"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
@@ -1388,9 +1382,7 @@
       "id": "sync_remote_digest",
       "go_name": "sync_remote_digest",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.remoteDigest"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
@@ -1398,9 +1390,7 @@
       "id": "sync_push",
       "go_name": "sync_push",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.push"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
@@ -1408,9 +1398,7 @@
       "id": "sync_pull",
       "go_name": "sync_pull",
       "status": "not-implemented",
-      "frontend_accessors": [
-        "syncApi.pull"
-      ],
+      "frontend_accessors": [],
       "sync_only_feature": false,
       "evidence": "no Go registration or passing feature-specific evidence supplied"
     }
