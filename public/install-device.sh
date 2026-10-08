@@ -1,5 +1,5 @@
 #!/bin/sh
-# NexTerm 设备 agent 一键接入 (FLEET157)。
+# NexTerm 设备 agent 一键接入。
 # 用法: curl -fsSL https://<server>/install-device.sh | sh -s -- --server <接入地址> --code <接入码> --version <版本> [--insecure] [--data-dir <目录>]
 # 仅支持 Linux x86_64/aarch64。二进制与同 release 的 SHA256SUMS 校验通过后才安装并 enroll, 最后装 systemd --user 服务, 全程不需要 root。
 set -eu
@@ -16,7 +16,7 @@ usage() {
     '' \
     '  --server    NexTerm 接入地址 (必填), 如 https://nexterm.example.com' \
     '  --code      设备接入码 (必填), 设备管理页签发的一次性接入码' \
-    '  --version   NexTerm 版本 (必填), 如 0.2.2' \
+    '  --version   NexTerm 版本 (必填), 如 0.2.2-rc.7 (对应 GitHub release tag v0.2.2-rc.7)' \
     '  --insecure  接入地址使用自签名证书时跳过 TLS 校验' \
     '  --data-dir  数据目录 (默认 ${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm})'
 }

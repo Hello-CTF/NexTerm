@@ -97,7 +97,7 @@ tasks:
       - node scripts/build.mjs desktop --release --repro-check --os=linux --arch={{.GOARCH | default "amd64"}}
 
   package:
-    summary: Package the host desktop and enforce all artifact size evidence
+    summary: Package the host desktop and enforce artifact assertion evidence (Rust/custom-Go size comparisons stay informational)
     cmds:
       - node scripts/build.mjs release
 

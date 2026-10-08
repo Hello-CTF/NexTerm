@@ -31,7 +31,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *     --os=darwin --arch=arm64 --require-evidence
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
- *     --flavor=full --file=target/release-assets/NexTerm.tar.gz --require-evidence
+ *     --flavor=full --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

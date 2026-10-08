@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""校验 lazycat/lzc-manifest.yml 的 `application.injects`（网关头 + 文件选择器接入）仍与随包脚本一致。
+"""校验 lazycat/lzc-manifest.yml 的 `application.injects`（网关头 + 文件选择器接入）与
+主密钥注入链仍与随包脚本一致。
 
-为什么需要它 —— 这条链路上有三处**只能靠约定对齐、出错时完全静默**的地方：
+为什么需要它 —— 这条链路上有四处**只能靠约定对齐、出错时完全静默**的地方：
 
 1. `subdomain` 用的是官方 `#@build if profile=dev / else / end` **打包期文本裁剪指令**，
    dev 与 release 的包 ID 不同，同一个文件必须两套都对。
@@ -10,6 +11,10 @@
    页面里不会报任何错，只是"网盘文件"那个页签不出现。
 3. request inject 的 `bridgePrefix` 必须与 browser inject 的 `params.fileBridgeRoot` 一致。
    对不上 ⇒ 选择**他人共享目录**时请求打偏（官方文档「常见错误」第一条）。
+4. 平台只能把 `stable_secret` 注入环境变量，主密钥必须经镜像 entrypoint 落成 0600
+   文件再以 `NEXTERM_MASTER_KEY_FILE` 交给服务端（`NEXTERM_MASTER_KEY` 已弃用）。
+   manifest 直注已弃用变量、entrypoint 漏 unset 或漏 0600，都会让密钥以弃用形态
+   留在进程环境里，服务端只打一条弃用告警，不报错。
 
 依赖：PyYAML（`pip install pyyaml`）。用法：
 
@@ -30,11 +35,16 @@ if not __debug__:
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "lazycat" / "lzc-manifest.yml"
 BUILD_SH = ROOT / "lazycat" / "image" / "build-server.sh"
+DOCKERFILE = ROOT / "lazycat" / "image" / "Dockerfile"
+ENTRYPOINT_SH = ROOT / "lazycat" / "image" / "entrypoint.sh"
 
 BRIDGE_ID = "lazycat-file-bridge"
 CHOOSER_ID = "open-save-chooser"
 GATEWAY_ID = "gateway-auth"
 CONTENT_PREFIX = "file:///lzcapp/pkg/content/"
+
+MASTER_KEY_TRANSPORT = "NEXTERM_LAZYCAT_VAULT_MASTER_KEY"
+MASTER_KEY_TRANSPORT_ENV = f'{MASTER_KEY_TRANSPORT}={{{{ stable_secret "vault_master" }}}}'
 
 # 匿名可达的最小集合: 设备 agent 合同 (enroll/sync/current-url/WS) 与公开
 # 分享链接数据面 (/share/public/{token}, token 即凭据)。
@@ -143,7 +153,7 @@ def assert_profile(document, want_subdomain):
 
     public_path = app.get("public_path")
     assert public_path == EXPECTED_PUBLIC_PATH, (
-        f"public_path 应当恰好是设备 agent 合同 4 条（被改宽会让匿名请求也拿到网关头，"
+        f"public_path 应当恰好是设备 agent 合同 {len(EXPECTED_PUBLIC_PATH)} 条（被改宽会让匿名请求也拿到网关头，"
         f"被收窄会让设备 agent 够不到服务器）：{public_path!r}"
     )
     print(f"    public_path = {EXPECTED_PUBLIC_PATH}")
@@ -178,6 +188,16 @@ def assert_profile(document, want_subdomain):
     print(f"    {GATEWAY_ID}: on=request, auth_required=true, params.key 与 NEXTERM_GATEWAY_AUTH 同 seed")
     check_js(gateway_src, GATEWAY_ID)
 
+    assert MASTER_KEY_TRANSPORT_ENV in environment, (
+        f"services 环境变量必须保留 {MASTER_KEY_TRANSPORT_ENV!r} 作为平台注入通道"
+        f"（镜像 entrypoint 把它落成 0600 密钥文件）：{environment!r}"
+    )
+    assert not any(entry.startswith("NEXTERM_MASTER_KEY=") for entry in environment), (
+        f"不得把已弃用的 NEXTERM_MASTER_KEY 直注服务环境（entrypoint 落 0600 文件后"
+        f"经 NEXTERM_MASTER_KEY_FILE 交给服务端）：{environment!r}"
+    )
+    print(f"    master key: {MASTER_KEY_TRANSPORT} 平台注入, 已弃用的 NEXTERM_MASTER_KEY 不再直注")
+
     bridge = by_id[BRIDGE_ID]
     assert bridge.get("on") == "request", f"{BRIDGE_ID}.on 应为 request"
     assert bridge.get("when") == ["/__lazycat_file_bridge/*"], bridge.get("when")
@@ -205,6 +225,23 @@ def assert_profile(document, want_subdomain):
     )
     print(f"    {CHOOSER_ID}: on=browser, fileBridgeRoot 与 bridgePrefix 一致")
     return uri
+
+
+def assert_entrypoint_wrapper(wrapper: str, dockerfile: str) -> None:
+    """镜像 entrypoint 必须把平台注入通道落成 0600 密钥文件再启动服务端。"""
+    assert 'ENTRYPOINT ["/usr/local/bin/nexterm-server-entrypoint"]' in dockerfile, (
+        "Dockerfile ENTRYPOINT 必须指向 entrypoint 包装脚本"
+    )
+    assert f"unset {MASTER_KEY_TRANSPORT}" in wrapper, (
+        f"entrypoint 必须在 exec 前 unset {MASTER_KEY_TRANSPORT}，否则密钥留在进程环境里"
+    )
+    assert 'NEXTERM_MASTER_KEY_FILE="$data_dir/master.key"' in wrapper and "export NEXTERM_MASTER_KEY_FILE" in wrapper, (
+        "entrypoint 必须把密钥文件路径经 NEXTERM_MASTER_KEY_FILE 传给服务端"
+    )
+    assert "chmod 0600" in wrapper, "entrypoint 必须把密钥文件权限设为 0600"
+    assert "umask 077" in wrapper, "entrypoint 必须在写密钥文件前 umask 077"
+    assert "exec /usr/local/bin/nexterm-server" in wrapper, "entrypoint 必须 exec 真正的服务端"
+    print("    entrypoint: 通道变量落 0600 密钥文件, NEXTERM_MASTER_KEY_FILE 交接, unset 后 exec 服务端")
 
 
 def selftest(yaml, Loader, raw) -> None:
@@ -235,12 +272,23 @@ def selftest(yaml, Loader, raw) -> None:
             for entry in environment
         ]
 
+    def deprecated_master_key_env(doc):
+        doc["services"]["nexterm-server"]["environment"].append("NEXTERM_MASTER_KEY=hardcoded-secret")
+
+    def drop_master_key_transport(doc):
+        doc["services"]["nexterm-server"]["environment"] = [
+            entry for entry in doc["services"]["nexterm-server"]["environment"]
+            if not entry.startswith(f"{MASTER_KEY_TRANSPORT}=")
+        ]
+
     negatives = [
         ("public_path 改宽", drift_public_path),
         ("public_path 删除", drop_public_path),
         ("auth_required: false", anonymous_gateway),
         ("网关密钥写死", static_gateway_key),
         ("env seed 不一致", mismatched_seed),
+        ("已弃用 NEXTERM_MASTER_KEY 直注", deprecated_master_key_env),
+        ("主密钥注入通道被删", drop_master_key_transport),
     ]
     assert_profile(copy.deepcopy(base), "nexterm")
     print("    正例通过")
@@ -249,6 +297,24 @@ def selftest(yaml, Loader, raw) -> None:
         mutate(mutated)
         try:
             assert_profile(mutated, "nexterm")
+        except AssertionError:
+            print(f"    负例通过（{name} 被拒绝）")
+            continue
+        sys.exit(f"负例未被发现：{name} 应当断言失败")
+
+    wrapper = ENTRYPOINT_SH.read_text(encoding="utf-8")
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    wrapper_negatives = [
+        ("entrypoint 漏 unset 通道变量", wrapper.replace(f"unset {MASTER_KEY_TRANSPORT}", "true"), dockerfile),
+        ("entrypoint 漏 0600", wrapper.replace("chmod 0600", "chmod 0644"), dockerfile),
+        ("entrypoint 漏 umask", wrapper.replace("umask 077", "umask 022"), dockerfile),
+        ("entrypoint 漏 NEXTERM_MASTER_KEY_FILE", wrapper.replace('NEXTERM_MASTER_KEY_FILE="$data_dir/master.key"', "true"), dockerfile),
+        ("Dockerfile 绕开 entrypoint", wrapper, dockerfile.replace('ENTRYPOINT ["/usr/local/bin/nexterm-server-entrypoint"]', 'ENTRYPOINT ["/usr/local/bin/nexterm-server"]')),
+    ]
+    assert_entrypoint_wrapper(wrapper, dockerfile)
+    for name, mutated_wrapper, mutated_dockerfile in wrapper_negatives:
+        try:
+            assert_entrypoint_wrapper(mutated_wrapper, mutated_dockerfile)
         except AssertionError:
             print(f"    负例通过（{name} 被拒绝）")
             continue
@@ -281,6 +347,11 @@ def main() -> int:
     src = ROOT / "lazycat" / repo_rel
     assert src.is_file(), f"仓库里没有随包脚本：{src}"
     print(f"    仓库源文件存在（{src.stat().st_size} 字节）")
+
+    print("== 主密钥注入链 ==")
+    assert_entrypoint_wrapper(
+        ENTRYPOINT_SH.read_text(encoding="utf-8"), DOCKERFILE.read_text(encoding="utf-8")
+    )
 
     print("\n全部断言通过；外部真机验收仍以 evidence gap 单独记录。")
     return 0

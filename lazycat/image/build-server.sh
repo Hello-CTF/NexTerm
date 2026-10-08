@@ -11,7 +11,7 @@ case "$LZC_ARCH" in
   amd64) ELF_ARCH="x86-64" ;;
   arm64) ELF_ARCH="aarch64" ;;
   *)
-    echo "[lzc-build] ✗ LZC_ARCH 只能是 amd64 或 arm64，收到：$LZC_ARCH" >&2
+    echo "[lzc-build] 错误：LZC_ARCH 只能是 amd64 或 arm64，收到：$LZC_ARCH" >&2
     exit 1
     ;;
 esac
@@ -24,10 +24,10 @@ echo "[lzc-build] 1/4 基线镜像: ${BASE_REF}"
 case "$BASE_REF" in
   registry.lazycat.cloud/*) ;;
   *)
-    echo "[lzc-build] ⚠️ FROM 不是懒猫官方源引用 ⇒ 上游匹配会失败，**整个基线层将被全量内嵌**" >&2
+    echo "[lzc-build] 警告：FROM 不是懒猫官方源引用，上游匹配会失败，整个基线层将被全量内嵌" >&2
     echo "[lzc-build]    修复：先跑  lzc-cli appstore copy-image <基线> --arch ${LZC_ARCH}" >&2
     echo "[lzc-build]    再把 FROM 改成它打印出的 registry.lazycat.cloud/... 引用。" >&2
-    echo "[lzc-build]    （不是致命错误：LPK 仍能构建安装，只是会大 ~27 MiB。）" >&2
+    echo "[lzc-build]    （不是致命错误：LPK 仍能构建安装，只是基线层全量内嵌会明显增大体积。）" >&2
     ;;
 esac
 
@@ -68,7 +68,7 @@ FILE_OUT="$(file -b "$OUT_BIN" || true)"
 case "$FILE_OUT" in
   *ELF*"$ELF_ARCH"*) ;;
   *)
-    echo "[lzc-build] ✗ 产出不是 Linux/${ELF_ARCH} 的 ELF：$FILE_OUT" >&2
+    echo "[lzc-build] 错误：产出不是 Linux/${ELF_ARCH} 的 ELF：$FILE_OUT" >&2
     echo "[lzc-build]   目标架构是 LZC_ARCH=${LZC_ARCH}。" >&2
     exit 1
     ;;
@@ -76,19 +76,19 @@ esac
 case "$FILE_OUT" in
   *statically\ linked*) ;;
   *)
-    echo "[lzc-build] ✗ 产出不是静态链接：$FILE_OUT" >&2
+    echo "[lzc-build] 错误：产出不是静态链接：$FILE_OUT" >&2
     echo "[lzc-build]   服务端必须 CGO_ENABLED=0（共享交付入口已强制，这里不应发生）。" >&2
     exit 1
     ;;
 esac
 if command -v go >/dev/null 2>&1; then
   if ! go version -m "$OUT_BIN" | grep -q 'CGO_ENABLED=0'; then
-    echo "[lzc-build] ✗ go version -m 里没有 CGO_ENABLED=0 标记" >&2
+    echo "[lzc-build] 错误：go version -m 里没有 CGO_ENABLED=0 标记" >&2
     exit 1
   fi
 fi
 if [ ! -f "$CONTENT/web/index.html" ]; then
-  echo "[lzc-build] ✗ $CONTENT/web/index.html 不存在：前端没构建成功？" >&2
+  echo "[lzc-build] 错误：$CONTENT/web/index.html 不存在：前端没构建成功？" >&2
   exit 1
 fi
 

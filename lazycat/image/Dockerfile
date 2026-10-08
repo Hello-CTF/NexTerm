@@ -10,8 +10,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY nexterm-server /usr/local/bin/nexterm-server
+COPY entrypoint.sh /usr/local/bin/nexterm-server-entrypoint
 RUN test -x /usr/local/bin/nexterm-server \
-    || { echo "FATAL: nexterm-server 没有执行位（构建上下文里的权限丢了？）" >&2; exit 1; }
+    || { echo "FATAL: nexterm-server 没有执行位（构建上下文里的权限丢了？）" >&2; exit 1; } \
+    && chmod 0755 /usr/local/bin/nexterm-server-entrypoint
 
 ENV NEXTERM_LISTEN=0.0.0.0:8080 \
     NEXTERM_DATA_DIR=/lzcapp/var/nexterm \
@@ -21,4 +23,4 @@ WORKDIR /lzcapp/var
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/nexterm-server"]
+ENTRYPOINT ["/usr/local/bin/nexterm-server-entrypoint"]
