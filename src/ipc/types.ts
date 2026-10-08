@@ -193,6 +193,44 @@ lastError: string | null, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, };
 
+/**
+ * 一条更新检查的结果（跨 IPC）。
+ *
+ * 刻意把「有没有新版」与「能不能装」拆成两个字段：服务端构建、或公钥未配置时，
+ * 仍然可以**知道**有没有新版（[`Self::available`]），只是装不了
+ * （[`Self::can_install`]）。合成一个 `bool` 的话，界面就无从区分
+ * 「已是最新」与「查不了」—— 而这两句话对用户的意思完全相反。
+ */
+export type UpdateInfo = { 
+/**
+ * 当前运行版本（编译期常量，来自 `Cargo.toml`）。
+ */
+current: string, 
+/**
+ * 可用的新版本号；没有新版时为 `None`。
+ */
+latest: string | null, 
+/**
+ * 是否确实有更新的版本。
+ */
+available: boolean, 
+/**
+ * 本版更新说明（Release 正文，Markdown）。
+ */
+notes: string | null, 
+/**
+ * 新版本发布时间。
+ */
+date: string | null, 
+/**
+ * 当前构建能否应用内安装。
+ */
+canInstall: boolean, 
+/**
+ * 不能安装时的原因。**直接展示给用户**，所以写成中文人话。
+ */
+unavailableReason: string | null, };
+
 export type VaultStatusDto = { initialized: boolean, 
 /**
  * not_init | dpapi | master

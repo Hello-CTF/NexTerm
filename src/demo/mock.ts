@@ -1081,6 +1081,40 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         vault: { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 },
       };
 
+    /* ─────────────── 在线更新 ─────────────── */
+    //
+    // 演示模式刻意**返回「有新版本」**：这个环境本来就是用来排 UI 的，返回
+    // 「已是最新」的话横幅和设置卡片永远不出现，这功能等于没法验。
+    case "app_update_check":
+      return {
+        current: "0.1.0-demo",
+        latest: "9.9.9-demo",
+        available: true,
+        notes: "（演示模式的假说明）\n· 修了一个并不存在的 bug\n· 加了一个看不见的功能",
+        date: "2026-10-08",
+        canInstall: true,
+        unavailableReason: null,
+      };
+
+    // 假下载：分 10 次推进度事件，让进度条真的走起来 ——
+    // 只 return 而不推事件的话，这段进度 UI 是验不了的。
+    case "app_update_install": {
+      const total = 24 * 1024 * 1024;
+      for (let i = 1; i <= 10; i++) {
+        emit("update://progress", {
+          downloaded: Math.round((total * i) / 10),
+          total,
+        });
+        await new Promise((r) => setTimeout(r, 180));
+      }
+      return null;
+    }
+
+    // 演示模式下重启只是把页面刷一下，让「重启」这个动作有可见后果。
+    case "app_restart":
+      window.location.reload();
+      return null;
+
     /* ─────────────── fs ─────────────── */
     case "fs_list": {
       const path = absPath(a.path);

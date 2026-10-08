@@ -13,6 +13,7 @@ pub mod mount;
 pub mod session;
 pub mod sync;
 pub mod terminal;
+pub mod update;
 pub mod vault;
 
 use crate::ipc_shim as tauri;
@@ -44,6 +45,10 @@ macro_rules! nexterm_commands {
         $cb! {
             // app
             app_platform,
+            // update（在线更新：桌面能装能重，服务端如实说不支持）
+            update::app_update_check,
+            update::app_update_install,
+            update::app_restart,
             // layout（工作区布局：服务端权威运行态的一部分）
             layout::layout_get,
             layout::layout_put,

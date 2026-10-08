@@ -9,6 +9,8 @@ pub const TERMINAL_THROTTLED: &str = "terminal://throttled";
 /// 终端控制权 / 观看人数快照变化。见 [`TerminalControlPayload`]。
 pub const TERMINAL_CONTROL: &str = "terminal://control";
 pub const FS_PROGRESS: &str = "fs://progress";
+/// 应用内更新的下载进度。见 [`UpdateProgressPayload`]。
+pub const UPDATE_PROGRESS: &str = "update://progress";
 pub const DOCKER_STATS: &str = "docker://stats";
 pub const AI_EVENT: &str = "ai://event";
 /// M5 预留，v1 不发。
@@ -79,6 +81,17 @@ pub struct FsProgressPayload {
     pub transferred: u64,
     pub total: u64,
     pub done: bool,
+}
+
+/// 更新包下载进度（`update://progress`）。
+///
+/// `total` 允许是 `None`：`Content-Length` 不是所有镜像都给（走代理、分块传输时常见），
+/// 缺了它界面该显示**不确定**进度条，而不是「0%」—— 后者看着像卡死了。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgressPayload {
+    pub downloaded: u64,
+    pub total: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

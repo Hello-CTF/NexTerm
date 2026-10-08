@@ -29,10 +29,19 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
+    "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/ProbiusOfficial/NexTerm/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_ME_RUN_tauri_signer_generate"
     }
   }
 }

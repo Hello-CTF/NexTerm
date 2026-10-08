@@ -46,6 +46,8 @@ import { CredentialsView } from "../features/credentials/CredentialsView";
 import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { TakeoverBanner } from "./TakeoverBanner";
+import { UpdateBanner } from "./UpdateBanner";
+import { useStartupUpdateCheck } from "./useUpdate";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
@@ -116,6 +118,10 @@ function tabIcon(t: AppTab) {
 let bootLocalTried = false;
 
 export default function App() {
+  // 启动后静默查一次更新（延迟 3 秒，让首屏先安顿下来；失败完全静默）。
+  // 放在最顶上是因为它没有任何依赖 —— 越早挂上，用户看到提示越早。
+  useStartupUpdateCheck();
+
   const {
     workspaces,
     setActiveWorkspace,
@@ -591,6 +597,9 @@ export default function App() {
     <div className="flex h-full flex-col">
       {/* 接管横幅（§8.6）：置顶占满整行，非空即表示 AI 正在操作某个终端 */}
       <TakeoverBanner />
+      {/* 更新横幅：只在「有新版本且当前构建装得了」时出现。
+          刻意排在接管横幅**之后** —— 接管提示是硬性安全要求，必须在最顶上 */}
+      <UpdateBanner />
 
       <div className="flex min-h-0 flex-1">
         {/* 最左：图标导航栏。macOS 原生红绿灯悬浮在窗口左上（约 28px 高），

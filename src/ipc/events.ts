@@ -25,6 +25,13 @@ export const EVENTS = {
    */
   terminalControl: "terminal://control",
   fsProgress: "fs://progress",
+  /**
+   * 应用内更新的下载进度。与 Rust 侧 `events::UPDATE_PROGRESS` 必须一致。
+   *
+   * 只在用户点了「立即更新」之后才会有事件 —— 检查更新本身是不发事件的，
+   * 它的结果直接由 `app_update_check` 的返回值给出。
+   */
+  updateProgress: "update://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
   appError: "app://error",
@@ -39,6 +46,17 @@ export interface SessionStatusEvent {
 export interface TerminalExitEvent {
   tabId: string;
   exitCode: number | null;
+}
+
+/**
+ * `update://progress` 的 payload（camelCase，与 Rust `UpdateProgressPayload` 对齐）。
+ *
+ * `total` 可能是 `null`：不是所有镜像都回 `Content-Length`。缺了它要显示**不确定**
+ * 进度条，不能按 0% 画 —— 那看着像卡死了，用户会去杀进程。
+ */
+export interface UpdateProgressEvent {
+  downloaded: number;
+  total: number | null;
 }
 
 /**

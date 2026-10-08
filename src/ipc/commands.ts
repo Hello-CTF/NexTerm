@@ -93,6 +93,30 @@ export const systemApi = {
   platform: () => call<string>("app_platform"),
 };
 
+// ───────── 在线更新 ─────────
+
+/**
+ * 更新检查与安装（桌面：能查能装；服务端：如实说装不了）。
+ *
+ * 返回值里 `available` 与 `canInstall` 是**两个**字段，前端别把它们并成一个
+ * 「有没有新版」：`available=false, canInstall=true` 是「已是最新」，
+ * `available=false, canInstall=false` 是「查不了」—— 两句话对用户的意思相反。
+ * 判定与原因文案都在 Rust 侧 `update` 模块，这里只做转发。
+ *
+ * `check` **不会抛**：网络不通、GitHub 限流、更新服务没配，全部降级成
+ * `unavailableReason` 正常返回。所以界面看到 `canInstall === false && available === false`
+ * 时要**展示原因**，而不是当成失败弹红条。
+ * `install` 会抛 —— 真装失败了必须让用户知道。
+ */
+export const updateApi = {
+  /** 查一次有没有新版本。 */
+  check: () => call<import("./types").UpdateInfo>("app_update_check"),
+  /** 下载并安装。进度经 `update://progress` 事件推送。 */
+  install: () => call<void>("app_update_install"),
+  /** 重启应用。macOS / Linux 上装完新版本必须重启才生效。 */
+  restart: () => call<void>("app_restart"),
+};
+
 // ───────── session ─────────
 
 export interface SessionInfo {

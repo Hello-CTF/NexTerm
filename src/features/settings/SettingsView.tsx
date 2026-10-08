@@ -16,6 +16,7 @@ import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
 import { SyncCard } from "./SyncCard";
+import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -418,6 +419,10 @@ export function SettingsView() {
 
         {/* 资产同步：桌面与微服之间搬资产。桌面是发起方，浏览器版是被同步的一端 */}
         <SyncCard />
+
+        {/* 软件更新：常驻入口。顶部横幅只在「有新版本且装得了」时出现，
+            想主动查、或想弄明白「为什么我这儿不提示」都看这张卡片 */}
+        <UpdateCard />
 
         {/* 快捷键速查 */}
         <section className="nx-card">

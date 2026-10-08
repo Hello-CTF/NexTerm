@@ -7,6 +7,7 @@
 // 扁平的一排标签很快就没法用了。
 import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
+import type { UpdateInfo } from "../ipc/types";
 import { describeError } from "../ui/errorText";
 
 export type PaneKind =
@@ -288,6 +289,24 @@ interface UiState {
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
   dismissToast: (id: number) => void;
+
+  // ── 在线更新 ──
+  //
+  // 放全局而不是设置页的局部 state：启动时那次静默检查的结果要同时被**顶部横幅**和
+  // 设置卡片读到。两处各查一次就是两次 GitHub 请求，而未认证的 GitHub API 限
+  // 60 次/小时**按 IP 算** —— 一个办公室共用一个出口 IP，很容易一起被限。
+  /** 最近一次检查结果；null = 还没查过。 */
+  updateInfo: UpdateInfo | null;
+  setUpdateInfo: (v: UpdateInfo | null) => void;
+  /** 用户点了「稍后」：本次运行不再用横幅打扰（设置页仍可手动查）。 */
+  updateBannerDismissed: boolean;
+  dismissUpdateBanner: () => void;
+  /** 正在下载安装：横幅 / 设置卡片据此显示进度并禁用按钮。 */
+  updateInstalling: boolean;
+  setUpdateInstalling: (v: boolean) => void;
+  /** 下载进度 0–1；`null` = 总大小未知（画不确定进度条，别按 0% 画）。 */
+  updateProgress: number | null;
+  setUpdateProgress: (v: number | null) => void;
 }
 
 let toastSeq = 1;
@@ -733,6 +752,15 @@ export const useUi = create<UiState>((set, get) => ({
   setSessions: (s) => set({ sessions: s }),
   setAiBusy: (v) => set({ aiBusy: v }),
   setTakeover: (t) => set({ takeover: t }),
+
+  updateInfo: null,
+  setUpdateInfo: (v) => set({ updateInfo: v }),
+  updateBannerDismissed: false,
+  dismissUpdateBanner: () => set({ updateBannerDismissed: true }),
+  updateInstalling: false,
+  setUpdateInstalling: (v) => set({ updateInstalling: v }),
+  updateProgress: null,
+  setUpdateProgress: (v) => set({ updateProgress: v }),
 
   pushToast: (kind, text) => {
     const id = toastSeq++;

@@ -99,6 +99,7 @@ desktop = [
     "dep:tauri",
     "dep:tauri-plugin-dialog",
     "dep:tauri-plugin-global-shortcut",
+    "dep:tauri-plugin-updater",
 ]
 
 # 服务端版（懒猫微包容器，Linux、无桌面、无 WebKit）。
@@ -110,6 +111,16 @@ server = ["dep:axum", "dep:clap"]
 tauri = { version = "2", features = [], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
+
+# 在线更新（检查 + 下载 + 安装 + 验签）。只桌面版要 —— 服务端跑在容器里，
+# 升级方式是换部署包，没有「用新包替换自己」这回事（见 `src/update.rs`）。
+#
+# 代价要说清楚：它自己带一份 `reqwest`（0.12 线），而本项目的 `reqwest` 钉在 0.13
+# （与 winrm-rs 对齐，见下方注释）⇒ 依赖树里会同时存在两个 reqwest。
+# 换取的是「不自己实现 NSIS 静默安装 + macOS 包替换 + 签名校验」——
+# 那三件事的任何一件写错，后果都是用户拿到一个装坏了的应用。
+# 默认 feature 是 `rustls-tls`，与项目既有的 TLS 选型一致，不额外拉 native-tls。
+tauri-plugin-updater = { version = "2", optional = true }
 
 # 服务端 HTTP / WebSocket。
 #

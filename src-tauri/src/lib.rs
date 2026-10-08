@@ -19,6 +19,7 @@ pub mod store;
 pub mod sync;
 pub mod terminal;
 pub mod transport;
+pub mod update;
 pub mod vault;
 
 /// 服务端装配（HTTP + WS）。仅服务端模式编译；里面依赖 axum（`server` feature）。
@@ -117,9 +118,15 @@ pub fn run() {
     let _log_guard = init_tracing(&log_dir);
     install_panic_hook(log_dir.clone());
 
+    // 更新插件只在桌面侧注册：服务端没有 Tauri 运行时，`update` 模块那边也
+    // 走 `cfg(not(feature = "desktop"))` 的降级实现（见 `update.rs`）。
+    //
+    // 插件本身**不检查更新**，只是把能力挂上去 —— 检查时机由前端决定
+    // （启动后静默查一次 + 设置页手动），见 `src/app/useUpdate.ts`。
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     let builder = commands::register(builder);
     builder
         .on_window_event(|window, event| {

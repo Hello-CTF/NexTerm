@@ -106,9 +106,61 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Release 说明共 $(wc -c < "$body") 字节 / $(wc -l < "$body") 行"
 
+      # ── 应用内更新的签名密钥守卫 ─────────────────────────────────────
+      #
+      # 背景：`tauri.conf.json` 里 `bundle.createUpdaterArtifacts: true` 让 Tauri
+      # 额外产出更新产物（Windows 的 `.nsis.zip`、macOS 的 `.app.tar.gz`）与各自的
+      # `.sig` 签名，tauri-action 再据此汇总出 Release 上的 `latest.json` ——
+      # 应用「检查更新」读的就是它。
+      #
+      # 但**签名私钥不可能进仓库**（它在发行方的 CI Secret 里），而缺少
+      # `TAURI_SIGNING_PRIVATE_KEY` 时 `tauri build` 会**直接失败**。于是刚合入的
+      # 代码会把发版流水线整个打断，直到维护者去生成密钥为止 —— 这个守卫就是为它。
+      #
+      # 行为：
+      #   · 配了密钥 → 照常出更新产物 + latest.json；
+      #   · 没配密钥 → 这一版临时把 createUpdaterArtifacts 关掉，出常规安装包，
+      #     发版照常成功。应用里「软件更新」会如实显示「更新服务未配置」
+      #     （见 src-tauri/src/update.rs），而不是报一串验签错误。
+      #
+      # 维护者一次性配置（三条命令，见 docs/UPDATER.md）：
+      #   pnpm tauri signer generate -w ~/.tauri/nexterm.key
+      #   → 公钥填进 src-tauri/tauri.conf.json 的 plugins.updater.pubkey
+      #   → 私钥与密码存成 Secret：TAURI_SIGNING_PRIVATE_KEY / _PASSWORD
+      - name: 决定本版是否产出更新产物
+        id: updater
+        shell: bash
+        # 注意 secret 必须经 env 中转：直接写进 `if:` 表达式里，GitHub 会因为
+        # 「表达式里不能出现 secrets」而报错（这是它刻意的防泄漏设计）。
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "已配置签名密钥，本版产出更新产物与 latest.json"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY，本版不出更新产物（应用内更新不可用）"
+            # 这里改的是 runner 上的检出副本，不影响仓库 —— 只为了让 `tauri build`
+            # 不在缺少私钥时失败。
+            node -e '
+              const fs = require("fs");
+              const p = "src-tauri/tauri.conf.json";
+              const c = JSON.parse(fs.readFileSync(p, "utf8"));
+              c.bundle.createUpdaterArtifacts = false;
+              fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+              console.log("已将 createUpdaterArtifacts 置为 false（仅本次构建）");
+            '
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 空字符串与「没设置」对 Tauri 是同一件事，所以未配置时直接传空即可，
+          # 不必分支出两个 step。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "NexTerm ${{ github.ref_name }}"
