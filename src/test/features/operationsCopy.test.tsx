@@ -204,7 +204,7 @@ describe("DockerPanel 文案", () => {
 
   it("工具栏标注真实刷新节奏，镜像空态与容器一致", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
-    await flushUntil(() => text().includes("容器 5s · 镜像 30s 自动刷新"));
+    await flushUntil(() => text().includes("容器 5s · 镜像与主机概览 30s 自动刷新"));
     const segment = [...mounted.container.querySelectorAll(".nx-segment-item")].find((b) =>
       b.textContent?.includes("镜像"),
     );
@@ -274,7 +274,7 @@ describe("ForwardPanel 文案", () => {
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s" }));
     await flushUntil(() => text().includes("10.0.0.8"));
     expect(text()).toContain("静态转发");
-    expect(text()).toContain("SOCKS5 动态转发");
+    expect(text()).toContain("SOCKS5 代理");
     expect(text()).not.toContain("本地静态");
   });
 

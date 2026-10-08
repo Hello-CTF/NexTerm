@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dockerApi, type ContainerSummary } from "../../ipc/commands";
-import { describeError } from "../../ui/errorText";
+import { describeDockerError } from "./dockerErrors";
 import {
   IconArrowLeft,
   IconArrowUp,
@@ -104,7 +104,7 @@ function InsightError({
 }) {
   return (
     <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
-      <span className="min-w-0 flex-1">{describeError(error)}</span>
+      <span className="min-w-0 flex-1">{describeDockerError(error)}</span>
       <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onRetry}>
         <IconRefresh size={12} />
         {retryText}
@@ -118,7 +118,7 @@ function RedactHint() {
   return (
     <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
-      敏感值已遮蔽 · 界面不会展示原始敏感值
+      敏感值已遮蔽 · 按名称和连接串内嵌凭据自动识别
     </span>
   );
 }
@@ -465,7 +465,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
           <InsightLoading text="读取容器目录…" />
         ) : q.isError ? (
           <InsightError
-            error={redactPathInText(describeError(q.error), path)}
+            error={redactPathInText(describeDockerError(q.error), path)}
             onRetry={() => void q.refetch()}
             extra={
               up ? (
@@ -488,9 +488,15 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                 return (
                   <tr
                     key={entry}
-                    className="cursor-pointer"
-                    title={sensitive ? "已遮蔽" : redactContainerPath(joinContainerPath(path, name))}
-                    onClick={() => setPath(joinContainerPath(path, name))}
+                    className={isDir ? "cursor-pointer" : undefined}
+                    title={
+                      sensitive
+                        ? "已遮蔽"
+                        : isDir
+                          ? redactContainerPath(joinContainerPath(path, name))
+                          : `${redactContainerPath(joinContainerPath(path, name))}（文件，仅列出目录，不读取内容）`
+                    }
+                    onClick={isDir ? () => setPath(joinContainerPath(path, name)) : undefined}
                   >
                     <td className="truncate text-neutral-200">
                       {isDir ? (
@@ -506,7 +512,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                       )}
                     </td>
                     <td style={{ width: 130 }} className="nx-hint nx-right">
-                      {isDir ? "目录" : ""}
+                      {isDir ? "目录" : "文件"}
                     </td>
                   </tr>
                 );

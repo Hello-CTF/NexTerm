@@ -49,7 +49,7 @@ async function mountForward(): Promise<MountedView> {
   const mounted = mount(
     createElement(QueryClientProvider, { client }, createElement(ForwardPanel, { sessionId: "s" })),
   );
-  clickButton(mounted.container, "SOCKS5 动态转发");
+  clickButton(mounted.container, "SOCKS5 代理");
   return mounted;
 }
 

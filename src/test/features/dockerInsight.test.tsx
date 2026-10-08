@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   listDir: vi.fn(),
   action: vi.fn(),
   imageRemove: vi.fn(),
+  logsAttach: vi.fn(),
+  reopenCbs: [] as (() => void)[],
   ask: vi.fn(),
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   toast: vi.fn(),
@@ -41,10 +43,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       action: mocks.action,
       imageRemove: mocks.imageRemove,
       imagePull: vi.fn(),
-      logsAttach: vi.fn(),
+      logsAttach: mocks.logsAttach,
       execAttach: vi.fn(),
     },
-    terminalApi: { closeTab: vi.fn() },
+    terminalApi: { closeTab: vi.fn(() => Promise.resolve()) },
   };
 });
 vi.mock("../../ipc/events", async (importOriginal) => {
@@ -53,7 +55,10 @@ vi.mock("../../ipc/events", async (importOriginal) => {
     ...actual,
     createBinaryChannel: vi.fn(),
     disposeChannel: vi.fn(),
-    onChannelReopen: vi.fn(() => () => undefined),
+    onChannelReopen: (_ch: unknown, cb: () => void) => {
+      mocks.reopenCbs.push(cb);
+      return () => undefined;
+    },
   };
 });
 vi.mock("../../ui/dialogs", async (importOriginal) => {
@@ -70,12 +75,14 @@ import { DialogHost } from "../../ui/DialogHost";
 import {
   buildInspectViewModel,
   isSensitiveFileName,
+  isSensitiveName,
   redactBindEntry,
   redactContainerPath,
   redactFileName,
   redactInspectTree,
   redactMountSource,
   redactPathInText,
+  redactUrlCredentials,
   REDACTED_MARK,
 } from "../../features/docker/dockerRedact";
 import { parseStatsOutput } from "../../features/docker/statsParse";
@@ -157,6 +164,7 @@ describe("Docker insight controls (M61)", () => {
     vi.clearAllMocks();
     document.body.replaceChildren();
     useUi.setState({ pushToast: vi.fn() });
+    mocks.reopenCbs.length = 0;
     mocks.ps.mockResolvedValue([containerA, containerB]);
     mocks.images.mockResolvedValue([]);
     mocks.overview.mockResolvedValue({
@@ -219,7 +227,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    expect(mockedText()).toContain("敏感值已遮蔽 · 界面不会展示原始敏感值");
+    expect(mockedText()).toContain("敏感值已遮蔽 · 按名称和连接串内嵌凭据自动识别");
     expect(mockedText()).not.toContain("显示敏感值");
 
     const rowOf = (needle: string) =>
@@ -353,6 +361,16 @@ describe("Docker insight controls (M61)", () => {
     }
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/");
 
+    const serverRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
+      r.textContent?.includes("server.js"),
+    );
+    if (!serverRow) throw new Error("server.js row not found");
+    expect(serverRow.className).not.toContain("cursor-pointer");
+    expect(serverRow.textContent).toContain("文件");
+    click(serverRow);
+    await flush();
+    expect(mocks.listDir).not.toHaveBeenCalledWith("s1", containerA.id, "/server.js");
+
     const etcRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("etc"),
     );
@@ -366,8 +384,10 @@ describe("Docker insight controls (M61)", () => {
     );
     if (!passwdRow) throw new Error("masked passwd row not found");
     expect(passwdRow.getAttribute("title")).toBe("已遮蔽");
+    expect(passwdRow.textContent).toContain("文件");
     click(passwdRow);
-    await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/etc/passwd"));
+    await flush();
+    expect(mocks.listDir).not.toHaveBeenCalledWith("s1", containerA.id, "/etc/passwd");
   });
 
   it("files tab masks sensitive directory names in rows and breadcrumbs but navigates by raw value", async () => {
@@ -442,23 +462,23 @@ describe("Docker insight controls (M61)", () => {
       r.textContent?.includes("server.js"),
     );
     if (!serverRow) throw new Error("server.js row not found");
-    click(serverRow);
-    await waitFor(() =>
-      expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js"),
+    expect(serverRow.className).not.toContain("cursor-pointer");
+    expect(serverRow.getAttribute("title")).toBe(
+      `/${REDACTED_MARK}/app/server.js（文件，仅列出目录，不读取内容）`,
     );
-    await waitFor(() => expect(mockedText()).toContain("Not a directory"));
-    expect(mockedText()).toContain(`/${REDACTED_MARK}/app/server.js`);
-    expect(mockedText()).not.toContain("secrets");
+    click(serverRow);
+    await flush();
+    expect(mocks.listDir).not.toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js");
 
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets");
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app");
-    expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js");
+    expect(mockedText()).not.toContain("secrets");
   });
 
   it("files tab shows inaccessible path errors with retry and a way back", async () => {
     mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
       if (path === "/") return Promise.resolve(["etc/"]);
-      if (path === "/etc") return Promise.resolve(["shadow"]);
+      if (path === "/etc") return Promise.resolve(["shadow/"]);
       return Promise.reject(new Error("docker ls exited with code 1: Permission denied"));
     });
     const m = (mounted = mountPanel());
@@ -492,6 +512,75 @@ describe("Docker insight controls (M61)", () => {
     await openInsight(m, 0);
     clickButton(m.container, "文件");
     await waitFor(() => expect(mockedText()).toContain("这个目录是空的"));
+  });
+
+  it("toolbar summary says 加载中 only while pending and 加载失败 after a failure", async () => {
+    const pending = deferred<ContainerSummary[]>();
+    mocks.ps.mockReturnValue(pending.promise);
+    mounted = mountPanel();
+
+    await waitFor(() => expect(mockedText()).toContain("容器状态加载中"));
+    pending.resolve([containerA]);
+    await waitFor(() => expect(mockedText()).toContain("1 运行中 / 共 1"));
+    expect(mockedText()).not.toContain("容器状态加载中");
+  });
+
+  it("failed containers query turns the toolbar summary into 加载失败 with an actionable daemon hint", async () => {
+    mocks.ps.mockRejectedValueOnce(
+      new Error("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"),
+    );
+    mounted = mountPanel();
+
+    await waitFor(() => expect(mockedText()).toContain("容器状态加载失败"));
+    expect(mockedText()).not.toContain("容器状态加载中");
+    expect(mockedText()).toContain("连不上这台主机的 Docker 守护进程");
+  });
+
+  it("missing docker binary maps to an actionable not-installed hint", async () => {
+    mocks.ps.mockRejectedValueOnce(new Error("bash: docker: command not found"));
+    mounted = mountPanel();
+
+    await waitFor(() => expect(mockedText()).toContain("容器列表加载失败"));
+    expect(mockedText()).toContain("这台主机没有安装 Docker");
+  });
+
+  it("log follow surfaces an interrupted state with retry when re-attach fails after reconnect", async () => {
+    mocks.logsAttach.mockResolvedValueOnce("tab-1").mockRejectedValueOnce(new Error("ssh: session down"));
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(m.container.querySelector('button[title="查看日志"]')).not.toBeNull());
+
+    click(m.container.querySelector('button[title="查看日志"]')!);
+    await flush();
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+
+    mocks.reopenCbs[mocks.reopenCbs.length - 1]();
+    await flush();
+    await waitFor(() => expect(mockedText()).toContain("跟随中断"));
+    expect(mockedText()).toContain("ssh: session down");
+    expect(mockedText()).not.toContain("跟随中 · 关闭此标签或返回即停止");
+
+    mocks.logsAttach.mockResolvedValueOnce("tab-2");
+    clickButton(m.container, "重新跟随");
+    await flush();
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+    expect(mockedText()).not.toContain("跟随中断");
+  });
+
+  it("log follow ends instead of claiming 跟随中 once the container is no longer running", async () => {
+    mocks.logsAttach.mockResolvedValue("tab-1");
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(m.container.querySelectorAll('button[title="查看日志"]').length).toBe(2));
+
+    click(m.container.querySelectorAll('button[title="查看日志"]')[1]);
+    await flush();
+    await waitFor(() => expect(mockedText()).toContain("跟随中 · 关闭此标签或返回即停止"));
+
+    mocks.reopenCbs[mocks.reopenCbs.length - 1]();
+    await flush();
+    await waitFor(() => expect(mockedText()).toContain("跟随结束"));
+    expect(mockedText()).toContain("容器已停止，不再产生新日志");
+    expect(mockedText()).not.toContain("跟随中断");
+    expect(mocks.logsAttach).toHaveBeenCalledTimes(1);
   });
 
   function mockedText(): string {
@@ -654,6 +743,74 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     await waitFor(() => expect(mocks.imageRemove).toHaveBeenCalledWith("s1", "sha256:bbb222", false));
   });
 
+  it("image remove explains the last-tag deletes the image itself", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    click(segmentItem(m.container, "镜像"));
+    await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
+
+    click(m.container.querySelector('button[title="删除镜像"]')!);
+    const modal = await openModal();
+    expect(modal.textContent).toContain("删除镜像 nginx:1.25");
+    expect(modal.textContent).toContain("最后一个标签");
+    expect(modal.textContent).toContain("镜像本体会一并删除");
+    expect(modal.textContent).toContain("仍可用来创建容器");
+    await closeModal(modal, "取消");
+    expect(mocks.imageRemove).not.toHaveBeenCalled();
+  });
+
+  it("bulk image remove for tagged-only selection explains the last-tag consequence", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    click(segmentItem(m.container, "镜像"));
+    await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
+
+    const pickA = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 nginx:1.25"]');
+    if (!pickA) throw new Error("pick checkbox not found");
+    click(pickA);
+    await waitFor(() => expect(m.container.textContent).toContain("已选 1"));
+
+    clickButton(m.container, "删除选中 (1)");
+    const modal = await openModal();
+    expect(modal.textContent).toContain("删除选中的 1 个镜像");
+    expect(modal.textContent).toContain("最后一个标签");
+    expect(modal.textContent).toContain("仍可用来创建容器");
+    await closeModal(modal, "取消");
+    expect(mocks.imageRemove).not.toHaveBeenCalled();
+  });
+
+  it("stop asks for confirmation with consequences, cancel aborts", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('button[title="停止"]')).not.toBeNull());
+
+    click(m.container.querySelector('button[title="停止"]')!);
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("停止容器 web");
+    expect(modal.textContent).toContain("服务会中断");
+    expect(modal.textContent).toContain("可以重新启动");
+    await closeModal(modal, "取消");
+    expect(mocks.action).not.toHaveBeenCalled();
+
+    click(m.container.querySelector('button[title="停止"]')!);
+    const modal2 = await openModal();
+    await closeModal(modal2, "确定");
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "stop"));
+  });
+
+  it("restart asks for confirmation with consequences", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('button[title="重启"]')).not.toBeNull());
+
+    click(m.container.querySelector('button[title="重启"]')!);
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("重启容器 web");
+    expect(modal.textContent).toContain("先停止再启动");
+    await closeModal(modal, "确定");
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "restart"));
+  });
+
   it("bulk remove renders an alertdialog with the count, cancel aborts", async () => {
     const m = (mounted = mountPanelWithDialogHost());
     await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(2));
@@ -708,6 +865,59 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
 });
 
 describe("dockerRedact helpers", () => {
+  it("isSensitiveName redacts credential-like names but spares innocent lookalikes", () => {
+    expect(isSensitiveName("POSTGRES_PASSWORD")).toBe(true);
+    expect(isSensitiveName("GITHUB_TOKEN")).toBe(true);
+    expect(isSensitiveName("DbPassword")).toBe(true);
+    expect(isSensitiveName("SSH_AUTH_SOCK")).toBe(true);
+    expect(isSensitiveName("PASSPHRASE")).toBe(true);
+    expect(isSensitiveName("apikey")).toBe(true);
+    expect(isSensitiveName("apitoken")).toBe(true);
+    expect(isSensitiveName("x-api-token")).toBe(true);
+    expect(isSensitiveName("KEYBOARD_LAYOUT")).toBe(false);
+    expect(isSensitiveName("author")).toBe(false);
+    expect(isSensitiveName("monkey")).toBe(false);
+    expect(isSensitiveName("compass")).toBe(false);
+    expect(isSensitiveName("bypass")).toBe(false);
+  });
+
+  it("redactUrlCredentials masks URL-embedded passwords and leaves plain URLs alone", () => {
+    expect(redactUrlCredentials("postgres://admin:s3cret@db:5432/app")).toBe(
+      `postgres://admin:${REDACTED_MARK}@db:5432/app`,
+    );
+    expect(redactUrlCredentials("https://example.com/x")).toBe("https://example.com/x");
+    expect(redactUrlCredentials("postgres://admin@db:5432/app")).toBe("postgres://admin@db:5432/app");
+    expect(redactUrlCredentials("no url here")).toBe("no url here");
+  });
+
+  it("buildInspectViewModel redacts URL-embedded credentials in env, labels and the JSON view", () => {
+    const raw = {
+      Name: "/db",
+      Config: {
+        Image: "postgres:16",
+        Env: ["DATABASE_URL=postgres://admin:s3cret@db:5432/app", "REPLICA_URL=mysql://root:pw@replica/db"],
+        Labels: { "metrics.url": "http://user:hunter2@metrics:9090/metrics" },
+      },
+      Mounts: [],
+    };
+    const vm = buildInspectViewModel(raw);
+    expect(vm.env[0].value).toBe(`postgres://admin:${REDACTED_MARK}@db:5432/app`);
+    expect(vm.env[1].value).toBe(`mysql://root:${REDACTED_MARK}@replica/db`);
+    expect(vm.labels[0].value).toBe(`http://user:${REDACTED_MARK}@metrics:9090/metrics`);
+    expect(vm.json).not.toContain("s3cret");
+    expect(vm.json).not.toContain("hunter2");
+    expect(vm.json).not.toContain("pw@replica");
+    expect(vm.json).toContain("DATABASE_URL");
+  });
+
+  it("redactInspectTree masks URL-embedded credentials in non-sensitive env entries", () => {
+    const out = redactInspectTree({
+      Config: { Env: ["DATABASE_URL=postgres://admin:s3cret@db/", "PATH=/usr/bin"] },
+    }) as { Config: { Env: string[] } };
+    expect(out.Config.Env[0]).toBe(`DATABASE_URL=postgres://admin:${REDACTED_MARK}@db/`);
+    expect(out.Config.Env[1]).toBe("PATH=/usr/bin");
+  });
+
   it("masks sensitive env entries, label values and mount name/source segments but keeps structure", () => {
     const input = {
       Config: {

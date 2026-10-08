@@ -1,13 +1,55 @@
 
-const SENSITIVE_KEY = /(pass|secret|token|key|credential|auth|pwd|private)/i;
+const SENSITIVE_WORDS = new Set([
+  "pass",
+  "pwd",
+  "key",
+  "keys",
+  "auth",
+  "token",
+  "tokens",
+  "private",
+  "password",
+  "passwords",
+  "passwd",
+  "passcode",
+  "passphrase",
+  "secret",
+  "secrets",
+  "credential",
+  "credentials",
+  "authentication",
+  "authorization",
+  "apikey",
+  "apikeys",
+]);
+
+const SENSITIVE_SUBSTRINGS = ["password", "passwd", "passphrase", "passcode", "secret", "credential", "token"];
 
 const SENSITIVE_FILE =
  /(^\.env)|(\.(pem|key|p12|pfx|jks|keystore|kubeconfig)$)|(^(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.|$))|(credential|secret|token|password|passwd)/i;
 
 export const REDACTED_MARK = "•••（已遮蔽）";
 
+function nameWords(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((w) => w.toLowerCase());
+}
+
 export function isSensitiveName(name: string): boolean {
-  return SENSITIVE_KEY.test(name);
+  const words = nameWords(name);
+  if (words.some((w) => SENSITIVE_WORDS.has(w))) return true;
+  return words.some((w) => SENSITIVE_SUBSTRINGS.some((s) => w.includes(s)));
+}
+
+const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^/@\s:]+):([^/@\s]+)@/gi;
+
+export function redactUrlCredentials(text: string): string {
+  if (!text.includes("://")) return text;
+  return text.replace(URL_CREDENTIAL, (_m, schemeAndUser: string) => `${schemeAndUser}:${REDACTED_MARK}@`);
 }
 
 export function isSensitiveFileName(name: string): boolean {
@@ -73,8 +115,10 @@ function walk(value: unknown, keyHint: string | undefined): unknown {
     if (keyHint === "Env") {
       return value.map((entry) => {
         if (typeof entry !== "string") return walk(entry, undefined);
-        const { name } = splitEnvEntry(entry);
-        return isSensitiveName(name) ? `${name}=${REDACTED_MARK}` : entry;
+        const { name, value: envValue } = splitEnvEntry(entry);
+        if (isSensitiveName(name)) return `${name}=${REDACTED_MARK}`;
+        const redacted = redactUrlCredentials(envValue);
+        return redacted === envValue ? entry : `${name}=${redacted}`;
       });
     }
     if (keyHint === "Binds") {
@@ -102,6 +146,8 @@ function walk(value: unknown, keyHint: string | undefined): unknown {
     }
     return out;
   }
+
+  if (typeof value === "string") return redactUrlCredentials(value);
 
   return value;
 }
@@ -141,11 +187,11 @@ export function buildInspectViewModel(raw: unknown): InspectViewModel {
 
   const env: InspectEnvRow[] = readStringArray(root, "Config.Env").map((entry) => {
     const { name, value } = splitEnvEntry(entry);
-    return { key: name, value: isSensitiveName(name) ? REDACTED_MARK : value };
+    return { key: name, value: isSensitiveName(name) ? REDACTED_MARK : redactUrlCredentials(value) };
   });
 
   const labels: InspectLabelRow[] = Object.entries(readStringRecord(root, "Config.Labels")).map(
-    ([key, value]) => ({ key, value: isSensitiveName(key) ? REDACTED_MARK : value }),
+    ([key, value]) => ({ key, value: isSensitiveName(key) ? REDACTED_MARK : redactUrlCredentials(value) }),
   );
 
   const mounts: InspectMountRow[] = readObjectArray(root, "Mounts").map((m) => ({

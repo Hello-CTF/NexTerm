@@ -6,6 +6,7 @@ import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from
 import { useUi } from "../../app/store";
 import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
+import { describeDockerError } from "./dockerErrors";
 import "../../ui/skeleton.css";
 import {
   IconArrowLeft,
@@ -28,6 +29,11 @@ interface LogAttach {
   tabId: string;
   channel: ReturnType<typeof createBinaryChannel>;
   sink: { onBytes: ((bytes: Uint8Array) => void) | null };
+}
+
+interface LogIssue {
+  text: string;
+  ended?: boolean;
 }
 
 function imageKey(i: ImageSummary): string {
@@ -79,7 +85,7 @@ function TableQueryBody({
       <tr>
         <td colSpan={colSpan} className="nx-table-empty">
           <span className="text-red-300">
-            {errorPrefix}加载失败 · {describeError(error)}
+            {errorPrefix}加载失败 · {describeDockerError(error)}
           </span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
             <IconRefresh size={12} />
@@ -114,6 +120,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const { addTab, pushToast } = useUi();
   const [tab, setTab] = useState<"containers" | "images">("containers");
   const [attached, setAttached] = useState<LogAttach | null>(null);
+  const [logsIssue, setLogsIssue] = useState<LogIssue | null>(null);
   const [insight, setInsight] = useState<ContainerSummary | null>(null);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState<Set<string>>(() => new Set());
@@ -152,7 +159,15 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const { channel, containerId, container } = attached;
     let cancelled = false;
     const off = onChannelReopen(channel, () => {
-      if (!cancelled) void openLogs(containerId, container);
+      if (cancelled) return;
+      const state = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId])?.find(
+        (c) => c.id === containerId,
+      )?.state;
+      if (state !== undefined && state !== "running") {
+        setLogsIssue({ text: "容器已停止，不再产生新日志", ended: true });
+        return;
+      }
+      void openLogs(containerId, container, true);
     });
     return () => {
       cancelled = true;
@@ -186,6 +201,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       );
       if (!go) return;
     }
+    if (action === "stop" || action === "restart") {
+      if (pending.has(key)) return;
+      const go = await ask(
+        action === "stop"
+          ? `停止容器 ${c.name}？\n\n容器内正在运行的进程会退出，它对外提供的服务会中断；容器本身和它的数据保留，之后可以重新启动。`
+          : `重启容器 ${c.name}？\n\n容器会先停止再启动，期间它对外提供的服务会中断；正在运行的进程会退出，容器数据保留。`,
+        { kind: "warning" },
+      );
+      if (!go) return;
+    }
     markPending(key, true);
     const snapshot = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId]);
     if (action === "remove") {
@@ -214,7 +239,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (pending.has(key)) return;
     const consequence = isUntaggedImage(i)
       ? "删除的是镜像本体；删除后这台主机上将没有这个镜像，不能再用它创建容器。"
-      : "删除的是这个镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。";
+      : "删除的是这个镜像条目（标签）；若这是该镜像的最后一个标签，镜像本体会一并删除，不能再用它创建容器；若还有其他标签，同一镜像仍可用来创建容器。";
     if (!(await ask(`删除镜像 ${ref}？\n\n${consequence}`, { kind: "warning" })))
       return;
     markPending(key, true);
@@ -245,7 +270,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (isContainer) {
       consequence = "容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。";
     } else if (untaggedCount === 0) {
-      consequence = "删除的是选中的镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。";
+      consequence =
+        "删除的是选中的镜像条目（标签）；若某个镜像被删的是最后一个标签，镜像本体会一并删除，不能再用它创建容器；还有其他标签的镜像仍可用来创建容器。";
     } else if (untaggedCount === imageTargets.length) {
       consequence = "无标签的镜像会删除镜像本体；删除后本机不再有这些镜像，不能再用它们创建容器。";
     } else {
@@ -299,7 +325,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
   };
 
-  const openLogs = async (containerId: string, containerName: string) => {
+  const openLogs = async (containerId: string, containerName: string, reattach = false) => {
     if (attachInFlight.current) return;
     attachInFlight.current = true;
     const sink: LogAttach["sink"] = { onBytes: null };
@@ -307,9 +333,14 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     try {
       const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
       setAttached({ container: containerName, containerId, tabId: kernelTab, channel, sink });
+      setLogsIssue(null);
     } catch (e) {
       disposeChannel(channel);
-      pushToast("error", `读取日志失败：${describeError(e)}`);
+      if (reattach) {
+        setLogsIssue({ text: describeError(e) });
+      } else {
+        pushToast("error", `读取日志失败：${describeError(e)}`);
+      }
     } finally {
       attachInFlight.current = false;
     }
@@ -332,16 +363,40 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         <div className="nx-toolbar">
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            onClick={() => setAttached(null)}
+            onClick={() => {
+              setAttached(null);
+              setLogsIssue(null);
+            }}
           >
             <IconArrowLeft size={13} />
             返回
           </button>
           <span className="nx-toolbar-title">{attached.container}</span>
           <span className="nx-badge">日志跟随</span>
-          <span className="nx-dot nx-dot-pulse bg-green-400" />
+          {logsIssue ? (
+            <span className={`nx-badge ${logsIssue.ended ? "nx-badge-amber" : "nx-badge-red"}`}>
+              {logsIssue.ended ? "跟随结束" : "跟随中断"}
+            </span>
+          ) : (
+            <span className="nx-dot nx-dot-pulse bg-green-400" />
+          )}
           <div className="nx-spacer" />
-          <span className="nx-hint">跟随中 · 关闭此标签或返回即停止</span>
+          {logsIssue ? (
+            <>
+              <span className="nx-hint">{logsIssue.text}</span>
+              {!logsIssue.ended && (
+                <button
+                  className="nx-btn nx-btn-ghost nx-btn-sm"
+                  onClick={() => void openLogs(attached.containerId, attached.container, true)}
+                >
+                  <IconRefresh size={12} />
+                  重新跟随
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="nx-hint">跟随中 · 关闭此标签或返回即停止</span>
+          )}
         </div>
         <div className="min-h-0 flex-1">
           <LogStream key={attached.tabId} sink={attached.sink} />
@@ -392,7 +447,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           </button>
         </div>
         <span className="nx-hint hidden min-[560px]:inline">
-          {containers.data ? `${running} 运行中 / 共 ${cRows.length}` : "容器状态加载中"}
+          {containers.data
+            ? `${running} 运行中 / 共 ${cRows.length}`
+            : containers.isError
+              ? "容器状态加载失败"
+              : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />
         {picked.size > 0 && (
@@ -425,7 +484,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           <IconRefresh size={13} />
           刷新
         </button>
-        <span className="nx-hint hidden min-[560px]:inline">容器 5s · 镜像 30s 自动刷新</span>
+        <span className="nx-hint hidden min-[560px]:inline">容器 5s · 镜像与主机概览 30s 自动刷新</span>
       </div>
 
       {tab === "containers" && <OverviewStrip sessionId={sessionId} visible={visible} />}
@@ -785,10 +844,10 @@ const HOST_STAT_LABELS: Record<string, string> = {
   containersRunning: "运行中",
   containersTotal: "容器总数",
   images: "镜像",
-  cpuPercent: "CPU",
+  cpuPercent: "CPU (%)",
   memUsedMb: "内存占用 (MB)",
   memTotalMb: "内存总量 (MB)",
-  diskPercent: "磁盘",
+  diskPercent: "磁盘 (%)",
 };
 
 function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boolean }) {
@@ -816,7 +875,7 @@ function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boo
   if (overview.isError) {
     return (
       <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
-        <span className="nx-hint">主机概览加载失败 · {describeError(overview.error)}</span>
+        <span className="nx-hint">主机概览加载失败 · {describeDockerError(overview.error)}</span>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void overview.refetch()}>
           <IconRefresh size={12} />
           重试

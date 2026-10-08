@@ -204,7 +204,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(row?.textContent).toContain("远程转发");
     expect(row?.textContent).toContain("127.0.0.1:18080");
     expect(row?.textContent).toContain("本地");
-    expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5");
+    expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
   });
 
   it("停止失败时如实报错，不虚报成功", async () => {
