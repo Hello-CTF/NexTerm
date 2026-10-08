@@ -50,6 +50,17 @@ afterEach(() => {
 });
 
 describe("AuthCard 未登录账号卡", () => {
+  it("auth=off 实例:只显示账号功能已关闭的说明,没有任何登录/初始化入口", async () => {
+    seed({ initialized: false, auth: "off" });
+    mounted = mountCard();
+    await flush();
+    expect(mounted.container.textContent).toContain("这台服务器关闭了账号功能");
+    const buttons = [...mounted.container.querySelectorAll("button")];
+    expect(buttons.some((b) => b.textContent?.includes("初始化账号"))).toBe(false);
+    expect(buttons.some((b) => b.textContent?.includes("登录"))).toBe(false);
+    expect(useAuth.getState().gate).toBe("ready");
+  });
+
   it("未初始化的 loopback 实例:显示显式初始化入口与匿名说明", async () => {
     seed({ initialized: false, auth: "loopback" });
     mounted = mountCard();
@@ -78,5 +89,15 @@ describe("AuthCard 未登录账号卡", () => {
     expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.includes("初始化账号"))).toBe(false);
     clickButton(mounted.container, "登录");
     expect(useAuth.getState().gate).toBe("login");
+  });
+
+  it("未登录文案说明登录只完成配置,同步台读取对比但推送/应用由用户手动触发", async () => {
+    seed({ initialized: true, auth: "on" });
+    mounted = mountCard();
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("登录只建立连接并完成配置");
+    expect(text).toContain("读取云端副本进行对比,但不会自动推送或应用");
+    expect(text).toContain("推送到云端 / 拉取并应用由你手动触发");
   });
 });

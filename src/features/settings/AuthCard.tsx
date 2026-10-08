@@ -112,6 +112,20 @@ export function AuthCard() {
   if (!user) {
     // 桌面端没有账号门,登录按钮只会打开一个不存在的门:整卡不渲染,登录入口在 SyncCard。
     if (!authAvailable()) return null;
+    if (status?.auth === "off") {
+      // auth=off 下 /auth/* 全部 403(store.refresh 合成 auth=off 状态),任何登录/初始化入口都是死路。
+      return (
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconKey size={15} className="text-neutral-400" />
+            <span className="nx-card-title">账号</span>
+          </div>
+          <p className="nx-hint mb-3">
+            这台服务器关闭了账号功能(--auth=off),不提供登录、注册与账号同步;其他本地功能不受影响。
+          </p>
+        </section>
+      );
+    }
     if (status && !status.initialized) {
       // 未初始化(loopback 免登录实例匿名可直达这里): 显式初始化入口,供想要账号的用户使用。
       return (
@@ -143,8 +157,8 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录后,这台服务器上的资产、分组、片段会端到端加密同步到你的账号,在其他设备上可用;
-          不登录也能继续本地使用。
+          登录只建立连接并完成配置;下方「账号同步」台会读取云端副本进行对比,但不会自动推送或应用,
+          推送到云端 / 拉取并应用由你手动触发。不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"

@@ -371,6 +371,7 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
 export function DevicesView() {
   const { pushToast } = useUi();
   const user = useAuth((s) => s.user);
+  const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [baseUrls, setBaseUrls] = useState<FleetBaseURLEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -466,6 +467,7 @@ export function DevicesView() {
   }
 
   if (!user) {
+    const authOff = authStatus?.auth === "off";
     return (
       <div className="nx-pane">
         <div className="nx-toolbar flex-wrap">
@@ -478,8 +480,10 @@ export function DevicesView() {
               <IconMonitor size={18} />
             </div>
             <div>
-              <div className="text-[13px] text-neutral-300">登录后才能查看与管理接入的设备。</div>
-              <div className="mt-1 text-[11.5px] text-neutral-500">登录入口在「设置 → 账号」卡。</div>
+              <div className="text-[13px] text-neutral-300">
+                {authOff ? "这台服务器关闭了账号功能,设备管理不可用。" : "登录后才能查看与管理接入的设备。"}
+              </div>
+              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">登录入口在「设置 → 账号同步」里的「账号」卡。</div>}
             </div>
           </div>
         </div>

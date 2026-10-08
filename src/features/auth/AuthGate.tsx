@@ -178,6 +178,15 @@ function SetupForm() {
           暂不初始化,匿名使用
         </button>
       )}
+      {status?.auth === "off" && (
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
+          onClick={() => useAuth.setState({ gate: "ready" })}
+        >
+          账号功能已关闭,返回应用
+        </button>
+      )}
     </form>
   );
 }

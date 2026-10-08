@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import {
   authApi,
+  AuthApiError,
   setCsrfToken,
   SESSION_EXPIRED_EVENT,
   type AccountDevice,
@@ -176,6 +177,13 @@ export const useAuth = create<AuthState>((set, get) => ({
         syncPreferenceStore(false);
       }
     } catch (e) {
+      // auth=off 下 /auth/status 也被 accountGuard 403(消息文本是服务端合同);
+      // 归一为 auth=off 状态,界面据此显示"账号功能已关闭",而不是死登录入口。
+      if (e instanceof AuthApiError && e.status === 403 && e.message.includes("--auth=off")) {
+        set({ status: { initialized: false, registration_open: false, auth: "off" }, user: null, gate: "ready", error: null });
+        syncPreferenceStore(false);
+        return;
+      }
       set({ gate: "ready", error: toAppError(e) });
     }
   },

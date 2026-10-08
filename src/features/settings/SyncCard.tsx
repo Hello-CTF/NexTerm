@@ -1200,7 +1200,7 @@ function DemoSyncConsole() {
       </div>
       <p className="nx-hint mb-3">
         演示模式下同步数据是假的。真实环境里,登录后这里会显示本机与云端密文副本的对比,
-        并能一键推送;数据在你的设备上加密,服务端只存密文。
+        并能手动推送到云端或拉取并应用;数据在你的设备上加密,服务端只存密文。
       </p>
       <div className="max-h-[200px] overflow-y-auto rounded border border-neutral-800/60">
         {[
@@ -1227,7 +1227,7 @@ function DemoSyncConsole() {
         </button>
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled>
           <IconDownload size={12} />
-          从云端拉取
+          拉取并应用 (1)
         </button>
       </div>
     </section>
