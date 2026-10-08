@@ -88,8 +88,9 @@ impl UpdateInfo {
 
 // ─────────────────────── 桌面：真检查、真安装 ───────────────────────
 
-#[cfg(feature = "desktop")]
-use tauri::Manager;
+// 这里**只**需要 `UpdaterExt`：`AppHandle::config()` 与 `request_restart()` 都是
+// 固有方法，`Manager` trait 不必在作用域里。多导一次会被 `-D unused-imports`
+// 打红（CI 是 `-D warnings`）。
 #[cfg(feature = "desktop")]
 use tauri_plugin_updater::UpdaterExt;
 
