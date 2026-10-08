@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -138,6 +139,7 @@ type Config struct {
 	Hub               *hub.Hub
 	Emitter           Emitter
 	Transcripts       TranscriptSink
+	Logger            *slog.Logger
 	IdleTimeout       time.Duration
 	SweepInterval     time.Duration
 	ReconnectMax      int

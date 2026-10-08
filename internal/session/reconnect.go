@@ -419,6 +419,9 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	finishedEvent := session.statusEventLocked(status, reconnectErr)
 	session.mu.Unlock()
 	m.mu.Unlock()
+	if status == StatusFailed && !errors.Is(reconnectErr, context.Canceled) {
+		m.logger.Warn("session reconnect failed", "session", session.ID, "error", reconnectErr)
+	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
 }

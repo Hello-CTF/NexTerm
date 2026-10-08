@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -265,6 +266,7 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 	if errors.As(err, &connectErr) {
 		result.Kind = string(connectErr.Kind)
 		result.Error = connectErr.UserMessage()
+		slog.Warn("asset probe failed", "asset", target.assetID, "kind", result.Kind, "error", connectErr)
 		return result
 	}
 	result.Kind = probeFailureKind(err)

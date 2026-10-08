@@ -1,6 +1,7 @@
 package production
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -86,6 +87,33 @@ func TestSessionReconnectUnknownSessionReturnsNotFound(t *testing.T) {
 	}
 	if !strings.Contains(response.Error.Message, "会话不存在或已关闭") {
 		t.Fatalf("message = %q, want actionable Chinese guidance", response.Error.Message)
+	}
+}
+
+func TestAssetProbeBatchKeepsOriginalCauseInLog(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	production := newHostKeyTestProduction(t)
+	assetID := createHostKeyTestAsset(t, production, closedTCPPort(t))
+
+	response := dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":{"assetIds":["`+assetID+`"],"timeoutMs":2000}}`)
+	var batch assetProbeBatchDTO
+	requireStoreTestResponse(t, response, &batch)
+	if len(batch.Results) != 1 {
+		t.Fatalf("probe results = %+v", batch.Results)
+	}
+	result := batch.Results[0]
+	if result.Reachable || result.Kind != "refused" {
+		t.Fatalf("probe result = %+v, want refused", result)
+	}
+	if !strings.Contains(result.Error, "拒绝连接") {
+		t.Fatalf("probe error = %q, want actionable Chinese message", result.Error)
+	}
+	if output := logs.String(); !strings.Contains(output, "connection refused") || !strings.Contains(output, assetID) {
+		t.Fatalf("original cause missing from probe log: %q", output)
 	}
 }
 
