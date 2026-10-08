@@ -148,14 +148,11 @@ func LoopbackListen(address string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool, auth ...string) {
+func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool, auth string) {
 	if LoopbackListen(address) {
 		return
 	}
-	mode := AuthOn
-	if len(auth) > 0 && auth[0] != "" {
-		mode = auth[0]
-	}
+	mode := auth
 	// 非回环监听下 loopback 等同 on, 与 server 端 effectiveAuthMode 口径一致。
 	if mode == AuthLoopback {
 		mode = AuthOn

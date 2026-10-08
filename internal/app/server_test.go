@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func warnIfExposedOutput(t *testing.T, address string, syncOnly bool, auth ...string) (string, string) {
+func warnIfExposedOutput(t *testing.T, address string, syncOnly bool, auth string) (string, string) {
 	t.Helper()
 	var logOutput, stderr bytes.Buffer
-	WarnIfExposed(slog.New(slog.NewTextHandler(&logOutput, nil)), &stderr, address, syncOnly, auth...)
+	WarnIfExposed(slog.New(slog.NewTextHandler(&logOutput, nil)), &stderr, address, syncOnly, auth)
 	return logOutput.String(), stderr.String()
 }
 
@@ -58,16 +58,6 @@ func TestWarnIfExposedEnabledModesRetainAccurateWarnings(t *testing.T) {
 	_, stderr = warnIfExposedOutput(t, "0.0.0.0:8080", true, AuthLoopback)
 	if !strings.Contains(stderr, "持有账号会话的人可以同步") {
 		t.Fatalf("auth=loopback exposed sync-only warning = %q", stderr)
-	}
-
-	// 调用方未传 auth 时保持 on 口径(与旧调用方行为一致)。
-	_, stderr = warnIfExposedOutput(t, "0.0.0.0:8080", false)
-	if !strings.Contains(stderr, "完整版已启用访问控制") {
-		t.Fatalf("default full warning = %q", stderr)
-	}
-	_, stderr = warnIfExposedOutput(t, "0.0.0.0:8080", true)
-	if !strings.Contains(stderr, "持有账号会话的人可以同步") {
-		t.Fatalf("default sync-only warning = %q", stderr)
 	}
 }
 

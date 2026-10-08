@@ -262,7 +262,7 @@ func TestNonLoopbackWarningsReachLoggerAndStderr(t *testing.T) {
 		var logOutput bytes.Buffer
 		var stderr bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&logOutput, nil))
-		core.WarnIfExposed(logger, &stderr, "0.0.0.0:8080", syncOnly)
+		core.WarnIfExposed(logger, &stderr, "0.0.0.0:8080", syncOnly, core.AuthOn)
 		if !strings.Contains(logOutput.String(), "non-loopback") || !strings.Contains(stderr.String(), "WARNING") {
 			t.Fatalf("syncOnly=%v log=%q stderr=%q", syncOnly, logOutput.String(), stderr.String())
 		}
@@ -278,7 +278,7 @@ func TestNonLoopbackWarningsReachLoggerAndStderr(t *testing.T) {
 	}
 	for _, address := range []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"} {
 		var stderr bytes.Buffer
-		core.WarnIfExposed(testLogger(), &stderr, address, false)
+		core.WarnIfExposed(testLogger(), &stderr, address, false, core.AuthOn)
 		if stderr.Len() != 0 {
 			t.Fatalf("%s warning = %q", address, stderr.String())
 		}
