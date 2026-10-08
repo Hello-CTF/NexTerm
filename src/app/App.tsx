@@ -462,6 +462,18 @@ function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visib
   return <View deviceId={deviceId} visible={visible} />;
 }
 
+// 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel/CredentialsView 的
+// queryKey 对齐(资产/分组/凭据/片段/搜索/凭据库状态)。auth 转换时统一重置: 登录前
+// 这些请求全部吃到 401(分组资产不显示), 换账号则不能把上一个会话的缓存漏给下一个。
+const ACCOUNT_QUERY_KEYS = [
+  ["assets"],
+  ["groups"],
+  ["credentials"],
+  ["snippets"],
+  ["asset-search"],
+  ["vault-status"],
+] as const;
+
 export default function App() {
   const {
     workspaces,
@@ -668,10 +680,13 @@ export default function App() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
+  const vaultStatusSeq = useRef(0);
   const refreshVaultStatus = useCallback(() => {
+    const seq = ++vaultStatusSeq.current;
     void vaultApi
       .status()
-      .then((v) =>
+      .then((v) => {
+        if (seq !== vaultStatusSeq.current) return;
         setVaultStatus({
           uninitialized: !v.initialized,
           text: !v.initialized
@@ -679,10 +694,34 @@ export default function App() {
             : v.unlocked
               ? "凭据库已解锁"
               : "凭据库已锁定",
-        }),
-      )
-      .catch(() => setVaultStatus({ text: "凭据库不可用", uninitialized: false }));
+        });
+      })
+      .catch(() => {
+        if (seq !== vaultStatusSeq.current) return;
+        setVaultStatus({ text: "凭据库不可用", uninitialized: false });
+      });
   }, []);
+
+  // 序号守卫: auth 转换(登录/登出)时在途旧请求可能迟到, 不允许覆盖新会话拉到的数据。
+  const sessionsSeq = useRef(0);
+  const refreshSessions = useCallback(() => {
+    const seq = ++sessionsSeq.current;
+    void sessionApi
+      .list()
+      .then((list) => {
+        if (seq === sessionsSeq.current) setSessions(list);
+      })
+      .catch(() => undefined);
+  }, [setSessions]);
+
+  // 登出/会话过期时先递增两个序号使在途响应全部失效, 再清空状态: 旧账号的慢请求
+  // 迟到后不得回写(否则 seq 未变, 迟到的旧数据会覆盖清空结果)。
+  const clearSessionScopedState = useCallback(() => {
+    sessionsSeq.current += 1;
+    vaultStatusSeq.current += 1;
+    setSessions([]);
+    setVaultStatus({ text: "…", uninitialized: false });
+  }, [setSessions]);
 
   const openVaultProtection = useCallback(() => {
     openSettings();
@@ -941,9 +980,38 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void sessionApi.list().then(setSessions).catch(() => undefined);
+    refreshSessions();
     refreshVaultStatus();
-  }, [setSessions, refreshVaultStatus]);
+  }, [refreshSessions, refreshVaultStatus]);
+
+  // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的账号级请求全部
+  // 吃到 401; resetQueries 会取消在途的旧 fetch 再重取(invalidateQueries 在 data 为空时会
+  // 并入旧 fetch, 401 照样落账)。反方向(登出/会话过期回 login)重置同一组键并清空会话
+  // 列表与凭据库状态, 避免上一个会话的数据漏给下一个账号。toast 不做 ready 全清:
+  // 8s/3.5s 自动消失已是有限生命周期, 终端/文件/AI 与非 401 错误在登录后仍是有效反馈。
+  useEffect(() => {
+    if (!WEB || DEMO) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    void import("../features/auth/store").then((m) => {
+      if (cancelled) return;
+      unsubscribe = m.useAuth.subscribe((s, prev) => {
+        if (s.gate === prev.gate) return;
+        if (s.gate === "ready" && prev.gate !== "loading") {
+          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
+          refreshSessions();
+          refreshVaultStatus();
+        } else if (prev.gate === "ready" && s.gate === "login") {
+          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
+          clearSessionScopedState();
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [queryClient, refreshSessions, refreshVaultStatus, clearSessionScopedState]);
 
   useEffect(() => {
     if (!DEMO) return;
@@ -1351,7 +1419,7 @@ export default function App() {
               title="刷新会话列表与凭据库状态"
               aria-label="刷新会话列表与凭据库状态"
               onClick={() => {
-                void sessionApi.list().then(setSessions).catch(() => undefined);
+                refreshSessions();
                 refreshVaultStatus();
               }}
             >
