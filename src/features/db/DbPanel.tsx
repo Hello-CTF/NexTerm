@@ -386,6 +386,12 @@ function RedisView({ connId }: { connId: string }) {
   const [viewError, setViewError] = useState<string | null>(null);
   const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
+  const consoleScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = consoleScrollRef.current;
+    if (el && cmdOut) el.scrollTop = el.scrollHeight;
+  }, [cmdOut]);
 
   const doScan = async (c: number) => {
     setPageError(null);
@@ -467,7 +473,7 @@ function RedisView({ connId }: { connId: string }) {
   };
 
   return (
-    <div className="nx-pane flex-col min-[560px]:flex-row">
+    <div className="nx-pane nx-redis-pane flex-col min-[560px]:flex-row">
       <div className="flex w-full min-h-0 max-h-[45%] flex-col border-b border-neutral-800/60 min-[560px]:w-[272px] min-[560px]:max-h-none min-[560px]:shrink-0 min-[560px]:border-b-0 min-[560px]:border-r">
         <div className="flex h-[38px] shrink-0 items-center gap-1.5 px-2.5">
           <IconSearch size={13} className="shrink-0 text-neutral-500" />
@@ -541,60 +547,69 @@ function RedisView({ connId }: { connId: string }) {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {view ? (
-          <>
-            <div className="nx-toolbar">
-              <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
-              <span className="nx-toolbar-title min-w-0 flex-1 truncate font-mono">{String(view.key)}</span>
-              <span className="nx-hint">
-                {String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒后过期`}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {view ? (
+            <>
+              <div className="nx-toolbar">
+                <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
+                <span className="nx-toolbar-title min-w-0 flex-1 truncate font-mono">{String(view.key)}</span>
+                <span className="nx-hint">
+                  {String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒后过期`}
+                </span>
+                <div className="nx-spacer" />
+                <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
+                  <IconSettings size={13} />
+                  改过期时间
+                </button>
+              </div>
+              <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
+                {JSON.stringify(view.value, null, 2)}
+              </pre>
+            </>
+          ) : viewError && selected ? (
+            <div className="nx-empty">
+              <span className="nx-empty-icon">
+                <IconXCircle size={18} />
               </span>
-              <div className="nx-spacer" />
-              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
-                <IconSettings size={13} />
-                改过期时间
+              <div className="text-[12.5px] text-red-300">键内容加载失败 · {viewError}</div>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm"
+                onClick={() => void inspect(selected)}
+              >
+                <IconRefresh size={12} />
+                重试
               </button>
             </div>
-            <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
-              {JSON.stringify(view.value, null, 2)}
-            </pre>
-          </>
-        ) : viewError && selected ? (
-          <div className="nx-empty">
-            <span className="nx-empty-icon">
-              <IconXCircle size={18} />
-            </span>
-            <div className="text-[12.5px] text-red-300">键内容加载失败 · {viewError}</div>
-            <button
-              className="nx-btn nx-btn-ghost nx-btn-sm"
-              onClick={() => void inspect(selected)}
-            >
-              <IconRefresh size={12} />
-              重试
-            </button>
-          </div>
-        ) : viewPending && selected ? (
-          <div className="nx-empty">
-            <span className="nx-empty-icon">
-              <IconLoader size={18} className="animate-spin" />
-            </span>
-            键内容加载中…
-          </div>
-        ) : (
-          <div className="nx-empty">
-            <span className="nx-empty-icon">
-              <IconLayers size={18} />
-            </span>
-            从左侧选一个键查看内容
-          </div>
-        )}
+          ) : viewPending && selected ? (
+            <div className="nx-empty">
+              <span className="nx-empty-icon">
+                <IconLoader size={18} className="animate-spin" />
+              </span>
+              键内容加载中…
+            </div>
+          ) : (
+            <div className="nx-empty">
+              <span className="nx-empty-icon">
+                <IconLayers size={18} />
+              </span>
+              从左侧选一个键查看内容
+            </div>
+          )}
+        </div>
 
-        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
-          <div className="mb-1.5 text-[11px] text-neutral-500">
-            <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
-            <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
+        <div className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
+          <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
+            <div className="mb-1.5 text-[11px] text-neutral-500">
+              <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
+              <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
+            </div>
+            {cmdOut && (
+              <pre className="nx-pre text-[11px]" role="status">
+                {cmdOut}
+              </pre>
+            )}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <input
               className="nx-input nx-input-sm font-mono"
               value={cmdText}
@@ -609,11 +624,6 @@ function RedisView({ connId }: { connId: string }) {
               执行
             </button>
           </div>
-          {cmdOut && (
-            <pre className="nx-pre mt-1.5 max-h-40 overflow-auto text-[11px]" role="status">
-              {cmdOut}
-            </pre>
-          )}
         </div>
       </div>
     </div>
