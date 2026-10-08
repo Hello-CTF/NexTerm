@@ -438,9 +438,8 @@ img { max-width: 100%; display: block; }
 
 /* 不可断的词（文件名之类）：`linux-amd64.tar.gz` 会在 `-` 处折成两行，把整行排版撕开。
    但**不能**图省事把它挂到上面那条通用规则上：不折行的标记会把自己的整宽计入
-   min-content，写长了直接顶开网格轨道。实测把 SECURITY 那条
-   `主密码 → Argon2id → …XChaCha20-Poly1305`（54 字符 ≈ 486px）一起 nowrap 之后，
-   `.bento` 的单列轨道从 342 被撑到 486px，整节横向溢出 120px。
+   min-content，写长了直接顶开网格轨道。实测把 SECURITY 那条长密码学链条一起 nowrap
+   之后，`.bento` 的单列轨道被撑宽、整节横向溢出。
    所以文件名这类长串改成**可断行的 mono 行**（下面 .file），而不是 nowrap 的 chip。 */
 
 /* 卡片底部的产物文件名：mono 但**不是** chip（无底色/内边距，允许断行）。

@@ -35,7 +35,7 @@
   <text class="t-tag mono" x="120" y="228">本机 · 桌面版</text>
   <text class="t-h" x="116" y="280">要搬走的那一份</text>
   <text class="t-li" x="120" y="334">资产库：SQLite（WAL）</text>
-  <text class="t-li" x="120" y="382">凭据库：DPAPI / 主密码 —— 同步前必须先解锁</text>
+  <text class="t-li" x="120" y="382">凭据库：DPAPI / 主密码，同步前必须先解锁</text>
   <text class="t-li" x="120" y="430">分组、资产、凭据、片段整组同步，方向（推 / 拉）按按钮定</text>
   <text class="t-val mono" x="120" y="486" fill="#616877">内置「当前设备」不参与搬运</text>
 
@@ -44,7 +44,7 @@
   <text class="t-tag mono" x="952" y="228">对端 · 服务端</text>
   <text class="t-h" x="948" y="280">落地的那一份</text>
   <text class="t-li" x="952" y="334">同步对象按账号隔离，密文落库</text>
-  <text class="t-li" x="952" y="382">只存密文与数据密钥信封 —— 内容不解读</text>
+  <text class="t-li" x="952" y="382">只存密文与数据密钥信封，内容不解读</text>
   <text class="t-li" x="952" y="430">每轮回报：拉取 / 应用 / 推送 / 跳过</text>
   <text class="t-val mono" x="952" y="486" fill="#616877">公网地址强制 HTTPS</text>
 
@@ -60,7 +60,7 @@
 
   <!-- ═══ 凭据链路 ═══ -->
   <rect x="84" y="556" width="1432" height="140" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
-  <text class="t-tag mono" x="120" y="594">凭据怎么过去 —— 每账号一把数据密钥：客户端密封，服务端只存密文</text>
+  <text class="t-tag mono" x="120" y="594">凭据怎么过去：每账号一把数据密钥，客户端密封，服务端只存密文</text>
 
   <rect x="120" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
   <text class="t-step" x="245" y="646" text-anchor="middle">账号密码登录</text>
@@ -89,6 +89,6 @@
 
   <rect x="810" y="728" width="706" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-key" x="846" y="774">哪些不搬</text>
-  <text class="t-val" x="846" y="808">AI 对话 · 审计日志 —— 本地行为记录，不参与同步</text>
-  <text class="t-val" x="846" y="836">会话记录 · 已知主机 · AI 档案 —— 默认不搬，需要时逐类打开</text>
+  <text class="t-val" x="846" y="808">AI 对话 · 审计日志：本地行为记录，不参与同步</text>
+  <text class="t-val" x="846" y="836">会话记录 · 已知主机 · AI 档案：默认不搬，需要时逐类打开</text>
 </svg>

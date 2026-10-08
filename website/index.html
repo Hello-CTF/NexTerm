@@ -3,16 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NexTerm — 一体化开发运维终端</title>
+  <title>NexTerm - 一体化开发运维终端</title>
   <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。桌面 App 与浏览器版共用同一个 Go 内核，凭据加密存储，AI 全程在权限护栏内执行。" />
   <link rel="icon" type="image/png" href="brand/nexterm-mark-128.png" />
-  <meta property="og:title" content="NexTerm — 一体化开发运维终端" />
+  <meta property="og:title" content="NexTerm - 一体化开发运维终端" />
   <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口；也能部署成服务端，浏览器打开即用。" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="NexTerm" />
   <meta property="og:url" content="https://probiusofficial.github.io/NexTerm/" />
-  <!-- og:image 必须是绝对地址。这张分享卡（1280×640）由 pages.yml 随站点一起发布
-       （`website/images/*.png` → `_site/images/`），此前只做了图没接上，分享时是纯文字卡。 -->
   <meta property="og:image" content="https://probiusofficial.github.io/NexTerm/images/social-preview.png" />
   <meta property="og:image:width" content="1280" />
   <meta property="og:image:height" content="640" />
@@ -59,13 +57,13 @@
         </div>
         <div class="hero-meta">
           <span>桌面版 <span class="os">Windows · macOS · Linux</span>，服务端 <span class="os">Linux / 容器</span></span>
-          <span>凭据加密存储 · 数据不出本机</span>
+          <span>凭据加密存储 · 同步内容端到端加密</span>
         </div>
       </div>
       <div class="term">
         <div class="term-bar">
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
-          <span class="term-title">NexTerm — web-01 · SSH</span>
+          <span class="term-title">NexTerm - web-01 · SSH</span>
           <span class="term-tag">AI 接管演示</span>
         </div>
         <div class="term-body" id="heroTerm" aria-hidden="true"></div>
@@ -82,7 +80,7 @@
     </div>
 
     <div class="proto-row">
-      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Wails</span><span>Go</span><span>WebSocket</span><span>SQLite</span>
+      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>AES-GCM</span><span>DPAPI</span><span>xterm.js</span><span>Wails</span><span>Go</span><span>WebSocket</span><span>SQLite</span>
     </div>
   </div>
 </header>
@@ -92,7 +90,7 @@
     <div class="section-head">
       <span class="pk">nexterm --modules</span>
       <h2>一个窗口，把整套运维收进来</h2>
-      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流 —— 再让它跑在桌面上，也跑在服务器上。</p>
+      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流，让它既跑在桌面上，也跑在服务器上。</p>
     </div>
     <div class="bento">
       <div class="cell cell-lg">
@@ -103,7 +101,7 @@
           <li>只读、读写、静默三档权限随时切换</li>
           <li>终端接管可按 Esc（可改键）随时夺回</li>
           <li>写文件前先看逐行 diff，改完留变更记录</li>
-          <li>任意 OpenAI 兼容端点，密钥仅存本机</li>
+          <li>任意 OpenAI 兼容端点，密钥只存自己一侧</li>
         </ul>
         <div class="cell-shot"><img src="images/ai-permission.png" alt="AI 权限确认卡片" loading="lazy" /></div>
       </div>
@@ -133,12 +131,23 @@
         <h3>端口转发</h3>
         <p>本地转发与 SOCKS5 动态转发复用已有会话，直达内网资源。监听地址由部署形态决定：桌面回环、自建服务端对外、懒猫微服上不可用。</p>
       </div>
-      <div class="cell cell-w">
+      <div class="cell">
         <span class="tag">SECURITY</span>
-        <h3>凭据只在本机</h3>
-        <p>两级密钥信封加密，日志自动脱敏；管理面板呈现引用关系与删除保护，支持 Windows DPAPI / macOS 钥匙串免主密码模式。</p>
+        <h3>凭据加密存储</h3>
+        <p>两级密钥信封加密，日志自动脱敏；管理面板呈现引用关系与删除保护，支持 Windows DPAPI / macOS 钥匙串免主密码模式。桌面端凭据只落本机；部署成服务端时，凭据库与主密钥在服务端这一侧。</p>
         <ul>
-          <li><code>主密码 → Argon2id → KEK → 信封加密 DEK → XChaCha20-Poly1305</code></li>
+          <li><code>主密码 → Argon2id → KEK → 信封加密 DEK → AES-GCM</code></li>
+        </ul>
+      </div>
+      <div class="cell">
+        <span class="tag">TEAM</span>
+        <h3>多用户账号与设备分享</h3>
+        <p>服务端内置账号体系，同步数据按账号隔离；主机装 agent 纳入设备列表，随时远程打开终端。</p>
+        <ul>
+          <li>超管创建用户，或开放注册自助加入</li>
+          <li>主机分享给指定注册用户，有效期内随时开新终端</li>
+          <li>公开链接默认只读、限时、可撤销，访问与输入留审计</li>
+          <li>分享全程不暴露主机密码与私钥</li>
         </ul>
       </div>
     </div>
@@ -150,7 +159,7 @@
     <div class="section-head">
       <span class="pk">nexterm --forms</span>
       <h2>一个内核，两种形态</h2>
-      <p>同一个 Go 核心 —— 装在本机是桌面 App，部署到服务器就是浏览器里的运维终端。</p>
+      <p>同一个 Go 核心：装在本机是桌面 App，部署到服务器就是浏览器里的运维终端。</p>
     </div>
 
     <div class="figure">
@@ -171,7 +180,7 @@
       <div class="cell">
         <span class="tag">SERVER · GO</span>
         <h3>服务端 nexterm-server</h3>
-        <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端 —— 而且运行态在服务端，不只是「投屏」。</p>
+        <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端，而且运行态在服务端，不只是「投屏」。</p>
         <ul>
           <li>部署到懒猫微服 / 自建服务器</li>
           <li>终端进程与回滚缓冲留在服务端，换设备接着用</li>
@@ -189,7 +198,7 @@
     <div class="section-head">
       <span class="pk">nexterm --serve</span>
       <h2>服务端：工作台搬到服务器上</h2>
-      <p>不是「投屏」。终端进程、回滚缓冲与工作区布局都跑在那台常开的机器上，浏览器只是接上去看 —— 换设备、关网页、多人同看，都以此为准。</p>
+      <p>不是「投屏」。终端进程、回滚缓冲与工作区布局都跑在那台常开的机器上，浏览器只是接上去看；换设备、关网页、多人同看，都以此为准。</p>
     </div>
 
     <div class="figure">
@@ -230,8 +239,8 @@
         <h3>转发端口的地址，看部署形态</h3>
         <p>同一条「把远端端口搬到服务端」的功能，监听在哪由部署形态决定。</p>
         <ul>
-          <li>桌面 App：<code>127.0.0.1</code> —— 转发只给自己用</li>
-          <li>自建服务端：<code>0.0.0.0</code> —— 可把远端服务搬到服务端端口上</li>
+          <li>桌面 App：<code>127.0.0.1</code>，转发只给自己用</li>
+          <li>自建服务端：<code>0.0.0.0</code>，可把远端服务搬到服务端端口上</li>
           <li>懒猫微服：<b>不可用</b>。平台侧端口暴露无鉴权，界面直接说明并指你改用平台原生转发</li>
         </ul>
       </div>
@@ -255,7 +264,7 @@
       <div class="cell">
         <span class="tag">DIRECTION</span>
         <h3>方向显式</h3>
-        <p>分组、资产、凭据、片段整组同步，按「推送到云端」或「拉取并应用」，方向由你按按钮定 —— SSH 私钥这类载荷不做自动合并，逐对象按修订号裁决。</p>
+        <p>分组、资产、凭据、片段整组同步，按「推送到云端」或「拉取并应用」，方向由你按按钮定；SSH 私钥这类载荷不做自动合并，逐对象按修订号裁决。</p>
       </div>
       <div class="cell">
         <span class="tag">CONFLICT</span>
@@ -273,7 +282,7 @@
       <div>
         <span class="pk">nexterm --connect</span>
         <h3 class="sub-h">一个账号，两个部署位置</h3>
-        <p>在「设置 → 账号同步」填「服务端地址 + 用户名 + 密码」登录就能连上，不用管对端装在哪 —— 懒猫微服或自建服务器，账号是同一套机制。</p>
+        <p>在「设置 → 账号同步」填「服务端地址 + 用户名 + 密码」登录就能连上，不用管对端装在哪：懒猫微服或自建服务器，账号是同一套机制。</p>
         <ul class="points">
           <li><b>懒猫微服</b>：平台公网入口默认要求登录，网关注入内部链路密钥后请求才到达容器。</li>
           <li><b>自建服务器</b>：不经平台网关，直接连到服务端。</li>
@@ -320,13 +329,13 @@
           <li>服务端：<code>NexTerm-server_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code>，含前端、两个 systemd 单元与两份 env 示例</li>
           <li>sync-only 不是独立包：同一个二进制加 <code>--sync-only</code> 即只挂同步端点</li>
           <li>懒猫微服：在微服应用中心里安装，不经 Release 下载</li>
-          <li>从源码构建：Go 1.26 + Node 22+ + pnpm</li>
+          <li>从源码构建：Go 1.26 + Node（20.19+ 或 22.12+）+ pnpm</li>
         </ul>
       </div>
       <div class="code-block">
         <div class="term-bar">
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
-          <span class="term-title">nexterm-server — bash</span>
+          <span class="term-title">nexterm-server - bash</span>
         </div>
         <pre><span class="c"># 完整版：界面 + 全部命令</span>
 <span class="c"># 裸启动就是 serve（容器里就这条）</span>
@@ -389,7 +398,7 @@
       </details>
       <details>
         <summary>服务端放公网安全吗？</summary>
-        <div class="faq-body">完整版默认开启账号鉴权（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有登录会话一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会进入初始化或登录页（账号未初始化时，一次性初始化码打印在服务端控制台）。回环免登录仅限显式 <code>--auth loopback</code>（会校验 Host 防 DNS 重绑定），且不适合反代场景。会话走 Cookie，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只挂账号与同步路由，不注册任何终端命令。懒猫微服上由平台登录门加网关注入的网关密钥放行内部链路，无需额外配置。</div>
+        <div class="faq-body">完整版默认开启账号鉴权（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有登录会话一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会进入初始化或登录页（账号未初始化时，一次性初始化码打印在服务端控制台）。回环免登录仅限显式 <code>--auth loopback</code>（会校验 Host 防 DNS 重绑定），且不适合反代场景。会话走 Cookie，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式：它只挂账号与同步路由，不注册任何终端命令。懒猫微服上由平台登录门加网关注入的网关密钥放行内部链路，无需额外配置。</div>
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
@@ -397,11 +406,15 @@
       </details>
       <details>
         <summary>几个人可以同时用同一台服务端吗？</summary>
-        <div class="faq-body">可以。终端能被多台设备一起看，但同一时刻只有一台能操作：控制权认的是<em>设备身份</em>（存在浏览器本地，同一台设备多开几个页面算同一台），后来者默认是观察者，点「接管控制」即可夺得键盘，原操作者当场转为只读。关闭标签时会问一次 —— 后台继续运行、结束进程、取消，选「后台继续运行」的会话可以在「后台会话」面板里重新接管。</div>
+        <div class="faq-body">可以。终端能被多台设备一起看，但同一时刻只有一台能操作：控制权认的是<em>设备身份</em>（存在浏览器本地，同一台设备多开几个页面算同一台），后来者默认是观察者，点「接管控制」即可夺得键盘，原操作者当场转为只读。关闭标签时会问一次：后台继续运行、结束进程、取消，选「后台继续运行」的会话可以在「后台会话」面板里重新接管。</div>
+      </details>
+      <details>
+        <summary>支持多用户、设备管理与分享吗？</summary>
+        <div class="faq-body">服务端内置多用户账号：超管初始化后创建用户，或开放注册让同事自助加入；各账号的同步数据互相隔离。主机安装 agent 后进入设备列表，可远程打开设备终端。主机可以分享给指定注册用户，对方在有效期内随时开新终端；也可以生成公开链接，默认只读、限时、可撤销，访问与输入都留审计。两种分享全程不暴露主机密码与私钥。</div>
       </details>
       <details>
         <summary>懒猫微服上的端口转发为什么不可用？</summary>
-        <div class="faq-body">平台提供的端口暴露是<em>裸 TCP</em>，且平台文档写明「从原理上无法提供鉴权流程」—— 应用侧补不上这个洞。所以在这个平台上这一功能被关闭，界面会直接说明并建议改用微服平台自带的转发功能，而不是画一个连不上的地址。自建服务端上转发正常可用，监听 <code>0.0.0.0</code>，可以把远端 <code>127.0.0.1</code> 上的服务搬到服务端端口上访问。</div>
+        <div class="faq-body">平台提供的端口暴露是<em>裸 TCP</em>，且平台文档写明「从原理上无法提供鉴权流程」，应用侧补不上这个洞。所以在这个平台上这一功能被关闭，界面会直接说明并建议改用微服平台自带的转发功能，而不是画一个连不上的地址。自建服务端上转发正常可用，监听 <code>0.0.0.0</code>，可以把远端 <code>127.0.0.1</code> 上的服务搬到服务端端口上访问。</div>
       </details>
       <details>
         <summary>同步会把我的密码传到别人的服务器吗？</summary>
@@ -409,11 +422,11 @@
       </details>
       <details>
         <summary>凭据如何保护？</summary>
-        <div class="faq-body">主密码经 Argon2id 派生密钥，凭据以 XChaCha20-Poly1305 信封加密存储；可选 Windows DPAPI / macOS 钥匙串免主密码模式；日志输出统一脱敏。</div>
+        <div class="faq-body">主密码经 Argon2id 派生密钥，凭据以 AES-GCM 信封加密存储；可选 Windows DPAPI / macOS 钥匙串免主密码模式；日志输出统一脱敏。桌面端凭据只存在本机；部署成服务端时，凭据库与主密钥在服务端这一侧。</div>
       </details>
       <details>
         <summary>AI 助手接入什么模型？</summary>
-        <div class="faq-body">任意 OpenAI 兼容端点均可接入，API 密钥仅保存在本机，不经过任何第三方服务。</div>
+        <div class="faq-body">任意 OpenAI 兼容端点均可接入。API 密钥保存在运行 NexTerm 的这一侧：桌面版在本机，服务端部署时在你的服务端；密钥只发往你配置的模型端点，不经第三方中转。</div>
       </details>
       <details>
         <summary>采用什么开源协议？</summary>
@@ -480,12 +493,12 @@
 
   var steps = [
     function () { return typeCmd("systemctl status api-server"); },
-    function () { out("● api-server.service — API 服务", 420); return sleep(420); },
+    function () { out("● api-server.service - API 服务", 420); return sleep(420); },
     function () { out("   Active: active (running) since 09:12 · 已运行 3h", 600); return sleep(600); },
     function () { return typeCmd("docker logs --tail 1 api-server"); },
     function () { out('10.0.0.8 - "GET /healthz 200" 3ms', 900); return sleep(900); },
     function () { return typeCmd(""); },
-    function () { line('<span class="warn">── AI 请求接管终端 ──────────────────</span>'); return sleep(650); },
+    function () { line('<span class="warn">---- AI 请求接管终端 ----</span>'); return sleep(650); },
     function () { line('<span class="info">   docker restart api-server</span>'); return sleep(650); },
     function () { line('<span class="d">   〔允许本次〕〔本会话允许〕〔拒绝〕 → 允许本次</span>'); return sleep(950); },
     function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按 Esc（可改键）夺回</span>'); return sleep(700); },

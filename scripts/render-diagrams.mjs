@@ -17,11 +17,13 @@ const CHROME_CANDIDATES = [
 ];
 
 function findChrome() {
+  const fromEnv = process.env.CHROME;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
   for (const p of CHROME_CANDIDATES) {
     if (existsSync(p)) return p;
   }
   throw new Error(
-    "找不到 Chrome/Chromium。装一个，或把路径加进 CHROME_CANDIDATES。"
+    "找不到 Chrome/Chromium。装一个，用 CHROME 环境变量指定路径，或把路径加进 CHROME_CANDIDATES。"
   );
 }
 
