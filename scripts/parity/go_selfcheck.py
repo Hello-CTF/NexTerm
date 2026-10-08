@@ -202,7 +202,12 @@ def server_smoke(
     data_dir = work / ("sync-only-data" if sync_only else "full-data")
     data_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / ("go-server-sync-only-smoke.log" if sync_only else "go-server-smoke.log")
-    command = [str(binary), "--listen", f"127.0.0.1:{port}", "--data-dir", str(data_dir)]
+    command = [
+        str(binary),
+        "--listen", f"127.0.0.1:{port}",
+        "--data-dir", str(data_dir),
+        "--auth", "loopback",
+    ]
     if sync_only:
         command.append("--sync-only")
     evidence = []
@@ -213,6 +218,15 @@ def server_smoke(
             health = wait_health(port, process)
             expected = check_health(health, surface, sync_only)
             runtime["health_commands"] = health.get("commands")
+            evidence.append(
+                {
+                    "auth_topology": {
+                        "mode": "loopback",
+                        "listen": f"127.0.0.1:{port}",
+                        "sync_only": sync_only,
+                    }
+                }
+            )
             evidence.append(
                 {
                     "health": health,
@@ -379,6 +393,27 @@ def main() -> int:
             runtime["sync_only_server"] = sync_only_runtime["observations"]
             runtime["command_surface"]["health_full_commands"] = full["health_commands"]
             runtime["command_surface"]["health_sync_only_commands"] = sync_only_runtime["health_commands"]
+            runtime["auth_paths"] = {
+                "topology": (
+                    "both loopback smoke servers run with --auth=loopback on 127.0.0.1: the product's explicit "
+                    "loopback mode, chosen because this smoke accepts the command surface, not authentication; "
+                    "the shipped default stays auth=on and non-loopback listeners still require account sessions"
+                ),
+                "exercised": [
+                    "anonymous GET /healthz on full and sync-only loopback servers",
+                    "anonymous POST /rpc dispatch under --auth=loopback: app_info, app_platform, unknown-command not_found",
+                    "sync-only POST /rpc absence (404) under --auth=loopback",
+                ],
+                "not_exercised": [
+                    "account session login/issuance and authenticated /rpc under --auth=on",
+                    "anonymous 401 rejection on auth-required routes",
+                    "account CSRF enforcement",
+                ],
+                "covered_by": (
+                    "internal/server Go tests: TestAuthModeMatrixAcrossListens and the TestExposedListen* "
+                    "anonymous-401/token/CSRF rejection suites"
+                ),
+            }
             smoke_status = "passed"
             smoke_code = 0
         except Exception as error:
