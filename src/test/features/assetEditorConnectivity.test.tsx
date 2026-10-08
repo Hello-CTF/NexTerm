@@ -96,6 +96,10 @@ function fillName(name: string) {
   setInputValue(mounted!.container.querySelector("input.nx-input") as HTMLInputElement, name);
 }
 
+function fillHost(host: string) {
+  setInputValue(findInput("1.2.3.4"), host);
+}
+
 function saveButton(): HTMLButtonElement {
   const button = [...mounted!.container.querySelectorAll("button")].find(
     (candidate) => candidate.textContent?.trim() === "保存",
@@ -121,6 +125,7 @@ describe("AssetEditor SSH 连接能力", () => {
     setSelectValue(findSelect("密码"), "keyboard-interactive");
     await flush();
     fillName("interactive-01");
+    fillHost("10.0.0.8");
     const passwordInput = mounted!.container.querySelector('input[type="password"]') as HTMLInputElement;
     expect(passwordInput).toBeTruthy();
     setInputValue(passwordInput, "s3cret");
@@ -148,6 +153,7 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(labels.some((label) => label?.includes("本机"))).toBe(false);
     setSelectValue(jumpSelect, "j1");
     fillName("via-jump");
+    fillHost("10.0.0.8");
     click(saveButton());
     await flushUntil(() => mocks.create.mock.calls.length > 0);
     expect(createdPayload().options).toEqual({ jumpAssetId: "j1" });
@@ -200,6 +206,7 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(checkbox.checked).toBe(true);
     setInputValue(findInput("$SSH_AUTH_SOCK"), "/tmp/agent.sock");
     fillName("forwarder");
+    fillHost("10.0.0.8");
     click(saveButton());
     await flushUntil(() => mocks.create.mock.calls.length > 0);
     expect(createdPayload().options).toEqual({
@@ -216,6 +223,7 @@ describe("AssetEditor SSH 连接能力", () => {
     setInputValue(findInput("选择或输入私钥路径"), "/home/u/.ssh/id_ed25519");
     setInputValue(findInput("id_ed25519-cert.pub"), "/home/u/.ssh/id_ed25519-cert.pub");
     fillName("cert-user");
+    fillHost("10.0.0.8");
     click(saveButton());
     await flushUntil(() => mocks.create.mock.calls.length > 0);
     const payload = createdPayload();

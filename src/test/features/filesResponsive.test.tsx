@@ -504,8 +504,13 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
   });
 
   it("NewCredentialModal 类型图标窄屏隐藏、footer 常驻", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(
-      createElement(NewCredentialModal, { onClose: () => undefined, onSaved: () => undefined }),
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(NewCredentialModal, { onClose: () => undefined, onSaved: () => undefined }),
+      ),
     );
     await waitFor(() => expect(mounted!.container.textContent).toContain("新建凭据"));
 

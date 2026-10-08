@@ -3,18 +3,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
   initMaster: vi.fn(),
   listCredentials: vi.fn(),
   setCredential: vi.fn(),
+  unlock: vi.fn(),
+  promptText: vi.fn(),
   assetList: vi.fn(),
   groupList: vi.fn(),
   assetCreate: vi.fn(),
+  assetUpdate: vi.fn(),
   toast: vi.fn(),
 }));
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  return { ...actual, promptText: mocks.promptText };
+});
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
@@ -24,7 +31,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       initMaster: mocks.initMaster,
       initDpapi: vi.fn(),
       lock: vi.fn(),
-      unlock: vi.fn(),
+      unlock: mocks.unlock,
       changePassword: vi.fn(),
       setAutoLock: vi.fn(),
       listCredentials: mocks.listCredentials,
@@ -38,6 +45,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.assetList,
       groupList: mocks.groupList,
       create: mocks.assetCreate,
+      update: mocks.assetUpdate,
       readKeyFile: vi.fn(),
     },
     sessionApi: {},
@@ -49,6 +57,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 import { CredentialsSidebar } from "../../features/credentials/CredentialsSidebar";
 import { CredentialsPanel } from "../../features/credentials/CredentialsPanel";
 import { CredentialsView } from "../../features/credentials/CredentialsView";
+import { NewCredentialModal } from "../../features/credentials/NewCredentialModal";
 import { AssetEditor } from "../../features/explorer/AssetTree";
 import { useUi } from "../../app/store";
 
@@ -61,6 +70,18 @@ const NOT_INIT_VAULT = {
 const DPAPI_VAULT = {
   initialized: true,
   mode: "dpapi" as const,
+  unlocked: true,
+  autoLockMinutes: 30,
+};
+const LOCKED_VAULT = {
+  initialized: true,
+  mode: "master" as const,
+  unlocked: false,
+  autoLockMinutes: 30,
+};
+const MASTER_UNLOCKED_VAULT = {
+  initialized: true,
+  mode: "master" as const,
   unlocked: true,
   autoLockMinutes: 30,
 };
@@ -128,12 +149,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.vaultStatus.mockResolvedValue(NOT_INIT_VAULT);
-  mocks.initMaster.mockResolvedValue(undefined);
+  mocks.initMaster.mockImplementation(async () => {
+    mocks.vaultStatus.mockResolvedValue(MASTER_UNLOCKED_VAULT);
+  });
   mocks.listCredentials.mockResolvedValue([]);
   mocks.assetList.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([]);
   mocks.setCredential.mockResolvedValue({ id: "cred-1" });
   mocks.assetCreate.mockResolvedValue({ id: "a-new" });
+  mocks.assetUpdate.mockResolvedValue({ id: "a1" });
+  mocks.promptText.mockResolvedValue(null);
+  mocks.unlock.mockResolvedValue(undefined);
   useUi.setState({
     pushToast: mocks.toast,
     sessions: [],
@@ -272,7 +298,9 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     const editor = assetEditorModal()!;
     const nameInput = editor.querySelector<HTMLInputElement>("input.nx-input")!;
     setInputValue(nameInput, "web-01");
-    const passwordInput = editor.querySelector<HTMLInputElement>('input[type="password"]')!;
+    const hostInput = editor.querySelector<HTMLInputElement>('input[placeholder="1.2.3.4"]')!;
+    setInputValue(hostInput, "10.0.0.8");
+    const passwordInput = editor.querySelector<HTMLInputElement>('input[aria-label="凭据密码"]')!;
     setInputValue(passwordInput, "s3cret");
     clickButton(editor, "保存");
 
@@ -314,5 +342,212 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     await flush();
     expect(modalHeaders()).toEqual(["编辑资产"]);
     expect(mocks.initMaster).not.toHaveBeenCalled();
+  });
+
+  it("编辑已有资产并输入新密码时先弹初始化浮层，取消后已填内容保留", async () => {
+    mounted = withClient(
+      createElement(AssetEditor, {
+        kind: "asset",
+        initial: EXISTING_ASSET,
+        onClose: () => {},
+        onSaved: () => {},
+      }),
+    );
+    await flushUntil(() => !!assetEditorModal());
+    expect(initModal()).toBeNull();
+
+    const passwordInput = assetEditorModal()!.querySelector<HTMLInputElement>(
+      'input[aria-label="凭据密码"]',
+    );
+    if (!passwordInput) throw new Error("credential password input not found");
+    setInputValue(passwordInput, "s3cret");
+    await flushUntil(() => !!initModal());
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+
+    clickButton(initModal()!, "取消");
+    await flushUntil(() => initModal() === null);
+    expect(passwordInput.value).toBe("s3cret");
+    expect(assetEditorModal()).not.toBeNull();
+  });
+
+  it("编辑路径完成初始化后保存：新密码写入凭据库并更新资产", async () => {
+    const onSaved = vi.fn();
+    mounted = withClient(
+      createElement(AssetEditor, {
+        kind: "asset",
+        initial: EXISTING_ASSET,
+        onClose: () => {},
+        onSaved,
+      }),
+    );
+    await flushUntil(() => !!assetEditorModal());
+
+    const passwordInput = assetEditorModal()!.querySelector<HTMLInputElement>(
+      'input[aria-label="凭据密码"]',
+    );
+    if (!passwordInput) throw new Error("credential password input not found");
+    setInputValue(passwordInput, "s3cret");
+    await flushUntil(() => !!initModal());
+
+    completeInit();
+    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    await flushUntil(() => initModal() === null);
+
+    clickButton(assetEditorModal()!, "保存");
+    await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
+    expect(mocks.setCredential).toHaveBeenCalledWith("web-1", "password", "s3cret");
+    await flushUntil(() => mocks.assetUpdate.mock.calls.length > 0);
+    await flushUntil(() => onSaved.mock.calls.length > 0);
+    for (const call of mocks.toast.mock.calls) {
+      expect(String(call[1])).not.toContain("尚未初始化");
+    }
+  });
+
+  it("编辑资产改选「存入凭据库」新建私钥时同样先弹初始化浮层", async () => {
+    mounted = withClient(
+      createElement(AssetEditor, {
+        kind: "asset",
+        initial: EXISTING_ASSET,
+        onClose: () => {},
+        onSaved: () => {},
+      }),
+    );
+    await flushUntil(() => !!assetEditorModal());
+    const editor = assetEditorModal()!;
+    const authSelect = [...editor.querySelectorAll("select")].find(
+      (s) => s.value === "password",
+    );
+    if (!authSelect) throw new Error("auth select not found");
+    setSelectValue(authSelect as HTMLSelectElement, "key");
+    await flush();
+    clickButton(editor, "存入凭据库");
+    await flushUntil(() => !!initModal());
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+
+    clickButton(initModal()!, "取消");
+    await flushUntil(() => initModal() === null);
+    expect(assetEditorModal()).not.toBeNull();
+  });
+});
+
+describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
+  function mountLockedEditor(onSaved: () => void) {
+    mocks.vaultStatus.mockResolvedValue(LOCKED_VAULT);
+    mounted = withClient(
+      createElement(AssetEditor, {
+        kind: "asset",
+        initial: EXISTING_ASSET,
+        onClose: () => {},
+        onSaved,
+      }),
+    );
+    return flushUntil(() => !!assetEditorModal());
+  }
+
+  function passwordInput(): HTMLInputElement {
+    const input = assetEditorModal()!.querySelector<HTMLInputElement>(
+      'input[aria-label="凭据密码"]',
+    );
+    if (!input) throw new Error("credential password input not found");
+    return input;
+  }
+
+  it("locked 时保存先弹解锁，解锁成功后才写凭据库", async () => {
+    const onSaved = vi.fn();
+    await mountLockedEditor(onSaved);
+    mocks.promptText.mockResolvedValue("right-password");
+
+    setInputValue(passwordInput(), "s3cret");
+    clickButton(assetEditorModal()!, "保存");
+
+    await flushUntil(() => mocks.promptText.mock.calls.length > 0);
+    expect(mocks.promptText).toHaveBeenCalledWith("保存凭据前需要解锁凭据库", "", {
+      secret: true,
+    });
+    await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
+    expect(mocks.setCredential).toHaveBeenCalledWith("web-1", "password", "s3cret");
+    await flushUntil(() => onSaved.mock.calls.length > 0);
+  });
+
+  it("解锁失败当场报错并中止保存，表单数据保留", async () => {
+    await mountLockedEditor(vi.fn());
+    mocks.promptText.mockResolvedValue("wrong-password");
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+
+    setInputValue(passwordInput(), "s3cret");
+    clickButton(assetEditorModal()!, "保存");
+
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+    expect(mocks.assetUpdate).not.toHaveBeenCalled();
+    await flush();
+    expect(passwordInput().value).toBe("s3cret");
+    expect(assetEditorModal()).not.toBeNull();
+  });
+
+  it("取消解锁则中止保存，不调用凭据接口", async () => {
+    await mountLockedEditor(vi.fn());
+    mocks.promptText.mockResolvedValue(null);
+
+    setInputValue(passwordInput(), "s3cret");
+    clickButton(assetEditorModal()!, "保存");
+
+    await flushUntil(() => mocks.promptText.mock.calls.length > 0);
+    await flush();
+    expect(mocks.unlock).not.toHaveBeenCalled();
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+    expect(assetEditorModal()).not.toBeNull();
+  });
+});
+
+describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
+  function mountLockedModal(onSaved: () => void) {
+    mocks.vaultStatus.mockResolvedValue(LOCKED_VAULT);
+    mounted = withClient(
+      createElement(NewCredentialModal, { onClose: () => {}, onSaved }),
+    );
+    const nameInput = mounted.container.querySelector<HTMLInputElement>(
+      'input[placeholder="例如：db-prod"]',
+    );
+    if (!nameInput) throw new Error("name input not found");
+    setInputValue(nameInput, "db-prod");
+    const valueInput = mounted.container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (!valueInput) throw new Error("value input not found");
+    setInputValue(valueInput, "s3cret");
+  }
+
+  it("locked 时保存先弹解锁，成功后按所填内容创建", async () => {
+    const onSaved = vi.fn();
+    mountLockedModal(onSaved);
+    mocks.promptText.mockResolvedValue("right-password");
+
+    clickButton(mounted!.container, "保存");
+    await flushUntil(() => mocks.promptText.mock.calls.length > 0);
+    expect(mocks.promptText).toHaveBeenCalledWith("保存凭据前需要解锁凭据库", "", {
+      secret: true,
+    });
+    await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
+    expect(mocks.setCredential).toHaveBeenCalledWith("db-prod", "password", "s3cret", {
+      source: undefined,
+    });
+    await flushUntil(() => onSaved.mock.calls.length > 0);
+    expect(onSaved).toHaveBeenCalledWith("cred-1");
+  });
+
+  it("解锁失败不创建凭据，已填内容保留", async () => {
+    mountLockedModal(vi.fn());
+    mocks.promptText.mockResolvedValue("wrong-password");
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+
+    clickButton(mounted!.container, "保存");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+    await flush();
+    expect(mounted!.container.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe(
+      "s3cret",
+    );
+    expect(mounted!.container.textContent).toContain("新建凭据");
   });
 });

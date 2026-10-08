@@ -82,6 +82,12 @@ function fillName(name: string) {
   setInputValue(input, name);
 }
 
+function fillHost(host: string) {
+  const input = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="1.2.3.4"]');
+  if (!input) throw new Error("host input not found");
+  setInputValue(input, host);
+}
+
 describe("AssetEditor 保存防重", () => {
   it("保存进行中禁用按钮并忽略重复点击", async () => {
     const { onSaved } = mountEditor();
@@ -89,6 +95,7 @@ describe("AssetEditor 保存防重", () => {
     const gate = deferred<{ id: string }>();
     mocks.create.mockImplementation(() => gate.promise);
     fillName("web-01");
+    fillHost("10.0.0.8");
     const saveBtn = [...mounted!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "保存",
     ) as HTMLButtonElement;
@@ -113,6 +120,7 @@ describe("AssetEditor 保存防重", () => {
     await flush();
     mocks.create.mockRejectedValueOnce(new Error("名称已存在"));
     fillName("web-01");
+    fillHost("10.0.0.8");
     clickButton(mounted!.container, "保存");
     await flushUntil(() => text().includes("名称已存在"));
     const saveBtn = [...mounted!.container.querySelectorAll("button")].find(

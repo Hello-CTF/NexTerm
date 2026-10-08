@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
+import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { connectWithHostKeyConfirm } from "./hostKeys";
 import { dirtyFileEditors } from "../features/files/editorGuards";
@@ -1214,20 +1214,26 @@ export function useCredentialsTabId(): string | undefined {
 
 async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }): Promise<boolean> {
   if (!asset.credId) return true;
+  let st: VaultStatus;
   try {
-    const st = await vaultApi.status();
-    if (!st.initialized || st.unlocked) return true;
-    const { promptText } = await import("../ui/dialogs");
-    const pwd = await promptText(
-      `连接「${asset.name}」需要使用凭据，请先输入保护密码：`,
-      "",
-      { secret: true },
-    );
-    if (pwd === null) return false;
-    await vaultApi.unlock(pwd);
-    return true;
+    st = await vaultApi.status();
   } catch {
     return true;
+  }
+  if (!st.initialized || st.unlocked) return true;
+  const { promptText } = await import("../ui/dialogs");
+  const pwd = await promptText(
+    `连接「${asset.name}」需要使用凭据，请先输入保护密码：`,
+    "",
+    { secret: true },
+  );
+  if (pwd === null) return false;
+  try {
+    await vaultApi.unlock(pwd);
+    return true;
+  } catch (e) {
+    useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+    return false;
   }
 }
 
@@ -1282,6 +1288,10 @@ export interface ConnectAssetInput {
   credId?: string | null;
 }
 
+export interface ConnectAssetOptions {
+  silent?: boolean;
+}
+
 export type ConnectOutcome =
   | { ok: true }
   | { ok: false; error?: string; canceled?: boolean };
@@ -1302,10 +1312,13 @@ export function isAssetConnecting(assetId: string): boolean {
   return useUi.getState().connectingAssetIds.includes(assetId);
 }
 
-export async function connectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome> {
+export async function connectAsset(
+  asset: ConnectAssetInput,
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
   const inflight = inflightConnects.get(asset.id);
   if (inflight) return inflight;
-  const promise = runConnectAsset(asset).finally(() => {
+  const promise = runConnectAsset(asset, options).finally(() => {
     inflightConnects.delete(asset.id);
     setAssetConnecting(asset.id, false);
   });
@@ -1314,7 +1327,10 @@ export async function connectAsset(asset: ConnectAssetInput): Promise<ConnectOut
   return promise;
 }
 
-async function runConnectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome> {
+async function runConnectAsset(
+  asset: ConnectAssetInput,
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
   const { pushToast } = useUi.getState();
 
   if (asset.kind === "mysql" || asset.kind === "redis") {
@@ -1336,7 +1352,7 @@ async function runConnectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome
       useConnectHistory.getState().record(asset.id);
       return { ok: true };
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (!options?.silent) pushToast("error", describeError(e));
       return { ok: false, error: describeError(e) };
     }
   }
@@ -1353,7 +1369,8 @@ async function runConnectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome
     return { ok: true };
   } catch (e) {
     const err = e as { message?: string };
-    pushToast("error", err.message || describeError(e));
-    return { ok: false, error: err.message || describeError(e) };
+    const message = err.message || describeError(e);
+    if (!options?.silent) pushToast("error", message);
+    return { ok: false, error: message };
   }
 }

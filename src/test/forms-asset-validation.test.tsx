@@ -221,3 +221,58 @@ describe("资产表单主机/端口内联校验", () => {
     setViewportWidth(1024);
   });
 });
+
+describe("资产表单保存被主机/端口校验阻塞", () => {
+  function saveButton(): HTMLButtonElement {
+    const button = [...mounted!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存",
+    ) as HTMLButtonElement;
+    if (!button) throw new Error("save button not found");
+    return button;
+  }
+
+  function fillName(name: string): void {
+    const input = mounted!.container.querySelector<HTMLInputElement>("input.nx-input");
+    if (!input) throw new Error("name input not found");
+    setInputValue(input, name);
+  }
+
+  it("主机非法时保存按钮禁用，修正后恢复", async () => {
+    mountEditor();
+    await flush();
+    fillName("web-01");
+    const host = hostInput();
+    setInputValue(host, "bad host");
+    blur(host);
+    expect(saveButton().disabled).toBe(true);
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    setInputValue(host, "10.0.0.8");
+    blur(host);
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("端口越界时保存按钮禁用且不会提交", async () => {
+    mountEditor();
+    await flush();
+    fillName("web-01");
+    const port = portInput();
+    setInputValue(port, "70000");
+    blur(port);
+    expect(saveButton().disabled).toBe(true);
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    setInputValue(port, "22");
+    blur(port);
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("主机留空时保存按钮禁用", async () => {
+    mountEditor();
+    await flush();
+    fillName("web-01");
+    blur(hostInput());
+    expect(saveButton().disabled).toBe(true);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+});

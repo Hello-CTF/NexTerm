@@ -195,6 +195,37 @@ describe("解锁与空引用文案", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已解锁");
   });
 
+  it("解锁失败当场说明主密码错误", async () => {
+    mocks.status.mockResolvedValue({ initialized: true, unlocked: false, mode: "master" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.promptText.mockResolvedValue("wrong");
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("凭据库已锁定"));
+
+    clickButton(mounted!.container, "解锁");
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误"),
+    );
+  });
+
+  it("凭据详情自动隐藏倒计时用「秒」而不是「s」", async () => {
+    mocks.revealCredential.mockResolvedValue({
+      kind: "private_key",
+      value: "PRIVATE KEY BODY",
+      source: "inline",
+      refPath: null,
+      passphrase: "pp",
+    });
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
+
+    clickButton(mounted!.container, "显示");
+    await waitFor(() => expect(mocks.revealCredential).toHaveBeenCalledWith("c1"));
+    await flush();
+    expect(mounted!.container.textContent).toContain("15 秒后自动隐藏");
+    expect(mounted!.container.textContent).not.toContain("15s 后自动隐藏");
+  });
+
   it("未被引用的凭据：空态只说事实，不堆冗余指引", async () => {
     mocks.listCredentials.mockResolvedValue([{ ...CRED, usedBy: [] }]);
     mounted = mountPanel();

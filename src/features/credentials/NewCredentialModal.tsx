@@ -6,6 +6,7 @@ import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { KIND_META, NEW_KIND_ORDER } from "./meta";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "./keyStaging";
+import { useVaultInitGate } from "./useVaultInitGate";
 
 type Origin = "ref" | "vault";
 
@@ -17,6 +18,7 @@ export function NewCredentialModal({
   onSaved: (id: string) => void;
 }) {
   const { pushToast } = useUi();
+  const { ensureVaultReady, vaultInitGate } = useVaultInitGate();
   const [name, setName] = useState("");
   const [kind, setKind] = useState("password");
   const [value, setValue] = useState("");
@@ -81,6 +83,7 @@ export function NewCredentialModal({
   const save = async () => {
     setSaving(true);
     try {
+      if (!(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
       let secret = value;
       let source: CredentialSource | undefined;
       if (isKey) {
@@ -112,6 +115,7 @@ export function NewCredentialModal({
   };
 
   return (
+    <>
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
@@ -326,5 +330,7 @@ export function NewCredentialModal({
         </div>
       </div>
     </div>
+    {vaultInitGate}
+    </>
   );
 }

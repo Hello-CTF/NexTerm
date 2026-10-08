@@ -5,6 +5,7 @@ import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconCopy, IconKey } from "../../ui/icons";
+import { useVaultInitGate } from "./useVaultInitGate";
 
 type Algorithm = "ed25519" | "rsa";
 
@@ -21,6 +22,7 @@ export function GenerateKeyModal({
   onSaved: (id: string) => void;
 }) {
   const { pushToast } = useUi();
+  const { ensureVaultReady, vaultInitGate } = useVaultInitGate();
   const [name, setName] = useState("");
   const [algorithm, setAlgorithm] = useState<Algorithm>("ed25519");
   const [passphrase, setPassphrase] = useState("");
@@ -41,6 +43,7 @@ export function GenerateKeyModal({
   const generate = async () => {
     setGenerating(true);
     try {
+      if (!(await ensureVaultReady("生成密钥前需要解锁凭据库"))) return;
       const result = await vaultApi.generateKey(
         name.trim(),
         algorithm,
@@ -65,6 +68,7 @@ export function GenerateKeyModal({
   };
 
   return (
+    <>
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
@@ -210,5 +214,7 @@ export function GenerateKeyModal({
         </div>
       </div>
     </div>
+    {vaultInitGate}
+    </>
   );
 }

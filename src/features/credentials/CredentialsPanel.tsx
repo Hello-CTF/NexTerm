@@ -380,7 +380,7 @@ function CredentialDetail({
               {revealed !== null && !isRef && (
                 <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[var(--nx-fg-warning)]">
                   <IconEye size={11} />
-                  {left}s 后自动隐藏
+                  {left} 秒后自动隐藏
                 </div>
               )}
 

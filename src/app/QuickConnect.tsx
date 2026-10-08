@@ -96,7 +96,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
     setConnectError(null);
     refocusInput();
-    const outcome = await connectAsset(asset);
+    const outcome = await connectAsset(asset, { silent: true });
     if (closedRef.current) return;
     if (outcome.ok) {
       closeOverlay();
