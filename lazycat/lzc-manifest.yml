@@ -102,7 +102,7 @@ services:
   nexterm-server:
     image: embed:nexterm-server
     environment:
-      - NEXTERM_MASTER_KEY={{ stable_secret "vault_master" }}
+      - NEXTERM_LAZYCAT_VAULT_MASTER_KEY={{ stable_secret "vault_master" }}
       - NEXTERM_GATEWAY_AUTH={{ stable_secret "gateway_auth" }}
       - NEXTERM_DATA_DIR=/lzcapp/var/nexterm
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web

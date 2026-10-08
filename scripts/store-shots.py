@@ -21,7 +21,7 @@
 本机域名；合成后的产物是打过码的，才进版本库）。
 缺失 raw 的条目会被跳过并给出提示，不会中断整批。
 
-依赖：Pillow（本机用 /Users/macmini/.workbuddy/binaries/python/envs/default/bin/python）
+依赖：Pillow（pip install pillow）
 """
 
 from __future__ import annotations

@@ -21,22 +21,19 @@ while [ $# -gt 0 ]; do
     --require-evidence) REQUIRE_EVIDENCE=1; shift ;;
     -h|--help)
       cat <<'PACK_HELP_EOF'
-#!/usr/bin/env bash
-# Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
-# scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains --sync-only acceptance.
-set -euo pipefail
+Usage: scripts/pack-linux-server.sh [options]
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/target/release-assets"
-BIN=""
-WEB="$ROOT/dist"
-ARCH="amd64"
-REQUIRE_EVIDENCE=0
+Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
+scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains
+--sync-only acceptance.
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --out) OUT="$2"; shift 2 ;;
-    --out=*) OUT="${1#*=}"; shift ;;
+Options:
+  --out DIR           output directory (default target/release-assets)
+  --bin PATH          server binary (default target/go-build/nexterm-server-linux-<arch>)
+  --web DIR           frontend dist directory (default dist)
+  --arch ARCH         Linux server architecture: amd64 or arm64 (default amd64)
+  --require-evidence  fail unless the artifact report passes every assertion
+  -h, --help          show this help
 PACK_HELP_EOF
       exit 0
       ;;
@@ -101,7 +98,10 @@ write_env() {
   local target="$1" env_name="$2"
   cat > "$target" <<ENVEOF
 # Copy to /etc/nexterm/$env_name and chmod 0600.
-NEXTERM_MASTER_KEY=
+# The vault root key lives in its own 0600 file owned by the service user:
+#   install -m 0600 -o nexterm -g nexterm /dev/null /etc/nexterm/master.key
+#   printf '%s' '<root-key>' > /etc/nexterm/master.key
+NEXTERM_MASTER_KEY_FILE=/etc/nexterm/master.key
 ENVEOF
 }
 
@@ -130,8 +130,10 @@ examples. Its version comes only from wails.json.
   runtime in this full archive, not a separate onlyServer package. Public
   deployments still require TLS.
 
-Install nexterm-server as /opt/nexterm/nexterm-server. Keep NEXTERM_MASTER_KEY
-secret and back it up with /var/lib/nexterm.
+Install nexterm-server as /opt/nexterm/nexterm-server. The env examples point
+NEXTERM_MASTER_KEY_FILE at /etc/nexterm/master.key; create that root-key file
+owned by the nexterm service user with chmod 0600, keep it secret and back it
+up with /var/lib/nexterm.
 
 ## Verify
 
@@ -142,8 +144,9 @@ secret and back it up with /var/lib/nexterm.
   are gone. Desktop clients sign in under Settings -> Account Sync with
   server address + username + password.
 
-LazyCat assembly and real LazyCat/box acceptance belong to M47. This archive is
-an input contract, not evidence that those external targets have passed.
+LazyCat package assembly and real LazyCat/box acceptance are separate external
+steps. This archive is an input contract, not evidence that those external
+targets have passed.
 MDEOF
 }
 
