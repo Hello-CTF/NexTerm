@@ -1032,6 +1032,6 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	shouldReconnect := tab.session.status == StatusConnected && tab.session.generation == generation && reconnectable(tab.session.asset.Kind) && transport != nil && !transport.IsAlive()
 	tab.session.mu.Unlock()
 	if shouldReconnect {
-		m.StartReconnect(tab.session.ID)
+		_ = m.StartReconnect(tab.session.ID)
 	}
 }

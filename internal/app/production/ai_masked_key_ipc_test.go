@@ -29,7 +29,7 @@ func setupMaskedKeyDispatcher(t *testing.T) *ipc.Dispatcher {
 		t.Fatal(err)
 	}
 	dispatcher := ipc.NewDispatcher()
-	if err := registerVaultCommands(dispatcher, credentialVault, database); err != nil {
+	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := registerAICommands(dispatcher, profileManager, database); err != nil {

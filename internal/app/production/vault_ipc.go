@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -57,7 +58,7 @@ type revealedCredentialDTO struct {
 	Passphrase *string `json:"passphrase"`
 }
 
-func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Vault, database *store.Store) error {
+func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Vault, database *store.Store, events ipc.Emitter) error {
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "vault_status", func(_ context.Context, _ *ipc.Call, _ struct{}) (vault.Status, error) {
@@ -127,6 +128,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 				}
 				result := make([]credentialDTO, 0, len(rows))
 				unlocked := credentialVault.Status().Unlocked
+				decryptFailures := 0
 				for _, row := range rows {
 					usedBy, err := database.CredentialUsage(ctx, row.ID)
 					if err != nil {
@@ -136,7 +138,11 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						ID: row.ID, Name: row.Name, Kind: row.Kind, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, UsedBy: usedBy,
 					}
 					if unlocked && row.Kind == vault.KindPrivateKey {
-						if plaintext, err := credentialVault.DecryptCredentialString(ctx, row); err == nil {
+						plaintext, err := credentialVault.DecryptCredentialString(ctx, row)
+						if err != nil {
+							decryptFailures++
+							slog.Warn("credential decrypt failed", "credential", row.ID, "error", err)
+						} else {
 							payload := vault.ParsePrivateKeyPayload(plaintext)
 							item.Source = productionKeySource(payload)
 							item.RefPath = payload.File
@@ -144,6 +150,9 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						}
 					}
 					result = append(result, item)
+				}
+				if decryptFailures > 0 {
+					reportAppError(ctx, events, "vault", fmt.Sprintf("%d 条凭据解密失败，来源与口令信息无法显示，请检查凭据库状态或重新保存这些凭据", decryptFailures), nil)
 				}
 				return result, nil
 			})

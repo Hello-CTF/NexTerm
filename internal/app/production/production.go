@@ -79,7 +79,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
@@ -126,7 +126,7 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "vault",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerVaultCommands(dispatcher, services.Vault, services.Store)
+				return registerVaultCommands(dispatcher, services.Vault, services.Store, services.Events)
 			},
 			Component: newVaultComponent(services.Vault),
 		})

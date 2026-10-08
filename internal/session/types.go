@@ -25,18 +25,19 @@ const (
 )
 
 var (
-	ErrSessionNotFound = errors.New("session not found")
-	ErrTabNotFound     = errors.New("terminal tab not found")
-	ErrSessionClosed   = errors.New("session closed")
-	ErrTabClosed       = errors.New("terminal tab closed")
-	ErrNotController   = errors.New("not_controller")
-	ErrUnsupported     = errors.New("session capability unsupported")
-	ErrDisconnected    = errors.New("session disconnected")
-	ErrInvalidSize     = errors.New("invalid terminal size")
-	ErrStaleGeneration = errors.New("stale session generation")
-	ErrHidden          = errors.New("terminal hidden")
-	ErrTabExists       = errors.New("terminal tab already exists")
-	ErrInvalidOptions  = errors.New("invalid terminal options")
+	ErrSessionNotFound      = errors.New("session not found")
+	ErrTabNotFound          = errors.New("terminal tab not found")
+	ErrSessionClosed        = errors.New("session closed")
+	ErrTabClosed            = errors.New("terminal tab closed")
+	ErrNotController        = errors.New("not_controller")
+	ErrUnsupported          = errors.New("session capability unsupported")
+	ErrDisconnected         = errors.New("session disconnected")
+	ErrInvalidSize          = errors.New("invalid terminal size")
+	ErrStaleGeneration      = errors.New("stale session generation")
+	ErrAssetSessionConflict = errors.New("asset already has an active session")
+	ErrHidden               = errors.New("terminal hidden")
+	ErrTabExists            = errors.New("terminal tab already exists")
+	ErrInvalidOptions       = errors.New("invalid terminal options")
 )
 
 type Status string
@@ -261,7 +262,7 @@ func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {
 	s.eventVersion++
 	event := StatusEvent{SessionID: s.ID, Status: status, Version: s.eventVersion}
 	if cause != nil {
-		event.Error = cause.Error()
+		event.Error = userMessage(cause)
 	}
 	return event
 }

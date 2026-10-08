@@ -50,6 +50,14 @@ func (e *HostKeyError) Unwrap() error {
 	return ErrHostKeyChanged
 }
 
+func (e *HostKeyError) UserMessage() string {
+	endpoint := endpointString(e.Presented.Host, e.Presented.Port)
+	if e.Pending {
+		return fmt.Sprintf("首次连接 %s 需要确认主机指纹（%s），请与服务器管理员核对后确认是否信任该主机", endpoint, e.Presented.Fingerprint)
+	}
+	return fmt.Sprintf("主机 %s 的指纹与已记录的不一致（新指纹 %s），请与服务器管理员核对后再确认是否替换", endpoint, e.Presented.Fingerprint)
+}
+
 type HostKeyStore interface {
 	HostKeys(ctx context.Context, host string, port int) ([]HostKey, error)
 	PutHostKey(ctx context.Context, key HostKey, replace bool) error

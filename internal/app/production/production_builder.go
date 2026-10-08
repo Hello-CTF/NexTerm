@@ -98,7 +98,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	var hostKeys *productionHostKeyStore
 	var sshConnector *productionConnector
 	if connector == nil {
-		defaultConnector, err := newProductionConnector(database, credentialVault, config.DataDir)
+		defaultConnector, err := newProductionConnector(database, credentialVault, config.DataDir, config.Config.Events)
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +126,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
-					_ = dockerService.CloseSession(status.SessionID)
+					if err := dockerService.CloseSession(status.SessionID); err != nil {
+						config.Config.Logger.Warn("close docker session on status change failed", "session", status.SessionID, "error", err)
+					}
 				}
 			}
 			return emitter.EmitSessionEvent(ctx, event)

@@ -33,7 +33,7 @@ func sshImportTestRig(t *testing.T) (*ipc.Dispatcher, *store.Store, *vault.Vault
 	credentialVault := vault.Load(ctx, database)
 	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource}
 	dispatcher := ipc.NewDispatcher()
-	if err := registerVaultCommands(dispatcher, credentialVault, database); err != nil {
+	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := planner.registerCommands(dispatcher); err != nil {
