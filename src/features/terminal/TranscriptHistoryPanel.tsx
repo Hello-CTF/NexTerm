@@ -146,8 +146,12 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   }, [assetId]);
 
   useEffect(() => {
-    if (!visible || !assetId) return;
+    if (!assetId) return;
     void loadSessions();
+  }, [assetId, loadSessions]);
+
+  useEffect(() => {
+    if (!visible || !assetId) return;
     const timer = window.setInterval(() => void loadSessions(), POLL_MS);
     return () => window.clearInterval(timer);
   }, [visible, assetId, loadSessions]);

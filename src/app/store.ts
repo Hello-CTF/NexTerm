@@ -411,11 +411,11 @@ export const useUi = create<UiState>((set, get) => ({
 
   ensureWorkspace: (spec) => {
     const { workspaces, activeWorkspaceId } = get();
-    const exists = workspaces.find(
-      (w) =>
-        (spec.sessionId !== undefined && w.sessionId === spec.sessionId) ||
-        (spec.connId !== undefined && w.connId === spec.connId),
-    );
+    const exists = workspaces.find((w) => {
+      if (spec.sessionId !== undefined) return w.sessionId === spec.sessionId;
+      if (spec.connId !== undefined) return w.connId === spec.connId;
+      return w.kind === spec.kind;
+    });
     if (exists) {
       const patch = workspaceFieldPatch(exists, spec);
       const activeChanged = activeWorkspaceId !== exists.id;
