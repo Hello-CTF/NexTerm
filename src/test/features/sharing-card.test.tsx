@@ -284,19 +284,27 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
 
-  it("auth=off 且残留旧会话视图: 仍按账号功能已关闭渲染, 不展示分享管理入口", async () => {
-    route(shareHandler());
+  it("auth=off 且残留旧会话视图: 零请求渲染关闭态; 切回 auth=on 后加载与入口恢复", async () => {
+    const calls = route(shareHandler());
     seedUser(SUPERADMIN, "off");
     mounted = mount(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("终端分享不可用") ?? false);
 
     expect(document.body.textContent).not.toContain("新建主机分享");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
-    // 让残留会话触发的列表请求在测试内落定, 不落到 unmount 之后。
     await flush();
     await flush();
+    expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
     expect(document.body.textContent).toContain("终端分享不可用");
-    expect(document.body.textContent).not.toContain("新建主机分享");
+
+    seedUser(SUPERADMIN, "on");
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET /fleet/devices",
+      "GET /share/host-shares",
+      "GET /share/links",
+    ]);
+    expect(document.body.textContent).toContain("新建主机分享");
   });
 
   it("auth=on 未登录: 保持登录提示口径不变", async () => {
