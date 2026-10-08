@@ -27,7 +27,7 @@ func TestOpenCommandPTYUnicodeLocaleAndTerm(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	channel, err := transport.OpenCommandPTY(ctx, "printf 'TERM=%s\\n' \"$TERM\"; ls -1", base.PTYOptions{Cols: 100, Rows: 30, Term: "xterm-test"})
+	channel, err := transport.OpenCommandPTY(ctx, "printf 'TERM=%s\\n' \"$TERM\"; printf '%s\\n' *", base.PTYOptions{Cols: 100, Rows: 30, Term: "xterm-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
