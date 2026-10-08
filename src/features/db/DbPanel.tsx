@@ -95,7 +95,7 @@ function MysqlView({ connId }: { connId: string }) {
           sqlLang(),
           nxHighlight,
           EditorView.contentAttributes.of({ "aria-label": "SQL 编辑器" }),
-          placeholder("在这里写 SQL，然后点右上角「运行」"),
+          placeholder("在这里写 SQL，然后点右上角「运行」（一次只执行一条语句）"),
         ],
       }),
       parent: hostRef.current,
@@ -192,7 +192,7 @@ function MysqlView({ connId }: { connId: string }) {
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
           onClick={() => void run()}
-          title="运行整段 SQL，或只运行选中部分"
+          title="运行整段 SQL，或只运行选中部分（一次只执行一条语句）"
         >
           {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
           {running ? "运行中…" : "运行"}
@@ -213,7 +213,7 @@ function MysqlView({ connId }: { connId: string }) {
       />
 
       <div className="min-h-[48px] flex-1 overflow-auto" role="status">
-        {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行</div>}
+        {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行。一次只执行一条语句，直接在远端库执行并立即生效</div>}
       </div>
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1.5">
@@ -288,6 +288,7 @@ function MysqlView({ connId }: { connId: string }) {
 }
 
 function ResultTable({ result }: { result: QueryResult }) {
+  const { pushToast } = useUi();
   if (result.error) {
     return (
       <div className="p-3 font-mono text-xs leading-relaxed text-red-300">
@@ -304,6 +305,14 @@ function ResultTable({ result }: { result: QueryResult }) {
       </div>
     );
   }
+  const copyCsv = async () => {
+    try {
+      await copyAsCsv(result);
+      pushToast("success", "CSV 已复制");
+    } catch (e) {
+      pushToast("error", `复制失败：${describeError(e)}`);
+    }
+  };
   return (
     <div>
       <table className="nx-table">
@@ -332,7 +341,7 @@ function ResultTable({ result }: { result: QueryResult }) {
         </span>
         {result.truncated && <span className="text-amber-300">超过 5000 行，仅显示前 5000 行</span>}
         <span className="nx-spacer" />
-        <button className="nx-link" onClick={() => void copyAsCsv(result)}>
+        <button className="nx-link" onClick={() => void copyCsv()}>
           复制 CSV
         </button>
       </div>
@@ -354,6 +363,13 @@ const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
   FLUSHALL: "该操作会删除 Redis 里的所有键，立即生效且不可恢复。",
   FLUSHDB: "该操作会删除当前数据库的所有键，立即生效且不可恢复。",
   SHUTDOWN: "该操作会停止 Redis 服务，正在使用它的应用会立即断连。",
+  DEL: "该操作会立即删除指定的键，不可恢复。",
+  UNLINK: "该操作会立即删除指定的键（异步版 DEL），不可恢复。",
+  CONFIG: "CONFIG SET 会立即改动服务器配置，可能导致服务异常；CONFIG REWRITE 会把改动写入配置文件。",
+  DEBUG: "DEBUG 用于服务器内部排障，DEBUG SEGFAULT 会直接让 Redis 进程崩溃。",
+  EVAL: "EVAL 会立即执行任意 Lua 脚本，脚本可以读写、删除任意数据。",
+  EVALSHA: "EVALSHA 会立即执行已缓存的 Lua 脚本，脚本可以读写、删除任意数据。",
+  FCALL: "FCALL 会立即调用已加载的函数，函数可以读写、删除任意数据。",
 };
 
 function RedisView({ connId }: { connId: string }) {
@@ -430,9 +446,22 @@ function RedisView({ connId }: { connId: string }) {
   const editTtl = async () => {
     if (!view) return;
     const current = String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒`;
-    const input = await promptText(`设置过期时间（秒，填 -1 表示永不过期）。当前：${current}`, String(view.ttl));
+    const input = await promptText(
+      `设置过期时间（秒，填 -1 表示永不过期，填 0 会立即删除该键）。当前：${current}`,
+      String(view.ttl),
+    );
     if (input === null) return;
-    await dbApi.redisSetTtl(connId, String(view.key), Number(input));
+    const seconds = Number(input.trim());
+    if (!/^-?\d+$/.test(input.trim()) || !Number.isSafeInteger(seconds)) {
+      pushToast("error", "过期时间必须是整数秒（-1 表示永不过期）");
+      return;
+    }
+    try {
+      await dbApi.redisSetTtl(connId, String(view.key), seconds);
+    } catch (e) {
+      pushToast("error", describeError(e));
+      return;
+    }
     pushToast("success", "过期时间已更新");
     void inspect(String(view.key));
   };
@@ -562,7 +591,8 @@ function RedisView({ connId }: { connId: string }) {
 
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
           <div className="mb-1.5 text-[11px] text-neutral-500">
-            命令台 · FLUSHALL / FLUSHDB 会删除数据，SHUTDOWN 会停止服务，执行前都会要求确认
+            <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
+            <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
           </div>
           <div className="flex items-center gap-1.5">
             <input
