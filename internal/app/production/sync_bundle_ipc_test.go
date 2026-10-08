@@ -2,6 +2,7 @@ package production
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -197,7 +198,8 @@ func TestSyncBundleExportImportRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if importedAsset.GroupID == nil || *importedAsset.GroupID != childID || importedAsset.CredID == nil || *importedAsset.CredID != credID ||
-		importedAsset.UpdatedAt != 200 || importedAsset.OptionsJSON != `{"theme":"dark"}` || importedAsset.Port == nil || *importedAsset.Port != 22 {
+		importedAsset.UpdatedAt != 200 || importedAsset.CreatedAt != 100 ||
+		importedAsset.OptionsJSON != `{"theme":"dark"}` || importedAsset.Port == nil || *importedAsset.Port != 22 {
 		t.Fatalf("imported asset = %+v", importedAsset)
 	}
 	importedCred, err := targetDB.CredentialGetRow(ctx, credID)
@@ -281,17 +283,19 @@ func TestSyncBundleImportMalformedInput(t *testing.T) {
 	}
 
 	invalidID := ids.New()
+	nullOptionsID := ids.New()
 	report := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
 		"bundle": map[string]any{
 			"protocol": 1,
 			"assets": []map[string]any{
 				{"id": "bad-id", "name": "非法资产", "optionsJson": "{}", "updatedAt": 100},
 				{"id": invalidID, "name": "坏选项", "optionsJson": "not-json", "updatedAt": 100},
+				{"id": nullOptionsID, "name": "空选项", "optionsJson": "null", "updatedAt": 100},
 			},
 		},
 		"force": false,
 	}))
-	if report.Refused != 1 || report.AssetsCreated != 1 {
+	if report.Refused != 1 || report.AssetsCreated != 2 {
 		t.Fatalf("malformed entries report = %+v", report)
 	}
 	if _, err := database.AssetGet(t.Context(), invalidID); err != nil {
@@ -301,14 +305,22 @@ func TestSyncBundleImportMalformedInput(t *testing.T) {
 	if err != nil || row.OptionsJSON != "{}" {
 		t.Fatalf("optionsJson fallback = %+v err=%v", row, err)
 	}
+	nullRow, err := database.AssetGet(t.Context(), nullOptionsID)
+	if err != nil || nullRow.OptionsJSON != "{}" {
+		t.Fatalf("optionsJson null fallback = %+v err=%v", nullRow, err)
+	}
 	warned := false
+	nullWarned := false
 	for _, warning := range report.Warnings {
 		if strings.Contains(warning, "optionsJson") {
 			warned = true
 		}
+		if strings.Contains(warning, nullOptionsID) {
+			nullWarned = true
+		}
 	}
-	if !warned {
-		t.Fatalf("optionsJson warning missing: %+v", report.Warnings)
+	if !warned || !nullWarned {
+		t.Fatalf("optionsJson warnings missing: %+v", report.Warnings)
 	}
 }
 
@@ -596,3 +608,227 @@ func TestSyncBundleHTTPAuthBoundaries(t *testing.T) {
 }
 
 func ptr[T any](value T) *T { return &value }
+
+// 本机删除墓碑优先于旧包: UI 删除(凭据经 CredentialDelete, 分组/片段经 0020 触发器)后
+// 重导删除前导出的旧包, 三类对象都不得复活, 墓碑必须保留; 载荷较新或 force 才允许导入并清碑。
+func TestSyncBundleImportRespectsLocalTombstones(t *testing.T) {
+	database, credentialVault, syncService := newSyncBundleTestService(t, false, true)
+	ctx := t.Context()
+
+	credID := ids.New()
+	nonce, blob, err := credentialVault.EncryptCredential(ctx, "s3cret-pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CredentialPut(ctx, store.CredentialInput{
+		ID: credID, Name: "生产口令", Kind: "password", Nonce: nonce, Blob: blob, KEKHint: credentialVault.KEKHint(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.CredentialDelete(ctx, credID); err != nil {
+		t.Fatal(err)
+	}
+	credTombstone, err := database.CredentialTombstoneGet(ctx, credID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credTombstone.DeletedAt <= 0 {
+		t.Fatalf("credential tombstone after UI delete = %+v", credTombstone)
+	}
+
+	groupID := ids.New()
+	if _, err := database.GroupUpsert(ctx, groupID, nil, "旧分组", 0, 100, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GroupDelete(ctx, groupID); err != nil {
+		t.Fatal(err)
+	}
+	snippetID := ids.New()
+	if err := sourceDBSnippetUpsert(ctx, database, snippetID, "旧片段", "echo hi", 100, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SnippetDelete(ctx, snippetID); err != nil {
+		t.Fatal(err)
+	}
+	groupTombstone, found, err := syncTombstoneRow(ctx, database, groupID)
+	if err != nil || !found {
+		t.Fatalf("group tombstone after UI delete = %+v found=%v err=%v", groupTombstone, found, err)
+	}
+	snippetTombstone, found, err := syncTombstoneRow(ctx, database, snippetID)
+	if err != nil || !found {
+		t.Fatalf("snippet tombstone after UI delete = %+v found=%v err=%v", snippetTombstone, found, err)
+	}
+
+	dispatcher := registerSyncBundleDispatcher(t, syncService)
+	staleBundle := map[string]any{
+		"protocol": 1,
+		"groups":   []map[string]any{{"id": groupID, "name": "旧分组", "sort": 0, "createdAt": 100, "updatedAt": 100}},
+		"creds":    []map[string]any{{"id": credID, "name": "生产口令", "kind": "password", "secret": "s3cret-pw", "updatedAt": 100}},
+		"snippets": []map[string]any{{"id": snippetID, "name": "旧片段", "body": "echo hi", "sort": 0, "createdAt": 100, "updatedAt": 100}},
+	}
+	report := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": staleBundle, "force": false,
+	}))
+	if report.SkippedNewer != 3 || report.GroupsCreated != 0 || report.CredsCreated != 0 || report.SnippetsCreated != 0 {
+		t.Fatalf("stale bundle over tombstones = %+v", report)
+	}
+	if _, err := database.CredentialGetRow(ctx, credID); err == nil {
+		t.Fatal("stale credential resurrected over tombstone")
+	}
+	if _, err := database.GroupGet(ctx, groupID); err == nil {
+		t.Fatal("stale group resurrected over tombstone")
+	}
+	if _, err := database.SnippetGet(ctx, snippetID); err == nil {
+		t.Fatal("stale snippet resurrected over tombstone")
+	}
+	if _, err := database.CredentialTombstoneGet(ctx, credID); err != nil {
+		t.Fatalf("credential tombstone must survive: %v", err)
+	}
+	if _, found, _ := syncTombstoneRow(ctx, database, groupID); !found {
+		t.Fatal("group tombstone must survive")
+	}
+	if _, found, _ := syncTombstoneRow(ctx, database, snippetID); !found {
+		t.Fatal("snippet tombstone must survive")
+	}
+
+	fresh := ids.NowMS() + 10000
+	freshBundle := map[string]any{
+		"protocol": 1,
+		"groups":   []map[string]any{{"id": groupID, "name": "新分组", "sort": 0, "createdAt": 100, "updatedAt": fresh}},
+		"creds":    []map[string]any{{"id": credID, "name": "新口令", "kind": "password", "secret": "new-pw", "updatedAt": fresh}},
+		"snippets": []map[string]any{{"id": snippetID, "name": "新片段", "body": "echo new", "sort": 0, "createdAt": 100, "updatedAt": fresh}},
+	}
+	freshReport := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": freshBundle, "force": false,
+	}))
+	if freshReport.SkippedNewer != 0 || freshReport.GroupsCreated != 1 || freshReport.CredsCreated != 1 || freshReport.SnippetsCreated != 1 {
+		t.Fatalf("newer payload over tombstone = %+v", freshReport)
+	}
+	if _, err := database.CredentialTombstoneGet(ctx, credID); err == nil {
+		t.Fatal("newer credential import must clear its tombstone")
+	}
+	if _, found, _ := syncTombstoneRow(ctx, database, groupID); found {
+		t.Fatal("newer group import must clear its tombstone")
+	}
+	if _, found, _ := syncTombstoneRow(ctx, database, snippetID); found {
+		t.Fatal("newer snippet import must clear its tombstone")
+	}
+
+	if err := database.SnippetDelete(ctx, snippetID); err != nil {
+		t.Fatal(err)
+	}
+	forcedReport := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": map[string]any{
+			"protocol": 1,
+			"snippets": []map[string]any{{"id": snippetID, "name": "强制片段", "body": "echo forced", "sort": 0, "createdAt": 100, "updatedAt": 100}},
+		},
+		"force": true,
+	}))
+	if forcedReport.SnippetsCreated != 1 || forcedReport.SkippedNewer != 0 {
+		t.Fatalf("forced import over tombstone = %+v", forcedReport)
+	}
+	if row, err := database.SnippetGet(ctx, snippetID); err != nil || row.Name != "强制片段" {
+		t.Fatalf("forced snippet = %+v err=%v", row, err)
+	}
+}
+
+func syncTombstoneRow(ctx context.Context, database *store.Store, id string) (deletedAt int64, found bool, returnErr error) {
+	err := database.DB().QueryRowContext(ctx, "SELECT deleted_at FROM sync_tombstone WHERE id = ?", id).Scan(&deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return deletedAt, true, nil
+}
+
+// 分组导入两遍链接: 子先父后不产生 FK 硬错误; 悬空父级与循环父级按 v2 文案置 nil + 警告,
+// 导入整体成功并返回 ImportReport, 不再中途硬错误部分落库。
+func TestSyncBundleGroupImportParentHandling(t *testing.T) {
+	database, _, syncService := newSyncBundleTestService(t, false, true)
+	ctx := t.Context()
+	parentID := ids.New()
+	childID := ids.New()
+	dispatcher := registerSyncBundleDispatcher(t, syncService)
+
+	ordered := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": map[string]any{
+			"protocol": 1,
+			"groups": []map[string]any{
+				{"id": childID, "parentId": parentID, "name": "子分组", "sort": 1, "createdAt": 100, "updatedAt": 100},
+				{"id": parentID, "name": "父分组", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			},
+		},
+		"force": false,
+	}))
+	if ordered.GroupsCreated != 2 || ordered.Refused != 0 {
+		t.Fatalf("child-before-parent report = %+v", ordered)
+	}
+	child, err := database.GroupGet(ctx, childID)
+	if err != nil || child.ParentID == nil || *child.ParentID != parentID {
+		t.Fatalf("child group = %+v err=%v", child, err)
+	}
+
+	danglingID := ids.New()
+	danglingParent := ids.New()
+	dangling := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": map[string]any{
+			"protocol": 1,
+			"groups": []map[string]any{
+				{"id": danglingID, "parentId": danglingParent, "name": "悬空父级", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			},
+		},
+		"force": false,
+	}))
+	if dangling.GroupsCreated != 1 {
+		t.Fatalf("dangling parent report = %+v", dangling)
+	}
+	row, err := database.GroupGet(ctx, danglingID)
+	if err != nil || row.ParentID != nil {
+		t.Fatalf("dangling parent must be cleared: %+v err=%v", row, err)
+	}
+	if !warningsContain(dangling.Warnings, "已按顶级分组导入") {
+		t.Fatalf("dangling parent warning missing: %+v", dangling.Warnings)
+	}
+
+	cycleA := ids.New()
+	cycleB := ids.New()
+	cycle := decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+		"bundle": map[string]any{
+			"protocol": 1,
+			"groups": []map[string]any{
+				{"id": cycleA, "parentId": cycleB, "name": "循环甲", "sort": 0, "createdAt": 100, "updatedAt": 100},
+				{"id": cycleB, "parentId": cycleA, "name": "循环乙", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			},
+		},
+		"force": false,
+	}))
+	if cycle.GroupsCreated != 2 {
+		t.Fatalf("cycle report = %+v", cycle)
+	}
+	rowA, err := database.GroupGet(ctx, cycleA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowB, err := database.GroupGet(ctx, cycleB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 循环必须被打破: 恰好一方保持顶级(先处理的一方清父级), 另一方挂到已清父级的一方下形成合法链。
+	if (rowA.ParentID == nil) == (rowB.ParentID == nil) {
+		t.Fatalf("cycle must leave exactly one top-level member: A=%+v B=%+v", rowA, rowB)
+	}
+	if !warningsContain(cycle.Warnings, "循环") {
+		t.Fatalf("cycle warning missing: %+v", cycle.Warnings)
+	}
+}
+
+func warningsContain(warnings []string, substring string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, substring) {
+			return true
+		}
+	}
+	return false
+}

@@ -358,45 +358,31 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			blockedCredIDs[*payload.CredID] = true
 		}
 	}
-	for _, payload := range bundle.Groups {
-		id := strings.TrimSpace(payload.ID)
-		if id == "" {
-			report.Refused++
-			warnf("拒绝了 ID 为空的分组")
-			continue
-		}
-		if !ids.Valid(id) {
-			report.Refused++
-			warnf("分组 %s 的 ID 格式不合法，已拒绝导入", id)
-			continue
-		}
-		name := strings.TrimSpace(payload.Name)
-		if name == "" {
-			name = "分组"
-		}
-		createdAt, updatedAt := payload.CreatedAt, payload.UpdatedAt
-		if createdAt <= 0 {
-			createdAt = ids.NowMS()
-		}
-		if updatedAt <= 0 {
-			updatedAt = ids.NowMS()
-		}
-		_, err := s.store.GroupGet(ctx, id)
-		exists := err == nil
-		if err != nil && !isNotFound(err) {
+	groupPlans, err := s.planGroupImports(ctx, bundle.Groups, request.Force, &report, warnf)
+	if err != nil {
+		return ImportReport{}, err
+	}
+	// 两遍写入: 先全部按顶级分组落库(任意顺序都无 FK 依赖), 再链接父级。
+	for _, plan := range groupPlans {
+		if err := s.engine.groupUpsert(ctx, groupObject{
+			ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
+		}, nil); err != nil {
 			return ImportReport{}, err
 		}
-		parentID := payload.ParentID
-		if parentID != nil && *parentID == "" {
-			parentID = nil
+	}
+	for _, plan := range groupPlans {
+		if plan.parentID == nil {
+			continue
 		}
 		if err := s.engine.groupUpsert(ctx, groupObject{
-			ID: id, ParentID: parentID, Name: name, Sort: payload.Sort,
-			CreatedAt: createdAt, UpdatedAt: updatedAt,
-		}, parentID); err != nil {
+			ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
+			CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
+		}, plan.parentID); err != nil {
 			return ImportReport{}, err
 		}
-		if exists {
+	}
+	for _, plan := range groupPlans {
+		if plan.exists {
 			report.GroupsUpdated++
 		} else {
 			report.GroupsCreated++
@@ -429,6 +415,18 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		updatedAt := payload.UpdatedAt
 		if updatedAt <= 0 {
 			updatedAt = ids.NowMS()
+		}
+		if tombstone, err := s.store.CredentialTombstoneGet(ctx, id); err == nil && !request.Force && tombstone.DeletedAt >= updatedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "credential", ID: id, Name: name,
+				LocalRevision: tombstone.DeletedAt, RemoteRevision: updatedAt,
+				EqualRevision: tombstone.DeletedAt == updatedAt,
+			})
+			warnf("凭据 %s 的本机删除标记较新，已跳过导入；如需恢复请使用强制同步", id)
+			continue
+		} else if err != nil && !isNotFound(err) {
+			return ImportReport{}, err
 		}
 		_, err := s.store.CredentialGetRow(ctx, id)
 		exists := err == nil
@@ -477,7 +475,8 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			ID: payload.ID, GroupID: payload.GroupID, Kind: payload.Kind, Name: payload.Name,
 			Host: payload.Host, Port: payload.Port, Username: payload.Username, AuthKind: payload.AuthKind,
 			KeyPath: payload.KeyPath, CredID: payload.CredID, OptionsJSON: optionsJSON,
-			Tags: payload.Tags, Note: payload.Note, Sort: payload.Sort, DeletedAt: payload.DeletedAt,
+			Tags: payload.Tags, Note: payload.Note, Sort: payload.Sort,
+			CreatedAt: payload.CreatedAt, DeletedAt: payload.DeletedAt,
 		}
 		if row.Kind == "" {
 			row.Kind = "ssh"
@@ -573,14 +572,26 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			warnf("片段 %s 的 ID 或名称不合法，已拒绝导入", name)
 			continue
 		}
+		updatedAt := payload.UpdatedAt
+		if updatedAt <= 0 {
+			updatedAt = ids.NowMS()
+		}
+		if tombstone, found, err := s.engine.syncTombstoneGet(ctx, id); err != nil {
+			return ImportReport{}, err
+		} else if found && !request.Force && tombstone.DeletedAt >= updatedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "snippet", ID: id, Name: strings.TrimSpace(payload.Name),
+				LocalRevision: tombstone.DeletedAt, RemoteRevision: updatedAt,
+				EqualRevision: tombstone.DeletedAt == updatedAt,
+			})
+			warnf("片段 %s 的本机删除标记较新，已跳过导入；如需恢复请使用强制同步", id)
+			continue
+		}
 		existing, err := s.store.SnippetGet(ctx, id)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
 			return ImportReport{}, err
-		}
-		updatedAt := payload.UpdatedAt
-		if updatedAt <= 0 {
-			updatedAt = ids.NowMS()
 		}
 		if exists && !request.Force && existing.UpdatedAt > updatedAt {
 			report.SkippedNewer++
@@ -631,5 +642,117 @@ func validJSONObject(raw string) bool {
 		return false
 	}
 	var decoded map[string]json.RawMessage
-	return json.Unmarshal([]byte(trimmed), &decoded) == nil
+	return json.Unmarshal([]byte(trimmed), &decoded) == nil && decoded != nil
+}
+
+type bundleGroupPlan struct {
+	id        string
+	name      string
+	parentID  *string
+	sort      int64
+	createdAt int64
+	updatedAt int64
+	exists    bool
+}
+
+// planGroupImports 校验分组载荷并解析父级: 本机删除墓碑较新且非 force 时跳过(保留墓碑);
+// 父级只允许指向包内或通过本地存在性校验的分组, 悬空父级置 nil; 循环与超深经 mergedGroupTopology 兜底。
+// 同一包内重复 ID 后者覆盖前者, 只计入一次。
+func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGroup, force bool, report *ImportReport, warnf func(string, ...any)) ([]bundleGroupPlan, error) {
+	plans := make([]bundleGroupPlan, 0, len(payloads))
+	planIndex := map[string]int{}
+	for _, payload := range payloads {
+		id := strings.TrimSpace(payload.ID)
+		if id == "" {
+			report.Refused++
+			warnf("拒绝了 ID 为空的分组")
+			continue
+		}
+		if !ids.Valid(id) {
+			report.Refused++
+			warnf("分组 %s 的 ID 格式不合法，已拒绝导入", id)
+			continue
+		}
+		name := strings.TrimSpace(payload.Name)
+		if name == "" {
+			name = "分组"
+		}
+		createdAt, updatedAt := payload.CreatedAt, payload.UpdatedAt
+		if createdAt <= 0 {
+			createdAt = ids.NowMS()
+		}
+		if updatedAt <= 0 {
+			updatedAt = ids.NowMS()
+		}
+		if tombstone, found, err := s.engine.syncTombstoneGet(ctx, id); err != nil {
+			return nil, err
+		} else if found && !force && tombstone.DeletedAt >= updatedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "group", ID: id, Name: name,
+				LocalRevision: tombstone.DeletedAt, RemoteRevision: updatedAt,
+				EqualRevision: tombstone.DeletedAt == updatedAt,
+			})
+			warnf("分组 %s 的本机删除标记较新，已跳过导入；如需恢复请使用强制同步", id)
+			continue
+		}
+		parentID := payload.ParentID
+		if parentID != nil && *parentID == "" {
+			parentID = nil
+		}
+		_, err := s.store.GroupGet(ctx, id)
+		exists := err == nil
+		if err != nil && !isNotFound(err) {
+			return nil, err
+		}
+		plan := bundleGroupPlan{
+			id: id, name: name, parentID: parentID, sort: payload.Sort,
+			createdAt: createdAt, updatedAt: updatedAt, exists: exists,
+		}
+		if index, duplicated := planIndex[id]; duplicated {
+			plans[index] = plan
+		} else {
+			planIndex[id] = len(plans)
+			plans = append(plans, plan)
+		}
+	}
+	parents, err := s.engine.groupParents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range plans {
+		plan := &plans[index]
+		if plan.parentID == nil {
+			continue
+		}
+		if _, inBundle := planIndex[*plan.parentID]; inBundle {
+			continue
+		}
+		if _, err := s.store.GroupGet(ctx, *plan.parentID); isNotFound(err) {
+			warnf("分组 %s 的父级 %s 不存在, 已按顶级分组导入", plan.id, *plan.parentID)
+			plan.parentID = nil
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	for index := range plans {
+		parents[plans[index].id] = plans[index].parentID
+	}
+	for index := range plans {
+		plan := &plans[index]
+		if plan.parentID == nil {
+			continue
+		}
+		switch mergedGroupTopology(plan.id, plan.parentID, parents) {
+		case groupTopologyCycle:
+			warnf("分组 %s 的父级会在合并后形成循环, 已按顶级分组导入", plan.id)
+			plan.parentID = nil
+			parents[plan.id] = nil
+		case groupTopologyTooDeep:
+			warnf("分组 %s 合并后的祖先链超过 64 层, 已按顶级分组导入", plan.id)
+			plan.parentID = nil
+			parents[plan.id] = nil
+		}
+	}
+	return plans, nil
 }
