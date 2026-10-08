@@ -2,8 +2,8 @@
   "schema_version": 1,
   "purpose": "Go feature acceptance coverage; canonical IDs are checklist labels, not required Rust wire compatibility",
   "go_source": {
-    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
-    "commit": "4e3d491d89b55ebbcc10beb45a930def7129e6ad",
+    "root": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236",
+    "commit": "1a7e066ffac5a8b0ab1946f3517928feb7b7cd1d",
     "report": "testdata/parity/baseline/go-selfcheck.json"
   },
   "rules": {
@@ -16,8 +16,8 @@
     "feature_complete": false,
     "commands_total": 139,
     "commands_verified": 2,
-    "commands_implemented_unverified": 136,
-    "commands_not_implemented": 1,
+    "commands_implemented_unverified": 130,
+    "commands_not_implemented": 7,
     "events_total": 10,
     "events_verified": 0,
     "streams_total": 7,
@@ -1317,12 +1317,12 @@
     {
       "id": "sync_origin",
       "go_name": "sync_origin",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.origin"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
     {
       "id": "sync_export",
@@ -1347,22 +1347,22 @@
     {
       "id": "sync_token",
       "go_name": "sync_token",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.token"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
     {
       "id": "sync_token_rotate",
       "go_name": "sync_token_rotate",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.rotateToken"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
     {
       "id": "sync_link_get",
@@ -1387,32 +1387,32 @@
     {
       "id": "sync_remote_digest",
       "go_name": "sync_remote_digest",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.remoteDigest"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
     {
       "id": "sync_push",
       "go_name": "sync_push",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.push"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     },
     {
       "id": "sync_pull",
       "go_name": "sync_pull",
-      "status": "implemented-unverified",
+      "status": "not-implemented",
       "frontend_accessors": [
         "syncApi.pull"
       ],
       "sync_only_feature": false,
-      "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
     }
   ],
   "events": [

@@ -1,65 +1,65 @@
 {
   "schema_version": 1,
   "purpose": "Go self-consistency and acceptance evidence; no Rust payload goldens or differential compatibility claims",
-  "captured_at": "2026-10-03T11:13:47.375446+00:00",
+  "captured_at": "2026-10-08T05:13:55.214935+00:00",
   "go_source": {
-    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
-    "commit": "4e3d491d89b55ebbcc10beb45a930def7129e6ad",
+    "root": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236",
+    "commit": "1a7e066ffac5a8b0ab1946f3517928feb7b7cd1d",
     "go_version": "go1.26.8"
   },
   "steps": [
     {
       "id": "go-harness-resolve",
-      "command": "go mod edit -replace=github.com/ProbiusOfficial/NexTerm=/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/harness",
+      "command": "go mod edit -replace=github.com/ProbiusOfficial/NexTerm=/home/huangzheng/NexTerm/.tower/worktrees/wt-236",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.012,
+      "duration_seconds": 0.016,
       "log": "testdata/parity/baseline/logs/go-harness-resolve.log"
     },
     {
       "id": "go-harness-tidy",
       "command": "go mod tidy",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/harness",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.086,
+      "duration_seconds": 0.164,
       "log": "testdata/parity/baseline/logs/go-harness-tidy.log"
     },
     {
       "id": "go-toolchain",
       "command": "go env GOVERSION",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/harness",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.012,
+      "duration_seconds": 0.007,
       "log": "testdata/parity/baseline/logs/go-toolchain.log"
     },
     {
       "id": "go-ipc-self-tests",
       "command": "go test -mod=readonly -race -count=1 ./...",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/harness",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 2.499,
+      "duration_seconds": 1.658,
       "log": "testdata/parity/baseline/logs/go-ipc-self-tests.log"
     },
     {
       "id": "go-surface-probe",
-      "command": "go run -mod=readonly ./cmd/surfaceprobe --data-dir /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/surface-probe-data --out /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/command-surface.json",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-selfcheck/harness",
+      "command": "go run -mod=readonly ./cmd/surfaceprobe --data-dir /home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/surface-probe-data --out /home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/command-surface.json",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 1.328,
+      "duration_seconds": 0.378,
       "log": "testdata/parity/baseline/logs/go-surface-probe.log"
     },
     {
       "id": "go-server-build",
-      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-artifacts/nexterm-server ./cmd/nexterm-server",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
+      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-artifacts/nexterm-server ./cmd/nexterm-server",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.262,
+      "duration_seconds": 0.267,
       "log": "testdata/parity/baseline/logs/go-server-build.log"
     },
     {
@@ -67,16 +67,16 @@
       "command": "full and sync-only loopback servers with synthetic requests",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.437,
+      "duration_seconds": 0.269,
       "log": "testdata/parity/baseline/logs/go-server-smoke.log"
     },
     {
       "id": "go-desktop-build",
-      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-artifacts/nexterm-desktop ./cmd/nexterm-desktop",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
+      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-artifacts/nexterm-desktop ./cmd/nexterm-desktop",
+      "cwd": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.262,
+      "duration_seconds": 10.805,
       "log": "testdata/parity/baseline/logs/go-desktop-build.log"
     }
   ],
@@ -95,12 +95,19 @@
       "ai_answer",
       "ai_cancel",
       "ai_chat",
+      "ai_circuit_status",
       "ai_confirm",
       "ai_conversation_create",
       "ai_conversation_delete",
       "ai_conversation_list",
+      "ai_edit_resend",
       "ai_get_permission",
       "ai_get_provider",
+      "ai_grant_list",
+      "ai_grant_revoke",
+      "ai_grant_set",
+      "ai_hitl_events",
+      "ai_hitl_snapshot",
       "ai_messages",
       "ai_model_activate",
       "ai_model_delete",
@@ -110,24 +117,36 @@
       "ai_model_save",
       "ai_models",
       "ai_presets",
+      "ai_run_events",
+      "ai_run_list",
       "ai_set_permission",
       "ai_set_provider",
+      "ai_steer",
       "ai_takeover_enter",
       "ai_takeover_exit",
+      "ai_takeover_resume",
       "ai_takeover_run",
       "ai_test_provider",
+      "ai_usage_summary",
       "app_info",
       "app_platform",
       "asset_create",
       "asset_delete",
       "asset_get",
       "asset_list",
+      "asset_probe_batch",
       "asset_read_key_file",
       "asset_save_key_file",
       "asset_search",
       "asset_update",
+      "audit_count",
       "audit_query",
       "credential_update",
+      "cron_get",
+      "cron_list",
+      "cron_register",
+      "cron_set_enabled",
+      "cron_unregister",
       "db_columns",
       "db_connect",
       "db_disconnect",
@@ -145,7 +164,11 @@
       "docker_overview",
       "docker_ps",
       "docker_stats",
+      "files_save_image",
+      "files_settings_get",
+      "files_settings_set",
       "forward_create",
+      "forward_create_remote",
       "forward_create_socks",
       "forward_env",
       "forward_list",
@@ -171,6 +194,13 @@
       "known_host_remove",
       "layout_get",
       "layout_put",
+      "memory_create",
+      "memory_delete",
+      "memory_edit",
+      "memory_get",
+      "memory_index",
+      "memory_settings_get",
+      "memory_settings_set",
       "mount_capability",
       "mount_create",
       "mount_list",
@@ -187,22 +217,31 @@
       "session_list",
       "session_open_line_tab",
       "session_probe",
+      "session_probe_host_key",
       "session_reconnect",
       "snippet_create",
       "snippet_delete",
       "snippet_list",
       "snippet_update",
+      "ssh_import_apply",
+      "ssh_import_preview",
+      "sync_apply_objects",
+      "sync_bundle_read",
+      "sync_bundle_write",
+      "sync_collect_ai_profiles",
+      "sync_collect_assets",
+      "sync_collect_credentials",
+      "sync_collect_known_hosts",
+      "sync_collect_tombstones",
       "sync_digest",
       "sync_export",
       "sync_import",
+      "sync_kind_opt_in_get",
+      "sync_kind_opt_in_set",
       "sync_link_get",
       "sync_link_set",
-      "sync_origin",
-      "sync_pull",
-      "sync_push",
-      "sync_remote_digest",
-      "sync_token",
-      "sync_token_rotate",
+      "sync_now",
+      "sync_status",
       "terminal_attach",
       "terminal_attach_tab",
       "terminal_claim",
@@ -222,13 +261,21 @@
       "terminal_switch_encoding",
       "terminal_tail",
       "terminal_write",
+      "transcript_delete",
+      "transcript_hosts",
+      "transcript_list",
+      "transcript_read",
+      "transcript_search",
+      "transcript_sync_opt_in",
       "vault_change_password",
       "vault_delete_credential",
+      "vault_generate_key",
       "vault_init_dpapi",
       "vault_init_master",
       "vault_list_credentials",
       "vault_lock",
       "vault_reveal_credential",
+      "vault_set_autolock",
       "vault_set_credential",
       "vault_status",
       "vault_unlock"
@@ -238,24 +285,31 @@
     "command_surface": {
       "source": "tests/parity/go/cmd/surfaceprobe",
       "composition": "production.NewProduction (Desktop=false), same wiring as cmd/nexterm-server",
-      "commands_count": 140,
+      "commands_count": 187,
       "peer_commands_count": 3,
       "sync_only_commands": [
         "sync_digest",
         "sync_export",
         "sync_import"
       ],
-      "health_full_commands": 140,
+      "health_full_commands": 187,
       "health_sync_only_commands": 3
     },
     "full_server": [
+      {
+        "auth_topology": {
+          "mode": "loopback",
+          "listen": "127.0.0.1:35459",
+          "sync_only": false
+        }
+      },
       {
         "health": {
           "ok": true,
           "service": "nexterm-server",
           "version": "dev",
           "syncOnly": false,
-          "commands": 140,
+          "commands": 187,
           "eventSubscribers": 0,
           "liveChannels": 0,
           "pendingChannels": 0,
@@ -268,17 +322,34 @@
           },
           "retention": {
             "enabled": true,
-            "lastAttemptAt": "2026-10-03T11:13:46.836596Z",
-            "lastSuccessAt": "2026-10-03T11:13:46.836663Z"
+            "lastAttemptAt": "2026-10-08T05:13:44.148359748Z",
+            "lastSuccessAt": "2026-10-08T05:13:44.148462779Z"
+          },
+          "imageLinks": {
+            "publicBaseURLConfigured": false,
+            "maxBytes": 20971520,
+            "ownerQuotaBytes": 209715200,
+            "ttlSeconds": 86400
+          },
+          "db": {
+            "backend": "sqlite",
+            "pingOk": true,
+            "pingMs": 0,
+            "pool": {
+              "openConnections": 4,
+              "inUse": 0,
+              "idle": 4,
+              "waitCount": 0
+            }
           }
         },
-        "expected_commands": 140,
+        "expected_commands": 187,
         "surface_source": "tests/parity/go/cmd/surfaceprobe"
       },
       {
         "app_platform": {
           "ok": true,
-          "data": "darwin"
+          "data": "linux"
         }
       },
       {
@@ -301,12 +372,19 @@
           "ok": false,
           "error": {
             "code": "not_found",
-            "message": "未找到命令: self.missing"
+            "message": "当前版本不支持该操作，请刷新或更新应用后重试"
           }
         }
       }
     ],
     "sync_only_server": [
+      {
+        "auth_topology": {
+          "mode": "loopback",
+          "listen": "127.0.0.1:54119",
+          "sync_only": true
+        }
+      },
       {
         "health": {
           "ok": true,
@@ -326,8 +404,19 @@
           },
           "retention": {
             "enabled": true,
-            "lastAttemptAt": "2026-10-03T11:13:46.962907Z",
-            "lastSuccessAt": "2026-10-03T11:13:46.962986Z"
+            "lastAttemptAt": "2026-10-08T05:13:44.262794563Z",
+            "lastSuccessAt": "2026-10-08T05:13:44.262813478Z"
+          },
+          "db": {
+            "backend": "sqlite",
+            "pingOk": true,
+            "pingMs": 0,
+            "pool": {
+              "openConnections": 1,
+              "inUse": 0,
+              "idle": 1,
+              "waitCount": 0
+            }
           }
         },
         "expected_commands": 3,
@@ -336,38 +425,52 @@
       {
         "sync_only_rpc_status": 404
       }
-    ]
+    ],
+    "auth_paths": {
+      "topology": "both loopback smoke servers run with --auth=loopback on 127.0.0.1: the product's explicit loopback mode, chosen because this smoke accepts the command surface, not authentication; the shipped default stays auth=on and non-loopback listeners still require account sessions",
+      "exercised": [
+        "anonymous GET /healthz on full and sync-only loopback servers",
+        "anonymous POST /rpc dispatch under --auth=loopback: app_info, app_platform, unknown-command not_found",
+        "sync-only POST /rpc absence (404) under --auth=loopback"
+      ],
+      "not_exercised": [
+        "account session login/issuance and authenticated /rpc under --auth=on",
+        "anonymous 401 rejection on auth-required routes",
+        "account CSRF enforcement"
+      ],
+      "covered_by": "internal/server Go tests: TestAuthModeMatrixAcrossListens and the TestExposedListen* anonymous-401/token/CSRF rejection suites"
+    }
   },
   "size_gates": [
     {
       "rust_label": "rust-desktop-macos-arm64",
       "rust_path": "target/parity/release/nexterm",
       "rust_sha256": "8f81f7b99855475dd2f08a2866932acefaff5e8d1b373bf04d726169eb05c033",
-      "go_path": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-artifacts/nexterm-desktop",
+      "go_path": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-artifacts/nexterm-desktop",
       "rust_bytes": 26095616,
-      "go_bytes": 40808562,
-      "delta_bytes": 14712946,
-      "go_to_rust_ratio": 1.563809,
+      "go_bytes": 46444480,
+      "delta_bytes": 20348864,
+      "go_to_rust_ratio": 1.779781,
       "smaller": false,
       "status": "failed",
       "rule": "Go artifact must be strictly smaller than the corresponding Rust artifact",
-      "go_sha256": "663f5d460ba4a6ba381a94c40b4811ae006a3b11e25c26378e66877fa46ce97c",
-      "go_file": "Mach-O 64-bit executable arm64"
+      "go_sha256": "e2efd49824c68884d464fb6f4f3639619c60f77a6e73a8bb7db2539173fd51ac",
+      "go_file": "unavailable: [Errno 2] No such file or directory: 'file'"
     },
     {
       "rust_label": "rust-server-macos-arm64",
       "rust_path": "target/parity/release/nexterm-server",
       "rust_sha256": "cdf19ea072f7aadb302a416b98c780adeff60e8f8070907b8c731e51a0c9d079",
-      "go_path": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12/target/parity-go-artifacts/nexterm-server",
+      "go_path": "/home/huangzheng/NexTerm/.tower/worktrees/wt-236/target/parity-go-artifacts/nexterm-server",
       "rust_bytes": 17172784,
-      "go_bytes": 37711218,
-      "delta_bytes": 20538434,
-      "go_to_rust_ratio": 2.195987,
+      "go_bytes": 44171426,
+      "delta_bytes": 26998642,
+      "go_to_rust_ratio": 2.572176,
       "smaller": false,
       "status": "failed",
       "rule": "Go artifact must be strictly smaller than the corresponding Rust artifact",
-      "go_sha256": "7220d4ff20dcfca87ad9961b8527bb23b2b9d9d41f1081918dd8c6f909063cbc",
-      "go_file": "Mach-O 64-bit executable arm64"
+      "go_sha256": "501ec156d1899a16f22296ac7bf644c178f50c201a95c625aef349473c467535",
+      "go_file": "unavailable: [Errno 2] No such file or directory: 'file'"
     }
   ],
   "not_produced": [
@@ -386,8 +489,8 @@
       "feature_complete": false,
       "commands_total": 139,
       "commands_verified": 2,
-      "commands_implemented_unverified": 136,
-      "commands_not_implemented": 1,
+      "commands_implemented_unverified": 130,
+      "commands_not_implemented": 7,
       "events_total": 10,
       "events_verified": 0,
       "streams_total": 7,

@@ -317,11 +317,30 @@ class SyncOnlyPeerSurfaceTest(unittest.TestCase):
         self.assertEqual(surface["peer_commands_count"], 3)
         self.assertEqual(surface["sync_only_commands"], ["sync_digest", "sync_export", "sync_import"])
         self.assertEqual(surface["health_sync_only_commands"], 3)
+        self.assertEqual(surface["health_full_commands"], surface["commands_count"])
+        self.assertEqual(len(report["runtime"]["implemented_commands"]), surface["commands_count"])
         observations = report["runtime"]["sync_only_server"]
         health = next(entry["health"] for entry in observations if "health" in entry)
         self.assertTrue(health["syncOnly"])
         self.assertEqual(health["commands"], 3)
         self.assertIn({"sync_only_rpc_status": 404}, observations)
+
+    def test_smoke_runs_on_the_explicit_loopback_auth_topology(self):
+        source = (ROOT / "scripts/parity/go_selfcheck.py").read_text(encoding="utf-8")
+        self.assertIn('"--auth", "loopback"', source)
+        self.assertNotIn("--auth=off", source)
+        self.assertNotIn('"--auth", "off"', source)
+        report = load(BASELINE / "go-selfcheck.json")
+        for key in ("full_server", "sync_only_server"):
+            topology = next(
+                entry["auth_topology"] for entry in report["runtime"][key] if "auth_topology" in entry
+            )
+            self.assertEqual(topology["mode"], "loopback")
+            self.assertTrue(topology["listen"].startswith("127.0.0.1:"))
+        auth_paths = report["runtime"]["auth_paths"]
+        self.assertTrue(auth_paths["exercised"])
+        self.assertTrue(auth_paths["not_exercised"])
+        self.assertIn("TestAuthModeMatrixAcrossListens", auth_paths["covered_by"])
 
 
 if __name__ == "__main__":
