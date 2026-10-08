@@ -46,6 +46,21 @@ const KIND_LABEL: Record<string, string> = {
 /** 拖拽资产用的 dataTransfer 类型（自定义 MIME，避免普通文本拖拽误触发）。 */
 const DRAG_ASSET = "application/x-nexterm-asset";
 
+/**
+ * 当前正在拖的资产 id —— 一次拖拽会话的模块级标记，与 `setData` 双写互兜底。
+ *
+ * 为什么不单靠 `dataTransfer.types.includes(DRAG_ASSET)` 判「能不能放」：
+ * 自定义 MIME 在 `types` 里的暴露在各 WebView 引擎上并不可靠；而按规范
+ * `getData` 在 `dragover` 阶段又只能返回空 —— 于是「拖到这儿能不能落」在
+ * dragover 里根本没有权威来源。这个标记由 `dragstart` 置位、`dragend` 复位，
+ * 是本模块内唯一稳定可靠的判据。
+ *
+ * ⚠️ 另有前置条件（不在本文件内）：`src-tauri/tauri.conf.json` 的窗口必须
+ * `"dragDropEnabled": false`。Tauri v2 该项默认为 true，会由原生层接管拖放、
+ * 把 HTML5 的 drop 整个吞掉 —— 表现为「能拖起来、松手没反应」。
+ */
+let draggingAssetId: string | null = null;
+
 export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
@@ -347,11 +362,17 @@ export function AssetTree() {
       <div
         className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes(DRAG_ASSET)) e.preventDefault();
+          if (draggingAssetId !== null || e.dataTransfer.types.includes(DRAG_ASSET)) {
+            e.preventDefault();
+          }
         }}
         onDrop={(e) => {
-          const id = e.dataTransfer.getData(DRAG_ASSET);
-          if (id) void moveAsset(id, null);
+          // drop 阶段以 getData 为准、模块标记兜底（判据的理由见 DRAG_ASSET 上方注释）
+          const id = e.dataTransfer.getData(DRAG_ASSET) || draggingAssetId;
+          if (!id) return;
+          e.preventDefault();
+          draggingAssetId = null;
+          void moveAsset(id, null);
         }}
       >
         {(byGroup.get(null) ?? []).map((a) => (
@@ -476,8 +497,14 @@ function AssetRow({
       className="nx-row group"
       draggable
       onDragStart={(e) => {
+        draggingAssetId = asset.id;
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => {
+        // 正常放下、以及中途按 Esc 取消，都会走到这里 —— 必须复位，
+        // 否则标记残留会让「随便拖点什么经过分组」都显示成可放。
+        draggingAssetId = null;
       }}
       onDoubleClick={() => void connectAsset(asset)}
       onContextMenu={onMenu}
@@ -559,13 +586,13 @@ function GroupNode({
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
-  const isAssetDrag = (e: React.DragEvent) =>
-    e.dataTransfer.types.includes(DRAG_ASSET);
+  const canDrop = (e: React.DragEvent) =>
+    draggingAssetId !== null || e.dataTransfer.types.includes(DRAG_ASSET);
   return (
     <div
       className={`mb-0.5 rounded ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
       onDragOver={(e) => {
-        if (isAssetDrag(e)) {
+        if (canDrop(e)) {
           e.preventDefault();
           setOver(true);
         }
@@ -575,12 +602,14 @@ function GroupNode({
         if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
       }}
       onDrop={(e) => {
-        if (!isAssetDrag(e)) return;
+        setOver(false);
+        // drop 阶段以 getData 为准、模块标记兜底（判据的理由见 DRAG_ASSET 上方注释）
+        const id = e.dataTransfer.getData(DRAG_ASSET) || draggingAssetId;
+        if (!id) return;
         e.preventDefault();
         e.stopPropagation(); // 别冒泡给根区域（= 未分组）
-        setOver(false);
-        const id = e.dataTransfer.getData(DRAG_ASSET);
-        if (id) onMoveAsset(id, group.id);
+        draggingAssetId = null;
+        onMoveAsset(id, group.id);
       }}
     >
       <div className="nx-row group w-full text-neutral-400">
