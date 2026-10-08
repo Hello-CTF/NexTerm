@@ -58,6 +58,7 @@ vi.mock("../features/auth/crypto", async (importOriginal) => {
 
 import { AuthGate } from "../features/auth/AuthGate";
 import { useAuth } from "../features/auth/store";
+import { AuthApiError } from "../ipc/authApi";
 
 const ADMIN = {
   id: "u-admin",
@@ -228,6 +229,38 @@ describe("AuthGate loopback 免登录", () => {
     await flushUntil(() => useAuth.getState().status?.initialized === true);
     expect(useAuth.getState().gate).toBe("ready");
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+  });
+});
+
+describe("AuthGate auth=off", () => {
+  it("refresh 拿到 auth=off 的 403 时归一为 off 状态:匿名 ready,不弹门,不留错误", async () => {
+    mocks.status.mockRejectedValue(new AuthApiError("forbidden", "--auth=off 下账号功能已关闭", 403));
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(useAuth.getState().status?.auth).toBe("off");
+    expect(useAuth.getState().error).toBeNull();
+    expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
+    expect(mocks.me).not.toHaveBeenCalled();
+  });
+
+  it("其他 403 不归一为 auth=off:如实保留错误", async () => {
+    mocks.status.mockRejectedValue(new AuthApiError("forbidden", "用户名或密码错误", 403));
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(useAuth.getState().status).toBeNull();
+    expect(useAuth.getState().error?.message).toBe("用户名或密码错误");
+  });
+
+  it("auth=off 下误入初始化门也有出口,可返回应用", async () => {
+    mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "off" });
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+
+    useAuth.setState({ gate: "setup" });
+    await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
+    clickButton(mounted.container, "账号功能已关闭,返回应用");
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
   });
 });
 

@@ -215,7 +215,19 @@ describe("设备管理视图 · 角色差异", () => {
     mounted = mount(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("登录后才能查看") ?? false);
 
-    expect(document.body.textContent).toContain("登录入口在「设置 → 账号」卡");
+    expect(document.body.textContent).toContain("登录入口在「设置 → 账号同步」里的「账号」卡");
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
+    expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
+  });
+
+  it("auth=off 时如实显示账号功能已关闭, 不指向登录入口, 不发任何 fleet 请求", async () => {
+    const calls = route(fleetHandler());
+    useAuth.setState({ user: null, gate: "ready", status: { initialized: false, registration_open: false, auth: "off" } });
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
+
+    expect(document.body.textContent).toContain("这台服务器关闭了账号功能,设备管理不可用。");
+    expect(document.body.textContent).not.toContain("登录入口在");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
