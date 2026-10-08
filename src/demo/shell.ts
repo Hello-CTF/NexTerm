@@ -1,7 +1,6 @@
 
 import { containers, fsFileContent, fsTree, redisKeys } from "./data";
 
-const PROMPT_USER = "\x1b[32mdeploy@web-01\x1b[0m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 const RED = "\x1b[31m";
@@ -23,17 +22,21 @@ export class DemoShell {
   private buf = "";
   private history: string[] = [];
   private histIdx = -1;
+  private readonly user: string;
+  private readonly host: string;
 
   constructor(
     private readonly write: (text: string) => void,
     opts: { cwd?: string; user?: string; host?: string } = {},
   ) {
     this.cwd = opts.cwd ?? HOME_DIR;
+    this.user = opts.user ?? "deploy";
+    this.host = opts.host ?? "web-01";
   }
 
   start() {
     this.out(`${DIM}Last login: ${new Date(Date.now() - 46 * 60_000).toDateString()} ${clock(46 * 60_000)} from 10.0.0.8${RESET}`);
-    this.out(`${DIM}# 演示模式：这是一台虚拟的 web-01，可以随便敲。输入 help 看支持哪些命令。${RESET}`);
+    this.out(`${DIM}# 演示模式：这是一台虚拟的 ${this.host}，可以随便敲。输入 help 看支持哪些命令。${RESET}`);
     this.out("");
     this.prompt();
   }
@@ -105,12 +108,12 @@ export class DemoShell {
 
   private help() {
     const rows: [string, string][] = [
-      ["文件", "ls / ls -la / ll / cd <目录> / pwd / cat <文件> / head -n N / tail -n N / mkdir"],
+      ["文件", "ls / ls -la / ll / cd <目录> / pwd / cat <文件> / head -n N / tail -n N / mkdir <目录>"],
       ["系统", "uptime / free -h / df -h / ps aux / ss -tlnp / uname -a / date / whoami / id / hostname"],
       ["服务", "systemctl status nginx|mysql / systemctl is-active <unit> / journalctl -u nginx -n 20"],
       ["nginx", "nginx -t / nginx -s reload"],
       ["容器", "docker ps [-a] / docker images / docker logs --tail N <名> / docker stats / docker start|stop|restart <名> / docker inspect <名>"],
-      ["其它", "history / clear / echo / exit（Tab 补全、↑↓ 历史都可用）"],
+      ["其它", "history / clear / echo / top（快照） / vim、nano（请用「文件」标签编辑） / exit（Tab 补全、↑↓ 历史都可用）"],
     ];
     this.out(`${BOLD}演示模式支持的命令${RESET}`);
     this.out("");
@@ -124,14 +127,18 @@ export class DemoShell {
     const shown = this.cwd.startsWith(HOME_DIR)
       ? `~${this.cwd.slice(HOME_DIR.length)}`
       : this.cwd;
-    this.write(`${PROMPT_USER}:${BLUE}${shown}${RESET}$ `);
+    this.write(`${this.promptUser()}:${BLUE}${shown}${RESET}$ `);
+  }
+
+  private promptUser() {
+    return `\x1b[32m${this.user}@${this.host}\x1b[0m`;
   }
 
   private recall(dir: number) {
     if (this.history.length === 0) return;
     if (this.histIdx === -1) this.histIdx = this.history.length;
     this.histIdx = Math.max(0, Math.min(this.history.length, this.histIdx + dir));
-    this.write(`\r\x1b[K${PROMPT_USER}:${BLUE}${this.shortCwd()}${RESET}$ `);
+    this.write(`\r\x1b[K${this.promptUser()}:${BLUE}${this.shortCwd()}${RESET}$ `);
     this.buf = this.history[this.histIdx] ?? "";
     this.write(this.buf);
   }
@@ -208,15 +215,15 @@ export class DemoShell {
         return "ok";
 
       case "whoami":
-        this.out("deploy");
+        this.out(this.user);
         return "ok";
 
       case "hostname":
-        this.out("web-01");
+        this.out(this.host);
         return "ok";
 
       case "id":
-        this.out("uid=1000(deploy) gid=1000(deploy) groups=1000(deploy),27(sudo),999(docker)");
+        this.out(`uid=1000(${this.user}) gid=1000(${this.user}) groups=1000(${this.user}),27(sudo),999(docker)`);
         return "ok";
 
       case "date":
@@ -224,7 +231,7 @@ export class DemoShell {
         return "ok";
 
       case "uname":
-        this.out("Linux web-01 5.15.0-119-generic #129-Ubuntu SMP Wed Aug 21 12:00:00 UTC 2026 x86_64 GNU/Linux");
+        this.out(`Linux ${this.host} 5.15.0-119-generic #129-Ubuntu SMP Wed Aug 21 12:00:00 UTC 2026 x86_64 GNU/Linux`);
         return "ok";
 
       case "uptime":
@@ -234,6 +241,37 @@ export class DemoShell {
       case "cd":
         this.cd(args[0] ?? HOME_DIR);
         return "ok";
+
+      case "mkdir": {
+        const target = args.find((a) => !a.startsWith("-"));
+        if (!target) {
+          this.out(`${RED}mkdir: missing operand${RESET}`);
+          return "ok";
+        }
+        const path = this.resolve(target);
+        const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+        if (!fsTree[parent]) {
+          this.out(`${RED}mkdir: cannot create directory '${target}': No such file or directory${RESET}`);
+          return "ok";
+        }
+        if (fsTree[path]) {
+          this.out(`${RED}mkdir: cannot create directory '${target}': File exists${RESET}`);
+          return "ok";
+        }
+        fsTree[parent].push({
+          name: path.slice(path.lastIndexOf("/") + 1),
+          path,
+          kind: "dir",
+          size: 4096,
+          mode: "drwxr-xr-x",
+          owner: this.user,
+          group: this.user,
+          mtime: Date.now(),
+          symlinkTarget: null,
+        });
+        fsTree[path] = [];
+        return "ok";
+      }
 
       case "ls":
       case "ll":
@@ -476,8 +514,8 @@ export class DemoShell {
       this.out(unit.startsWith("mysql") ? `${RED}failed${RESET}` : `${GREEN}active${RESET}`);
       return;
     }
-    if (sub === "restart") {
-      this.out(`${YELLOW}需要权限：演示模式下不做真实的 systemd 操作${RESET}`);
+    if (sub === "restart" || sub === "start" || sub === "stop") {
+      this.out(`${YELLOW}（演示模式：未模拟 systemctl ${sub}，没有做任何变更）${RESET}`);
       return;
     }
     this.out(`${RED}Unknown operation ${sub}.${RESET}`);

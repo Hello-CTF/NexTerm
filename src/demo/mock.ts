@@ -128,6 +128,8 @@ interface DemoLiveTab {
   sessionId: string;
   sessionName: string;
   sessionKind: string;
+  shellUser: string;
+  shellHost: string;
   cols: number;
   rows: number;
   controller: string | null;
@@ -143,6 +145,8 @@ liveTabs.set("t-bg-demo", {
   sessionId: "s-web01",
   sessionName: "web-01",
   sessionKind: "ssh",
+  shellUser: "deploy",
+  shellHost: "web-01",
   cols: 120,
   rows: 30,
   controller: null,
@@ -754,7 +758,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
   const cmdsBlock = commands.length
     ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
     : "";
-  const fullAnswer = `${answer}\n\n${cmdsBlock}以上命令都已在你面前的终端里跑过，可回放。`;
+  const fullAnswer = `${answer}\n\n${cmdsBlock}以上命令的输出都在上面的工具结果里。`;
 
   let delay = 430;
 
@@ -829,8 +833,8 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         type: "confirmRequired",
         id: callId,
         tool: "write_file",
-        rendered: `write_file {"path":"${path}","content":"…"}\n这是本会话第 1 次请求写权限。`,
-        reason: "这是本会话第 1 次请求写权限。",
+        rendered: `write_file {"path":"${path}","content":"…"}`,
+        reason: "文件系统写操作",
         preview: { path, kind: creating ? "create" : "modify", before, after },
         confirmationNonce: `nonce-${uid("n")}`,
       }),
@@ -850,21 +854,30 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         finish(text);
         return;
       }
+      const current = creating ? "" : (fsFileContent[path] ?? "");
+      const next = creating ? after : applyDemoNginxEdit(current);
+      if (!creating) {
+        fsFileContent[`${path}.nexterm-bak`] = current;
+        upsertDemoFileEntry(`${path}.nexterm-bak`, current);
+      }
+      fsFileContent[path] = next;
+      upsertDemoFileEntry(path, next);
+      const written = new TextEncoder().encode(next).length;
       pushEvent(channel, {
         type: "toolResult",
         id: callId,
         ok: true,
-        summary: `写入 ${path}（${after.length} 字节）`,
+        summary: `写入 ${path}（${written} 字节）`,
         text: creating
-          ? `写入 ${path} 成功（${after.length} 字节）。新文件，没有可备份的原内容。`
-          : `写入 ${path} 成功（${after.length} 字节）。原文件已备份为 ${path}.nexterm-bak`,
+          ? `写入 ${path} 成功（${written} 字节）。新文件，没有可备份的原内容。`
+          : `写入 ${path} 成功（${written} 字节）。原文件已备份为 ${path}.nexterm-bak`,
         exitCode: null,
       });
       pushEvent(channel, { type: "fileChange", id: callId, path, before, after });
       const text = creating
         ? [`已${verb} \`${path}\`：`, "", "- 整份都是新增内容（原文件不存在）", "", "改错了直接删掉这个文件即可。"].join("\n")
         : [
-            `已按你的授权改掉 \`${path}\` 的两处配置：`,
+            `已按你的授权改掉 \`${path}\` 的三处配置：`,
             "",
             "- `worker_processes 1` → `auto`",
             "- `server_tokens on` → `off`（不再对外报版本号）",
@@ -891,12 +904,19 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         type: "confirmRequired",
         id: `call-${uid("c")}`,
         tool: "docker_control",
-        rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5-15 秒。\n这是本会话第 1 次请求写权限。`,
-        reason: "这是本会话第 1 次请求写权限。",
+        rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5-15 秒。`,
+        reason: "Docker 容器状态变更",
         preview: null,
         confirmationNonce: `nonce-${uid("n")}`,
       });
       pendingAi.set(jobId, (decision) => {
+        if (decision !== "deny") {
+          const c = containers.find((x) => x.name === "mysql-prod");
+          if (c) {
+            c.state = "running";
+            c.status = "Up Less than a second";
+          }
+        }
         const head = decision === "deny" ? "" : "已按你的授权执行 `docker restart mysql-prod`，容器已重启：\n\n";
         const body =
           decision === "deny"
@@ -924,15 +944,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     delay = 240 + commands.length * 260 + 200;
     later(delay - 160, () =>
       pushEvent(channel, { type: "status", phase: "thinking", turn: 2 }),
-    );
-    later(200 + commands.length * 260, () =>
-      pushEvent(channel, {
-        type: "fileChange",
-        id: `call-${uid("c")}`,
-        path: DEMO_NGINX_PATH,
-        before: DEMO_NGINX_BEFORE,
-        after: DEMO_NGINX_AFTER,
-      }),
     );
     if (/排查|部署|安装|迁移|优化|重构/.test(question)) {
       later(160 + commands.length * 260, () =>
@@ -998,6 +1009,90 @@ function toolOutputFor(cmd: string): string {
 function demoFsEntryExists(path: string): boolean {
   const parent = path.slice(0, path.lastIndexOf("/")) || "/";
   return fsTree[parent]?.some((e) => e.path === path) === true;
+}
+
+function demoFsContent(path: string): string {
+  return fsFileContent[path] ?? `# ${path}\n\n（演示模式：这个文件没有内置内容，随便改都行）\n`;
+}
+
+const MD5_SHIFTS = [
+  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+  5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+];
+const MD5_K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32));
+
+function md5Hex(data: Uint8Array): string {
+  const bitLen = data.length * 8;
+  const padded = new Uint8Array((((data.length + 8) >> 6) + 1) << 6);
+  padded.set(data);
+  padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padded.length - 8, bitLen >>> 0, true);
+  view.setUint32(padded.length - 4, Math.floor(bitLen / 2 ** 32), true);
+  let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476;
+  for (let off = 0; off < padded.length; off += 64) {
+    const m = Array.from({ length: 16 }, (_, i) => view.getUint32(off + i * 4, true));
+    let [a, b, c, d] = [h0, h1, h2, h3];
+    for (let i = 0; i < 64; i++) {
+      let f: number, g: number;
+      if (i < 16) {
+        f = (b & c) | (~b & d);
+        g = i;
+      } else if (i < 32) {
+        f = (d & b) | (~d & c);
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        f = b ^ c ^ d;
+        g = (3 * i + 5) % 16;
+      } else {
+        f = c ^ (b | ~d);
+        g = (7 * i) % 16;
+      }
+      const sum = (a + f + MD5_K[i] + m[g]) | 0;
+      const rot = (sum << MD5_SHIFTS[i]) | (sum >>> (32 - MD5_SHIFTS[i]));
+      const prev = d;
+      d = c;
+      c = b;
+      b = (b + rot) | 0;
+      a = prev;
+    }
+    h0 = (h0 + a) | 0;
+    h1 = (h1 + b) | 0;
+    h2 = (h2 + c) | 0;
+    h3 = (h3 + d) | 0;
+  }
+  return [h0, h1, h2, h3]
+    .map((w) => {
+      let hex = "";
+      for (let i = 0; i < 4; i++) hex += ((w >>> (i * 8)) & 0xff).toString(16).padStart(2, "0");
+      return hex;
+    })
+    .join("");
+}
+
+function applyDemoNginxEdit(content: string): string {
+  return content
+    .replace("worker_processes 1;", "worker_processes auto;")
+    .replace("server_tokens on;", "server_tokens off;\n    client_max_body_size 64m;");
+}
+
+function upsertDemoFileEntry(path: string, content: string) {
+  const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+  const list = fsTree[parent];
+  if (!list || list.some((e) => e.path === path)) return;
+  list.push({
+    name: path.slice(path.lastIndexOf("/") + 1),
+    path,
+    kind: "file",
+    size: new TextEncoder().encode(content).length,
+    mode: "-rw-r--r--",
+    owner: "root",
+    group: "root",
+    mtime: Date.now(),
+    symlinkTarget: null,
+  });
 }
 
 function failTransfer(message: string): never {
@@ -1116,13 +1211,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const tabId = newTabId("t");
       const sessionId = str(a.sessionId);
       const sess = sessions.find((s) => s.id === sessionId);
-      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
+      const asset = assets.find((x) => x.id === sess?.assetId);
+      const identity =
+        asset?.kind === "local"
+          ? { user: "demo", host: "localhost" }
+          : { user: asset?.username ?? "deploy", host: asset?.name ?? "web-01" };
+      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")), identity);
       shells.set(tabId, shell);
       liveTabs.set(tabId, {
         tabId,
         sessionId,
         sessionName: sess?.name ?? "web-01",
         sessionKind: sess?.kind ?? "ssh",
+        shellUser: identity.user,
+        shellHost: identity.host,
         cols: num(a.cols, 120),
         rows: num(a.rows, 30),
         controller: str(a.clientId) || "desktop",
@@ -1130,7 +1232,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         exited: false,
         lastOutputAt: Date.now(),
       });
-      const asset = assets.find((x) => x.id === sess?.assetId);
       later(90, () => {
         pushText(a.channel, `\r\n\x1b[2m[演示模式] 已连到 ${asset?.name ?? "web-01"}（假数据，随便敲）\x1b[0m\r\n\r\n`);
         shell.start();
@@ -1146,10 +1247,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       lt.subscribers += 1;
       if (!lt.controller) lt.controller = client;
       lt.lastOutputAt = Date.now();
-      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
+      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")), {
+        user: lt.shellUser,
+        host: lt.shellHost,
+      });
       shells.set(tabId, shell);
       later(70, () => {
-        pushText(a.channel, `\x1b[2m[演示模式] 已接回后台终端（回放最近的输出）\x1b[0m\r\n\r\n`);
+        pushText(a.channel, `\x1b[2m[演示模式] 已接回后台终端（假数据，随便敲）\x1b[0m\r\n\r\n`);
         shell.start();
       });
       return {
@@ -1530,7 +1634,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "fs_read": {
       const path = absPath(a.path);
-      const text = fsFileContent[path] ?? `# ${path}\n\n（演示模式：这个文件没有内置内容，随便改都行）\n`;
+      const text = demoFsContent(path);
       const bytes = new TextEncoder().encode(text);
       return { path, size: bytes.length, contentBase64: bytesToBase64(bytes) };
     }
@@ -1602,8 +1706,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "fs_chmod":
       return null;
 
-    case "fs_checksum":
-      return "d41d8cd98f00b204e9800998ecf8427e  (演示模式：固定示例值)";
+    case "fs_checksum": {
+      const path = absPath(a.path);
+      const algo = str(a.algo, "sha256").toLowerCase();
+      const bytes = new TextEncoder().encode(demoFsContent(path));
+      if (algo === "sha256") {
+        if (typeof crypto === "undefined" || !crypto.subtle) {
+          throwAppError("crypto", "当前环境不支持 WebCrypto(需要 HTTPS 或 localhost)");
+        }
+        const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
+        return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      }
+      if (algo === "md5") return md5Hex(bytes);
+      throwAppError("bad_param", `演示模式：不支持的校验算法：${algo}（支持 md5/sha256）`);
+    }
 
     case "fs_upload": {
       const remote = absPath(a.remotePath);
@@ -1777,7 +1893,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "docker_exec_attach": {
       const tabId = newTabId("exec");
       const name = containers.find((c) => c.id === str(a.containerId))?.name ?? "api-server";
-      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
+      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")), {
+        user: "root",
+        host: name,
+      });
       shells.set(tabId, shell);
       later(90, () => {
         pushText(a.channel, `\r\n\x1b[2m[演示模式] 已进入容器 ${name} 的 sh\x1b[0m\r\n\r\n`);
@@ -1847,7 +1966,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (cmd === "DBSIZE") return "(integer) 10";
       if (cmd === "KEYS") return redisKeys.join("\n");
       if (cmd === "GET") return redisValues[str(args[1])] ? JSON.stringify(redisValues[str(args[1])].value) : "(nil)";
-      return `(演示模式) 已执行 ${args.join(" ")}`;
+      return `（演示模式：未内置 ${args.join(" ") || "空命令"} 的模拟结果，没有执行）`;
     }
 
     case "redis_set_ttl":
@@ -2093,7 +2212,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         pushEvent(a.channel, {
           type: "done",
           answer:
-            "先被 unattended-upgrades 占着 dpkg 锁，停掉它之后 nginx 装上了；`systemctl is-active` 返回 active，本机 80 端口返回 200。全程 4 步都在你面前的终端里，可逐屏回放。",
+            "先被 unattended-upgrades 占着 dpkg 锁，停掉它之后 nginx 装上了；`systemctl is-active` 返回 active，本机 80 端口返回 200。全程 4 步的屏幕内容都在上面的「读取屏幕」里。",
         }),
       );
       return { jobId, token: DEMO_TAKEOVER_TOKEN };
