@@ -82,7 +82,7 @@ export async function startVite(options = {}) {
   // 直启 vite.js (不经 pnpm 包装): SIGTERM 必须落在真正的 dev server 进程上,
   // 否则包装进程死后 vite 子进程残留占用端口。
   const args = [viteBin];
-  if (options.config) args.push("--config", options.config);
+  args.push("--config", options.config ?? path.join(root, "src", "test", "lib", "acceptance-vite.config.mjs"));
   args.push("--host", "127.0.0.1", "--port", String(port), "--strictPort");
   const child = spawn(
     process.execPath,
