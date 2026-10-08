@@ -199,21 +199,19 @@ describe("demo SSH ~/.ssh 目录快速导入", () => {
     expect(JSON.stringify(preview)).not.toContain("PRIVATE KEY");
   });
 
-  it("ssh-home 一键导入全部安全项：新增项入库、冲突项不覆盖", async () => {
+  it("ssh-home 一键导入全部安全项：只提交安全项，新增项入库、冲突项不覆盖", async () => {
     const preview = (await mockInvoke("ssh_import_preview", {
       args: { source: "ssh-home" },
     })) as { hosts: { id: string; action: string }[]; keys: { id: string; action: string }[] };
     const result = (await mockInvoke("ssh_import_apply", {
       args: {
         source: "ssh-home",
-        hosts: preview.hosts.map((h) => ({
-          id: h.id,
-          action: h.action === "add" ? "import" : "skip",
-        })),
-        keys: preview.keys.map((k) => ({
-          id: k.id,
-          action: k.action === "add" ? "import" : "skip",
-        })),
+        hosts: preview.hosts
+          .filter((h) => h.action === "add")
+          .map((h) => ({ id: h.id, action: "import" })),
+        keys: preview.keys
+          .filter((k) => k.action === "add")
+          .map((k) => ({ id: k.id, action: "import" })),
       },
     })) as Record<string, number>;
     expect(result.assetsCreated).toBe(2);

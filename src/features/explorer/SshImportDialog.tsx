@@ -83,16 +83,20 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       (action) => action !== "skip",
     );
 
-  // 一键导入只提交当前仍为选中状态的安全项：手动取消的 skip 与冲突项的覆盖选择都保留
-  const importableCount =
+  // 一键导入只提交当前仍为选中状态的安全项；手动 skip 与冲突行的覆盖选择都不包含，覆盖需走「导入选中项」
+  const quickImportHosts =
     preview === null
-      ? 0
+      ? []
       : preview.hosts.filter(
           (host) => host.action === "add" && (hostActions[host.id] ?? "skip") === "import",
-        ).length +
-        preview.keys.filter(
+        );
+  const quickImportKeys =
+    preview === null
+      ? []
+      : preview.keys.filter(
           (key) => key.action === "add" && (keyActions[key.id] ?? "skip") === "import",
-        ).length;
+        );
+  const importableCount = quickImportHosts.length + quickImportKeys.length;
 
   const applySelection = async (
     hosts: { id: string; action: SshImportItemAction }[],
@@ -124,7 +128,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const runApply = () => {
+  const runApplySelection = () => {
     if (!preview) return;
     void applySelection(
       preview.hosts.map((host) => ({
@@ -135,6 +139,13 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         id: key.id,
         action: keyActions[key.id] ?? "skip",
       })),
+    );
+  };
+
+  const runQuickImport = () => {
+    void applySelection(
+      quickImportHosts.map((host) => ({ id: host.id, action: "import" as const })),
+      quickImportKeys.map((key) => ({ id: key.id, action: "import" as const })),
     );
   };
 
@@ -167,7 +178,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         >
           <div className="nx-modal-header shrink-0">
             <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-              导入 SSH 主机
+              导入 SSH 主机与密钥
             </span>
           </div>
           <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
@@ -329,7 +340,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
               </button>
             )}
             {phase === "preview" && importableCount > 0 && (
-              <button className="nx-btn nx-btn-ghost" onClick={runApply}>
+              <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
                 一键导入全部安全项 ({importableCount})
               </button>
             )}
@@ -337,7 +348,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
               <button
                 className="nx-btn nx-btn-primary"
                 disabled={!canApply}
-                onClick={runApply}
+                onClick={runApplySelection}
               >
                 导入选中项
               </button>
