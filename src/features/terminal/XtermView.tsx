@@ -339,7 +339,7 @@ export function XtermView(props: XtermViewProps) {
           if (!disposed) onAttachFailedRef.current?.(code);
           term.writeln("\r\n\x1b[33m[连接已失效] 这台终端所属的连接在服务端已经不在了。\x1b[0m");
         } else {
-          term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
+          term.writeln(`\r\n\x1b[31m[连接失败] ${describeError(e)}\x1b[0m`);
         }
       } finally {
         attaching = false;

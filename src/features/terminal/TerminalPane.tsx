@@ -16,6 +16,7 @@ import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } fro
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
+import { noteTabDurable } from "./durableTabs";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, describeImageUploadFailure, markdownImageLink } from "./imagePaste";
 import {
@@ -152,6 +153,10 @@ export function TerminalPane({
   const statusText = sessionStatusText(sessionStatus);
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
+  const canDisconnect =
+    sessionStatus === "connected" ||
+    sessionStatus === "connecting" ||
+    sessionStatus === "reconnecting";
   const blocksSupported = !effectiveWinrm;
   const bindings = useKeybindings();
   const searchBindingLabel = formatBinding(bindings.terminalSearch);
@@ -221,18 +226,22 @@ export function TerminalPane({
   );
 
   const sendData = useCallback(
-    async (text: string) => {
-      if (!kernelTabId) return;
-      if (isObserver) {
+    async (text: string, opts?: { fromCommand?: boolean }): Promise<"sent" | "observer" | "failed"> => {
+      if (!kernelTabId) return "failed";
+      const hintObserver = () => {
         const now = Date.now();
-        if (now - observerHintAt.current > 4000) {
+        if (opts?.fromCommand || now - observerHintAt.current > 4000) {
           observerHintAt.current = now;
           pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
         }
-        return;
+      };
+      if (isObserver) {
+        hintObserver();
+        return "observer";
       }
       try {
         await terminalApi.write(kernelTabId, new TextEncoder().encode(text));
+        return "sent";
       } catch (e) {
         const code = (e as { code?: string } | null)?.code;
         if (code === "not_controller") {
@@ -240,18 +249,15 @@ export function TerminalPane({
             setControl((c) => (c ? { ...c, controller: "__other__" } : c));
             void refreshControl();
           }
-          const now = Date.now();
-          if (now - observerHintAt.current > 4000) {
-            observerHintAt.current = now;
-            pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
-          }
-          return;
+          hintObserver();
+          return "observer";
         }
         const now = Date.now();
-        if (now - writeErrorAt.current > 5000) {
+        if (opts?.fromCommand || now - writeErrorAt.current > 5000) {
           writeErrorAt.current = now;
           pushToast("error", `写入终端失败：${describeError(e)}`);
         }
+        return "failed";
       }
     },
     [kernelTabId, isObserver, me, pushToast, refreshControl],
@@ -289,7 +295,10 @@ export function TerminalPane({
       setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
     }
     if (p.cwd !== undefined) setCwd(p.cwd || null);
-    if (p.durable !== undefined) setDurable(p.durable);
+    if (p.durable !== undefined) {
+      setDurable(p.durable);
+      noteTabDurable(p.tabId, p.durable);
+    }
   }, []);
   useEffect(() => {
     setCwd(null);
@@ -531,7 +540,7 @@ export function TerminalPane({
       const started = await sessionApi.reconnect(sessionId);
       pushToast(
         started ? "info" : "error",
-        started ? "正在重连…结果会显示在终端状态上" : "重连未能启动",
+        started ? "正在重连…结果会显示在工具栏的状态徽标上" : "重连未能启动：服务正在关闭",
       );
     } catch (e) {
       pushToast("error", `重连失败：${describeError(e)}`);
@@ -569,7 +578,7 @@ export function TerminalPane({
         pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
         return;
       }
-      setImagePaste({ phase: "uploading", message: `正在上传 ${files.length} 张图片…` });
+      setImagePaste({ phase: "uploading", message: `正在上传 ${files.length} 张图片到服务端图床（限时公开链接）…` });
       try {
         const service = await fetchImageService();
         if (service) {
@@ -589,12 +598,12 @@ export function TerminalPane({
           setImagePaste({
             phase: "error",
             message:
-              "服务端未提供图片上传服务（/healthz 没有 imageLinks）。图片没有被上传到任何其他服务器；可请管理员为服务端配置数据目录后重试。",
+              "服务端未提供图片上传服务（未配置图床）。图片没有被上传到任何服务器；可请管理员为服务端配置数据目录后重试。",
           });
           return;
         }
         const confirmed = await ask(
-          "当前连接没有可用的图片上传服务。改为把图片保存到本地文件，并在光标处插入本地路径的 Markdown 链接？",
+          "当前连接没有可用的图片上传服务。改为把图片保存到本地文件，并在光标处插入本地路径的 Markdown 链接？图片不会上传到任何服务器。",
           { title: "图片粘贴", kind: "info" },
         );
         if (!confirmed) {
@@ -633,6 +642,28 @@ export function TerminalPane({
     [kernelTabId, isObserver, pushToast],
   );
 
+  const pasteImagesFromClipboard = async () => {
+    if (!kernelTabId) return;
+    const files: File[] = [];
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith("image/"));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        files.push(new File([blob], `pasted-image.${type.slice("image/".length) || "png"}`, { type }));
+      }
+    } catch (e) {
+      pushToast("error", `读取剪贴板图片失败：${describeError(e)}`);
+      return;
+    }
+    if (files.length === 0) {
+      pushToast("info", "剪贴板里没有图片：先截图或复制图片文件，再在终端里 Ctrl+V 或拖入");
+      return;
+    }
+    await handlePasteImages(files);
+  };
+
   useEffect(() => {
     if (imagePaste?.phase !== "success") return;
     const timer = window.setTimeout(() => setImagePaste(null), 4500);
@@ -646,12 +677,8 @@ export function TerminalPane({
     });
     if (!cmd) return;
     const body = cmd.endsWith("\n") ? cmd : `${cmd}\n`;
-    try {
-      await sendData(body);
-      pushToast("success", "命令已发送");
-    } catch (e) {
-      pushToast("error", `发送失败：${describeError(e)}`);
-    }
+    const result = await sendData(body, { fromCommand: true });
+    if (result === "sent") pushToast("success", "命令已发送");
   };
 
   const toggleBlocksPanel = () => {
@@ -754,6 +781,13 @@ export function TerminalPane({
       },
       {
         kind: "item",
+        label: "粘贴图片",
+        hint: "上传图床或存本地，插入链接",
+        disabled: !kernelTabId,
+        onSelect: () => void pasteImagesFromClipboard(),
+      },
+      {
+        kind: "item",
         label: "粘贴选中文本",
         icon: <IconEdit size={13} />,
         hint: "不动剪贴板",
@@ -792,15 +826,15 @@ export function TerminalPane({
         kind: "item",
         label: "保存为日志",
         icon: <IconSave size={13} />,
-        hint: "当前回滚缓冲",
+        hint: "屏幕与滚动历史",
         disabled: !kernelTabId,
         onSelect: () => void saveLogToFile(),
       },
       {
         kind: "item",
-        label: "重新连接",
+        label: "重连会话（保留当前终端）",
         icon: <IconRefresh size={13} />,
-        hint: canReconnect ? "已断开" : statusText,
+        hint: statusText,
         disabled: !canReconnect,
         onSelect: () => void reconnectSession(),
       },
@@ -809,6 +843,8 @@ export function TerminalPane({
         label: "断开连接",
         icon: <IconPlug size={13} />,
         danger: true,
+        disabled: !canDisconnect,
+        hint: canDisconnect ? undefined : statusText,
         onSelect: () => void disconnectSession(),
       },
       { kind: "separator" },
@@ -884,7 +920,11 @@ export function TerminalPane({
             输出积压
           </span>
         )}
-        {throttleNow?.recovered && <span className="nx-badge nx-badge-green">输出已恢复</span>}
+        {throttleNow?.recovered && (
+          <span className="nx-badge nx-badge-green" title="终端输出积压已消退，画面恢复实时">
+            输出已恢复
+          </span>
+        )}
         <Cwd cwd={cwd} />
         {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
         <div className="nx-spacer" />
@@ -901,7 +941,7 @@ export function TerminalPane({
         <select
           className="nx-select nx-input-sm w-[88px] font-mono max-[560px]:hidden"
           value={encoding}
-          title="终端字符编码（右键菜单里也有）"
+          title="终端字符编码（对之后的输出生效）"
           onChange={(e) => void applyEncoding(e.target.value)}
         >
           {ENCODINGS.map((enc) => (
@@ -913,7 +953,8 @@ export function TerminalPane({
 
         <button
           className={`nx-btn nx-btn-sm max-[560px]:hidden ${recording ? "nx-btn-danger" : "nx-btn-ghost"}`}
-          title="把终端输出录制到文件"
+          disabled={!kernelTabId}
+          title={kernelTabId ? "把终端输出录制到文件" : "终端连接后才能录制"}
           onClick={() => void toggleRecord()}
         >
           {recording ? <IconStop size={12} /> : <span className="nx-dot bg-current" />}
@@ -1086,8 +1127,9 @@ export function TerminalPane({
               ) : (
                 <>
                   <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                    多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，
-                    终端尺寸也会按你的窗口重排。
+                    {control.controller
+                      ? "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，终端尺寸也会按你的窗口重排。"
+                      : "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后即可输入，终端尺寸会按你的窗口重排。"}
                   </span>
                   {control.subscribers > 1 && (
                     <span className="nx-badge">{control.viewers} 个设备正在观看</span>

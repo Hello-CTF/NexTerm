@@ -185,7 +185,7 @@ export function TerminalKeysBar({ onSend, onFocus }: TerminalKeysBarProps) {
         </div>
         <div className="nx-modal-body">
           <p className="nx-hint mb-3">
-            勾选要在终端上方显示的按键；已启用的按键可上下移动调整顺序。设置只保存在本机浏览器，不同步到服务器。
+            勾选要在终端上方显示的按键；已启用的按键可上下移动调整顺序。设置只保存在本机，不同步到服务器。
           </p>
           <div role="group" aria-label="已启用按键" className="mb-1 text-[11px] text-neutral-400">
             已启用
