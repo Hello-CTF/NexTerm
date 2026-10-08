@@ -411,7 +411,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if payload.ID == store.BuiltinLocalAssetID {
-		report.warnf("内置「当前设备」不接受同步覆盖")
+		report.warnf("内置\"当前设备\"不接受同步覆盖")
 		return false, false
 	}
 	local, err := e.store.AssetGet(ctx, payload.ID)

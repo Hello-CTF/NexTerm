@@ -182,7 +182,7 @@ type auditPayload struct {
 func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
 VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
@@ -203,7 +203,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	err := s.db.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).
 		Scan(&grant.userID, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+		return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)

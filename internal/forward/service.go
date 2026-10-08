@@ -106,7 +106,7 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 		return Spec{}, ipc.BadParam(errors.New("目标主机不能为空"))
 	}
 	if args.TargetPort == 0 {
-		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1–65535 之间"))
+		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1-65535 之间"))
 	}
 	if _, err := s.validateSession(ctx, args.SessionID); err != nil {
 		return Spec{}, err
@@ -148,7 +148,7 @@ func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec
 		return Spec{}, ipc.BadParam(errors.New("目标主机不能为空"))
 	}
 	if args.TargetPort == 0 {
-		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1–65535 之间"))
+		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1-65535 之间"))
 	}
 	bindHost := strings.TrimSpace(args.BindHost)
 	if bindHost == "" {

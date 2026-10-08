@@ -14,7 +14,7 @@ func validateEnvelopes(envelopes *vault.UserDEKEnvelopes) error {
 	if envelopes == nil ||
 		len(envelopes.DEKEnvelope) == 0 || len(envelopes.KDFSalt) == 0 || envelopes.KDFParams == "" ||
 		len(envelopes.RecoveryEnvelope) == 0 || envelopes.RecoveryHash == "" {
-		return ipc.BadParam(fmt.Errorf("DEK 信封字段不完整"))
+		return ipc.BadParam(fmt.Errorf("账号加密密钥字段不完整"))
 	}
 	return nil
 }
@@ -37,7 +37,7 @@ ON CONFLICT(user_id) DO UPDATE SET dek_envelope = excluded.dek_envelope, kdf_sal
 }
 
 // InsertUserDEKEnvelopes 仅在该用户尚无信封时写入; 已存在时返回 ErrDEKEnvelopesExist, 不会覆盖。
-var ErrDEKEnvelopesExist = errors.New("DEK 信封已存在")
+var ErrDEKEnvelopesExist = errors.New("账号加密密钥已存在")
 
 func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, envelopes *vault.UserDEKEnvelopes) error {
 	if err := validateEnvelopes(envelopes); err != nil {
@@ -63,7 +63,7 @@ func (a *Accounts) GetUserDEKEnvelopes(ctx context.Context, userID string) (*vau
 FROM user_dek WHERE user_id = ?`, userID).
 		Scan(&envelopes.DEKEnvelope, &envelopes.KDFSalt, &envelopes.KDFParams, &envelopes.RecoveryEnvelope, &envelopes.RecoveryHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeNotFound, "未找到: DEK 信封")
+		return nil, ipc.NewError(ipc.CodeNotFound, "账号加密密钥不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -86,7 +86,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	var hash string
 	if err := tx.QueryRowContext(ctx, "SELECT password_hash FROM "+userTable+" WHERE id = ?", userID).Scan(&hash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
+			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
 		}
 		return dbError(err)
 	}
@@ -151,7 +151,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	var recoveryHash string
 	if err := tx.QueryRowContext(ctx, "SELECT recovery_hash FROM user_dek WHERE user_id = ?", userID).Scan(&recoveryHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ipc.NewError(ipc.CodeForbidden, "账号未设置 DEK，不能使用恢复密钥")
+			return ipc.NewError(ipc.CodeForbidden, "账号未设置加密密钥，不能使用恢复密钥")
 		}
 		return dbError(err)
 	}
@@ -199,7 +199,7 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
+		return ipc.NewError(ipc.CodeNotFound, "用户不存在")
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_dek WHERE user_id = ?", userID); err != nil {
 		return dbError(err)

@@ -222,7 +222,7 @@ type auditPayload struct {
 func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
 VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceFleet, kind, string(encoded)); err != nil {
@@ -243,7 +243,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	err := s.db.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).
 		Scan(&grant.userID, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+		return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -351,7 +351,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?
 RETURNING user_id`, now, hashSecret(code), now).Scan(&ownerID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期")
+		return nil, ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成后再试")
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -372,7 +372,7 @@ VALUES(?,?,?,?,?)`, deviceID, credentialID, platform, appVersion, now); err != n
 	}
 	payload, err := json.Marshal(auditPayload{Action: "enroll", DeviceID: deviceID, Requester: ownerID, Outcome: "allow"})
 	if err != nil {
-		return nil, ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
 VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, now, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
@@ -524,7 +524,7 @@ func (s *Service) AgentDesiredConfig(ctx context.Context, deviceID string) (Agen
 	err := s.db.QueryRowContext(ctx, "SELECT desired_autostart, terminal_enabled FROM device_agent WHERE device_id = ?", deviceID).
 		Scan(&desiredAutostart, &terminalEnabled)
 	if errors.Is(err, sql.ErrNoRows) {
-		return AgentConfig{}, ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+		return AgentConfig{}, ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	if err != nil {
 		return AgentConfig{}, dbError(err)
@@ -556,7 +556,7 @@ func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Ide
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	if updated, err := s.AgentDesiredConfig(ctx, deviceID); err == nil {
 		s.registry.PushControl(deviceID, controlMessage{
@@ -604,7 +604,7 @@ func (s *Service) SetBaseURLs(ctx context.Context, entries []BaseURLEntry) ([]Ba
 	}
 	encoded, err := json.Marshal(normalized)
 	if err != nil {
-		return nil, ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
@@ -657,7 +657,7 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample Met
 	var revokedAt sql.NullInt64
 	err := s.db.QueryRowContext(ctx, "SELECT revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+		return ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return dbError(err)
@@ -746,14 +746,14 @@ sample_count = excluded.sample_count`,
 func (s *Service) UpdateServiceState(ctx context.Context, deviceID string, state ServiceState) error {
 	encoded, err := json.Marshal(state)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	result, err := s.db.ExecContext(ctx, "UPDATE device_agent SET service_state_json = ? WHERE device_id = ?", string(encoded), deviceID)
 	if err != nil {
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	return nil
 }
@@ -770,11 +770,11 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	payload, err := json.Marshal(auditPayload{Action: "failover", DeviceID: deviceID, Requester: deviceID, Outcome: "allow", Reason: reason, URL: url})
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
 VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {

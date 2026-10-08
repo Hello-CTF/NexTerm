@@ -116,7 +116,7 @@ func sealDEK(kek, dek *secretKey) ([]byte, error) {
 
 func openDEK(kek *secretKey, envelope []byte) (*secretKey, error) {
 	if len(envelope) != nonceLength+DEKLength+16 {
-		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: DEK 信封长度不合法")
+		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 密钥信封长度不合法")
 	}
 	plaintext, err := open(kek, envelope[:nonceLength], envelope[nonceLength:], dekAAD)
 	if err != nil {
@@ -147,7 +147,7 @@ func openCredential(dek *secretKey, nonce, blob []byte) ([]byte, error) {
 
 func decodeDEK(plaintext []byte) (*secretKey, error) {
 	if len(plaintext) != DEKLength {
-		return nil, ipc.NewError(ipc.CodeDecrypt, fmt.Sprintf("凭据解密失败: DEK 长度为 %d，应为 %d", len(plaintext), DEKLength))
+		return nil, ipc.NewError(ipc.CodeDecrypt, fmt.Sprintf("凭据解密失败: 密钥长度为 %d，应为 %d", len(plaintext), DEKLength))
 	}
 	dek := &secretKey{}
 	copy(dek.bytes[:], plaintext)

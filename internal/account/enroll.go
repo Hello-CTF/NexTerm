@@ -47,7 +47,7 @@ func (a *Accounts) ConsumeEnrollCode(ctx context.Context, code string) (string, 
 WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?
 RETURNING user_id`, a.now(), enrollCodeHash(code), a.now()).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成后再试")
 	}
 	if err != nil {
 		return "", dbError(err)

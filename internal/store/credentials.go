@@ -37,7 +37,7 @@ nonce=excluded.nonce, blob=excluded.blob, kek_hint=excluded.kek_hint, updated_at
 func (s *Store) CredentialGetRow(ctx context.Context, id string) (CredentialRow, error) {
 	row, err := scanCredential(s.db.QueryRowContext(ctx, "SELECT "+credentialColumns+" FROM credential WHERE id = ?", id))
 	if isNoRows(err) {
-		return CredentialRow{}, notFound("凭据 " + id)
+		return CredentialRow{}, notFound("凭据")
 	}
 	if err != nil {
 		return CredentialRow{}, dbError(err)

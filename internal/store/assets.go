@@ -49,7 +49,7 @@ func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow,
 func (s *Store) AssetGet(ctx context.Context, id string) (AssetRow, error) {
 	row, err := scanAsset(s.db.QueryRowContext(ctx, "SELECT "+assetColumns+" FROM asset WHERE id = ?", id))
 	if isNoRows(err) {
-		return AssetRow{}, notFound("资产 " + id)
+		return AssetRow{}, notFound("资产")
 	}
 	if err != nil {
 		return AssetRow{}, dbError(err)
@@ -123,7 +123,7 @@ func (s *Store) AssetDelete(ctx context.Context, id string) error {
 		return err
 	}
 	if row.Builtin {
-		return badParam(errString("「当前设备」是内置资产，不能删除"))
+		return badParam(errString("\"当前设备\"是内置资产，不能删除"))
 	}
 	_, err = s.db.ExecContext(ctx, "UPDATE asset SET deleted_at = ? WHERE id = ?", ids.NowMS(), id)
 	if err != nil {
@@ -182,7 +182,7 @@ ORDER BY sort, name LIMIT 100`, like, like, like, like, like)
 
 func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
 	if row.ID == BuiltinLocalAssetID {
-		return false, badParam(errString("内置资产「当前设备」不接受同步写入（本机在每台设备上都是各自身份）"))
+		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（本机在每台设备上都是各自身份）"))
 	}
 	if err := EnsureID(row.ID); err != nil {
 		return false, err

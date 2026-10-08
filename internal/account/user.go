@@ -214,7 +214,7 @@ func scanUser(row rowScanner) (*User, error) {
 	if err := row.Scan(&user.ID, &user.Username, &user.DisplayName, &role, &user.passwordHash, &state,
 		&user.MustChangePassword, &user.CreatedAt, &user.UpdatedAt, &lastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
+			return nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
 		}
 		return nil, dbError(err)
 	}

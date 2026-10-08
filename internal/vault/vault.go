@@ -289,7 +289,7 @@ func (v *Vault) UnlockMaster(ctx context.Context, password string) error {
 
 func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 	if v.mode == ModeNotInit {
-		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无需解锁；请先在「设置 → 凭据保护」中完成初始化")
+		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无需解锁；请先在\"设置 → 凭据保护\"中完成初始化")
 	}
 	if v.mode != ModeMaster {
 		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")
@@ -365,7 +365,7 @@ func (v *Vault) currentDEK() (*secretKey, error) {
 	v.lastUsedAt = v.now()
 	if v.dek == nil {
 		if v.mode == ModeNotInit {
-			return nil, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在「设置 → 凭据保护」中完成初始化")
+			return nil, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在\"设置 → 凭据保护\"中完成初始化")
 		}
 		return nil, ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}

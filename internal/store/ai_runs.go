@@ -109,7 +109,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
 	row, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE id = ?`, id))
 	if isNoRows(err) {
-		return RunRow{}, notFound("AI 运行 " + id)
+		return RunRow{}, notFound("AI 运行")
 	}
 	if err != nil {
 		return RunRow{}, dbError(err)
@@ -175,7 +175,7 @@ func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, pay
 	var seq uint64
 	if err := tx.QueryRowContext(ctx, `SELECT seq FROM ai_run WHERE id = ?`, runID).Scan(&seq); err != nil {
 		if isNoRows(err) {
-			return 0, notFound("AI 运行 " + runID)
+			return 0, notFound("AI 运行")
 		}
 		return 0, dbError(err)
 	}
@@ -272,7 +272,7 @@ func (s *Store) RunUpdateStatus(ctx context.Context, runID, status string) error
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
-		return notFound("AI 运行 " + runID)
+		return notFound("AI 运行")
 	}
 	return nil
 }

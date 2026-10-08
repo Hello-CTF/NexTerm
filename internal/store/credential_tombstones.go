@@ -31,7 +31,7 @@ func (s *Store) CredentialTombstoneGet(ctx context.Context, id string) (Credenti
 	err := s.db.QueryRowContext(ctx, "SELECT id, deleted_at FROM credential_tombstone WHERE id = ?", id).
 		Scan(&tombstone.ID, &tombstone.DeletedAt)
 	if isNoRows(err) {
-		return CredentialTombstone{}, notFound("凭据墓碑 " + id)
+		return CredentialTombstone{}, notFound("凭据墓碑")
 	}
 	if err != nil {
 		return CredentialTombstone{}, dbError(err)

@@ -88,7 +88,7 @@ func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) er
 	var revokedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&owner, &revokedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+			return ipc.NewError(ipc.CodeNotFound, "设备不存在")
 		}
 		return dbError(err)
 	}
@@ -129,7 +129,7 @@ func scanDevice(row rowScanner) (*Device, error) {
 	var lastSeenAt, revokedAt sql.NullInt64
 	if err := row.Scan(&device.ID, &device.UserID, &device.Name, &device.Kind, &device.CreatedAt, &lastSeenAt, &revokedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+			return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 		}
 		return nil, dbError(err)
 	}

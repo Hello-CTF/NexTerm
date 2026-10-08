@@ -39,7 +39,7 @@ func (s *Store) GroupList(ctx context.Context) ([]AssetGroupRow, error) {
 func (s *Store) GroupGet(ctx context.Context, id string) (AssetGroupRow, error) {
 	row, err := scanGroup(s.db.QueryRowContext(ctx, "SELECT "+groupColumns+" FROM asset_group WHERE id = ?", id))
 	if isNoRows(err) {
-		return AssetGroupRow{}, notFound("分组 " + id)
+		return AssetGroupRow{}, notFound("分组")
 	}
 	if err != nil {
 		return AssetGroupRow{}, dbError(err)

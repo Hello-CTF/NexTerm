@@ -75,7 +75,7 @@ func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok || userID == "" {
-		writeSyncError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+		writeSyncError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失，请重新登录"))
 		return
 	}
 	switch r.URL.Path {

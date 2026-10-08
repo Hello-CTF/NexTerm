@@ -52,7 +52,7 @@ func (a *Accounts) SetUserDisabled(ctx context.Context, userID string, disabled 
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
+		return ipc.NewError(ipc.CodeNotFound, "用户不存在")
 	}
 	if disabled {
 		if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", a.now(), userID); err != nil {

@@ -70,7 +70,7 @@ func GenerateUserDEKEnvelopes(password string) (dek []byte, envelopes *UserDEKEn
 
 func WrapUserDEK(password string, dek []byte) (envelope, salt []byte, params string, returnErr error) {
 	if len(dek) != DEKLength {
-		return nil, nil, "", ipc.NewError(ipc.CodeCrypto, "加密错误: DEK 长度不合法")
+		return nil, nil, "", ipc.NewError(ipc.CodeCrypto, "加密错误: 密钥长度不合法")
 	}
 	salt = make([]byte, 16)
 	randomBytes(salt)
@@ -101,7 +101,7 @@ func UnwrapUserDEK(password string, envelope, salt []byte, params string) ([]byt
 	}
 	defer kek.destroy()
 	if len(envelope) != nonceLength+DEKLength+16 {
-		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: DEK 信封长度不合法")
+		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 账号加密密钥数据长度不合法")
 	}
 	plaintext, err := open(kek, envelope[:nonceLength], envelope[nonceLength:], userDEKAAD)
 	if err != nil {
@@ -117,7 +117,7 @@ func UnwrapUserDEK(password string, envelope, salt []byte, params string) ([]byt
 
 func WrapUserDEKWithRecovery(recoveryKey string, dek []byte) ([]byte, error) {
 	if len(dek) != DEKLength {
-		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: DEK 长度不合法")
+		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: 密钥长度不合法")
 	}
 	if NormalizeRecoveryKey(recoveryKey) == "" {
 		return nil, ipc.BadParam(errString("恢复密钥为空"))
@@ -139,7 +139,7 @@ func UnwrapUserDEKWithRecovery(recoveryKey string, envelope []byte) ([]byte, err
 		return nil, ipc.BadParam(errString("恢复密钥为空"))
 	}
 	if len(envelope) != nonceLength+DEKLength+16 {
-		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 恢复信封长度不合法")
+		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 恢复密钥数据长度不合法")
 	}
 	key := recoveryKeyMaterial(recoveryKey)
 	defer clear(key)
