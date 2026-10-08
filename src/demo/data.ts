@@ -651,7 +651,7 @@ export async function registerRoutes(app: FastifyInstance) {
 }
 `,
   "/etc/nginx/nginx.conf": `user  nginx;
-worker_processes  auto;
+worker_processes 1;
 
 error_log  /var/log/nginx/error.log notice;
 pid        /var/run/nginx.pid;
@@ -672,6 +672,7 @@ http {
 
     sendfile        on;
     keepalive_timeout  65;
+    server_tokens on;
 
     # 上游：本机的 api-server 容器
     upstream api_backend {
@@ -1222,10 +1223,10 @@ export const conversationMessages: Record<
       content: {
         role: "assistant",
         content:
-          "这台机器（linuxcore）当前运行的服务：\n\n" +
+          "这台机器（web-01）当前运行的服务：\n\n" +
           "- `docker` / `containerd` — 容器运行时\n" +
           "- `1panel` — 1Panel 面板\n" +
-          "- `ssh` / `tailscaled` / `openvpn-client@linuxcore`\n\n" +
+          "- `ssh` / `tailscaled` / `openvpn-client@web-01`\n\n" +
           "✅ 没有失败单元。",
       },
       tokensIn: 2988,

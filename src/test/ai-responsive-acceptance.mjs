@@ -597,7 +597,7 @@ async function acceptance(page) {
     });
     await page.waitFor(`Boolean(document.querySelector('div[role="log"] .nx-md-pre'))`, 30_000);
     await page.waitFor(`document.querySelectorAll('div[role="log"] .nx-md-pre-body [class*="nx-tok-"]').length > 0`, 20_000);
-    await page.waitFor(`[...document.querySelectorAll('div[role="log"] .nx-md-p')].some((p) => p.textContent.includes("可回放"))`, 30_000);
+    await page.waitFor(`[...document.querySelectorAll('div[role="log"] .nx-md-p')].some((p) => p.textContent.includes("工具结果"))`, 30_000);
     await page.waitFor(`[...document.querySelectorAll('div[role="log"] .nx-md-table')].some((t) => t.textContent.includes("2.14"))`, 10_000);
     const dark = await page.evaluate(`(() => {
       ${CONTRAST_HELPERS}
