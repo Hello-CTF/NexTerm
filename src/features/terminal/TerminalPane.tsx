@@ -16,7 +16,6 @@ import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } fro
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
-import { noteTabDurable } from "./durableTabs";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, describeImageUploadFailure, markdownImageLink } from "./imagePaste";
 import {
@@ -295,10 +294,7 @@ export function TerminalPane({
       setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
     }
     if (p.cwd !== undefined) setCwd(p.cwd || null);
-    if (p.durable !== undefined) {
-      setDurable(p.durable);
-      noteTabDurable(p.tabId, p.durable);
-    }
+    if (p.durable !== undefined) setDurable(p.durable);
   }, []);
   useEffect(() => {
     setCwd(null);

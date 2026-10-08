@@ -19,9 +19,8 @@ import type { AppTab, Pane, Workspace } from "../../app/store";
 import { useUi } from "../../app/store";
 import {
   disconnectSessionWithConfirm,
-  runningTerminalCounts,
+  runningTerminalCount,
 } from "../../features/terminal/sessionDisconnect";
-import { noteTabDurable, resetDurableTabs } from "../../features/terminal/durableTabs";
 import type { LiveTabInfo } from "../../ipc/commands";
 
 function terminal(id: string, sessionId = "s1"): AppTab {
@@ -64,7 +63,6 @@ function liveTab(tabId: string, sessionId: string, exited = false): LiveTabInfo 
 describe("session disconnect confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetDurableTabs();
     mocks.ask.mockResolvedValue(true);
     mocks.disconnect.mockResolvedValue(undefined);
     mocks.listLive.mockResolvedValue([]);
@@ -80,27 +78,28 @@ describe("session disconnect confirmation", () => {
       liveTab("kernel-other", "s2"),
     ]);
 
-    expect(await runningTerminalCounts("s1")).toEqual({ ordinary: 4, durable: 0 });
-    expect(await runningTerminalCounts("s2")).toEqual({ ordinary: 1, durable: 0 });
-    expect(await runningTerminalCounts("nope")).toEqual({ ordinary: 0, durable: 0 });
+    expect(await runningTerminalCount("s1")).toBe(4);
+    expect(await runningTerminalCount("s2")).toBe(1);
+    expect(await runningTerminalCount("nope")).toBe(0);
   });
 
   it("falls back to the local count when the backend list is unavailable", async () => {
     seed([terminal("a")]);
     mocks.listLive.mockRejectedValue(new Error("offline"));
 
-    expect(await runningTerminalCounts("s1")).toEqual({ ordinary: 1, durable: 0 });
+    expect(await runningTerminalCount("s1")).toBe(1);
   });
 
-  it("asks with the affected ordinary terminal count before disconnecting", async () => {
+  it("asks with the total count and states consequences per terminal kind", async () => {
     seed([terminal("a"), terminal("b")]);
 
     await disconnectSessionWithConfirm("s1", "web-01");
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const [message, options] = mocks.ask.mock.calls[0];
-    expect(message).toContain("2 个普通终端进程会被结束，无法恢复");
-    expect(message).not.toContain("守护终端");
+    expect(message).toContain("2 个正在运行的终端里");
+    expect(message).toContain("普通终端的进程会被结束，无法恢复");
+    expect(message).toContain("守护终端会留在「后台会话」，之后可接管");
     expect(message).toContain("web-01");
     expect(options.kind).toBe("warning");
     expect(mocks.disconnect).toHaveBeenCalledWith("s1");
@@ -113,7 +112,7 @@ describe("session disconnect confirmation", () => {
     await disconnectSessionWithConfirm("s1", "web-01");
 
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("2 个普通终端进程会被结束");
+    expect(message).toContain("2 个正在运行的终端里");
   });
 
   it("does not recount a local tab whose backend twin already exited", async () => {
@@ -124,41 +123,12 @@ describe("session disconnect confirmation", () => {
       liveTab("kernel-other", "s2"),
     ]);
 
-    expect(await runningTerminalCounts("s1")).toEqual({ ordinary: 1, durable: 0 });
+    expect(await runningTerminalCount("s1")).toBe(1);
 
     await disconnectSessionWithConfirm("s1", "web-01");
 
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("1 个普通终端进程会被结束");
-  });
-
-  it("separates durable terminals from the ones that will be killed", async () => {
-    seed([terminal("a"), terminal("b")]);
-    mocks.listLive.mockResolvedValue([liveTab("kernel-a", "s1"), liveTab("kernel-bg", "s1")]);
-    noteTabDurable("kernel-b", true);
-    noteTabDurable("kernel-bg", true);
-
-    expect(await runningTerminalCounts("s1")).toEqual({ ordinary: 1, durable: 2 });
-
-    await disconnectSessionWithConfirm("s1", "web-01");
-
-    const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("1 个普通终端进程会被结束，无法恢复");
-    expect(message).toContain("2 个守护终端会留在「后台会话」");
-    expect(message.split("无法恢复")).toHaveLength(2);
-  });
-
-  it("does not claim processes die when only durable terminals remain", async () => {
-    seed([terminal("a")]);
-    mocks.listLive.mockResolvedValue([liveTab("kernel-a", "s1")]);
-    noteTabDurable("kernel-a", true);
-
-    await disconnectSessionWithConfirm("s1", "web-01");
-
-    const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("1 个守护终端会留在「后台会话」");
-    expect(message).toContain("进程不会被结束");
-    expect(message).not.toContain("无法恢复");
+    expect(message).toContain("1 个正在运行的终端里");
   });
 
   it("cancelling the confirmation keeps the connection", async () => {
@@ -178,7 +148,7 @@ describe("session disconnect confirmation", () => {
     await disconnectSessionWithConfirm("s1", "web-01");
 
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).not.toContain("终端进程");
+    expect(message).not.toContain("正在运行的终端");
     expect(mocks.disconnect).toHaveBeenCalledWith("s1");
   });
 });
