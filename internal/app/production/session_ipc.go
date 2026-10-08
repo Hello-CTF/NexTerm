@@ -27,6 +27,7 @@ type terminalCommandService struct {
 	grid         *ipc.Dispatcher
 	hostKeys     *productionHostKeyStore
 	sshConnector *productionConnector
+	events       ipc.Emitter
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -125,10 +126,11 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter) *terminalCommandService {
 	return &terminalCommandService{
 		database: database, sessions: sessions, docker: dockerService, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), hostKeys: hostKeys, sshConnector: sshConnector,
+		events: events,
 	}
 }
 
@@ -165,20 +167,22 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "session_disconnect", func(_ context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "session_disconnect", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
 				if s.docker != nil {
-					_ = s.docker.CloseSession(input.SessionID)
+					s.closeDockerSession(ctx, input.SessionID)
 				}
 				return nil, terminalIPCError(s.sessions.Disconnect(input.SessionID))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "session_reconnect", func(_ context.Context, _ *ipc.Call, input sessionIDRequest) (bool, error) {
-				started := s.sessions.StartReconnect(input.SessionID)
-				if started && s.docker != nil {
-					_ = s.docker.CloseSession(input.SessionID)
+			return ipc.Register(dispatcher, "session_reconnect", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (bool, error) {
+				if err := s.sessions.StartReconnect(input.SessionID); err != nil {
+					return false, terminalIPCError(err)
 				}
-				return started, nil
+				if s.docker != nil {
+					s.closeDockerSession(ctx, input.SessionID)
+				}
+				return true, nil
 			})
 		},
 		func() error {
@@ -570,6 +574,12 @@ func validTabID(id string) bool {
 		}
 	}
 	return true
+}
+
+func (s *terminalCommandService) closeDockerSession(ctx context.Context, sessionID string) {
+	if err := s.docker.CloseSession(sessionID); err != nil {
+		reportAppError(ctx, s.events, "docker", "Docker 容器会话关闭失败，请检查 Docker 服务状态后重试", err)
+	}
 }
 
 func terminalIPCError(err error) error {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type Manager struct {
 	ownsBus     bool
 	emitter     Emitter
 	transcripts TranscriptSink
+	logger      *slog.Logger
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -108,6 +110,10 @@ func NewManager(config Config) *Manager {
 		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
 			manager.offsets = source
 		}
+	}
+	manager.logger = config.Logger
+	if manager.logger == nil {
+		manager.logger = slog.Default()
 	}
 	if binder, ok := config.Transcripts.(interface {
 		BindTranscriptOffsetSource(durableTranscriptOffsetSource)

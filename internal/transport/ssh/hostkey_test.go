@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -238,4 +239,21 @@ func hostKeyForTest(t *testing.T) gossh.PublicKey {
 		t.Fatal(err)
 	}
 	return signer.PublicKey()
+}
+
+func TestHostKeyErrorUserMessage(t *testing.T) {
+	pending := &HostKeyError{Pending: true, Presented: HostKey{Host: "203.0.113.10", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:pending"}}
+	message := pending.UserMessage()
+	for _, want := range []string{"203.0.113.10:2222", "SHA256:pending", "确认"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("pending UserMessage() = %q, want it to contain %q", message, want)
+		}
+	}
+	changed := &HostKeyError{Presented: HostKey{Host: "203.0.113.10", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:new"}, Known: []HostKey{{Host: "203.0.113.10", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:old"}}}
+	message = changed.UserMessage()
+	for _, want := range []string{"203.0.113.10:2222", "SHA256:new", "不一致", "核对"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("changed UserMessage() = %q, want it to contain %q", message, want)
+		}
+	}
 }

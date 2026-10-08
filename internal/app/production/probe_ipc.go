@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -264,7 +265,8 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 	var connectErr *ssh.ConnectError
 	if errors.As(err, &connectErr) {
 		result.Kind = string(connectErr.Kind)
-		result.Error = connectErr.Error()
+		result.Error = connectErr.UserMessage()
+		slog.Warn("asset probe failed", "asset", target.assetID, "kind", result.Kind, "error", connectErr)
 		return result
 	}
 	result.Kind = probeFailureKind(err)
@@ -365,7 +367,7 @@ func sshConnectIPCError(connectErr *ssh.ConnectError) *ipc.Error {
 		for _, known := range keyErr.Known {
 			detail.Known = append(detail.Known, hostKeyProbeKnownDTO{KeyType: known.KeyType, Fingerprint: known.Fingerprint})
 		}
-		return ipc.WrapError(ipc.CodeHostKeyPending, connectErr.Error(), connectErr).WithDetail(detail)
+		return ipc.WrapError(ipc.CodeHostKeyPending, keyErr.UserMessage(), connectErr).WithDetail(detail)
 	}
 	code := ipc.CodeSSH
 	switch connectErr.Kind {
@@ -378,5 +380,5 @@ func sshConnectIPCError(connectErr *ssh.ConnectError) *ipc.Error {
 		Kind: string(connectErr.Kind), Hint: connectErr.Hint, Op: connectErr.Op,
 		Host: connectErr.Host, Port: connectErr.Port, Proxy: connectErr.Proxy, Jump: connectErr.Jump,
 	}
-	return ipc.WrapError(code, connectErr.Error(), connectErr).WithDetail(detail)
+	return ipc.WrapError(code, connectErr.UserMessage(), connectErr).WithDetail(detail)
 }

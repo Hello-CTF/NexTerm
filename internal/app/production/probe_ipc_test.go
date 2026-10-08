@@ -331,7 +331,7 @@ func TestProductionAssetProbeBatchThroughJump(t *testing.T) {
 	if result := batch.Results[0]; !result.Reachable || result.AssetID != targetAssetID {
 		t.Fatalf("reachable through jump = %+v", result)
 	}
-	if result := batch.Results[1]; result.Reachable || result.Kind != "refused" || !strings.Contains(result.Error, "through jump host") {
+	if result := batch.Results[1]; result.Reachable || result.Kind != "refused" || !strings.Contains(result.Error, "经由跳板机") {
 		t.Fatalf("unreachable through jump = %+v", result)
 	}
 }

@@ -10,10 +10,43 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-func (m *Manager) StartReconnect(id string) bool {
-	return m.startGoroutine(func() {
+func (m *Manager) StartReconnect(id string) error {
+	if err := m.reconnectPreflight(id); err != nil {
+		return err
+	}
+	if !m.startGoroutine(func() {
 		_ = m.Reconnect(context.Background(), id)
-	})
+	}) {
+		return ErrSessionClosed
+	}
+	return nil
+}
+
+func (m *Manager) reconnectPreflight(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.sessions[id]
+	if session == nil {
+		return ErrSessionNotFound
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !reconnectable(session.asset.Kind) {
+		return ErrUnsupported
+	}
+	if session.closed {
+		return ErrSessionClosed
+	}
+	if session.reconnecting {
+		return nil
+	}
+	if session.status == StatusConnecting {
+		return ErrDisconnected
+	}
+	if other := m.sessions[m.byAsset[session.asset.ID]]; other != nil && other != session {
+		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
+	}
+	return nil
 }
 
 func (m *Manager) Reconnect(ctx context.Context, id string) error {
@@ -48,7 +81,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	if other := m.sessions[m.byAsset[session.asset.ID]]; other != nil && other != session {
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return fmt.Errorf("asset %s already has an active session", session.asset.ID)
+		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
 	}
 
 	generation := session.generation + 1
@@ -386,6 +419,9 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	finishedEvent := session.statusEventLocked(status, reconnectErr)
 	session.mu.Unlock()
 	m.mu.Unlock()
+	if status == StatusFailed && !errors.Is(reconnectErr, context.Canceled) {
+		m.logger.Warn("session reconnect failed", "session", session.ID, "error", reconnectErr)
+	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
 }

@@ -335,3 +335,62 @@ func TestConnectErrorJumpConfigFailureNamesTheFailingHop(t *testing.T) {
 		t.Fatalf("nested jump config failure endpoint = %+v", connectErr)
 	}
 }
+
+func TestConnectErrorUserMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *ConnectError
+		wants    []string
+		excludes []string
+	}{
+		{
+			name:  "refused",
+			err:   &ConnectError{Kind: ErrorKindRefused, Op: "dial", Host: "203.0.113.10", Port: 2222, Err: errors.New("dial tcp: connect: connection refused")},
+			wants: []string{"203.0.113.10:2222", "拒绝连接", "请确认主机在线"},
+		},
+		{
+			name:  "auth through jump names the failing hop",
+			err:   &ConnectError{Kind: ErrorKindAuth, Op: "authentication", Host: "10.0.0.8", Port: 22, Jump: "jump.example:22", Err: errors.New("unable to authenticate")},
+			wants: []string{"10.0.0.8:22", "经由跳板机 jump.example:22", "认证失败"},
+		},
+		{
+			name:  "proxy",
+			err:   &ConnectError{Kind: ErrorKindProxy, Op: "proxy connect", Host: "203.0.113.10", Port: 22, Proxy: "socks5://127.0.0.1:1080", Err: errors.New("proxy down")},
+			wants: []string{"经由代理 socks5://127.0.0.1:1080", "代理连接失败"},
+		},
+		{
+			name:     "canceled",
+			err:      &ConnectError{Kind: ErrorKindCanceled, Op: "dial", Host: "203.0.113.10", Port: 22, Err: context.Canceled},
+			wants:    []string{"203.0.113.10:22", "已取消"},
+			excludes: []string{"失败"},
+		},
+		{
+			name:  "missing endpoint",
+			err:   &ConnectError{Kind: ErrorKindNetwork, Op: "dial", Err: errors.New("boom")},
+			wants: []string{"目标主机", "网络连接失败"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message := test.err.UserMessage()
+			for _, want := range test.wants {
+				if !strings.Contains(message, want) {
+					t.Fatalf("UserMessage() = %q, want it to contain %q", message, want)
+				}
+			}
+			for _, exclude := range test.excludes {
+				if strings.Contains(message, exclude) {
+					t.Fatalf("UserMessage() = %q, must not contain %q", message, exclude)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectErrorUserMessageDelegatesToHostKey(t *testing.T) {
+	keyErr := &HostKeyError{Pending: true, Presented: HostKey{Host: "203.0.113.10", Port: 2222, KeyType: "ssh-ed25519", Fingerprint: "SHA256:abc"}}
+	connectErr := newConnectError(ErrorKindHostKeyPending, "host key verification", "203.0.113.10", 2222, "", keyErr)
+	if got, want := connectErr.UserMessage(), keyErr.UserMessage(); got != want {
+		t.Fatalf("UserMessage() = %q, want host key message %q", got, want)
+	}
+}

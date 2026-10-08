@@ -68,6 +68,64 @@ func (e *ConnectError) Unwrap() error {
 	return e.Err
 }
 
+func (e *ConnectError) UserMessage() string {
+	var keyErr *HostKeyError
+	if errors.As(e, &keyErr) {
+		return keyErr.UserMessage()
+	}
+	target := "目标主机"
+	if e.Host != "" {
+		target = endpointString(e.Host, e.Port)
+	}
+	if e.Kind == ErrorKindCanceled {
+		return "SSH 连接 " + target + " 已取消"
+	}
+	var message strings.Builder
+	message.WriteString("SSH 连接 ")
+	message.WriteString(target)
+	if e.Jump != "" {
+		message.WriteString("（经由跳板机 ")
+		message.WriteString(e.Jump)
+		message.WriteString("）")
+	}
+	if e.Proxy != "" {
+		message.WriteString("（经由代理 ")
+		message.WriteString(e.Proxy)
+		message.WriteString("）")
+	}
+	message.WriteString("失败：")
+	message.WriteString(userGuidanceForKind(e.Kind))
+	return message.String()
+}
+
+func userGuidanceForKind(kind ErrorKind) string {
+	switch kind {
+	case ErrorKindConfig:
+		return "配置无效，请检查主机、端口、用户名与认证方式设置"
+	case ErrorKindDNS:
+		return "无法解析主机名，请检查主机地址是否拼写正确以及 DNS 是否可用"
+	case ErrorKindRefused:
+		return "目标主机拒绝连接，请确认主机在线且 SSH 端口已开放"
+	case ErrorKindUnreachable:
+		return "目标主机不可达，请检查网络路由与防火墙设置"
+	case ErrorKindTimeout:
+		return "连接超时，请检查网络连通性与防火墙设置"
+	case ErrorKindAuth:
+		return "认证失败，请检查用户名、密码、私钥或 SSH agent 配置"
+	case ErrorKindHostKeyPending:
+		return "主机指纹待确认，请核对指纹后确认信任该主机"
+	case ErrorKindHostKeyChanged:
+		return "主机指纹与已记录的不一致，请与服务器管理员核对后再确认替换"
+	case ErrorKindProxy:
+		return "代理连接失败，请检查代理地址、凭据以及代理是否允许连接目标"
+	case ErrorKindHandshake:
+		return "SSH 握手失败，请检查服务器 SSH 服务状态与其日志"
+	case ErrorKindNetwork:
+		return "网络连接失败，请检查与目标主机的网络连通性"
+	}
+	return "连接失败，请检查网络与资产配置"
+}
+
 func (e *ConnectError) withJump(jump string) *ConnectError {
 	e.Jump = jump
 	return e

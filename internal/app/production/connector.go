@@ -23,6 +23,7 @@ type productionConnector struct {
 	database *store.Store
 	vault    *vault.Vault
 	hostKeys *productionHostKeyStore
+	events   ipc.Emitter
 }
 
 type productionAssetOptions struct {
@@ -53,12 +54,12 @@ type productionAssetOptions struct {
 	InitialCommand        string            `json:"initialCommand"`
 }
 
-func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string) (*productionConnector, error) {
+func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter) (*productionConnector, error) {
 	hostKeys, err := newProductionHostKeyStore(filepath.Join(dataDir, "known_hosts.json"), database)
 	if err != nil {
 		return nil, err
 	}
-	return &productionConnector{database: database, vault: credentialVault, hostKeys: hostKeys}, nil
+	return &productionConnector{database: database, vault: credentialVault, hostKeys: hostKeys, events: events}, nil
 }
 
 func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
@@ -89,14 +90,36 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 	}
 	if options.InitialCommand != "" {
 		execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, _ = transport.Exec(execCtx, options.InitialCommand, base.ExecOptions{})
+		result, execErr := transport.Exec(execCtx, options.InitialCommand, base.ExecOptions{})
 		cancel()
+		if generation == 1 {
+			c.reportInitialCommandFailure(ctx, options.InitialCommand, result, execErr)
+		}
 		if err := ctx.Err(); err != nil {
 			_ = transport.Close()
 			return nil, err
 		}
 	}
 	return transport, nil
+}
+
+func (c *productionConnector) reportInitialCommandFailure(ctx context.Context, command string, result base.ExecResult, execErr error) {
+	if execErr == nil && (result.ExitCode == nil || *result.ExitCode == 0) {
+		return
+	}
+	cause := execErr
+	if cause == nil {
+		cause = fmt.Errorf("退出码 %d: %s", *result.ExitCode, truncatedInitialCommandStderr(result.Stderr))
+	}
+	reportAppError(ctx, c.events, "session", "初始命令执行失败，未在会话中运行，请检查资产的初始命令配置", fmt.Errorf("命令 %q: %w", command, cause))
+}
+
+func truncatedInitialCommandStderr(stderr string) string {
+	trimmed := []rune(strings.TrimSpace(stderr))
+	if len(trimmed) > 200 {
+		return string(trimmed[:200]) + "..."
+	}
+	return string(trimmed)
 }
 
 const maxJumpAssetHops = 8
