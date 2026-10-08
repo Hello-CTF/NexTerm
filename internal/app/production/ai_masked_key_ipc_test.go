@@ -104,7 +104,7 @@ func TestAIModelRefreshMaskedKeyUnknownProfileFails(t *testing.T) {
 	if response.OK {
 		t.Fatalf("refresh with unknown masked profile succeeded: %s", response.Data)
 	}
-	if response.Error == nil || !strings.Contains(response.Error.Message, "not found") {
+	if response.Error == nil || !strings.Contains(response.Error.Message, "档案不存在") {
 		t.Fatalf("error = %+v, want profile not found", response.Error)
 	}
 	if hits.Load() != 0 {
@@ -182,7 +182,7 @@ func TestAIModelRefreshWhitespacePaddedMaskedKey(t *testing.T) {
 	if response.OK {
 		t.Fatalf("refresh with unknown profile succeeded: %s", response.Data)
 	}
-	if response.Error == nil || !strings.Contains(response.Error.Message, "not found") {
+	if response.Error == nil || !strings.Contains(response.Error.Message, "档案不存在") {
 		t.Fatalf("error = %+v, want profile not found", response.Error)
 	}
 	if hits.Load() != 1 {

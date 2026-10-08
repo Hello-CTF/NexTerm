@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 )
@@ -172,14 +171,7 @@ func terminalErrorMessage(err error) string {
 	if err == nil {
 		return "操作失败（原因未记录），请重试"
 	}
-	switch {
-	case errors.Is(err, profiles.ErrNoActiveProfile):
-		return "尚未启用 AI 模型档案，请先在设置中选择并启用模型"
-	case errors.Is(err, profiles.ErrProfileNotFound):
-		return "指定的 AI 模型档案不存在，可能已被删除，请检查设置"
-	case errors.Is(err, profiles.ErrProfileKeyUnavailable):
-		return "AI 模型档案缺少可用的 API Key，请检查档案的密钥配置"
-	case errors.Is(err, provider.ErrCircuitOpen):
+	if errors.Is(err, provider.ErrCircuitOpen) {
 		return "AI 服务连续失败已触发熔断，请稍后重试"
 	}
 	switch provider.ClassifyError(err) {

@@ -103,7 +103,7 @@ func TestAIModelRefreshRejectsResidualMaskedKeys(t *testing.T) {
 		if response.OK {
 			t.Fatalf("envelope=%v: refresh with residual masked key succeeded", envelope)
 		}
-		if response.Error == nil || !strings.Contains(response.Error.Message, "usable API key") {
+		if response.Error == nil || !strings.Contains(response.Error.Message, "API Key") {
 			t.Fatalf("envelope=%v: error = %+v", envelope, response.Error)
 		}
 		if hits.Load() != 0 {
