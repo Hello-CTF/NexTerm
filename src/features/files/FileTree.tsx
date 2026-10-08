@@ -99,6 +99,13 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     if (el) el.scrollLeft = el.scrollWidth;
   }, [root, editing]);
 
+  useEffect(() => {
+    if (sessionKind !== "winrm" || root !== HOME) return;
+    setExpanded([]);
+    setSelected(null);
+    setRoot("/");
+  }, [sessionKind, root]);
+
   const beginEdit = () => {
     setDraft(root);
     setEditing(true);

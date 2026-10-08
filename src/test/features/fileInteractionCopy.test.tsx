@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, mount, waitFor, type MountedView } from "./reactTestUtils";
 
@@ -217,6 +217,26 @@ describe("FileTree ~ 归因", () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "~");
+    const home = mounted!.container.querySelector<HTMLButtonElement>(
+      'button[title="WinRM 后端不支持 ~ 展开"]',
+    );
+    expect(home?.disabled).toBe(true);
+  });
+
+  it("sessions 后到的 WinRM 会话：~ 列表失败后自动切到 /，不停留在错误行", async () => {
+    useUi.setState({ sessions: [] });
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      p === "~" ? Promise.reject(new Error("tilde unsupported")) : Promise.resolve([]),
+    );
+    mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~"));
+
+    act(() => {
+      useUi.setState({ sessions: [session(SID, "winrm")] });
+    });
+
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
+    expect(mounted!.container.textContent).not.toContain("tilde unsupported");
     const home = mounted!.container.querySelector<HTMLButtonElement>(
       'button[title="WinRM 后端不支持 ~ 展开"]',
     );
