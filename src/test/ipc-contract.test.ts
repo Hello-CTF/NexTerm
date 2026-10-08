@@ -177,7 +177,7 @@ describe("IPC facade 静态契约", () => {
     };
     visit(source, false);
 
-    expect(buttons).toBe(8);
+    expect(buttons).toBe(7);
     expect(missingNoDrag).toEqual([]);
   });
 });

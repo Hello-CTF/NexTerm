@@ -21,8 +21,8 @@ func testPreferences(t *testing.T) *Preferences {
 
 func TestPreferenceKeysWhitelist(t *testing.T) {
 	keys := PreferenceKeys()
-	if len(keys) != 17 {
-		t.Fatalf("declared preference keys=%d want 17: %v", len(keys), keys)
+	if len(keys) != 16 {
+		t.Fatalf("declared preference keys=%d want 16: %v", len(keys), keys)
 	}
 	for _, key := range keys {
 		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") {

@@ -223,6 +223,14 @@ async function pressCtrl(page, letter, vk) {
   await sleep(60);
 }
 
+async function pressCtrlShift(page, letter, vk) {
+  const code = `Key${letter.toUpperCase()}`;
+  const base = { key: letter.toUpperCase(), code, windowsVirtualKeyCode: vk, modifiers: 10 };
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  await sleep(60);
+}
+
 // 从当前焦点出发，仅按 Tab 直到 predicate(activeElement) 为真；返回按键次数。
 async function tabUntil(page, predicate, max = 200) {
   for (let i = 0; i < max; i++) {
@@ -382,7 +390,7 @@ async function keyboardAcceptance(page) {
     await boot(page);
     const paneTabsBefore = await page.evaluate(`document.querySelectorAll('[role="tablist"][aria-label="标签页"] [role="tab"]').length`);
 
-    await pressCtrl(page, "k", 75);
+    await pressCtrlShift(page, "p", 80);
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     await page.send("Input.insertText", { text: "设置" });
     await page.waitFor(`[...document.querySelectorAll('[role="option"],[role="listbox"] *')].some((el) => el.textContent?.includes('设置'))`);

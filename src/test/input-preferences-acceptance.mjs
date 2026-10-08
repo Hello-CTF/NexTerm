@@ -208,8 +208,6 @@ async function pressCombo(page, key, code, vk, modifiers) {
   await sleep(60);
 }
 
-const pressCtrl = (page, letter, vk) =>
-  pressCombo(page, letter, `Key${letter.toUpperCase()}`, vk, MOD_CTRL);
 const pressCtrlShift = (page, letter, vk) =>
   pressCombo(page, letter.toUpperCase(), `Key${letter.toUpperCase()}`, vk, MOD_CTRL | MOD_SHIFT);
 const pressCtrlDigit = (page, digit) =>
@@ -307,7 +305,7 @@ async function boot(page, { clearStorage = true } = {}) {
 }
 
 async function openSettingsViaPalette(page) {
-  await pressCtrl(page, "k", 75);
+  await pressCtrlShift(page, "p", 80);
   await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
   await page.send("Input.insertText", { text: "设置" });
   await page.waitFor(
@@ -321,7 +319,7 @@ async function openSettingsViaPalette(page) {
 }
 
 async function openViaPalette(page, text, tabText) {
-  await pressCtrl(page, "k", 75);
+  await pressCtrlShift(page, "p", 80);
   await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
   await page.send("Input.insertText", { text });
   await page.waitFor(
@@ -463,7 +461,7 @@ async function inputPreferenceAcceptance(page) {
     await pressCombo(page, "Backspace", "Backspace", 8, 0);
     await page.waitFor(`document.querySelector('[data-shortcut-row="toggleSplit"] .nx-kbd')?.textContent === '未绑定'`);
 
-    await pressCtrl(page, "k", 75);
+    await pressCtrlShift(page, "p", 80);
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     const evidence = await page.evaluate(`(() => {
       const options = [...document.querySelectorAll('[role="option"]')];

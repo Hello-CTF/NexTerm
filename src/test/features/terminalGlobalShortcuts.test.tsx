@@ -192,12 +192,12 @@ afterEach(() => {
 });
 
 describe("XtermView 应用级快捷键放行", () => {
-  it("注册 xterm custom key handler 并放行 Mod+K 给 window 级 App 处理", async () => {
+  it("注册 xterm custom key handler 并放行 Mod+Shift+P / Mod+Shift+K 给 window 级 App 处理", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
     expect(harness.keyHandler).not.toBeNull();
-    expect(handledByXterm({ key: "k", code: "KeyK", ctrlKey: true })).toBe(false);
     expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(handledByXterm({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true })).toBe(false);
   });
 
   it("普通输入与非应用键位仍由 xterm 处理", async () => {
@@ -213,8 +213,8 @@ describe("XtermView 应用级快捷键放行", () => {
   it("repeat 与 IME 组合期间不放行", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    expect(handledByXterm({ key: "k", code: "KeyK", ctrlKey: true, repeat: true })).toBe(true);
-    expect(handledByXterm({ key: "k", code: "KeyK", ctrlKey: true, isComposing: true })).toBe(
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, repeat: true })).toBe(true);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, isComposing: true })).toBe(
       true,
     );
   });
@@ -222,11 +222,12 @@ describe("XtermView 应用级快捷键放行", () => {
   it("键位覆盖同步后按新绑定放行", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    setKeybinding("globalSearch", "Mod+Shift+g");
+    setKeybinding("commandPalette", "Mod+Shift+g");
     expect(handledByXterm({ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true })).toBe(false);
-    expect(handledByXterm({ key: "k", code: "KeyK", ctrlKey: true })).toBe(true);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(true);
 
     resetAllKeybindings();
-    expect(handledByXterm({ key: "k", code: "KeyK", ctrlKey: true })).toBe(false);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(handledByXterm({ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true })).toBe(true);
   });
 });

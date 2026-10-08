@@ -4,7 +4,6 @@ import { getAccountDefaults, getAccountOverrides, getAccountPreferenceStore, pat
 
 export type KeybindingActionId =
   | "commandPalette"
-  | "globalSearch"
   | "quickConnect"
   | "newTerminal"
   | "toggleSidebar"
@@ -24,7 +23,6 @@ export interface KeybindingAction {
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "commandPalette", label: "命令面板", defaultBinding: "Mod+Shift+p" },
-  { id: "globalSearch", label: "全局搜索", defaultBinding: "Mod+k" },
   { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
   { id: "newTerminal", label: "新建本地终端", defaultBinding: "Mod+t" },
   { id: "toggleSidebar", label: "收起 / 展开资产树", defaultBinding: "Mod+b" },
@@ -39,7 +37,6 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
   "commandPalette",
-  "globalSearch",
   "quickConnect",
   "newTerminal",
   "toggleSidebar",

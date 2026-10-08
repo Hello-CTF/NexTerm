@@ -126,16 +126,16 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
 
-    setKeybinding("globalSearch", "Mod+Shift+g");
+    setKeybinding("quickConnect", "Mod+Shift+g");
     setKeybinding("toggleSplit", "Mod+Shift+\\");
     // 账号快照不被后续改键冲掉,账号存储里的其他键也不被整表覆盖
     expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t");
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+w");
     expect(store.data["keybinding.newTerminal"]).toBe("Mod+Shift+t");
     expect(store.data["keybinding.closeTab"]).toBe("Mod+Shift+w");
-    expect(store.puts).toEqual([{ "keybinding.globalSearch": "Mod+Shift+g" }, { "keybinding.toggleSplit": "Mod+Shift+\\" }]);
+    expect(store.puts).toEqual([{ "keybinding.quickConnect": "Mod+Shift+g" }, { "keybinding.toggleSplit": "Mod+Shift+\\" }]);
     expect(JSON.parse(window.localStorage.getItem("nexterm.keybindings.v1")!)).toEqual({
-      globalSearch: "Mod+Shift+g",
+      quickConnect: "Mod+Shift+g",
       toggleSplit: "Mod+Shift+\\",
     });
   });
@@ -169,17 +169,17 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("closeTab")).toBe("Mod+Shift+w"));
-    setKeybinding("globalSearch", "Mod+Shift+g");
+    setKeybinding("quickConnect", "Mod+Shift+g");
 
     resetAllKeybindings();
     expect(getKeybinding("closeTab")).toBe("Mod+w");
     expect(getKeybinding("newTerminal")).toBe("Mod+t");
-    expect(getKeybinding("globalSearch")).toBe("Mod+k");
+    expect(getKeybinding("quickConnect")).toBe("Mod+Shift+k");
     expect(store.data).toEqual({});
     expect(store.clears.flat().sort()).toEqual([
       "keybinding.closeTab",
-      "keybinding.globalSearch",
       "keybinding.newTerminal",
+      "keybinding.quickConnect",
     ]);
   });
 
@@ -205,18 +205,18 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
   it("服务端默认 < 设备本地 < 账号覆盖 逐层优先", async () => {
     window.localStorage.setItem(
       "nexterm.keybindings.v1",
-      JSON.stringify({ newTerminal: "Mod+y", globalSearch: "Mod+Shift+j" }),
+      JSON.stringify({ newTerminal: "Mod+y", quickConnect: "Mod+Shift+j" }),
     );
     loadKeybindings();
     const store = memoryStore(
       { "keybinding.newTerminal": "Mod+Shift+t" },
-      { "keybinding.newTerminal": "Mod+Shift+g", "keybinding.globalSearch": "Mod+Shift+k" },
+      { "keybinding.newTerminal": "Mod+Shift+g", "keybinding.quickConnect": "Mod+Shift+k" },
     );
     registerAccountPreferenceStore(store);
     // 账号覆盖胜本地与服务端默认
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
     // 设备本地胜服务端默认
-    await vi.waitFor(() => expect(getKeybinding("globalSearch")).toBe("Mod+Shift+j"));
+    await vi.waitFor(() => expect(getKeybinding("quickConnect")).toBe("Mod+Shift+j"));
     // 未声明的键回内置默认
     expect(getKeybinding("toggleSplit")).toBe("Mod+\\");
   });
@@ -241,13 +241,13 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
     );
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("closeTab")).toBe("Mod+Shift+w"));
-    setKeybinding("globalSearch", "Mod+Shift+j");
+    setKeybinding("quickConnect", "Mod+Shift+j");
 
     resetAllKeybindings();
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+c");
     expect(getKeybinding("newTerminal")).toBe("Mod+Shift+g");
-    expect(getKeybinding("globalSearch")).toBe("Mod+k");
-    expect(store.clears.flat().sort()).toEqual(["keybinding.closeTab", "keybinding.globalSearch"]);
+    expect(getKeybinding("quickConnect")).toBe("Mod+Shift+k");
+    expect(store.clears.flat().sort()).toEqual(["keybinding.closeTab", "keybinding.quickConnect"]);
   });
 
   it("syncNow 走服务端默认与账号覆盖(线上白名单键)", async () => {

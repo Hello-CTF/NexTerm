@@ -53,7 +53,6 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.terminalTheme":    {kind: preferenceKindEnumString, strings: []string{"dark", "light", "interface"}},
 	"input.selectionAutoCopy":     {kind: preferenceKindBool},
 	"keybinding.commandPalette":   {kind: preferenceKindBinding},
-	"keybinding.globalSearch":     {kind: preferenceKindBinding},
 	"keybinding.quickConnect":     {kind: preferenceKindBinding},
 	"keybinding.newTerminal":      {kind: preferenceKindBinding},
 	"keybinding.toggleSidebar":    {kind: preferenceKindBinding},

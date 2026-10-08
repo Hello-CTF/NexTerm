@@ -73,6 +73,16 @@ const SESSION = {
   createdAt: 0,
 };
 const FRESH_SESSION = { ...SESSION, id: "s2", status: "connected" };
+// 重连成功后会话 id 不变; 后端 reconnect 先把状态置 reconnecting, 前端轮询读到终态。
+const RECONNECTED_SESSION = { ...SESSION, status: "connected" as const };
+
+// 重连发起前置为旧状态, reconnect 被调用后 list 才读到 connected,
+// 避免 App 挂载时的 list 把会话刷成 connected 而走 alive 快速路径。
+function listUntilReconnectThenConnected(): void {
+  mocks.sessionList.mockImplementation(async () =>
+    mocks.reconnect.mock.calls.length > 0 ? [RECONNECTED_SESSION] : [SESSION],
+  );
+}
 
 function seedWorkspace(withSession: boolean): void {
   useUi.setState({
@@ -160,6 +170,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
@@ -185,10 +196,12 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
       known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:oldfp" }],
     });
     mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
@@ -216,10 +229,12 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
       state: "known",
     });
     mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(dialog()).toBeNull();
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
@@ -242,6 +257,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
@@ -271,10 +287,12 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
       },
     });
     mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
@@ -296,22 +314,29 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({ code: "not_found", message: "unknown command" });
     mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(dialog()).toBeNull();
   });
 
   it("非 ssh 会话不探测指纹直接重连", async () => {
     seedWorkspace(true);
-    mocks.sessionList.mockResolvedValue([{ ...SESSION, kind: "winrm" }]);
+    mocks.sessionList.mockImplementation(async () =>
+      mocks.reconnect.mock.calls.length > 0
+        ? [{ ...SESSION, kind: "winrm", status: "connected" as const }]
+        : [{ ...SESSION, kind: "winrm" }],
+    );
     mocks.reconnect.mockResolvedValue(true);
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.probeHostKey).not.toHaveBeenCalled();
     expect(dialog()).toBeNull();
@@ -336,6 +361,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
     expect(dialog()?.textContent).toContain("首次连接 10.0.0.8:22");
     expect(mocks.connect).toHaveBeenCalledTimes(1);
@@ -347,6 +373,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(toastTexts()).toContain("已取消重连");
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
     clickButton(dialog() as HTMLElement, "确定");
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(3));
@@ -380,10 +407,12 @@ describe("指纹确认弹窗去重", () => {
       })
       .mockResolvedValueOnce(FRESH_SESSION);
     mocks.reconnect.mockResolvedValue(true);
+    listUntilReconnectThenConnected();
     mounted = mountApp();
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });
@@ -423,6 +452,7 @@ describe("指纹确认弹窗去重", () => {
     await flush();
 
     clickRail("新建终端");
+    await flush();
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const connectPromise = connectAsset({ id: "a1", name: "web-01", kind: "ssh" });

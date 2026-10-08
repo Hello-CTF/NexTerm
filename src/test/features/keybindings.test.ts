@@ -218,7 +218,7 @@ describe("persistence", () => {
   });
 
   it("treats setting the default as removing the override", () => {
-    setKeybinding("globalSearch", "Mod+K");
+    setKeybinding("quickConnect", "Mod+Shift+K");
     expect(storedOverrides()).toEqual({});
   });
 
@@ -252,11 +252,11 @@ describe("bindingConflicts", () => {
   });
 
   it("detects actions sharing one binding", () => {
-    setKeybinding("globalSearch", "Mod+Shift+P");
+    setKeybinding("quickConnect", "Mod+Shift+P");
     const conflicts = bindingConflicts();
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].bindings).toEqual(["Mod+Shift+p", "Mod+Shift+p"]);
-    expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "globalSearch"]);
+    expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "quickConnect"]);
   });
 
   it("detects Mod and Primary overlapping the same key on both platforms", () => {
@@ -295,8 +295,8 @@ describe("bindingConflicts", () => {
 
 describe("matchAppKeybinding", () => {
   it("maps keys to app actions in catalog order", () => {
-    expect(matchAppKeybinding(keyEvent({ key: "k", ctrlKey: true })))
-      .toEqual({ action: "globalSearch", digit: null });
+    expect(matchAppKeybinding(keyEvent({ key: "k", ctrlKey: true, shiftKey: true })))
+      .toEqual({ action: "quickConnect", digit: null });
     expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true })))
       .toEqual({ action: "switchTab", digit: 2 });
     expect(matchAppKeybinding(keyEvent({ key: "b", ctrlKey: true })))

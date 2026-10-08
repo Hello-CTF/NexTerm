@@ -255,6 +255,14 @@ async function pressCtrl(page, letter, vk) {
   await sleep(60);
 }
 
+async function pressCtrlShift(page, letter, vk) {
+  const code = `Key${letter.toUpperCase()}`;
+  const base = { key: letter.toUpperCase(), code, windowsVirtualKeyCode: vk, modifiers: 10 };
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  await sleep(60);
+}
+
 async function pressCtrlBackslash(page) {
   const base = { key: "\\", code: "Backslash", windowsVirtualKeyCode: 220, modifiers: 2 };
   await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
@@ -304,7 +312,7 @@ async function activateBackgroundTab(page) {
 }
 
 async function connectLocalDevice(page) {
-  await pressCtrl(page, "k", 75);
+  await pressCtrlShift(page, "p", 80);
   await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
   await page.send("Input.insertText", { text: "当前设备" });
   await page.waitFor(`[...document.querySelectorAll('[role="option"]')].some((el) => el.textContent.includes("当前设备"))`);
@@ -473,7 +481,7 @@ async function closeBackgroundAcceptance(page) {
     await boot(page);
     await killSeedBackgroundTab(page);
     await activateTerminalTab(page);
-    await pressCtrl(page, "k", 75);
+    await pressCtrlShift(page, "p", 80);
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     await page.send("Input.insertText", { text: "结束当前终端进程" });
     await page.waitFor(`[...document.querySelectorAll('[role="option"]')].some((el) => el.textContent.includes("结束当前终端进程"))`);
@@ -565,7 +573,7 @@ async function closeBackgroundAcceptance(page) {
   await pass("winrm-close-confirms", async () => {
     await boot(page);
     await killSeedBackgroundTab(page);
-    await pressCtrl(page, "k", 75);
+    await pressCtrlShift(page, "p", 80);
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     await page.send("Input.insertText", { text: "win-2019" });
     await page.waitFor(`[...document.querySelectorAll('[role="option"]')].some((el) => el.textContent.includes("win-2019"))`);

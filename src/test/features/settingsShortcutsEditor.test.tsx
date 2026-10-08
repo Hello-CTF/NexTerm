@@ -74,7 +74,6 @@ describe("shortcuts editor", () => {
       KEYBINDING_ACTIONS.length,
     );
     expect(kbdText("commandPalette")).toBe("Ctrl+Shift+P");
-    expect(kbdText("globalSearch")).toBe("Ctrl+K");
     expect(kbdText("quickConnect")).toBe("Ctrl+Shift+K");
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
     expect(kbdText("terminalSearch")).toBe("Ctrl+F");
@@ -126,11 +125,11 @@ describe("shortcuts editor", () => {
 
   it("flags conflicts with the other action and explains resolution", () => {
     click(editButton("commandPalette"));
-    keyDown(captureInput() as HTMLInputElement, "k", { code: "KeyK", ctrlKey: true });
-    expect(getKeybinding("commandPalette")).toBe("Mod+k");
+    keyDown(captureInput() as HTMLInputElement, "t", { code: "KeyT", ctrlKey: true });
+    expect(getKeybinding("commandPalette")).toBe("Mod+t");
     const badge = row("commandPalette").querySelector(".nx-badge-amber");
     expect(badge?.textContent).toContain("冲突");
-    expect(row("globalSearch").querySelector(".nx-badge-amber")).not.toBeNull();
+    expect(row("newTerminal").querySelector(".nx-badge-amber")).not.toBeNull();
     expect(mounted?.container.textContent).toContain("排在前面的动作生效");
   });
 
