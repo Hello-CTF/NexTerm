@@ -2,15 +2,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 // M209 真实 auth=on 浏览器证据: 门后应用 mounted 即发 /rpc(无 cookie)全部 401,
-// 登录成功后资产树/凭据库停在登录前错误态。这里钉住 gate 转换后的重取与竞态隔离。
+// 登录成功后资产树/凭据库停在登录前错误态。这里用真实 AssetTree/CredentialsView
+// 钉住 gate 转换后的重取(含分组/凭据/片段)与在途竞态隔离; toast 不做 ready 全清。
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
     assetList: vi.fn(),
+    groupList: vi.fn(),
+    snippetList: vi.fn(),
     listCredentials: vi.fn(),
     sessionList: vi.fn(),
     vaultStatus: vi.fn(),
@@ -23,7 +26,12 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../ipc/commands", () => ({
-  assetApi: { list: mocks.assetList, search: vi.fn() },
+  assetApi: {
+    list: mocks.assetList,
+    search: vi.fn(),
+    groupList: mocks.groupList,
+    snippetList: mocks.snippetList,
+  },
   sessionApi: {
     list: mocks.sessionList,
     connectLocal: vi.fn(),
@@ -84,14 +92,14 @@ vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../features/credentials/CredentialsView", () => ({ CredentialsView: () => null }));
-vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../app/App";
 import { useUi } from "../app/store";
 import { useAuth } from "../features/auth/store";
+import { CredentialsView } from "../features/credentials/CredentialsView";
+import type { Asset } from "../ipc/commands";
 
 const ADMIN = {
   id: "u-admin",
@@ -104,30 +112,33 @@ const ADMIN = {
   updated_at: 1,
   last_login_at: 1,
 };
-const ASSET = { id: "a-1", name: "web-01", kind: "ssh" };
+const GROUP = { id: "g1", parentId: null, name: "生产", sort: 0, createdAt: 1, updatedAt: 1 };
+const ASSET: Asset = {
+  id: "a-1",
+  groupId: "g1",
+  name: "web-01",
+  kind: "ssh",
+  host: "10.0.0.8",
+  port: 22,
+  username: "root",
+  authKind: "password",
+  keyPath: null,
+  credId: null,
+  options: {},
+  tags: "",
+  note: "",
+  sort: 0,
+  createdAt: 1,
+  updatedAt: 1,
+  deletedAt: null,
+  builtin: false,
+};
 const CRED = { id: "c-1", name: "db-prod", kind: "password", usedBy: [], createdAt: 1, updatedAt: 1 };
+const SNIPPET = { id: "sn-1", name: "uptime", command: "uptime", createdAt: 1, updatedAt: 1 };
 const SESSION = { id: "s-1", name: "web-01", kind: "ssh", status: "connected", assetId: "a-1" };
 const UNAUTH = { code: "unauthorized", message: "访问令牌无效或缺失", status: 401 };
 
 let authed = false;
-
-function AssetsProbe() {
-  const q = useQuery({ queryKey: ["assets"], queryFn: () => mocks.assetList() });
-  return createElement(
-    "div",
-    { "data-testid": "assets-probe", "data-state": q.isError ? "error" : q.isSuccess ? "ready" : "pending" },
-    String((q.data ?? []).length),
-  );
-}
-
-function CredentialsProbe() {
-  const q = useQuery({ queryKey: ["credentials"], queryFn: () => mocks.listCredentials() });
-  return createElement(
-    "div",
-    { "data-testid": "creds-probe", "data-state": q.isError ? "error" : q.isSuccess ? "ready" : "pending" },
-    String((q.data ?? []).length),
-  );
-}
 
 let mounted: MountedView | undefined;
 
@@ -138,14 +149,13 @@ function mountApp(): MountedView {
       QueryClientProvider,
       { client },
       createElement(App),
-      createElement(AssetsProbe),
-      createElement(CredentialsProbe),
+      createElement(CredentialsView, { view: "text", onChange: () => {} }),
     ),
   );
 }
 
-function probe(id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+function text(): string {
+  return document.body.textContent ?? "";
 }
 
 function vaultStatusText(): string {
@@ -154,6 +164,13 @@ function vaultStatusText(): string {
     if (el.textContent?.includes("凭据库")) return el.textContent;
   }
   return "";
+}
+
+function assetTreeFooterCount(title: string): string {
+  const btn = [...document.querySelectorAll<HTMLElement>("button")].find(
+    (b) => b.getAttribute("title") === title,
+  );
+  return btn?.textContent ?? "";
 }
 
 async function login(): Promise<void> {
@@ -191,6 +208,8 @@ beforeEach(() => {
     recovery_hash: "",
   });
   mocks.assetList.mockImplementation(() => (authed ? Promise.resolve([ASSET]) : Promise.reject(UNAUTH)));
+  mocks.groupList.mockImplementation(() => (authed ? Promise.resolve([GROUP]) : Promise.reject(UNAUTH)));
+  mocks.snippetList.mockImplementation(() => (authed ? Promise.resolve([SNIPPET]) : Promise.reject(UNAUTH)));
   mocks.listCredentials.mockImplementation(() => (authed ? Promise.resolve([CRED]) : Promise.reject(UNAUTH)));
   mocks.sessionList.mockImplementation(() => (authed ? Promise.resolve([SESSION]) : Promise.reject(UNAUTH)));
   mocks.vaultStatus.mockImplementation(() =>
@@ -220,17 +239,22 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("auth=on 登录成功后的数据重取", () => {
-  it("gate 进 ready 后重取资产/凭据/会话/凭据库状态, 清掉登录前错误 toast", async () => {
+describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsView)", () => {
+  it("gate 进 ready 后资产树(含分组)/凭据/片段/凭据库状态全部恢复, toast 不做全清", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "error");
-    expect(probe("creds-probe")?.dataset.state).toBe("error");
+    // 登录前: 资产树与凭据视图都停在 401 错误态, 状态栏凭据库不可用
+    await flushUntil(() => text().includes("加载失败："));
+    expect(text()).toContain("访问令牌无效或缺失");
+    expect(text()).toContain("加载失败 · unauthorized: 访问令牌无效或缺失");
     expect(vaultStatusText()).toContain("凭据库不可用");
+    expect(text()).not.toContain("web-01");
 
-    // 登录前的 401 噪音: 布局同步失败类错误 toast + 一条仍相关的 info toast
+    // 登录前留下的 toast: 认证上下文 401 一条、非 401 布局错误一条、非认证终端错误一条
     act(() => {
       useUi.getState().pushToast("error", "布局同步失败：访问令牌无效或缺失");
+      useUi.getState().pushToast("error", "布局同步失败：daemon 未响应");
+      useUi.getState().pushToast("error", "会话失败：connection reset");
       useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
     });
 
@@ -238,38 +262,49 @@ describe("auth=on 登录成功后的数据重取", () => {
     await login();
     expect(useAuth.getState().gate).toBe("ready");
 
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "ready");
-    await flushUntil(() => probe("creds-probe")?.dataset.state === "ready");
-    expect(probe("assets-probe")?.textContent).toBe("1");
-    expect(probe("creds-probe")?.textContent).toBe("1");
-    expect(mocks.assetList.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // 登录后: 分组与分组内资产都回来(防分组资产隐藏), 凭据/片段计数恢复
+    await flushUntil(() => text().includes("web-01"));
+    expect(text()).toContain("生产");
+    expect(assetTreeFooterCount("凭据库（左栏查看）")).toContain("1");
+    expect(assetTreeFooterCount("命令片段（插入当前终端）")).toContain("1");
+    expect(text()).toContain("# NexTerm 凭据视图");
+    expect(text()).toContain("共 1 个资产 / 1 条凭据");
     expect(vaultStatusText()).toContain("凭据库已解锁");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
+
+    // toast 不做 ready 全清: 非认证错误与非 401 布局错误在登录后仍是有效反馈, 全部保留
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.kind === "error")).toBe(false);
+    expect(toasts.filter((t) => t.kind === "error").map((t) => t.text)).toEqual([
+      "布局同步失败：访问令牌无效或缺失",
+      "布局同步失败：daemon 未响应",
+      "会话失败：connection reset",
+    ]);
     expect(toasts.some((t) => t.kind === "info")).toBe(true);
   });
 
-  it("登出清空资产/凭据缓存, 重新登录再次取到数据", async () => {
+  it("登出清空账号级缓存与会话/凭据库状态, 重新登录再次取到数据", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     authed = true;
     await login();
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "ready");
+    await flushUntil(() => text().includes("web-01"));
 
     authed = false;
     await logout();
     expect(useAuth.getState().gate).toBe("login");
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "error");
-    expect(probe("assets-probe")?.textContent).toBe("0");
+    // 换账号方向: 旧账号的资产/会话/凭据库状态不能残留
+    await flushUntil(() => text().includes("加载失败："));
+    expect(text()).not.toContain("web-01");
+    expect(useUi.getState().sessions).toEqual([]);
+    expect(vaultStatusText()).not.toContain("凭据库已解锁");
 
     authed = true;
     await login();
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "ready");
-    expect(probe("assets-probe")?.textContent).toBe("1");
+    await flushUntil(() => text().includes("web-01"));
+    expect(text()).toContain("生产");
   });
 
-  it("登录前发出的在途请求迟到后不得污染新会话(查询与凭据库状态)", async () => {
+  it("登录前发出的在途请求迟到后不得污染新会话(资产查询与凭据库状态)", async () => {
     const staleAssets = deferred<never>();
     const staleVault = deferred<never>();
     mocks.assetList.mockImplementation(() => (authed ? Promise.resolve([ASSET]) : staleAssets.promise));
@@ -279,12 +314,18 @@ describe("auth=on 登录成功后的数据重取", () => {
 
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
-    // 首屏资产查询与凭据库状态请求仍在途(慢 401)
-    expect(probe("assets-probe")?.dataset.state).toBe("pending");
+    // 首屏资产查询与凭据库状态请求仍在途(慢 401): 树还停在加载骨架, 状态栏还是占位
+    expect(text()).not.toContain("web-01");
+    expect(
+      [...document.querySelectorAll('[role="alert"]')].some((el) =>
+        el.textContent?.includes("加载失败"),
+      ),
+    ).toBe(false);
+    expect(vaultStatusText()).not.toContain("凭据库不可用");
 
     authed = true;
     await login();
-    await flushUntil(() => probe("assets-probe")?.dataset.state === "ready");
+    await flushUntil(() => text().includes("web-01"));
     await flushUntil(() => vaultStatusText().includes("凭据库已解锁"));
 
     // 迟到的登录前响应现在才到: 查询结果被丢弃, 状态栏不被旧 401 覆盖
@@ -293,8 +334,23 @@ describe("auth=on 登录成功后的数据重取", () => {
       staleVault.reject(UNAUTH);
       await flush();
     });
-    expect(probe("assets-probe")?.dataset.state).toBe("ready");
-    expect(probe("assets-probe")?.textContent).toBe("1");
+    expect(text()).toContain("web-01");
     expect(vaultStatusText()).toContain("凭据库已解锁");
+  });
+});
+
+describe("toast 生命周期", () => {
+  it("error 8s / info 3.5s 自动消失, 无需上下文清理兜底", async () => {
+    vi.useFakeTimers();
+    try {
+      useUi.getState().pushToast("error", "布局同步失败：访问令牌无效或缺失");
+      useUi.getState().pushToast("info", "布局已在其他设备上更新");
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(useUi.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(useUi.getState().toasts).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

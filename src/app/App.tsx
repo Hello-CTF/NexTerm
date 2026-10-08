@@ -462,6 +462,18 @@ function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visib
   return <View deviceId={deviceId} visible={visible} />;
 }
 
+// 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel/CredentialsView 的
+// queryKey 对齐(资产/分组/凭据/片段/搜索/凭据库状态)。auth 转换时统一重置: 登录前
+// 这些请求全部吃到 401(分组资产不显示), 换账号则不能把上一个会话的缓存漏给下一个。
+const ACCOUNT_QUERY_KEYS = [
+  ["assets"],
+  ["groups"],
+  ["credentials"],
+  ["snippets"],
+  ["asset-search"],
+  ["vault-status"],
+] as const;
+
 export default function App() {
   const {
     workspaces,
@@ -485,7 +497,6 @@ export default function App() {
     setRightWidth,
     toasts,
     dismissToast,
-    dismissToasts,
     pushToast,
     connectFocusRevision,
   } = useUi();
@@ -964,11 +975,11 @@ export default function App() {
     refreshVaultStatus();
   }, [refreshSessions, refreshVaultStatus]);
 
-  // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的资产/凭据查询、
-  // 会话列表与凭据库状态请求全部吃到 401; resetQueries 会取消在途的旧 fetch 再重取
-  // (invalidateQueries 在 data 为空时会并入旧 fetch, 401 照样落账), 登录前的错误 toast
-  // 属于失效上下文, 一并清掉。反方向(登出/会话过期回 login)重置缓存, 避免上一个会话的
-  // 数据漏给下一个账号。
+  // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的账号级请求全部
+  // 吃到 401; resetQueries 会取消在途的旧 fetch 再重取(invalidateQueries 在 data 为空时会
+  // 并入旧 fetch, 401 照样落账)。反方向(登出/会话过期回 login)重置同一组键并清空会话
+  // 列表与凭据库状态, 避免上一个会话的数据漏给下一个账号。toast 不做 ready 全清:
+  // 8s/3.5s 自动消失已是有限生命周期, 终端/文件/AI 与非 401 错误在登录后仍是有效反馈。
   useEffect(() => {
     if (!WEB || DEMO) return;
     let cancelled = false;
@@ -977,16 +988,14 @@ export default function App() {
       if (cancelled) return;
       unsubscribe = m.useAuth.subscribe((s, prev) => {
         if (s.gate === prev.gate) return;
-        if (s.gate === "ready") {
-          if (prev.gate === "loading") return;
-          void queryClient.resetQueries({ queryKey: ["assets"] });
-          void queryClient.resetQueries({ queryKey: ["credentials"] });
+        if (s.gate === "ready" && prev.gate !== "loading") {
+          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
           refreshSessions();
           refreshVaultStatus();
-          dismissToasts("error");
         } else if (prev.gate === "ready" && s.gate === "login") {
-          void queryClient.resetQueries({ queryKey: ["assets"] });
-          void queryClient.resetQueries({ queryKey: ["credentials"] });
+          for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
+          setSessions([]);
+          setVaultStatus({ text: "…", uninitialized: false });
         }
       });
     });
@@ -994,7 +1003,7 @@ export default function App() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [queryClient, refreshSessions, refreshVaultStatus, dismissToasts]);
+  }, [queryClient, refreshSessions, refreshVaultStatus, setSessions]);
 
   useEffect(() => {
     if (!DEMO) return;
