@@ -1,5 +1,5 @@
 // 与 src/test/nodeFs.d.ts、src/test/features/imagePasteHttp.d.ts 同一模式:
-// tsconfig 不加载 @types/node, 这里声明 acceptance-process 生命周期测试用到的最小 node 类型面。
+// tsconfig 不加载 @types/node, 这里声明 src/test/lib 生命周期与 watcher 测试用到的最小 node 类型面。
 declare module "node:child_process" {
   export interface ChildProcess {
     pid?: number;
@@ -17,6 +17,7 @@ declare module "node:child_process" {
 declare module "node:fs" {
   export function mkdtempSync(prefix: string): string;
   export function writeFileSync(path: string, data: string): void;
+  export function mkdirSync(path: string, options: { recursive: boolean }): string | undefined;
   export function rmSync(path: string, options: { recursive: boolean; force: boolean }): void;
   export function existsSync(path: string): boolean;
 }
@@ -42,6 +43,12 @@ declare module "node:os" {
 
 declare module "node:path" {
   export function join(...parts: string[]): string;
+  export function resolve(...parts: string[]): string;
+  export function dirname(path: string): string;
+}
+
+declare module "node:url" {
+  export function fileURLToPath(url: string): string;
 }
 
 declare const process: {
