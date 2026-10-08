@@ -452,7 +452,7 @@ function RedisView({ connId }: { connId: string }) {
     );
     if (input === null) return;
     const seconds = Number(input.trim());
-    if (!/^-?\d+$/.test(input.trim()) || !Number.isSafeInteger(seconds)) {
+    if (!/^(?:-1|\d+)$/.test(input.trim()) || !Number.isSafeInteger(seconds)) {
       pushToast("error", "过期时间必须是整数秒（-1 表示永不过期）");
       return;
     }

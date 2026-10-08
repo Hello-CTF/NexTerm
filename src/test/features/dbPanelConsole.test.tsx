@@ -218,6 +218,25 @@ describe("DbPanel Redis 改过期时间", () => {
     expect(mocks.redisSetTtl).not.toHaveBeenCalled();
   });
 
+  it.each(["-2", "-42"])("%s 等 -1 以外的负数会被拒绝，不调用后端", async (input) => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce(input);
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
+  });
+
+  it("-1 照常提交（永不过期）", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("-1");
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.redisSetTtl.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).toHaveBeenCalledWith("c1", "k1", -1);
+    await flushUntil(() => mocks.toast.mock.calls.some((c) => c[0] === "success"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "过期时间已更新");
+  });
+
   it("输入 0 时提示会立即删除该键，确认后照常提交", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("0");
