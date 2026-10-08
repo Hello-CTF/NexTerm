@@ -4,9 +4,9 @@
 
 ## 分支基线
 
-- `rwig` 是唯一工作基线与发布基线：新分支一律从 `rwig` 最新提交切出，完成后合回 `rwig`；不面向 `master`/`main` 开发（Pages 部署随 `master` push 触发，属既有流程，不改变基线约定）。
-- 发布从 `rwig` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `rwig`、`master`、`main` 时运行。
-- 推送 `rwig` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。
+- `master` 是唯一工作基线与发布基线：新分支一律从 `master` 最新提交切出，完成后合回 `master`。Pages 部署随 `master` push 触发，属既有流程。
+- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 时运行。
+- 推送 `master` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。
 
 ## 编码标准
 
@@ -82,6 +82,6 @@
 - 每个 agent 的作用域互不重叠；同一文件不分配给两个 agent。
 - 依赖显式排序：有依赖的任务写明先后顺序，无依赖才并行。
 - 实现与评审分离：改动由独立 agent 评审，作者不自审。
-- 实现前先 rebase 到 `rwig` 最新提交；最终集成前再 rebase 一次，最终集成只做一次。
+- 实现前先 rebase 到 `master` 最新提交；最终集成前再 rebase 一次，最终集成只做一次。
 - 测试节奏与"分层测试节奏"一致：实现期只跑聚焦测试，最终集成后跑一次全量验证（`task check`、`task verify`）；不为每个小改动重复全仓套件，不重复跑已移除的 CI job。
 - 并行不绕过既有约定：CI 门禁（见"质量命令"）、bindings 生成物禁手改、migrations append-only 均不变；提交不得引入真实密钥或个人信息，密钥安全靠评审与按需扫描把关（无固定 CI 扫描 job）；`internal/ai/memory/redact_test.go` 的合成 Slack token 为已批准测试夹具，其值不得打印进文档或日志。
