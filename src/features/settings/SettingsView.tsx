@@ -329,7 +329,7 @@ export function SettingsView() {
             )}
           </div>
           <p className="nx-hint mb-3.5">
-            命令命中规则后每次先向你确认（只读模式下直接拒绝）；子串匹配，忽略大小写。
+            命令命中规则后，读写与完全静默模式下每次先向你确认，只读与无人值守模式下直接拒绝；子串匹配，忽略大小写。
           </p>
 
           <div className="mb-1.5 flex flex-col gap-1">
@@ -389,7 +389,7 @@ export function SettingsView() {
           </button>
 
           <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-            规则命中 → 先确认；不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
+            规则命中 → 读写/完全静默先确认，只读/无人值守直接拒绝；不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
           </p>
         </section>
 

@@ -117,6 +117,18 @@ describe("设置分区导航", () => {
   });
 });
 
+describe("AI 拦截规则文案", () => {
+  it("主文与脚注都如实写明各模式下的命中行为", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
+    expect(text).toContain("读写与完全静默模式下每次先向你确认");
+    expect(text).toContain("只读与无人值守模式下直接拒绝");
+    expect(text).toContain("规则命中 → 读写/完全静默先确认，只读/无人值守直接拒绝");
+    expect(text).not.toContain("命中即拦截");
+  });
+});
+
 describe("AI 拦截规则草稿", () => {
   it("预填草稿定位到规则区且失焦不静默保存，Enter 才写入", async () => {
     useUi.setState({ aiRulePrefill: "kubectl delete" });

@@ -87,7 +87,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const revoke = async (asset: Asset) => {
     const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `撤销「${asset.name}」的设备授权？\n\n撤销后，AI 在该设备上进行${scope || "终端写入、命令执行"}时恢复逐次确认，只读模式下这两类操作也重新被禁止。授权记录会从本安装（服务器）上删除。`,
+      `撤销「${asset.name}」的设备授权？\n\n撤销后，AI 在该设备上的${scope || "终端写入、命令执行"}不再享受长期授权，按当前权限模式处理：读写模式下恢复逐次确认，完全静默模式下直接执行不逐次问，只读与无人值守模式下会被拒绝。授权记录会从本安装（服务器）上删除。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -99,7 +99,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         delete next[asset.id];
         return next;
       });
-      pushToast("success", `已撤销「${asset.name}」的设备授权，相关操作恢复逐次确认`);
+      pushToast("success", `已撤销「${asset.name}」的设备授权，相关操作按当前权限模式处理`);
     } catch (e) {
       pushToast("error", `撤销授权失败：${describeError(e)}`);
     } finally {

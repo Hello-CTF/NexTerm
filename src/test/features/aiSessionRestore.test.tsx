@@ -6,6 +6,7 @@ import {
   click,
   clickButton,
   flush,
+  flushUntil,
   mount,
   setInputValue,
   type MountedView,
@@ -244,6 +245,25 @@ describe("AiSidebar session restore", () => {
     await flushReplay();
     expect(textOf(view!)).toContain("旧问题");
     expect(textOf(view!)).not.toContain("会话加载失败");
+  });
+
+  it("恢复失败后删除当前会话会清除错误态，不留无法重试的旧错误", async () => {
+    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+    mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
+    mountSidebar();
+    await flushReplay();
+    expect(textOf(view!)).toContain("会话加载失败 · 会话库不可用");
+
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    click(view!.container.querySelector('button[aria-label="删除会话「排查 502」"]')!);
+    await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
+    await flush();
+
+    expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
+    expect(textOf(view!)).not.toContain("会话加载失败");
+    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(localStorage.getItem(CONVERSATION_KEY)).toBeNull();
   });
 
   it("replays an interrupted run with a pending question into the restored session", async () => {

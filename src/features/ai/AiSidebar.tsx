@@ -1032,6 +1032,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (conversationIdRef.current === c.id) {
       deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
+      setConversationError(null);
       setEditing(null);
       if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
