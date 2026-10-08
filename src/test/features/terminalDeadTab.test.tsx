@@ -166,6 +166,51 @@ function overlay(): HTMLElement | null {
   ) ?? null;
 }
 
+async function openTerminalMenu(): Promise<void> {
+  const body = mounted?.container.querySelector<HTMLElement>(".nx-terminal-body .relative");
+  if (!body) throw new Error("terminal body not found");
+  act(() => {
+    body.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }),
+    );
+  });
+  await flush();
+}
+
+async function clickMenuItem(label: string): Promise<void> {
+  const item = [...document.querySelectorAll<HTMLElement>(".nx-menu .nx-menu-item")].find(
+    (candidate) => candidate.textContent?.includes(label),
+  );
+  if (!item) throw new Error(`menu item ${label} not found`);
+  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function menuLabels(): string[] {
+  return [...document.querySelectorAll<HTMLElement>(".nx-menu .nx-menu-item")].map(
+    (candidate) => candidate.textContent ?? "",
+  );
+}
+
+function toastTexts(): string {
+  return useUi
+    .getState()
+    .toasts.map((t) => t.text)
+    .join("\n");
+}
+
+const CHANGED_HOST_KEY = {
+  code: "host_key_pending",
+  message: "SSH host key for 127.0.0.1:22 changed",
+  detail: {
+    host: "127.0.0.1",
+    port: 22,
+    keyType: "ssh-ed25519",
+    fingerprint: "SHA256:new",
+    changed: true,
+    known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:old" }],
+  },
+};
+
 describe("terminal dead-tab overlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -258,5 +303,131 @@ describe("terminal dead-tab overlay", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(overlay()).not.toBeNull();
     expect(storeTab()?.dead).toBe(true);
+  });
+});
+
+describe("terminal dead-tab context menu reconnect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    harness.props = null;
+    mocks.listLive.mockResolvedValue([]);
+    mocks.connect.mockResolvedValue({
+      id: "s2",
+      assetId: "asset-1",
+      name: "web-01",
+      kind: "ssh",
+      status: "connected",
+      tabs: [],
+      createdAt: 1,
+    });
+    mocks.knownHostAccept.mockResolvedValue(undefined);
+    mocks.ask.mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  it("offers the fresh host connect instead of StartReconnect and reuses the tab", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    await openTerminalMenu();
+    expect(menuLabels().some((t) => t.includes("重新连接这台主机"))).toBe(true);
+    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(false);
+
+    await clickMenuItem("重新连接这台主机");
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith("asset-1"));
+    await waitFor(() => expect(overlay()).toBeNull());
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+    const st = useUi.getState();
+    expect(st.workspaces).toHaveLength(1);
+    expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
+    expect(storeTab()?.sessionId).toBe("s2");
+    expect(storeTab()?.dead).toBe(false);
+    expect(toastTexts()).toContain("已重新连接");
+  });
+
+  it("cancelling the changed host key confirmation neither trusts nor retries", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
+
+    await openTerminalMenu();
+    await clickMenuItem("重新连接这台主机");
+
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机密钥已变更 127.0.0.1:22");
+    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(storeTab()?.dead).toBe(true);
+    expect(overlay()).not.toBeNull();
+  });
+
+  it("accepting the changed host key trusts it and recovers the same tab", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    mocks.connect.mockRejectedValueOnce(CHANGED_HOST_KEY);
+    mocks.ask.mockResolvedValue(true);
+
+    await openTerminalMenu();
+    await clickMenuItem("重新连接这台主机");
+
+    await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new");
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    const st = useUi.getState();
+    expect(st.workspaces).toHaveLength(1);
+    expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
+    expect(storeTab()?.sessionId).toBe("s2");
+    expect(storeTab()?.dead).toBe(false);
+  });
+
+  it("keeps the tab dead and reports the error when the fresh connect fails", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
+
+    await openTerminalMenu();
+    await clickMenuItem("重新连接这台主机");
+
+    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+    expect(storeTab()?.dead).toBe(true);
+    expect(overlay()).not.toBeNull();
+  });
+
+  it("drops the StartReconnect item when the session was deleted without a dead tab", async () => {
+    seedTab();
+    useUi.setState({ sessions: [] });
+    mounted = mountPane();
+    await flush();
+
+    await openTerminalMenu();
+    expect(menuLabels().some((t) => t.includes("重新连接这台主机"))).toBe(true);
+    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(false);
+
+    await clickMenuItem("重新连接这台主机");
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith("asset-1"));
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+    await waitFor(() => expect(storeTab()?.sessionId).toBe("s2"));
+    expect(storeTab()?.dead).not.toBe(true);
   });
 });

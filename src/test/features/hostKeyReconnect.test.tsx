@@ -404,4 +404,27 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
+
+  it("会话在点击前已被删除时说明真实原因而不是「请刷新后重试」", async () => {
+    mocks.probeHostKey.mockResolvedValue({
+      host: "10.0.0.8",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "SHA256:newfp",
+      state: "known",
+    });
+    mocks.reconnect.mockRejectedValue({
+      code: "not_found",
+      message: "会话不存在或已关闭，请刷新后重试",
+    });
+    await flush();
+
+    await clickTerminalMenuItem("重连会话");
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(toastTexts()).toContain("会话已在服务端删除"));
+    expect(toastTexts()).not.toContain("请刷新后重试");
+    expect(
+      useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("会话已在服务端删除")),
+    ).toBe(true);
+  });
 });
