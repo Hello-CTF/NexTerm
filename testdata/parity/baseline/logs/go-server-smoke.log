@@ -1,14 +1,27 @@
-time=2026-10-03T19:13:46.836+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
+time=2026-10-08T13:13:44.122+08:00 level=INFO msg="open file limit ensured" limit=1048576
+
+nexterm-server: 账号系统尚未初始化
+nexterm-server: 一次性初始化码: zYixeF2u3MB_HeE8TzI3lUwQRnsFr_vnxTRp1J54sg4
+nexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)
+
+time=2026-10-08T13:13:44.146+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
 
 SELFCheck observations (Go runtime only; no Rust expected payloads):
 [
+  {
+    "auth_topology": {
+      "mode": "loopback",
+      "listen": "127.0.0.1:35459",
+      "sync_only": false
+    }
+  },
   {
     "health": {
       "ok": true,
       "service": "nexterm-server",
       "version": "dev",
       "syncOnly": false,
-      "commands": 140,
+      "commands": 187,
       "eventSubscribers": 0,
       "liveChannels": 0,
       "pendingChannels": 0,
@@ -21,17 +34,34 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
       },
       "retention": {
         "enabled": true,
-        "lastAttemptAt": "2026-10-03T11:13:46.836596Z",
-        "lastSuccessAt": "2026-10-03T11:13:46.836663Z"
+        "lastAttemptAt": "2026-10-08T05:13:44.148359748Z",
+        "lastSuccessAt": "2026-10-08T05:13:44.148462779Z"
+      },
+      "imageLinks": {
+        "publicBaseURLConfigured": false,
+        "maxBytes": 20971520,
+        "ownerQuotaBytes": 209715200,
+        "ttlSeconds": 86400
+      },
+      "db": {
+        "backend": "sqlite",
+        "pingOk": true,
+        "pingMs": 0,
+        "pool": {
+          "openConnections": 4,
+          "inUse": 0,
+          "idle": 4,
+          "waitCount": 0
+        }
       }
     },
-    "expected_commands": 140,
+    "expected_commands": 187,
     "surface_source": "tests/parity/go/cmd/surfaceprobe"
   },
   {
     "app_platform": {
       "ok": true,
-      "data": "darwin"
+      "data": "linux"
     }
   },
   {
@@ -54,7 +84,7 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
       "ok": false,
       "error": {
         "code": "not_found",
-        "message": "未找到命令: self.missing"
+        "message": "当前版本不支持该操作，请刷新或更新应用后重试"
       }
     }
   }
