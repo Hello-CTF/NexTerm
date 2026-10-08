@@ -806,12 +806,13 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     const verb = creating ? "新建" : "修改";
 
     if (!creating && plan.changes.length === 0) {
-      const text =
+      const onTarget =
         current.includes("worker_processes auto;") &&
         current.includes("server_tokens off;") &&
-        current.includes("client_max_body_size 64m;")
-          ? `检查过了，\`${path}\` 已经是目标状态：\`worker_processes auto\`、\`server_tokens off\`、\`client_max_body_size 64m\` 都在，无需变更。`
-          : `检查过了，\`${path}\` 无需变更。`;
+        current.includes("client_max_body_size 64m;");
+      const text = onTarget
+        ? `检查过了，\`${path}\` 已经是目标状态：\`worker_processes auto\`、\`server_tokens off\`、\`client_max_body_size 64m\` 都在，无需变更。`
+        : `没能改 \`${path}\`：配置与预期不符（缺少 \`server_tokens\`/\`keepalive_timeout\` 锚点或 \`worker_processes\` 值异常），没有做任何变更，请人工核对这份配置。`;
       later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
       later(900, () => {
         pushEvent(channel, { type: "delta", text });
@@ -1095,8 +1096,14 @@ function demoNginxPlan(current: string): { next: string; changes: { before: stri
     changes.push({ before: "server_tokens on;", after: "server_tokens off;", note: "`server_tokens on` → `off`（不再对外报版本号）" });
     next = next.replace("server_tokens on;", "server_tokens off;");
   }
-  if (!next.includes("client_max_body_size")) {
-    const anchor = next.match(/\n([ \t]*)server_tokens [^;]+;/);
+  const bodySize = next.match(/client_max_body_size\s+[^;]+;/);
+  if (bodySize) {
+    if (bodySize[0] !== "client_max_body_size 64m;") {
+      changes.push({ before: bodySize[0], after: "client_max_body_size 64m;", note: "`client_max_body_size` 调整为 `64m`" });
+      next = next.replace(bodySize[0], "client_max_body_size 64m;");
+    }
+  } else {
+    const anchor = next.match(/\n([ \t]*)server_tokens [^;]+;/) ?? next.match(/\n([ \t]*)keepalive_timeout[^;]*;/);
     if (anchor) {
       next = next.replace(anchor[0], `${anchor[0]}\n${anchor[1]}client_max_body_size 64m;`);
       changes.push({ before: "", after: `${anchor[1]}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });

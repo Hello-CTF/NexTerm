@@ -155,6 +155,104 @@ describe("demo AI 授权写入真实落到演示文件系统", () => {
     }
   }, 20000);
 
+  it("client_max_body_size 值不符（32m）时生成真实修复计划而非误报无需变更", async () => {
+    const path = "/etc/nginx/nginx.conf";
+    const backup = `${path}.nexterm-bak`;
+    const original = fsFileContent[path];
+    const treeBefore = [...(fsTree["/etc/nginx"] ?? [])];
+    const cfg = [
+      "user  nginx;",
+      "worker_processes auto;",
+      "events {",
+      "    worker_connections  1024;",
+      "}",
+      "http {",
+      "    keepalive_timeout  65;",
+      "    server_tokens off;",
+      "    client_max_body_size 32m;",
+      "}",
+    ].join("\n");
+    fsFileContent[path] = cfg;
+    const { events, channel } = collectEvents();
+    try {
+      const started = (await mockInvoke("ai_chat", {
+        conversationId: "conv-write-32m",
+        message: "把 nginx 配置改一下",
+        channel,
+      })) as { jobId: string };
+      const confirm = await waitFor(events, "confirmRequired");
+      const preview = confirm.preview as { before: string; after: string };
+      expect(preview.before).toContain("client_max_body_size 32m;");
+      expect(preview.after).toContain("client_max_body_size 64m;");
+      await mockInvoke("ai_confirm", { jobId: started.jobId, callId: confirm.id, decision: "allow" });
+      const done = await waitFor(events, "done");
+      expect(fsFileContent[path]).toContain("client_max_body_size 64m;");
+      expect(fsFileContent[path]).not.toContain("32m");
+      expect(String(done.answer)).toContain("一处配置");
+      expect(String(done.answer)).toContain("64m");
+      expect(String(done.answer)).not.toContain("无需变更");
+    } finally {
+      fsFileContent[path] = original;
+      delete fsFileContent[backup];
+      fsTree["/etc/nginx"] = treeBefore;
+    }
+  }, 15000);
+
+  it("缺 server_tokens 锚点时退到 keepalive 锚点生成真实修复计划", async () => {
+    const path = "/etc/nginx/nginx.conf";
+    const backup = `${path}.nexterm-bak`;
+    const original = fsFileContent[path];
+    const treeBefore = [...(fsTree["/etc/nginx"] ?? [])];
+    fsFileContent[path] = original.replace(/\n[ \t]*server_tokens [^;]+;/, "");
+    const { events, channel } = collectEvents();
+    try {
+      const started = (await mockInvoke("ai_chat", {
+        conversationId: "conv-write-noanchor",
+        message: "把 nginx 配置改一下",
+        channel,
+      })) as { jobId: string };
+      const confirm = await waitFor(events, "confirmRequired");
+      await mockInvoke("ai_confirm", { jobId: started.jobId, callId: confirm.id, decision: "allow" });
+      const done = await waitFor(events, "done");
+      expect(fsFileContent[path]).toContain("worker_processes auto;");
+      expect(fsFileContent[path]).toContain("client_max_body_size 64m;");
+      expect(String(done.answer)).toContain("两处配置");
+      expect(String(done.answer)).toContain("新增 `client_max_body_size 64m`");
+      expect(String(done.answer)).not.toContain("无需变更");
+    } finally {
+      fsFileContent[path] = original;
+      delete fsFileContent[backup];
+      fsTree["/etc/nginx"] = treeBefore;
+    }
+  }, 15000);
+
+  it("锚点全缺、配置异常时不把空 plan 当无需变更，明确报错且不动文件", async () => {
+    const path = "/etc/nginx/nginx.conf";
+    const original = fsFileContent[path];
+    const broken = original
+      .replace("worker_processes 1;", "worker_processes auto;")
+      .replace(/\n[ \t]*server_tokens [^;]+;/, "")
+      .replace(/\n[ \t]*keepalive_timeout[^;]*;/, "");
+    fsFileContent[path] = broken;
+    const { events, channel } = collectEvents();
+    try {
+      await mockInvoke("ai_chat", {
+        conversationId: "conv-write-broken",
+        message: "把 nginx 配置改一下",
+        channel,
+      });
+      const done = await waitFor(events, "done");
+      expect(events.some((e) => e.type === "confirmRequired")).toBe(false);
+      expect(events.some((e) => e.type === "fileChange")).toBe(false);
+      expect(String(done.answer)).toContain("没能改");
+      expect(String(done.answer)).toContain("没有做任何变更");
+      expect(String(done.answer)).not.toContain("无需变更");
+      expect(fsFileContent[path]).toBe(broken);
+    } finally {
+      fsFileContent[path] = original;
+    }
+  }, 15000);
+
   it("新建文件的授权写入同样真实创建文件", async () => {
     const path = "/etc/nginx/conf.d/upload.conf";
     const treeBefore = [...(fsTree["/etc/nginx/conf.d"] ?? [])];
