@@ -494,7 +494,7 @@ func TestAccountHTTPPasswordChange(t *testing.T) {
 
 	newSalt := currentDEKSalt(t, fixture, session)
 	if oldSalt == newSalt {
-		t.Fatal("密码变更必须重包 DEK 信封")
+		t.Fatal("密码变更必须重包账号加密密钥")
 	}
 }
 
@@ -778,6 +778,8 @@ func TestAccountHTTPDEKUploadOnce(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodPost, "/auth/dek", upload, dave, dave.csrf, nil); call.status != http.StatusConflict {
 		t.Fatalf("dek re-upload status=%d", call.status)
+	} else if message := call.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "账号加密密钥已存在") {
+		t.Fatalf("dek re-upload message=%q", message)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusOK {
 		t.Fatalf("dek after upload status=%d", call.status)

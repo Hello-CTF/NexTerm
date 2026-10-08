@@ -19,6 +19,10 @@ const (
 	csrfHeaderName    = "X-NexTerm-CSRF"
 	csrfPurpose       = "nexterm-csrf-v1"
 	maxAccountBody    = 64 << 10
+
+	// 会话与 CSRF 失败统一给出刷新或重新登录的下一步, server 与 fleet 两侧措辞保持一致。
+	sessionReloginMessage = "会话无效或缺失，请重新登录"
+	csrfRefreshMessage    = "页面已过期，请刷新后重试"
 )
 
 type accountIdentityContextKey struct{}
@@ -115,7 +119,7 @@ func (s *Server) accountGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if s.accountClosed() {
-			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "--auth=off 下账号功能已关闭"))
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "当前为共享工作区模式（未启用账号登录），账号功能不可用"))
 			return
 		}
 		if token, ok := sessionCookie(r); ok {
@@ -146,7 +150,7 @@ func resetRequiredLocked(r *http.Request) bool {
 func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if accountIdentityFrom(r.Context()) == nil {
-			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 			return
 		}
 		if resetRequiredLocked(r) {
@@ -173,11 +177,11 @@ func (s *Server) requireAccountCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := accountIdentityFrom(r.Context())
 		if identity == nil {
-			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 			return
 		}
 		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
-			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败"))
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return
 		}
 		next.ServeHTTP(w, r)

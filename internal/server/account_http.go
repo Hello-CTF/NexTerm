@@ -55,7 +55,7 @@ func (request *dekEnvelopeRequest) toEnvelopes() *vault.UserDEKEnvelopes {
 func (request *dekEnvelopeRequest) validate() error {
 	if len(request.DEKEnvelope) == 0 || len(request.KDFSalt) == 0 || request.KDFParams == "" ||
 		len(request.RecoveryEnvelope) == 0 || request.RecoveryHash == "" {
-		return ipc.NewError(ipc.CodeBadParam, "参数错误: DEK 信封字段不完整")
+		return ipc.NewError(ipc.CodeBadParam, "参数错误: 账号加密密钥字段不完整")
 	}
 	return nil
 }
@@ -451,7 +451,7 @@ func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 	err := s.accounts.InsertUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes())
 	if err != nil {
 		if errors.Is(err, account.ErrDEKEnvelopesExist) {
-			writeAccountError(w, http.StatusConflict, ipc.NormalizeError(err))
+			writeAccountError(w, http.StatusConflict, ipc.NewError(ipc.CodeInternal, "账号加密密钥已存在，无需重复上传"))
 			return
 		}
 		writeAccountFailure(w, err)

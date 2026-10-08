@@ -25,12 +25,12 @@ const (
 	DefaultBlobPersistQuota   int64 = 1 << 30
 	DefaultBlobDiskMaxPercent       = 90.0
 	blobCopyBuffer                  = 256 << 10
-	blobTooLargeMessage             = "blob exceeds the maximum allowed size"
+	blobTooLargeMessage             = "文件超出大小限制，请压缩或拆分后重试"
 )
 
 var (
-	errBlobPersistQuota  = errors.New("persisted blob storage quota exceeded")
-	errBlobDiskThreshold = errors.New("persisted blob storage disk usage exceeds threshold")
+	errBlobPersistQuota  = errors.New("持久化存储配额已用尽，请清理空间后重试")
+	errBlobDiskThreshold = errors.New("磁盘使用率超过阈值，无法继续持久化存储")
 )
 
 type BlobStore struct {
@@ -137,7 +137,7 @@ func (b *BlobStore) keepRoot() string  { return filepath.Join(b.dataDir, "files"
 func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 	persist, err := optionalBool(r, "persist")
 	if err != nil {
-		http.Error(w, "invalid persist value", http.StatusBadRequest)
+		http.Error(w, "persist 参数不是合法的布尔值", http.StatusBadRequest)
 		return
 	}
 	limit := b.maxBlobBytes()
@@ -154,7 +154,7 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, errBlobPersistQuota.Error(), http.StatusInsufficientStorage)
 				return
 			}
-			http.Error(w, "persist storage usage unavailable", http.StatusInternalServerError)
+			http.Error(w, "持久化存储用量获取失败，请稍后重试", http.StatusInternalServerError)
 			return
 		}
 		if err := b.checkDiskThreshold(); err != nil {
@@ -162,20 +162,20 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, errBlobDiskThreshold.Error(), http.StatusInsufficientStorage)
 				return
 			}
-			http.Error(w, "persist disk usage unavailable", http.StatusInternalServerError)
+			http.Error(w, "磁盘用量获取失败，请稍后重试", http.StatusInternalServerError)
 			return
 		}
 	}
 	dir, id, err := b.createItemDir(root)
 	if err != nil {
-		http.Error(w, "staging directory unavailable", http.StatusInternalServerError)
+		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	path := filepath.Join(dir, SafeBlobName(r.URL.Query().Get("name")))
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "staging file unavailable", http.StatusInternalServerError)
+		http.Error(w, "暂存文件创建失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	written, copyErr := io.CopyBuffer(file, r.Body, make([]byte, blobCopyBuffer))
@@ -187,7 +187,7 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
 			return
 		}
-		http.Error(w, "staging write failed", http.StatusInternalServerError)
+		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	writeBlobJSON(w, stagedBlob{ID: id, Path: path, Bytes: &written})
@@ -202,19 +202,19 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dir, id, err := b.createItemDir(b.stageRoot())
 	if err != nil {
-		http.Error(w, "staging directory unavailable", http.StatusInternalServerError)
+		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	path := filepath.Join(dir, SafeBlobName(r.URL.Query().Get("name")))
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "reservation failed", http.StatusInternalServerError)
+		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	if err := file.Close(); err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "reservation failed", http.StatusInternalServerError)
+		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	writeBlobJSON(w, stagedBlob{ID: id, Path: path})
@@ -223,23 +223,23 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 func (b *BlobStore) Download(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if !ids.Valid(id) {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		http.Error(w, "id 参数无效", http.StatusBadRequest)
 		return
 	}
 	path, err := findBlob(b.stageRoot(), id)
 	if err != nil {
-		http.Error(w, "staged item not found or expired", http.StatusNotFound)
+		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "staged item is not readable", http.StatusNotFound)
+		http.Error(w, "暂存文件不可读", http.StatusNotFound)
 		return
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		http.Error(w, "staged item is not readable", http.StatusNotFound)
+		http.Error(w, "暂存文件不可读", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -251,21 +251,21 @@ func (b *BlobStore) Download(w http.ResponseWriter, r *http.Request) {
 func (b *BlobStore) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if !ids.Valid(id) {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		http.Error(w, "id 参数无效", http.StatusBadRequest)
 		return
 	}
 	dir := filepath.Join(b.stageRoot(), id)
 	info, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		http.Error(w, "staged item not found or expired", http.StatusNotFound)
+		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
 		return
 	}
 	if err != nil || !info.IsDir() {
-		http.Error(w, "staged item not found or expired", http.StatusNotFound)
+		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		http.Error(w, "delete failed", http.StatusInternalServerError)
+		http.Error(w, "删除失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

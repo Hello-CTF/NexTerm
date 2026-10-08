@@ -31,9 +31,9 @@ const (
 const ImageSharedOwner = "shared"
 
 var (
-	errImageTooLarge = errors.New("image exceeds the maximum allowed size")
-	errImageQuota    = errors.New("image storage quota exceeded for this owner")
-	errImageMIME     = errors.New("unsupported image type")
+	errImageTooLarge = errors.New("图片超出大小限制，请压缩后重试")
+	errImageQuota    = errors.New("图片存储配额已用尽，请删除部分图片后重试")
+	errImageMIME     = errors.New("不支持的图片类型，仅支持 PNG/JPEG/GIF/WebP")
 )
 
 var imageAllowedMIME = map[string]string{

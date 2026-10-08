@@ -39,7 +39,7 @@ func (s *Server) requireImageWrite(next http.Handler) http.Handler {
 		identity := accountIdentityFrom(r.Context())
 		if identity == nil {
 			if s.authRequired {
-				writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+				writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -50,7 +50,7 @@ func (s *Server) requireImageWrite(next http.Handler) http.Handler {
 			return
 		}
 		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
-			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败"))
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -90,7 +90,7 @@ func (s *Server) serveImageUpload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, errImageMIME.Error(), http.StatusUnsupportedMediaType)
 		default:
 			s.logger.Warn("image upload failed", "error", err)
-			http.Error(w, "image upload failed", http.StatusInternalServerError)
+			http.Error(w, "图片上传失败，请稍后重试", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -104,13 +104,13 @@ func (s *Server) serveImageUpload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveImageDownload(w http.ResponseWriter, r *http.Request) {
 	meta, file, err := s.images.Open(r.Context(), r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "image not found or expired", http.StatusNotFound)
+		http.Error(w, "图片不存在或已过期", http.StatusNotFound)
 		return
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		http.Error(w, "image not found or expired", http.StatusNotFound)
+		http.Error(w, "图片不存在或已过期", http.StatusNotFound)
 		return
 	}
 	s.auditImage(r.Context(), "image_download", meta, "anonymous")
@@ -125,7 +125,7 @@ func (s *Server) serveImageDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	meta, err := s.images.readMeta(id)
 	if err != nil {
-		http.Error(w, "image not found or expired", http.StatusNotFound)
+		http.Error(w, "图片不存在或已过期", http.StatusNotFound)
 		return
 	}
 	identity := accountIdentityFrom(r.Context())
@@ -136,17 +136,17 @@ func (s *Server) serveImageDelete(w http.ResponseWriter, r *http.Request) {
 		allowed = identity.UserID == meta.Owner || identity.Role == account.RoleSuperadmin
 	}
 	if !allowed {
-		http.Error(w, "image not found or expired", http.StatusNotFound)
+		http.Error(w, "图片不存在或已过期", http.StatusNotFound)
 		return
 	}
 	removed, err := s.images.Remove(id)
 	if errors.Is(err, os.ErrNotExist) {
-		http.Error(w, "image not found or expired", http.StatusNotFound)
+		http.Error(w, "图片不存在或已过期", http.StatusNotFound)
 		return
 	}
 	if err != nil {
 		s.logger.Warn("image delete failed", "error", err)
-		http.Error(w, "image delete failed", http.StatusInternalServerError)
+		http.Error(w, "图片删除失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	s.auditImage(r.Context(), "image_delete", removed, by)

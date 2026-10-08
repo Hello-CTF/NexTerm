@@ -269,7 +269,7 @@ func (s *Server) routes(config Config) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				identity := accountIdentityFrom(r.Context())
 				if identity == nil {
-					writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+					writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 					return
 				}
 				next.ServeHTTP(w, r.WithContext(syncservice.WithUserID(r.Context(), identity.UserID)))
