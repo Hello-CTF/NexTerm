@@ -776,7 +776,6 @@ async function statesFormsAcceptance(page) {
     assert.ok(nameInput);
     await page.send("Input.insertText", { text: "web-99" });
 
-    // M214 合同：主机留空时保存被校验拦截——不进入保存、不发 asset_create、守卫文案不出现
     await page.evaluate(`(() => {
       const modal = document.querySelector('.nx-modal');
       [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存").click();
@@ -808,7 +807,6 @@ async function statesFormsAcceptance(page) {
     assert.equal(blocked.assetCreateCalls, 0, "校验拦截不得发出 asset_create");
     assert.equal(blocked.vaultNotInit, false, "vault 应处于已初始化状态");
 
-    // 修正主机后立即通过校验（失焦触发），保存按钮恢复可点
     await page.evaluate(`document.querySelector('.nx-modal input[placeholder="1.2.3.4"]').focus()`);
     await page.send("Input.insertText", { text: "10.0.0.8" });
     await page.evaluate(`document.activeElement?.blur()`);
@@ -818,7 +816,6 @@ async function statesFormsAcceptance(page) {
       return Boolean(btn && !btn.disabled);
     })()`);
 
-    // 失败落态：IPC 报错后守卫退出、内联错误保留表单、按钮恢复可点
     await setSwitches(page, { fail: ["asset_create"] });
     await page.evaluate(`(() => {
       const modal = document.querySelector('.nx-modal');
@@ -838,7 +835,6 @@ async function statesFormsAcceptance(page) {
     assert.equal(errored.disabled, false, "保存失败后按钮恢复可点");
     assert.equal(errored.modalOpen, true, "保存失败后表单必须保留");
 
-    // 真实保存中：三连点只发一次 asset_create，守卫仅在保存中出现
     const callsBefore = await page.evaluate(`window.__nxCallCounts?.asset_create ?? 0`);
     await setSwitches(page, { fail: [], slow: 900 });
     await page.evaluate(`(() => {
