@@ -23,7 +23,6 @@
   <text class="t-title" x="84" y="88">连接对端：一个账号，两个部署位置</text>
   <text class="t-sub" x="84" y="128">在「设置 → 账号同步」填服务端地址、用账号密码登录，不用管对端装在哪</text>
 
-  <!-- ═══ 桌面发起端 ═══ -->
   <rect x="84" y="176" width="1432" height="150" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
   <text class="t-h" x="120" y="248">桌面 App</text>
   <text class="t-sub" x="120" y="284" font-size="16px">发起同步的一端</text>
@@ -43,7 +42,6 @@
   <line x1="437" y1="334" x2="437" y2="374" stroke="#516cd6" stroke-width="2" marker-end="url(#dn)"/>
   <line x1="1163" y1="334" x2="1163" y2="374" stroke="#516cd6" stroke-width="2" marker-end="url(#dn)"/>
 
-  <!-- ═══ 左：懒猫微服 ═══ -->
   <rect x="84" y="380" width="706" height="360" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-tag mono" x="120" y="424">部署位置 A</text>
   <text class="t-h" x="116" y="474">懒猫微服</text>
@@ -59,7 +57,6 @@
 
   <text class="t-val" x="120" y="718" font-size="15px" fill="#616877">放行的是平台的账密门，不是应用的门</text>
 
-  <!-- ═══ 右：自建服务器 ═══ -->
   <rect x="810" y="380" width="706" height="360" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-tag mono" x="846" y="424">部署位置 B</text>
   <text class="t-h" x="842" y="474">自建服务器</text>
@@ -75,7 +72,6 @@
 
   <text class="t-val" x="846" y="718" font-size="15px" fill="#616877">只有本机 / 内网地址才允许 http</text>
 
-  <!-- ═══ 底部提示 ═══ -->
   <rect x="84" y="762" width="1432" height="106" rx="16" fill="#1c1a17" stroke="#5c4a2a" stroke-width="1.5"/>
   <text class="t-key" x="120" y="804">账号从哪来，密码等于什么</text>
   <text class="t-val" x="120" y="838">账号由服务端超管创建，或在开放注册时自助注册。同步内容用你的密码端到端加密，服务端只存密文；密码就是解锁口令，别外传。</text>

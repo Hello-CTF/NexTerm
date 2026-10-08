@@ -1,8 +1,3 @@
-/* ==========================================================================
-   NexTerm 官网样式
-   深色终端视觉：左文右终端的非对称首屏、bento 混排、命令提示符母题
-   ========================================================================== */
-
 :root {
   --bg: #0e1015;
   --bg-soft: #12151c;
@@ -47,8 +42,6 @@ a:hover { color: var(--text); }
 img { max-width: 100%; display: block; }
 
 .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-
-/* ── 导航 ─────────────────────────────────────────────────────────────── */
 
 .nav {
   position: sticky;
@@ -110,8 +103,6 @@ img { max-width: 100%; display: block; }
 
 .nav-github svg { width: 15px; height: 15px; fill: currentColor; }
 
-/* ── 按钮 ─────────────────────────────────────────────────────────────── */
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -139,8 +130,6 @@ img { max-width: 100%; display: block; }
 .btn-ghost:hover { border-color: var(--accent); color: var(--text); }
 
 .btn-sm { padding: 8px 15px; font-size: 14px; border-radius: 8px; }
-
-/* ── Hero：左文右终端 ─────────────────────────────────────────────────── */
 
 .hero {
   position: relative;
@@ -344,8 +333,6 @@ img { max-width: 100%; display: block; }
   padding: 4px 11px;
 }
 
-/* ── 通用节 ───────────────────────────────────────────────────────────── */
-
 .section { padding: 84px 0; }
 
 .section-alt {
@@ -374,8 +361,6 @@ img { max-width: 100%; display: block; }
 }
 
 .section-head > p { margin-top: 10px; max-width: 620px; font-size: 15.5px; }
-
-/* ── Bento 功能矩阵 ───────────────────────────────────────────────────── */
 
 .bento {
   display: grid;
@@ -436,16 +421,6 @@ img { max-width: 100%; display: block; }
   padding: 1px 7px;
 }
 
-/* 不可断的词（文件名之类）：`linux-amd64.tar.gz` 会在 `-` 处折成两行，把整行排版撕开。
-   但**不能**图省事把它挂到上面那条通用规则上：不折行的标记会把自己的整宽计入
-   min-content，写长了直接顶开网格轨道。实测把 SECURITY 那条长密码学链条一起 nowrap
-   之后，`.bento` 的单列轨道被撑宽、整节横向溢出。
-   所以文件名这类长串改成**可断行的 mono 行**（下面 .file），而不是 nowrap 的 chip。 */
-
-/* 卡片底部的产物文件名：mono 但**不是** chip（无底色/内边距，允许断行）。
-   `overflow-wrap: anywhere`（不是 `break-all`）有两个作用：够宽时一行放下、
-   不够宽时优先在 `-` 这种正常断点处折行；同时把 min-content 压到 1 字符，
-   于是再长的文件名也不会把卡片撑开（这正是上面 nowrap 踩过的坑）。 */
 .cell .file {
   display: block;
   margin-top: 13px;
@@ -457,16 +432,9 @@ img { max-width: 100%; display: block; }
 
 .cell ul { list-style: none; display: grid; gap: 7px; margin-top: 12px; }
 
-/* ⛔ 这里**不能**用 `display: flex` 挂 `▸`。
-   实测：flex 是 nowrap，文字在 flex 主轴里不会换行 ⇒ 条目一长整行就撑破卡片
-   （窄屏 390px 下实测把 `.cell` 从 342 撑到 409，页面整体横向溢出 43px）。
-   改成「块 + 绝对定位的记号」：文字正常换行，续行挂在 16.8px 处（等于原来的
-   `▸ 宽度 + gap 9px`，逐项量过，单行条目的文字坐标与行高与改前一致）。 */
 .cell ul li { font-size: 13px; color: var(--text-3); display: block; position: relative; padding-left: 16.8px; }
 
 .cell ul li::before { content: "▸"; color: var(--accent-bright); font-family: var(--mono); position: absolute; left: 0; }
-
-/* ── 在线体验 CTA ─────────────────────────────────────────────────────── */
 
 .demo-panel {
   position: relative;
@@ -513,8 +481,6 @@ img { max-width: 100%; display: block; }
 .demo-cmd .p { color: var(--accent-bright); }
 .demo-cmd .ok { color: var(--green); }
 
-/* ── 获取应用 ─────────────────────────────────────────────────────────── */
-
 .get-wrap { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 48px; align-items: center; }
 
 .get-steps h3 { color: var(--text); font-size: 22px; margin-bottom: 10px; }
@@ -542,8 +508,6 @@ img { max-width: 100%; display: block; }
 .code-block .c { color: var(--text-4); }
 .code-block .p { color: var(--accent-bright); }
 .code-block .g { color: var(--green); }
-
-/* ── FAQ ──────────────────────────────────────────────────────────────── */
 
 .faq { max-width: 760px; display: grid; gap: 10px; }
 
@@ -585,8 +549,6 @@ img { max-width: 100%; display: block; }
 
 .faq .faq-body { padding: 0 22px 18px; font-size: 14px; color: var(--text-3); }
 
-/* ── 页脚 ─────────────────────────────────────────────────────────────── */
-
 .footer { border-top: 1px solid var(--line-soft); background: var(--bg-soft); padding: 44px 0 36px; }
 
 .footer-inner {
@@ -608,8 +570,6 @@ img { max-width: 100%; display: block; }
 
 .footer-meta { font-size: 12.5px; color: var(--text-4); }
 
-/* ── 配图（示意图 / 宽幅截图） ─────────────────────────────────────────── */
-
 .figure {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -624,8 +584,6 @@ img { max-width: 100%; display: block; }
 /* 放在分栏里时不要再压一层下边距（列间距已经给了） */
 .figure-tight { margin-bottom: 0; }
 
-/* ── 两种形态：并排两张卡 ─────────────────────────────────────────────── */
-
 .duo {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -634,8 +592,6 @@ img { max-width: 100%; display: block; }
 
 /* 三列版 bento（资产同步的三条规则）。写在 .bento 之后，靠顺序覆盖列数。 */
 .bento-3 { grid-template-columns: repeat(3, 1fr); }
-
-/* ── 图文分栏 ─────────────────────────────────────────────────────────── */
 
 .split {
   display: grid;
@@ -657,8 +613,6 @@ img { max-width: 100%; display: block; }
 
 .points { list-style: none; display: grid; gap: 12px; margin-top: 20px; }
 
-/* ⚠️ 这里**不能**用 flex：li 里带行内 <b>，display:flex 会把 <b> 变成独立
-   的 flex 项，于是「懒猫微服」被拆成两个盒子换行。用绝对定位的符号代替。 */
 .points li { position: relative; padding-left: 22px; font-size: 14.5px; color: var(--text-3); }
 
 .points li::before {
@@ -674,8 +628,6 @@ img { max-width: 100%; display: block; }
 /* `em` 只用来给「不建议」这类词加重（`code` 已经是等宽绿字，不再叠 em） */
 .cell em,
 .faq-body em { color: var(--text-2); font-style: normal; font-weight: 600; }
-
-/* ── 响应式 ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 980px) {
   .hero-grid { grid-template-columns: 1fr; gap: 40px; }

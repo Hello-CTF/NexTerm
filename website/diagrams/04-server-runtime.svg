@@ -27,7 +27,6 @@
   <text class="t-title" x="84" y="88">服务端权威运行态：多台设备，一个工作台</text>
   <text class="t-sub" x="84" y="128">布局、终端与回滚缓冲都留在服务端：浏览器只是接上去看，关掉网页不影响它</text>
 
-  <!-- ═══ 左：服务端（权威） ═══ -->
   <rect x="84" y="176" width="700" height="432" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
   <text class="t-tag mono" x="124" y="222" fill="#8b9de4">SERVER · AUTHORITATIVE</text>
   <text class="t-card" x="120" y="272">服务端持有运行态</text>
@@ -49,7 +48,6 @@
   <rect x="504" y="540" width="240" height="44" rx="10" fill="#1b2130" stroke="#2b3446"/>
   <text class="t-chip mono" x="624" y="568" text-anchor="middle">subscribers / viewers</text>
 
-  <!-- ═══ 右：三台设备 ═══ -->
   <rect x="844" y="176" width="672" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-tag mono" x="880" y="212" fill="#8b9de4">DEVICE 01 · CONTROLLER</text>
   <text class="t-cardS" x="876" y="250">笔记本 · 正在操作</text>
@@ -65,12 +63,10 @@
   <text class="t-cardS" x="876" y="554">又一台设备 · 接管既有终端</text>
   <text class="t-desc" x="876" y="586">按布局里记着的标签 id 接管，服务端清屏后回放历史</text>
 
-  <!-- 服务端 → 设备 -->
   <line x1="792" y1="240" x2="836" y2="240" stroke="#516cd6" stroke-width="2" marker-end="url(#flow)"/>
   <line x1="792" y1="392" x2="836" y2="392" stroke="#5b6478" stroke-width="1.6" marker-end="url(#flowDim)"/>
   <line x1="792" y1="544" x2="836" y2="544" stroke="#516cd6" stroke-width="2" marker-end="url(#flow)"/>
 
-  <!-- ═══ 底座：三条不变量 ═══ -->
   <rect x="84" y="648" width="1432" height="192" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-h" x="120" y="694">三条不变量</text>
 
