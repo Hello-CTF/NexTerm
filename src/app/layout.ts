@@ -47,6 +47,7 @@ const PANE_KINDS = new Set<PaneKind>([
   "settings",
   "audit",
   "background",
+  "history",
 ]);
 
 function isObj(v: unknown): v is Record<string, unknown> {
