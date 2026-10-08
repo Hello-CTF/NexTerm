@@ -361,6 +361,8 @@ func TestAccountHTTPCSRFAndOriginRules(t *testing.T) {
 
 	if call := fixture.call(t, http.MethodPost, "/auth/logout", nil, session, "", nil); call.status != http.StatusForbidden {
 		t.Fatalf("csrf missing status=%d", call.status)
+	} else if message, _ := call.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "CSRF") {
+		t.Fatalf("csrf missing message=%q, want CSRF keyword", message)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, session, "", nil); call.status != http.StatusOK {
 		t.Fatalf("read exempt from csrf status=%d", call.status)

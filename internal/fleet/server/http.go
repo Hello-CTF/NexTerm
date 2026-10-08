@@ -216,7 +216,7 @@ func (s *Service) requireFleetCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := identityFrom(r)
 		if identity == nil || !fleetCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
-			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "页面已过期，请刷新后重试")))
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败：页面已过期，请刷新后重试")))
 			return
 		}
 		next.ServeHTTP(w, r)

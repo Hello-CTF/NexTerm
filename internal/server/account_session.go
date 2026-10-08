@@ -21,8 +21,9 @@ const (
 	maxAccountBody    = 64 << 10
 
 	// 会话与 CSRF 失败统一给出刷新或重新登录的下一步, server 与 fleet 两侧措辞保持一致。
+	// CSRF 文案必须保留 "CSRF" 关键字: 前端 isCsrfRejection (src/ipc/commands.ts, webFiles.ts) 靠它识别并自动刷新重试。
 	sessionReloginMessage = "会话无效或缺失，请重新登录"
-	csrfRefreshMessage    = "页面已过期，请刷新后重试"
+	csrfRefreshMessage    = "CSRF 校验失败：页面已过期，请刷新后重试"
 )
 
 type accountIdentityContextKey struct{}

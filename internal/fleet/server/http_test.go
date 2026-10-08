@@ -233,6 +233,8 @@ func TestFleetHTTPAuthAndCSRF(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodPost, "/device/enroll-codes", map[string]any{}, aliceSession, ""); call.status != http.StatusForbidden {
 		t.Fatalf("missing csrf status=%d", call.status)
+	} else if message, _ := call.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "CSRF") {
+		t.Fatalf("missing csrf message=%q, want CSRF keyword", message)
 	}
 	if call := fixture.call(t, http.MethodPost, "/device/enroll-codes", map[string]any{}, aliceSession, "bad-csrf"); call.status != http.StatusForbidden {
 		t.Fatalf("bad csrf status=%d", call.status)

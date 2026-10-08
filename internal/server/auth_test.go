@@ -563,4 +563,8 @@ func TestRequireAuthAccountSessionInjectsSharedUserID(t *testing.T) {
 	if noCSRF.status != http.StatusForbidden {
 		t.Fatalf("missing csrf status=%d, want 403", noCSRF.status)
 	}
+	// 前端 isCsrfRejection 以 message 含 "CSRF" 识别拒绝并自动刷新重试, 关键字是契约。
+	if message, _ := noCSRF.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "CSRF") {
+		t.Fatalf("csrf rejection message=%q, want CSRF keyword", message)
+	}
 }
