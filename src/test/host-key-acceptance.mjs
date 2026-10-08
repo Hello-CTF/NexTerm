@@ -725,6 +725,113 @@ async function hostKeyAcceptance(page, state) {
       },
     };
   });
+
+  await pass("hostkey-reconnect-menu-dead-session", async () => {
+    await waitLayoutSaved(page);
+    await restartWithNewHostKey(state);
+    await openApp(page, state.server.origin);
+    await page.waitFor(`${wsTabCount} >= 1`, 15_000);
+    const sessionsAfterRestart = await page.evaluate(rpcSessions);
+    assert.equal(
+      sessionsAfterRestart.filter((s) => s.assetId === state.assetId).length,
+      0,
+      `server restart must wipe sessions so the restored tab has none: ${JSON.stringify(sessionsAfterRestart)}`,
+    );
+    const workspacesBefore = await page.evaluate(wsTabCount);
+    await page.waitFor(`Boolean(document.querySelector("${VISIBLE_PANEL} .nx-terminal-body .relative"))`, 15_000);
+
+    const openMenu = async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const dispatched = await page.evaluate(`(() => {
+          const el = document.querySelector(${JSON.stringify(`${VISIBLE_PANEL} .nx-terminal-body .relative`)});
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+          return true;
+        })()`);
+        if (!dispatched) {
+          await sleep(400);
+          continue;
+        }
+        try {
+          await page.waitFor(`Boolean(document.querySelector(".nx-menu"))`, 3_000);
+          return;
+        } catch {
+          await sleep(400);
+        }
+      }
+      throw new Error("terminal context menu did not open on the restored dead-session tab");
+    };
+    const clickFreshConnect = `(() => {
+      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("重新连接这台主机"));
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`;
+
+    await openMenu();
+    const menuLabels = await page.evaluate(
+      `[...document.querySelectorAll(".nx-menu .nx-menu-item")].map((b) => b.textContent)`,
+    );
+    assert.ok(
+      menuLabels.some((t) => t.includes("重新连接这台主机")),
+      `restored dead-session tab must offer the fresh host connect: ${JSON.stringify(menuLabels)}`,
+    );
+    assert.ok(
+      !menuLabels.some((t) => t.includes("重连会话")),
+      `deleted session must not get the StartReconnect menu item: ${JSON.stringify(menuLabels)}`,
+    );
+    const shot = await screenshot(page, "hostkey-dead-session-menu.png");
+
+    assert.equal(await page.evaluate(clickFreshConnect), true);
+    await page.waitFor(dialogPresent);
+    const text = await page.evaluate(dialogText);
+    const knownFp = await page.evaluate(rpcKnownFingerprint(state.sshPort));
+    assert.ok(text.includes("主机密钥已变更 127.0.0.1:"), `fresh connect must warn about the changed key: ${text}`);
+    assert.ok(knownFp && text.includes(knownFp), `dialog must show the previous fingerprint ${knownFp}: ${text}`);
+    assert.ok(text.includes(state.ssh.fingerprint), `dialog must show the new fingerprint: ${text}`);
+
+    assert.equal(await page.evaluate(clickDialogButton("取消")), true);
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    await page.waitFor(`${toastText}.includes("已取消重连")`);
+    const sessionsAfterCancel = await page.evaluate(rpcSessions);
+    assert.equal(
+      sessionsAfterCancel.filter((s) => s.assetId === state.assetId).length,
+      0,
+      `cancel must not create a session: ${JSON.stringify(sessionsAfterCancel)}`,
+    );
+
+    await openMenu();
+    assert.equal(await page.evaluate(clickFreshConnect), true);
+    await page.waitFor(dialogPresent);
+    assert.equal(await page.evaluate(clickDialogButton("确定")), true);
+    await page.waitFor(rpcAssetConnected(state.assetId), 20_000);
+
+    const finalState = await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const st = useUi.getState();
+      const ws = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+      const terminals = ws?.panes.flatMap((p) => p.tabs).filter((t) => t.kind === "terminal") ?? [];
+      const commands = await import('${VITE}/src/ipc/commands.ts');
+      const sessions = await commands.sessionApi.list();
+      return {
+        terminals: terminals.map((t) => ({ sessionId: t.sessionId, dead: Boolean(t.dead) })),
+        assetSessionIds: sessions.filter((s) => s.assetId === ${JSON.stringify(state.assetId)}).map((s) => s.id),
+      };
+    })()`);
+    assert.equal(
+      await page.evaluate(wsTabCount),
+      workspacesBefore,
+      `fresh connect from the dead-session tab must not duplicate the workspace: ${JSON.stringify(finalState)}`,
+    );
+    assert.equal(finalState.assetSessionIds.length, 1, `must not duplicate the session: ${JSON.stringify(finalState)}`);
+    assert.deepEqual(
+      finalState.terminals,
+      [{ sessionId: finalState.assetSessionIds[0], dead: false }],
+      `must reuse the restored terminal tab: ${JSON.stringify(finalState)}`,
+    );
+    return { evidence: { dialog: text.split("\n")[0], menu: menuLabels, screenshot: shot } };
+  });
 }
 
 let vite;
@@ -770,7 +877,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退；失效终端弹层路径被 durable 恢复拦截（见 findings，bad_param 而非 not_found），该路径由 vitest 覆盖",
+    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退、会话随服务端重启删除后菜单只提供「重新连接这台主机」并经 changed 指纹确认后复用标签新连接（不重复建工作区/会话/标签）；失效终端弹层路径被 durable 恢复拦截（bad_param 而非 not_found），该路径由 vitest 覆盖",
   },
   checks,
   harness_errors: harnessErrors,

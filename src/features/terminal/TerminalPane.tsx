@@ -539,6 +539,10 @@ export function TerminalPane({
         started ? "正在重连…结果会显示在工具栏的状态徽标上" : "重连未能启动：服务正在关闭",
       );
     } catch (e) {
+      if ((e as { code?: string } | null)?.code === "not_found") {
+        pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");
+        return;
+      }
       pushToast("error", `重连失败：${describeError(e)}`);
     }
   };
@@ -759,6 +763,7 @@ export function TerminalPane({
       w.panes.some((p) => p.tabs.some((t) => t.id === storeTabId)),
     );
     const isSplit = (ws?.panes.length ?? 1) > 1;
+    const staleSession = sessionStatus === undefined || isStoreTabDead(storeTabId);
 
     return [
       { kind: "group", label: "操作" },
@@ -828,11 +833,11 @@ export function TerminalPane({
       },
       {
         kind: "item",
-        label: "重连会话（保留当前终端）",
+        label: staleSession ? "重新连接这台主机" : "重连会话（保留当前终端）",
         icon: <IconRefresh size={13} />,
-        hint: statusText,
-        disabled: !canReconnect,
-        onSelect: () => void reconnectSession(),
+        hint: staleSession ? "连接已失效，本标签将打开新终端" : statusText,
+        disabled: staleSession ? reconnecting : !canReconnect,
+        onSelect: () => void (staleSession ? reconnectNow() : reconnectSession()),
       },
       {
         kind: "item",
