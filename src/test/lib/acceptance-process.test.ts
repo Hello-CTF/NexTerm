@@ -3,10 +3,14 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import repoConfig from "../../../vite.config.ts";
+import { acceptanceWatchIgnored } from "./acceptance-watch-ignores.mjs";
 import { freePort, startVite } from "./acceptance-process.mjs";
 
 const HELPER_URL = new URL("./acceptance-process.mjs", import.meta.url).href;
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const FAKE_VITE = `import http from "node:http";
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
@@ -199,4 +203,78 @@ describe("acceptance-process startVite", () => {
     await waitExit(driver);
     await waitPidGone(vitePid);
   }, 30_000);
+});
+
+async function waitFor(predicate: () => boolean, timeout: number): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await sleep(100);
+  }
+  throw new Error("waitFor timed out");
+}
+
+// M239: 产品 pnpm dev 直接吃仓库根 vite.config.ts, 必须与验收同一套有界行为。
+// 结构断言钉住 optimizeDeps.entries 与 root 锚定 watch.ignored; 裸 "**/.tower/**"
+// 规则通不过 startsWith(REPO_ROOT + "/") 断言 (M238 R1 回归形状)。
+describe("repository dev vite config (pnpm dev)", () => {
+  it("bounds dep scanning to the single HTML entry and anchors watch-ignores to the repo root", () => {
+    expect(repoConfig.optimizeDeps?.entries).toEqual(["index.html"]);
+    const ignored = repoConfig.server?.watch?.ignored as string[] | undefined;
+    expect(ignored).toEqual(acceptanceWatchIgnored(REPO_ROOT));
+    for (const pattern of ignored ?? []) {
+      expect(pattern.startsWith(`${REPO_ROOT}/`)).toBe(true);
+    }
+  });
+
+  // 真实 vite 二进制加载产品 config 的 watcher 行为: fake root 放在仓库 target 下
+  // (向上自然解析仓库 node_modules, 免 symlink), 路径自带 .tower 祖先, 复刻 tower
+  // worktree 场景。vite 打包 config 保留各模块真实 import.meta.url, 产品 config 的
+  // 锚定因此落在仓库根 (结构断言已钉住该值); fake root 位于 target/ 下, 若直接
+  // re-export 会把整棵 fake root 罩进仓库根的忽略区, 这里按产品 config 的同一
+  // helper 重新锚定到 fake root。反事实: helper 若回退到裸 "**/.tower/**" 规则,
+  // root 的 src 会被一并忽略, 下面 main.tsx 的 HMR 断言会失败。
+  it("keeps source HMR alive under a .tower ancestor while ignoring the root's own artifact dirs", async () => {
+    const regressDir = path.join(REPO_ROOT, "target", "m239-dev-config-regress");
+    const root = path.join(regressDir, ".tower", "worktrees", "wt-fake");
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.mkdirSync(path.join(root, ".tower"), { recursive: true });
+    fs.writeFileSync(path.join(root, "index.html"), "<!doctype html><html><body></body></html>\n");
+    fs.writeFileSync(path.join(root, "src", "main.tsx"), "export const probe = 1;\n");
+    fs.writeFileSync(path.join(root, ".tower", "probe.ts"), "export const artifact = 1;\n");
+    fs.writeFileSync(
+      path.join(root, "vite.config.mjs"),
+      `import base from ${JSON.stringify(path.join(REPO_ROOT, "vite.config.ts"))};\n` +
+        `import { acceptanceWatchIgnored } from ${JSON.stringify(path.join(REPO_ROOT, "src", "test", "lib", "acceptance-watch-ignores.mjs"))};\n` +
+        `export default { ...base, server: { ...base.server, watch: { ignored: acceptanceWatchIgnored(${JSON.stringify(root)}) } } };\n`,
+    );
+    const vite = await startVite({
+      root,
+      config: path.join(root, "vite.config.mjs"),
+      viteBin: path.join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js"),
+    });
+    try {
+      const messages: string[] = [];
+      const ws = new WebSocket(`ws://127.0.0.1:${vite.port}/`, "vite-hmr");
+      ws.addEventListener("message", (event) => messages.push(String(event.data)));
+      await waitFor(() => messages.length > 0, 10_000);
+
+      const mainRes = await fetch(`${vite.origin}/src/main.tsx`);
+      expect(mainRes.status).toBe(200);
+      fs.writeFileSync(path.join(root, "src", "main.tsx"), "export const probe = 2;\n");
+      await waitFor(() => messages.some((m) => m.includes("main.tsx") || m.includes("full-reload")), 10_000);
+
+      const artifactRes = await fetch(`${vite.origin}/.tower/probe.ts`);
+      expect(artifactRes.status).toBe(200);
+      const before = messages.length;
+      fs.writeFileSync(path.join(root, ".tower", "probe.ts"), "export const artifact = 2;\n");
+      await sleep(4000);
+      const fresh = messages.slice(before);
+      expect(fresh.some((m) => m.includes("probe.ts") || m.includes("full-reload"))).toBe(false);
+      ws.close();
+    } finally {
+      await vite.stop();
+      fs.rmSync(regressDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
