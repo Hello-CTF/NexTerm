@@ -832,3 +832,103 @@ func warningsContain(warnings []string, substring string) bool {
 	}
 	return false
 }
+
+// 包内重复分组 ID 按 last-index 去重: 同一 ID 只处理最后一项,
+// 墓碑判断/skipped 计数/details/plan/父级引用统一采用最终决策。
+func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
+	database, _, syncService := newSyncBundleTestService(t, false, true)
+	ctx := t.Context()
+	dispatcher := registerSyncBundleDispatcher(t, syncService)
+	tombstoneGroup := func(t *testing.T) string {
+		t.Helper()
+		id := ids.New()
+		if _, err := database.GroupUpsert(ctx, id, nil, "将被删除", 0, 100, 100); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.GroupDelete(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	importGroups := func(t *testing.T, groups []map[string]any) syncservice.ImportReport {
+		t.Helper()
+		return decodeSyncBundleResponse[syncservice.ImportReport](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandImport, map[string]any{
+			"bundle": map[string]any{"protocol": 1, "groups": groups}, "force": false,
+		}))
+	}
+
+	t.Run("stale+stale 只计一次跳过", func(t *testing.T) {
+		id := tombstoneGroup(t)
+		report := importGroups(t, []map[string]any{
+			{"id": id, "name": "旧一", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			{"id": id, "name": "旧二", "sort": 0, "createdAt": 100, "updatedAt": 200},
+		})
+		if report.SkippedNewer != 1 || len(report.SkippedNewerDetails) != 1 || report.SkippedNewerDetails[0].Name != "旧二" {
+			t.Fatalf("stale+stale report = %+v", report)
+		}
+		if _, err := database.GroupGet(ctx, id); err == nil {
+			t.Fatal("stale+stale must not import the group")
+		}
+		if _, found, _ := syncTombstoneRow(ctx, database, id); !found {
+			t.Fatal("tombstone must survive")
+		}
+	})
+
+	t.Run("fresh+stale 最终决策为跳过", func(t *testing.T) {
+		id := tombstoneGroup(t)
+		report := importGroups(t, []map[string]any{
+			{"id": id, "name": "早期新", "sort": 0, "createdAt": 100, "updatedAt": ids.NowMS() + 10000},
+			{"id": id, "name": "最终旧", "sort": 0, "createdAt": 100, "updatedAt": 100},
+		})
+		if report.SkippedNewer != 1 || len(report.SkippedNewerDetails) != 1 || report.SkippedNewerDetails[0].Name != "最终旧" {
+			t.Fatalf("fresh+stale report = %+v", report)
+		}
+		if _, err := database.GroupGet(ctx, id); err == nil {
+			t.Fatal("fresh+stale must not import the earlier fresh entry")
+		}
+		if _, found, _ := syncTombstoneRow(ctx, database, id); !found {
+			t.Fatal("tombstone must survive")
+		}
+	})
+
+	t.Run("stale+fresh 采用最后一项", func(t *testing.T) {
+		id := tombstoneGroup(t)
+		report := importGroups(t, []map[string]any{
+			{"id": id, "name": "早期旧", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			{"id": id, "name": "最终新", "sort": 0, "createdAt": 100, "updatedAt": ids.NowMS() + 10000},
+		})
+		if report.SkippedNewer != 0 || report.GroupsCreated != 1 {
+			t.Fatalf("stale+fresh report = %+v", report)
+		}
+		row, err := database.GroupGet(ctx, id)
+		if err != nil || row.Name != "最终新" {
+			t.Fatalf("stale+fresh must import the last entry: %+v err=%v", row, err)
+		}
+		if _, found, _ := syncTombstoneRow(ctx, database, id); found {
+			t.Fatal("newer import must clear the tombstone")
+		}
+	})
+
+	t.Run("子分组引用最终被跳过的重复父级", func(t *testing.T) {
+		parentID := tombstoneGroup(t)
+		childID := ids.New()
+		report := importGroups(t, []map[string]any{
+			{"id": parentID, "name": "父早期新", "sort": 0, "createdAt": 100, "updatedAt": ids.NowMS() + 10000},
+			{"id": parentID, "name": "父最终旧", "sort": 0, "createdAt": 100, "updatedAt": 100},
+			{"id": childID, "parentId": parentID, "name": "子分组", "sort": 0, "createdAt": 100, "updatedAt": 100},
+		})
+		if report.SkippedNewer != 1 || report.GroupsCreated != 1 {
+			t.Fatalf("child of skipped duplicate parent report = %+v", report)
+		}
+		if _, err := database.GroupGet(ctx, parentID); err == nil {
+			t.Fatal("parent final entry skipped must stay deleted")
+		}
+		child, err := database.GroupGet(ctx, childID)
+		if err != nil || child.ParentID != nil {
+			t.Fatalf("child must fall back to top-level: %+v err=%v", child, err)
+		}
+		if !warningsContain(report.Warnings, "已按顶级分组导入") {
+			t.Fatalf("dangling parent warning missing: %+v", report.Warnings)
+		}
+	})
+}

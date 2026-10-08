@@ -655,14 +655,23 @@ type bundleGroupPlan struct {
 	exists    bool
 }
 
-// planGroupImports 校验分组载荷并解析父级: 本机删除墓碑较新且非 force 时跳过(保留墓碑);
+// planGroupImports 校验分组载荷并解析父级: 同一 trim 后非空 ID 只处理包内最后一项(last-index 去重),
+// 墓碑判断/skipped 计数/plan 构建/父级引用统一采用最终决策; 本机删除墓碑较新且非 force 时跳过(保留墓碑);
 // 父级只允许指向包内或通过本地存在性校验的分组, 悬空父级置 nil; 循环与超深经 mergedGroupTopology 兜底。
-// 同一包内重复 ID 后者覆盖前者, 只计入一次。
 func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGroup, force bool, report *ImportReport, warnf func(string, ...any)) ([]bundleGroupPlan, error) {
+	lastIndex := make(map[string]int, len(payloads))
+	for index, payload := range payloads {
+		if id := strings.TrimSpace(payload.ID); id != "" {
+			lastIndex[id] = index
+		}
+	}
 	plans := make([]bundleGroupPlan, 0, len(payloads))
 	planIndex := map[string]int{}
-	for _, payload := range payloads {
+	for index, payload := range payloads {
 		id := strings.TrimSpace(payload.ID)
+		if id != "" && lastIndex[id] != index {
+			continue
+		}
 		if id == "" {
 			report.Refused++
 			warnf("拒绝了 ID 为空的分组")
@@ -705,16 +714,11 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 		if err != nil && !isNotFound(err) {
 			return nil, err
 		}
-		plan := bundleGroupPlan{
+		planIndex[id] = len(plans)
+		plans = append(plans, bundleGroupPlan{
 			id: id, name: name, parentID: parentID, sort: payload.Sort,
 			createdAt: createdAt, updatedAt: updatedAt, exists: exists,
-		}
-		if index, duplicated := planIndex[id]; duplicated {
-			plans[index] = plan
-		} else {
-			planIndex[id] = len(plans)
-			plans = append(plans, plan)
-		}
+		})
 	}
 	parents, err := s.engine.groupParents(ctx)
 	if err != nil {
