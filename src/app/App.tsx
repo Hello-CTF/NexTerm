@@ -720,13 +720,13 @@ export default function App() {
   const openNewTerminal = useCallback(async () => {
     const sid = ws?.sessionId;
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
-    if (s && isSessionAlive(s.status)) {
-      void openTerminalTab(s);
-      return;
-    }
     if (s) {
       if (isSessionReconnectPending(s.id)) {
         pushToast("info", "正在重连，连上后会自动新建终端");
+        return;
+      }
+      if (isSessionAlive(s.status)) {
+        void openTerminalTab(s);
         return;
       }
       pushToast("info", "正在重连，连上后自动新建终端…");

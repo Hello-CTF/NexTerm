@@ -64,6 +64,7 @@ import App from "../../app/App";
 import {
   isSessionReconnectPending,
   reconnectSessionAndWait,
+  SESSION_RECONNECT_WAIT_MS,
   useUi,
   type AppTab,
 } from "../../app/store";
@@ -197,14 +198,56 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     const toasts = useUi.getState().toasts;
     expect(toasts.some((t) => t.text === "正在重连，连上后会自动新建终端")).toBe(true);
   });
+
+  it("重连等待中会话已 connected 时再点不会重复打开终端", async () => {
+    mocks.sessionList
+      .mockResolvedValueOnce([session("disconnected")])
+      .mockResolvedValue([session("reconnecting")]);
+    mounted = mountApp();
+    await flush();
+
+    click(newTerminalButton());
+    await waitUntil(() => expect(mocks.sessionReconnect).toHaveBeenCalledTimes(1));
+
+    // connected 事件先于 helper 的轮询到达 store, 此时连点走 pending 检查而不是 alive 快速路径
+    act(() => useUi.setState({ sessions: [session("connected")] }));
+    click(newTerminalButton());
+    click(newTerminalButton());
+    expect(terminalTabs()).toHaveLength(0);
+
+    mocks.sessionList.mockResolvedValue([session("connected")]);
+    await waitUntil(() => expect(terminalTabs()).toHaveLength(1));
+    expect(mocks.sessionReconnect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().toasts.some((t) => t.kind === "error")).toBe(false);
+  });
 });
 
 describe("reconnectSessionAndWait", () => {
-  it("会话进入 failed 时以中文原因拒绝", async () => {
-    mocks.sessionList.mockResolvedValue([session("failed")]);
+  it("默认等待上限覆盖后端重连生命周期(10 次尝试退避合计 181s)", () => {
+    expect(SESSION_RECONNECT_WAIT_MS).toBeGreaterThanOrEqual(181_000);
+  });
+
+  it("首次 list 读到启动前的旧 disconnected 不误判, reconnecting 后 connected 正常返回", async () => {
+    mocks.sessionList
+      .mockResolvedValueOnce([session("disconnected")])
+      .mockResolvedValueOnce([session("disconnected")])
+      .mockResolvedValueOnce([session("reconnecting")])
+      .mockResolvedValue([session("connected")]);
+
+    const result = await reconnectSessionAndWait(session("disconnected"), {
+      timeoutMs: 2000,
+      intervalMs: 10,
+    });
+    expect(result?.status).toBe("connected");
+  });
+
+  it("进入重连后 failed 时以中文原因拒绝", async () => {
+    mocks.sessionList
+      .mockResolvedValueOnce([session("reconnecting")])
+      .mockResolvedValue([session("failed")]);
 
     await expect(
-      reconnectSessionAndWait(session("disconnected"), { timeoutMs: 200, intervalMs: 10 }),
+      reconnectSessionAndWait(session("disconnected"), { timeoutMs: 500, intervalMs: 10 }),
     ).rejects.toThrow("会话连接失败");
     expect(isSessionReconnectPending("s1")).toBe(false);
   });
@@ -215,6 +258,42 @@ describe("reconnectSessionAndWait", () => {
     await expect(
       reconnectSessionAndWait(session("disconnected"), { timeoutMs: 60, intervalMs: 10 }),
     ).rejects.toThrow("重连超时");
+  });
+
+  it("超时后 inflight 清理, 可再次发起重连", async () => {
+    mocks.sessionList.mockResolvedValue([session("reconnecting")]);
+    await expect(
+      reconnectSessionAndWait(session("disconnected"), { timeoutMs: 30, intervalMs: 10 }),
+    ).rejects.toThrow("重连超时");
+    expect(isSessionReconnectPending("s1")).toBe(false);
+
+    mocks.sessionList.mockResolvedValue([session("connected")]);
+    await expect(
+      reconnectSessionAndWait(session("disconnected"), { timeoutMs: 500, intervalMs: 10 }),
+    ).resolves.toMatchObject({ status: "connected" });
+    expect(mocks.sessionReconnect).toHaveBeenCalledTimes(2);
+    expect(isSessionReconnectPending("s1")).toBe(false);
+  });
+
+  it("超过 20s 后成功仍返回(默认超时, 短轮询模拟长重连)", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      mocks.sessionList.mockImplementation(async () => {
+        calls += 1;
+        return [session(calls <= 25 ? "reconnecting" : "connected")];
+      });
+
+      const promise = reconnectSessionAndWait(session("disconnected"), { intervalMs: 1000 });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(26_000);
+
+      await expect(promise).resolves.toMatchObject({ status: "connected" });
+      expect(calls).toBeGreaterThan(20);
+      expect(isSessionReconnectPending("s1")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("主机指纹确认取消时返回 null 且不发起重连", async () => {

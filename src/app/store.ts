@@ -1377,6 +1377,11 @@ async function runConnectAsset(
 
 const inflightReconnects = new Map<string, Promise<SessionInfo | null>>();
 
+// SESSION_RECONNECT_WAIT_MS 对齐后端重连生命周期: internal/session 默认 10 次尝试、
+// 退避 1/2/4/8/16/30s(合计 181s), 每次拨号 SSH 默认 15s, 6 分钟覆盖最坏情况;
+// connected/failed 终态会提前结束等待, 超时只是兜底。
+export const SESSION_RECONNECT_WAIT_MS = 360_000;
+
 export function isSessionReconnectPending(sessionId: string): boolean {
   return inflightReconnects.has(sessionId);
 }
@@ -1389,7 +1394,7 @@ export function reconnectSessionAndWait(
   if (inflight) return inflight;
   const promise = runReconnectAndWait(
     session,
-    options?.timeoutMs ?? 20_000,
+    options?.timeoutMs ?? SESSION_RECONNECT_WAIT_MS,
     options?.intervalMs ?? 600,
   ).finally(() => {
     inflightReconnects.delete(session.id);
@@ -1407,11 +1412,16 @@ async function runReconnectAndWait(
   const started = await sessionApi.reconnect(session.id);
   if (!started) throw new Error("重连未能启动");
   const deadline = Date.now() + timeoutMs;
+  // session_reconnect 先返回、后端协程后置 reconnecting, 首次 list 可能读到启动前的
+  // 旧 disconnected/failed; 只有见过 connecting/reconnecting 之后的终态才算失败。
+  let enteredReconnect = false;
   for (;;) {
     const list = await sessionApi.list();
     const current = list.find((s) => s.id === session.id);
     if (current?.status === "connected") return current;
-    if (current && current.status !== "connecting" && current.status !== "reconnecting") {
+    if (current?.status === "connecting" || current?.status === "reconnecting") {
+      enteredReconnect = true;
+    } else if (current && enteredReconnect) {
       throw new Error(`会话${sessionStatusText(current.status)}`);
     }
     if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
