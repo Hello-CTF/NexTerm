@@ -10,6 +10,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
@@ -131,6 +132,7 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 
 	public("GET /auth/status", s.serveAccountStatus)
 	public("POST /auth/init", s.serveAccountInit)
+	public("POST /auth/platform-session", s.servePlatformSession)
 	public("POST /auth/login", s.serveAccountLogin)
 	public("POST /auth/totp/login", s.serveAccountTOTPLogin)
 	public("POST /auth/register", s.serveAccountRegister)
@@ -226,6 +228,11 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 }
 
 func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
+	// 平台托管模式下没有码可消费: 账号由首个经网关到达的请求自动建立。
+	if s.options.Auth == AuthPlatform {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "当前为平台托管模式（--auth=platform）：账号随平台登录自动建立，不需要初始化码"))
+		return
+	}
 	var request accountInitRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
 		writeAccountFailure(w, err)
@@ -247,6 +254,40 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountThrottle.init.RecordSuccess(key)
 	s.writeAccountSession(w, r, user, "")
+}
+
+// servePlatformSession 把「已经过前置网关认证」的请求升级为一个真实账号会话。
+//
+// 平台模式的信任根是网关注入的请求头（NEXTERM_GATEWAY_AUTH）：能走到这里就说明平台
+// 已经完成了登录认证。但那个头只说「过了门」、不说「是谁」，所以这里维持一个保留的
+// 单所有者账号 —— 首个这样的请求创建它并签发会话，之后每次打开顺手续用。用户既不抄
+// 初始化码，也不需要口令。
+func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
+	if s.options.Auth != AuthPlatform {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "当前部署不是平台托管模式"))
+		return
+	}
+	if !syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "缺少网关凭据：请从平台入口访问"))
+		return
+	}
+	// 已有有效会话就续用, 避免每次刷新都新开一行会话。
+	if token, ok := sessionCookie(r); ok {
+		if identity, err := s.accounts.ValidateSession(r.Context(), token); err == nil {
+			if user, err := s.accounts.GetUser(r.Context(), identity.UserID); err == nil {
+				writeAccountJSON(w, http.StatusOK, accountSessionView{
+					User: newAccountUserView(user), CSRFToken: accountCSRFToken(identity.SessionID),
+				})
+				return
+			}
+		}
+	}
+	owner, err := s.accounts.EnsurePlatformOwner(r.Context())
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	s.writeAccountSession(w, r, owner, "")
 }
 
 type accountLoginRequest struct {

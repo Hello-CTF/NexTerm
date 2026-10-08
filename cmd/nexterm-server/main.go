@@ -187,7 +187,8 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	if accounts != nil && invocation.Auth != core.AuthOff {
+	// 平台托管模式下账号随平台登录自动建立, 不存在需要抄写的一次性初始化码。
+	if accounts != nil && invocation.Auth != core.AuthOff && invocation.Auth != core.AuthPlatform {
 		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1

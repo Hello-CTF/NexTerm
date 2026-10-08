@@ -33,6 +33,10 @@ export function AuthCard() {
   const pendingRecoveryKey = useAuth((s) => s.pendingRecoveryKey);
   const clearPendingRecoveryKey = useAuth((s) => s.clearPendingRecoveryKey);
 
+  // 平台托管模式(懒猫): 账号随平台登录自动建立, 用户手里没有口令, 也不该有"退出"。
+  // 退出后下一次刷新会被平台会话重新接管, 留着只会让人以为"登出"生效了。
+  const platformManaged = status?.auth === "platform";
+
   const [devices, setDevices] = useState<AccountDevice[] | null>(null);
   const [devicesError, setDevicesError] = useState<string | null>(null);
   const [enrollCode, setEnrollCode] = useState<{ code: string; expiresAt: number } | null>(null);
@@ -108,6 +112,22 @@ export function AuthCard() {
   if (!user) {
     // 桌面端没有账号门,登录按钮只会打开一个不存在的门:整卡不渲染,登录入口在 SyncCard。
     if (!authAvailable()) return null;
+    if (status?.auth === "platform") {
+      // 平台托管模式下没有可填的东西: 账号随平台登录自动建立。走到这里说明平台会话没建立
+      // (典型是从服务端口直连、绕开了平台入口), 给出原因而不是死按钮。
+      return (
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconKey size={15} className="text-neutral-400" />
+            <span className="nx-card-title">账号</span>
+          </div>
+          <p className="nx-hint mb-3">
+            本实例部署在懒猫平台上，账号随平台登录自动建立，这里没有需要填写的初始化码或密码。
+            看到这段文字通常意味着没有经过平台入口访问 —— 请改用平台的访问地址重新打开。
+          </p>
+        </section>
+      );
+    }
     if (status?.auth === "off") {
       // auth=off 下 /auth/* 全部 403(store.refresh 合成 auth=off 状态),任何登录/初始化入口都是死路。
       return (
@@ -187,91 +207,102 @@ export function AuthCard() {
           <span className="nx-hint">最近登录 {formatTime(user.last_login_at)}</span>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            className="nx-btn nx-btn-outline nx-btn-sm"
-            onClick={() =>
-              void (async () => {
-                const ok = await ask("退出当前账号?\n\n本机浏览器会话立即失效。", { title: "退出登录" });
-                if (!ok) return;
-                await logout();
-                void qc.invalidateQueries();
-              })()
-            }
-          >
-            退出登录
-          </button>
-          <button
-            className="nx-btn nx-btn-ghost nx-btn-sm"
-            onClick={() =>
-              void (async () => {
-                const ok = await ask("退出所有设备上的会话?\n\n包括这台浏览器,退出后需重新登录。", {
-                  title: "退出全部会话",
-                  kind: "warning",
-                });
-                if (!ok) return;
-                try {
-                  await authApi.logoutAll();
+        {platformManaged && (
+          <p className="nx-hint mt-2">
+            本实例部署在懒猫平台上，登录由平台负责：打开地址即为当前账号，不需要在这里登录或退出。
+            账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。
+          </p>
+        )}
+
+        {!platformManaged && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              onClick={() =>
+                void (async () => {
+                  const ok = await ask("退出当前账号?\n\n本机浏览器会话立即失效。", { title: "退出登录" });
+                  if (!ok) return;
                   await logout();
                   void qc.invalidateQueries();
-                } catch (e) {
-                  pushToast("error", describeError(e));
-                }
-              })()
-            }
-          >
-            退出全部会话
-          </button>
-        </div>
-      </section>
-
-      <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
-          <IconLock size={15} className="text-neutral-400" />
-          <span className="nx-card-title">修改密码</span>
-        </div>
-        <p className="nx-hint mb-3">
-          修改密码会用新密码重新加密数据密钥,云端已保存的加密内容不受影响。修改成功后会签发
-          新的恢复密钥(旧的立即作废),并退出其他设备上的会话。
-        </p>
-        <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
-          <input
-            className="nx-input max-w-[280px]"
-            type="password"
-            placeholder="当前密码"
-            value={oldPassword}
-            autoComplete="current-password"
-            onChange={(e) => setOldPassword(e.target.value)}
-          />
-          <input
-            className="nx-input max-w-[280px]"
-            type="password"
-            placeholder="新密码(至少 8 位)"
-            value={newPassword}
-            autoComplete="new-password"
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-          <input
-            className="nx-input max-w-[280px]"
-            type="password"
-            placeholder="确认新密码"
-            value={confirmPassword}
-            autoComplete="new-password"
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
-          {pwdError && (
-            <div className="nx-alert nx-alert-danger flex items-start gap-2">
-              <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span>{pwdError}</span>
-            </div>
-          )}
-          <div>
-            <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={pwdBusy || !oldPassword || !newPassword}>
-              {pwdBusy ? "修改中…" : "修改密码"}
+                })()
+              }
+            >
+              退出登录
+            </button>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              onClick={() =>
+                void (async () => {
+                  const ok = await ask("退出所有设备上的会话?\n\n包括这台浏览器,退出后需重新登录。", {
+                    title: "退出全部会话",
+                    kind: "warning",
+                  });
+                  if (!ok) return;
+                  try {
+                    await authApi.logoutAll();
+                    await logout();
+                    void qc.invalidateQueries();
+                  } catch (e) {
+                    pushToast("error", describeError(e));
+                  }
+                })()
+              }
+            >
+              退出全部会话
             </button>
           </div>
-        </form>
+        )}
       </section>
+
+      {!platformManaged && (
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconLock size={15} className="text-neutral-400" />
+            <span className="nx-card-title">修改密码</span>
+          </div>
+          <p className="nx-hint mb-3">
+            修改密码会用新密码重新加密数据密钥,云端已保存的加密内容不受影响。修改成功后会签发
+            新的恢复密钥(旧的立即作废),并退出其他设备上的会话。
+          </p>
+          <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
+            <input
+              className="nx-input max-w-[280px]"
+              type="password"
+              placeholder="当前密码"
+              value={oldPassword}
+              autoComplete="current-password"
+              onChange={(e) => setOldPassword(e.target.value)}
+            />
+            <input
+              className="nx-input max-w-[280px]"
+              type="password"
+              placeholder="新密码(至少 8 位)"
+              value={newPassword}
+              autoComplete="new-password"
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+            <input
+              className="nx-input max-w-[280px]"
+              type="password"
+              placeholder="确认新密码"
+              value={confirmPassword}
+              autoComplete="new-password"
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+            {pwdError && (
+              <div className="nx-alert nx-alert-danger flex items-start gap-2">
+                <IconXCircle size={13} className="mt-0.5 shrink-0" />
+                <span>{pwdError}</span>
+              </div>
+            )}
+            <div>
+              <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={pwdBusy || !oldPassword || !newPassword}>
+                {pwdBusy ? "修改中…" : "修改密码"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
 
       <TotpCard />
 

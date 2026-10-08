@@ -176,18 +176,29 @@ func New(config Config) (*Server, error) {
 		authMode = AuthLoopback
 	}
 	switch authMode {
-	case AuthOn, AuthLoopback, AuthOff:
+	case AuthOn, AuthLoopback, AuthPlatform, AuthOff:
 	default:
 		return nil, fmt.Errorf("invalid auth mode %q", authMode)
 	}
+	// 平台模式下唯一的放行凭据就是网关注入的请求头; 没有配置密钥时任何请求都会被拒,
+	// 与其静默锁死, 不如启动即失败。
+	if authMode == AuthPlatform && config.GatewayAuthKey == "" {
+		return nil, fmt.Errorf("auth mode %q requires a gateway key (NEXTERM_GATEWAY_AUTH); without it no request can be admitted", AuthPlatform)
+	}
 	config.Options.Auth = authMode
 	authRequired := false
-	if !config.Options.SyncOnly {
-		switch authMode {
-		case AuthOn:
-			authRequired = true
-		case AuthLoopback:
-			authRequired = !core.LoopbackListen(config.Options.Listen)
+	switch authMode {
+	case AuthPlatform:
+		// 平台模式不区分 syncOnly: 门在网关上, 不在监听地址上。
+		authRequired = true
+	default:
+		if !config.Options.SyncOnly {
+			switch authMode {
+			case AuthOn:
+				authRequired = true
+			case AuthLoopback:
+				authRequired = !core.LoopbackListen(config.Options.Listen)
+			}
 		}
 	}
 	if authRequired && config.Tokens == nil && config.Accounts == nil {

@@ -20,6 +20,7 @@ const (
 const (
 	AuthOn       = "on"
 	AuthLoopback = "loopback"
+	AuthPlatform = "platform"
 	AuthOff      = "off"
 )
 
@@ -195,9 +196,9 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 			return Invocation{}, err
 		}
 		switch invocation.Auth {
-		case AuthOn, AuthLoopback, AuthOff:
+		case AuthOn, AuthLoopback, AuthPlatform, AuthOff:
 		default:
-			return Invocation{}, fmt.Errorf("invalid --auth value %q (want %q, %q, or %q)", invocation.Auth, AuthOn, AuthLoopback, AuthOff)
+			return Invocation{}, fmt.Errorf("invalid --auth value %q (want %q, %q, %q, or %q)", invocation.Auth, AuthOn, AuthLoopback, AuthPlatform, AuthOff)
 		}
 		base, err := ParsePublicBaseURL(invocation.PublicBaseURL)
 		if err != nil {
@@ -251,8 +252,11 @@ Flags:
   --web-root PATH     Web assets directory (env NEXTERM_WEB_ROOT)
   --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY, deprecated; use --master-key-file)
   --master-key-file PATH  Read the vault master key from a file (env NEXTERM_MASTER_KEY_FILE)
-  --auth MODE         Access control: on, loopback, or off (env NEXTERM_AUTH, default on)
+  --auth MODE         Access control: on, loopback, platform, or off (env NEXTERM_AUTH, default on)
                       on = account sessions; loopback = no auth on a loopback listener;
+                      platform = access control delegated to a fronting gateway: only requests
+                      carrying the NEXTERM_GATEWAY_AUTH header are admitted, and the first such
+                      request becomes the platform owner account (no init code);
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
   --public-base-url URL  Default file access base URL for public image links
