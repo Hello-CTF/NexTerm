@@ -33,7 +33,7 @@ vi.mock("../../ipc/env", async (importOriginal) => {
 });
 
 import { FilesCard } from "../../features/settings/FilesCard";
-import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const HEALTH_CONFIGURED = {
   publicBaseURLConfigured: true,
@@ -67,6 +67,27 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     return el;
   }
 
+  function openEditor(container: ParentNode): void {
+    clickButton(container, "覆盖基础 URL");
+  }
+
+  it("无覆盖值时编辑区默认折叠,已有覆盖值自动展开", async () => {
+    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "" });
+    mounted = mount(createElement(FilesCard));
+    await flush();
+
+    expect(mounted.container.querySelector("#files-public-base-url")).toBeNull();
+    openEditor(mounted.container);
+    await flush();
+    expect(input(mounted.container).value).toBe("");
+    mounted.unmount();
+
+    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
+    mounted = mount(createElement(FilesCard));
+    await flush();
+    expect(input(mounted.container).value).toBe("https://example.com/nexterm");
+  });
+
   it("未设置覆盖值且服务端无默认时展示同源相对链接语义", async () => {
     mocks.flags.web = true;
     mocks.fetchImageService.mockResolvedValue(HEALTH_UNSET);
@@ -75,6 +96,7 @@ describe("FilesCard 默认文件访问基础 URL", () => {
 
     const c = mounted.container;
     expect(c.textContent).toContain("同源相对链接");
+    openEditor(c);
     expect(input(c).value).toBe("");
     expect(c.textContent).toContain("/files/image/…");
   });
@@ -161,6 +183,7 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     mounted = mount(createElement(FilesCard));
     await flush();
 
+    openEditor(mounted.container);
     setInputValue(input(mounted.container), "https://user:pass@example.com");
     click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "保存")!);
     await flush();
@@ -176,6 +199,7 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     mounted = mount(createElement(FilesCard));
     await flush();
 
+    openEditor(mounted.container);
     setInputValue(input(mounted.container), "https://example.com/nexterm/");
     click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "保存")!);
     await flush();

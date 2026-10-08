@@ -132,12 +132,6 @@ export async function pickKeyFile(): Promise<string | null> {
   if (DEMO) {
     return isMac() ? "~/.ssh/id_ed25519" : "C:\\Users\\you\\.ssh\\id_ed25519";
   }
-  if (TRANSPORT === "web") {
-    const picked = await pickBrowserFile();
-    if (!picked) return null;
-    const staged = await stageFile(picked, { persist: true });
-    return staged.path;
-  }
   return openWailsFile([
     {
       name: "私钥文件",

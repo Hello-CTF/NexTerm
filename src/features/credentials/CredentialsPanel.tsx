@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { vaultApi, type Credential, type CredentialSource, type RevealedCredential } from "../../ipc/commands";
 import { ask } from "../../ui/dialogs";
-import { connectAsset, openCredentialsSidebar, openCredentialsViewTab, useUi } from "../../app/store";
+import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { GenerateKeyModal } from "./GenerateKeyModal";
@@ -12,7 +12,6 @@ import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import { useVaultInitGate } from "./useVaultInitGate";
 import {
   assetIcon,
-  IconCode,
   IconCopy,
   IconEye,
   IconEyeOff,
@@ -65,14 +64,6 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             <span className="nx-badge hidden sm:inline-flex">未启用密码保护</span>
           ))}
         <div className="nx-spacer" />
-        <button
-          className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
-          title="以文本 / JSON 查看全部凭据"
-          onClick={() => openCredentialsViewTab("text")}
-        >
-          <IconCode size={12} />
-          凭据视图
-        </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
           onClick={() =>

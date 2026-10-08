@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -127,4 +128,59 @@ func TestCredentialUsageAndForeignKeyCleanup(t *testing.T) {
 	if err != nil || asset.CredID != nil {
 		t.Fatalf("credential reference not cleared: %+v err=%v", asset, err)
 	}
+}
+
+func TestAssetUpdateAppliesConcurrentDisjointPatches(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	asset, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "web", Host: ptr("10.0.0.1"), Username: ptr("old"), OptionsJSON: "{}", Tags: "a", Note: "n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patches := []AssetPatch{
+		{Name: ptr("web-2")},
+		{Tags: ptr("b")},
+		{Note: ptr("n2")},
+		{Host: Value("10.0.0.2")},
+		{Sort: ptr(int64(5))},
+		{Username: Value("root")},
+		{Port: Value(int32(2222))},
+	}
+	var wg sync.WaitGroup
+	for _, patch := range patches {
+		wg.Add(1)
+		go func(patch AssetPatch) {
+			defer wg.Done()
+			if _, err := db.AssetUpdate(ctx, asset.ID, patch); err != nil {
+				t.Error(err)
+			}
+		}(patch)
+	}
+	wg.Wait()
+	got, err := db.AssetGet(ctx, asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "web-2" || got.Tags != "b" || got.Note != "n2" || got.Host == nil || *got.Host != "10.0.0.2" ||
+		got.Sort != 5 || got.Username == nil || *got.Username != "root" || got.Port == nil || *got.Port != 2222 {
+		t.Fatalf("concurrent patches lost fields: %+v", got)
+	}
+}
+
+func TestAssetUpdateEmptyPatchAndMissingAsset(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	asset, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "web", Host: ptr("10.0.0.1"), OptionsJSON: "{}", Tags: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.AssetUpdate(ctx, asset.ID, AssetPatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "web" || got.Host == nil || *got.Host != "10.0.0.1" || got.Tags != "a" {
+		t.Fatalf("empty patch must keep row: %+v", got)
+	}
+	_, err = db.AssetUpdate(ctx, ids.New(), AssetPatch{Name: ptr("x")})
+	requireCode(t, err, ipc.CodeNotFound)
 }

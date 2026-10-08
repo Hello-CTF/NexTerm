@@ -78,7 +78,12 @@ function text(): string {
 
 async function mountCard() {
   mounted = withClient(createElement(SyncBundleCard));
+  clickButton(mounted!.container, "导出资产包");
   await flushUntil(() => text().includes("web-01"));
+}
+
+function openImport() {
+  clickButton(mounted!.container, "导入资产包");
 }
 
 describe("SyncBundleCard 网页版资产包", () => {
@@ -98,6 +103,7 @@ describe("SyncBundleCard 网页版资产包", () => {
   it("选中 flag=1 的 NXBM 加密容器：明确提示加密与桌面版导入", async () => {
     mocks.pickBundleFile.mockResolvedValue({ name: "backup.nxbm", text: `${NXBM_HEADER_ENCRYPTED}garbage` });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("这是加密的资产包"));
     expect(text()).toContain("请在桌面版 NexTerm 中导入");
@@ -107,6 +113,7 @@ describe("SyncBundleCard 网页版资产包", () => {
   it("选中 flag=0 的 NXBM 明文容器：不误报为加密，提示去桌面版读取", async () => {
     mocks.pickBundleFile.mockResolvedValue({ name: "plain.nxbm", text: `${NXBM_HEADER_PLAINTEXT}{"protocol":1}` });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("资产包容器"));
     expect(text()).not.toContain("这是加密的资产包");
@@ -130,6 +137,7 @@ describe("SyncBundleCard 网页版资产包", () => {
       }),
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入 1 条资产"));
     expect(text()).toContain("old-device");

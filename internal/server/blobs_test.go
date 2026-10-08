@@ -7,12 +7,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
 func TestBlobStageReserveStreamAndDelete(t *testing.T) {
@@ -30,8 +34,11 @@ func TestBlobStageReserveStreamAndDelete(t *testing.T) {
 	if staged.ID == "" || staged.Bytes == nil || *staged.Bytes != int64(len(payload)) {
 		t.Fatalf("staged = %+v", staged)
 	}
-	if filepath.Base(staged.Path) != "报表 2026.bin" || filepath.Dir(filepath.Dir(staged.Path)) != filepath.Join(config.Options.DataDir, "blobs") {
+	if staged.Path != staged.ID+"/报表 2026.bin" {
 		t.Fatalf("staged path = %q", staged.Path)
+	}
+	if strings.Contains(staged.Path, config.Options.DataDir) || filepath.IsAbs(staged.Path) {
+		t.Fatalf("staged path leaks server filesystem layout: %q", staged.Path)
 	}
 	response, err = httpServer.Client().Get(httpServer.URL + "/files/blob?id=" + url.QueryEscape(staged.ID))
 	if err != nil {
@@ -75,10 +82,10 @@ func TestBlobStageReserveStreamAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	reserved := decodeStagedBlob(t, response)
-	if reserved.Bytes != nil || filepath.Base(reserved.Path) != "report.txt" {
+	if reserved.Bytes != nil || reserved.Path != reserved.ID+"/report.txt" {
 		t.Fatalf("reserved = %+v", reserved)
 	}
-	if err := os.WriteFile(reserved.Path, []byte("written by shared fs core"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(config.Options.DataDir, "blobs", reserved.ID, "report.txt"), []byte("written by shared fs core"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	response, err = httpServer.Client().Get(httpServer.URL + "/files/blob?id=" + url.QueryEscape(reserved.ID))
@@ -104,14 +111,16 @@ func TestBlobPersistenceTTLAndIDBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	persistent := decodeStagedBlob(t, response)
-	if filepath.Dir(filepath.Dir(persistent.Path)) != filepath.Join(config.Options.DataDir, "files") {
+	if persistent.Path != persistent.ID+"/id_ed25519" {
 		t.Fatalf("persistent path = %q", persistent.Path)
 	}
+	persistentFile := filepath.Join(config.Options.DataDir, "files", persistent.ID, "id_ed25519")
 	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=temporary.txt", "application/octet-stream", strings.NewReader("temporary"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	temporary := decodeStagedBlob(t, response)
+	temporaryFile := filepath.Join(config.Options.DataDir, "blobs", temporary.ID, "temporary.txt")
 
 	removed, err := store.SweepOnce(context.Background())
 	if err != nil || removed != 0 {
@@ -122,10 +131,10 @@ func TestBlobPersistenceTTLAndIDBoundary(t *testing.T) {
 	if err != nil || removed != 1 {
 		t.Fatalf("expired sweep = %d, %v", removed, err)
 	}
-	if _, err := os.Stat(persistent.Path); err != nil {
+	if _, err := os.Stat(persistentFile); err != nil {
 		t.Fatalf("persistent file was swept: %v", err)
 	}
-	if _, err := os.Stat(temporary.Path); !os.IsNotExist(err) {
+	if _, err := os.Stat(temporaryFile); !os.IsNotExist(err) {
 		t.Fatalf("temporary file still exists: %v", err)
 	}
 
@@ -241,6 +250,7 @@ func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
 	}
 
 	first := decodeStagedBlob(t, persist("a.bin", 64))
+	firstFile := filepath.Join(config.Options.DataDir, "files", first.ID, "a.bin")
 	response := persist("big.bin", 65)
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
@@ -248,6 +258,7 @@ func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
 		t.Fatalf("known-length quota status = %d: %s", response.StatusCode, body)
 	}
 	second := decodeStagedBlob(t, persist("b.bin", 64))
+	secondFile := filepath.Join(config.Options.DataDir, "files", second.ID, "b.bin")
 	response = persist("c.bin", 1)
 	body, _ = io.ReadAll(response.Body)
 	response.Body.Close()
@@ -260,18 +271,19 @@ func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	temporary := decodeStagedBlob(t, response)
+	temporaryFile := filepath.Join(config.Options.DataDir, "blobs", temporary.ID, "t.bin")
 
 	store.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
 	removed, err := store.SweepOnce(context.Background())
 	if err != nil || removed != 1 {
 		t.Fatalf("sweep = %d, %v", removed, err)
 	}
-	for _, path := range []string{first.Path, second.Path} {
+	for _, path := range []string{firstFile, secondFile} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("persisted file was swept: %v", err)
 		}
 	}
-	if _, err := os.Stat(temporary.Path); !os.IsNotExist(err) {
+	if _, err := os.Stat(temporaryFile); !os.IsNotExist(err) {
 		t.Fatalf("staged file still exists: %v", err)
 	}
 }
@@ -387,6 +399,148 @@ func TestDiskUsageRate(t *testing.T) {
 	}
 	if usage, err := diskUsageRate(filepath.Join(t.TempDir(), "missing")); err == nil || usage != 0 {
 		t.Fatalf("missing path = %f, %v", usage, err)
+	}
+}
+
+func TestBlobOwnerEnforcedOnDownloadAndDelete(t *testing.T) {
+	store := NewBlobStore(t.TempDir(), testLogger())
+	owner := &account.Identity{UserID: "user-owner", Role: account.RoleUser, State: account.StateActive}
+	other := &account.Identity{UserID: "user-other", Role: account.RoleUser, State: account.StateActive}
+	admin := &account.Identity{UserID: "user-admin", Role: account.RoleSuperadmin, State: account.StateActive}
+
+	request := func(method, target string, body io.Reader, identity *account.Identity) *http.Request {
+		t.Helper()
+		r := httptest.NewRequest(method, target, body)
+		if identity != nil {
+			r = r.WithContext(withAccountIdentity(r.Context(), identity))
+		}
+		return r
+	}
+	stage := func(name, content string, identity *account.Identity) stagedBlob {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		store.Stage(recorder, request(http.MethodPost, "/files/blob?name="+name, strings.NewReader(content), identity))
+		return decodeStagedBlob(t, recorder.Result())
+	}
+	download := func(id string, identity *account.Identity) (int, string) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		store.Download(recorder, request(http.MethodGet, "/files/blob?id="+id, nil, identity))
+		body, _ := io.ReadAll(recorder.Result().Body)
+		return recorder.Code, string(body)
+	}
+	remove := func(id string, identity *account.Identity) int {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		store.Delete(recorder, request(http.MethodDelete, "/files/blob?id="+id, nil, identity))
+		return recorder.Code
+	}
+
+	owned := stage("owned.bin", "owned-by-user", owner)
+	if status, body := download(owned.ID, owner); status != http.StatusOK || body != "owned-by-user" {
+		t.Fatalf("owner download = %d %q", status, body)
+	}
+	if status, _ := download(owned.ID, other); status != http.StatusNotFound {
+		t.Fatalf("non-owner download status = %d, want 404", status)
+	}
+	if status, _ := download(owned.ID, nil); status != http.StatusNotFound {
+		t.Fatalf("anonymous download status = %d, want 404", status)
+	}
+	if status, body := download(owned.ID, admin); status != http.StatusOK || body != "owned-by-user" {
+		t.Fatalf("superadmin download = %d %q", status, body)
+	}
+	if status := remove(owned.ID, other); status != http.StatusNotFound {
+		t.Fatalf("non-owner delete status = %d, want 404", status)
+	}
+	if _, err := os.Stat(filepath.Join(store.stageRoot(), owned.ID)); err != nil {
+		t.Fatalf("non-owner delete removed the blob: %v", err)
+	}
+	if status := remove(owned.ID, admin); status != http.StatusNoContent {
+		t.Fatalf("superadmin delete status = %d", status)
+	}
+
+	reservedRecorder := httptest.NewRecorder()
+	store.Reserve(reservedRecorder, request(http.MethodPost, "/files/blob/reserve?name=reserved.bin", nil, owner))
+	reserved := decodeStagedBlob(t, reservedRecorder.Result())
+	if status, _ := download(reserved.ID, other); status != http.StatusNotFound {
+		t.Fatalf("non-owner reserved download status = %d, want 404", status)
+	}
+	if status, body := download(reserved.ID, owner); status != http.StatusOK || body != "" {
+		t.Fatalf("owner reserved download = %d %q", status, body)
+	}
+	if status := remove(reserved.ID, owner); status != http.StatusNoContent {
+		t.Fatalf("owner delete status = %d", status)
+	}
+
+	legacy := stage("legacy.bin", "no-owner-recorded", nil)
+	if status, body := download(legacy.ID, other); status != http.StatusOK || body != "no-owner-recorded" {
+		t.Fatalf("legacy blob must stay accessible: %d %q", status, body)
+	}
+}
+
+func TestBlobResolveStagedPath(t *testing.T) {
+	store := NewBlobStore(t.TempDir(), testLogger())
+	store.diskUsage = func(string) (float64, error) { return 0, nil }
+	owner := &account.Identity{UserID: "user-owner", Role: account.RoleUser, State: account.StateActive}
+	other := &account.Identity{UserID: "user-other", Role: account.RoleUser, State: account.StateActive}
+
+	stage := func(name, content string, identity *account.Identity) stagedBlob {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/files/blob?name="+name, strings.NewReader(content))
+		if identity != nil {
+			r = r.WithContext(withAccountIdentity(r.Context(), identity))
+		}
+		recorder := httptest.NewRecorder()
+		store.Stage(recorder, r)
+		return decodeStagedBlob(t, recorder.Result())
+	}
+
+	legacy := stage("legacy.bin", "legacy-content", nil)
+	resolved, err := store.ResolveStagedPath(legacy.Path, "")
+	if err != nil {
+		t.Fatalf("legacy resolve: %v", err)
+	}
+	if resolved != filepath.Join(store.stageRoot(), legacy.ID, "legacy.bin") {
+		t.Fatalf("resolved path = %q", resolved)
+	}
+	if data, err := os.ReadFile(resolved); err != nil || string(data) != "legacy-content" {
+		t.Fatalf("legacy resolved file = %q, %v", data, err)
+	}
+
+	spaced := stage(url.QueryEscape("my file.bin"), "spaced-content", nil)
+	if spaced.Path != spaced.ID+"/my file.bin" {
+		t.Fatalf("spaced staged path = %q", spaced.Path)
+	}
+	if path, err := store.ResolveStagedPath(spaced.Path, ""); err != nil || path == "" {
+		t.Fatalf("resolve name kept by SafeBlobName = %q, %v", path, err)
+	}
+
+	owned := stage("owned.bin", "owned-content", owner)
+	if path, err := store.ResolveStagedPath(owned.Path, owner.UserID); err != nil || path == "" {
+		t.Fatalf("owner resolve = %q, %v", path, err)
+	}
+	for _, userID := range []string{"", other.UserID} {
+		if _, err := store.ResolveStagedPath(owned.Path, userID); !errors.Is(err, errStagedNotFound) {
+			t.Fatalf("resolve as %q = %v, want errStagedNotFound", userID, err)
+		}
+	}
+
+	persistRecorder := httptest.NewRecorder()
+	store.Stage(persistRecorder, httptest.NewRequest(http.MethodPost, "/files/blob?name=key.pem&persist=1", strings.NewReader("key")))
+	persist := decodeStagedBlob(t, persistRecorder.Result())
+	if _, err := store.ResolveStagedPath(persist.Path, ""); !errors.Is(err, errStagedNotFound) {
+		t.Fatalf("persist resolve = %v, want errStagedNotFound", err)
+	}
+
+	for _, malformed := range []string{
+		"", "no-slash", "short/name", legacy.ID + "/..", legacy.ID + "/.meta.json",
+		legacy.ID + "/.META.JSON", legacy.ID + "/.meta.json ", legacy.ID + "/.hidden",
+		legacy.ID + "/na\x01me.bin", legacy.ID + "/name.bin ", legacy.ID + "/nested/name.bin",
+		legacy.ID + `\name.bin`, "/abs/name.bin", ids.New() + "/missing.bin",
+	} {
+		if _, err := store.ResolveStagedPath(malformed, ""); !errors.Is(err, errStagedNotFound) {
+			t.Fatalf("ResolveStagedPath(%q) = %v, want errStagedNotFound", malformed, err)
+		}
 	}
 }
 

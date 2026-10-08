@@ -7,6 +7,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +82,61 @@ func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 0 {
 		t.Fatalf("tabs survived close: %+v", tabs)
+	}
+}
+
+func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
+	factory := &bridgeTestFactory{}
+	staged := &fakeStagedBlobResolver{dir: t.TempDir()}
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{
+			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
+		},
+		DataDir: t.TempDir(), Desktop: false, StagedBlobs: staged,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected := connectLocalTerminalTest(t, production)
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "staged-record", "client-a")
+	var tabID string
+	requireStoreTestResponse(t, attachResponse, &tabID)
+	stream := factory.at("staged-record", 0)
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_record_start", `{"tabId":"`+tabID+`","path":"staged-id/rec.log"}`, "", "client-a"))
+	writeDurableTestCommand(t, production, tabID, "staged-record-marker", "client-a")
+	waitForProductionOutput(t, stream, "staged-record-marker")
+	stopResponse := dispatchDurableTest(t, production, "terminal_record_stop", `{"tabId":"`+tabID+`"}`, "", "client-a")
+	var recorded uint64
+	requireStoreTestResponse(t, stopResponse, &recorded)
+	if recorded == 0 {
+		t.Fatal("recorded bytes = 0")
+	}
+	recordedData, err := os.ReadFile(filepath.Join(staged.dir, "rec.log"))
+	if err != nil || !bytes.Contains(recordedData, []byte("staged-record-marker")) {
+		t.Fatalf("recorded staged file = %q, %v", recordedData, err)
+	}
+
+	exportResponse := dispatchDurableTest(t, production, "terminal_export_log", `{"tabId":"`+tabID+`","path":"staged-id/export.log","maxBytes":262144}`, "", "client-a")
+	var exported uint64
+	requireStoreTestResponse(t, exportResponse, &exported)
+	exportedData, err := os.ReadFile(filepath.Join(staged.dir, "export.log"))
+	if err != nil || !bytes.Contains(exportedData, []byte("staged-record-marker")) {
+		t.Fatalf("exported staged file = %q, %v", exportedData, err)
+	}
+
+	rejected := dispatchDurableTest(t, production, "terminal_record_start", `{"tabId":"`+tabID+`","path":"/tmp/rec.log"}`, "", "client-a")
+	if rejected.OK || rejected.Error == nil || rejected.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("absolute record path = %+v, want bad_param", rejected)
+	}
+	unknown := dispatchDurableTest(t, production, "terminal_export_log", `{"tabId":"`+tabID+`","path":"other-id/export.log"}`, "", "client-a")
+	if unknown.OK || unknown.Error == nil || unknown.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("unknown staged ref = %+v, want not_found", unknown)
 	}
 }
 

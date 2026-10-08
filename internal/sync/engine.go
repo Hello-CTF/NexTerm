@@ -448,6 +448,14 @@ func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error 
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := e.snippetUpsertTx(ctx, tx, row); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// snippetUpsertTx 是 snippetUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+func (e *Engine) snippetUpsertTx(ctx context.Context, tx *sql.Tx, row store.SnippetRow) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at)
 VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, name=excluded.name, body=excluded.body,
@@ -458,7 +466,7 @@ sort=excluded.sort, updated_at=excluded.updated_at`,
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", row.ID); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func isNotFound(err error) bool {

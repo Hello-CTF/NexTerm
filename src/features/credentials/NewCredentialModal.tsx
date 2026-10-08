@@ -4,6 +4,7 @@ import { pickKeyFile } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { browserFilesAvailable } from "../../ipc/webFiles";
 import { KIND_META, NEW_KIND_ORDER } from "./meta";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "./keyStaging";
 import { useVaultInitGate } from "./useVaultInitGate";
@@ -22,7 +23,8 @@ export function NewCredentialModal({
   const [name, setName] = useState("");
   const [kind, setKind] = useState("password");
   const [value, setValue] = useState("");
-  const [origin, setOrigin] = useState<Origin>("ref");
+  const webFiles = browserFilesAvailable();
+  const [origin, setOrigin] = useState<Origin>(webFiles ? "vault" : "ref");
   const [keyFilePath, setKeyFilePath] = useState("");
   const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [contentMode, setContentMode] = useState<"file" | "paste">("file");
@@ -214,16 +216,20 @@ export function NewCredentialModal({
                         aria-label="私钥文件路径"
                         autoComplete="off"
                       />
-                      <button
-                        type="button"
-                        className="nx-btn nx-btn-outline shrink-0"
-                        onClick={() => pick(setKeyFilePath)}
-                      >
-                        浏览…
-                      </button>
+                      {!webFiles && (
+                        <button
+                          type="button"
+                          className="nx-btn nx-btn-outline shrink-0"
+                          onClick={() => pick(setKeyFilePath)}
+                        >
+                          浏览…
+                        </button>
+                      )}
                     </div>
                     <div className="nx-hint mt-1.5">
-                      ↳ 只记路径，私钥正文不复制进库。文件被挪走或删掉后，用它的资产就连不上了。
+                      {webFiles
+                        ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
+                        : "↳ 只记路径，私钥正文不复制进库。文件被挪走或删掉后，用它的资产就连不上了。"}
                     </div>
                   </>
                 ) : (

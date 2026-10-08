@@ -1,19 +1,6 @@
 // 设备管理视图的展示格式化助手: 字节/时长/相对时间。
 
-export { formatTime } from "../../ui/format";
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB", "PiB"];
-  let value = bytes / 1024;
-  let unit = units[0];
-  for (let i = 1; i < units.length && value >= 1024; i++) {
-    value /= 1024;
-    unit = units[i];
-  }
-  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${unit}`;
-}
+export { formatTime, formatBytes } from "../../ui/format";
 
 export function formatUptime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "—";

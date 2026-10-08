@@ -137,7 +137,7 @@ export function TakeoverBanner() {
       </span>
       <span
         className="shrink-0 text-red-300/70"
-        title="夺回会停止 AI 并退出接管；终端内横幅的 Esc 只是暂停，可恢复"
+        title="夺回会停止 AI 并退出接管；终端内按任意键只是暂停，可恢复"
       >
         {bindings.reclaimTakeover ? (
           <>
@@ -151,7 +151,7 @@ export function TakeoverBanner() {
         type="button"
         className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0"
         aria-keyshortcuts={formatBindingAria(bindings.reclaimTakeover) ?? undefined}
-        title="停止 AI 并退出接管（终端内按 Esc 只是暂停，可恢复）"
+        title="停止 AI 并退出接管（终端内按任意键只是暂停，可恢复）"
         onClick={() => void stealBack()}
       >
         <IconGamepad size={12} />

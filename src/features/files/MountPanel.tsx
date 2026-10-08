@@ -6,7 +6,7 @@ import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
-import { IconArrowLeft, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
+import { IconArrowLeft, IconChevronRight, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
@@ -53,9 +53,11 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const [remotePath, setRemotePath] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [credsOpen, setCredsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const localPointErrorId = useId();
   const remotePathErrorId = useId();
+  const credsPanelId = useId();
   const localPointRef = useRef<HTMLInputElement>(null);
   const remotePathRef = useRef<HTMLInputElement>(null);
   const [localPointError, setLocalPointError] = useState<string | null>(null);
@@ -287,23 +289,6 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               </p>
             )}
           </div>
-          <input
-            className="nx-input nx-input-sm w-[150px]"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="用户名（可选）"
-            aria-label="挂载用户名（可选）"
-            autoComplete="off"
-          />
-          <input
-            type="password"
-            className="nx-input nx-input-sm w-[150px]"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="密码（可选）"
-            aria-label="挂载密码（可选）"
-            autoComplete="off"
-          />
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
             disabled={busy || localSession}
@@ -313,6 +298,40 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             挂载
           </button>
         </div>
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-xs mt-2"
+          aria-expanded={credsOpen}
+          aria-controls={credsPanelId}
+          onClick={() => setCredsOpen((v) => !v)}
+        >
+          <IconChevronRight size={11} className={credsOpen ? "rotate-90" : ""} />
+          使用其他凭据（可选）
+          {!credsOpen && (username !== "" || password !== "") && (
+            <span className="nx-badge nx-badge-green">已配置</span>
+          )}
+        </button>
+        {credsOpen && (
+          <div id={credsPanelId} className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="nx-input nx-input-sm w-[150px]"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="用户名（可选）"
+              aria-label="挂载用户名（可选）"
+              autoComplete="off"
+            />
+            <input
+              type="password"
+              className="nx-input nx-input-sm w-[150px]"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="密码（可选）"
+              aria-label="挂载密码（可选）"
+              autoComplete="off"
+            />
+          </div>
+        )}
         <div className="nx-hint mt-2">
           {localSession ? (
             <>

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -434,7 +435,7 @@ func TestLinkGateStopsAfterRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := fixture.service.NewLinkGate(grant)
+	gate := fixture.service.NewLinkGate(grant, WithGateNow(func() int64 { return fixture.now }))
 
 	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second")}}
 	reader.onRead = func() {
@@ -442,6 +443,7 @@ func TestLinkGateStopsAfterRevocation(t *testing.T) {
 			if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
 				t.Fatal(err)
 			}
+			fixture.now += linkRevalidateTTL.Milliseconds() + 1
 		}
 	}
 	var output bytes.Buffer
@@ -449,6 +451,40 @@ func TestLinkGateStopsAfterRevocation(t *testing.T) {
 	requireIPCCode(t, err, ipc.CodeForbidden)
 	if output.String() != "first" {
 		t.Fatalf("output after revocation = %q, want only pre-revocation chunk", output.String())
+	}
+}
+
+// TTL 内的块沿用缓存快照继续流动, 吊销在 TTL 后的下一次重查生效。
+func TestLinkGateRevocationTakesEffectAfterTTL(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := fixture.service.NewLinkGate(grant, WithGateNow(func() int64 { return fixture.now }))
+
+	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second"), []byte("third")}}
+	reader.onRead = func() {
+		if reader.index == 1 {
+			if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if reader.index >= 1 {
+			fixture.now += linkRevalidateTTL.Milliseconds() / 2
+		}
+	}
+	var output bytes.Buffer
+	err = gate.PipeOutput(context.Background(), &output, reader)
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if output.String() != "firstsecond" {
+		t.Fatalf("output = %q, want chunks within TTL to flow before revocation lands", output.String())
 	}
 }
 
@@ -464,7 +500,7 @@ func TestLinkGateStopsAfterDeviceRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := fixture.service.NewLinkGate(grant)
+	gate := fixture.service.NewLinkGate(grant, WithGateNow(func() int64 { return fixture.now }))
 
 	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second")}}
 	reader.onRead = func() {
@@ -472,6 +508,7 @@ func TestLinkGateStopsAfterDeviceRevocation(t *testing.T) {
 			if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
 				t.Fatal(err)
 			}
+			fixture.now += linkRevalidateTTL.Milliseconds() + 1
 		}
 	}
 	var output bytes.Buffer
@@ -494,7 +531,7 @@ func TestLinkGateInputStopsAfterRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := fixture.service.NewLinkGate(grant)
+	gate := fixture.service.NewLinkGate(grant, WithGateNow(func() int64 { return fixture.now }))
 
 	reader := &chunkReader{chunks: [][]byte{[]byte("a"), []byte("b")}}
 	reader.onRead = func() {
@@ -502,6 +539,7 @@ func TestLinkGateInputStopsAfterRevocation(t *testing.T) {
 			if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
 				t.Fatal(err)
 			}
+			fixture.now += linkRevalidateTTL.Milliseconds() + 1
 		}
 	}
 	var input bytes.Buffer
@@ -544,5 +582,93 @@ func TestRevalidateLinkOwnerMismatch(t *testing.T) {
 		t.Fatal("tampered owner must fail input revalidation")
 	} else {
 		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+}
+
+func TestLinkInputAuditAggregatedBySessionWindow(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 5 {
+		if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := fixture.auditRows(t, auditKindLinkInput)
+	if len(rows) != 1 || rows[0]["outcome"] != "allow" {
+		t.Fatalf("input audits within one window = %+v, want a single allow row", rows)
+	}
+
+	fixture.now += linkInputAuditWindow.Milliseconds() + 1
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	rows = fixture.auditRows(t, auditKindLinkInput)
+	if len(rows) != 2 {
+		t.Fatalf("input audits after window = %+v", rows)
+	}
+	if suppressed, _ := rows[1]["suppressed"].(float64); suppressed != 5 {
+		t.Fatalf("aggregated row suppressed = %v, want 5 (%+v)", rows[1]["suppressed"], rows[1])
+	}
+
+	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err == nil {
+		t.Fatal("revoked link must reject input")
+	}
+	rows = fixture.auditRows(t, auditKindLinkInput)
+	if len(rows) != 3 || rows[2]["outcome"] != "deny" || rows[2]["reason"] != "revoked" {
+		t.Fatalf("deny audit must not be delayed by aggregation: %+v", rows)
+	}
+}
+
+func TestLinkInputAuditConcurrentRevalidate(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	_, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	fixture.now += linkInputAuditWindow.Milliseconds() + 1
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	rows := fixture.auditRows(t, auditKindLinkInput)
+	if len(rows) != 2 {
+		t.Fatalf("concurrent input audits = %d rows, want first row plus one aggregate", len(rows))
+	}
+	if suppressed, _ := rows[1]["suppressed"].(float64); suppressed != 200 {
+		t.Fatalf("aggregated suppressed = %v, want 200", rows[1]["suppressed"])
 	}
 }

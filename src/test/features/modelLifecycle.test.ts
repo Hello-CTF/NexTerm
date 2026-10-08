@@ -191,6 +191,9 @@ describe("ModelManager fallback editing", () => {
   it("starts a brand-new profile with an explicitly empty fallback", async () => {
     click(view2!.container.querySelector('button[title="新增档案"]')!);
     await flush();
+    // 新档案参数全默认: 高级参数折叠,展开后才看得到回退模型字段
+    clickButton(view2!.container, "高级参数");
+    await flush();
     expect(fallbackInput().value).toBe("");
     clickButton(view2!.container, "保存");
     await flush();

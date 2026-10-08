@@ -58,7 +58,7 @@ cd NexTerm-server_x.y.z_linux_amd64
 less README.md
 ```
 
-安装包的 systemd 配置默认监听 `127.0.0.1:8080`，并显式声明 `--auth on`（任何监听地址都要求先登录账号）。首次启动时账号系统未初始化，服务端会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在本机浏览器打开 `http://127.0.0.1:8080`，按提示输入初始化码并设置超管用户名与密码，完成后妥善保存恢复密钥。之后也可通过带 TLS 的 HTTPS 反向代理访问。初始化码只用一次；若遗失，清除 setting 表 `auth.init_code` 后重启会重新生成。
+安装包的 systemd 配置默认监听 `127.0.0.1:8080`，并显式声明 `--auth on`（任何监听地址都要求先登录账号）。首次启动时账号系统未初始化，服务端会在控制台打印一次性初始化码（systemd 下用 `journalctl -u nexterm-server` 查看）；在本机浏览器打开 `http://127.0.0.1:8080`，按提示输入初始化码并设置超管用户名与密码，完成后妥善保存恢复密钥。之后也可通过带 TLS 的 HTTPS 反向代理访问。初始化码只用一次；若遗失，停止服务端后删除 setting 表中 `auth.init_code` 一行再重启即重新生成，默认 SQLite 后端执行 `sqlite3 /var/lib/nexterm/data.db "DELETE FROM setting WHERE key='auth.init_code';"`（PostgreSQL 后端对同名表执行等价的 `DELETE`）。
 
 > **不要把完整版服务端直接暴露到公网。** 访问控制默认开启（`--auth on`）：无论监听地址，`/rpc`、`/ws` 与 `/files/blob` 都要求登录会话（`/healthz` 与页面静态资源保持公开），浏览器首次打开会进入初始化或登录页。回环免登录仅在显式指定 `--auth loopback` 且监听回环地址时生效，该模式校验 Host 只允许 `localhost`、`127.0.0.1`、`[::1]`（防 DNS 重绑定），不匹配返回 421；非回环监听时 `loopback` 等同 `on`。对外访问时，仍建议只监听回环地址，并在前面配置带 TLS 的反向代理。
 
@@ -70,7 +70,7 @@ less README.md
 nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 ```
 
-该模式只开放账号路由（`/auth/*`）、超管路由（`/admin/*`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。其中 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 是公共端点，匿名可用（五个 POST 端点有频率限制，`GET /auth/status` 可匿名查询）；其余账号数据与 `/sync/v2/*` 要求登录会话，会话内写操作额外要求 CSRF 头，`/admin/*` 还要求超管身份。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
+该模式只开放账号路由（`/auth/*`）、超管路由（`/admin/*`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids`、`/sync/rpc` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。`/sync/rpc` 是对端同步命令面，只有 `sync_digest`、`sync_export`、`sync_import` 三个命令，要求登录会话与 CSRF 头（完整版不挂此路由，`/rpc` 已含这三命令）；`/healthz` 的 `commands` 字段如实上报当前命令数，sync-only 下为 3。其中 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 是公共端点，匿名可用（五个 POST 端点有频率限制，`GET /auth/status` 可匿名查询）；其余账号数据与 `/sync/v2/*`、`/sync/rpc` 要求登录会话，会话内写操作额外要求 CSRF 头，`/admin/*` 还要求超管身份。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
 
 在桌面端的「设置 → 账号同步」中填写服务端地址、用户名和密码即可；密码会发送到服务端完成登录认证，同时在本机用于解锁数据密钥；数据密钥本身与同步内容的明文不会离开本机，服务端只存密文。公网地址必须使用 HTTPS（客户端强制校验）；回环、私网与链路本地地址允许 HTTP，但 HTTP 不加密传输中的密码，内网部署同样建议使用 HTTPS（自签证书可勾选跳过证书校验）。
 
@@ -103,7 +103,7 @@ go build ./...   # 编译全部 Go 包
 质量门禁与 CI 一致，装好 task 后可一次跑完：
 
 ```bash
-task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验
+task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验 + parity inventory/manifest 防漂移校验
 ```
 
 也可分别执行 `go test ./...`、`pnpm typecheck`、`pnpm lint`、`pnpm test`。PostgreSQL 真实测试读取环境变量 `NEXTERM_TEST_PG_DSN`，未设置时自动跳过。桌面端与服务端安装包的完整打包见 `node scripts/build.mjs --help`。
@@ -125,7 +125,7 @@ task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck +
 | `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。已弃用，请改用 `--master-key-file`。 |
 | `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从文件读取凭据库根密钥（推荐；与 `--master-key` 互斥）。 |
 | `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
-| `--sync-only` | — | 只启动账号、超管与同步路由（`/auth/*`、`/admin/*`、`/sync/v2/*`），无浏览器界面。 |
+| `--sync-only` | — | 只启动账号、超管与同步路由（`/auth/*`、`/admin/*`、`/sync/v2/*`、`/sync/rpc`），无浏览器界面。`/healthz` 的 `commands` 字段在此模式下上报对端同步命令数（3）。 |
 | `--public-base-url` | `NEXTERM_PUBLIC_BASE_URL` | 仅完整模式。生成图片公开链接时使用的外部基础 URL，如 `https://term.example.com/nexterm`（反代带路径前缀时）。仅接受 http/https，拒绝 userinfo/query/fragment；未设置时生成同源相对链接。运行时可在「设置 → 文件链接」中覆盖（数据库存储优先于此默认值）。与同步地址、AI 模型地址互不影响。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免登录会话（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 | — | `NEXTERM_BLOB_MAX_BYTES` | 仅完整模式。单个文件上传的大小上限（字节），默认 268435456（256 MiB）。 |

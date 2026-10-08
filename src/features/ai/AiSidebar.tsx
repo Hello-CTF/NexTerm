@@ -6,6 +6,7 @@ import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "..
 import { useUi, type TakeoverState } from "../../app/store";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
+import { formatBytes } from "../../ui/format";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { DEMO } from "../../demo";
 import { ModelPanel } from "./ModelPanel";
@@ -137,6 +138,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   } | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
+  const [activeGeneration, setActiveGeneration] = useState<number | null>(null);
+  const setActiveRun = (run: AiRunSlot) => {
+    activeRunRef.current = run;
+    setActiveGeneration(run.generation);
+  };
   const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
   const runChannelRef = useRef<{
     channel: IpcChannel<unknown>;
@@ -155,7 +161,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   } | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
     const run = createAiRun(++runSequenceRef.current, kind);
-    activeRunRef.current = run;
+    setActiveRun(run);
     stream.beginRun(run.generation, kind);
     return run;
   };
@@ -213,7 +219,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       prev && prev.generation === generation ? { generation, phase: "failed", count: 0 } : prev,
     );
   };
-  const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
   const hitlWaiting = confirmCard
@@ -362,7 +367,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const settleRestoredRun = (generation: number) => {
     const current = activeRunRef.current;
     if (isCurrentAiRun(current, generation) && !current.settled) {
-      activeRunRef.current = settleAiRun(current);
+      setActiveRun(settleAiRun(current));
       if (!current.spawnPending) setAiBusy(false);
     }
     const live = runChannelRef.current;
@@ -538,7 +543,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       expiryTimer: scheduleExpiryWatch(resumable.snapshot),
       expiryRetries: 8,
     };
-    activeRunRef.current = { generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false };
+    setActiveRun({ generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false });
     setAiBusy(true);
     void replayHitl(generation, resumable.run.id);
   };
@@ -661,11 +666,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         updateConversationId(res.conversationId);
       }
       if (current.settled) {
-        activeRunRef.current = finishAiRunSpawn(current);
+        setActiveRun(finishAiRunSpawn(current));
         setAiBusy(false);
         return;
       }
-      activeRunRef.current = bindAiRunJob(current, res.jobId);
+      setActiveRun(bindAiRunJob(current, res.jobId));
       stream.bindJob(run.generation, res.jobId);
       if (stream.hasGap(run.generation)) resyncRun(run.generation, res.jobId);
       void hydrateMessageIds(res.conversationId);
@@ -677,7 +682,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           message: describeError(e),
         });
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
-        activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
+        setActiveRun(settleAiRun(finishAiRunSpawn(current)));
         setAiBusy(false);
         clearResyncState(run.generation);
       }
@@ -785,7 +790,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     try {
       const current = activeRunRef.current;
       if (current && !current.settled) {
-        activeRunRef.current = settleAiRun(current);
+        setActiveRun(settleAiRun(current));
         stream.cancelRun(current.generation, false);
         clearResyncState(current.generation);
       }
@@ -885,7 +890,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation)) return;
       const cancellation = completeRunCancellation(current);
-      activeRunRef.current = cancellation.run;
+      setActiveRun(cancellation.run);
       stream.cancelRun(run.generation, !cancellation.waitForTerminal);
       if (!cancellation.waitForTerminal) setAiBusy(false);
       const restored = restoredChannelRef.current;
@@ -1136,11 +1141,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       if (current.settled || holder.settled) {
-        activeRunRef.current = finishAiRunSpawn(current);
+        setActiveRun(finishAiRunSpawn(current));
         setAiBusy(false);
         return;
       }
-      activeRunRef.current = bindAiRunJob(current, result.jobId);
+      setActiveRun(bindAiRunJob(current, result.jobId));
       stream.bindJob(run.generation, result.jobId);
       banner = {
         tabId,
@@ -1168,7 +1173,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           message: describeError(e),
         });
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
-        activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
+        setActiveRun(settleAiRun(finishAiRunSpawn(current)));
         setAiBusy(false);
         clearTakeover();
       }
@@ -1921,11 +1926,6 @@ function toolLabel(tool: string): string {
     default:
       return tool;
   }
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} 字节`;
-  return `${(n / 1024).toFixed(1)} KB`;
 }
 
 function ruleFromRendered(rendered: string): string {

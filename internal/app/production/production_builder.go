@@ -34,6 +34,9 @@ type ProductionConfig struct {
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
 	DB                      store.BackendConfig
+	// StagedBlobs 由服务端装配注入 ( nexterm-server ), 把 blob Stage/Reserve 响应的
+	// 相对 path 解析为暂存文件路径; 桌面端为 nil。
+	StagedBlobs StagedBlobResolver
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -155,6 +158,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		desktop:     config.Desktop,
+		stagedBlobs: config.StagedBlobs,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,

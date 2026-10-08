@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -248,6 +248,7 @@ describe("SyncCard 对照区时钟提示", () => {
 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("web-01"));
 
     const text = mounted.container.textContent ?? "";

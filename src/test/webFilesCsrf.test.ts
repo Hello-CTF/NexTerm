@@ -11,7 +11,7 @@ vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
 });
 
-import { dropStaged, requestSaveTarget, stageFile } from "../ipc/webFiles";
+import { deliverStaged, dropStaged, requestSaveTarget, stageFile } from "../ipc/webFiles";
 import { authApi, getCsrfToken, setCsrfToken } from "../ipc/authApi";
 import { clearServerToken } from "../ipc/serverAuth";
 
@@ -98,7 +98,8 @@ beforeAll(async () => {
         handled.reserve += 1;
         blobSeq += 1;
         const name = new URL(path, "http://x").searchParams.get("name") || "target.bin";
-        const record: BlobRecord = { id: `blob-${blobSeq}`, path: `/tmp/staged/blob-${blobSeq}/${name}`, body: "" };
+        // 服务端契约: path 是不含目录布局的相对 id/name, 不泄露服务器绝对路径。
+        const record: BlobRecord = { id: `blob-${blobSeq}`, path: `blob-${blobSeq}/${name}`, body: "" };
         stagedBlobs.set(record.id, record);
         sendJSON(res, 200, { data: { id: record.id, path: record.path } });
         return;
@@ -115,9 +116,20 @@ beforeAll(async () => {
         handled.stage += 1;
         blobSeq += 1;
         const name = new URL(path, "http://x").searchParams.get("name") || "upload.bin";
-        const record: BlobRecord = { id: `blob-${blobSeq}`, path: `/tmp/staged/blob-${blobSeq}/${name}`, body };
+        const record: BlobRecord = { id: `blob-${blobSeq}`, path: `blob-${blobSeq}/${name}`, body };
         stagedBlobs.set(record.id, record);
         sendJSON(res, 200, { data: { id: record.id, path: record.path, bytes: body.length } });
+        return;
+      }
+      if (req.method === "GET" && path.startsWith("/files/blob")) {
+        const id = new URL(path, "http://x").searchParams.get("id") ?? "";
+        const record = stagedBlobs.get(id);
+        if (!record) {
+          sendJSON(res, 404, { ok: false, error: { code: "not_found", message: "暂存文件不存在或已过期" } });
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        res.end(record.body);
         return;
       }
       if (req.method === "DELETE" && path.startsWith("/files/blob")) {
@@ -330,5 +342,41 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     const deletions = blobCalls().filter((entry) => entry.method === "DELETE");
     expect(deletions).toHaveLength(1);
     expect(meCalls()).toHaveLength(0);
+  });
+
+  it("相对 id/name 落点: requestSaveTarget 预留后 deliverStaged 按 id 回读、写入手柄并删除暂存", async () => {
+    jarCookie = "nexterm_session=s-1";
+    setCsrfToken("csrf-1");
+
+    const writes: string[] = [];
+    const handle = {
+      createWritable: async () => ({
+        write: async (data: Blob) => {
+          writes.push(await data.text());
+        },
+        close: async () => undefined,
+      }),
+    };
+    const win = window as unknown as Record<string, unknown>;
+    win.showSaveFilePicker = vi.fn(async () => handle);
+    try {
+      const target = await requestSaveTarget("report.txt");
+      // 服务端契约: 响应 path 是相对 id/name, 不含服务器目录布局。
+      expect(target).toBe("blob-1/report.txt");
+
+      // 服务端 fs_download 按暂存引用解析后把内容写进预留落点。
+      const record = stagedBlobs.get("blob-1");
+      if (!record) throw new Error("reserved blob missing");
+      record.body = "downloaded-bytes";
+
+      await expect(deliverStaged(target ?? "")).resolves.toBe("delivered");
+      expect(writes).toEqual(["downloaded-bytes"]);
+      expect(stagedBlobs.has("blob-1")).toBe(false);
+      const deletions = blobCalls().filter((entry) => entry.method === "DELETE");
+      expect(deletions).toHaveLength(1);
+      expect(deletions[0]?.path).toContain("id=blob-1");
+    } finally {
+      delete win.showSaveFilePicker;
+    }
   });
 });

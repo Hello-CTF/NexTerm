@@ -748,7 +748,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
 
 function LogStream({ sink }: { sink: LogAttach["sink"] }) {
   const [lines, setLines] = useState<string[]>([]);
+  const [newOutput, setNewOutput] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+  const lastHeightRef = useRef(0);
 
   useEffect(() => {
     const decoder = new TextDecoder();
@@ -763,22 +766,65 @@ function LogStream({ sink }: { sink: LogAttach["sink"] }) {
 
   useEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const onScroll = () => {
+      const near = el.scrollHeight - el.scrollTop - el.clientHeight <= 32;
+      followRef.current = near;
+      if (near) setNewOutput(false);
+      lastHeightRef.current = el.scrollHeight;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (followRef.current) {
+      el.scrollTop = el.scrollHeight;
+    } else if (el.scrollHeight > lastHeightRef.current) {
+      setNewOutput(true);
+    }
+    lastHeightRef.current = el.scrollHeight;
   }, [lines]);
 
+  const jumpToLatest = () => {
+    const el = scroller.current;
+    followRef.current = true;
+    setNewOutput(false);
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      lastHeightRef.current = el.scrollHeight;
+    }
+  };
+
   return (
-    <div
-      ref={scroller}
-      className="h-full overflow-auto bg-term px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-300"
-    >
-      {lines.length === 0 ? (
-        <span className="text-neutral-600">等待日志…</span>
-      ) : (
-        lines.map((l, i) => (
-          <div key={i} className="whitespace-pre-wrap">
-            {highlightLog(l)}
-          </div>
-        ))
+    <div className="relative h-full min-h-0">
+      <div
+        ref={scroller}
+        role="log"
+        aria-label="容器日志"
+        className="h-full overflow-auto bg-term px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-300"
+      >
+        {lines.length === 0 ? (
+          <span className="text-neutral-600">等待日志…</span>
+        ) : (
+          lines.map((l, i) => (
+            <div key={i} className="whitespace-pre-wrap">
+              {highlightLog(l)}
+            </div>
+          ))
+        )}
+      </div>
+      {newOutput && (
+        <button
+          type="button"
+          className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
+          aria-label="回到最新日志"
+          onClick={jumpToLatest}
+        >
+          ↓ 新输出
+        </button>
       )}
     </div>
   );

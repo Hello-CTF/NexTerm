@@ -263,6 +263,12 @@ describe("DbPanel 文案", () => {
   it("Redis 命令台说明与真实行为一致，不引用内部章节号", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("命令台"));
+    const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    if (!bar) throw new Error("命令台折叠条未找到");
+    click(bar);
+    await flushUntil(() => text().includes("命令台 · FLUSHALL"));
     expect(text()).toContain("命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行");
     expect(text()).not.toContain("§");
     expect(text()).not.toContain("M3");

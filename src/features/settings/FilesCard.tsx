@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { filesApi, type FilesSettingsView } from "../../ipc/commands";
 import { fetchImageService } from "../../ipc/webFiles";
 import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
-import { IconImage, IconInfo, IconRefresh, IconXCircle } from "../../ui/icons";
+import { IconChevronDown, IconChevronRight, IconImage, IconInfo, IconRefresh, IconXCircle } from "../../ui/icons";
 
 export type PublicBaseURLResult = { ok: true; value: string } | { ok: false; error: string };
 
@@ -62,6 +62,12 @@ export function FilesCard() {
   const [reloadToken, setReloadToken] = useState(0);
   // serviceDefault 区分生效默认: 持久化覆盖为空时, 服务端可能仍用 CLI/env 的 --public-base-url。
   const [serviceDefault, setServiceDefault] = useState<"unknown" | "configured" | "unset">("unknown");
+  const editorPanelId = useId();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const hasOverride = (settings?.publicBaseURL ?? "") !== "";
+  useEffect(() => {
+    if (hasOverride) setEditorOpen(true);
+  }, [hasOverride]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +126,6 @@ export function FilesCard() {
   };
 
   const overrideValue = settings?.publicBaseURL ?? "";
-  const hasOverride = overrideValue !== "";
   const badge = !settings
     ? null
     : hasOverride
@@ -169,33 +174,53 @@ export function FilesCard() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-[12.5px] text-neutral-200" htmlFor="files-public-base-url">
-          默认文件访问基础 URL
-        </label>
-        <input
-          id="files-public-base-url"
-          className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-          placeholder="留空 = 不设置覆盖值"
-          value={draft}
-          disabled={settings === null || saving}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setValidationError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") save();
-          }}
-        />
-        <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={saving || settings === null} onClick={save}>
-          {saving ? "保存中…" : "保存"}
+      <div>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+          aria-expanded={editorOpen}
+          aria-controls={editorPanelId}
+          onClick={() => setEditorOpen((v) => !v)}
+        >
+          {editorOpen ? (
+            <IconChevronDown size={12} className="shrink-0" />
+          ) : (
+            <IconChevronRight size={12} className="shrink-0" />
+          )}
+          覆盖基础 URL
         </button>
+        {editorOpen && (
+          <div id={editorPanelId} className="mt-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-[12.5px] text-neutral-200" htmlFor="files-public-base-url">
+                默认文件访问基础 URL
+              </label>
+              <input
+                id="files-public-base-url"
+                className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
+                placeholder="留空 = 不设置覆盖值"
+                value={draft}
+                disabled={settings === null || saving}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setValidationError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") save();
+                }}
+              />
+              <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={saving || settings === null} onClick={save}>
+                {saving ? "保存中…" : "保存"}
+              </button>
+            </div>
+            {validationError !== null && (
+              <p className="mt-1.5 text-[11.5px] text-red-400" role="alert">
+                {validationError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
-      {validationError !== null && (
-        <p className="mt-1.5 text-[11.5px] text-red-400" role="alert">
-          {validationError}
-        </p>
-      )}
       <p className="nx-hint mt-2">{effectiveHint}</p>
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />

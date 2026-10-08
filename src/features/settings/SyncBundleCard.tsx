@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { syncApi } from "../../ipc/commands";
 import type { ImportReport, SyncBundle, SyncDigest } from "../../ipc/types";
@@ -13,6 +13,8 @@ import { ImportReportView } from "./SyncCardReport";
 import {
   IconArchive,
   IconCheckCircle,
+  IconChevronDown,
+  IconChevronRight,
   IconDownload,
   IconInfo,
   IconLock,
@@ -120,6 +122,11 @@ export function SyncBundleCard() {
   const [force, setForce] = useState(false);
   const [importing, setImporting] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
+
+  const exportPanelId = useId();
+  const importPanelId = useId();
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const refreshDigest = useCallback(() => {
     setDigestError(null);
@@ -293,7 +300,39 @@ export function SyncBundleCard() {
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+          aria-expanded={exportOpen}
+          aria-controls={exportPanelId}
+          onClick={() => setExportOpen((v) => !v)}
+        >
+          {exportOpen ? (
+            <IconChevronDown size={12} className="shrink-0" />
+          ) : (
+            <IconChevronRight size={12} className="shrink-0" />
+          )}
+          导出资产包
+        </button>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+          aria-expanded={importOpen}
+          aria-controls={importPanelId}
+          onClick={() => setImportOpen((v) => !v)}
+        >
+          {importOpen ? (
+            <IconChevronDown size={12} className="shrink-0" />
+          ) : (
+            <IconChevronRight size={12} className="shrink-0" />
+          )}
+          导入资产包
+        </button>
+      </div>
+
+      {exportOpen && (
+      <div id={exportPanelId} className="mt-2 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">导出</span>
           <div className="nx-spacer" />
@@ -487,8 +526,10 @@ export function SyncBundleCard() {
           </div>
         )}
       </div>
+      )}
 
-      <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
+      {importOpen && (
+      <div id={importPanelId} className="mt-2 flex flex-col gap-2">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">导入</span>
           <div className="nx-spacer" />
@@ -582,6 +623,7 @@ export function SyncBundleCard() {
 
         {report && <ImportReportView title="导入结果" data={report} />}
       </div>
+      )}
     </section>
   );
 }

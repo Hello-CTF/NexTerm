@@ -423,6 +423,33 @@ describe("MountPanel 窄屏结构", () => {
   });
 });
 
+describe("MountPanel 可选凭据折叠", () => {
+  it("用户名/密码默认折叠，点「使用其他凭据（可选）」后展开", async () => {
+    mounted = mountWithClient(createElement(MountPanel, { sessionId: "s1" }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("断开"));
+
+    expect(mounted!.container.querySelector('input[aria-label="挂载用户名（可选）"]')).toBeNull();
+    expect(mounted!.container.querySelector('input[aria-label="挂载密码（可选）"]')).toBeNull();
+
+    const toggle = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("使用其他凭据"),
+    );
+    if (!toggle) throw new Error("凭据折叠按钮未找到");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    click(toggle);
+
+    await waitFor(() =>
+      expect(
+        mounted!.container.querySelector('input[aria-label="挂载用户名（可选）"]'),
+      ).not.toBeNull(),
+    );
+    expect(
+      mounted!.container.querySelector('input[aria-label="挂载密码（可选）"]'),
+    ).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
 describe("凭据 overlay dock 选中后收起", () => {
   // 凭据是全局工具标签, 统一落入「工具」工作区, 不在默认工作区里
   function allTabs() {

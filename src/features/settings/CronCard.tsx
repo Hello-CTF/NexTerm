@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { aiApi, modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
 import { useUi } from "../../app/store";
@@ -7,6 +7,8 @@ import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { profileKeyUnavailable as profileKeyMasked } from "../ai/modelLifecycle";
 import {
+  IconChevronDown,
+  IconChevronRight,
   IconClock,
   IconEdit,
   IconPlus,
@@ -71,6 +73,8 @@ export function CronCard() {
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
+  const advancedPanelId = useId();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const replaceConflictRef = useRef<ReplaceConflict | null>(null);
   const [replaceConflict, setReplaceConflictState] = useState<ReplaceConflict | null>(null);
@@ -206,6 +210,7 @@ export function CronCard() {
   const openRegister = () => {
     setRegisterError(null);
     setEditingJob(null);
+    setAdvancedOpen(false);
     setDraft({
       sessionId: conversations?.[0]?.id ?? "",
       name: "",
@@ -221,6 +226,7 @@ export function CronCard() {
   const openEdit = (job: CronJob) => {
     setRegisterError(null);
     setEditingJob(job);
+    setAdvancedOpen((job.timezone.trim() || "UTC") !== "UTC" || job.timeout > 0);
     setDraft({
       sessionId: job.sessionId,
       name: job.name ?? "",
@@ -488,20 +494,40 @@ export function CronCard() {
               value={draft.schedule}
               onChange={(e) => setDraft({ ...draft, schedule: e.target.value })}
             />
-            <input
-              className="nx-input nx-input-sm w-[110px]"
-              placeholder="时区 UTC"
-              aria-label="时区"
-              value={draft.timezone}
-              onChange={(e) => setDraft({ ...draft, timezone: e.target.value })}
-            />
-            <input
-              className="nx-input nx-input-sm w-[110px]"
-              placeholder="超时（秒）"
-              aria-label="单次执行超时（秒）"
-              value={draft.timeoutSec}
-              onChange={(e) => setDraft({ ...draft, timeoutSec: e.target.value })}
-            />
+          </div>
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+              aria-expanded={advancedOpen}
+              aria-controls={advancedPanelId}
+              onClick={() => setAdvancedOpen((v) => !v)}
+            >
+              {advancedOpen ? (
+                <IconChevronDown size={12} className="shrink-0" />
+              ) : (
+                <IconChevronRight size={12} className="shrink-0" />
+              )}
+              高级设置
+            </button>
+            {advancedOpen && (
+              <div id={advancedPanelId} className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  className="nx-input nx-input-sm w-[110px]"
+                  placeholder="时区 UTC"
+                  aria-label="时区"
+                  value={draft.timezone}
+                  onChange={(e) => setDraft({ ...draft, timezone: e.target.value })}
+                />
+                <input
+                  className="nx-input nx-input-sm w-[110px]"
+                  placeholder="超时（秒）"
+                  aria-label="单次执行超时（秒）"
+                  value={draft.timeoutSec}
+                  onChange={(e) => setDraft({ ...draft, timeoutSec: e.target.value })}
+                />
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="nx-spacer" />

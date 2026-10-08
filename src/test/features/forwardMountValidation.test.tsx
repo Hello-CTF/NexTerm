@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { clickButton, click, deferred, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -349,5 +349,49 @@ describe("MountPanel 提交时内联校验", () => {
       mounted = undefined;
     }
     setViewportWidth(1024);
+  });
+});
+
+describe("MountPanel 凭据折叠可访问性", () => {
+  function credsToggle(): HTMLButtonElement {
+    const toggle = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("使用其他凭据"),
+    );
+    if (!toggle) throw new Error("凭据折叠按钮未找到");
+    return toggle;
+  }
+
+  it("折叠按钮 aria-controls 指向凭据面板；已填凭据时折叠摘要显示已配置", async () => {
+    mountMountPanel();
+    await flush();
+    const toggle = credsToggle();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const panelId = toggle.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    expect(toggle.textContent).not.toContain("已配置");
+
+    click(toggle);
+    await flush();
+    const userInput = inputBy('input[aria-label="挂载用户名（可选）"]');
+    expect(userInput.closest("div")?.id).toBe(panelId);
+
+    setInputValue(userInput, "alice");
+    click(toggle);
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="挂载用户名（可选）"]')).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toContain("已配置");
+  });
+
+  it("凭据保持为空时折叠摘要不显示已配置", async () => {
+    mountMountPanel();
+    await flush();
+    const toggle = credsToggle();
+    click(toggle);
+    await flush();
+    click(toggle);
+    await flush();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).not.toContain("已配置");
   });
 });

@@ -28,6 +28,7 @@ type terminalCommandService struct {
 	hostKeys     *productionHostKeyStore
 	sshConnector *productionConnector
 	events       ipc.Emitter
+	stagedBlobs  StagedBlobResolver
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -126,11 +127,11 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver) *terminalCommandService {
 	return &terminalCommandService{
 		database: database, sessions: sessions, docker: dockerService, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), hostKeys: hostKeys, sshConnector: sshConnector,
-		events: events,
+		events: events, stagedBlobs: stagedBlobs,
 	}
 }
 
@@ -413,8 +414,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_record_start", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
-				return nil, terminalIPCError(s.sessions.StartRecording(input.TabID, input.Path))
+			return ipc.Register(dispatcher, "terminal_record_start", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				if err != nil {
+					return nil, err
+				}
+				return nil, terminalIPCError(s.sessions.StartRecording(input.TabID, path))
 			})
 		},
 		func() error {
@@ -424,8 +429,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_export_log", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
-				value, err := s.sessions.ExportLog(input.TabID, input.Path, input.MaxBytes)
+			return ipc.Register(dispatcher, "terminal_export_log", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
+				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				if err != nil {
+					return 0, err
+				}
+				value, err := s.sessions.ExportLog(input.TabID, path, input.MaxBytes)
 				return value, terminalIPCError(err)
 			})
 		},
@@ -456,7 +465,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	if err := s.registerSSHDiagnostics(dispatcher); err != nil {
 		return err
 	}
-	return registerFSCommands(dispatcher, s.sessions)
+	return registerFSCommands(dispatcher, s.sessions, s.stagedBlobs)
 }
 
 func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {

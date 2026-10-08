@@ -141,6 +141,10 @@ function button(label: string): HTMLButtonElement | undefined {
   ) as HTMLButtonElement | undefined;
 }
 
+function openDetails(): void {
+  clickButton(mounted!.container, "对比详情");
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -197,6 +201,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 4, applied: 4, skipped: 0 });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("old-01"));
     clickButton(mounted.container, "推送到云端 (4)");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
@@ -231,6 +236,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 2, applied: 2, skipped: 0 });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("web-01") && text().includes("db-02"));
     expect(mocks.collectAssets).toHaveBeenCalledTimes(2);
     expect(mocks.collectAssets).toHaveBeenNthCalledWith(1, true, undefined, 512);
@@ -280,6 +286,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("已一致"));
     expect(text()).toContain("拉取并应用 (0)");
     expect(button("拉取并应用 (0)")?.disabled).toBe(true);
@@ -308,6 +315,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("云端已删"));
     clickButton(mounted.container, "拉取并应用 (1)");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
@@ -346,6 +354,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("云端已删"));
     clickButton(mounted.container, "拉取并应用 (1)");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
@@ -386,6 +395,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("生产 <口令> & more"));
     clickButton(mounted.container, "拉取并应用 (1)");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
@@ -427,6 +437,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
     // 本机省略版不得覆盖云端完整版:不进推送集合,进应用集合
     expect(text()).toContain("推送到云端 (0)");
@@ -456,6 +467,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
     expect(text()).toContain("拉取并应用 (0)");
     expect(text()).toContain("推送到云端 (1)");
@@ -485,6 +497,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
     // 本机 endedAt 更大 → 本机较新,推送;远端不进入应用集合
     expect(text()).toContain("本机较新");

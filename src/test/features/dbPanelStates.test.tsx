@@ -87,6 +87,17 @@ describe("DbPanel MySQL 状态", () => {
     await flushUntil(() => text().includes("users"));
     expect(text()).not.toContain("表列表加载中");
   });
+
+  it("工具栏没有「历史（即将推出）」死按钮", async () => {
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some((b) =>
+        b.textContent?.includes("历史"),
+      ),
+    ).toBe(false);
+    expect(mounted!.container.querySelector('button[title="查询历史（即将推出）"]')).toBeNull();
+  });
 });
 
 describe("DbPanel Redis 状态", () => {

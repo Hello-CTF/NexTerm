@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
@@ -11,8 +11,8 @@ import { dbApi, type QueryResult } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
+  IconChevronUp,
   IconDatabase,
-  IconHistory,
   IconLayers,
   IconList,
   IconLoader,
@@ -21,6 +21,7 @@ import {
   IconSearch,
   IconSettings,
   IconTable,
+  IconTerminal,
   IconXCircle,
 } from "../../ui/icons";
 
@@ -184,10 +185,6 @@ function MysqlView({ connId }: { connId: string }) {
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">张表</span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（即将推出）" disabled>
-          <IconHistory size={13} />
-          历史
-        </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
@@ -386,7 +383,9 @@ function RedisView({ connId }: { connId: string }) {
   const [viewError, setViewError] = useState<string | null>(null);
   const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const consoleScrollRef = useRef<HTMLDivElement>(null);
+  const consolePanelId = useId();
 
   useEffect(() => {
     const el = consoleScrollRef.current;
@@ -597,34 +596,61 @@ function RedisView({ connId }: { connId: string }) {
           )}
         </div>
 
-        <div className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
-          <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
-            <div className="mb-1.5 text-[11px] text-neutral-500">
-              <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
-              <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
+        {consoleOpen ? (
+          <div id={consolePanelId} className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
+            <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
+              <div className="mb-1.5 text-[11px] text-neutral-500">
+                <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
+                <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
+              </div>
+              {cmdOut && (
+                <pre className="nx-pre text-[11px]" role="status">
+                  {cmdOut}
+                </pre>
+              )}
             </div>
-            {cmdOut && (
-              <pre className="nx-pre text-[11px]" role="status">
-                {cmdOut}
-              </pre>
-            )}
+            <div className="flex shrink-0 items-center gap-1.5">
+              <input
+                className="nx-input nx-input-sm font-mono"
+                value={cmdText}
+                onChange={(e) => setCmdText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isImeKeyEvent(e)) return;
+                  if (e.key === "Enter") void runCmd();
+                }}
+                aria-label="Redis 命令"
+              />
+              <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
+                执行
+              </button>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                aria-expanded={consoleOpen}
+                aria-controls={consolePanelId}
+                onClick={() => setConsoleOpen(false)}
+              >
+                收起
+              </button>
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <input
-              className="nx-input nx-input-sm font-mono"
-              value={cmdText}
-              onChange={(e) => setCmdText(e.target.value)}
-              onKeyDown={(e) => {
-                if (isImeKeyEvent(e)) return;
-                if (e.key === "Enter") void runCmd();
-              }}
-              aria-label="Redis 命令"
-            />
-            <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
-              执行
-            </button>
-          </div>
-        </div>
+        ) : (
+          <button
+            type="button"
+            className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1.5 text-left"
+            aria-expanded={consoleOpen}
+            aria-controls={consolePanelId}
+            onClick={() => setConsoleOpen(true)}
+          >
+            <IconTerminal size={12} className="shrink-0 text-neutral-500" />
+            <span className="shrink-0 text-[11.5px] text-neutral-300">命令台</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-500">
+              {cmdOut.trim()
+                ? cmdOut.trim().split("\n").slice(-1)[0]
+                : "执行任意 Redis 命令；FLUSHALL / DEL 等危险命令会先要求确认"}
+            </span>
+            <IconChevronUp size={11} className="shrink-0 rotate-180 text-neutral-500" />
+          </button>
+        )}
       </div>
     </div>
   );

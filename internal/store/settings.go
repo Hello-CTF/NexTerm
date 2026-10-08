@@ -134,6 +134,17 @@ func escapeLikePrefix(prefix string) string {
 	return out.String()
 }
 
+// SettingContainsValue 报告是否存在 value 包含 substring 的设置项(如 enc:v1: 密文信封)。
+func (s *Store) SettingContainsValue(ctx context.Context, substring string) (bool, error) {
+	var found bool
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM setting WHERE value LIKE ? ESCAPE '\\')",
+		"%"+escapeLikePrefix(substring)+"%").Scan(&found)
+	if err != nil {
+		return false, dbError(err)
+	}
+	return found, nil
+}
+
 type SettingTx interface {
 	SettingGet(ctx context.Context, key string) (string, bool, error)
 	SettingDelete(ctx context.Context, key string) error

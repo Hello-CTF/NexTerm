@@ -99,7 +99,7 @@
         <p>命令以卡片进入对话流，展开可见完整输出与退出码；危险操作一律拒绝，敏感操作先经确认。</p>
         <ul>
           <li>只读、读写、静默三档权限随时切换</li>
-          <li>AI 接管中，终端内按 Esc（可改键）只是暂停、可恢复；点「立即夺回」才停止 AI 并退出接管</li>
+          <li>AI 接管中，终端内按任意键只是暂停、可恢复；全局夺回快捷键（默认 Esc，可改键）或点「立即夺回」才停止 AI 并退出接管</li>
           <li>写文件前先看逐行 diff，改完留变更记录</li>
           <li>任意 OpenAI 兼容端点，密钥只存自己一侧</li>
         </ul>
@@ -114,7 +114,7 @@
       <div class="cell">
         <span class="tag">FILES</span>
         <h3>文件</h3>
-        <p>SFTP 虚拟滚动、带断点续传的传输、内置编辑器与 MD5 / SHA256 校验。</p>
+        <p>SFTP 虚拟滚动、上传下载进度、内置编辑器与 MD5 / SHA256 校验。</p>
       </div>
       <div class="cell">
         <span class="tag">DATABASE</span>
@@ -348,9 +348,9 @@
 <span class="c"># 首次启动打印一次性初始化码，浏览器打开完成超管初始化</span>
 <span class="p">$</span> nexterm-server --data-dir /var/lib/nexterm
 
-<span class="c"># 自查：sync-only 不注册终端命令，/rpc 返回 404</span>
+<span class="c"># 自查：sync-only 不挂 /rpc（404），/healthz 如实上报命令数</span>
 <span class="p">$</span> curl -s 127.0.0.1:8080/healthz
-  <span class="c"># "syncOnly":true,"commands":0</span></pre>
+  <span class="c"># "syncOnly":true,"commands":3</span></pre>
       </div>
     </div>
 
@@ -369,9 +369,9 @@
       <div class="cell">
         <span class="tag">LINUX · SYNC-ONLY 模式</span>
         <h3>公网只做同步中转</h3>
-        <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/auth/*</code>、<code>/admin/*</code>、<code>/sync/v2/*</code> 与 <code>/healthz</code>。</p>
+        <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/auth/*</code>、<code>/admin/*</code>、<code>/sync/v2/*</code>、<code>/sync/rpc</code> 与 <code>/healthz</code>。</p>
         <ul>
-          <li>不注册任何终端命令：浏览器界面与 <code>/rpc</code> 都不存在</li>
+          <li>不注册任何终端命令：浏览器界面与 <code>/rpc</code> 都不存在；<code>/sync/rpc</code> 只有对端同步三命令（digest / export / import）</li>
           <li>同步数据按账号隔离、端到端加密，服务端只存密文</li>
           <li>同一个服务端包内附 <code>nexterm-onlyserver.service</code>，换装即切换</li>
         </ul>
@@ -509,7 +509,7 @@
     function () { line('<span class="warn">---- AI 请求接管终端 ----</span>'); return sleep(650); },
     function () { line('<span class="info">   docker restart api-server</span>'); return sleep(650); },
     function () { line('<span class="d">   〔允许本次〕〔本会话允许〕〔拒绝〕 → 允许本次</span>'); return sleep(950); },
-    function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按 Esc 暂停（可恢复），「立即夺回」停止 AI</span>'); return sleep(700); },
+    function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按任意键暂停（可恢复），「立即夺回」停止 AI</span>'); return sleep(700); },
     function () { line('<span class="p">deploy@web-01:~$</span> <span class="caret"></span>'); return sleep(4200); }
   ];
 

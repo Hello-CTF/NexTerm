@@ -823,9 +823,9 @@ export const syncApi = {
       args: { path, content, password },
     }),
 
-  linkGet: () => call<import("./types").SyncLink>("sync_link_get"),
-  linkSet: (patch: { url: string; tokenKind?: string; token?: string; insecure?: boolean }) =>
-    call<import("./types").SyncLink>("sync_link_set", { args: patch }),
+  linkGet: () => call<import("./types").AccountLink>("sync_link_get"),
+  linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
+    call<import("./types").AccountLink>("sync_link_set", { args: patch }),
 
   status: () => call<import("./types").SyncStatus>("sync_status"),
   syncNow: () => call<import("./types").SyncReport>("sync_now"),

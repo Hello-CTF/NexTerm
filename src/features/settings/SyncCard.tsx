@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
-import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncReport } from "../../ipc/types";
+import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncReport, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
@@ -32,6 +32,8 @@ import { AccountCard } from "./AccountCard";
 import { SyncReportView } from "./SyncCardReport";
 import {
   IconCheckCircle,
+  IconChevronDown,
+  IconChevronRight,
   IconDownload,
   IconInfo,
   IconLock,
@@ -40,27 +42,6 @@ import {
   IconUpload,
   IconXCircle,
 } from "../../ui/icons";
-
-// Go internal/sync.Link 的线上形状(src/ipc/types.ts 的 SyncLink 是 v1 残留,以这里为准)。
-interface AccountLink {
-  url: string;
-  username: string;
-  insecure: boolean;
-  hasPassword: boolean;
-  verifiedAt: number;
-  lastError: string | null;
-}
-
-interface SyncStatusView {
-  configured: boolean;
-  loggedIn: boolean;
-  username?: string;
-  userId?: string;
-  head?: string;
-  seq: number;
-  verifiedAt: number;
-  lastError: string;
-}
 
 export function SyncCard() {
   return (
@@ -86,13 +67,19 @@ function DesktopLinkCard() {
   const qc = useQueryClient();
 
   const [link, setLink] = useState<AccountLink | null>(null);
-  const [status, setStatus] = useState<SyncStatusView | null>(null);
+  const [status, setStatus] = useState<SyncStatus | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
   const [draftEdited, setDraftEdited] = useState(false);
   const [busy, setBusy] = useState<null | "login" | "sync">(null);
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const insecurePanelId = useId();
+  const [insecureOpen, setInsecureOpen] = useState(false);
+  const savedInsecure = link?.insecure ?? false;
+  useEffect(() => {
+    if (savedInsecure) setInsecureOpen(true);
+  }, [savedInsecure]);
 
   const updateDraft = (patch: Partial<{ url: string; username: string; password: string; insecure: boolean }>) => {
     setDraftEdited(true);
@@ -103,12 +90,11 @@ function DesktopLinkCard() {
     setLoadError(null);
     return Promise.all([
       syncApi.linkGet().then((l) => {
-        const next = l as unknown as AccountLink;
-        setLink(next);
+        setLink(l);
         // 初次加载用已保存链接回填 URL/用户名/insecure;密码保持空白;不覆盖未保存编辑
-        setDraft((d) => (draftEdited ? d : { ...d, url: next.url, username: next.username, insecure: next.insecure }));
+        setDraft((d) => (draftEdited ? d : { ...d, url: l.url, username: l.username, insecure: l.insecure }));
       }),
-      syncApi.status().then((s) => setStatus(s as unknown as SyncStatusView)),
+      syncApi.status().then((s) => setStatus(s)),
     ]).catch((e: unknown) => setLoadError(describeError(e)));
   }, [draftEdited]);
 
@@ -126,7 +112,7 @@ function DesktopLinkCard() {
         username: draft.username.trim(),
         ...(draft.password ? { password: draft.password } : {}),
         insecure: draft.insecure,
-      } as never);
+      });
       setDraft((d) => ({ ...d, password: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
@@ -143,7 +129,7 @@ function DesktopLinkCard() {
     setError(null);
     setReport(null);
     try {
-      const r = (await syncApi.syncNow()) as unknown as SyncReport;
+      const r = await syncApi.syncNow();
       setReport(r);
       void qc.invalidateQueries();
       await load();
@@ -230,18 +216,38 @@ function DesktopLinkCard() {
             onChange={(e) => updateDraft({ password: e.target.value })}
           />
         </div>
-        <label className="flex items-start gap-2">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 shrink-0"
-            checked={draft.insecure}
-            onChange={(e) => updateDraft({ insecure: e.target.checked })}
-          />
-          <span className="text-[12px] text-neutral-300">
-            跳过证书校验
-            <span className="nx-hint block">勾选后不再验证服务端身份,可能被中间人冒充;只有自签证书的内网/自建地址才需要勾。</span>
-          </span>
-        </label>
+        <div className="mt-1 border-t border-neutral-800/60 pt-2">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+            aria-expanded={insecureOpen}
+            aria-controls={insecurePanelId}
+            onClick={() => setInsecureOpen((v) => !v)}
+          >
+            {insecureOpen ? (
+              <IconChevronDown size={12} className="shrink-0" />
+            ) : (
+              <IconChevronRight size={12} className="shrink-0" />
+            )}
+            高级选项
+          </button>
+          {insecureOpen && (
+            <div id={insecurePanelId} className="mt-2">
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={draft.insecure}
+                  onChange={(e) => updateDraft({ insecure: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  跳过证书校验
+                  <span className="nx-hint block">勾选后不再验证服务端身份,可能被中间人冒充;只有自签证书的内网/自建地址才需要勾。</span>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -842,6 +848,15 @@ function CompareConsole() {
   // 当前 local/remote 快照所属代次; 与 optInEpochRef 不一致时推送/应用保持禁用(reload 完成前)。
   const [snapshotEpoch, setSnapshotEpoch] = useState(-1);
 
+  const optInPanelId = useId();
+  const detailsPanelId = useId();
+  const [optInOpen, setOptInOpen] = useState(false);
+  const anyOptIn = !!kindOptIn && (kindOptIn.knownHost || kindOptIn.aiProfile);
+  useEffect(() => {
+    if (anyOptIn) setOptInOpen(true);
+  }, [anyOptIn]);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
   // opt-in 读取失败(旧服务端没有该命令/网络错误)按默认关处理, 不阻断对比台
   useEffect(() => {
     let cancelled = false;
@@ -1050,6 +1065,13 @@ function CompareConsole() {
   };
 
   const pushCount = winners.length;
+  const sameCount = rows?.filter((r) => r.state === "same").length ?? 0;
+  const detailsSummary = !rows
+    ? "读取中…"
+    : rows.length === 0
+      ? "本机与云端都还没有可同步的内容"
+      : `共 ${rows.length} 条 · 一致 ${sameCount} 条` +
+        (sameCount < rows.length ? ` · 差异 ${rows.length - sameCount} 条` : "");
 
   return (
     <section className="nx-card">
@@ -1087,33 +1109,56 @@ function CompareConsole() {
       </p>
 
       {kindOptIn && (
-        <div className="mb-3 flex flex-col gap-2">
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={kindOptIn.knownHost}
-              disabled={busy !== null}
-              onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
-            />
-            <span className="text-[12px] text-neutral-300">
-              同步已知主机(主机信任)
-              <span className="nx-hint block">默认关闭。开启后,已接受的主机密钥会端到端加密同步;本地删除会随同步删除云端副本。</span>
+        <div className="mb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+              aria-expanded={optInOpen}
+              aria-controls={optInPanelId}
+              onClick={() => setOptInOpen((v) => !v)}
+            >
+              {optInOpen ? (
+                <IconChevronDown size={12} className="shrink-0" />
+              ) : (
+                <IconChevronRight size={12} className="shrink-0" />
+              )}
+              同步内容开关
+            </button>
+            <span className="nx-hint text-[11px]">
+              已知主机 {kindOptIn.knownHost ? "已开启" : "关"} · AI 档案 {kindOptIn.aiProfile ? "已开启" : "关"}
             </span>
-          </label>
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={kindOptIn.aiProfile}
-              disabled={busy !== null}
-              onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
-            />
-            <span className="text-[12px] text-neutral-300">
-              同步 AI 模型档案
-              <span className="nx-hint block">默认关闭。开启后,档案设置会端到端加密同步;API 密钥只在凭据库已解锁时随档案同步。</span>
-            </span>
-          </label>
+          </div>
+          {optInOpen && (
+            <div id={optInPanelId} className="mt-2 flex flex-col gap-2">
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={kindOptIn.knownHost}
+                  disabled={busy !== null}
+                  onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步已知主机(主机信任)
+                  <span className="nx-hint block">默认关闭。开启后,已接受的主机密钥会端到端加密同步;本地删除会随同步删除云端副本。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={kindOptIn.aiProfile}
+                  disabled={busy !== null}
+                  onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步 AI 模型档案
+                  <span className="nx-hint block">默认关闭。开启后,档案设置会端到端加密同步;API 密钥只在凭据库已解锁时随档案同步。</span>
+                </span>
+              </label>
+            </div>
+          )}
         </div>
       )}
 
@@ -1149,29 +1194,51 @@ function CompareConsole() {
         </div>
       )}
 
-      {rows && (
-        <div className="max-h-[320px] overflow-y-auto rounded border border-neutral-800/60">
-          {rows.length === 0 && <div className="nx-hint px-2.5 py-3 text-[12px]">本机与云端都还没有可同步的内容。</div>}
-          {rows.map((r) => {
-            const label = rowLabel(r);
-            return (
-              <div
-                key={r.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0"
-                title={label.hint}
-              >
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={r.name}>
-                  {r.name}
-                </span>
-                <span className="nx-hint shrink-0 text-[11px]">{KIND_LABELS[r.kind] ?? r.kind}</span>
-                <span className={`nx-badge shrink-0 ${label.tone}`}>{label.text}</span>
-              </div>
-            );
-          })}
+      <div className="mb-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsPanelId}
+            onClick={() => setDetailsOpen((v) => !v)}
+          >
+            {detailsOpen ? (
+              <IconChevronDown size={12} className="shrink-0" />
+            ) : (
+              <IconChevronRight size={12} className="shrink-0" />
+            )}
+            对比详情
+          </button>
+          <span className="nx-hint text-[11px]">{detailsSummary}</span>
         </div>
-      )}
-
-      {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读本机与云端数据…</div>}
+        {detailsOpen && (
+          <div id={detailsPanelId} className="mt-2">
+            {rows && (
+              <div className="max-h-[320px] overflow-y-auto rounded border border-neutral-800/60">
+                {rows.length === 0 && <div className="nx-hint px-2.5 py-3 text-[12px]">本机与云端都还没有可同步的内容。</div>}
+                {rows.map((r) => {
+                  const label = rowLabel(r);
+                  return (
+                    <div
+                      key={r.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0"
+                      title={label.hint}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={r.name}>
+                        {r.name}
+                      </span>
+                      <span className="nx-hint shrink-0 text-[11px]">{KIND_LABELS[r.kind] ?? r.kind}</span>
+                      <span className={`nx-badge shrink-0 ${label.tone}`}>{label.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读本机与云端数据…</div>}
+          </div>
+        )}
+      </div>
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />

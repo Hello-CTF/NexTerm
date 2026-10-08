@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
@@ -22,15 +23,26 @@ var (
 type RecheckFunc func(ctx context.Context, grant *Grant) (*Grant, error)
 
 // Gate 是分享流的执行点: 输出方向 (终端到 viewer) 始终放行, 输入方向仅对
-// read_write 授权放行; 每个数据块在 Read 前与 Write 前各复查一次, 授权失效
-// 后双向立即停止, 失效或取消期间读到的块一律丢弃。阻塞的 Read 由集成层在
-// 取消时关闭 source 唤醒。
+// read_write 授权放行; 每个数据块在 Read 前与 Write 前各复查一次 (可用
+// WithRevalidateTTL 把重查收敛为短 TTL 缓存), 授权失效后双向立即停止,
+// 失效或取消期间读到的块一律丢弃。阻塞的 Read 由集成层在取消时关闭 source 唤醒。
 type Gate struct {
 	mu         sync.Mutex
 	grant      *Grant
 	now        func() int64
 	recheck    RecheckFunc
 	inputCheck func(ctx context.Context, grant *Grant) (*Grant, error)
+
+	revalidateTTL time.Duration
+	recheckCache  refreshCache
+	inputCache    refreshCache
+}
+
+// refreshCache 是 revalidate 短 TTL 缓存的条目: grant 是上次成功刷新的快照,
+// at 是其刷新时刻 (毫秒)。
+type refreshCache struct {
+	grant *Grant
+	at    int64
 }
 
 type GateOption func(*Gate)
@@ -54,6 +66,15 @@ func WithRecheck(recheck RecheckFunc) GateOption {
 func WithInputCheck(check func(ctx context.Context, grant *Grant) (*Grant, error)) GateOption {
 	return func(g *Gate) {
 		g.inputCheck = check
+	}
+}
+
+// WithRevalidateTTL 打开 recheck 与 inputCheck 的短 TTL 缓存: TTL 内的重复
+// 调用不重查, 沿用上次的刷新快照, 吊销/收缩最迟在 TTL 后的下一次调用生效
+// (空闲连接由集成层的周期 Check 兜住)。非正数 (默认) 关闭缓存, 逐块重查。
+func WithRevalidateTTL(ttl time.Duration) GateOption {
+	return func(g *Gate) {
+		g.revalidateTTL = ttl
 	}
 }
 
@@ -94,22 +115,42 @@ func (g *Gate) Check(ctx context.Context) error {
 	if grant == nil {
 		return errors.New("sharing: nil grant")
 	}
-	g.mu.Lock()
-	recheck := g.recheck
-	g.mu.Unlock()
-	if recheck != nil {
-		refreshed, err := recheck(ctx, grant)
-		if err != nil {
-			return err
-		}
-		if refreshed != nil {
-			g.setGrant(refreshed)
-		}
+	refreshed, err := g.cachedRefresh(ctx, grant, g.recheck, &g.recheckCache)
+	if err != nil {
+		return err
+	}
+	if refreshed != nil {
+		g.setGrant(refreshed)
 	}
 	if g.now() >= g.Grant().ExpiresAt {
 		return ErrGrantExpired
 	}
 	return nil
+}
+
+// cachedRefresh 执行一次 revalidate: TTL 窗口内直接返回 nil (沿用当前快照,
+// 缓存条目一定比当前快照旧或相同, 不会把权限回滚到更宽的状态); 窗口外真实
+// 调用, 成功的刷新写入缓存。错误不缓存, 吊销即时传递。
+func (g *Gate) cachedRefresh(ctx context.Context, grant *Grant, check RecheckFunc, cache *refreshCache) (*Grant, error) {
+	if check == nil {
+		return nil, nil
+	}
+	g.mu.Lock()
+	ttl, last := g.revalidateTTL, *cache
+	g.mu.Unlock()
+	if ttl > 0 && last.grant != nil && g.now()-last.at < ttl.Milliseconds() {
+		return nil, nil
+	}
+	refreshed, err := check(ctx, grant)
+	if err != nil {
+		return nil, err
+	}
+	if refreshed != nil && ttl > 0 {
+		g.mu.Lock()
+		*cache = refreshCache{grant: refreshed, at: g.now()}
+		g.mu.Unlock()
+	}
+	return refreshed, nil
 }
 
 // PipeOutput 把终端输出拷贝给 viewer, 直到源结束、上下文结束或授权失效。
@@ -140,7 +181,7 @@ func (g *Gate) pipe(ctx context.Context, dst io.Writer, src io.Reader, write boo
 		}
 		if count > 0 {
 			if write && g.inputCheck != nil {
-				refreshed, err := g.inputCheck(ctx, g.Grant())
+				refreshed, err := g.cachedRefresh(ctx, g.Grant(), g.inputCheck, &g.inputCache)
 				if err != nil {
 					return err
 				}

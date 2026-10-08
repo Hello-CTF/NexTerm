@@ -53,6 +53,7 @@ type ProductionServices struct {
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore
 	sshConnector     *productionConnector
+	stagedBlobs      StagedBlobResolver
 	dataDir          string
 	desktop          bool
 	aiRelease        func()
@@ -79,7 +80,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
@@ -111,11 +112,11 @@ func productionModules(services ProductionServices) []Module {
 				if err := registerFilesImageCommands(dispatcher, services.desktop); err != nil {
 					return err
 				}
-				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir); err != nil {
+				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir, services.desktop); err != nil {
 					return err
 				}
 				if services.Vault != nil {
-					return registerSSHImportCommands(dispatcher, services.Store, services.Vault)
+					return registerSSHImportCommands(dispatcher, services.Store, services.Vault, services.desktop)
 				}
 				return nil
 			},

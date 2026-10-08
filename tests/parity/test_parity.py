@@ -110,16 +110,16 @@ class InventoryTest(unittest.TestCase):
         steer = {entry["name"]: entry for entry in frontend["entries"] if entry["name"] == "ai_steer"}
         self.assertEqual(
             [(steer["ai_steer"]["accessor"], steer["ai_steer"]["line"])],
-            [("aiApi.steer", 613)],
+            [("aiApi.steer", 614)],
         )
         hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
         self.assertEqual(
             [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
-            [("aiApi.hitlSnapshot", 621)],
+            [("aiApi.hitlSnapshot", 622)],
         )
         self.assertEqual(
             [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
-            [("aiApi.hitlEvents", 623)],
+            [("aiApi.hitlEvents", 624)],
         )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],

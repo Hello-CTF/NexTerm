@@ -126,6 +126,12 @@ func run(args []string) int {
 	} else if limit > 0 {
 		logger.Info("open file limit ensured", "limit", limit)
 	}
+	// 同一个 BlobStore 实例同时供 /files/blob HTTP 面与服务端 IPC 暂存解析,
+	// 保证属主元数据与暂存根布局只有一份事实来源。
+	var blobs *server.BlobStore
+	if paths.DataDir != "" {
+		blobs = server.NewBlobStore(paths.DataDir, logger.Logger)
+	}
 	application, err := production.NewProduction(ctx, production.ProductionConfig{
 		Config: core.Config{
 			Logger: logger.Logger,
@@ -140,6 +146,7 @@ func run(args []string) int {
 			Password:     dbPassword,
 			MaxOpenConns: invocation.DBMaxOpenConns,
 		},
+		StagedBlobs: blobs,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -198,6 +205,7 @@ func run(args []string) int {
 			Auth:          invocation.Auth,
 			PublicBaseURL: invocation.PublicBaseURL,
 		},
+		Blobs:          blobs,
 		Dispatcher:     application.Dispatcher,
 		PeerDispatcher: peerDispatcher,
 		Environment:    application.Environment(""),

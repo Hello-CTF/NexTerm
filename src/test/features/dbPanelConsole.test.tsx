@@ -97,6 +97,17 @@ function cmdInput(): HTMLInputElement {
   return input;
 }
 
+async function expandConsole(): Promise<void> {
+  const bar = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) =>
+    b.textContent?.includes("命令台"),
+  );
+  if (!bar) throw new Error("命令台折叠条未找到");
+  click(bar);
+  await flushUntil(
+    () => mounted?.container.querySelector('input[aria-label="Redis 命令"]') !== null,
+  );
+}
+
 function statusOut(): HTMLElement | null {
   return mounted?.container.querySelector<HTMLElement>('pre[role="status"]') ?? null;
 }
@@ -126,7 +137,7 @@ async function selectKey(key: string): Promise<void> {
 describe("DbPanel Redis 命令台可访问性", () => {
   it("命令输入有可访问名，输出通过 status 区域播报", async () => {
     mountRedis();
-    await flushUntil(() => cmdInput() !== null);
+    await expandConsole();
     setInputValue(cmdInput(), "INFO memory");
     clickButton(mounted!.container, "执行");
     await flushUntil(() => statusOut()?.textContent === "OK");
@@ -136,7 +147,7 @@ describe("DbPanel Redis 命令台可访问性", () => {
 
   it("提示文案如实枚举需确认的命令，并声明引号限制", async () => {
     mountRedis();
-    await flushUntil(() => cmdInput() !== null);
+    await expandConsole();
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("FLUSHALL");
     expect(text).toContain("DEL");
@@ -148,11 +159,66 @@ describe("DbPanel Redis 命令台可访问性", () => {
   });
 });
 
+describe("DbPanel Redis 命令台折叠", () => {
+  it("默认折叠成一行条，展开可执行，收起后回到一行条并保留输出预览", async () => {
+    mountRedis();
+    await flushUntil(() => mounted!.container.textContent?.includes("命令台") === true);
+    expect(mounted!.container.querySelector('input[aria-label="Redis 命令"]')).toBeNull();
+    const bar = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    expect(bar?.getAttribute("aria-expanded")).toBe("false");
+
+    await expandConsole();
+    setInputValue(cmdInput(), "INFO memory");
+    pressEnter(cmdInput());
+    await flushUntil(() => statusOut()?.textContent === "OK");
+
+    clickButton(mounted!.container, "收起");
+    await flushUntil(
+      () => mounted!.container.querySelector('input[aria-label="Redis 命令"]') === null,
+    );
+    const collapsedBar = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    expect(collapsedBar?.textContent).toContain("OK");
+  });
+
+  it("折叠条与收起按钮通过 aria-controls 关联命令台区域", async () => {
+    mountRedis();
+    await flushUntil(() => mounted!.container.textContent?.includes("命令台") === true);
+    const bar = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    if (!bar) throw new Error("命令台折叠条未找到");
+    const panelId = bar.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    expect(bar.getAttribute("aria-expanded")).toBe("false");
+
+    await expandConsole();
+    const panel = mounted!.container.querySelector(".nx-redis-console");
+    expect(panel?.id).toBe(panelId);
+    const collapse = [...mounted!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "收起",
+    );
+    expect(collapse?.getAttribute("aria-expanded")).toBe("true");
+    expect(collapse?.getAttribute("aria-controls")).toBe(panelId);
+
+    clickButton(mounted!.container, "收起");
+    await flushUntil(() => mounted!.container.querySelector(".nx-redis-console") === null);
+    const collapsedBar = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    expect(collapsedBar?.getAttribute("aria-expanded")).toBe("false");
+    expect(collapsedBar?.getAttribute("aria-controls")).toBe(panelId);
+  });
+});
+
 describe("DbPanel Redis 命令台危险命令门禁", () => {
   it("FLUSHALL 先弹警告确认；取消则不执行", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     mountRedis();
-    await flushUntil(() => cmdInput() !== null);
+    await expandConsole();
     setInputValue(cmdInput(), "FLUSHALL");
     clickButton(mounted!.container, "执行");
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
@@ -166,7 +232,7 @@ describe("DbPanel Redis 命令台危险命令门禁", () => {
 
   it("确认后 FLUSHALL 真正执行并播报结果", async () => {
     mountRedis();
-    await flushUntil(() => cmdInput() !== null);
+    await expandConsole();
     setInputValue(cmdInput(), "FLUSHALL");
     pressEnter(cmdInput());
     await flushUntil(() => statusOut()?.textContent === "OK");
@@ -188,7 +254,7 @@ describe("DbPanel Redis 命令台危险命令门禁", () => {
   ])("%s 同样被门禁拦截，取消即不执行", async (command) => {
     mocks.ask.mockResolvedValueOnce(false);
     mountRedis();
-    await flushUntil(() => cmdInput() !== null);
+    await expandConsole();
     setInputValue(cmdInput(), command);
     pressEnter(cmdInput());
     await flushUntil(() => mocks.ask.mock.calls.length > 0);

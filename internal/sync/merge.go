@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -380,6 +381,14 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := e.groupUpsertTx(ctx, tx, payload, parentID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// groupUpsertTx 是 groupUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+func (e *Engine) groupUpsertTx(ctx context.Context, tx *sql.Tx, payload groupObject, parentID *string) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_group(id, parent_id, name, sort, created_at, updated_at)
 VALUES(?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, name=excluded.name, sort=excluded.sort, updated_at=excluded.updated_at`,
@@ -389,7 +398,7 @@ ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, name=excluded.name, 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", payload.ID); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (e *Engine) groupParents(ctx context.Context) (map[string]*string, error) {
@@ -541,6 +550,14 @@ func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject,
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := e.credentialUpsertTx(ctx, tx, payload, nonce, blob); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// credentialUpsertTx 是 credentialUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+func (e *Engine) credentialUpsertTx(ctx context.Context, tx *sql.Tx, payload credentialObject, nonce, blob []byte) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO credential(id, name, kind, cipher, nonce, blob, kek_hint, created_at, updated_at)
 VALUES(?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, cipher=excluded.cipher,
@@ -552,7 +569,7 @@ nonce=excluded.nonce, blob=excluded.blob, kek_hint=excluded.kek_hint, updated_at
 	if _, err := tx.ExecContext(ctx, "DELETE FROM credential_tombstone WHERE id = ?", payload.ID); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
@@ -26,11 +27,13 @@ const (
 	DefaultBlobDiskMaxPercent       = 90.0
 	blobCopyBuffer                  = 256 << 10
 	blobTooLargeMessage             = "文件超出大小限制，请压缩或拆分后重试"
+	blobMetaName                    = ".meta.json"
 )
 
 var (
 	errBlobPersistQuota  = errors.New("持久化存储配额已用尽，请清理空间后重试")
 	errBlobDiskThreshold = errors.New("磁盘使用率超过阈值，无法继续持久化存储")
+	errStagedNotFound    = errors.New("暂存文件不存在或已过期")
 )
 
 type BlobStore struct {
@@ -50,6 +53,10 @@ type stagedBlob struct {
 	ID    string `json:"id"`
 	Path  string `json:"path"`
 	Bytes *int64 `json:"bytes,omitempty"`
+}
+
+type blobMeta struct {
+	OwnerID string `json:"owner_id"`
 }
 
 func NewBlobStore(dataDir string, logger *slog.Logger) *BlobStore {
@@ -171,7 +178,8 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
 		return
 	}
-	path := filepath.Join(dir, SafeBlobName(r.URL.Query().Get("name")))
+	name := SafeBlobName(r.URL.Query().Get("name"))
+	path := filepath.Join(dir, name)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -190,7 +198,12 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
-	writeBlobJSON(w, stagedBlob{ID: id, Path: path, Bytes: &written})
+	if err := b.writeOwnerMeta(dir, r); err != nil {
+		_ = os.RemoveAll(dir)
+		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name, Bytes: &written})
 }
 
 func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +218,8 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
 		return
 	}
-	path := filepath.Join(dir, SafeBlobName(r.URL.Query().Get("name")))
+	name := SafeBlobName(r.URL.Query().Get("name"))
+	path := filepath.Join(dir, name)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -217,7 +231,12 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
-	writeBlobJSON(w, stagedBlob{ID: id, Path: path})
+	if err := b.writeOwnerMeta(dir, r); err != nil {
+		_ = os.RemoveAll(dir)
+		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name})
 }
 
 func (b *BlobStore) Download(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +247,10 @@ func (b *BlobStore) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	path, err := findBlob(b.stageRoot(), id)
 	if err != nil {
+		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
+		return
+	}
+	if !b.canAccess(r, filepath.Dir(path)) {
 		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
 		return
 	}
@@ -264,11 +287,83 @@ func (b *BlobStore) Delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
 		return
 	}
+	if !b.canAccess(r, dir) {
+		http.Error(w, "暂存文件不存在或已过期", http.StatusNotFound)
+		return
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		http.Error(w, "删除失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (b *BlobStore) writeOwnerMeta(dir string, r *http.Request) error {
+	identity := accountIdentityFrom(r.Context())
+	if identity == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(blobMeta{OwnerID: identity.UserID})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, blobMetaName), encoded, 0o600)
+}
+
+// canAccess 校验请求身份是暂存条目属主或超管；无属主元数据的存量条目
+// (未启用账号或本改动前的暂存) 保持放行。拒绝与不存在同样回 404, 不泄露存在性。
+func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
+	identity := accountIdentityFrom(r.Context())
+	userID := ""
+	superadmin := false
+	if identity != nil {
+		userID = identity.UserID
+		superadmin = identity.Role == account.RoleSuperadmin
+	}
+	return b.canAccessDir(dir, userID, superadmin)
+}
+
+// canAccessDir 是 canAccess 的按身份判等拆分, 供 HTTP 面与 IPC 面共用;
+// userID 空串表示无身份 (静态令牌/网关/auth=off)。
+func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	var meta blobMeta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return false
+	}
+	if meta.OwnerID == "" {
+		return true
+	}
+	return userID != "" && (userID == meta.OwnerID || superadmin)
+}
+
+// ResolveStagedPath 把 Stage/Reserve 响应里的相对 path (id/name) 解析为暂存文件的服务器
+// 绝对路径, 供服务端 IPC (fs_upload/fs_download/terminal_record_start 等) 定位浏览器暂存
+// 文件; 响应本身不含绝对路径, 解析只在服务端发生。userID 是 ipc 会话注入的操作用户,
+// 属主口径与 HTTP 面一致 (IPC 面无角色信息, 超管不能代解析他人暂存)。persist 条目不在
+// 暂存根, 不能经此解析。name 必须等于 SafeBlobName(name) (即暂存落盘名), 拒绝大小写、
+// 控制字符、前导点等变体, 如 .META.JSON 在大小写不敏感文件系统上会与属主元数据碰撞。
+func (b *BlobStore) ResolveStagedPath(rel, userID string) (string, error) {
+	id, name, found := strings.Cut(rel, "/")
+	if !found || !ids.Valid(id) || name == "" || name != SafeBlobName(name) {
+		return "", errStagedNotFound
+	}
+	dir := filepath.Join(b.stageRoot(), id)
+	if !b.canAccessDir(dir, userID, false) {
+		return "", errStagedNotFound
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errStagedNotFound
+	}
+	return path, nil
 }
 
 func (b *BlobStore) createItemDir(root string) (string, string, error) {
@@ -322,7 +417,7 @@ func (b *BlobStore) persistUsage() (int64, error) {
 		if err != nil {
 			return err
 		}
-		if !entry.Type().IsRegular() {
+		if !entry.Type().IsRegular() || entry.Name() == blobMetaName {
 			return nil
 		}
 		info, err := entry.Info()
@@ -369,6 +464,9 @@ func findBlob(root, id string) (string, error) {
 		return "", err
 	}
 	for _, entry := range entries {
+		if entry.Name() == blobMetaName {
+			continue
+		}
 		if entry.Type().IsRegular() {
 			return filepath.Join(root, id, entry.Name()), nil
 		}

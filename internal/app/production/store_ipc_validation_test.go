@@ -1,6 +1,8 @@
 package production
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +19,7 @@ func TestAssetKeyFileValidationMessages(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	unavailable := ipc.NewDispatcher()
-	if err := registerStoreCommands(unavailable, database, nil, ""); err != nil {
+	if err := registerStoreCommands(unavailable, database, nil, "", true); err != nil {
 		t.Fatal(err)
 	}
 	response := dispatchStoreTest(unavailable, "asset_save_key_file", `{"content":"key"}`)
@@ -29,7 +31,7 @@ func TestAssetKeyFileValidationMessages(t *testing.T) {
 	}
 
 	dispatcher := ipc.NewDispatcher()
-	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir()); err != nil {
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
 	oversized := `"` + strings.Repeat("a", 64<<10+1) + `"`
@@ -42,6 +44,30 @@ func TestAssetKeyFileValidationMessages(t *testing.T) {
 	}
 }
 
+func TestAssetReadKeyFileServerAssemblyRejected(t *testing.T) {
+	ctx := t.Context()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), false); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir() + "/server.key"
+	if err := os.WriteFile(outside, []byte("SERVER SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":`+strconv.Quote(outside)+`}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("server assembly asset_read_key_file = %+v, want unsupported", response)
+	}
+	if response.Error.Message != "读取本地密钥文件只在桌面端可用" {
+		t.Fatalf("asset_read_key_file message = %q", response.Error.Message)
+	}
+}
+
 func TestSnippetValidationMessages(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -50,7 +76,7 @@ func TestSnippetValidationMessages(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	dispatcher := ipc.NewDispatcher()
-	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir()); err != nil {
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
 

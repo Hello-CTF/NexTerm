@@ -3,12 +3,23 @@ package sharing
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	stdsync "sync"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+)
+
+const (
+	// linkRevalidateTTL 是公开链接 Gate 重查的短 TTL: 块级重查收敛为每秒
+	// 每连接至多一次, 吊销/收缩最迟在 TTL 后的下一次重查生效。
+	linkRevalidateTTL = time.Second
+	// linkInputAuditWindow 是输入审计的聚合窗口: 同窗同类事件只计数,
+	// 匿名 read_write 连接无法逐块刷爆 audit_log。
+	linkInputAuditWindow = time.Minute
 )
 
 // Grant 是一次分享授权的快照: 服务端校验通过后交给连接路径与 agent 端
@@ -299,10 +310,13 @@ func linkDenyMessage(reason string) string {
 
 // NewLinkGate 为公开链接连接建立执行 Gate: 逐块以 RevalidateLink 按当前行
 // 刷新授权 (吊销/过期/设备吊销即双向停止), 输入方向在 Write 前再经
-// RevalidateLinkInput 审计并强制 read_write。后续连接切片应通过本构造
-// 建立数据通路, 而不是直接持有 Grant 快照。
+// RevalidateLinkInput 审计并强制 read_write。重查带短 TTL 缓存: 匿名
+// read_write 连接的每块输入不再都打到数据库与审计, 吊销/收缩最迟在 TTL 后的
+// 下一次重查生效。后续连接切片应通过本构造建立数据通路, 而不是直接持有
+// Grant 快照。
 func (s *Service) NewLinkGate(grant *Grant, options ...GateOption) *Gate {
 	wired := []GateOption{
+		WithRevalidateTTL(linkRevalidateTTL),
 		WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {
 			return s.RevalidateLink(ctx, current)
 		}),
@@ -315,7 +329,7 @@ func (s *Service) NewLinkGate(grant *Grant, options ...GateOption) *Gate {
 
 // RevalidateLinkInput 是公开链接输入路径的服务端强制点: 每次输入都按当前
 // 行重查 (吊销/过期/绑定) 并要求 read_write, 不信任签发时的 Grant 快照;
-// 每次判定都写审计。
+// 每次判定都写审计 (按会话/时间窗口聚合, 见 auditLinkInput)。
 func (s *Service) RevalidateLinkInput(ctx context.Context, grant *Grant) (*Grant, error) {
 	refreshed, reason, err := s.revalidateLink(ctx, grant)
 	if err == nil && !refreshed.Permission.AllowsWrite() {
@@ -337,11 +351,85 @@ func (s *Service) RevalidateLinkInput(ctx context.Context, grant *Grant) (*Grant
 		payload.Reason = ""
 		payload.Permission = string(refreshed.Permission)
 	}
-	if auditErr := s.audit(ctx, auditKindLinkInput, payload); auditErr != nil {
+	if auditErr := s.auditLinkInputAggregated(ctx, payload); auditErr != nil {
 		return nil, auditErr
 	}
 	if err != nil {
 		return nil, err
 	}
 	return refreshed, nil
+}
+
+type linkInputAuditPayload struct {
+	auditPayload
+	Suppressed int64 `json:"suppressed,omitempty"`
+}
+
+type linkInputAuditState struct {
+	startedAt  int64
+	payload    auditPayload
+	suppressed int64
+}
+
+var linkInputAudits = struct {
+	mu      stdsync.Mutex
+	windows map[string]*linkInputAuditState
+}{windows: map[string]*linkInputAuditState{}}
+
+// auditLinkInputAggregated 按会话 + 时间窗口聚合输入审计: 窗口内同类事件只
+// 计数不落行; 窗口过期后的同类事件把计数折算成一行; 类别变化 (如 allow ->
+// deny) 先把旧窗口计数折算落行, 再立即落新事件的一行, 拒绝不被延迟。
+func (s *Service) auditLinkInputAggregated(ctx context.Context, payload auditPayload) error {
+	key := payload.SessionID
+	if key == "" {
+		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+	}
+	now := s.now()
+	linkInputAudits.mu.Lock()
+	state := linkInputAudits.windows[key]
+	switch {
+	case state == nil:
+		if len(linkInputAudits.windows) > 1024 {
+			for existing, entry := range linkInputAudits.windows {
+				if now-entry.startedAt >= linkInputAuditWindow.Milliseconds() {
+					delete(linkInputAudits.windows, existing)
+				}
+			}
+		}
+		linkInputAudits.windows[key] = &linkInputAuditState{startedAt: now, payload: payload}
+		linkInputAudits.mu.Unlock()
+		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+	case now-state.startedAt < linkInputAuditWindow.Milliseconds() && state.payload.Outcome == payload.Outcome && state.payload.Reason == payload.Reason:
+		state.suppressed++
+		linkInputAudits.mu.Unlock()
+		return nil
+	case state.payload.Outcome == payload.Outcome && state.payload.Reason == payload.Reason:
+		count := state.suppressed + 1
+		state.startedAt, state.suppressed = now, 0
+		linkInputAudits.mu.Unlock()
+		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload, Suppressed: count})
+	default:
+		flushed := state.payload
+		count := state.suppressed
+		state.startedAt, state.payload, state.suppressed = now, payload, 0
+		linkInputAudits.mu.Unlock()
+		if count > 0 {
+			if err := s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: flushed, Suppressed: count}); err != nil {
+				return err
+			}
+		}
+		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+	}
+}
+
+func (s *Service) auditLinkInput(ctx context.Context, payload linkInputAuditPayload) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, auditKindLinkInput, string(encoded)); err != nil {
+		return dbError(err)
+	}
+	return nil
 }

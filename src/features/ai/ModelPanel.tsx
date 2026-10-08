@@ -31,6 +31,8 @@ import {
 import { formatTokens } from "./UsageRing";
 import {
   IconCheck,
+  IconChevronDown,
+  IconChevronRight,
   IconClose,
   IconEye,
   IconEyeOff,
@@ -57,6 +59,17 @@ function blankProfile(): ModelProfile {
     circuitFailureThreshold: null,
     circuitCooldownSeconds: null,
   };
+}
+
+function hasAdvancedModelParams(p: ModelProfile): boolean {
+  return (
+    !modelParamsAtDefaults(p) ||
+    (p.requestTimeoutSeconds ?? null) !== null ||
+    (p.idleTimeoutSeconds ?? null) !== null ||
+    (p.maxTokens ?? null) !== null ||
+    (p.circuitFailureThreshold ?? null) !== null ||
+    (p.circuitCooldownSeconds ?? null) !== null
+  );
 }
 
 export function ModelManager({
@@ -88,6 +101,12 @@ export function ModelManager({
   const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft));
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
   const fieldId = useId();
+  const advancedPanelId = useId();
+  const [advancedState, setAdvancedState] = useState<{ id: string; open: boolean }>({ id: "", open: false });
+  if (draft && advancedState.id !== draft.id) {
+    setAdvancedState({ id: draft.id, open: hasAdvancedModelParams(draft) });
+  }
+  const advancedOpen = !!draft && advancedState.id === draft.id && advancedState.open;
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -458,160 +477,184 @@ export function ModelManager({
                 </div>
               </Field>
 
-              <Field label="回退模型（可选）" htmlFor={`${fieldId}-fallback`}>
-                <input
-                  id={`${fieldId}-fallback`}
-                  className="nx-input font-mono"
-                  placeholder="主模型失败时改用的模型名"
-                  value={fallbackModelLabel(draft)}
-                  onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
-                />
-                <div className="nx-hint mt-1 text-[10.5px]">
-                  不改这里就保留原设置；清空后保存 = 明确移除回退。
-                </div>
-              </Field>
+              <div className="mt-1 border-t border-neutral-800/60 pt-2.5">
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+                  aria-expanded={advancedOpen}
+                  aria-controls={advancedPanelId}
+                  onClick={() =>
+                    setAdvancedState((prev) =>
+                      draft && prev.id === draft.id ? { ...prev, open: !prev.open } : prev,
+                    )
+                  }
+                >
+                  {advancedOpen ? (
+                    <IconChevronDown size={12} className="shrink-0" />
+                  ) : (
+                    <IconChevronRight size={12} className="shrink-0" />
+                  )}
+                  高级参数
+                </button>
+                {advancedOpen && (
+                  <div id={advancedPanelId} className="mt-2.5 flex flex-col gap-2.5">
+                    <Field label="回退模型（可选）" htmlFor={`${fieldId}-fallback`}>
+                      <input
+                        id={`${fieldId}-fallback`}
+                        className="nx-input font-mono"
+                        placeholder="主模型失败时改用的模型名"
+                        value={fallbackModelLabel(draft)}
+                        onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
+                      />
+                      <div className="nx-hint mt-1 text-[10.5px]">
+                        不改这里就保留原设置；清空后保存 = 明确移除回退。
+                      </div>
+                    </Field>
 
-              <div className="flex flex-col gap-3 min-[400px]:flex-row">
-                <div className="flex-1">
-                  <Field label="温度 (0–2)" htmlFor={`${fieldId}-temperature`}>
-                    <input
-                      id={`${fieldId}-temperature`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={0}
-                      max={2}
-                      step={0.1}
-                      value={draft.temperature}
-                      onChange={(e) => patch({ temperature: Number(e.target.value) })}
-                    />
-                  </Field>
-                </div>
-                <div className="flex-1">
-                  <Field label="上下文窗口 (tokens)" htmlFor={`${fieldId}-context`}>
-                    <input
-                      id={`${fieldId}-context`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={1000}
-                      max={2000000}
-                      step={1000}
-                      value={draft.contextWindow}
-                      onChange={(e) => patch({ contextWindow: Number(e.target.value) })}
-                    />
-                  </Field>
-                </div>
+                    <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                      <div className="flex-1">
+                        <Field label="温度 (0–2)" htmlFor={`${fieldId}-temperature`}>
+                          <input
+                            id={`${fieldId}-temperature`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={0}
+                            max={2}
+                            step={0.1}
+                            value={draft.temperature}
+                            onChange={(e) => patch({ temperature: Number(e.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex-1">
+                        <Field label="上下文窗口 (tokens)" htmlFor={`${fieldId}-context`}>
+                          <input
+                            id={`${fieldId}-context`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={1000}
+                            max={2000000}
+                            step={1000}
+                            value={draft.contextWindow}
+                            onChange={(e) => patch({ contextWindow: Number(e.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+
+                    <Field label="最大输出 tokens（留空不限）" htmlFor={`${fieldId}-max-tokens`}>
+                      <input
+                        id={`${fieldId}-max-tokens`}
+                        className="nx-input font-mono"
+                        type="number"
+                        min={1}
+                        max={MAX_TOKENS_HARD_LIMIT}
+                        step={1}
+                        placeholder="不限"
+                        value={maxTokensLabel(draft)}
+                        onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
+                      />
+                      <div className="nx-hint mt-1 text-[10.5px]">
+                        留空 = 不限制单次输出（旧档案默认）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
+                      </div>
+                    </Field>
+
+                    <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                      <div className="flex-1">
+                        <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                          <input
+                            id={`${fieldId}-request-timeout`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={1}
+                            max={3600}
+                            step={1}
+                            placeholder="默认 300"
+                            value={requestTimeoutLabel(draft)}
+                            onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex-1">
+                        <Field label="流空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                          <input
+                            id={`${fieldId}-idle-timeout`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={0}
+                            max={3600}
+                            step={1}
+                            placeholder="默认 60"
+                            value={idleTimeoutLabel(draft)}
+                            onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                      <div className="flex-1">
+                        <Field label="自动暂停阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
+                          <input
+                            id={`${fieldId}-circuit-threshold`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={1}
+                            max={100}
+                            step={1}
+                            placeholder={`默认 ${CIRCUIT_DEFAULT_THRESHOLD}`}
+                            value={circuitThresholdLabel(draft)}
+                            onChange={(e) => patch({ circuitFailureThreshold: circuitThresholdFromInput(e.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex-1">
+                        <Field label="自动暂停时长（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
+                          <input
+                            id={`${fieldId}-circuit-cooldown`}
+                            className="nx-input font-mono"
+                            type="number"
+                            min={1}
+                            max={3600}
+                            step={1}
+                            placeholder={`默认 ${CIRCUIT_DEFAULT_COOLDOWN_SECONDS}`}
+                            value={circuitCooldownLabel(draft)}
+                            onChange={(e) => patch({ circuitCooldownSeconds: circuitCooldownFromInput(e.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                    <div className="nx-hint mt-0.5 text-[10.5px]">
+                      留空用默认值；只统计网络与服务端错误，连续失败达到阈值后暂停请求，到时自动恢复。
+                    </div>
+                    {isNew ? (
+                      <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看暂停状态</div>
+                    ) : (
+                      <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
+                    )}
+
+                    <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
+                      <input
+                        id={`${fieldId}-proxy`}
+                        className="nx-input font-mono"
+                        placeholder="http://127.0.0.1:7890"
+                        value={draft.proxy ?? ""}
+                        onChange={(e) => patch({ proxy: e.target.value || null })}
+                      />
+                    </Field>
+
+                    <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
+                      <input
+                        className="nx-check"
+                        type="checkbox"
+                        checked={draft.stream}
+                        onChange={(e) => patch({ stream: e.target.checked })}
+                      />
+                      流式输出（关闭后整块返回，部分自建端点更稳）
+                    </label>
+                  </div>
+                )}
               </div>
-
-              <Field label="最大输出 tokens（留空不限）" htmlFor={`${fieldId}-max-tokens`}>
-                <input
-                  id={`${fieldId}-max-tokens`}
-                  className="nx-input font-mono"
-                  type="number"
-                  min={1}
-                  max={MAX_TOKENS_HARD_LIMIT}
-                  step={1}
-                  placeholder="不限"
-                  value={maxTokensLabel(draft)}
-                  onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
-                />
-                <div className="nx-hint mt-1 text-[10.5px]">
-                  留空 = 不限制单次输出（旧档案默认）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
-                </div>
-              </Field>
-
-              <div className="flex flex-col gap-3 min-[400px]:flex-row">
-                <div className="flex-1">
-                  <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
-                    <input
-                      id={`${fieldId}-request-timeout`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={1}
-                      max={3600}
-                      step={1}
-                      placeholder="默认 300"
-                      value={requestTimeoutLabel(draft)}
-                      onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
-                    />
-                  </Field>
-                </div>
-                <div className="flex-1">
-                  <Field label="流空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
-                    <input
-                      id={`${fieldId}-idle-timeout`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={0}
-                      max={3600}
-                      step={1}
-                      placeholder="默认 60"
-                      value={idleTimeoutLabel(draft)}
-                      onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
-                    />
-                  </Field>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 min-[400px]:flex-row">
-                <div className="flex-1">
-                  <Field label="自动暂停阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
-                    <input
-                      id={`${fieldId}-circuit-threshold`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={1}
-                      max={100}
-                      step={1}
-                      placeholder={`默认 ${CIRCUIT_DEFAULT_THRESHOLD}`}
-                      value={circuitThresholdLabel(draft)}
-                      onChange={(e) => patch({ circuitFailureThreshold: circuitThresholdFromInput(e.target.value) })}
-                    />
-                  </Field>
-                </div>
-                <div className="flex-1">
-                  <Field label="自动暂停时长（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
-                    <input
-                      id={`${fieldId}-circuit-cooldown`}
-                      className="nx-input font-mono"
-                      type="number"
-                      min={1}
-                      max={3600}
-                      step={1}
-                      placeholder={`默认 ${CIRCUIT_DEFAULT_COOLDOWN_SECONDS}`}
-                      value={circuitCooldownLabel(draft)}
-                      onChange={(e) => patch({ circuitCooldownSeconds: circuitCooldownFromInput(e.target.value) })}
-                    />
-                  </Field>
-                </div>
-              </div>
-              <div className="nx-hint mt-0.5 text-[10.5px]">
-                留空用默认值；只统计网络与服务端错误，连续失败达到阈值后暂停请求，到时自动恢复。
-              </div>
-              {isNew ? (
-                <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看暂停状态</div>
-              ) : (
-                <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
-              )}
-
-              <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
-                <input
-                  id={`${fieldId}-proxy`}
-                  className="nx-input font-mono"
-                  placeholder="http://127.0.0.1:7890"
-                  value={draft.proxy ?? ""}
-                  onChange={(e) => patch({ proxy: e.target.value || null })}
-                />
-              </Field>
-
-              <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
-                <input
-                  className="nx-check"
-                  type="checkbox"
-                  checked={draft.stream}
-                  onChange={(e) => patch({ stream: e.target.checked })}
-                />
-                流式输出（关闭后整块返回，部分自建端点更稳）
-              </label>
 
               <div className="nx-hint mt-0.5">
                 API Key 加密后保存在本机，只在发起请求时发向你配置的模型端点，不会上传到 NexTerm 的服务器。

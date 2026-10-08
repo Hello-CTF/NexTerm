@@ -168,3 +168,82 @@ describe("ModelManager 恢复默认参数", () => {
     expect(reset.disabled).toBe(true);
   });
 });
+
+describe("ModelManager 高级参数折叠", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    mocks.presets.mockResolvedValue([]);
+    mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast });
+  });
+
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+  });
+
+  it("参数全默认时高级参数折叠,点击展开后才看得到字段", async () => {
+    await mountManager({ ...SAVED, ...MODEL_PARAM_DEFAULTS, fallbackModel: null });
+
+    const toggle = [...view!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级参数",
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(() => inputFor("温度")).toThrow();
+
+    clickButton(view!.container, "高级参数");
+    await flush();
+
+    expect(inputFor("温度").value).toBe("0.3");
+    expect(inputFor("上下文窗口").value).toBe("32768");
+    expect(inputFor("回退模型").value).toBe("");
+  });
+
+  it("任一高级参数非默认时自动展开", async () => {
+    await mountManager(SAVED);
+
+    const toggle = [...view!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级参数",
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(inputFor("温度").value).toBe("1.2");
+    expect(inputFor("回退模型").value).toBe("fb-1");
+  });
+
+  it("最大输出/超时/熔断任一非空也自动展开", async () => {
+    await mountManager({
+      ...SAVED,
+      ...MODEL_PARAM_DEFAULTS,
+      fallbackModel: null,
+      maxTokens: 4096,
+    });
+
+    expect(inputFor("最大输出").value).toBe("4096");
+  });
+
+  it("切换到参数全默认的档案后回到折叠", async () => {
+    const plain: ModelProfile = {
+      ...SAVED,
+      id: "p2",
+      name: "默认档案",
+      ...MODEL_PARAM_DEFAULTS,
+      fallbackModel: null,
+    };
+    mocks.overview.mockResolvedValue({ profiles: [SAVED, plain], activeId: SAVED.id });
+    view = mount(createElement(ModelManager));
+    await flush();
+
+    expect(inputFor("温度").value).toBe("1.2");
+
+    clickButton(view!.container, "默认档案");
+    await flush();
+
+    const toggle = [...view!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级参数",
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(() => inputFor("温度")).toThrow();
+  });
+});

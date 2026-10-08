@@ -16,11 +16,12 @@ func (s *Service) vaultStatus() (initialized, unlocked bool) {
 	return status.Initialized, status.Unlocked
 }
 
-// protectSettingSecret 写入侧一律升级为 enc:v1: 信封；凭据库不可用时按原样写回并保持双读兼容。
+// protectSettingSecret 写入侧一律升级为 enc:v1: 信封；凭据库未初始化时拒绝写入
+// (口令不得明文落库)，已锁定时要求先解锁。
 func (s *Service) protectSettingSecret(ctx context.Context, plaintext string) (string, error) {
 	initialized, unlocked := s.vaultStatus()
 	if !initialized {
-		return plaintext, nil
+		return "", ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	if !unlocked {
 		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 
 	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
 	sshfs "github.com/ProbiusOfficial/NexTerm/internal/fs/ssh"
@@ -16,6 +17,31 @@ import (
 )
 
 const fsReadDefaultMaxBytes = 8 << 20
+
+// StagedBlobResolver 把 blob Stage/Reserve 响应里的相对 path (id/name) 解析为服务器
+// 暂存文件路径; 由 *server.BlobStore 满足, 只在服务端装配注入。桌面端为 nil,
+// fs_upload/fs_download 等的 localPath 是用户经系统对话框选定的真实本地路径, 原样使用。
+type StagedBlobResolver interface {
+	ResolveStagedPath(rel, userID string) (string, error)
+}
+
+// resolveStagedLocalPath 在服务端装配下把 localPath 按暂存引用解析为服务器暂存文件。
+// 浏览器侧不存在真实本地路径, 拒绝绝对路径, 避免 /rpc 成为任意服务器文件读写通道;
+// 解析失败按不存在处理, 不回退为相对 CWD 的路径。
+func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path string) (string, error) {
+	if staged == nil {
+		return path, nil
+	}
+	if filepath.IsAbs(path) {
+		return "", ipc.NewError(ipc.CodeBadParam, "参数错误: web 模式下的本地路径必须是暂存引用")
+	}
+	userID, _ := ipc.UserIDFromContext(ctx)
+	resolved, err := staged.ResolveStagedPath(path, userID)
+	if err != nil {
+		return "", ipc.NewError(ipc.CodeNotFound, "暂存文件不存在或已过期")
+	}
+	return resolved, nil
+}
 
 type fsRequest struct {
 	SessionID     string `json:"sessionId"`
@@ -59,7 +85,7 @@ type sshExtractor interface {
 	Extract(context.Context, string) (string, error)
 }
 
-func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) error {
+func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver) error {
 	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
 		transport, err := sessions.Transport(ctx, sessionID)
 		if err != nil {
@@ -165,26 +191,38 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_upload", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
+				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				if err != nil {
+					return 0, err
+				}
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Upload(ctx, input.LocalPath, filesystem, input.RemotePath, productionTransferOptions(ctx, call, input.Resume))
+				value, err := fslocal.Upload(ctx, localPath, filesystem, input.RemotePath, productionTransferOptions(ctx, call, input.Resume))
 				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
+				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				if err != nil {
+					return 0, err
+				}
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Download(ctx, filesystem, input.RemotePath, input.LocalPath, productionTransferOptions(ctx, call, false))
+				value, err := fslocal.Download(ctx, filesystem, input.RemotePath, localPath, productionTransferOptions(ctx, call, false))
 				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_pack_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
+				localPath, err := resolveStagedLocalPath(ctx, staged, input.LocalPath)
+				if err != nil {
+					return 0, err
+				}
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
@@ -195,7 +233,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 				}
 				taskID := ids.New()
 				var last sshfs.Progress
-				value, err := provider.PackDownload(ctx, input.RemotePath, input.LocalPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
+				value, err := provider.PackDownload(ctx, input.RemotePath, localPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
 					last = progress
 					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 				}})

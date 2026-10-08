@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,11 @@ import (
 	"time"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+)
+
+const (
+	requestReadIdleTimeout  = time.Minute
+	requestWriteIdleTimeout = time.Minute
 )
 
 type Lifecycle interface {
@@ -90,7 +96,8 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 		}
 	}
 	httpServer := &http.Server{
-		Addr: config.Server.Options.Listen, Handler: server.Handler(),
+		Addr:              config.Server.Options.Listen,
+		Handler:           withRequestTimeouts(requestReadIdleTimeout, requestWriteIdleTimeout, server.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return runCtx },
 	}
@@ -121,3 +128,50 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 func loggerDefault() *slog.Logger {
 	return slog.Default()
 }
+
+// withRequestTimeouts 给普通 HTTP 请求施加读/写 idle 超时: 请求体每次读取、
+// 响应每次写入都重新续期, 慢速但持续传输的连接不受影响; 空闲 keep-alive 由
+// http.Server 的 IdleTimeout 把关, 请求头由 ReadHeaderTimeout 把关。
+// 连接一旦被 hijack(WebSocket 等长连接)即清除全部 deadline, 交还给上层自理。
+func withRequestTimeouts(readIdle, writeIdle time.Duration, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		controller := http.NewResponseController(w)
+		if r.Body != nil {
+			r.Body = &idleTimeoutReadCloser{ReadCloser: r.Body, controller: controller, idle: readIdle}
+		}
+		next.ServeHTTP(&idleTimeoutResponseWriter{ResponseWriter: w, controller: controller, idle: writeIdle}, r)
+	})
+}
+
+type idleTimeoutReadCloser struct {
+	io.ReadCloser
+	controller *http.ResponseController
+	idle       time.Duration
+}
+
+func (r *idleTimeoutReadCloser) Read(data []byte) (int, error) {
+	_ = r.controller.SetReadDeadline(time.Now().Add(r.idle))
+	return r.ReadCloser.Read(data)
+}
+
+type idleTimeoutResponseWriter struct {
+	http.ResponseWriter
+	controller *http.ResponseController
+	idle       time.Duration
+}
+
+func (w *idleTimeoutResponseWriter) Write(data []byte) (int, error) {
+	_ = w.controller.SetWriteDeadline(time.Now().Add(w.idle))
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *idleTimeoutResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	connection, readWriter, err := w.controller.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	_ = connection.SetDeadline(time.Time{})
+	return connection, readWriter, nil
+}
+
+func (w *idleTimeoutResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

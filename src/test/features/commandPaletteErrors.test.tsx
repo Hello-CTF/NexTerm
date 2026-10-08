@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -69,10 +69,9 @@ describe("命令面板资产与片段加载失败互不覆盖", () => {
     mocks.list.mockRejectedValue(new Error("资产 boom"));
     mocks.snippetList.mockRejectedValue(new Error("片段 boom"));
     mounted = mountPalette();
-    await flush();
+    await flushUntil(() => errorRows().length === 2);
 
     const rows = errorRows();
-    expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain("资产列表加载失败：资产 boom");
     expect(rows[1].textContent).toContain("片段列表加载失败：片段 boom");
   });
@@ -81,16 +80,15 @@ describe("命令面板资产与片段加载失败互不覆盖", () => {
     mocks.list.mockRejectedValueOnce(new Error("资产 boom"));
     mocks.snippetList.mockRejectedValue(new Error("片段 boom"));
     mounted = mountPalette();
-    await flush();
+    await flushUntil(() => errorRows().length === 2);
 
     mocks.list.mockResolvedValue([]);
     click(retryButtonIn(errorRows()[0]));
-    await flush();
+    await flushUntil(() => errorRows().length === 1);
 
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(mocks.snippetList).toHaveBeenCalledTimes(1);
     const rows = errorRows();
-    expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("片段列表加载失败：片段 boom");
   });
 
@@ -98,11 +96,11 @@ describe("命令面板资产与片段加载失败互不覆盖", () => {
     mocks.list.mockRejectedValue(new Error("资产 boom"));
     mocks.snippetList.mockRejectedValueOnce(new Error("片段 boom"));
     mounted = mountPalette();
-    await flush();
+    await flushUntil(() => errorRows().length === 2);
 
     mocks.snippetList.mockResolvedValue([]);
     click(retryButtonIn(errorRows()[1]));
-    await flush();
+    await flushUntil(() => errorRows().length === 1);
 
     expect(mocks.snippetList).toHaveBeenCalledTimes(2);
     expect(mocks.list).toHaveBeenCalledTimes(1);

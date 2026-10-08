@@ -939,28 +939,14 @@ export function TerminalPane({
           搜索
         </button>
 
-        <select
-          className="nx-select nx-input-sm w-[88px] font-mono max-[560px]:hidden"
-          value={encoding}
-          title="终端字符编码（对之后的输出生效）"
-          onChange={(e) => void applyEncoding(e.target.value)}
-        >
-          {ENCODINGS.map((enc) => (
-            <option key={enc} value={enc}>
-              {enc}
-            </option>
-          ))}
-        </select>
-
-        <button
-          className={`nx-btn nx-btn-sm max-[560px]:hidden ${recording ? "nx-btn-danger" : "nx-btn-ghost"}`}
-          disabled={!kernelTabId}
-          title={kernelTabId ? "把终端输出录制到文件" : "终端连接后才能录制"}
-          onClick={() => void toggleRecord()}
-        >
-          {recording ? <IconStop size={12} /> : <span className="nx-dot bg-current" />}
-          {recording ? "停止" : "录制"}
-        </button>
+        {encoding !== "utf-8" && (
+          <span
+            className="nx-badge nx-badge-amber font-mono"
+            title="当前终端字符编码（对之后的输出生效），在「更多终端操作」菜单里切换"
+          >
+            {encoding}
+          </span>
+        )}
 
         {blocksSupported && (
           <>
@@ -992,8 +978,20 @@ export function TerminalPane({
             </button>
           </>
         )}
+        {recording && (
+          <button
+            type="button"
+            className="nx-badge nx-badge-red shrink-0 cursor-pointer"
+            title="正在录制终端输出到文件，点击停止并保存"
+            aria-label="停止录制"
+            onClick={() => void toggleRecord()}
+          >
+            <span className="nx-dot nx-dot-pulse" />
+            录制中
+          </button>
+        )}
         <button
-          className="nx-icon-btn nx-icon-btn-sm hidden max-[560px]:flex"
+          className="nx-icon-btn nx-icon-btn-sm"
           title="更多终端操作（搜索 / 编码 / 录制 / 命令块）"
           aria-label="更多终端操作"
           onClick={openToolbarOverflow}

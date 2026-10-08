@@ -190,6 +190,11 @@ describe("ModelManager AI-1 profile fields", () => {
     click(view!.container.querySelector('button[title="新增档案"]')!);
     await flush();
 
+    // 新档案参数全默认: 高级参数折叠,展开后才看得到字段
+    expect(() => inputFor("最大输出")).toThrow();
+    clickButton(view!.container, "高级参数");
+    await flush();
+
     expect(inputFor("最大输出").value).toBe("");
     expect(inputFor("自动暂停阈值").value).toBe("");
     expect(inputFor("自动暂停时长").value).toBe("");

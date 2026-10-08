@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -107,6 +108,7 @@ type sshImportPlanner struct {
 	database         *store.Store
 	vault            *vault.Vault
 	termiusKeySource func() (termiusdb.KeySource, error)
+	desktop          bool
 }
 
 type sshImportPlan struct {
@@ -124,8 +126,8 @@ type sshImportExisting struct {
 	credIDByFP    map[string]string
 }
 
-func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault) error {
-	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource}
+func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault, desktop bool) error {
+	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop}
 	return planner.registerCommands(dispatcher)
 }
 
@@ -255,6 +257,9 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		if effective == "" {
 			return nil, ipc.NewError(ipc.CodeBadParam, "找不到默认 SSH 配置文件路径，请手动指定")
 		}
+		if err := p.guardServerImportPath(effective); err != nil {
+			return nil, err
+		}
 		result, err := sshconfig.Parse(effective, sshconfig.Limits{})
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -272,6 +277,9 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		if dir == "" {
 			return nil, ipc.NewError(ipc.CodeBadParam, "找不到默认 SSH 目录路径，请手动指定")
 		}
+		if err := p.guardServerImportPath(dir); err != nil {
+			return nil, err
+		}
 		preview, err := sshconfig.PreviewHome(dir, existing.assets, existing.keys, sshconfig.Limits{})
 		if err != nil {
 			return nil, ipc.NewError(ipc.CodeBadParam, "扫描 SSH 目录失败: "+err.Error())
@@ -281,6 +289,14 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 	case "termius":
 		if !confirmed {
 			return nil, ipc.NewError(ipc.CodeBadParam, "读取本机 Termius 数据需要显式确认")
+		}
+		dbPath := strings.TrimSpace(path)
+		effectiveDBPath := dbPath
+		if effectiveDBPath == "" {
+			effectiveDBPath = termiusdb.DefaultDBPath()
+		}
+		if err := p.guardServerImportPath(effectiveDBPath); err != nil {
+			return nil, err
 		}
 		platformSource, err := p.termiusKeySource()
 		if err != nil {
@@ -297,7 +313,6 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 			}
 			return cachedKey, nil
 		})
-		dbPath := strings.TrimSpace(path)
 		if withMaterial {
 			_, keyRecords, err := termiusdb.Export(dbPath, keySource)
 			if err != nil {
@@ -317,15 +332,30 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 			return nil, ipc.NewError(ipc.CodeBadParam, "读取 Termius 数据失败: "+err.Error())
 		}
 		plan.preview = preview
-		plan.path = dbPath
-		if plan.path == "" {
-			plan.path = termiusdb.DefaultDBPath()
-		}
+		plan.path = effectiveDBPath
 	default:
 		return nil, ipc.BadParam(fmt.Errorf("未知的导入来源 %q", source))
 	}
 	blockUnmappableJumps(plan.preview)
 	return plan, nil
+}
+
+// guardServerImportPath 把服务端装配(nexterm-server, desktop=false)下的导入路径限制在
+// 当前用户 home 的 .ssh 目录内, 拒绝越界路径, 任意路径读不能经服务端 /rpc 到达;
+// 桌面端路径来自系统对话框, 不过限。
+func (p *sshImportPlanner) guardServerImportPath(path string) error {
+	if p.desktop {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ipc.NewError(ipc.CodeUnsupported, "服务端装配下无法定位当前用户 home 目录")
+	}
+	rel, err := filepath.Rel(filepath.Join(home, ".ssh"), path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("服务端装配下只能导入当前用户 .ssh 目录内的路径: %s", path))
+	}
+	return nil
 }
 
 func blockUnmappableJumps(preview *sshconfig.ImportPreview) {

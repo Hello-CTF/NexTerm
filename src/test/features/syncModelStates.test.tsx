@@ -134,8 +134,22 @@ describe("SyncCard 桌面端状态", () => {
     expect(urlInput.value).toBe("https://sync.example.com");
     expect(userInput.value).toBe("alice");
     expect(passInput.value).toBe("");
+    // 未开启跳过证书校验时高级选项折叠
+    expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
+    clickButton(mounted.container, "高级选项");
+    await flush();
     const insecureCheckbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(insecureCheckbox.checked).toBe(false);
+  });
+
+  it("已开启跳过证书校验时高级选项自动展开", async () => {
+    mocks.linkGet.mockResolvedValue({ ...SAVED_LINK, insecure: true });
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => (mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value ?? "") !== "");
+    await flushUntil(() => mounted!.container.querySelector('input[type="checkbox"]') !== null);
+
+    const insecureCheckbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(insecureCheckbox.checked).toBe(true);
   });
 
   it("登录时以账号+密码调用 linkSet(一次登录即完成同步配置)", async () => {

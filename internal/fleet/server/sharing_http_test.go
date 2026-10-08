@@ -3,11 +3,13 @@
 package fleetserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -844,4 +846,40 @@ func TestShareRoutesAuthOff(t *testing.T) {
 			t.Fatalf("call %d status = %d want 403 (body %v)", i, call.status, call.body)
 		}
 	}
+}
+
+// 对端接受 WS 后永不读: 内核写缓冲填满后, 写 viewer 必须在超时内失败返回,
+// 而不是把输出泵与连接拆除无限期挂死 (吊销也因此无法落地)。
+func TestShareViewerWriteTimeoutUnblocksStalledViewer(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		<-release
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+
+	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &shareTerminalWS{conn: conn, writeTimeout: 100 * time.Millisecond}
+	payload := bytes.Repeat([]byte{0xab}, 1<<20)
+	start := time.Now()
+	var writeErr error
+	for range 64 {
+		if writeErr = viewer.writeMessage(context.Background(), websocket.MessageBinary, payload); writeErr != nil {
+			break
+		}
+	}
+	if writeErr == nil {
+		t.Fatal("stalled viewer write never failed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("stalled write took %s to unblock, want the per-message timeout", elapsed)
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 }

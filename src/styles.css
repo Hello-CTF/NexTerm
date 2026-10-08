@@ -1054,7 +1054,8 @@
   }
 
   .nx-tab-close {
-    display: none;
+    display: inline-flex;
+    visibility: hidden;
     align-items: center;
     justify-content: center;
     width: 16px;
@@ -1064,8 +1065,9 @@
     color: var(--nx-fg-tertiary);
   }
   .nx-tab:hover .nx-tab-close,
-  .nx-tab.is-active .nx-tab-close {
-    display: inline-flex;
+  .nx-tab.is-active .nx-tab-close,
+  .nx-tab:focus-within .nx-tab-close {
+    visibility: visible;
   }
   .nx-tab-close:hover {
     background: color-mix(in srgb, var(--color-red-500) 22%, transparent);

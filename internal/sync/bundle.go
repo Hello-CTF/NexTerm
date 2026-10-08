@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -300,6 +301,7 @@ type bundleAssetDecision struct {
 
 // ImportBundle 按资产包协议 v1 写入当前后端: 本机版本较新的条目默认跳过(force 覆盖),
 // 非法条目拒绝并记警告; 凭据删除墓碑按修订号裁决, 删除写入同步墓碑防止对端复活。
+// 同一对象类的全部写入在单个事务内提交, 任一失败整类回滚, 不留下半导入状态。
 func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest) (ImportReport, error) {
 	bundle := request.Bundle
 	if bundle.Protocol != BundleProtocolVersion {
@@ -362,24 +364,29 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	if err != nil {
 		return ImportReport{}, err
 	}
-	// 两遍写入: 先全部按顶级分组落库(任意顺序都无 FK 依赖), 再链接父级。
-	for _, plan := range groupPlans {
-		if err := s.engine.groupUpsert(ctx, groupObject{
-			ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-		}, nil); err != nil {
-			return ImportReport{}, err
+	// 两遍写入: 先全部按顶级分组落库(任意顺序都无 FK 依赖), 再链接父级; 整类一个事务。
+	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		for _, plan := range groupPlans {
+			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+				ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
+			}, nil); err != nil {
+				return err
+			}
 		}
-	}
-	for _, plan := range groupPlans {
-		if plan.parentID == nil {
-			continue
+		for _, plan := range groupPlans {
+			if plan.parentID == nil {
+				continue
+			}
+			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
+				ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
+				CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
+			}, plan.parentID); err != nil {
+				return err
+			}
 		}
-		if err := s.engine.groupUpsert(ctx, groupObject{
-			ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
-			CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-		}, plan.parentID); err != nil {
-			return ImportReport{}, err
-		}
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
 	}
 	for _, plan := range groupPlans {
 		if plan.exists {
@@ -388,6 +395,17 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			report.GroupsCreated++
 		}
 	}
+	type preparedCred struct {
+		id        string
+		name      string
+		kind      string
+		updatedAt int64
+		nonce     []byte
+		blob      []byte
+		exists    bool
+	}
+	preparedCreds := make([]preparedCred, 0, len(bundle.Creds))
+	seenCredIDs := map[string]bool{}
 	for _, payload := range bundle.Creds {
 		id := strings.TrimSpace(payload.ID)
 		if id == "" {
@@ -437,17 +455,32 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		if err != nil {
 			return ImportReport{}, err
 		}
-		if err := s.engine.credentialUpsert(ctx, credentialObject{
-			ID: id, Name: name, Kind: kind, Secret: payload.Secret, UpdatedAt: updatedAt,
-		}, nonce, blob); err != nil {
-			return ImportReport{}, err
+		preparedCreds = append(preparedCreds, preparedCred{
+			id: id, name: name, kind: kind, updatedAt: updatedAt,
+			nonce: nonce, blob: blob, exists: exists || seenCredIDs[id],
+		})
+		seenCredIDs[id] = true
+	}
+	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		for _, cred := range preparedCreds {
+			if err := s.engine.credentialUpsertTx(ctx, tx, credentialObject{
+				ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
+			}, cred.nonce, cred.blob); err != nil {
+				return err
+			}
 		}
-		if exists {
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	for _, cred := range preparedCreds {
+		if cred.exists {
 			report.CredsUpdated++
 		} else {
 			report.CredsCreated++
 		}
 	}
+	preparedAssets := make([]store.AssetRow, 0, len(bundle.Assets))
 	for index, payload := range bundle.Assets {
 		decision := decisions[index]
 		if decision.acceptance != bundleAssetAccepted {
@@ -515,16 +548,33 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				return ImportReport{}, err
 			}
 		}
-		created, err := s.store.AssetUpsert(ctx, row)
-		if err != nil {
-			return ImportReport{}, err
+		preparedAssets = append(preparedAssets, row)
+	}
+	createdFlags := make([]bool, len(preparedAssets))
+	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		for index, row := range preparedAssets {
+			created, err := s.store.AssetUpsertTx(ctx, tx, row)
+			if err != nil {
+				return err
+			}
+			createdFlags[index] = created
 		}
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	for _, created := range createdFlags {
 		if created {
 			report.AssetsCreated++
 		} else {
 			report.AssetsUpdated++
 		}
 	}
+	type preparedCredTombstone struct {
+		id        string
+		deletedAt int64
+	}
+	preparedTombstones := make([]preparedCredTombstone, 0, len(bundle.CredTombstones))
 	for _, tombstone := range bundle.CredTombstones {
 		id := strings.TrimSpace(tombstone.ID)
 		if id == "" {
@@ -553,14 +603,30 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			warnf("凭据 %s 的本机版本较新，已忽略远端删除墓碑；如需覆盖请使用强制同步", id)
 			continue
 		}
-		if err := s.store.CredentialDeleteRow(ctx, id); err != nil {
-			return ImportReport{}, err
-		}
-		if err := s.store.CredentialTombstonePut(ctx, id, tombstone.DeletedAt); err != nil {
-			return ImportReport{}, err
-		}
-		report.CredsDeleted++
+		preparedTombstones = append(preparedTombstones, preparedCredTombstone{id: id, deletedAt: tombstone.DeletedAt})
 	}
+	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		for _, tombstone := range preparedTombstones {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", tombstone.id); err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(id, deleted_at) VALUES(?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at=`+scalarMax(s.store.Backend())+`(credential_tombstone.deleted_at, excluded.deleted_at)`,
+				tombstone.id, tombstone.deletedAt); err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	report.CredsDeleted += len(preparedTombstones)
+	type preparedSnippet struct {
+		row    store.SnippetRow
+		exists bool
+	}
+	preparedSnippets := make([]preparedSnippet, 0, len(bundle.Snippets))
+	seenSnippetIDs := map[string]bool{}
 	for _, payload := range bundle.Snippets {
 		id := strings.TrimSpace(payload.ID)
 		if id == "" || !ids.Valid(id) || strings.TrimSpace(payload.Name) == "" {
@@ -621,19 +687,49 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				return ImportReport{}, err
 			}
 		}
-		if err := s.engine.snippetUpsert(ctx, store.SnippetRow{
-			ID: id, GroupID: groupID, Name: name, Body: body,
-			Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt,
-		}); err != nil {
-			return ImportReport{}, err
+		preparedSnippets = append(preparedSnippets, preparedSnippet{
+			row: store.SnippetRow{
+				ID: id, GroupID: groupID, Name: name, Body: body,
+				Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt,
+			},
+			exists: exists || seenSnippetIDs[id],
+		})
+		seenSnippetIDs[id] = true
+	}
+	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		for _, snippet := range preparedSnippets {
+			if err := s.engine.snippetUpsertTx(ctx, tx, snippet.row); err != nil {
+				return err
+			}
 		}
-		if exists {
+		return nil
+	}); err != nil {
+		return ImportReport{}, err
+	}
+	for _, snippet := range preparedSnippets {
+		if snippet.exists {
 			report.SnippetsUpdated++
 		} else {
 			report.SnippetsCreated++
 		}
 	}
 	return report, nil
+}
+
+// inImportTx 在单个事务内提交一个对象类的全部写入, 任一语句失败整类回滚。
+func (s *Service) inImportTx(ctx context.Context, apply func(*sql.Tx) error) error {
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := apply(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return nil
 }
 
 func validJSONObject(raw string) bool {

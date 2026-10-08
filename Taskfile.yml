@@ -46,7 +46,7 @@ tasks:
       - go test -count=1 ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron
 
   check:
-    summary: Run Go, frontend, generated-bindings and reproducibility quality gates
+    summary: Run Go, frontend, parity, generated-bindings and reproducibility quality gates
     deps: [fmt:check, vet, test]
     cmds:
       - go mod verify
@@ -55,6 +55,8 @@ tasks:
       - pnpm test
       - node scripts/build.mjs bindings
       - node scripts/build.mjs frontend --repro-check
+      - python3 scripts/parity/inventory.py --check
+      - python3 scripts/parity/manifest.py --check
 
   bindings:
     summary: Regenerate Wails TypeScript bindings intentionally

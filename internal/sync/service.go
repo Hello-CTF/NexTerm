@@ -128,6 +128,9 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
+	if initialized, _ := s.vaultStatus(); !initialized {
+		return Link{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
+	}
 	secret := linkSecret{}
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
 		return Link{}, err
@@ -205,7 +208,9 @@ func (s *Service) recordProbe(ctx context.Context, probeErr error) {
 		secret.VerifiedAt = ids.NowMS()
 		secret.LastError = ""
 	}
-	_ = s.saveLinkSecret(ctx, secret)
+	if err := s.saveLinkSecret(ctx, secret); err != nil {
+		s.engine.logger.Warn("sync probe result not recorded", "error", err)
+	}
 }
 
 func (s *Service) linkSecret(ctx context.Context) (linkSecret, error) {

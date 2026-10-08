@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -267,4 +269,119 @@ func TestGateCancelledDuringReadWithDataDiscardsBothDirections(t *testing.T) {
 	if input.Len() != 0 {
 		t.Fatalf("cancelled input pipe wrote %q", input.String())
 	}
+}
+
+func TestGateRevalidateTTLSkipsRecheckWithinWindow(t *testing.T) {
+	current := time.Now().UnixMilli()
+	calls := 0
+	gate := NewGate(testGrant(PermissionReadWrite, current+time.Hour.Milliseconds()),
+		WithGateNow(func() int64 { return current }),
+		WithRevalidateTTL(2*time.Second),
+		WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			calls++
+			return grant, nil
+		}))
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current += 500
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("recheck calls within TTL = %d, want 1", calls)
+	}
+	current += 1500
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("recheck calls after TTL = %d, want 2", calls)
+	}
+}
+
+func TestGateRevalidateTTLAppliesRevocationAfterTTL(t *testing.T) {
+	current := time.Now().UnixMilli()
+	calls := 0
+	recheckErr := errors.New("share revoked")
+	gate := NewGate(testGrant(PermissionReadWrite, current+time.Hour.Milliseconds()),
+		WithGateNow(func() int64 { return current }),
+		WithRevalidateTTL(2*time.Second),
+		WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			calls++
+			if calls > 1 {
+				return nil, recheckErr
+			}
+			return grant, nil
+		}))
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current += 500
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatalf("cached window must not surface the revocation early: %v", err)
+	}
+	current += 1500
+	if err := gate.Check(context.Background()); !errors.Is(err, recheckErr) {
+		t.Fatalf("err = %v, want recheck error once the TTL elapsed", err)
+	}
+}
+
+func TestGateRevalidateTTLCachesInputCheck(t *testing.T) {
+	current := time.Now().UnixMilli()
+	inputCalls := 0
+	gate := NewGate(testGrant(PermissionReadWrite, current+time.Hour.Milliseconds()),
+		WithGateNow(func() int64 { return current }),
+		WithRevalidateTTL(2*time.Second),
+		WithInputCheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			inputCalls++
+			return grant, nil
+		}))
+	var dst bytes.Buffer
+	if err := gate.PipeInput(context.Background(), &dst, &chunkReader{chunks: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}); err != nil {
+		t.Fatal(err)
+	}
+	if inputCalls != 1 {
+		t.Fatalf("input check calls within TTL = %d, want 1", inputCalls)
+	}
+}
+
+func TestGateRevalidateTTLConcurrentAccess(t *testing.T) {
+	var current atomic.Int64
+	current.Store(time.Now().UnixMilli())
+	gate := NewGate(testGrant(PermissionReadWrite, current.Load()+time.Hour.Milliseconds()),
+		WithGateNow(func() int64 { return current.Load() }),
+		WithRevalidateTTL(10*time.Millisecond),
+		WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			copied := *grant
+			return &copied, nil
+		}),
+		WithInputCheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			copied := *grant
+			return &copied, nil
+		}))
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				_ = gate.Check(context.Background())
+				current.Add(2)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var dst bytes.Buffer
+		_ = gate.PipeOutput(context.Background(), &dst, bytes.NewReader(bytes.Repeat([]byte("x"), 128*1024)))
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var dst bytes.Buffer
+		_ = gate.PipeInput(context.Background(), &dst, bytes.NewReader(bytes.Repeat([]byte("y"), 128*1024)))
+	}()
+	wg.Wait()
 }

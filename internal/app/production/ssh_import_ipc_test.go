@@ -23,6 +23,10 @@ import (
 )
 
 func sshImportTestRig(t *testing.T) (*ipc.Dispatcher, *store.Store, *vault.Vault, *sshImportPlanner) {
+	return sshImportTestRigMode(t, true)
+}
+
+func sshImportTestRigMode(t *testing.T, desktop bool) (*ipc.Dispatcher, *store.Store, *vault.Vault, *sshImportPlanner) {
 	t.Helper()
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -31,7 +35,7 @@ func sshImportTestRig(t *testing.T) (*ipc.Dispatcher, *store.Store, *vault.Vault
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	credentialVault := vault.Load(ctx, database)
-	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource}
+	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop}
 	dispatcher := ipc.NewDispatcher()
 	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
 		t.Fatal(err)
@@ -1398,5 +1402,51 @@ func TestSSHImportHomeApplyRequiresUnlockedVault(t *testing.T) {
 	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-home","path":"/nonexistent","hosts":[],"keys":[]}}`)
 	if response.OK || response.Error == nil {
 		t.Fatalf("locked apply = %+v, want error", response)
+	}
+}
+
+func TestSSHImportServerAssemblyRestrictsPathsToSSHHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	insideConfig := sshImportTestConfig(t, sshDir, "")
+	outsideConfig := sshImportTestConfig(t, t.TempDir(), "")
+
+	dispatcher, _, _, _ := sshImportTestRigMode(t, false)
+
+	rejected := func(body string) {
+		t.Helper()
+		response := dispatchStoreTest(dispatcher, "ssh_import_preview", body)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("server preview %s = %+v, want bad_param", body, response)
+		}
+		if !strings.Contains(response.Error.Message, ".ssh") {
+			t.Fatalf("server preview message = %q, want .ssh restriction", response.Error.Message)
+		}
+	}
+	rejected(`{"args":{"source":"ssh-config","path":` + strconvQuote(outsideConfig) + `}}`)
+	rejected(`{"args":{"source":"ssh-config","path":` + strconvQuote(filepath.Join(sshDir, "..", "outside")) + `}}`)
+	rejected(`{"args":{"source":"ssh-home","path":` + strconvQuote(t.TempDir()) + `}}`)
+	rejected(`{"args":{"source":"termius","confirmed":true,"path":"/etc"}}`)
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(insideConfig)+`}}`)
+	if len(preview.Hosts) != 3 {
+		t.Fatalf("in-.ssh preview hosts = %+v", preview.Hosts)
+	}
+	homePreview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(sshDir)+`}}`)
+	if homePreview.Path != sshDir {
+		t.Fatalf("in-.ssh home preview = %+v", homePreview)
+	}
+	defaultPreview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config"}}`)
+	if defaultPreview.Path != insideConfig {
+		t.Fatalf("default path must pass the guard and resolve to %q, got %q", insideConfig, defaultPreview.Path)
+	}
+
+	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-config","path":`+strconvQuote(outsideConfig)+`,"hosts":[],"keys":[]}}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("server apply outside .ssh = %+v, want bad_param", response)
 	}
 }

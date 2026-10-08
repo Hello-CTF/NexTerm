@@ -136,13 +136,8 @@ export type SyncBundleSnippet = { id: string, groupId: string | null, name: stri
 
 export type SyncBundle = { protocol: number, origin: string, exportedAt: number, groups: Array<SyncBundleGroup>, assets: Array<SyncBundleAsset>, creds: Array<SyncBundleCredential>, credTombstones?: Array<SyncCredentialTombstone>, snippets?: Array<SyncBundleSnippet>, warnings?: Array<string>, };
 
-export type SyncLink = { 
-url: string, 
-tokenKind: string, 
-token: string, 
-insecure: boolean, 
-verifiedAt: number, 
-lastError: string | null, };
+export type AccountLink = { url: string, username: string, insecure: boolean, hasPassword: boolean,
+verifiedAt: number, lastError: string, };
 
 export type SyncTokenDto = { id: string, clientId: string, purpose: string, createdAt: number, expiresAt: number, revokedAt: number | null, lastUsedAt: number | null, };
 

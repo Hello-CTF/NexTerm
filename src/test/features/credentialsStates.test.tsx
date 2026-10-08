@@ -187,6 +187,17 @@ describe("CredentialsPanel 状态", () => {
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
     expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("凭据加载中");
   });
+
+  it("工具栏没有与命令面板重复的「凭据视图」按钮", async () => {
+    mocks.listCredentials.mockResolvedValue([]);
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => text().includes("还没有任何凭据"));
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some((b) =>
+        b.textContent?.includes("凭据视图"),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("CredentialsView 状态", () => {

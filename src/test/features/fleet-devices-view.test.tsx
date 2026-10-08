@@ -193,7 +193,12 @@ describe("设备管理视图 · 角色差异", () => {
 
     expect(document.body.textContent).toContain("alice");
     expect(document.body.textContent).toContain("接入地址");
-    expect(document.querySelector('input[aria-label="新接入地址"]')).not.toBeNull();
+    const expand = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "展开编辑",
+    );
+    if (!expand) throw new Error("展开编辑按钮未找到");
+    click(expand);
+    await flushUntil(() => document.querySelector('input[aria-label="新接入地址"]') !== null);
     expect(document.body.textContent).toContain("共 4 台");
   });
 
@@ -203,8 +208,13 @@ describe("设备管理视图 · 角色差异", () => {
     mounted = mount(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
+    const expand = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "展开",
+    );
+    if (!expand) throw new Error("展开按钮未找到");
+    click(expand);
+    await flushUntil(() => document.body.textContent?.includes("仅超级管理员可修改") ?? false);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
-    expect(document.body.textContent).toContain("仅超级管理员可修改");
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
     expect(card?.textContent).not.toContain("alice");
   });

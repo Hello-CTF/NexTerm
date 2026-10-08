@@ -36,11 +36,4 @@ export function kindMeta(kind: string): KindMeta {
 
 export const KIND_ORDER = Object.keys(KIND_META);
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
-export function formatTime(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`;
-}
+export { formatTime } from "../../ui/format";

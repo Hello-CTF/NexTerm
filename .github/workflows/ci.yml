@@ -80,6 +80,10 @@ jobs:
         run: |
           python3 -m unittest discover -s tests/parity -v
           python3 scripts/verify-manifest-injects.py
+      - name: Parity inventory and manifest freshness
+        run: |
+          python3 scripts/parity/inventory.py --check
+          python3 scripts/parity/manifest.py --check
       - name: Workflow reuse wiring checks
         env:
           SOURCE_DATE_EPOCH: "1"

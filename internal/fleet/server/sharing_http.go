@@ -24,6 +24,10 @@ const maxShareViewerMessage = 1 << 20
 // 吊销/过期/设备变化最迟在该间隔内生效。
 const defaultShareRevalidateInterval = 10 * time.Second
 
+// shareViewerWriteTimeout 是写 viewer WS 的单条消息超时: 慢 viewer (TCP
+// 背压) 不得把输出泵与连接拆除无限期挂死。
+const shareViewerWriteTimeout = 30 * time.Second
+
 type shareLinkView struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -188,13 +192,20 @@ type shareErrorFrame struct {
 type shareTerminalWS struct {
 	conn *websocket.Conn
 
-	writeMu sync.Mutex
+	writeMu      sync.Mutex
+	writeTimeout time.Duration
 }
 
 func (v *shareTerminalWS) writeMessage(ctx context.Context, kind websocket.MessageType, payload []byte) error {
 	v.writeMu.Lock()
 	defer v.writeMu.Unlock()
-	return v.conn.Write(ctx, kind, payload)
+	timeout := v.writeTimeout
+	if timeout <= 0 {
+		timeout = shareViewerWriteTimeout
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return v.conn.Write(writeCtx, kind, payload)
 }
 
 func (v *shareTerminalWS) writeJSON(ctx context.Context, frame any) error {

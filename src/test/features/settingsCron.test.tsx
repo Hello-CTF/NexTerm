@@ -347,6 +347,7 @@ describe("CronCard", () => {
       mounted.container.querySelector<HTMLInputElement>('input[aria-label="cron 表达式"]')!,
       "0 4 * * *",
     );
+    clickButton(mounted.container, "高级设置");
     setInputValue(
       mounted.container.querySelector<HTMLInputElement>(
         'input[aria-label="单次执行超时（秒）"]',
@@ -366,6 +367,54 @@ describe("CronCard", () => {
     });
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已注册");
     expect(mocks.list).toHaveBeenCalledTimes(4);
+  });
+
+  it("注册表单默认折叠高级设置;编辑非默认时区/超时的任务时自动展开", async () => {
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickButton(mounted.container, "注册定时任务");
+    expect(mounted.container.querySelector('input[aria-label="时区"]')).toBeNull();
+    expect(mounted.container.querySelector('input[aria-label="单次执行超时（秒）"]')).toBeNull();
+    clickButton(mounted.container, "高级设置");
+    expect(mounted.container.querySelector('input[aria-label="时区"]')).not.toBeNull();
+    clickButton(mounted.container, "取消");
+
+    const custom = job({
+      id: "j-3",
+      sessionId: "c-1",
+      name: "自定义时区",
+      timezone: "Asia/Shanghai",
+      timeout: 0,
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [custom] : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+
+    clickRowButton(mounted.container, "自定义时区", "编辑");
+    const tz = mounted.container.querySelector<HTMLInputElement>('input[aria-label="时区"]');
+    expect(tz?.value).toBe("Asia/Shanghai");
+  });
+
+  it("编辑空字符串时区（等同默认 UTC）的任务时不自动展开高级设置", async () => {
+    const emptyTz = job({
+      id: "j-4",
+      sessionId: "c-1",
+      name: "空时区任务",
+      timezone: "",
+      timeout: 0,
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [emptyTz] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "空时区任务", "编辑");
+    expect(mounted.container.querySelector('input[aria-label="时区"]')).toBeNull();
+    expect(mounted.container.querySelector('input[aria-label="单次执行超时（秒）"]')).toBeNull();
   });
 
   it("shows the kernel message and keeps the form when registration is rejected", async () => {

@@ -53,6 +53,7 @@ type Vault struct {
 	protector Protector
 	derive    func(string, []byte) (*secretKey, error)
 	now       func() int64
+	loadErr   error
 
 	mu         sync.Mutex
 	mode       Mode
@@ -77,21 +78,27 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 	}
 	v.lastUsedAt = v.now()
 
-	switch readSetting(ctx, db, settingMode, "凭据库模式") {
-	case "dpapi":
+	switch mode, err := readSetting(ctx, db, settingMode); {
+	case err != nil:
+		v.noteLoadError(settingMode, err)
+	case mode == "dpapi":
 		v.mode = ModeDPAPI
-	case "master":
+	case mode == "master":
 		v.mode = ModeMaster
-	case "":
+	case mode == "":
 	default:
 		slog.Warn("凭据库模式无法识别，本次按未初始化处理")
 	}
-	if raw := readSetting(ctx, db, settingAutolock, "自动锁时长"); raw != "" {
+	if raw, err := readSetting(ctx, db, settingAutolock); err != nil {
+		v.noteLoadError(settingAutolock, err)
+	} else if raw != "" {
 		if milliseconds, err := strconv.ParseUint(raw, 10, 64); err == nil && milliseconds <= maxAutoLockMS && milliseconds%60_000 == 0 {
 			v.autoLockMS = milliseconds
 		}
 	}
-	if raw := readSetting(ctx, db, settingSalt, "主密码盐"); raw != "" {
+	if raw, err := readSetting(ctx, db, settingSalt); err != nil {
+		v.noteLoadError(settingSalt, err)
+	} else if raw != "" {
 		if salt, err := base64.StdEncoding.DecodeString(raw); err == nil {
 			v.salt = salt
 		} else {
@@ -111,13 +118,41 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 	return v
 }
 
-func readSetting(ctx context.Context, db *store.Store, key, what string) string {
+func readSetting(ctx context.Context, db *store.Store, key string) (string, error) {
 	value, _, err := db.SettingGet(ctx, key)
 	if err != nil {
-		slog.Warn("读取凭据库设置失败，按缺省处理", "setting", key, "what", what, "error", err)
-		return ""
+		return "", err
 	}
-	return value
+	return value, nil
+}
+
+// noteLoadError 记录设置读取失败: 此时库状态未知, 初始化守卫据此拒绝换新 DEK,
+// 避免把"读不到"误判为"未初始化"而让旧密文永久不可解密。
+func (v *Vault) noteLoadError(key string, err error) {
+	slog.Warn("读取凭据库设置失败，初始化将被拒绝", "setting", key, "error", err)
+	if v.loadErr == nil {
+		v.loadErr = err
+	}
+}
+
+func (v *Vault) guardLoadError() error {
+	if v.loadErr != nil {
+		return ipc.NewError(ipc.CodeCrypto, "加密错误: 凭据库设置读取失败，状态未知；为避免旧密文永久不可解密，已拒绝初始化，请先检查数据库")
+	}
+	return nil
+}
+
+// hasUndecryptableSecrets 报告库内是否仍有密文: 凭据行之外, setting 表里的
+// enc:v1: 信封(AI 密钥等)同样由当前 DEK 加密, 换新 DEK 会让它们永远无法解密。
+func (v *Vault) hasUndecryptableSecrets(ctx context.Context) (bool, error) {
+	existing, err := v.store.CredentialList(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(existing) > 0 {
+		return true, nil
+	}
+	return v.store.SettingContainsValue(ctx, store.SecretEnvelopePrefix)
 }
 
 func (v *Vault) Status() Status {
@@ -161,14 +196,17 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 	if v.mode != ModeNotInit {
 		return ipc.NewError(ipc.CodeVaultAlreadyInit, "凭据库已初始化，不能重复初始化")
 	}
+	if err := v.guardLoadError(); err != nil {
+		return err
+	}
 	if len(password) < 8 {
 		return ipc.BadParam(errString("主密码至少 8 位"))
 	}
-	existing, err := v.store.CredentialList(ctx)
+	hasSecrets, err := v.hasUndecryptableSecrets(ctx)
 	if err != nil {
 		return err
 	}
-	if len(existing) > 0 {
+	if hasSecrets {
 		return ipc.NewError(ipc.CodeCrypto, "加密错误: 库内仍有密文，重新初始化会替换密钥并使其永远无法解密，已拒绝")
 	}
 	salt := make([]byte, 16)
@@ -216,6 +254,9 @@ func (v *Vault) initDPAPILocked(ctx context.Context) error {
 	if v.mode != ModeNotInit {
 		return ipc.NewError(ipc.CodeVaultAlreadyInit, "凭据库已初始化，不能重复初始化")
 	}
+	if err := v.guardLoadError(); err != nil {
+		return err
+	}
 	v.mode = ModeDPAPI
 	if err := v.unlockDPAPILocked(ctx); err != nil {
 		v.mode = ModeNotInit
@@ -237,11 +278,11 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 	}
 	var dek *secretKey
 	if !found || encoded == "" {
-		existing, err := v.store.CredentialList(ctx)
+		hasSecrets, err := v.hasUndecryptableSecrets(ctx)
 		if err != nil {
 			return err
 		}
-		if len(existing) > 0 {
+		if hasSecrets {
 			return ipc.NewError(ipc.CodeCrypto, "加密错误: 凭据库的密钥信封已丢失，但库内仍有密文；重建密钥会让它们永远无法解密，已拒绝")
 		}
 		dek = generateKey()

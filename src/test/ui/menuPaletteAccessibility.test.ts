@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
   flush,
+  flushUntil,
   mount,
   setInputValue,
   type MountedView,
@@ -194,9 +195,8 @@ describe("menu and command palette accessibility", () => {
     mocks.list.mockRejectedValue(new Error("offline"));
     mounted = mountPalette(createElement(CommandPalette, { onClose: vi.fn() }));
 
-    await flush();
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("offline"));
     expect(mocks.list).toHaveBeenCalledOnce();
-    expect(mounted.container.textContent).toContain("offline");
     expect(mounted.container.querySelector('[role="combobox"]')).not.toBeNull();
   });
 

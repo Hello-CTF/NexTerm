@@ -91,7 +91,7 @@ func TestFSIPCErrorClassifiesProviderFailures(t *testing.T) {
 			})
 			manager := session.NewManager(session.Config{Connector: connector})
 			dispatcher := ipc.NewDispatcher()
-			if err := registerFSCommands(dispatcher, manager); err != nil {
+			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
 			}
 			connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-" + testCase.name, Kind: testCase.assetKind})
@@ -117,7 +117,7 @@ func TestFSIPCErrorPreservesExistingClassification(t *testing.T) {
 	})
 	manager := session.NewManager(session.Config{Connector: connector})
 	dispatcher := ipc.NewDispatcher()
-	if err := registerFSCommands(dispatcher, manager); err != nil {
+	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
 	}
 	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-unsupported", Kind: session.KindWinRM})
@@ -138,7 +138,7 @@ func TestFSWriteRejectsInvalidBase64(t *testing.T) {
 	})
 	manager := session.NewManager(session.Config{Connector: connector})
 	dispatcher := ipc.NewDispatcher()
-	if err := registerFSCommands(dispatcher, manager); err != nil {
+	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
 	}
 	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-base64", Kind: session.KindSSH})
@@ -174,7 +174,7 @@ func TestFSIPCErrorClassifiesAcquireFailures(t *testing.T) {
 			})
 			manager := session.NewManager(session.Config{Connector: connector})
 			dispatcher := ipc.NewDispatcher()
-			if err := registerFSCommands(dispatcher, manager); err != nil {
+			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 				t.Fatal(err)
 			}
 			connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-acquire-" + testCase.name, Kind: testCase.assetKind})
@@ -200,7 +200,7 @@ func TestFSIPCErrorAcquirePassesThroughSessionLookup(t *testing.T) {
 			return fakeProviderTransport{kind: "ssh", fs: fakeProviderFileSystem{}}, nil
 		})})
 	dispatcher := ipc.NewDispatcher()
-	if err := registerFSCommands(dispatcher, manager); err != nil {
+	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
 	}
 	response := dispatcher.Dispatch(t.Context(), ipc.Request{

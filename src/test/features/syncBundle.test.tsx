@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -91,7 +91,12 @@ function text(): string {
 
 async function mountCard() {
   mounted = withClient(createElement(SyncBundleCard));
+  clickButton(mounted!.container, "导出资产包");
   await flushUntil(() => text().includes("web-01"));
+}
+
+function openImport() {
+  clickButton(mounted!.container, "导入资产包");
 }
 
 function exportableRow(name: string): HTMLElement {
@@ -169,6 +174,7 @@ describe("SyncBundleCard 导入", () => {
   it("非法 JSON：显示错误且不调用 sync_import", async () => {
     mocks.pickBundleFile.mockResolvedValue({ name: "broken.json", text: "not-json{" });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("不是合法的 JSON"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
@@ -180,6 +186,7 @@ describe("SyncBundleCard 导入", () => {
       text: JSON.stringify({ protocol: 99, groups: [], assets: [], creds: [] }),
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("不支持的资产包协议版本"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
@@ -191,6 +198,7 @@ describe("SyncBundleCard 导入", () => {
       text: JSON.stringify({ protocol: 1, assets: "nope" }),
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("assets 必须是数组"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
@@ -213,6 +221,7 @@ describe("SyncBundleCard 导入", () => {
       warnings: ["资产 a9 引用的分组 g9 不存在，已清除该引用"],
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入"));
     expect(text()).toContain("other-device");
@@ -247,6 +256,7 @@ describe("SyncBundleCard 导入", () => {
       warnings: [],
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入"));
     const forceToggle = [...mounted!.container.querySelectorAll("label")].find((l) =>
@@ -285,6 +295,7 @@ describe("SyncBundleCard 导入", () => {
       warnings: ["资产 a1 的本机版本较新，已跳过；如需覆盖请使用强制同步"],
     });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入 1 条资产"));
     clickButton(mounted!.container, "确认导入 1 条资产");
@@ -307,6 +318,7 @@ describe("SyncBundleCard 导入", () => {
     };
     mocks.pickBundleFile.mockResolvedValue({ name: "bundle.json", text: JSON.stringify(withTombstone) });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("删除标记"));
     expect(text()).toContain("本机对应资产会被一并标记删除");
@@ -318,5 +330,28 @@ describe("SyncBundleCard 分区引用", () => {
     await mountCard();
     expect(text()).toContain("与上方「账号同步」的推送 / 拉取互不影响");
     expect(text()).not.toContain("「资产同步」");
+  });
+
+  it("默认只显示说明与导出/导入按钮,点击再展开对应区域", async () => {
+    mounted = withClient(createElement(SyncBundleCard));
+    await flushUntil(() => text().includes("与上方「账号同步」的推送 / 拉取互不影响"));
+    expect(mounted!.container.querySelector("#bundle-format")).toBeNull();
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some(
+        (b) => b.textContent?.trim() === "选择资产包文件…",
+      ),
+    ).toBe(false);
+
+    clickButton(mounted!.container, "导出资产包");
+    await flushUntil(() => text().includes("web-01"));
+    expect(mounted!.container.querySelector("#bundle-format")).not.toBeNull();
+
+    clickButton(mounted!.container, "导入资产包");
+    await flush();
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some(
+        (b) => b.textContent?.trim() === "选择资产包文件…",
+      ),
+    ).toBe(true);
   });
 });

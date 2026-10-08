@@ -15,7 +15,7 @@ func TestAuditCountIPCFollowsFilters(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	dispatcher := ipc.NewDispatcher()
-	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir()); err != nil {
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
 

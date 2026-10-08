@@ -198,7 +198,7 @@ type keyFileContentRequest struct {
 	Content string `json:"content"`
 }
 
-func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, hostKeys *productionHostKeyStore, dataDir string) error {
+func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, hostKeys *productionHostKeyStore, dataDir string, desktop bool) error {
 	assetFromRow := func(row store.AssetRow) assetDTO { return productionAssetDTO(row) }
 	assetsFromRows := func(rows []store.AssetRow) []assetDTO {
 		result := make([]assetDTO, len(rows))
@@ -291,7 +291,12 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 			})
 		},
 		func() error {
+			// 路径来自桌面端系统对话框; desktop 为 false(nexterm-server 装配)时一律拒绝,
+			// 任意路径读不能经服务端 /rpc 到达, web 端经浏览器文件选择直接获得内容。
 			return ipc.Register(dispatcher, "asset_read_key_file", func(_ context.Context, _ *ipc.Call, input idRequest) (string, error) {
+				if !desktop {
+					return "", ipc.NewError(ipc.CodeUnsupported, "读取本地密钥文件只在桌面端可用")
+				}
 				file, err := os.Open(input.Path)
 				if err != nil {
 					return "", err

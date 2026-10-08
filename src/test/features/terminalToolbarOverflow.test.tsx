@@ -8,6 +8,8 @@ const harness = vi.hoisted(() => ({
   mac: false,
   switchEncoding: vi.fn(),
   listLive: vi.fn(),
+  recordStart: vi.fn(),
+  recordStop: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -31,8 +33,8 @@ vi.mock("../../ipc/commands", () => ({
     setVisible: vi.fn().mockResolvedValue(undefined),
     switchEncoding: harness.switchEncoding,
     claim: vi.fn().mockResolvedValue(null),
-    recordStart: vi.fn().mockResolvedValue(undefined),
-    recordStop: vi.fn().mockResolvedValue(0),
+    recordStart: harness.recordStart,
+    recordStop: harness.recordStop,
     exportLog: vi.fn().mockResolvedValue(0),
   },
 }));
@@ -89,6 +91,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { useUi } from "../../app/store";
+import { finishSave, pickSavePath } from "../../ui/dialogs";
 
 let mounted: MountedView | undefined;
 
@@ -128,6 +131,10 @@ beforeEach(() => {
   harness.mac = false;
   harness.listLive.mockResolvedValue([]);
   harness.switchEncoding.mockResolvedValue(undefined);
+  harness.recordStart.mockResolvedValue(undefined);
+  harness.recordStop.mockResolvedValue(0);
+  vi.mocked(pickSavePath).mockResolvedValue(null);
+  vi.mocked(finishSave).mockResolvedValue(null);
   useUi.setState({
     sessions: [
       {
@@ -198,22 +205,26 @@ describe("terminal toolbar overflow", () => {
     );
   });
 
-  it("hides the inline controls and the overflow affordance by breakpoint", async () => {
+  it("keeps the wide toolbar free of the encoding select and the record button", async () => {
     await flush();
     const toolbar = mounted!.container.querySelector(".nx-toolbar");
     if (!toolbar) throw new Error("toolbar not found");
-    const search = toolbar.querySelector<HTMLButtonElement>('button[title^="搜索终端内容"]');
-    expect(search?.className).toContain("max-[560px]:hidden");
-    expect(toolbar.querySelector("select")?.className).toContain("max-[560px]:hidden");
+    expect(toolbar.querySelector("select")).toBeNull();
     const record = [...toolbar.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
       b.textContent?.includes("录制"),
     );
-    expect(record?.className).toContain("max-[560px]:hidden");
+    expect(record).toBeUndefined();
+    const encodingBadge = [...toolbar.querySelectorAll(".nx-badge")].find((b) =>
+      /utf-8|gbk|gb18030|big5|latin1/.test(b.textContent ?? ""),
+    );
+    expect(encodingBadge).toBeUndefined();
+    const search = toolbar.querySelector<HTMLButtonElement>('button[title^="搜索终端内容"]');
+    expect(search?.className).toContain("max-[560px]:hidden");
     const blocks = [...toolbar.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
       b.textContent?.includes("命令块"),
     );
     expect(blocks?.className).toContain("max-[560px]:hidden");
-    expect(overflowButton().className).toContain("max-[560px]:flex");
+    expect(overflowButton().className).not.toContain("hidden");
   });
 
   it("opens terminal search from the overflow menu", async () => {
@@ -253,6 +264,11 @@ describe("terminal toolbar overflow", () => {
       expect(harness.switchEncoding).toHaveBeenCalledWith("kernel-1", "gbk"),
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();
+
+    const badge = [...mounted!.container.querySelectorAll(".nx-toolbar .nx-badge")].find((b) =>
+      b.textContent?.includes("gbk"),
+    );
+    expect(badge).not.toBeUndefined();
   });
 
   it("navigates the overflow menu with arrow keys and closes with Escape", async () => {
@@ -274,5 +290,32 @@ describe("terminal toolbar overflow", () => {
     keyDown(document.activeElement as Element, "Escape");
     await flush();
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("shows a persistent recording indicator with a direct stop action while recording", async () => {
+    vi.mocked(pickSavePath).mockResolvedValue("/tmp/term-1.log");
+    vi.mocked(finishSave).mockResolvedValue("/tmp/term-1.log");
+    await flush();
+    click(overflowButton());
+    await flush();
+    clickMenuItem("录制输出");
+    await waitFor(() =>
+      expect(harness.recordStart).toHaveBeenCalledWith("kernel-1", "/tmp/term-1.log"),
+    );
+
+    const indicator = [
+      ...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
+    ].find((b) => b.textContent?.includes("录制中"));
+    expect(indicator).not.toBeUndefined();
+    expect(indicator!.getAttribute("aria-label")).toBe("停止录制");
+
+    click(indicator!);
+    await waitFor(() => expect(harness.recordStop).toHaveBeenCalledWith("kernel-1"));
+    await flush();
+    expect(
+      [...mounted!.container.querySelectorAll(".nx-toolbar button")].some((b) =>
+        b.textContent?.includes("录制中"),
+      ),
+    ).toBe(false);
   });
 });

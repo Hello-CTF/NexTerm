@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -212,4 +214,84 @@ func TestProductionFSUploadFailureEmitsErrorProgress(t *testing.T) {
 func jsonString(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+type fakeStagedBlobResolver struct {
+	dir     string
+	userIDs []string
+}
+
+func (f *fakeStagedBlobResolver) ResolveStagedPath(rel, userID string) (string, error) {
+	f.userIDs = append(f.userIDs, userID)
+	id, name, found := strings.Cut(rel, "/")
+	if !found || id != "staged-id" || name == "" {
+		return "", errors.New("staged blob missing")
+	}
+	return filepath.Join(f.dir, name), nil
+}
+
+// 服务端装配下 fs_upload/fs_download 的 localPath 是 Stage/Reserve 响应里的相对
+// id/name, 必须经 StagedBlobResolver 解析为暂存文件; 绝对路径与未知引用一律拒绝。
+func TestProductionFSStagedLocalPathResolution(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	staged := &fakeStagedBlobResolver{dir: t.TempDir()}
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager, stagedBlobs: staged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-staged", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ipc.WithUserID(t.Context(), "user-1")
+	dispatch := func(command, args string) ipc.Response {
+		return production.Dispatcher.Dispatch(ctx, ipc.Request{Command: command, Args: json.RawMessage(args)}, production.Environment(""))
+	}
+
+	if err := os.WriteFile(filepath.Join(staged.dir, "upload.bin"), []byte("staged-upload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "uploaded.bin")
+	response := dispatch("fs_upload", `{"sessionId":"`+connected.ID+`","localPath":"staged-id/upload.bin","remotePath":`+jsonString(remote)+`}`)
+	var transferred int
+	requireStoreTestResponse(t, response, &transferred)
+	if transferred != len("staged-upload") {
+		t.Fatalf("upload bytes = %d", transferred)
+	}
+	if data, err := os.ReadFile(remote); err != nil || string(data) != "staged-upload" {
+		t.Fatalf("remote content = %q, %v", data, err)
+	}
+	if len(staged.userIDs) != 1 || staged.userIDs[0] != "user-1" {
+		t.Fatalf("resolver userIDs = %v", staged.userIDs)
+	}
+
+	response = dispatch("fs_download", `{"sessionId":"`+connected.ID+`","remotePath":`+jsonString(remote)+`,"localPath":"staged-id/download.bin"}`)
+	requireStoreTestResponse(t, response, &transferred)
+	stagedTarget := filepath.Join(staged.dir, "download.bin")
+	if data, err := os.ReadFile(stagedTarget); err != nil || string(data) != "staged-upload" {
+		t.Fatalf("staged download target = %q, %v", data, err)
+	}
+
+	calls := len(staged.userIDs)
+	response = dispatch("fs_upload", `{"sessionId":"`+connected.ID+`","localPath":`+jsonString(filepath.Join(staged.dir, "upload.bin"))+`,"remotePath":`+jsonString(filepath.Join(root, "abs.bin"))+`}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("absolute localPath = %+v, want bad_param", response)
+	}
+	if len(staged.userIDs) != calls {
+		t.Fatal("absolute localPath must not reach the resolver")
+	}
+
+	response = dispatch("fs_download", `{"sessionId":"`+connected.ID+`","remotePath":`+jsonString(remote)+`,"localPath":"other-id/download.bin"}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("unknown staged ref = %+v, want not_found", response)
+	}
 }

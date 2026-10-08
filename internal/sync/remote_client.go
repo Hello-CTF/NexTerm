@@ -301,7 +301,20 @@ func isLocalOrPrivate(hostname string) bool {
 	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
 }
 
+// 同步客户端按 insecure 缓存复用: Transport 内含连接池, 每请求新建会耗尽端口并丢失 keep-alive。
+var (
+	secureSyncHTTPClient   = newSyncHTTPClient(false)
+	insecureSyncHTTPClient = newSyncHTTPClient(true)
+)
+
 func syncHTTPClient(insecure bool) *http.Client {
+	if insecure {
+		return insecureSyncHTTPClient
+	}
+	return secureSyncHTTPClient
+}
+
+func newSyncHTTPClient(insecure bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second

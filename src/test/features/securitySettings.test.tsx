@@ -402,6 +402,7 @@ describe("SyncCard（Web 同步台）", () => {
     });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("云端较新"); // a1 云端修订更新
@@ -426,6 +427,7 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
 
     clickButton(mounted.container, "推送到云端 (1)");
@@ -497,6 +499,7 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("aaa"));
     const expected = localHash > remoteHash ? 1 : 0;
     expect(mounted.container.textContent).toContain(`推送到云端 (${expected})`);
@@ -526,6 +529,7 @@ describe("SyncCard（Web 同步台）", () => {
       .mockResolvedValueOnce({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
     clickButton(mounted.container, "推送到云端 (1)");
     await flushUntil(() => mocks.syncPush.mock.calls.length >= 2);
@@ -585,6 +589,7 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     clickButton(mounted.container, "推送到云端 (1)");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
@@ -615,6 +620,7 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
     clickButton(mounted.container, "推送到云端 (1)");
@@ -650,6 +656,7 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "t1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     // 已一致,winner 与 applySet 均为空,不推送也不重复应用
     expect(mounted.container.textContent).toContain("推送到云端 (0)");
@@ -768,6 +775,7 @@ describe("SyncCard（Web 同步台）", () => {
     });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     // 等远端对象加载完成(凭据行出现),按钮才会变为「拉取并应用 (1)」可用
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
     await flushUntil(() => {

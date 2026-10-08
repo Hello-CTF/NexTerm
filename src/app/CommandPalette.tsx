@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
@@ -7,7 +7,7 @@ import { describeError } from "../ui/errorText";
 import { DEMO } from "../demo";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
-import { insertSnippet, type Snippet } from "../features/explorer/snippetInsert";
+import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import {
@@ -69,14 +69,15 @@ export function CommandPalette({
     useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
-  const [assetError, setAssetError] = useState("");
-  const [snippetError, setSnippetError] = useState("");
+  const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
+  const snippetsQuery = useQuery({ queryKey: ["snippets"], queryFn: () => assetApi.snippetList(), retry: false });
+  const assets = assetsQuery.data ?? [];
+  const snippets = snippetsQuery.data ?? [];
+  const assetError = assetsQuery.isError ? `资产列表加载失败：${describeError(assetsQuery.error)}` : "";
+  const snippetError = snippetsQuery.isError ? `片段列表加载失败：${describeError(snippetsQuery.error)}` : "";
   const { hiddenIds, showHidden } = useAssetVisibility();
   const reachEntries = useAssetReachability((s) => s.entries);
   const probedRef = useRef(false);
-  const mountedRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
@@ -90,41 +91,6 @@ export function CommandPalette({
     if (!binding) return description;
     return description ? `${formatBinding(binding)} · ${description}` : formatBinding(binding);
   };
-
-  const loadAssets = useCallback(() => {
-    void assetApi.list().then(
-      (result) => {
-        if (!mountedRef.current) return;
-        setAssets(result);
-        setAssetError("");
-      },
-      (error) => {
-        if (mountedRef.current) setAssetError(`资产列表加载失败：${describeError(error)}`);
-      },
-    );
-  }, []);
-
-  const loadSnippets = useCallback(() => {
-    void assetApi.snippetList().then(
-      (result) => {
-        if (!mountedRef.current) return;
-        setSnippets(result);
-        setSnippetError("");
-      },
-      (error) => {
-        if (mountedRef.current) setSnippetError(`片段列表加载失败：${describeError(error)}`);
-      },
-    );
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    loadAssets();
-    loadSnippets();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [loadAssets, loadSnippets]);
 
   useEffect(() => {
     if (probedRef.current || assets.length === 0) return;
@@ -543,7 +509,7 @@ export function CommandPalette({
               className="nx-link shrink-0"
               onClick={() => {
                 inputRef.current?.focus();
-                loadAssets();
+                void assetsQuery.refetch();
               }}
             >
               重试
@@ -558,7 +524,7 @@ export function CommandPalette({
               className="nx-link shrink-0"
               onClick={() => {
                 inputRef.current?.focus();
-                loadSnippets();
+                void snippetsQuery.refetch();
               }}
             >
               重试

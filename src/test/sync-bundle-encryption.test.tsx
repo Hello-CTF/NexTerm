@@ -97,7 +97,12 @@ function text(): string {
 
 async function mountCard() {
   mounted = withClient(createElement(SyncBundleCard));
+  clickButton(mounted!.container, "导出资产包");
   await flushUntil(() => text().includes("web-01"));
+}
+
+function openImport() {
+  clickButton(mounted!.container, "导入资产包");
 }
 
 function exportRow(name: string): HTMLElement {
@@ -219,6 +224,7 @@ describe("SyncBundleCard 加密导入", () => {
       JSON.stringify({ protocol: 1, origin: "other", exportedAt: Date.now(), groups: [], assets: [], creds: [] }),
     );
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入 0 条资产"));
 
@@ -234,6 +240,7 @@ describe("SyncBundleCard 加密导入", () => {
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
     mocks.readBundleFile.mockRejectedValue({ code: "decrypt", message: "资产包解密失败：口令错误或数据已被篡改" });
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("口令错误或数据已被篡改"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
@@ -243,6 +250,7 @@ describe("SyncBundleCard 加密导入", () => {
     mocks.pickBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
     mocks.promptText.mockResolvedValue(null);
     await mountCard();
+    openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(text()).not.toContain("口令错误");
@@ -252,6 +260,8 @@ describe("SyncBundleCard 加密导入", () => {
 
   it("桌面端导入提示同时声明支持 .json 与 .nxbm", async () => {
     await mountCard();
+    openImport();
+    await flushUntil(() => text().includes("选择资产包文件"));
     expect(text()).toContain("支持旧版 .json 资产包与 .nxbm 加密资产包");
   });
 });

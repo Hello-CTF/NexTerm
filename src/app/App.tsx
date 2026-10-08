@@ -93,6 +93,7 @@ import { TakeoverBanner } from "./TakeoverBanner";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
+import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { registerPromptHandler, registerDialogHandlers, promptText } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
@@ -495,6 +496,14 @@ const ACCOUNT_QUERY_KEYS = [
 ] as const;
 
 export default function App() {
+  return (
+    <ErrorBoundary title="应用界面出了点问题">
+      <AppShell />
+    </ErrorBoundary>
+  );
+}
+
+function AppShell() {
   const {
     workspaces,
     setActiveWorkspace,
@@ -880,14 +889,13 @@ export default function App() {
       toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
       return;
     }
-    // types.ts 的 SyncLink 是 v1 残留;线上形状含 username/hasPassword,与设置页「立即同步」按钮同一 configured 判定。
-    const link = syncLink.data as unknown as { url: string; username: string; hasPassword: boolean } | undefined;
+    const link = syncLink.data;
     if (!link || link.url === "" || link.username === "" || !link.hasPassword) {
       toast("info", "同步还没配置：先到「设置 → 账号同步」里登录");
       return;
     }
     try {
-      const r = (await syncApi.syncNow()) as unknown as { applied: number; pushed: number };
+      const r = await syncApi.syncNow();
       const moved = r.applied + r.pushed;
       toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
       void queryClient.invalidateQueries();
@@ -1789,11 +1797,15 @@ function PaneGroup({
               aria-labelledby={`nx-tab-${idPrefix}-${t.id}`}
               className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}
             >
-              <PaneForTab
-                tab={t}
-                active={t.id === activeTabId && visible}
-                onClose={() => void requestCloseTab(t.id)}
-              />
+              <ErrorBoundary
+                onClose={t.closable ? () => void requestCloseTab(t.id) : undefined}
+              >
+                <PaneForTab
+                  tab={t}
+                  active={t.id === activeTabId && visible}
+                  onClose={() => void requestCloseTab(t.id)}
+                />
+              </ErrorBoundary>
             </div>
           ))
         )}

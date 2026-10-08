@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -74,38 +75,56 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.GroupID, input.Kind, strings
 	return s.AssetGet(ctx, id)
 }
 
+// AssetUpdate 只把 patch 显式给出的列写进 SQL, 并发 patch 不同字段互不覆盖。
 func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (AssetRow, error) {
-	row, err := s.AssetGet(ctx, id)
-	if err != nil {
+	if _, err := s.AssetGet(ctx, id); err != nil {
 		return AssetRow{}, err
 	}
-	applyOptional(&row.GroupID, patch.GroupID)
-	applyOptional(&row.Host, patch.Host)
-	applyOptional(&row.Port, patch.Port)
-	applyOptional(&row.Username, patch.Username)
-	applyOptional(&row.AuthKind, patch.AuthKind)
-	applyOptional(&row.KeyPath, patch.KeyPath)
-	applyOptional(&row.CredID, patch.CredID)
+	sets := make([]string, 0, 13)
+	args := make([]any, 0, 14)
+	add := func(column string, value any) {
+		sets = append(sets, column+"=?")
+		args = append(args, value)
+	}
+	if patch.GroupID.Set {
+		add("group_id", patch.GroupID.Value)
+	}
+	if patch.Host.Set {
+		add("host", patch.Host.Value)
+	}
+	if patch.Port.Set {
+		add("port", patch.Port.Value)
+	}
+	if patch.Username.Set {
+		add("username", patch.Username.Value)
+	}
+	if patch.AuthKind.Set {
+		add("auth_kind", patch.AuthKind.Value)
+	}
+	if patch.KeyPath.Set {
+		add("key_path", patch.KeyPath.Value)
+	}
+	if patch.CredID.Set {
+		add("cred_id", patch.CredID.Value)
+	}
 	if patch.Name != nil {
-		row.Name = strings.TrimSpace(*patch.Name)
+		add("name", strings.TrimSpace(*patch.Name))
 	}
 	if patch.OptionsJSON != nil {
-		row.OptionsJSON = *patch.OptionsJSON
+		add("options_json", *patch.OptionsJSON)
 	}
 	if patch.Tags != nil {
-		row.Tags = *patch.Tags
+		add("tags", *patch.Tags)
 	}
 	if patch.Note != nil {
-		row.Note = *patch.Note
+		add("note", *patch.Note)
 	}
 	if patch.Sort != nil {
-		row.Sort = *patch.Sort
+		add("sort", *patch.Sort)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE asset SET group_id=?, name=?, host=?, port=?, username=?,
-auth_kind=?, key_path=?, cred_id=?, options_json=?, tags=?, note=?, sort=?, updated_at=? WHERE id=?`,
-		row.GroupID, row.Name, row.Host, row.Port, row.Username, row.AuthKind, row.KeyPath,
-		row.CredID, row.OptionsJSON, row.Tags, row.Note, row.Sort, ids.NowMS(), id)
-	if err != nil {
+	add("updated_at", ids.NowMS())
+	args = append(args, id)
+	if _, err := s.db.ExecContext(ctx, "UPDATE asset SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
 		return AssetRow{}, dbError(err)
 	}
 	return s.AssetGet(ctx, id)
@@ -180,7 +199,21 @@ ORDER BY sort, name LIMIT 100`, like, like, like, like, like)
 	return result, rows.Err()
 }
 
+type assetExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
+	return assetUpsert(ctx, s.db, row)
+}
+
+// AssetUpsertTx 是 AssetUpsert 的事务内版本, 供同步导入把一个对象类的多次写入并入同一事务。
+func (s *Store) AssetUpsertTx(ctx context.Context, tx *sql.Tx, row AssetRow) (bool, error) {
+	return assetUpsert(ctx, tx, row)
+}
+
+func assetUpsert(ctx context.Context, exec assetExecer, row AssetRow) (bool, error) {
 	if row.ID == BuiltinLocalAssetID {
 		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（本机在每台设备上都是各自身份）"))
 	}
@@ -191,12 +224,12 @@ func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
 		return false, badParam(errString("资产名称不能为空"))
 	}
 	var ignored string
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM asset WHERE id = ?", row.ID).Scan(&ignored)
+	err := exec.QueryRowContext(ctx, "SELECT id FROM asset WHERE id = ?", row.ID).Scan(&ignored)
 	exists := err == nil
 	if err != nil && !isNoRows(err) {
 		return false, dbError(err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO asset(id, group_id, kind, name, host, port, username,
+	_, err = exec.ExecContext(ctx, `INSERT INTO asset(id, group_id, kind, name, host, port, username,
 auth_kind, key_path, cred_id, options_json, tags, note, sort, created_at, updated_at, deleted_at, builtin)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
 ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, kind=excluded.kind, name=excluded.name,

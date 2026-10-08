@@ -165,6 +165,14 @@ describe("Enter 提交的 IME 守卫", () => {
   it("Redis 命令台：组合中 Enter 不执行，普通 Enter 执行", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
+    const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("命令台"),
+    );
+    if (!bar) throw new Error("命令台折叠条未找到");
+    click(bar);
+    await flushUntil(
+      () => mounted!.container.querySelector('input[aria-label="Redis 命令"]') !== null,
+    );
     const cmdInput = mounted.container.querySelector<HTMLInputElement>(
       'input[aria-label="Redis 命令"]',
     );

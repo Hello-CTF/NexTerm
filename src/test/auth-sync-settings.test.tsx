@@ -180,9 +180,17 @@ function optInCheckbox(index: number): HTMLInputElement {
   return box;
 }
 
-// opt-in 开关经 kindOptInGet 异步到达后才渲染
+// opt-in 开关经 kindOptInGet 异步到达后才渲染; 默认折叠,未自动展开(有开启项)时点开「同步内容开关」
 async function flushUntilOptInRendered(): Promise<void> {
+  await flushUntil(() => button("同步内容开关") !== undefined);
+  if ((mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) < 2) {
+    clickButton(mounted!.container, "同步内容开关");
+  }
   await flushUntil(() => (mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) >= 2);
+}
+
+function openDetails(): void {
+  clickButton(mounted!.container, "对比详情");
 }
 
 function fixtureText(name: string): string {
@@ -248,6 +256,7 @@ describe("M165 opt-in 默认关", () => {
 
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
+    openDetails();
     // 远端 known_host/AI 档案被 opt-in 过滤: 不进应用集合, 也不出现在对比行
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     expect(mocks.kindOptInGet).toHaveBeenCalled();
@@ -269,6 +278,7 @@ describe("M165 known_host 同步", () => {
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
     optInCheckbox(0).click();
+    openDetails();
     await flushUntil(() => text().includes("10.0.0.9:22"));
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: true });
     expect(text()).toContain("已知主机");
@@ -306,6 +316,7 @@ describe("M165 known_host 同步", () => {
 
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
+    openDetails();
     // 默认关: known_host 墓碑不进入推送集合, 也不出现在对比行
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     expect(text()).toContain("推送到云端 (0)");
@@ -358,6 +369,7 @@ describe("M165 AI 档案同步", () => {
     mocks.applyObjects.mockResolvedValue({ applied: 1, identical: 0, skipped: 0, objects: [{ id: "p-1", kind: "ai_profile", result: "applied" }] });
 
     mounted = mountSyncCard();
+    openDetails();
     await flushUntil(() => text().includes("生产 <档案> & more"));
     expect(text()).toContain("AI 档案");
     expect(text()).toContain("仅云端");
@@ -464,6 +476,7 @@ describe("M165 R2 开关切换竞态", () => {
     // 第一次 load(开启)挂在 collectKnownHosts; 开关渲染后立即关闭(opt-in 关的 load 不碰该 mock, 先完成)
     await flushUntilOptInRendered();
     optInCheckbox(0).click();
+    openDetails();
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     // 慢 load 此刻才完成: 回写必须被代次检查丢弃, 禁用种类不得出现在对比行
     slowLoad.resolve();

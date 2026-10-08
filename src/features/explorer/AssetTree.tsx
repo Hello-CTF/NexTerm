@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
+import { browserFilesAvailable } from "../../ipc/webFiles";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
@@ -1221,8 +1222,13 @@ export function AssetEditor({
   const boundIsRefKey = boundIsVaultKey && boundCred?.source === "file";
   const privateKeys = (credentials.data ?? []).filter((c) => c.kind === "private_key");
 
+  const webFiles = browserFilesAvailable();
   const [keyOrigin, setKeyOrigin] = useState<"ref" | "vault">(
-    boundIsRefKey ? "ref" : boundIsVaultKey ? "vault" : "ref",
+    boundIsRefKey || initial?.keyPath
+      ? "ref"
+      : boundIsVaultKey || webFiles
+        ? "vault"
+        : "ref",
   );
   const [vaultMode, setVaultMode] = useState<"new" | "existing">(
     boundIsVaultKey && !boundIsRefKey ? "existing" : "new",
@@ -1689,24 +1695,27 @@ export function AssetEditor({
                           onChange={(e) => setKeyPath(e.target.value)}
                           placeholder="选择或输入私钥路径"
                         />
-                        <button
-                          type="button"
-                          className="nx-btn nx-btn-outline shrink-0"
-                          onClick={() =>
-                            void pickKeyFile().then((p) => {
-                              if (p) {
-                                setKeyPath(p);
-                                setDirty(true);
-                              }
-                            })
-                          }
-                        >
-                          浏览…
-                        </button>
+                        {!webFiles && (
+                          <button
+                            type="button"
+                            className="nx-btn nx-btn-outline shrink-0"
+                            onClick={() =>
+                              void pickKeyFile().then((p) => {
+                                if (p) {
+                                  setKeyPath(p);
+                                  setDirty(true);
+                                }
+                              })
+                            }
+                          >
+                            浏览…
+                          </button>
+                        )}
                       </div>
                       <div className="nx-hint mt-1.5">
-                        ↳ 只保存路径，私钥内容不进入凭据库，与系统 ssh 共用同一份文件。
-                        文件移动或删除后会连不上，改这里的路径即可。
+                        {webFiles
+                          ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
+                          : "↳ 只保存路径，私钥内容不进入凭据库，与系统 ssh 共用同一份文件。文件移动或删除后会连不上，改这里的路径即可。"}
                       </div>
                     </>
                   ) : (
