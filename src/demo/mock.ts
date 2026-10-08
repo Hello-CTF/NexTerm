@@ -807,9 +807,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
 
     if (!creating && plan.changes.length === 0) {
       const onTarget =
-        current.includes("worker_processes auto;") &&
-        current.includes("server_tokens off;") &&
-        current.includes("client_max_body_size 64m;");
+        demoNginxDirectiveLine(current, "worker_processes")?.trim() === "worker_processes auto;" &&
+        demoNginxDirectiveLine(current, "server_tokens")?.trim() === "server_tokens off;" &&
+        demoNginxDirectiveLine(current, "client_max_body_size")?.trim() === "client_max_body_size 64m;";
       const text = onTarget
         ? `检查过了，\`${path}\` 已经是目标状态：\`worker_processes auto\`、\`server_tokens off\`、\`client_max_body_size 64m\` 都在，无需变更。`
         : `没能改 \`${path}\`：配置与预期不符（缺少 \`server_tokens\`/\`keepalive_timeout\` 锚点或 \`worker_processes\` 值异常），没有做任何变更，请人工核对这份配置。`;
@@ -1085,28 +1085,35 @@ function md5Hex(data: Uint8Array): string {
     .join("");
 }
 
+function demoNginxDirectiveLine(content: string, name: string): string | null {
+  const hit = content.match(new RegExp(`^[ \\t]*${name}(?:[ \\t]+[^;]+)?;[ \\t]*$`, "m"));
+  return hit ? hit[0] : null;
+}
+
 function demoNginxPlan(current: string): { next: string; changes: { before: string; after: string; note: string }[] } {
   const changes: { before: string; after: string; note: string }[] = [];
   let next = current;
-  if (next.includes("worker_processes 1;")) {
-    changes.push({ before: "worker_processes 1;", after: "worker_processes auto;", note: "`worker_processes 1` → `auto`" });
-    next = next.replace("worker_processes 1;", "worker_processes auto;");
-  }
-  if (next.includes("server_tokens on;")) {
-    changes.push({ before: "server_tokens on;", after: "server_tokens off;", note: "`server_tokens on` → `off`（不再对外报版本号）" });
-    next = next.replace("server_tokens on;", "server_tokens off;");
-  }
-  const bodySize = next.match(/client_max_body_size\s+[^;]+;/);
-  if (bodySize) {
-    if (bodySize[0] !== "client_max_body_size 64m;") {
-      changes.push({ before: bodySize[0], after: "client_max_body_size 64m;", note: "`client_max_body_size` 调整为 `64m`" });
-      next = next.replace(bodySize[0], "client_max_body_size 64m;");
-    }
+  const edit = (line: string, replacement: string, note: string) => {
+    const indent = line.slice(0, line.length - line.trimStart().length);
+    changes.push({ before: line.trim(), after: replacement, note });
+    next = next.replace(line, `${indent}${replacement}`);
+  };
+
+  const wp = demoNginxDirectiveLine(next, "worker_processes");
+  if (wp?.trim() === "worker_processes 1;") edit(wp, "worker_processes auto;", "`worker_processes 1` → `auto`");
+
+  const st = demoNginxDirectiveLine(next, "server_tokens");
+  if (st?.trim() === "server_tokens on;") edit(st, "server_tokens off;", "`server_tokens on` → `off`（不再对外报版本号）");
+
+  const cmb = demoNginxDirectiveLine(next, "client_max_body_size");
+  if (cmb) {
+    if (cmb.trim() !== "client_max_body_size 64m;") edit(cmb, "client_max_body_size 64m;", "`client_max_body_size` 调整为 `64m`");
   } else {
-    const anchor = next.match(/\n([ \t]*)server_tokens [^;]+;/) ?? next.match(/\n([ \t]*)keepalive_timeout[^;]*;/);
+    const anchor = demoNginxDirectiveLine(next, "server_tokens") ?? demoNginxDirectiveLine(next, "keepalive_timeout");
     if (anchor) {
-      next = next.replace(anchor[0], `${anchor[0]}\n${anchor[1]}client_max_body_size 64m;`);
-      changes.push({ before: "", after: `${anchor[1]}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });
+      const indent = anchor.slice(0, anchor.length - anchor.trimStart().length);
+      next = next.replace(anchor, `${anchor}\n${indent}client_max_body_size 64m;`);
+      changes.push({ before: "", after: `${indent}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });
     }
   }
   return { next, changes };
