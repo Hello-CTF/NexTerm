@@ -23,7 +23,7 @@ func TestCronRegisterValidatesModelProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
-		`{"sessionId":"`+conversation.ID+`","prompt":"p","schedule":"0 0 1 1 *","modelProfileId":"missing"}`), "profile")
+		`{"sessionId":"`+conversation.ID+`","prompt":"p","schedule":"0 0 1 1 *","modelProfileId":"missing"}`), "模型档案")
 
 	profile, err := services.Profiles.Save(ctx, profiles.Profile{BaseURL: "https://example.test/v1", APIKey: "k", Model: "m"})
 	var saved profiles.Profile

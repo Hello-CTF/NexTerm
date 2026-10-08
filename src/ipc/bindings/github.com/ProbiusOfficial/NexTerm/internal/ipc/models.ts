@@ -33,7 +33,6 @@ export enum Code {
     CodeNotController = "not_controller",
     CodeNeedsConfirm = "needs_confirm",
     CodeTimeout = "timeout",
-    CodeAIProvider = "ai_provider",
     CodeCrypto = "crypto",
     CodeInternal = "internal",
 };

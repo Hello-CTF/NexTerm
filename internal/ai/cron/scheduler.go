@@ -75,13 +75,13 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 func (s *Scheduler) Register(ctx context.Context, registration Registration) (Job, error) {
 	registration.SessionID = strings.TrimSpace(registration.SessionID)
 	if registration.SessionID == "" {
-		return Job{}, errors.New("cron session ID is required")
+		return Job{}, errors.New("定时任务必须关联一个会话")
 	}
 	if strings.TrimSpace(registration.Prompt) == "" {
-		return Job{}, errors.New("cron prompt is required")
+		return Job{}, errors.New("定时任务的提示词不能为空")
 	}
 	if registration.Timeout < 0 {
-		return Job{}, errors.New("cron timeout cannot be negative")
+		return Job{}, errors.New("超时时间不能为负数")
 	}
 	if registration.Timeout == 0 {
 		registration.Timeout = s.options.ExecutionTimeout
@@ -124,7 +124,7 @@ func (s *Scheduler) Register(ctx context.Context, registration Registration) (Jo
 func (s *Scheduler) List(ctx context.Context, sessionID string) ([]Job, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return nil, errors.New("cron session ID is required")
+		return nil, errors.New("定时任务必须关联一个会话")
 	}
 	jobs, err := s.load(ctx)
 	if err != nil {

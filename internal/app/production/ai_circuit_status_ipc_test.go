@@ -35,7 +35,7 @@ func TestAICircuitStatusCommandRegistrationAndInvocation(t *testing.T) {
 	}
 
 	response := dispatchStoreTest(dispatcher, "ai_circuit_status", `{"id":""}`)
-	if response.OK || !strings.Contains(response.Error.Message, "no active AI model profile") {
+	if response.OK || !strings.Contains(response.Error.Message, "尚未启用 AI 模型档案") {
 		t.Fatalf("empty id without active profile = %+v", response)
 	}
 	response = dispatchStoreTest(dispatcher, "ai_circuit_status", `{"id":"missing"}`)

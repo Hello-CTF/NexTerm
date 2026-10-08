@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 )
 
@@ -162,9 +164,27 @@ func doneEvent(answer string, turns int, tokensIn, tokensOut uint64) Event {
 }
 
 func errorEvent(err error, retryable bool) Event {
-	message := "未知 AI 错误"
-	if err != nil {
-		message = err.Error()
+	return Event{Type: "error", Message: terminalErrorMessage(err), Retryable: retryable}
+}
+
+func terminalErrorMessage(err error) string {
+	if err == nil {
+		return "操作失败（原因未记录），请重试"
 	}
-	return Event{Type: "error", Message: message, Retryable: retryable}
+	if errors.Is(err, provider.ErrCircuitOpen) {
+		return "AI 服务连续失败已触发熔断，请稍后重试"
+	}
+	switch provider.ClassifyError(err) {
+	case provider.ErrorClassRateLimit:
+		return "AI 服务请求过于频繁已被限流，请稍后重试"
+	case provider.ErrorClassServer:
+		return "AI 服务暂时不可用（服务端错误），请稍后重试"
+	case provider.ErrorClassClient:
+		return "AI 服务拒绝了请求，请检查模型档案中的密钥与模型配置"
+	case provider.ErrorClassTransport:
+		return "无法连接 AI 服务，请检查网络或代理设置后重试"
+	case provider.ErrorClassProtocol:
+		return "AI 服务返回了无法解析的响应，请稍后重试或更换模型"
+	}
+	return err.Error()
 }

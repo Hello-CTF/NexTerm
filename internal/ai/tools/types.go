@@ -77,7 +77,7 @@ func OK(text string) Output {
 
 func Fail(err error) Output {
 	if err == nil {
-		err = errors.New("未知错误")
+		err = errors.New("操作失败（原因未记录），请重试")
 	}
 	return Output{Text: err.Error(), ExitCode: 1}
 }

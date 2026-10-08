@@ -26,7 +26,7 @@ func register[In, Out any](dispatcher *Dispatcher, name string, handler CommandF
 				Args json.RawMessage `json:"args"`
 			}
 			if err := json.Unmarshal(raw, &envelope); err != nil {
-				return nil, BadParam(err)
+				return nil, badDecode(err)
 			}
 			raw = envelope.Args
 			if len(raw) == 0 {
@@ -36,7 +36,7 @@ func register[In, Out any](dispatcher *Dispatcher, name string, handler CommandF
 
 		var input In
 		if err := json.Unmarshal(raw, &input); err != nil {
-			return nil, BadParam(err)
+			return nil, badDecode(err)
 		}
 		return handler(ctx, call, input)
 	})

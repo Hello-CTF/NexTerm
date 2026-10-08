@@ -85,9 +85,9 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 	}
 
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
-		`{"sessionId":"`+conversationA.ID+`","prompt":"  ","schedule":"0 0 1 1 *"}`), "prompt")
+		`{"sessionId":"`+conversationA.ID+`","prompt":"  ","schedule":"0 0 1 1 *"}`), "提示词")
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
-		`{"sessionId":"`+conversationA.ID+`","prompt":"p","schedule":"not-a-schedule"}`), "schedule")
+		`{"sessionId":"`+conversationA.ID+`","prompt":"p","schedule":"not-a-schedule"}`), "定时表达式")
 
 	var listed []cron.Job
 	requireCronData(t, dispatchCronTest(dispatcher, "cron_list", `{"sessionId":"`+conversationA.ID+`"}`), &listed)
@@ -100,11 +100,11 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 	}
 
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_get",
-		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`"}`), "not found")
+		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`"}`), "定时任务不存在")
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_set_enabled",
-		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`","enabled":false}`), "not found")
+		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`","enabled":false}`), "定时任务不存在")
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_unregister",
-		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`"}`), "not found")
+		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`"}`), "定时任务不存在")
 
 	var disabled cron.Job
 	requireCronData(t, dispatchCronTest(dispatcher, "cron_set_enabled",
@@ -136,7 +136,7 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	requireCronError(t, dispatchCronTest(dispatcher, "cron_list", `{"sessionId":"`+conversationA.ID+`"}`), "cron storage failure")
+	requireCronError(t, dispatchCronTest(dispatcher, "cron_list", `{"sessionId":"`+conversationA.ID+`"}`), "定时任务存储失败")
 }
 
 func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {

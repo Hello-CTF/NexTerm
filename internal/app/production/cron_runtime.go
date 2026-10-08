@@ -33,19 +33,19 @@ type conversationLookup interface {
 	ConvGet(ctx context.Context, id string) (store.ConversationRow, error)
 }
 
-func scopeForConversation(lookup conversationLookup) func(cron.Trigger) tools.Scope {
-	return func(trigger cron.Trigger) tools.Scope {
+func scopeForConversation(lookup conversationLookup) func(cron.Trigger) (tools.Scope, error) {
+	return func(trigger cron.Trigger) (tools.Scope, error) {
 		row, err := lookup.ConvGet(context.Background(), trigger.SessionID)
 		if err != nil {
-			return tools.Scope{}
+			return tools.Scope{}, err
 		}
 		var envelope struct {
 			Scope tools.Scope `json:"scope"`
 		}
 		if err := json.Unmarshal([]byte(row.ScopeJSON), &envelope); err != nil {
-			return tools.Scope{}
+			return tools.Scope{}, err
 		}
-		return envelope.Scope
+		return envelope.Scope, nil
 	}
 }
 

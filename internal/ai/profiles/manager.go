@@ -23,9 +23,9 @@ const (
 )
 
 var (
-	ErrNoActiveProfile       = errors.New("no active AI model profile")
-	ErrProfileNotFound       = errors.New("AI model profile not found")
-	ErrProfileKeyUnavailable = errors.New("AI model profile has no usable API key")
+	ErrNoActiveProfile       = errors.New("尚未启用 AI 模型档案，请先在设置中选择并启用模型")
+	ErrProfileNotFound       = errors.New("AI 模型档案不存在，可能已被删除，请检查设置")
+	ErrProfileKeyUnavailable = errors.New("AI 模型档案缺少可用的 API Key，请检查档案的密钥配置")
 )
 
 type Settings interface {
