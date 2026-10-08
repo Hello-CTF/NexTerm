@@ -15,7 +15,7 @@ const packageNames = [
     `NexTerm-server_${version}_linux_${arch}.tar.gz`,
   ]),
 ];
-const evidenceNames = ["SHA256SUMS", "release-evidence.json", "real-target-gaps.json"];
+const evidenceNames = ["SHA256SUMS"];
 const expectedNames = [...packageNames, ...evidenceNames];
 const retriableStatuses = new Set([429, 500, 502, 503, 504]);
 const requestTimeoutMs = 600_000;

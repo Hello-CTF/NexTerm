@@ -55,7 +55,7 @@
 
 - 实现期只跑聚焦测试：与改动直接相关的 Go 包 / 前端测试，外加 `pnpm typecheck`、`pnpm lint`；不为每个小改动重复全仓套件。
 - 高风险改动（并发、协议、持久化、安全、数据库）一旦可运行，立即补跑相关集成测试与 `go test -race ./...`；涉及 build tag 的按需加 `-tags`。
-- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时附 release evidence（`node .github/scripts/release-evidence.mjs <产物目录>`）。
+- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验 8 个最终产物并生成 `SHA256SUMS`。release 资产只有 8 个目标包与 `SHA256SUMS`，不生成也不上传 `release-evidence.json` 与 `real-target-gaps.json`；真实环境验证缺口只在 release notes 与 Pages 文档中如实说明。
 - 分层不削弱门禁：CI 保留全部质量检查，上文"质量命令"全绿要求不变；评审须实际运行并核对行为，不得凭汇报放行。
 
 ## 平台 build tags
