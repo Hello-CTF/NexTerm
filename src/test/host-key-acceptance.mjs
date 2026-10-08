@@ -398,7 +398,10 @@ const clickDialogButton = (label) => `(() => {
 })()`;
 const toastText = `[...document.querySelectorAll(".nx-toasts button")].map((b) => b.textContent).join("\\n")`;
 const wsTabCount = `document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length`;
-const VISIBLE_PANEL = ".nx-workspace-main [role='tabpanel']:not(.hidden)";
+// 必须限定在活动工作区内：非活动工作区的外层面板带 hidden，但其 pane 内"激活"标签的
+// tabpanel 自身不带 hidden（App.tsx PaneGroup 只按 pane 内激活态加类），
+// 不限定活动工作区时 querySelector 会按 DOM 顺序命中先出现的隐藏死面板。
+const VISIBLE_PANEL = ".nx-workspace-main > [role='tabpanel']:not(.hidden) [role='tabpanel']:not(.hidden)";
 const rpcSessions = `(async () => (await import('${VITE}/src/ipc/commands.ts')).sessionApi.list())()`;
 const rpcAssetConnected = (assetId) => `(async () => {
   const list = await (${rpcSessions});
@@ -571,13 +574,39 @@ async function hostKeyAcceptance(page, state) {
 
   await pass("hostkey-reconnect-menu-fallback", async () => {
     await page.evaluate(`(async () => {
+      const { listenEvent, EVENTS } = await import('${VITE}/src/ipc/events.ts');
+      const commands = await import('${VITE}/src/ipc/commands.ts');
+      window.__statusEvents = [];
+      window.__clickAt = 0;
+      window.__ipcLog = [];
+      for (const name of ["reconnect", "probeHostKey", "connect", "disconnect", "list"]) {
+        const original = commands.sessionApi[name].bind(commands.sessionApi);
+        commands.sessionApi[name] = async (...args) => {
+          const startedAt = Date.now();
+          try {
+            const result = await original(...args);
+            window.__ipcLog.push({ at: startedAt, name, args: JSON.stringify(args), ok: JSON.stringify(result)?.slice(0, 200) });
+            return result;
+          } catch (e) {
+            window.__ipcLog.push({ at: startedAt, name, args: JSON.stringify(args), error: String(e?.message ?? e), code: e?.code });
+            throw e;
+          }
+        };
+      }
+      listenEvent(EVENTS.sessionStatus, (p) => window.__statusEvents.push({ at: Date.now(), ...p }));
+      listenEvent(EVENTS.appError, (p) => window.__statusEvents.push({ at: Date.now(), appError: p.message }));
+      return true;
+    })()`);
+    await page.evaluate(`(async () => {
       const commands = await import('${VITE}/src/ipc/commands.ts');
       const sessions = await commands.sessionApi.list();
       const mine = sessions.find((s) => s.assetId === ${JSON.stringify(state.assetId)});
       if (!mine) throw new Error("no asset session to disconnect");
       await commands.sessionApi.disconnect(mine.id);
-      return true;
-    })()`);
+      return mine.id;
+    })()`).then((id) => {
+      state.reconnectSessionId = id;
+    });
     await page.waitFor(`document.querySelector("${VISIBLE_PANEL}")?.textContent.includes("已断开") ?? false`, 15_000);
     let menuOpen = false;
     for (let attempt = 0; attempt < 3 && !menuOpen; attempt++) {
@@ -600,16 +629,101 @@ async function hostKeyAcceptance(page, state) {
       }
     }
     if (!menuOpen) throw new Error("terminal context menu did not open");
-    const clicked = await page.evaluate(`(() => {
-      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("重连会话"));
-      if (!item) return false;
-      item.click();
+    await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const st = useUi.getState();
+      window.__liveAtClick = {
+        activeWorkspaceId: st.activeWorkspaceId,
+        sessions: st.sessions.map((s) => ({ id: s.id, status: s.status })),
+        workspaces: st.workspaces.map((w) => ({
+          id: w.id,
+          sessionId: w.sessionId,
+          panes: w.panes.map((p) => ({
+            id: p.id,
+            activeTabId: p.activeTabId,
+            tabs: p.tabs.map((t) => ({ id: t.id, title: t.title, sessionId: t.sessionId, tabId: t.tabId, dead: t.dead })),
+          })),
+        })),
+      };
       return true;
     })()`);
-    assert.equal(clicked, true, "menu item 重连会话 missing");
-    await page.waitFor(`${toastText}.includes("正在重连")`, 15_000);
-    assert.equal(await page.evaluate(dialogPresent), false, "probe-less backend must fall back without a dialog");
-    return { evidence: { note: "session_probe_host_key lands with M157; until the rebase the menu reconnect must degrade to the plain reconnect" } };
+    const clickProbe = await page.evaluate(`(() => {
+      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("重连会话"));
+      if (!item) return { found: false };
+      const probe = { found: true, disabled: item.disabled, text: item.textContent, html: item.outerHTML.slice(0, 400) };
+      window.__clickAt = Date.now();
+      item.click();
+      probe.menuStillOpen = Boolean(document.querySelector(".nx-menu"));
+      return probe;
+    })()`);
+    assert.equal(clickProbe.found, true, "menu item 重连会话 missing");
+    const toastHistory = [];
+    try {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const seen = await page.evaluate(toastText);
+        for (const line of String(seen ?? "").split("\n")) {
+          if (line && !toastHistory.includes(line)) toastHistory.push(line);
+        }
+        if (toastHistory.some((line) => line.includes("正在重连"))) break;
+        if (Date.now() >= deadline) throw new Error("toast 正在重连 never appeared");
+        await sleep(150);
+      }
+    } catch (error) {
+      const diagnostics = await page.evaluate(`(async () => {
+        const commands = await import('${VITE}/src/ipc/commands.ts');
+        const { useUi } = await import('${VITE}/src/app/store.ts');
+        const st = useUi.getState();
+        const live = {
+          activeWorkspaceId: st.activeWorkspaceId,
+          sessions: st.sessions.map((s) => ({ id: s.id, status: s.status })),
+          workspaces: st.workspaces.map((w) => ({
+            id: w.id,
+            sessionId: w.sessionId,
+            panes: w.panes.map((p) => ({
+              id: p.id,
+              activeTabId: p.activeTabId,
+              tabs: p.tabs.map((t) => ({ id: t.id, kind: t.kind, title: t.title, sessionId: t.sessionId, tabId: t.tabId, dead: t.dead })),
+            })),
+          })),
+        };
+        const sessions = await commands.sessionApi.list().catch((e) => String(e));
+        const known = await commands.assetApi.knownHostList().catch((e) => String(e));
+        return {
+          dialog: document.querySelector('[role="alertdialog"]')?.textContent ?? null,
+          menuStillOpen: Boolean(document.querySelector(".nx-menu")),
+          sessions,
+          known,
+          live,
+          clickAt: window.__clickAt,
+          statusEvents: window.__statusEvents,
+          ipcLog: window.__ipcLog,
+          liveAtClick: window.__liveAtClick,
+        };
+      })()`).catch((e) => ({ evaluateError: String(e) }));
+      await screenshot(page, "hostkey-reconnect-fallback-timeout.png").catch(() => {});
+      throw new Error(`${error.message}; clickProbe=${JSON.stringify(clickProbe)}; toastHistory=${JSON.stringify(toastHistory)}; fixtureFingerprint=${state.ssh.fingerprint}; diagnostics=${JSON.stringify(diagnostics)}`);
+    }
+    assert.equal(await page.evaluate(dialogPresent), false, "known fingerprint must reconnect without a dialog");
+    await page.waitFor(rpcAssetConnected(state.assetId), 20_000);
+    const tabState = await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const st = useUi.getState();
+      const ws = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+      const terminals = ws?.panes.flatMap((p) => p.tabs).filter((t) => t.kind === "terminal") ?? [];
+      return { terminals: terminals.map((t) => ({ sessionId: t.sessionId, dead: Boolean(t.dead) })), ipcLog: window.__ipcLog.filter((e) => e.name !== "list") };
+    })()`);
+    assert.deepEqual(
+      tabState.terminals,
+      [{ sessionId: state.reconnectSessionId, dead: false }],
+      `menu reconnect must reuse the existing terminal tab without duplicates: ${JSON.stringify(tabState.terminals)}`,
+    );
+    return {
+      evidence: {
+        note: "指纹未变化时菜单重连不弹窗：probe 返回 known 后直接 StartReconnect，toast 提示正在重连，原终端标签复用不新建",
+        ipcLog: tabState.ipcLog,
+      },
+    };
   });
 }
 
