@@ -91,7 +91,6 @@ export function PromptModal() {
               }}
               rows={9}
               className="nx-textarea nx-textarea-grow"
-              placeholder="尽量写清楚目标和约束"
               aria-describedby={hintId}
               value={value}
               onChange={(event) => setValue(event.target.value)}

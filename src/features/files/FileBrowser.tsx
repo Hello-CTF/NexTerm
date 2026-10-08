@@ -504,6 +504,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           className="nx-btn nx-btn-danger nx-btn-sm max-[560px]:hidden"
           disabled={!selected}
           onClick={() => selected && void removePath(selected, selectedEntry?.kind === "dir")}
+          title="删除选中项"
         >
           <IconTrash size={13} />
           删除

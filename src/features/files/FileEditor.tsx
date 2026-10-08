@@ -7,6 +7,7 @@ import { openSearchPanel, search } from "@codemirror/search";
 import { ask } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { modHint } from "../../app/platform";
 import { nxHighlight } from "../../ui/editorTheme";
 import {
   IconClose,
@@ -264,21 +265,21 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
 
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="撤销 (Ctrl+Z)"
+          title={`撤销 (${modHint()}+Z)`}
           onClick={() => withView(undo)}
         >
           <IconUndo size={13} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="重做 (Ctrl+Shift+Z)"
+          title={`重做 (${modHint()}+Shift+Z)`}
           onClick={() => withView(redo)}
         >
           <IconRedo size={13} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="查找 / 替换 (Ctrl+F)"
+          title={`查找 / 替换 (${modHint()}+F)`}
           onClick={() => withView(openSearchPanel)}
         >
           <IconSearch size={13} />
@@ -365,7 +366,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         >
           <IconSave size={13} />
           {saving ? "保存中…" : "保存"}
-          <span className="nx-kbd border-white/25 text-white/70 max-[560px]:hidden">Ctrl S</span>
+          <span className="nx-kbd border-white/25 text-white/70 max-[560px]:hidden">{modHint()} S</span>
         </button>
         {onClose && (
           <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器">
