@@ -6,7 +6,8 @@
 // 生产合同证据归 Go 测试与 scripts/e2e-sharing-local.py。
 // 覆盖: 列表渲染 (方向/权限/状态), 超管与普通 owner 同一创建合同 (只读默认/
 // 显式读写/有界 TTL/CSRF), 吊销确认流, 公开链接零创建入口, 普通 owner 路径
-// 零 /admin/users, 320/390/768 响应式无溢出, demo 显式不可用且零分享 HTTP。
+// 零 /admin/users, 320/390/768 响应式无溢出 (含创建表单; 吊销按钮完整可见,
+// 有效期/最近访问时间不裁剪), demo 显式不可用且零分享 HTTP。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -592,6 +593,46 @@ const READ_OVERFLOW = `(() => {
   };
 })()`;
 
+// READ_ROW_FIT 逐行核对 M233 不变量: 吊销按钮完整落在卡片内 (不隐藏), 有效期/
+// 最近访问时间戳不换行截断 (scrollWidth 不超盒, 且时间部分完整), 行自身不横向溢出。
+const READ_ROW_FIT = `(() => {
+  const card = [...document.querySelectorAll(".nx-card")].find((c) => {
+    const title = c.querySelector(".nx-card-title");
+    return title && title.textContent?.trim() === "分享";
+  });
+  if (!card) return { found: false };
+  const cr = card.getBoundingClientRect();
+  const rows = [...card.querySelectorAll("div.border-b")];
+  const problems = [];
+  let revokeButtons = 0;
+  let timeSpans = 0;
+  rows.forEach((row, i) => {
+    if (row.scrollWidth > row.clientWidth + 1) {
+      problems.push({ row: i, kind: "row-overflow", scrollWidth: row.scrollWidth, clientWidth: row.clientWidth });
+    }
+    for (const el of row.querySelectorAll("*")) {
+      const text = el.textContent || "";
+      if (el.tagName === "BUTTON" && text.trim() === "吊销") {
+        revokeButtons += 1;
+        const r = el.getBoundingClientRect();
+        if (r.right > cr.right + 1 || r.left < cr.left - 1) {
+          problems.push({ row: i, kind: "revoke-outside-card" });
+        }
+      }
+      if (el.children.length === 0 && /有效期至|最近访问/.test(text)) {
+        timeSpans += 1;
+        if (el.scrollWidth > el.clientWidth + 1) {
+          problems.push({ row: i, kind: "time-clipped", text: text.slice(0, 40), scrollWidth: el.scrollWidth, clientWidth: el.clientWidth });
+        }
+        if (!/\\d{1,2}:\\d{2}/.test(text)) {
+          problems.push({ row: i, kind: "time-incomplete", text: text.slice(0, 40) });
+        }
+      }
+    }
+  });
+  return { found: true, rowCount: rows.length, revokeButtons, timeSpans, problems };
+})()`;
+
 // READ_OVERFLOW_CULPRITS 在 pane 溢出时列出横向探出 pane 内容盒的元素并标注是否
 // 属于分享卡片 (inShareCard); truncate 截断与自带滚动的容器不算探出。
 const READ_OVERFLOW_CULPRITS = `(() => {
@@ -780,6 +821,10 @@ async function responsiveChecks(page) {
       assert.ok(card.found, "share card not found");
       assert.equal(card.overflowsViewport, false, `share card overflows viewport: ${JSON.stringify(card)}`);
       assert.equal(card.overflowingRows, 0, `share rows overflow: ${JSON.stringify(card)}`);
+      const fit = await page.evaluate(READ_ROW_FIT);
+      assert.equal(fit.problems.length, 0, `${width}: row fit problems: ${JSON.stringify(fit.problems)}`);
+      assert.equal(fit.revokeButtons, 3, `${width}: revoke buttons must stay visible on the 3 revocable rows: ${JSON.stringify(fit)}`);
+      assert.equal(fit.timeSpans, 7, `${width}: every row keeps its full expiry/access timestamp: ${JSON.stringify(fit)}`);
       const docOverflow = sample.docScrollWidth > sample.innerWidth || sample.bodyScrollWidth > sample.innerWidth;
       const paneOverflow = sample.panes.some((p) => p.scrollWidth > p.clientWidth + 1);
       let foreign = [];
@@ -795,6 +840,31 @@ async function responsiveChecks(page) {
       return { evidence: { innerWidth: sample.innerWidth, docScrollWidth: sample.docScrollWidth, rows: card.rowCount, shot, foreignOverflow: foreign } };
     });
   }
+
+  // M233: 创建表单在 320px 同样不得溢出 (选择器/输入框/按钮换行收缩)。
+  await pass("B-create-form-no-overflow-320", async () => {
+    await setViewport(page, 320, 720);
+    await clickButton(page, "新建主机分享");
+    await page.waitFor(`!!document.querySelector('select[aria-label="分享主机"]')`);
+    await sleep(250);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    const card = await page.evaluate(READ_SHARE_CARD);
+    assert.equal(card.overflowsViewport, false, `create form overflows viewport: ${JSON.stringify(card)}`);
+    assert.equal(card.overflowingRows, 0, `create form rows overflow: ${JSON.stringify(card)}`);
+    const docOverflow = sample.docScrollWidth > sample.innerWidth || sample.bodyScrollWidth > sample.innerWidth;
+    const paneOverflow = sample.panes.some((p) => p.scrollWidth > p.clientWidth + 1);
+    if (docOverflow || paneOverflow) {
+      const culprits = await page.evaluate(READ_OVERFLOW_CULPRITS);
+      const mine = culprits.filter((c) => c.inShareCard);
+      assert.equal(mine.length, 0, `320 create form: share card elements overflow: ${JSON.stringify(mine)}`);
+      assert.ok(culprits.length > 0, `320 create form: overflow seen but no culprit identified: ${JSON.stringify(sample)}`);
+    }
+    const shot = await screenshot(page, "B-sharing-create-form-320.png");
+    await clickButton(page, "新建主机分享");
+    await page.waitFor(`!document.querySelector('select[aria-label="分享主机"]')`);
+    await setViewport(page, 768, 900);
+    return { evidence: { shot } };
+  });
 }
 
 async function plainOwnerChecks(page, fake) {
@@ -917,7 +987,7 @@ const report = {
     headless: true,
     jsdom: false,
     transport: "vite dev server + in-process fake HTTP backend (M127/M138/M149 合同形状复述, 非生产后端证据)",
-    matrix: "320/390/768 响应式 + 超管/普通 owner 创建 (recipient_username) 与吊销交互 + demo 零分享 HTTP",
+    matrix: "320/390/768 响应式 (无溢出 + 吊销按钮可见 + 时间信息不裁剪, 含 320 创建表单) + 超管/普通 owner 创建 (recipient_username) 与吊销交互 + demo 零分享 HTTP",
   },
   checks,
   harness_errors: harnessErrors,
