@@ -142,6 +142,24 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // 主窗口的「原生拖放接管」开关 —— 页内 HTML5 拖拽能不能收到 drop 全看它。
+            //
+            // 读的是**合并后**的配置：平台配置（macOS 的 `tauri.macos.conf.json`）以
+            // `json_patch` 合并进来，语义是对象递归合并、**数组整体替换**，所以平台文件里
+            // 只要有 `app.windows`，基础配置里的同名数组就被整份丢掉。
+            //
+            // 实测踩过：只在 `tauri.conf.json` 里关掉它，macOS 上被平台文件覆盖回默认
+            // `true`，症状是「资产卡片拖到分组上松手没反应」—— 后端一条记录都不落，
+            // 日志全绿一个错都没有，拖拽过程本身还完全正常（wry 的 draggingEntered /
+            // draggingUpdated 照常回 NSDragOperation::Copy，光标有反馈）。
+            // 把真值写进启动日志，就是让这类"静默失效"下次一眼可见。
+            let drag_drop_enabled = tauri::Manager::config(app)
+                .app
+                .windows
+                .first()
+                .map(|w| w.drag_drop_enabled);
+
             tauri::async_runtime::block_on(async move {
                 let db_path = data_dir().join("data.db");
                 let store = match store::Store::open(&db_path).await {
@@ -189,6 +207,12 @@ pub fn run() {
                 let app_state =
                     state::AppState::new(handle.clone(), store, vault, sessions, ai, dbmgr);
                 tauri::Manager::manage(&handle, Arc::clone(&app_state));
+
+                tracing::info!(
+                    target: "boot",
+                    drag_drop_enabled = ?drag_drop_enabled,
+                    "主窗口拖放接管开关（页内 HTML5 拖拽要求 false）"
+                );
 
                 // macOS：原生红绿灯标题栏。tao/wry 的运行时 API 靠不住 ——
                 // set_decorations 只翻转内部原子标志（is_decorated 读的也是它，

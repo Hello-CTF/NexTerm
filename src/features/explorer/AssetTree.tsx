@@ -55,9 +55,19 @@ const DRAG_ASSET = "application/x-nexterm-asset";
  * dragover 里根本没有权威来源。这个标记由 `dragstart` 置位、`dragend` 复位，
  * 是本模块内唯一稳定可靠的判据。
  *
- * ⚠️ 另有前置条件（不在本文件内）：`src-tauri/tauri.conf.json` 的窗口必须
- * `"dragDropEnabled": false`。Tauri v2 该项默认为 true，会由原生层接管拖放、
- * 把 HTML5 的 drop 整个吞掉 —— 表现为「能拖起来、松手没反应」。
+ * ⚠️ 另有前置条件（不在本文件内）：**两个窗口配置文件的 `app.windows[0]`
+ * 都要 `"dragDropEnabled": false`** —— `src-tauri/tauri.conf.json`（Windows/Linux）
+ * 与 `src-tauri/tauri.macos.conf.json`（macOS）。Tauri v2 该项默认为 true，
+ * 会由原生层接管拖放、把 HTML5 的 drop 整个吞掉。
+ *
+ * 为什么 macOS 那份必须单独再写一遍：平台配置是拿 `json_patch` 合并进来的
+ * （`tauri-utils/src/config/parse.rs`），它的语义是**对象递归合并、数组整体替换**。
+ * 所以平台文件里只要出现 `app.windows`，基础配置里的同名数组就被整份丢掉 ——
+ * 只在 `tauri.conf.json` 里关掉它，macOS 上等于没关（实测踩过，见下）。
+ * 症状极具迷惑性：拖拽全程正常（wry 的 draggingEntered / draggingUpdated 照常
+ * 返回 NSDragOperation::Copy，光标有反馈），只有 drop 被原生层吃掉，
+ * 后端一条记录都不落、日志里一个错都没有。
+ * 启动日志里的 `drag_drop_enabled` 就是这个值，怀疑时先看它。
  */
 let draggingAssetId: string | null = null;
 
