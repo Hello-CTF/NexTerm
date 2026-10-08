@@ -11,6 +11,8 @@
 //   只可能来自真实创建响应)。
 // 列表由服务端按 owner/superadmin 过滤; 桌面端与演示模式没有分享后端,
 // 一律给显式不可用态, 不发任何请求 (DEMO 也不落 demoAuthRequest 假后端)。
+// auth=off 下 /share/* 与 /fleet/* 一律 403 (服务端硬边界, TestShareRoutesAuthOff),
+// 同样只给事实性不可用说明, 不给任何登录/分享入口 (与 M210 AuthCard/DevicesView 口径一致)。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
@@ -94,6 +96,22 @@ function ShareLoginHint() {
   );
 }
 
+function ShareAuthOff() {
+  // auth=off 下账号体系整体关闭, 登录/初始化都是死路; 零按钮, 只说明事实。
+  return (
+    <section className="nx-card">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <IconGlobe size={15} className="text-neutral-400" />
+        <span className="nx-card-title">分享</span>
+        <span className="nx-badge nx-badge-amber">账号功能已关闭</span>
+      </div>
+      <p className="nx-hint">
+        这台服务器关闭了账号功能(--auth=off), 终端分享不可用; 主机分享与公开链接都依赖账号体系。
+      </p>
+    </section>
+  );
+}
+
 export function ShareCard() {
   if (!WEB) return <ShareUnsupported />;
   return <ShareManagement />;
@@ -102,6 +120,7 @@ export function ShareCard() {
 function ShareManagement() {
   const { pushToast } = useUi();
   const user = useAuth((s) => s.user);
+  const authStatus = useAuth((s) => s.status);
   const isAdmin = user?.role === "superadmin";
   const userId = user?.id ?? null;
 
@@ -192,6 +211,7 @@ function ShareManagement() {
     return () => clearInterval(timer);
   }, []);
 
+  if (authStatus?.auth === "off") return <ShareAuthOff />;
   if (!user) return <ShareLoginHint />;
 
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
