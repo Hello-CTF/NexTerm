@@ -15,7 +15,7 @@ import {
   pickSavePath,
   promptText,
 } from "../../ui/dialogs";
-import { fsApi, terminalApi } from "../../ipc/commands";
+import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
 import type { FileEntryDto } from "../../ipc/types";
 import {
@@ -26,6 +26,7 @@ import {
   openTerminalTab,
   useUi,
 } from "../../app/store";
+import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useCoarsePointer } from "../../app/platform";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -82,6 +83,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     queryKey: ["fs", sessionId, path],
     queryFn: () => fsApi.list(sessionId, path),
     refetchOnWindowFocus: false,
+    retry: (failureCount, error) =>
+      (error as { code?: string } | null)?.code === "not_found" ? false : failureCount < 1,
   });
 
   const list = entries.data ?? [];
@@ -140,6 +143,47 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
   const refreshDir = (dir: string) =>
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
+
+  const sessionGone =
+    entries.isError && (entries.error as { code?: string } | null)?.code === "not_found";
+  const goneHint = "会话已在服务端删除，请重新连接这台主机";
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const reconnectHost = async () => {
+    const st = useUi.getState();
+    let target: { tabId: string; assetId?: string } | undefined;
+    for (const w of st.workspaces) {
+      const tab = w.panes
+        .flatMap((p) => p.tabs)
+        .find((t) => t.kind === "files" && !t.path && t.sessionId === sessionId);
+      if (tab) {
+        target = { tabId: tab.id, assetId: w.assetId };
+        break;
+      }
+    }
+    if (!target) {
+      pushToast("error", "找不到这个文件标签的主机信息，请到左侧资产树里手动连接");
+      return;
+    }
+    setReconnecting(true);
+    try {
+      const s = await connectWithHostKeyConfirm(() =>
+        target.assetId ? sessionApi.connect(target.assetId) : sessionApi.connectLocal(),
+      );
+      if (!s) {
+        pushToast("info", "已取消重连");
+        return;
+      }
+      const list = useUi.getState().sessions;
+      useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
+      useUi.getState().updateTab(target.tabId, { sessionId: s.id });
+      pushToast("info", "已重新连接，正在重新加载文件列表");
+    } catch (e) {
+      pushToast("error", `重新连接失败：${describeError(e)}`);
+    } finally {
+      setReconnecting(false);
+    }
+  };
 
   const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
@@ -392,22 +436,34 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         kind: "item",
         label: "打包下载当前文件夹",
         icon: <IconArchive size={13} />,
-        hint: "tar.gz",
+        hint: sessionGone ? "会话已删除" : "tar.gz",
+        disabled: sessionGone,
         onSelect: () => void packDownload(path),
       },
       {
         kind: "item",
         label: "上传到当前目录",
         icon: <IconUpload size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
         onSelect: () => void uploadTo(path),
       },
       {
         kind: "item",
         label: "新建文件夹",
         icon: <IconFolderPlus size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
         onSelect: () => void mkDirIn(path),
       },
-      { kind: "item", label: "刷新", icon: <IconRefresh size={13} />, onSelect: refresh },
+      {
+        kind: "item",
+        label: "刷新",
+        icon: <IconRefresh size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
+        onSelect: refresh,
+      },
       { kind: "separator" },
       { kind: "group", label: "终端" },
       {
@@ -471,14 +527,20 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             title="直接输入路径后回车跳转"
           />
         </div>
-        <button className="nx-icon-btn" onClick={refresh} title="刷新">
+        <button
+          className="nx-icon-btn"
+          onClick={refresh}
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "刷新"}
+        >
           <IconRefresh size={14} />
         </button>
         <span className="nx-divider-v max-[560px]:hidden" />
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void uploadTo(path)}
-          title="上传本地文件到当前目录"
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "上传本地文件到当前目录"}
         >
           <IconUpload size={13} />
           上传
@@ -495,7 +557,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void mkDirIn(path)}
-          title="新建文件夹"
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "新建文件夹"}
         >
           <IconFolder size={13} />
           新建
@@ -558,11 +621,23 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             <IconAlert size={14} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="break-words">
-                {describeError(entries.error)}
+                {sessionGone
+                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在本标签继续浏览"
+                  : describeError(entries.error)}
               </div>
-              <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
-                重试
-              </button>
+              {sessionGone ? (
+                <button
+                  className="nx-link mt-1 text-[11px]"
+                  disabled={reconnecting}
+                  onClick={() => void reconnectHost()}
+                >
+                  {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                </button>
+              ) : (
+                <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
+                  重试
+                </button>
+              )}
             </div>
           </div>
         ) : list.length === 0 ? (

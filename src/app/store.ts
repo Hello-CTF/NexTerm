@@ -189,6 +189,7 @@ interface UiState {
   addTab: (tab: AppTab, paneId?: string) => void;
   closeTab: (id: string, mode?: "kill" | "detach") => Promise<boolean>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
+  updateWorkspaceSession: (workspaceId: string, sessionId: string) => void;
 
   setSessions: (s: SessionInfo[]) => void;
   resyncSessions: () => Promise<void>;
@@ -684,15 +685,38 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   updateTab: (id, patch) =>
+    set((st) => {
+      let from: string | undefined;
+      for (const w of st.workspaces) {
+        for (const p of w.panes) {
+          const t = p.tabs.find((x) => x.id === id);
+          if (t) from = t.sessionId;
+        }
+      }
+      const to =
+        typeof patch.sessionId === "string" && from !== undefined && patch.sessionId !== from
+          ? patch.sessionId
+          : undefined;
+      return {
+        workspaces: st.workspaces.map((w) => ({
+          ...w,
+          ...(to !== undefined &&
+          w.sessionId === from &&
+          w.panes.some((p) => p.tabs.some((t) => t.id === id))
+            ? { sessionId: to }
+            : {}),
+          panes: w.panes.map((p) =>
+            p.tabs.some((t) => t.id === id)
+              ? { ...p, tabs: p.tabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) }
+              : p,
+          ),
+        })),
+      };
+    }),
+
+  updateWorkspaceSession: (workspaceId, sessionId) =>
     set((st) => ({
-      workspaces: st.workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) =>
-          p.tabs.some((t) => t.id === id)
-            ? { ...p, tabs: p.tabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) }
-            : p,
-        ),
-      })),
+      workspaces: st.workspaces.map((w) => (w.id === workspaceId ? { ...w, sessionId } : w)),
     })),
 
   setSessions: (s) => set({ sessions: s }),
