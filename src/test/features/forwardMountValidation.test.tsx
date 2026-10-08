@@ -215,7 +215,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
-    clickButton(mounted!.container, "SOCKS5 动态转发");
+    clickButton(mounted!.container, "SOCKS5 代理");
     expect(mounted!.container.querySelector('input[aria-label="目标主机"]')).toBeNull();
     setInputValue(listenPort, "99999");
     clickButton(mounted!.container, "创建");

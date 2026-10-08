@@ -22,7 +22,7 @@ const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080", remo
 const FALLBACK_LISTEN_HOST = "127.0.0.1";
 
 const LAZYCAT_UNAVAILABLE =
-  "检测到懒猫微服，端口转发在此平台上暂不可用，您可以前往微服平台使用更强大的原生转发功能";
+  "检测到懒猫微服，端口转发在此平台上不可用：平台暴露的端口是不带鉴权的裸 TCP，应用侧无法补上鉴权。需要把端口开放给外部时，请改用微服平台自带的转发功能或 SSH 隧道。";
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
@@ -196,7 +196,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (!sessionId) {
-      pushToast("info", "先连接一台机器 —— 端口转发需要一条 SSH 会话作为出口");
+      pushToast("info", "先连接一台机器：端口转发需要一条 SSH 会话作为出口");
       return;
     }
     if (localSession) {
@@ -308,10 +308,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       <div className="nx-toolbar">
         <IconNetwork size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">端口转发</span>
-        <span className="nx-hint">
+        <span className="nx-hint hidden min-[560px]:inline">
           {forwards.data
-            ? `${localCount} 条静态转发 · ${remoteCount} 条远程转发 · ${socksCount} 条 SOCKS5 · 5s 自动刷新`
-            : "转发列表加载中"}
+            ? `${localCount} 条静态转发 · ${remoteCount} 条远程转发 · ${socksCount} 条 SOCKS5 代理 · 5s 自动刷新`
+            : forwardsFailed
+              ? "转发列表加载失败"
+              : "转发列表加载中"}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
@@ -369,7 +371,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                       {isSocks ? (
                         <>
                           <IconGlobe size={11} />
-                          SOCKS5 动态转发
+                          SOCKS5 代理
                         </>
                       ) : isRemote ? (
                         <>
@@ -428,7 +430,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           </div>
         ) : (
           <>
-            <div className="mb-2.5 flex items-center gap-1.5">
+            <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
               <button
                 className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}
                 onClick={() => switchKind("local")}
@@ -448,7 +450,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                 onClick={() => switchKind("socks")}
               >
                 <IconGlobe size={13} />
-                SOCKS5 动态转发
+                SOCKS5 代理
               </button>
               <span className="ml-1 text-[11px] text-neutral-500">
                 {kind === "local"
@@ -591,11 +593,11 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     <span className="nx-code">
                       {bindHost}:{listenPort}
                     </span>{" "}
-                    （绑定在远端机器上）
+                    （绑定在远端机器上
                     {isLoopbackHost(bindHost)
-                      ? " —— 只有远端本机能连，不对远端网络暴露。"
-                      : " —— 这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"}
-                    {" "}远程转发绑定在当前 SSH 连接上，会话断开后需要重新创建。
+                      ? "，只有远端本机能连，不对远端网络暴露"
+                      : "，这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止"}
+                    ）。远程转发绑定在当前 SSH 连接上，会话断开后需要重新创建。
                   </>
                 ) : (
                 <>
@@ -604,13 +606,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     {listenHost}:{listenPort}
                   </span>
                   {exposed
-                    ? " —— 这个端口对外可访问，能连上它的任何人都会到达目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"
-                    : " —— 只有本机能连，不对外暴露。"}
+                    ? "，这个端口对外可访问，能连上它的任何人都会到达目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"
+                    : "，只有本机能连，不对外暴露。"}
                   {exposed && kind === "socks" && (
                     <>
                       <br />
-                      SOCKS5 代理本身没有认证，暴露在服务端上等于一个开放代理 ——
-                      能连上这个端口的人都能借这条 SSH 会话访问远端网络。
+                      SOCKS5 代理本身没有认证，暴露在服务端上等于一个开放代理：能连上这个端口的人都能借这条 SSH 会话访问远端网络。
                     </>
                   )}
                 </>

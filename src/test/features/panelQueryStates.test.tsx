@@ -95,6 +95,8 @@ describe("DockerPanel 查询状态", () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("容器列表加载失败 · daemon 未运行"));
     expect(text()).not.toContain("这台主机上还没有容器");
+    expect(text()).toContain("容器状态加载失败");
+    expect(text()).not.toContain("容器状态加载中");
   });
 
   it("retry recovers into the true empty state", async () => {
@@ -137,6 +139,7 @@ describe("ForwardPanel 查询状态", () => {
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("转发列表加载失败 · 转发服务离线"));
     expect(text()).not.toContain("还没有任何转发");
+    expect(text()).not.toContain("转发列表加载中");
   });
 
   it("retry recovers into the true empty state", async () => {
