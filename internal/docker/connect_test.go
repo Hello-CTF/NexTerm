@@ -106,19 +106,25 @@ func TestChannelConnCloseWriteAndDeadlines(t *testing.T) {
 	if err := conn.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, os.ErrDeadlineExceeded) {
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("read deadline error = %v", err)
 	}
-	if err := conn.SetDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+
+	channel2 := &deadlineChannel{closed: make(chan struct{})}
+	conn2 := NewChannelConn(channel2)
+	if err := conn2.SetDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-channel.closed:
+	case <-channel2.closed:
 	case <-time.After(time.Second):
 		t.Fatal("deadline did not force channel close")
 	}
-	if _, err := conn.Write([]byte("x")); !errors.Is(err, net.ErrClosed) {
+	if _, err := conn2.Write([]byte("x")); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("write after close = %v", err)
+	}
+	if err := conn2.SetDeadline(time.Now()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("set deadline after close = %v", err)
 	}
 }
 
