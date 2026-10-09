@@ -91,13 +91,13 @@
       "feature_set": "full-pre-eino",
       "source": "3e39138 DMG (app bundle + ad-hoc codesign + hdiutil UDZO), measured on macOS arm64 host"
     },
-    "desktop-linux-archive-linux-amd64": {
+    "desktop-linux-deb-linux-amd64": {
       "size_bytes": 14253110,
       "like_for_like": true,
       "feature_set": "full-pre-eino",
       "source": "3e39138 Linux desktop archive (binary + LICENSE + README), GNU tar fixed metadata, measured in golang:1.26.8-trixie container"
     },
-    "desktop-linux-archive-linux-arm64": {
+    "desktop-linux-deb-linux-arm64": {
       "size_bytes": 12073196,
       "like_for_like": true,
       "feature_set": "full-pre-eino",

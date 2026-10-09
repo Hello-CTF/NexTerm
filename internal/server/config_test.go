@@ -66,17 +66,16 @@ func (s *fakeTokenStore) VerifyToken(_ context.Context, presented string) (bool,
 
 func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 	environment := map[string]string{
-		"NEXTERM_LISTEN":     "127.0.0.1:9000",
-		"NEXTERM_DATA_DIR":   "/env/data",
-		"NEXTERM_WEB_ROOT":   "/env/web",
-		"NEXTERM_MASTER_KEY": "env-secret",
+		"NEXTERM_LISTEN":   "127.0.0.1:9000",
+		"NEXTERM_DATA_DIR": "/env/data",
+		"NEXTERM_WEB_ROOT": "/env/web",
 	}
 	getenv := func(name string) string { return environment[name] }
-	invocation, err := ParseCLI([]string{"--master-key=flag-secret", "serve", "--data-dir", "/flag/data", "--sync-only=false"}, getenv)
+	invocation, err := ParseCLI([]string{"serve", "--data-dir", "/flag/data", "--sync-only=false"}, getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invocation.Command != core.CommandServe || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.MasterKey != "flag-secret" || invocation.Options.SyncOnly {
+	if invocation.Command != core.CommandServe || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.SyncOnly {
 		t.Fatalf("invocation = %+v", invocation)
 	}
 	if invocation.Options.Auth != AuthOn {
@@ -127,35 +126,32 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 		t.Fatal("server accepted desktop command")
 	}
 	usage := Usage("nexterm-server")
-	if strings.Contains(usage, "desktop") || strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY") {
+	if strings.Contains(usage, "desktop") || strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY_FILE") || strings.Contains(usage, "--master-key ") {
 		t.Fatalf("server usage = %q", usage)
 	}
 }
 
 func TestResolveMasterKey(t *testing.T) {
-	key, err := ResolveMasterKey("env-secret", "")
-	if err != nil || key != "env-secret" {
-		t.Fatalf("passthrough = %q, %v", key, err)
+	key, err := ResolveMasterKey("")
+	if err != nil || key != "" {
+		t.Fatalf("empty = %q, %v", key, err)
 	}
 	keyFile := filepath.Join(t.TempDir(), "master.key")
 	if err := os.WriteFile(keyFile, []byte("file-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	key, err = ResolveMasterKey("", keyFile)
+	key, err = ResolveMasterKey(keyFile)
 	if err != nil || key != "file-secret" {
 		t.Fatalf("file key = %q, %v", key, err)
-	}
-	if _, err := ResolveMasterKey("env-secret", keyFile); err == nil {
-		t.Fatal("combined --master-key and --master-key-file were accepted")
 	}
 	emptyFile := filepath.Join(t.TempDir(), "empty.key")
 	if err := os.WriteFile(emptyFile, []byte(" \n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResolveMasterKey("", emptyFile); err == nil {
+	if _, err := ResolveMasterKey(emptyFile); err == nil {
 		t.Fatal("empty master key file was accepted")
 	}
-	if _, err := ResolveMasterKey("", filepath.Join(t.TempDir(), "missing.key")); err == nil {
+	if _, err := ResolveMasterKey(filepath.Join(t.TempDir(), "missing.key")); err == nil {
 		t.Fatal("missing master key file was accepted")
 	}
 	invocation, err := ParseCLI([]string{"--master-key-file", keyFile, "--data-dir", t.TempDir()}, func(string) string { return "" })
@@ -165,8 +161,8 @@ func TestResolveMasterKey(t *testing.T) {
 	if invocation.Options.MasterKey != "file-secret" {
 		t.Fatalf("ParseCLI master key = %q", invocation.Options.MasterKey)
 	}
-	if _, err := ParseCLI([]string{"--master-key=flag-secret", "--master-key-file", keyFile, "--data-dir", t.TempDir()}, func(string) string { return "" }); err == nil {
-		t.Fatal("ParseCLI accepted combined key sources")
+	if _, err := ParseCLI([]string{"--master-key=flag-secret", "--data-dir", t.TempDir()}, func(string) string { return "" }); err == nil {
+		t.Fatal("ParseCLI accepted the removed --master-key flag")
 	}
 }
 

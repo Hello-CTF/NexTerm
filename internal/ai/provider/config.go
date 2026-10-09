@@ -128,14 +128,10 @@ type Preset struct {
 }
 
 var presetTable = []Preset{
-	{ID: "deepseek", Config: Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat", ContextWindow: 64_000, Stream: true}},
-	{ID: "openai", Config: Config{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini", ContextWindow: 128_000, Stream: true}},
-	{ID: "dashscope", Config: Config{BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-plus", ContextWindow: 128_000, Stream: true}},
-	{ID: "moonshot", Config: Config{BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-32k", ContextWindow: 128_000, Stream: true}},
-	{ID: "zhipu", Config: Config{BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4-flash", ContextWindow: 128_000, Stream: true}},
+	{ID: "moonshot", Config: Config{BaseURL: "https://api.moonshot.cn/v1", Model: "kimi-k3", ContextWindow: 1_000_000, Stream: true}},
+	{ID: "deepseek", Config: Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash", ContextWindow: 1_000_000, Stream: true}},
+	{ID: "zhipu", Config: Config{BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4.7-flash", ContextWindow: 200_000, Stream: true}},
 	{ID: "ollama", Config: Config{BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen2.5:7b", ContextWindow: 32_000, Stream: true}},
-	{ID: "lmstudio", Config: Config{BaseURL: "http://127.0.0.1:1234/v1", Model: "local-model", ContextWindow: 32_000, Stream: true}},
-	{ID: "vllm", Config: Config{BaseURL: "http://127.0.0.1:8000/v1", Model: "local-model", ContextWindow: 32_000, Stream: true}},
 }
 
 func Presets() []Preset {

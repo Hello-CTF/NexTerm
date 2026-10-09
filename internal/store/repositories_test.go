@@ -62,6 +62,47 @@ func TestSettingsAuditAndConversations(t *testing.T) {
 	}
 }
 
+func TestConvDeleteRemovesCronJobs(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	conversation, err := db.ConvCreate(ctx, "chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := db.ConvCreate(ctx, "other", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{conversation.ID, other.ID} {
+		if _, err := db.DB().ExecContext(ctx, `INSERT INTO cron_job (id, session_id, prompt, schedule, timezone, enabled, timeout_ms, created_at, updated_at, revision, next_run_at)
+VALUES (?, ?, 'prompt', '0 2 * * *', 'UTC', 1, 60000, 1, 1, 1, 1)`, "job-"+sessionID, sessionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.ConvDelete(ctx, conversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.DB().QueryContext(ctx, "SELECT session_id FROM cron_job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	remaining := []string{}
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			t.Fatal(err)
+		}
+		remaining = append(remaining, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 || remaining[0] != other.ID {
+		t.Fatalf("remaining cron jobs=%v", remaining)
+	}
+}
+
 func TestSnippetsKnownHostsAndRecordings(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)

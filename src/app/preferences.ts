@@ -170,7 +170,7 @@ export function useInputPrefs(): InputPrefs {
   return useSyncExternalStore(subscribeInputPrefs, getInputPrefs);
 }
 
-export type UiFontPreset = 12 | 13 | 14.5;
+export type UiFontPreset = number;
 export type TerminalThemePref = "dark" | "light" | "interface";
 export type ResolvedTerminalTheme = "dark" | "light";
 
@@ -183,8 +183,10 @@ export interface AppearancePrefs {
 
 export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5];
 export const UI_FONT_SCALE_STEPS: readonly number[] = [1, 1.25, 1.5, 1.75, 2];
-export const TERMINAL_FONT_SIZE_MIN = 12;
-export const TERMINAL_FONT_SIZE_MAX = 18;
+export const UI_FONT_SIZE_MIN = 8;
+export const UI_FONT_SIZE_MAX = 32;
+export const TERMINAL_FONT_SIZE_MIN = 8;
+export const TERMINAL_FONT_SIZE_MAX = 32;
 
 const APPEARANCE_KEY = "nexterm.appearance.v1";
 const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -202,9 +204,11 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
 };
 
 function parsePreset(value: unknown): UiFontPreset {
-  return UI_FONT_PRESETS.includes(value as UiFontPreset)
-    ? (value as UiFontPreset)
-    : DEFAULT_APPEARANCE.uiFontPreset;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_APPEARANCE.uiFontPreset;
+  }
+  const clamped = Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, value));
+  return Math.round(clamped * 2) / 2;
 }
 
 function parseScale(value: unknown): number {
@@ -313,8 +317,9 @@ function commitAppearance(next: AppearancePrefs): void {
 }
 
 export function setUiFontPreset(value: UiFontPreset): void {
-  if (appearance.uiFontPreset === value) return;
-  commitAppearance({ ...appearance, uiFontPreset: value });
+  const next = parsePreset(value);
+  if (appearance.uiFontPreset === next) return;
+  commitAppearance({ ...appearance, uiFontPreset: next });
 }
 
 export function setUiFontScale(value: number): void {

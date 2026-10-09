@@ -3,12 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   bytesToBase64,
   clipboardHasPlainText,
-  describeImageUploadFailure,
-  markdownImageLink,
+  markdownFileLink,
+  pasteFileExtension,
   pureImageFiles,
 } from "../../features/terminal/imagePaste";
-import { normalizePublicBaseURL } from "../../features/settings/FilesCard";
-import { ImageUploadError } from "../../ipc/webFiles";
 
 interface StubItem {
   kind: string;
@@ -88,37 +86,31 @@ describe("clipboardHasPlainText", () => {
   });
 });
 
-describe("markdownImageLink", () => {
-  it("生成 Markdown 图片链接并转义 alt 文本", () => {
-    expect(markdownImageLink("shot.png", "/files/image/01J")).toBe("![shot.png](/files/image/01J)");
-    expect(markdownImageLink("a[b]c.png", "/files/image/01J")).toBe("![a\\[b\\]c.png](/files/image/01J)");
-    expect(markdownImageLink("", "/files/image/01J")).toBe("![image](/files/image/01J)");
+describe("markdownFileLink", () => {
+  it("生成普通 Markdown 链接(非图片嵌入)并转义文本", () => {
+    expect(markdownFileLink("shot.png", "/tmp/nexterm-paste-1.png")).toBe(
+      "[shot.png](/tmp/nexterm-paste-1.png)",
+    );
+    expect(markdownFileLink("a[b]c.png", "/tmp/a.png")).toBe("[a\\[b\\]c.png](/tmp/a.png)");
+    expect(markdownFileLink("", "/tmp/a.png")).toBe("[file](/tmp/a.png)");
   });
 
   it("目标含空白或圆括号时用尖括号包裹", () => {
-    expect(markdownImageLink("a.png", "/tmp/my images/a.png")).toBe(
-      "![a.png](</tmp/my images/a.png>)",
-    );
-    expect(markdownImageLink("a.png", "/tmp/a(1).png")).toBe("![a.png](</tmp/a(1).png>)");
+    expect(markdownFileLink("a.png", "/tmp/my images/a.png")).toBe("[a.png](</tmp/my images/a.png>)");
+    expect(markdownFileLink("a.png", "/tmp/a(1).png")).toBe("[a.png](</tmp/a(1).png>)");
   });
 });
 
-describe("describeImageUploadFailure", () => {
-  it("按 HTTP 状态映射成可操作提示", () => {
-    expect(describeImageUploadFailure(new ImageUploadError(401, '{"error":{"message":"会话无效或缺失"}}')))
-      .toContain("需要登录或没有权限");
-    expect(describeImageUploadFailure(new ImageUploadError(401, '{"error":{"message":"会话无效或缺失"}}')))
-      .toContain("会话无效或缺失");
-    expect(describeImageUploadFailure(new ImageUploadError(413, "image exceeds the maximum allowed size")))
-      .toContain("大小限制");
-    expect(describeImageUploadFailure(new ImageUploadError(415, "unsupported image type")))
-      .toContain("png/jpeg/gif/webp");
-    expect(describeImageUploadFailure(new ImageUploadError(507, "quota exceeded"))).toContain("配额");
-    expect(describeImageUploadFailure(new ImageUploadError(500, "boom"))).toContain("HTTP 500");
+describe("pasteFileExtension", () => {
+  it("优先取文件名扩展名并小写化", () => {
+    expect(pasteFileExtension(png("shot.PNG"))).toBe("png");
+    expect(pasteFileExtension(new File(["w"], "b.webp", { type: "image/webp" }))).toBe("webp");
   });
 
-  it("网络错误映射为不可达提示", () => {
-    expect(describeImageUploadFailure(new Error("fetch failed"))).toContain("网络或服务不可达");
+  it("文件名没有扩展名时回退 MIME 子类型, 再缺省 png", () => {
+    expect(pasteFileExtension(new File(["x"], "pasted-image", { type: "image/gif" }))).toBe("gif");
+    expect(pasteFileExtension(new File(["x"], "pasted-image", { type: "image/svg+xml" }))).toBe("png");
+    expect(pasteFileExtension(new File(["x"], "pasted-image"))).toBe("png");
   });
 });
 
@@ -132,41 +124,5 @@ describe("bytesToBase64", () => {
     const decoded = atob(bytesToBase64(large));
     expect(decoded.length).toBe(large.length);
     for (let i = 0; i < large.length; i++) expect(decoded.charCodeAt(i)).toBe(large[i]);
-  });
-});
-
-// 与 internal/app/production/files_ipc_test.go 的 TestFilesSettingsSetValidationTable 共享同一张边界用例表,
-// 保证前端预检与后端 core.ParsePublicBaseURL 判定一致。
-const PUBLIC_BASE_URL_TABLE: Array<{ raw: string; ok: boolean; value?: string }> = [
-  { raw: "", ok: true, value: "" },
-  { raw: "https://example.com", ok: true, value: "https://example.com" },
-  { raw: "https://example.com/", ok: true, value: "https://example.com" },
-  { raw: "https://example.com//", ok: true, value: "https://example.com" },
-  { raw: "https://example.com/nexterm/", ok: true, value: "https://example.com/nexterm" },
-  { raw: "https://example.com/nexterm//", ok: true, value: "https://example.com/nexterm" },
-  { raw: "http://example.com", ok: true, value: "http://example.com" },
-  { raw: "ftp://example.com", ok: false },
-  { raw: "example.com", ok: false },
-  { raw: "https://", ok: false },
-  { raw: "https://user:pass@example.com", ok: false },
-  { raw: "https://@example.com", ok: false },
-  { raw: "https://example.com/?q=1", ok: false },
-  { raw: "https://example.com/?", ok: false },
-  { raw: "https://example.com/#frag", ok: false },
-  { raw: "https://example.com/%zz", ok: false },
-];
-
-describe("normalizePublicBaseURL 与后端共享边界表", () => {
-  it("合法地址按规范化接受", () => {
-    for (const tc of PUBLIC_BASE_URL_TABLE.filter((entry) => entry.ok)) {
-      expect(normalizePublicBaseURL(tc.raw), tc.raw).toEqual({ ok: true, value: tc.value });
-    }
-  });
-
-  it("非法地址一律拒绝", () => {
-    for (const tc of PUBLIC_BASE_URL_TABLE.filter((entry) => !entry.ok)) {
-      const result = normalizePublicBaseURL(tc.raw);
-      expect(result.ok, tc.raw).toBe(false);
-    }
   });
 });

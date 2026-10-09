@@ -17,48 +17,48 @@ func TestUpdateSettingsFlagsAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.InjectionEnabled || settings.ToolsEnabled || settings.Version != 0 {
+	if !settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 0 {
 		t.Fatalf("default settings = %+v", settings)
 	}
 	if _, err := store.UpdateSettings(ctx, testScope, SettingsInput{}, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("empty update err = %v", err)
 	}
 
-	enabled := true
-	settings, err = store.UpdateSettings(ctx, testScope, SettingsInput{InjectionEnabled: &enabled}, 0)
+	disabled := false
+	settings, err = store.UpdateSettings(ctx, testScope, SettingsInput{InjectionEnabled: &disabled}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !settings.InjectionEnabled || settings.ToolsEnabled || settings.Version != 1 {
+	if settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 1 {
 		t.Fatalf("after injection flip = %+v", settings)
 	}
-	if _, err := store.UpdateSettings(ctx, testScope, SettingsInput{InjectionEnabled: &enabled}, 0); !errors.Is(err, ErrVersionConflict) {
+	if _, err := store.UpdateSettings(ctx, testScope, SettingsInput{InjectionEnabled: &disabled}, 0); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("stale version err = %v", err)
 	}
 	var conflict *VersionConflictError
-	if _, err := store.UpdateSettings(ctx, testScope, SettingsInput{ToolsEnabled: &enabled}, 0); !errors.As(err, &conflict) || conflict.Expected != 0 || conflict.Actual != 1 {
+	if _, err := store.UpdateSettings(ctx, testScope, SettingsInput{ToolsEnabled: &disabled}, 0); !errors.As(err, &conflict) || conflict.Expected != 0 || conflict.Actual != 1 {
 		t.Fatalf("conflict detail = %+v", conflict)
 	}
 
-	settings, err = store.UpdateSettings(ctx, testScope, SettingsInput{ToolsEnabled: &enabled}, 1)
+	settings, err = store.UpdateSettings(ctx, testScope, SettingsInput{ToolsEnabled: &disabled}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 2 {
+	if settings.InjectionEnabled || settings.ToolsEnabled || settings.Version != 2 {
 		t.Fatalf("after tools flip = %+v", settings)
 	}
 
-	disabled := false
-	settings, err = store.SetInjectionEnabled(ctx, testScope, disabled, 2)
+	enabled := true
+	settings, err = store.SetInjectionEnabled(ctx, testScope, enabled, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 3 {
+	if !settings.InjectionEnabled || settings.ToolsEnabled || settings.Version != 3 {
 		t.Fatalf("after delegate flip = %+v", settings)
 	}
 
 	other := Scope{Tenant: testScope.Tenant, Subject: "subject-b"}
-	if settings, err := store.Settings(ctx, other); err != nil || settings.Version != 0 || settings.ToolsEnabled {
+	if settings, err := store.Settings(ctx, other); err != nil || settings != defaultSettings() {
 		t.Fatalf("other scope settings = %+v err=%v", settings, err)
 	}
 }

@@ -33,7 +33,7 @@ const DEMO_STATUS: UpdateStatusDto = {
   version: "0.2.0-demo",
   notes: "演示更新",
   prerelease: false,
-  assetName: "NexTerm-desktop_0.2.0-demo_linux_amd64.tar.gz",
+  assetName: "NexTerm-desktop_0.2.0-demo_linux_amd64.deb",
   assetSize: 8 << 20,
   canInstall: true,
   unavailableReason: "",

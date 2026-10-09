@@ -13,7 +13,7 @@ const expected = [
   `NexTerm_${version}_aarch64.dmg`,
   `NexTerm_${version}_x86_64.dmg`,
   ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-desktop_${version}_linux_${arch}.tar.gz`,
+    `NexTerm-desktop_${version}_linux_${arch}.deb`,
     `NexTerm-server_${version}_linux_${arch}.tar.gz`,
   ]),
 ];
@@ -23,7 +23,7 @@ const reportIDs = new Map([
   [`NexTerm_${version}_aarch64.dmg`, "desktop-dmg-darwin-arm64"],
   [`NexTerm_${version}_x86_64.dmg`, "desktop-dmg-darwin-amd64"],
   ...["amd64", "arm64"].flatMap((arch) => [
-    [`NexTerm-desktop_${version}_linux_${arch}.tar.gz`, `desktop-linux-archive-linux-${arch}`],
+    [`NexTerm-desktop_${version}_linux_${arch}.deb`, `desktop-linux-deb-linux-${arch}`],
     [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-full-linux-${arch}`],
   ]),
 ]);

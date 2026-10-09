@@ -262,7 +262,7 @@ describe("SyncBundleCard 加密导入", () => {
     await mountCard();
     openImport();
     await flushUntil(() => text().includes("选择资产包文件"));
-    expect(text()).toContain("支持旧版 .json 资产包与 .nxbm 加密资产包");
+    expect(text()).toContain("支持 .json 资产包与 .nxbm 加密资产包");
   });
 });
 

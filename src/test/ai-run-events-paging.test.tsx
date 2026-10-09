@@ -64,7 +64,7 @@ vi.mock("../ipc/events", async (importOriginal) => ({
 }));
 
 import { AiSidebar } from "../features/ai/AiSidebar";
-import { useUi } from "../app/store";
+import { GLOBAL_AI_BOARD_KEY, useUi } from "../app/store";
 
 const runRows = [
   {
@@ -170,14 +170,18 @@ describe("AiSidebar run event paging", () => {
     mocks.runs.mockResolvedValue(runRows);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.usageSummary.mockResolvedValue([]);
-    localStorage.setItem("nexterm.ai.conversation.v1", "conv-1");
     useUi.setState({
       rightOpen: true,
       aiBusy: false,
       takeover: null,
       pushToast: mocks.toast,
       workspaces: [],
-      aiBoards: {},
+      aiBoards: {
+        [GLOBAL_AI_BOARD_KEY]: {
+          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          activeTabId: "tab-bound",
+        },
+      },
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
@@ -187,7 +191,6 @@ describe("AiSidebar run event paging", () => {
   afterEach(() => {
     view?.unmount();
     view = null;
-    localStorage.removeItem("nexterm.ai.conversation.v1");
     vi.unstubAllGlobals();
   });
 

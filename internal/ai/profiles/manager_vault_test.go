@@ -109,7 +109,7 @@ func TestSaveEncryptsAPIKeyAtRest(t *testing.T) {
 	}
 }
 
-func TestPlaintextProfileKeysRemainUsableUntilSaved(t *testing.T) {
+func TestPlaintextProfileKeysRejectedUntilResaved(t *testing.T) {
 	ctx := context.Background()
 	database := openStore(t)
 	raw := `{"version":1,"profiles":[{"id":"p1","name":"legacy","baseUrl":"https://a.test/v1","apiKey":"plaintext-key","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"p1"}`
@@ -127,9 +127,12 @@ func TestPlaintextProfileKeysRemainUsableUntilSaved(t *testing.T) {
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
 		t.Fatal("load must not rewrite a plaintext-keyed store")
 	}
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
+		t.Fatalf("plaintext key must be rejected with re-save guidance: %v", err)
+	}
 	config, ok := manager.ActiveConfig()
-	if !ok || config.APIKey != "plaintext-key" {
-		t.Fatalf("active config lost the plaintext key: %+v", config)
+	if !ok || config.APIKey != "" {
+		t.Fatalf("active config must not carry the plaintext key: %+v", config)
 	}
 
 	saved := manager.Overview().Profiles[0]
@@ -193,7 +196,9 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locked startup with plaintext keys must not fail: %v", err)
 	}
-	requireLockedClient(t, manager)
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
+		t.Fatalf("locked plaintext profile must report re-save guidance: %v", err)
+	}
 	if got := manager.Overview().Profiles[0].APIKey; got != profiles.MaskedAPIKey {
 		t.Fatalf("locked overview key = %q", got)
 	}
@@ -204,7 +209,9 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err := credentialVault.UnlockMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	requireClientKey(t, manager, "locked-plaintext")
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
+		t.Fatalf("unlocked plaintext profile must still require re-save: %v", err)
+	}
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
 		t.Fatal("unlock must not rewrite the plaintext row without an explicit save")
 	}

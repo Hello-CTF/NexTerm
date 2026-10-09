@@ -6,10 +6,9 @@ import (
 
 func TestParseCLICommandShapesAndFlagPositions(t *testing.T) {
 	environment := map[string]string{
-		"NEXTERM_LISTEN":     "127.0.0.1:9000",
-		"NEXTERM_DATA_DIR":   "/env/data",
-		"NEXTERM_WEB_ROOT":   "/env/web",
-		"NEXTERM_MASTER_KEY": "env-secret",
+		"NEXTERM_LISTEN":   "127.0.0.1:9000",
+		"NEXTERM_DATA_DIR": "/env/data",
+		"NEXTERM_WEB_ROOT": "/env/web",
 	}
 	getenv := func(key string) string { return environment[key] }
 
@@ -20,7 +19,7 @@ func TestParseCLICommandShapesAndFlagPositions(t *testing.T) {
 	if invocation.Command != CommandServe || invocation.DataDir != "/flag/data" || invocation.SyncOnly {
 		t.Fatalf("invocation = %+v", invocation)
 	}
-	if invocation.Listen != "127.0.0.1:9000" || invocation.WebRoot != "/env/web" || invocation.MasterKey != "env-secret" {
+	if invocation.Listen != "127.0.0.1:9000" || invocation.WebRoot != "/env/web" {
 		t.Fatalf("environment fallback = %+v", invocation)
 	}
 
@@ -39,6 +38,8 @@ func TestParseCLIRejectsInvalidInput(t *testing.T) {
 		{"unknown"},
 		{"serve", "token"},
 		{"--data-dir"},
+		{"--master-key", "legacy-secret"},
+		{"--master-key=legacy-secret"},
 		{"--listen", "missing-port"},
 		{"--listen", "127.0.0.1:70000"},
 		{"--sync-only=perhaps"},

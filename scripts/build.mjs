@@ -409,7 +409,7 @@ function buildBinary(kind) {
     if (!release) die("--package requires --release");
     if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
     const packaged = packageDesktop(outputPath, goos, goarch);
-    const packageKind = { darwin: "desktop-dmg", windows: "desktop-nsis", linux: "desktop-linux-archive" }[goos];
+    const packageKind = { darwin: "desktop-dmg", windows: "desktop-nsis", linux: "desktop-linux-deb" }[goos];
     writeArtifactReport({
       id: `${packageKind}-${goos}-${goarch}`,
       kind: packageKind,
@@ -496,15 +496,29 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
 function packageAssertions(kind, file, goos, goarch) {
   const data = fs.readFileSync(file);
   if (kind === "desktop-nsis") return [assertion("nsis-container", data[0] === 0x4d && data[1] === 0x5a, "NSIS output is not a PE executable")];
-  if (kind === "desktop-linux-archive") {
-    const root = `NexTerm-desktop_${VERSION}_linux_${goarch}`;
-    const required = [`${root}/nexterm-desktop`, `${root}/LICENSE`, `${root}/README.md`];
-    const listing = output("tar", ["-tzf", file], { allowFailure: true });
-    const members = new Set(listing?.split(/\r?\n/) || []);
-    return [
-      assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "Linux desktop archive is not gzip compressed"),
-      assertion("linux-desktop-archive-members", goos === "linux" && listing !== null && required.every((member) => members.has(member)), `required members: ${required.join(", ")}`),
-    ];
+  if (kind === "desktop-linux-deb") {
+    const checks = [assertion("deb-container", data.subarray(0, 8).toString("ascii") === "!<arch>\n", "Linux desktop package is not an ar archive")];
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-deb-assert-"));
+    try {
+      const extracted = output("ar", ["x", path.resolve(file)], { cwd: work, allowFailure: true });
+      if (extracted === null) {
+        checks.push(assertion("linux-desktop-deb-extract", false, "ar extraction failed; the package is not a installable deb"));
+        return checks;
+      }
+      const control = output("tar", ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
+      checks.push(assertion(
+        "linux-desktop-deb-control",
+        control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
+        "control file must carry the package name, release version and architecture",
+      ));
+      const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
+      const members = new Set(listing?.split(/\r?\n/) || []);
+      const required = ["usr/bin/nexterm-desktop", "usr/share/applications/nexterm.desktop", "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
+      checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && required.every((member) => members.has(member)), `required members: ${required.join(", ")}`));
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
+    return checks;
   }
   if (kind === "server-archive") {
     const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
@@ -650,22 +664,48 @@ function packageDesktop(binary, goos, goarch) {
   die(`no desktop package is contracted for ${goos}`);
 }
 
+function debVersion(version) {
+  return version.replace("-", "~");
+}
+
 function packageLinuxDesktop(binary, goarch) {
   const assets = path.resolve(ROOT, option("assets-dir", "target/release-assets"));
   const name = `NexTerm-desktop_${VERSION}_linux_${goarch}`;
   const work = path.join(ROOT, "target/package-work/linux-desktop", goarch);
-  const directory = path.join(work, name);
+  const dataDir = path.join(work, "data");
   fs.rmSync(work, { recursive: true, force: true });
-  fs.mkdirSync(directory, { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "usr/bin"), { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "usr/share/applications"), { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "usr/share/icons/hicolor/256x256/apps"), { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "usr/share/doc/nexterm"), { recursive: true });
+  fs.mkdirSync(path.join(work, "control"), { recursive: true });
   fs.mkdirSync(assets, { recursive: true });
-  fs.copyFileSync(binary, path.join(directory, "nexterm-desktop"));
-  fs.chmodSync(path.join(directory, "nexterm-desktop"), 0o755);
-  fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(directory, "LICENSE"));
-  fs.writeFileSync(path.join(directory, "README.md"), `# NexTerm desktop ${VERSION} (linux/${goarch})\n\nSelf-contained Wails binary with the production frontend embedded; no dist directory or working-directory web root is required. Run ./nexterm-desktop on Linux/${goarch} with the Wails GTK4/WebKitGTK 6.0 runtime installed. This tar.gz is not an AppImage/deb and does not claim real-target installation acceptance.\n`);
-  const archive = path.join(assets, `${name}.tar.gz`);
-  fs.rmSync(archive, { force: true });
-  run("tar", ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner", "-czf", archive, "-C", work, name]);
-  return archive;
+  fs.copyFileSync(binary, path.join(dataDir, "usr/bin/nexterm-desktop"));
+  fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
+  fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
+  fs.writeFileSync(path.join(dataDir, "usr/share/applications/nexterm.desktop"), "[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\n");
+  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/ProbiusOfficial/NexTerm>\nHomepage: https://github.com/ProbiusOfficial/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
+  const normalizeModes = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        fs.chmodSync(target, 0o755);
+        normalizeModes(target);
+      } else {
+        fs.chmodSync(target, 0o644);
+      }
+    }
+  };
+  normalizeModes(dataDir);
+  fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
+  const tarFlags = ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner"];
+  run("tar", [...tarFlags, "-czf", path.join(work, "control.tar.gz"), "-C", path.join(work, "control"), "control"]);
+  run("tar", [...tarFlags, "-czf", path.join(work, "data.tar.gz"), "-C", dataDir, "usr"]);
+  fs.writeFileSync(path.join(work, "debian-binary"), "2.0\n");
+  const deb = path.join(assets, `${name}.deb`);
+  fs.rmSync(deb, { force: true });
+  run("ar", ["rD", deb, path.join(work, "debian-binary"), path.join(work, "control.tar.gz"), path.join(work, "data.tar.gz")]);
+  return deb;
 }
 
 function packageDarwin(binary, goarch) {
@@ -683,7 +723,10 @@ function packageDarwin(binary, goarch) {
   const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleDisplayName</key><string>NexTerm</string>\n<key>CFBundleExecutable</key><string>NexTerm</string>\n<key>CFBundleIdentifier</key><string>${wailsConfig.info.productIdentifier}</string>\n<key>CFBundleIconFile</key><string>icon.icns</string>\n<key>CFBundleName</key><string>NexTerm</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${VERSION}</string>\n<key>CFBundleVersion</key><string>${VERSION}</string>\n<key>LSMinimumSystemVersion</key><string>12.0</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n`;
   fs.writeFileSync(path.join(app, "Contents/Info.plist"), plist);
   run("plutil", ["-lint", path.join(app, "Contents/Info.plist")]);
-  run("codesign", ["--force", "--deep", "--sign", "-", app]);
+  const signIdentity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
+  const signArgs = ["--force", "--deep", "--sign", signIdentity];
+  if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp");
+  run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   fs.symlinkSync("/Applications", path.join(work, "Applications"));
   fs.mkdirSync(assets, { recursive: true });
@@ -692,7 +735,19 @@ function packageDarwin(binary, goarch) {
   fs.rmSync(dmg, { force: true });
   run("hdiutil", ["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "UDZO", dmg]);
   run("hdiutil", ["verify", dmg]);
+  notarizeDmg(dmg);
   return dmg;
+}
+
+// 公证是可选增强:只有配置了 App Store Connect API 密钥(notarytool key 认证)才提交;
+// 自签证书无法通过公证,未配置凭据时保持 ad-hoc 分发现状。
+function notarizeDmg(dmg) {
+  const keyPath = process.env.NEXTERM_MACOS_NOTARY_KEY_PATH;
+  const keyId = process.env.NEXTERM_MACOS_NOTARY_KEY_ID;
+  const issuer = process.env.NEXTERM_MACOS_NOTARY_ISSUER;
+  if (!keyPath || !keyId || !issuer) return;
+  run("xcrun", ["notarytool", "submit", dmg, "--key", keyPath, "--key-id", keyId, "--issuer", issuer, "--wait"]);
+  run("xcrun", ["stapler", "staple", dmg]);
 }
 
 function packageWindows(binary, goarch) {

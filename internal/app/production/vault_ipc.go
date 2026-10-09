@@ -71,8 +71,8 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "vault_init_dpapi", func(ctx context.Context, _ *ipc.Call, _ struct{}) (any, error) {
-				return nil, credentialVault.InitDPAPI(ctx)
+			return ipc.Register(dispatcher, "vault_init_dpapi", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
+				return nil, credentialVault.InitDPAPI(ctx, input.Password)
 			})
 		},
 		func() error {

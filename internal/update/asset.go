@@ -24,9 +24,9 @@ func matchAsset(release Release, goos, goarch string) (Asset, bool) {
 	case "darwin/arm64":
 		prefix, suffix = "NexTerm_", "_aarch64.dmg"
 	case "linux/amd64":
-		prefix, suffix = "NexTerm-desktop_", "_linux_amd64.tar.gz"
+		prefix, suffix = "NexTerm-desktop_", "_linux_amd64.deb"
 	case "linux/arm64":
-		prefix, suffix = "NexTerm-desktop_", "_linux_arm64.tar.gz"
+		prefix, suffix = "NexTerm-desktop_", "_linux_arm64.deb"
 	default:
 		return Asset{}, false
 	}

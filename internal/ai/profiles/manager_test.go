@@ -84,7 +84,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _ := profiles.PresetProfile("openai")
+	first, _ := profiles.PresetProfile("moonshot")
 	first.Name = " first "
 	first.APIKey = " key "
 	overview, err := manager.Save(ctx, first)
@@ -115,10 +115,10 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if _, err = manager.Activate(ctx, second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := manager.ActiveConfig(); got.Model != "deepseek-chat" {
+	if got, _ := manager.ActiveConfig(); got.Model != "deepseek-flash" {
 		t.Fatalf("active model = %s", got.Model)
 	}
-	if firstClient.Config().Model != "gpt-4o-mini" {
+	if firstClient.Config().Model != "kimi-k3" {
 		t.Fatal("existing client snapshot changed after activation")
 	}
 
@@ -153,7 +153,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	if _, err = manager.ActiveClient(); !errors.Is(err, profiles.ErrNoActiveProfile) {
 		t.Fatalf("deleted provider is still usable: %v", err)
 	}
-	if firstClient.Config().Model != "gpt-4o-mini" {
+	if firstClient.Config().Model != "kimi-k3" {
 		t.Fatal("deleting profiles mutated an in-flight client snapshot")
 	}
 }
@@ -208,7 +208,7 @@ func TestConcurrentSaveDoesNotLoseProfiles(t *testing.T) {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			profile, _ := profiles.PresetProfile("openai")
+			profile, _ := profiles.PresetProfile("moonshot")
 			profile.ID = ""
 			profile.Model = fmt.Sprintf("model-%02d", index)
 			_, err := manager.Save(ctx, profile)

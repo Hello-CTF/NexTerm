@@ -68,7 +68,6 @@ type Config struct {
 	Channels       ChannelBinder
 	ChannelStats   ChannelStatsFunc
 	Blobs          *BlobStore
-	Images         *ImageStore
 	Settings       SettingStore
 	AuditFunc      AuditFunc
 	Static         http.Handler
@@ -106,8 +105,6 @@ type Server struct {
 	closeOnce       sync.Once
 	closeErr        error
 	webSocket       WebSocketConfig
-	images          *ImageStore
-	settings        SettingStore
 	preferences     *account.Preferences
 	audit           AuditFunc
 	fleet           *fleetserver.Service
@@ -137,7 +134,6 @@ type Health struct {
 	WebRoot          *string          `json:"webRoot"`
 	Vault            any              `json:"vault"`
 	Retention        *RetentionHealth `json:"retention"`
-	ImageLinks       *ImageLinkHealth `json:"imageLinks,omitempty"`
 	DB               *DBHealth        `json:"db,omitempty"`
 }
 
@@ -154,14 +150,6 @@ type DBPoolStats struct {
 	InUse           int   `json:"inUse"`
 	Idle            int   `json:"idle"`
 	WaitCount       int64 `json:"waitCount"`
-}
-
-// ImageLinkHealth 是 /healthz 暴露的非秘密图片链接元数据。
-type ImageLinkHealth struct {
-	PublicBaseURLConfigured bool  `json:"publicBaseURLConfigured"`
-	MaxBytes                int64 `json:"maxBytes"`
-	OwnerQuotaBytes         int64 `json:"ownerQuotaBytes"`
-	TTLSeconds              int64 `json:"ttlSeconds"`
 }
 
 func New(config Config) (*Server, error) {
@@ -210,13 +198,6 @@ func New(config Config) (*Server, error) {
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {
 		return nil, err
 	}
-	if config.Options.PublicBaseURL != "" {
-		base, err := core.ParsePublicBaseURL(config.Options.PublicBaseURL)
-		if err != nil {
-			return nil, err
-		}
-		config.Options.PublicBaseURL = base
-	}
 	if !config.Options.SyncOnly && config.Channels == nil {
 		return nil, fmt.Errorf("channel binder is required in full server mode")
 	}
@@ -264,7 +245,7 @@ func New(config Config) (*Server, error) {
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
-		images: config.Images, settings: config.Settings, audit: config.AuditFunc, fleet: config.Fleet,
+		audit: config.AuditFunc, fleet: config.Fleet,
 		db: config.DB,
 	}
 	if s.environment.Events == nil {
@@ -331,21 +312,13 @@ func (s *Server) routes(config Config) http.Handler {
 		blobs = NewBlobStore(s.options.DataDir, s.logger)
 	}
 	if blobs != nil {
+		// 存在任何无身份放行路径 (auth=off/回环监听/静态令牌/网关) 时属主概念不成立,
+		// 暂存 blob 放开无属主条目; 仅当所有放行请求都带账号会话身份时保持属主判等。
+		blobs.openAccess = !(s.authRequired && s.accounts != nil && s.tokens == nil && s.gatewayAuthKey == "")
 		mux.Handle("POST /files/blob", s.requireAuth(http.HandlerFunc(blobs.Stage)))
 		mux.Handle("GET /files/blob", s.requireAuth(http.HandlerFunc(blobs.Download)))
 		mux.Handle("DELETE /files/blob", s.requireAuth(http.HandlerFunc(blobs.Delete)))
 		mux.Handle("POST /files/blob/reserve", s.requireAuth(http.HandlerFunc(blobs.Reserve)))
-	}
-	images := config.Images
-	if images == nil && s.options.DataDir != "" {
-		images = NewImageStore(s.options.DataDir, s.logger)
-	}
-	if images != nil {
-		s.images = images
-		images.onExpire = s.auditImageExpire
-		mux.Handle("POST /files/image", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageUpload))))
-		mux.Handle("GET /files/image/{id}", http.HandlerFunc(s.serveImageDownload))
-		mux.Handle("DELETE /files/image/{id}", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageDelete))))
 	}
 	if staticHandler != nil {
 		mux.Handle("/", staticHandler)
@@ -393,15 +366,6 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 			commands = s.peerDispatcher.Len()
 		}
 	}
-	var imageLinks *ImageLinkHealth
-	if s.images != nil {
-		imageLinks = &ImageLinkHealth{
-			PublicBaseURLConfigured: s.publicBaseURL(r.Context()) != "",
-			MaxBytes:                s.images.imageMaxBytes(),
-			OwnerQuotaBytes:         s.images.ownerQuotaBytes(),
-			TTLSeconds:              int64(s.images.ttlDuration().Seconds()),
-		}
-	}
 	var dbHealth *DBHealth
 	if s.db != nil {
 		pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -430,14 +394,11 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 		OK: true, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
 		Commands: commands, EventSubscribers: s.events.SubscriberCount(),
 		LiveChannels: channelStats.LiveChannels, PendingChannels: channelStats.PendingChannels,
-		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, ImageLinks: imageLinks, DB: dbHealth,
+		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, DB: dbHealth,
 	})
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
-
-// Images 返回图片暂存(nil 表示未启用, 如同步模式或无数据目录)。
-func (s *Server) Images() *ImageStore { return s.images }
 
 func (s *Server) Events() *EventBroker { return s.events }
 

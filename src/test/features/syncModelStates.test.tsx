@@ -319,7 +319,11 @@ describe("ModelManager 状态", () => {
     mocks.overview.mockResolvedValueOnce({ profiles: [saved], activeId: "p1" });
     mocks.save.mockImplementation(async (p: typeof saved) => ({ ...p }));
     mounted = mount(createElement(ModelManager));
-    await flushUntil(() => text().includes("DeepSeek"));
+    await flushUntil(() =>
+      [...mounted!.container.querySelectorAll(".nx-menu-item")].some((item) =>
+        item.textContent?.includes("DeepSeek"),
+      ),
+    );
 
     mocks.overview.mockRejectedValueOnce(new Error("磁盘不可读"));
     clickButton(mounted!.container, "保存");

@@ -113,9 +113,6 @@ func sealBundle(plaintext []byte, password string, header *bundleHeader) ([]byte
 
 func encodeBundleContainer(plaintext []byte, password string) ([]byte, error) {
 	header := &bundleHeader{plainLen: uint64(len(plaintext))}
-	if password == "" {
-		return append(header.marshal(), plaintext...), nil
-	}
 	header.encrypted = true
 	header.kdf = bundleKDFDefaults
 	header.cipherLen = header.plainLen + bundleGCMTagSize
@@ -144,9 +141,6 @@ func decodeBundleContainer(data []byte, password string) ([]byte, error) {
 		}
 		return body, nil
 	}
-	if password == "" {
-		return nil, ipc.NewError(ipc.CodeBadParam, "资产包已加密，请提供口令")
-	}
 	if uint64(len(body)) != header.cipherLen {
 		return nil, ipc.NewError(ipc.CodeBadParam, "资产包数据不完整")
 	}
@@ -162,6 +156,9 @@ func decodeBundleContainer(data []byte, password string) ([]byte, error) {
 	}
 	plaintext, err := aead.Open(nil, header.nonce[:], body, data[:bundleHeaderSize])
 	if err != nil {
+		if password == "" {
+			return nil, ipc.NewError(ipc.CodeBadParam, "资产包已加密，请提供口令")
+		}
 		return nil, ipc.NewError(ipc.CodeDecrypt, "资产包解密失败：口令错误或数据已被篡改")
 	}
 	if uint64(len(plaintext)) != header.plainLen {

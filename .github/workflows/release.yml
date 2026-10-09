@@ -140,8 +140,46 @@ jobs:
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x "target/go-build/${binary}"
           fi
+      # 可选签名:在仓库 variables/secrets 配置后自动启用(自签固定身份或 Developer ID 均可);
+      # 公证只有 Developer ID + App Store Connect API 密钥能过,未配置时保持 ad-hoc 分发。
+      - name: Import the macOS signing identity (optional)
+        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
+        shell: bash
+        env:
+          P12_BASE64: ${{ secrets.NEXTERM_MACOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.NEXTERM_MACOS_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$HOME/Library/Keychains/nexterm-signing.keychain-db"
+          echo "$P12_BASE64" | base64 --decode > /tmp/nexterm-signing.p12
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security import /tmp/nexterm-signing.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security unlock-keychain -p "" "$KEYCHAIN"
+          shred -u /tmp/nexterm-signing.p12 2>/dev/null || rm -f /tmp/nexterm-signing.p12
+          echo "NEXTERM_MACOS_SIGN_IDENTITY=${{ vars.NEXTERM_MACOS_SIGN_IDENTITY }}" >> "$GITHUB_ENV"
+      - name: Prepare macOS notarization credentials (optional)
+        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
+        shell: bash
+        env:
+          NOTARY_KEY_BASE64: ${{ secrets.NEXTERM_MACOS_NOTARY_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$NOTARY_KEY_BASE64" ]; then
+            (umask 077; echo "$NOTARY_KEY_BASE64" | base64 --decode > /tmp/nexterm-notary.p8)
+            echo "NEXTERM_MACOS_NOTARY_KEY_PATH=/tmp/nexterm-notary.p8" >> "$GITHUB_ENV"
+            echo "NEXTERM_MACOS_NOTARY_KEY_ID=${{ vars.NEXTERM_MACOS_NOTARY_KEY_ID }}" >> "$GITHUB_ENV"
+            echo "NEXTERM_MACOS_NOTARY_ISSUER=${{ vars.NEXTERM_MACOS_NOTARY_ISSUER }}" >> "$GITHUB_ENV"
+          fi
       - name: Package the verified production binary and enforce final artifact evidence
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
+      - name: Clean up notarization key (optional)
+        if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true' && always()
+        shell: bash
+        run: shred -u /tmp/nexterm-notary.p8 2>/dev/null || rm -f /tmp/nexterm-notary.p8
       - name: Upload candidate and raw/final reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -273,7 +311,7 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/release-template.md > candidate/release-body.md
-          printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和）。以下项目尚未在真实环境验证，不算通过验收：\n\n- 真实 Chromium 浏览器验收（响应式布局、纯键盘导航、触摸命中、WebSocket 重连、真实服务端 reload 恢复）：原验收脚本随演示模式移除，当前无自动化替代\n- Windows / macOS 安装包在真实系统上的安装，含签名、公证与 WebView2 / WKWebView 运行库结果\n- 服务端在真实常开 Linux 主机上的完整部署：域名与 TLS 反向代理、真实账号初始化登录、桌面端 `/sync/v2` 登录同步\n- 懒猫微服包在真机（含 ARM64 设备）上的构建安装，以及商店上架状态\n- 已部署 Pages 站点真实地址的验收\n- iOS / Android 真机界面与原生软键盘证据\n' >> candidate/release-body.md
+          printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和）。\n真实环境验证缺口（真实浏览器、真机安装与部署等）见仓库文档。\n' >> candidate/release-body.md
       - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

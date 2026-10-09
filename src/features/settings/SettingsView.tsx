@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
@@ -8,8 +8,6 @@ import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
-import { CronCard } from "./CronCard";
-import { FilesCard } from "./FilesCard";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
@@ -19,6 +17,7 @@ import { describeError } from "../../ui/errorText";
 import { DESKTOP, WEB } from "../../ipc/env";
 import {
   IconCheckCircle,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconClose,
@@ -40,17 +39,15 @@ const SETTINGS_SECTIONS = [
   { id: "settings-ai-model", label: "AI 模型" },
   { id: "settings-ai-rules", label: "AI 拦截" },
   { id: "settings-memory", label: "长期记忆" },
-  { id: "settings-cron", label: "定时任务" },
   { id: "settings-vault", label: "凭据保护" },
   { id: "settings-known-hosts", label: "已知主机" },
   { id: "settings-account", label: "账号同步" },
   { id: "settings-bundle", label: "资产包" },
-  { id: "settings-files", label: "文件链接" },
   { id: "settings-share", label: "分享" },
   { id: "settings-shortcuts", label: "快捷键" },
   { id: "settings-update", label: "软件更新" },
 ].filter((section) => {
-  if (section.id === "settings-files" || section.id === "settings-share") return WEB;
+  if (section.id === "settings-share") return WEB;
   if (section.id === "settings-update") return DESKTOP;
   return true;
 }) as readonly { id: string; label: string }[];
@@ -72,6 +69,8 @@ export function SettingsView() {
     chatError?: string | null;
     fatal?: string;
   } | null>(null);
+  const connTestPanelId = useId();
+  const [connTestOpen, setConnTestOpen] = useState(false);
 
   const [protPwd, setProtPwd] = useState("");
   const [pendingEnable, setPendingEnable] = useState(false);
@@ -85,6 +84,7 @@ export function SettingsView() {
     queryFn: () => vaultApi.status(),
     refetchOnWindowFocus: false,
   }).data ?? null;
+  const vaultPasswordProtected = vault?.mode === "master" && !vault.passwordless;
   const refreshVault = () => void qc.invalidateQueries({ queryKey: ["vault-status"] });
   useEffect(() => {
     setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
@@ -288,7 +288,7 @@ export function SettingsView() {
                 <button
                   key={s.id}
                   type="button"
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${
+                  className={`w-full rounded-md px-2 py-1.5 text-left text-[13px] whitespace-nowrap transition-colors ${
                     s.id === activeSection
                       ? "bg-neutral-800/70 text-neutral-100"
                       : "text-neutral-400 hover:bg-neutral-800/45 hover:text-neutral-200"
@@ -300,7 +300,10 @@ export function SettingsView() {
                 </button>
               ))
             ) : (
-              <span className="pt-2 text-center text-[11px] text-neutral-400">
+              <span
+                className="truncate pt-2 text-center text-[11px] text-neutral-400"
+                title={SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.label}
+              >
                 {SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.label}
               </span>
             )}
@@ -353,38 +356,56 @@ export function SettingsView() {
           <ModelManager />
 
           <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="nx-btn nx-btn-outline h-auto min-h-7 shrink py-1 text-left whitespace-normal"
-                disabled={testing}
-                onClick={() => void test()}
-              >
-                {testing ? (
-                  <IconRefresh size={13} className="shrink-0 animate-spin" />
-                ) : (
-                  <IconZap size={13} className="shrink-0" />
-                )}
-                {testing ? "测试中…" : "连通性测试（两步）· 当前模型"}
-              </button>
-              <span className="nx-hint">
-                只能测当前模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
-                要验证草稿的连接参数，请用上方的「刷新模型列表」。
-              </span>
-            </div>
-
-            {testResult && (
-              <div
-                className={`mt-3.5 nx-alert ${
-                  testPassed
-                    ? "nx-alert-success"
-                    : "nx-alert-danger"
-                }`}
-              >
-                <div className="mb-1 flex items-center gap-1.5 font-semibold">
-                  {testPassed ? <IconCheckCircle size={13} /> : <IconXCircle size={13} />}
-                  测试结果
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+              aria-expanded={connTestOpen}
+              aria-controls={connTestPanelId}
+              onClick={() => setConnTestOpen((v) => !v)}
+            >
+              {connTestOpen ? (
+                <IconChevronDown size={12} className="shrink-0" />
+              ) : (
+                <IconChevronRight size={12} className="shrink-0" />
+              )}
+              连通性测试
+            </button>
+            {connTestOpen && (
+              <div id={connTestPanelId}>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    className="nx-btn nx-btn-outline h-auto min-h-7 shrink py-1 text-left whitespace-normal"
+                    disabled={testing}
+                    onClick={() => void test()}
+                  >
+                    {testing ? (
+                      <IconRefresh size={13} className="shrink-0 animate-spin" />
+                    ) : (
+                      <IconZap size={13} className="shrink-0" />
+                    )}
+                    {testing ? "测试中…" : "连通性测试（两步）· 当前模型"}
+                  </button>
+                  <span className="nx-hint">
+                    只能测当前模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
+                    要验证草稿的连接参数，请用上方的「刷新模型列表」。
+                  </span>
                 </div>
-                <pre className="whitespace-pre-wrap font-mono text-[11px]">{testDetail}</pre>
+
+                {testResult && (
+                  <div
+                    className={`mt-3.5 nx-alert ${
+                      testPassed
+                        ? "nx-alert-success"
+                        : "nx-alert-danger"
+                    }`}
+                  >
+                    <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                      {testPassed ? <IconCheckCircle size={13} /> : <IconXCircle size={13} />}
+                      测试结果
+                    </div>
+                    <pre className="whitespace-pre-wrap font-mono text-[11px]">{testDetail}</pre>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -495,7 +516,7 @@ export function SettingsView() {
           </button>
 
           <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-            规则命中 → 读写/完全静默先确认，只读/无人值守直接拒绝；不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
+            不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
           </p>
         </section>
 
@@ -503,16 +524,12 @@ export function SettingsView() {
           <MemoryCard />
         </div>
 
-        <div id="settings-cron" className="scroll-mt-12">
-          <CronCard />
-        </div>
-
         <section id="settings-vault" className="nx-card scroll-mt-12">
           <div className="mb-1 flex items-center gap-2">
             <IconLock size={15} className="text-neutral-400" />
             <span className="nx-card-title">凭据保护</span>
             {vault &&
-              (vault.mode === "master" ? (
+              (vaultPasswordProtected ? (
                 <span className="nx-badge nx-badge-green">已开启</span>
               ) : vault.mode === "not_init" ? (
                 <span className="nx-badge nx-badge-amber">未初始化</span>
@@ -525,23 +542,29 @@ export function SettingsView() {
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
               <p className="nx-hint mt-0.5">
-                {vault?.mode === "master"
+                {vaultPasswordProtected
                   ? "开启：每次启动需输入密码后方可使用凭据。"
                   : vault?.mode === "not_init"
                     ? "尚未初始化：打开这个开关并设置保护密码即可完成初始化；初始化前无法保存任何密码或私钥。"
-                    : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
+                    : vault?.mode === "master"
+                      ? "关闭：未设置保护密码，凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密。"
+                      : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
               </p>
             </div>
             <input
               type="checkbox"
               className="mt-0.5 h-4 w-4 shrink-0"
-              checked={vault?.mode === "master"}
+              checked={vaultPasswordProtected}
               onChange={() => {
-                if (vault?.mode === "master") {
-                  void ask("关闭密码保护？\n关闭后凭据无需密码即可使用。").then((ok) => {
+                if (vaultPasswordProtected) {
+                  const confirmText = DESKTOP
+                    ? "关闭密码保护？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。"
+                    : "关闭密码保护？\n关闭后凭据无需密码即可使用，但任何拿到数据目录的人都能解密。";
+                  void ask(confirmText).then(async (ok) => {
                     if (!ok) return;
-                    void vaultApi
-                      .initDpapi()
+                    const old = await promptText("输入当前保护密码：", "", { secret: true });
+                    if (old === null) return;
+                    void (DESKTOP ? vaultApi.initDpapi(old) : vaultApi.changePassword(old, ""))
                       .then(() => {
                         pushToast("success", "已关闭密码保护");
                         return refreshVault();
@@ -556,25 +579,28 @@ export function SettingsView() {
             />
           </label>
 
-          {pendingEnable && vault?.mode !== "master" && (
+          {pendingEnable && !vaultPasswordProtected && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <input
                 type="password"
                 className="nx-input max-w-[240px]"
-                placeholder="设置保护密码（至少 8 位）"
+                placeholder="设置保护密码（留空则不设置）"
                 value={protPwd}
                 autoComplete="off"
                 onChange={(e) => setProtPwd(e.target.value)}
               />
               <button
                 className="nx-btn nx-btn-primary"
-                disabled={protPwd.length < 8}
+                disabled={protPwd.length > 0 && protPwd.length < 8}
                 onClick={() =>
                   void vaultApi
                     .initMaster(protPwd)
                     .then(() => {
                       setPendingEnable(false);
-                      pushToast("success", "已开启密码保护");
+                      pushToast(
+                        "success",
+                        protPwd === "" ? "已完成初始化，未设置密码" : "已开启密码保护",
+                      );
                       return refreshVault();
                     })
                     .catch((e) => pushToast("error", describeError(e)))
@@ -586,7 +612,7 @@ export function SettingsView() {
                 取消
               </button>
               <p className="nx-hint w-full text-[11px]">
-                保护密码只在本机使用，不会上传；忘记后无法找回，已保存的凭据将永远无法解密。
+                保护密码只在本机使用，不会上传；留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。忘记后无法找回，已保存的凭据将永远无法解密。
               </p>
             </div>
           )}
@@ -598,16 +624,22 @@ export function SettingsView() {
                 className="nx-btn nx-btn-outline nx-btn-sm"
                 onClick={() =>
                   void (async () => {
-                    const old = await promptText("输入当前保护密码：", "", { secret: true });
+                    const old = vault?.passwordless
+                      ? ""
+                      : await promptText("输入当前保护密码：", "", { secret: true });
                     if (old === null) return;
-                    const next = await promptText("输入新密码（至少 8 位）：", "", { secret: true });
-                    if (next === null || next.length < 8) {
-                      if (next !== null) pushToast("error", "新密码至少 8 位");
+                    const next = await promptText("输入新密码（至少 8 位，留空则关闭密码保护）：", "", { secret: true });
+                    if (next === null) return;
+                    if (next.length > 0 && next.length < 8) {
+                      pushToast("error", "新密码至少 8 位");
                       return;
                     }
                     try {
                       await vaultApi.changePassword(old, next);
-                      pushToast("success", "密码已修改 · 凭据不受影响");
+                      pushToast(
+                        "success",
+                        next === "" ? "已关闭密码保护 · 凭据不受影响" : "密码已修改 · 凭据不受影响",
+                      );
                     } catch (e) {
                       pushToast("error", describeError(e));
                     }
@@ -619,7 +651,7 @@ export function SettingsView() {
             </div>
           )}
 
-          {vault?.mode === "master" && (
+          {vaultPasswordProtected && (
             <div className="mt-3 border-t border-neutral-800/60 pt-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[12.5px] text-neutral-200">闲置自动锁定</span>
@@ -638,7 +670,7 @@ export function SettingsView() {
                 </button>
               </div>
               <p className="nx-hint mt-1.5">
-                闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码；保存后立即生效，重启后保持。
+                闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码。
               </p>
             </div>
           )}
@@ -655,12 +687,6 @@ export function SettingsView() {
         <div id="settings-bundle" className="scroll-mt-12">
           <SyncBundleCard />
         </div>
-
-        {WEB && (
-          <div id="settings-files" className="scroll-mt-12">
-            <FilesCard />
-          </div>
-        )}
 
         {WEB && (
           <div id="settings-share" className="scroll-mt-12">

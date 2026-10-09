@@ -92,8 +92,8 @@ beforeEach(() => {
     error: null,
   });
   mocks.users.mockResolvedValue({ users: [SELF, ALICE] });
-  mocks.settingsGet.mockResolvedValue({ registration_open: false, public_base_url: "" });
-  mocks.settingsPut.mockResolvedValue({ registration_open: true, public_base_url: "" });
+  mocks.settingsGet.mockResolvedValue({ registration_open: false });
+  mocks.settingsPut.mockResolvedValue({ registration_open: true });
   mocks.createUser.mockResolvedValue({ user: ALICE });
   mocks.disableUser.mockResolvedValue({ ok: true });
   mocks.resetUser.mockResolvedValue({ ok: true });

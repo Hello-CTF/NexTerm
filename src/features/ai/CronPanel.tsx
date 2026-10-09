@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { aiApi, modelApi, type ModelProfilesView } from "../../ipc/commands";
+import { modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { profileKeyUnavailable as profileKeyMasked } from "../ai/modelLifecycle";
+import { profileKeyUnavailable as profileKeyMasked } from "./modelLifecycle";
 import {
   IconChevronDown,
   IconChevronRight,
   IconClock,
+  IconClose,
   IconEdit,
   IconPlus,
   IconRefresh,
@@ -16,10 +17,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-type ConversationOption = { id: string; title: string };
-
 type RegisterDraft = {
-  sessionId: string;
   name: string;
   prompt: string;
   schedule: string;
@@ -32,7 +30,6 @@ type ReplaceConflict = {
   label: string;
   oldKey: string;
   newKey: string;
-  sessions: string[];
   gen: number;
   error: string;
 };
@@ -54,15 +51,19 @@ function formatTime(rfc3339: string | undefined): string | null {
   return new Date(ms).toLocaleString();
 }
 
-export function CronCard() {
+export function CronPanel({
+  conversationId,
+  onClose,
+}: {
+  conversationId: string;
+  onClose: () => void;
+}) {
   const { pushToast } = useUi();
   const profilesRevision = useUi((s) => s.modelProfilesRevision);
 
-  const [conversations, setConversations] = useState<ConversationOption[] | null>(null);
   const [jobs, setJobs] = useState<CronJob[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [partialErrors, setPartialErrors] = useState<string[]>([]);
 
   const [profilesView, setProfilesView] = useState<ModelProfilesView | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
@@ -83,7 +84,6 @@ export function CronCard() {
   }, []);
 
   const [jobsGen, setJobsGen] = useState(0);
-  const [coveredSessionIds, setCoveredSessionIds] = useState<string[]>([]);
 
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
@@ -118,46 +118,11 @@ export function CronCard() {
     const gen = ++loadGenRef.current;
     setLoading(true);
     setError(null);
-    setPartialErrors([]);
     try {
-      const list = await aiApi.conversationList();
+      const sessionJobs = await cronApi.list(conversationId);
       if (!aliveRef.current || gen !== loadGenRef.current) return;
-      const options = list.map((c) => ({ id: c.id, title: c.title }));
-      setConversations(options);
-
-      const conflict = replaceConflictRef.current;
-      const listedIds = new Set(options.map((c) => c.id));
-      const targets = [
-        ...options,
-        ...(conflict
-          ? conflict.sessions.filter((s) => !listedIds.has(s)).map((s) => ({ id: s, title: s }))
-          : []),
-      ];
-      const results = await Promise.all(
-        targets.map(async (c) => {
-          try {
-            const sessionJobs = await cronApi.list(c.id);
-            return { ok: true as const, id: c.id, title: c.title, jobs: sessionJobs ?? [] };
-          } catch (e) {
-            return { ok: false as const, id: c.id, title: c.title, message: describeError(e) };
-          }
-        }),
-      );
-      if (!aliveRef.current || gen !== loadGenRef.current) return;
-      const failed = results.filter((r) => !r.ok);
-      const merged = results.flatMap((r) => (r.ok ? r.jobs : []));
-      setJobs(merged);
+      setJobs(sessionJobs ?? []);
       setJobsGen(gen);
-      setCoveredSessionIds(results.filter((r) => r.ok).map((r) => r.id));
-      if (failed.length > 0) {
-        const detail = failed.map((f) => `「${f.title}」：${f.message}`).join("；");
-        if (failed.length === results.length) {
-          setJobs(null);
-          setError(`读取定时任务失败：${detail}`);
-        } else {
-          setPartialErrors([`部分会话的任务读取失败：${detail}`]);
-        }
-      }
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
       setJobs(null);
@@ -165,7 +130,7 @@ export function CronCard() {
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
     }
-  }, []);
+  }, [conversationId]);
 
   useEffect(() => {
     void reload();
@@ -174,15 +139,11 @@ export function CronCard() {
   useEffect(() => {
     if (!replaceConflict || !jobs) return;
     if (jobsGen <= replaceConflict.gen) return;
-    if (!replaceConflict.sessions.every((s) => coveredSessionIds.includes(s))) return;
     const present = (key: string) => jobs.some((j) => `${j.sessionId}/${j.id}` === key);
     if (!present(replaceConflict.oldKey) || !present(replaceConflict.newKey)) {
       applyReplaceConflict(null);
     }
-  }, [jobs, jobsGen, coveredSessionIds, replaceConflict, applyReplaceConflict]);
-
-  const titleOf = (sessionId: string) =>
-    conversations?.find((c) => c.id === sessionId)?.title ?? sessionId;
+  }, [jobs, jobsGen, replaceConflict, applyReplaceConflict]);
 
   const profileById = (id: string) => profilesView?.profiles.find((p) => p.id === id);
   const activeProfile = profilesView?.activeId ? profileById(profilesView.activeId) : undefined;
@@ -207,7 +168,6 @@ export function CronCard() {
     setEditingJob(null);
     setAdvancedOpen(false);
     setDraft({
-      sessionId: conversations?.[0]?.id ?? "",
       name: "",
       prompt: "",
       schedule: "",
@@ -223,7 +183,6 @@ export function CronCard() {
     setEditingJob(job);
     setAdvancedOpen((job.timezone.trim() || "UTC") !== "UTC" || job.timeout > 0);
     setDraft({
-      sessionId: job.sessionId,
       name: job.name ?? "",
       prompt: job.prompt,
       schedule: job.schedule,
@@ -237,10 +196,6 @@ export function CronCard() {
   const submitRegister = async () => {
     if (!draft || registering) return;
     if (editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`) return;
-    if (!draft.sessionId) {
-      setRegisterError("先选择一个 AI 会话");
-      return;
-    }
     if (!draft.prompt.trim()) {
       setRegisterError("任务内容（提示词）不能为空");
       return;
@@ -268,7 +223,7 @@ export function CronCard() {
     try {
       if (!editingJob) {
         await cronApi.register({
-          sessionId: draft.sessionId,
+          sessionId: conversationId,
           ...(draft.name.trim() ? { name: draft.name.trim() } : {}),
           prompt: draft.prompt.trim(),
           schedule: draft.schedule.trim(),
@@ -283,7 +238,7 @@ export function CronCard() {
         return;
       }
       const created = await cronApi.register({
-        sessionId: draft.sessionId,
+        sessionId: conversationId,
         ...(draft.name.trim() ? { name: draft.name.trim() } : {}),
         prompt: draft.prompt.trim(),
         schedule: draft.schedule.trim(),
@@ -305,7 +260,6 @@ export function CronCard() {
             label: draft.name.trim() || draft.prompt.trim().slice(0, 40),
             oldKey: `${editingJob.sessionId}/${editingJob.id}`,
             newKey: `${created.sessionId}/${created.id}`,
-            sessions: [...new Set([editingJob.sessionId, created.sessionId])],
             gen: loadGenRef.current,
             error: describeError(rollbackError),
           });
@@ -365,7 +319,7 @@ export function CronCard() {
   const unregister = async (job: CronJob) => {
     const display = job.name?.trim() || job.prompt.slice(0, 40);
     const ok = await ask(
-      `注销定时任务「${display}」？\n所属会话：${titleOf(job.sessionId)}\n表达式：${job.schedule}（${job.timezone}）\n\n注销后到点不再执行，且不可恢复。`,
+      `注销定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n注销后到点不再执行，且不可恢复。`,
       { title: "注销定时任务", kind: "warning" },
     );
     if (!ok) return;
@@ -383,50 +337,35 @@ export function CronCard() {
   };
 
   return (
-    <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
-        <IconClock size={15} className="text-neutral-400" />
-        <span className="nx-card-title">定时任务</span>
+    <div className="max-h-[55%] min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
+        <IconClock size={12} />
+        定时任务
         {jobs && <span className="nx-badge">{jobs.length} 个</span>}
-        <div className="nx-spacer" />
+        <span className="nx-spacer" />
         <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="刷新"
           onClick={() => {
             void reload();
             void loadProfiles();
           }}
         >
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
-          刷新
+        </button>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={onClose}>
+          <IconClose size={11} />
         </button>
       </div>
-      <p className="nx-hint mb-3.5">
-        到点以某个 AI 会话为上下文发起无人值守执行。需要人工确认或被禁止的操作会被明确拒绝，
-        原因记在该任务的「上次错误」里；任务持久保存在本机，重启后继续生效。
+      <p className="nx-hint mb-2 text-[11px]">
+        到点以当前会话为上下文发起无人值守执行。需要人工确认或被禁止的操作会被明确拒绝，
+        原因记在该任务的「上次错误」里。
       </p>
 
       {registerOpen && draft ? (
-        <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
-          <div className="text-[12.5px] font-semibold text-neutral-200">
+        <div className="mb-2 flex flex-col gap-2 border-b border-neutral-800/60 pb-2">
+          <div className="text-[12px] font-semibold text-neutral-200">
             {editingJob ? "编辑定时任务" : "注册定时任务"}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="nx-hint text-[11px]" htmlFor="cron-register-session">
-              所属会话
-            </label>
-            <select
-              id="cron-register-session"
-              className="nx-select nx-input-sm min-w-0 flex-1"
-              aria-label="所属 AI 会话"
-              value={draft.sessionId}
-              onChange={(e) => setDraft({ ...draft, sessionId: e.target.value })}
-            >
-              {(conversations ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
           </div>
           <input
             className="nx-input nx-input-sm"
@@ -568,25 +507,36 @@ export function CronCard() {
           )}
         </div>
       ) : (
-        <div className="mb-3">
-          <button
-            className="nx-btn nx-btn-outline nx-btn-sm"
-            disabled={!conversations || conversations.length === 0}
-            title={
-              conversations && conversations.length === 0
-                ? "还没有 AI 会话，先在 AI 侧栏开始一个会话"
-                : undefined
-            }
-            onClick={openRegister}
-          >
+        <div className="mb-2">
+          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={openRegister}>
             <IconPlus size={11} />
             注册定时任务
           </button>
-          {conversations && conversations.length === 0 && (
-            <span className="nx-hint ml-2 text-[11px]">
-              还没有 AI 会话：定时任务挂在会话上，请先在 AI 侧栏开始一个会话。
-            </span>
-          )}
+        </div>
+      )}
+
+      {replaceConflict && (
+        <div
+          className="nx-alert nx-alert-danger mb-2 flex items-start gap-2 text-[12px]"
+          role="alert"
+        >
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="break-words">
+              编辑「{replaceConflict.label}」未完成：旧任务保留，重建的新任务（已停用）也未能自动清理（
+              {replaceConflict.error}）。两条任务不会同时执行，但请手动注销其中一条。
+            </div>
+            <div className="mt-1 break-words font-mono text-[11px]">
+              旧 {replaceConflict.oldKey} · 新 {replaceConflict.newKey}
+            </div>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm mt-2"
+              onClick={() => void reload()}
+            >
+              <IconRefresh size={11} />
+              刷新
+            </button>
+          </div>
         </div>
       )}
 
@@ -595,7 +545,7 @@ export function CronCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">{error}</div>
+              <div className="break-words">读取定时任务失败：{error}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 重试
@@ -609,176 +559,127 @@ export function CronCard() {
         )
       ) : (
         <div className="flex flex-col gap-1.5">
-          {replaceConflict && (
-            <div
-              className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]"
-              role="alert"
-            >
-              <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="break-words">
-                  编辑「{replaceConflict.label}」未完成：旧任务保留，重建的新任务（已停用）也未能自动清理（
-                  {replaceConflict.error}）。两条任务不会同时执行，但请手动注销其中一条。
-                </div>
-                <div className="mt-1 break-words font-mono text-[11px]">
-                  旧 {replaceConflict.oldKey} · 新 {replaceConflict.newKey}
-                </div>
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-sm mt-2"
-                  onClick={() => void reload()}
-                >
-                  <IconRefresh size={11} />
-                  刷新
-                </button>
-              </div>
-            </div>
-          )}
-          {partialErrors.map((message) => (
-            <div
-              key={message}
-              className="nx-alert nx-alert-danger flex items-center gap-2 text-[12px]"
-              role="alert"
-            >
-              <IconXCircle size={13} className="shrink-0" />
-              <span className="min-w-0 break-words">{message}</span>
-            </div>
-          ))}
           {jobs.length === 0 ? (
-            partialErrors.length === 0 ? (
-              <div className="nx-hint py-2 text-[12px]">还没有定时任务。</div>
-            ) : (
-              <div className="nx-hint py-2 text-[12px]">
-                成功读取的会话里没有任何任务；失败会话的任务未知，不能据此断定没有任务。
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-sm ml-2"
-                  onClick={() => void reload()}
-                >
-                  <IconRefresh size={11} />
-                  重试
-                </button>
-              </div>
-            )
+            <div className="nx-hint py-2 text-[12px]">这个会话还没有定时任务。</div>
           ) : (
             jobs.map((job) => {
-            const status = jobStatus(job);
-            const key = `${job.sessionId}/${job.id}`;
-            const busy = actionBusy === key;
-            const nextRun = formatTime(job.nextRunAt);
-            const lastRun = formatTime(job.lastRunAt);
-            const jobProfileId = job.modelProfileId ?? "";
-            const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
-            const profileUnknown = !!jobProfileId && !!profilesView && !jobProfile;
-            const profileKeySaved = !!jobProfile && profileKeyMasked(jobProfile);
-            const editingThis =
-              !!editingJob && editingJob.sessionId === job.sessionId && editingJob.id === job.id;
-            const conflicted =
-              !!replaceConflict &&
-              (replaceConflict.oldKey === key || replaceConflict.newKey === key);
-            return (
-              <div key={key} className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="min-w-0 break-words text-[12.5px] text-neutral-200">
-                      {job.name?.trim() || job.prompt.slice(0, 40)}
-                    </span>
-                    <span className={`nx-badge ${status.cls}`}>{status.label}</span>
-                    {job.consecutiveFailures ? (
-                      <span className="nx-badge nx-badge-red">
-                        连续失败 {job.consecutiveFailures} 次
+              const status = jobStatus(job);
+              const key = `${job.sessionId}/${job.id}`;
+              const busy = actionBusy === key;
+              const nextRun = formatTime(job.nextRunAt);
+              const lastRun = formatTime(job.lastRunAt);
+              const jobProfileId = job.modelProfileId ?? "";
+              const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
+              const profileUnknown = !!jobProfileId && !!profilesView && !jobProfile;
+              const profileKeySaved = !!jobProfile && profileKeyMasked(jobProfile);
+              const editingThis =
+                !!editingJob && editingJob.sessionId === job.sessionId && editingJob.id === job.id;
+              const conflicted =
+                !!replaceConflict &&
+                (replaceConflict.oldKey === key || replaceConflict.newKey === key);
+              return (
+                <div key={key} className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="min-w-0 break-words text-[12.5px] text-neutral-200">
+                        {job.name?.trim() || job.prompt.slice(0, 40)}
                       </span>
-                    ) : null}
-                    {profileUnknown && <span className="nx-badge nx-badge-red">档案已删除</span>}
-                    {profileKeySaved && <span className="nx-badge">档案密钥已保存</span>}
-                  </div>
-                  <div className="nx-hint mt-0.5 text-[11px]">
-                    会话「{titleOf(job.sessionId)}」 ·{" "}
-                    <span className="font-mono">
-                      {job.schedule}（{job.timezone}）
-                    </span>{" "}
-                    · 超时 {Math.round(cronTimeoutMs(job) / 1000)}s ·{" "}
-                    {jobProfile ? (
-                      <>档案「{jobProfile.name}」</>
-                    ) : jobProfileId ? (
-                      <span className="break-words font-mono" title={jobProfileId}>
-                        档案 {jobProfileId}
-                      </span>
-                    ) : (
-                      <>跟随激活档案{activeProfile ? `「${activeProfile.name}」` : ""}</>
-                    )}
-                  </div>
-                  <div className="nx-hint text-[11px]">
-                    {nextRun ? `下次执行 ${nextRun}` : "没有待执行的时间点"}
-                    {lastRun ? ` · 上次执行 ${lastRun}` : ""}
-                  </div>
-                  {job.lastError && (
-                    <div
-                      className="mt-0.5 break-words font-mono text-[11px] text-red-300"
-                      title={job.lastError}
-                    >
-                      上次错误：{job.lastError}
+                      <span className={`nx-badge ${status.cls}`}>{status.label}</span>
+                      {job.consecutiveFailures ? (
+                        <span className="nx-badge nx-badge-red">
+                          连续失败 {job.consecutiveFailures} 次
+                        </span>
+                      ) : null}
+                      {profileUnknown && <span className="nx-badge nx-badge-red">档案已删除</span>}
+                      {profileKeySaved && <span className="nx-badge">档案密钥已保存</span>}
                     </div>
-                  )}
-                </div>
-                <div className="flex shrink-0 flex-col gap-1">
-                  <button
-                    className="nx-btn nx-btn-outline nx-btn-sm"
-                    disabled={
-                      actionBusy !== null ||
-                      !!job.run.id ||
-                      conflicted ||
-                      (editingThis && registerOpen)
-                    }
-                    title={
-                      job.run.id
-                        ? "执行中不能编辑"
-                        : conflicted
-                          ? "存在未完成的编辑冲突，请先手动处理"
-                          : editingThis && registerOpen
-                            ? "正在编辑"
-                            : "编辑定时任务"
-                    }
-                    onClick={() => openEdit(job)}
-                  >
-                    <IconEdit size={11} />
-                    编辑
-                  </button>
-                  <button
-                    className="nx-btn nx-btn-outline nx-btn-sm"
-                    disabled={actionBusy !== null || (editingThis && registering)}
-                    onClick={() => void toggleEnabled(job)}
-                  >
-                    {busy ? (
-                      <IconRefresh size={11} className="animate-spin" />
-                    ) : (
-                      <IconClock size={11} />
+                    <div className="nx-hint mt-0.5 text-[11px]">
+                      <span className="font-mono">
+                        {job.schedule}（{job.timezone}）
+                      </span>{" "}
+                      · 超时 {Math.round(cronTimeoutMs(job) / 1000)}s ·{" "}
+                      {jobProfile ? (
+                        <>档案「{jobProfile.name}」</>
+                      ) : jobProfileId ? (
+                        <span className="break-words font-mono" title={jobProfileId}>
+                          档案 {jobProfileId}
+                        </span>
+                      ) : (
+                        <>跟随激活档案{activeProfile ? `「${activeProfile.name}」` : ""}</>
+                      )}
+                    </div>
+                    <div className="nx-hint text-[11px]">
+                      {nextRun ? `下次执行 ${nextRun}` : "没有待执行的时间点"}
+                      {lastRun ? ` · 上次执行 ${lastRun}` : ""}
+                    </div>
+                    {job.lastError && (
+                      <div
+                        className="mt-0.5 break-words font-mono text-[11px] text-red-300"
+                        title={job.lastError}
+                      >
+                        上次错误：{job.lastError}
+                      </div>
                     )}
-                    {job.enabled ? "停用" : "启用"}
-                  </button>
-                  <button
-                    className="nx-btn nx-btn-danger nx-btn-sm"
-                    disabled={actionBusy !== null || (editingThis && registerOpen)}
-                    title={
-                      editingThis && registerOpen
-                        ? "编辑中，请先保存或取消编辑"
-                        : `注销定时任务 ${job.name?.trim() || job.id}`
-                    }
-                    onClick={() => void unregister(job)}
-                  >
-                    <IconTrash size={11} />
-                    注销
-                  </button>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      className="nx-btn nx-btn-outline nx-btn-sm"
+                      disabled={
+                        actionBusy !== null ||
+                        !!job.run.id ||
+                        conflicted ||
+                        (editingThis && registerOpen)
+                      }
+                      title={
+                        job.run.id
+                          ? "执行中不能编辑"
+                          : conflicted
+                            ? "存在未完成的编辑冲突，请先手动处理"
+                            : editingThis && registerOpen
+                              ? "正在编辑"
+                              : "编辑定时任务"
+                      }
+                      onClick={() => openEdit(job)}
+                    >
+                      <IconEdit size={11} />
+                      编辑
+                    </button>
+                    <button
+                      className="nx-btn nx-btn-outline nx-btn-sm"
+                      disabled={actionBusy !== null || (editingThis && registering)}
+                      onClick={() => void toggleEnabled(job)}
+                    >
+                      {busy ? (
+                        <IconRefresh size={11} className="animate-spin" />
+                      ) : (
+                        <IconClock size={11} />
+                      )}
+                      {job.enabled ? "停用" : "启用"}
+                    </button>
+                    <button
+                      className="nx-btn nx-btn-danger nx-btn-sm"
+                      disabled={actionBusy !== null || (editingThis && registerOpen)}
+                      title={
+                        editingThis && registerOpen
+                          ? "编辑中，请先保存或取消编辑"
+                          : `注销定时任务 ${job.name?.trim() || job.id}`
+                      }
+                      onClick={() => void unregister(job)}
+                    >
+                      <IconTrash size={11} />
+                      注销
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })
           )}
         </div>
       )}
 
-      <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        启停只影响这一条任务；注销是唯一删除路径，需逐个确认。管理任何会话的任务都不会
-        改动其它会话的任务。
+      <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
+        启停只影响这一条任务；注销是唯一删除路径，需逐个确认。删除会话会一并删除它的定时任务。
       </p>
-    </section>
+    </div>
   );
 }

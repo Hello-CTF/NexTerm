@@ -47,7 +47,7 @@ export function CredentialsSidebar() {
 
   const st = status.data;
   const locked = !!st?.initialized && !st.unlocked;
-  const protectionOn = st?.mode === "master";
+  const protectionOn = st?.mode === "master" && !st.passwordless;
   const all = credentials.data ?? [];
 
   const q = search.trim().toLowerCase();

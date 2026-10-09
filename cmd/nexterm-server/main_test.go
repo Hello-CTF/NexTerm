@@ -47,9 +47,13 @@ type testServerProcess struct {
 	output *syncBuffer
 }
 
-func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
+func TestServerProcessBootstrapsVaultFromMasterKeyFile(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte("regression-master-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +62,8 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir, "--auth=loopback")
-	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
+	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir, "--auth=loopback", "--master-key-file", keyFile)
+	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
 	buffer := &syncBuffer{}
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
@@ -73,9 +77,6 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	if health.Vault == nil {
 		t.Fatal("health has no vault status")
 	}
-	if !strings.Contains(process.output.String(), "deprecated") {
-		t.Fatalf("NEXTERM_MASTER_KEY deprecation warning missing: %q", process.output.String())
-	}
 	encoded, err := json.Marshal(health.Vault)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !status.Initialized || !status.Unlocked {
-		t.Fatalf("vault status = %+v, want initialized and unlocked from NEXTERM_MASTER_KEY", status)
+		t.Fatalf("vault status = %+v, want initialized and unlocked from --master-key-file", status)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	created := requestFullRPC(t, client, address, "vault_set_credential", map[string]any{"args": map[string]any{"name": "regression", "kind": "password", "secret": "s3cret"}})
@@ -104,6 +105,20 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	decodeRPCData(t, revealed, &revealedData)
 	if revealedData.Value != "s3cret" {
 		t.Fatalf("vault_reveal_credential value = %q", revealedData.Value)
+	}
+}
+
+func TestServerProcessRejectsRemovedMasterKeyEnv(t *testing.T) {
+	binary := buildServerBinary(t)
+	cmd := exec.Command(binary, "--listen", "127.0.0.1:0", "--data-dir", t.TempDir())
+	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=legacy-secret")
+	output, err := cmd.CombinedOutput()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("exit = %v, want code 2, output %q", err, output)
+	}
+	if !strings.Contains(string(output), "--master-key-file") {
+		t.Fatalf("missing migration guidance: %q", output)
 	}
 }
 

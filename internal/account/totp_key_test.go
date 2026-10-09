@@ -29,7 +29,7 @@ func TestTOTPKeyStoredOutsideDatabase(t *testing.T) {
 	}
 
 	var settingCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", totpKeySetting).Scan(&settingCount); err != nil {
+	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Scan(&settingCount); err != nil {
 		t.Fatal(err)
 	}
 	if settingCount != 0 {
@@ -78,7 +78,7 @@ func TestTOTPKeyFailClosedWithoutKeyFile(t *testing.T) {
 	}
 }
 
-func TestTOTPKeyLegacySettingMigrated(t *testing.T) {
+func TestTOTPKeyLegacySettingIgnored(t *testing.T) {
 	db, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestTOTPKeyLegacySettingMigrated(t *testing.T) {
 		legacy[i] = byte(i + 1)
 	}
 	if _, err := db.DB().ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)`,
-		totpKeySetting, base64.StdEncoding.EncodeToString(legacy), 1); err != nil {
+		"auth.totp_key", base64.StdEncoding.EncodeToString(legacy), 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,22 +111,21 @@ func TestTOTPKeyLegacySettingMigrated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	migrated, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatal(err)
+	generated, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(generated) != totpKeyBytes {
+		t.Fatalf("key file content invalid: %v", err)
 	}
-	if !bytes.Equal(migrated, legacy) {
-		t.Fatal("legacy key not preserved during migration")
+	if bytes.Equal(generated, legacy) {
+		t.Fatal("legacy in-database key must not be migrated into the key file")
 	}
 	var settingCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", totpKeySetting).Scan(&settingCount); err != nil {
+	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Scan(&settingCount); err != nil {
 		t.Fatal(err)
 	}
-	if settingCount != 0 {
-		t.Fatal("legacy in-database key copy must be deleted after migration")
+	if settingCount != 1 {
+		t.Fatal("legacy in-database key row must be left untouched")
 	}
 
-	// 迁移前用旧密钥封出的信封在迁移后仍可解。
 	block, err := aes.NewCipher(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -137,9 +136,8 @@ func TestTOTPKeyLegacySettingMigrated(t *testing.T) {
 	}
 	nonce := make([]byte, totpNonceLength)
 	legacyEnvelope := aead.Seal(nonce, nonce, []byte("legacy-secret"), totpAAD(user.ID))
-	opened, err := a.openTOTPSecret(ctx, user.ID, legacyEnvelope)
-	if err != nil || string(opened) != "legacy-secret" {
-		t.Fatalf("legacy envelope must open after migration: %q %v", opened, err)
+	if opened, err := a.openTOTPSecret(user.ID, legacyEnvelope); err == nil {
+		t.Fatalf("legacy envelope must no longer open: %q", opened)
 	}
 
 	if _, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, now/1000)); err != nil {
@@ -147,43 +145,54 @@ func TestTOTPKeyLegacySettingMigrated(t *testing.T) {
 	}
 }
 
-func TestTOTPKeyBootMigrationCleansOrphanedSetting(t *testing.T) {
-	db, err := store.OpenInMemory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+func TestTOTPVerifyGuidesRebindWhenLegacyKeyPresent(t *testing.T) {
+	a, now := testAccounts(t)
 	ctx := context.Background()
-
-	keyPath := filepath.Join(t.TempDir(), "totp.key")
-	fresh := bytes.Repeat([]byte("x"), totpKeyBytes)
-	if err := writeTOTPKeyFile(keyPath, fresh); err != nil {
-		t.Fatal(err)
-	}
-	orphan := bytes.Repeat([]byte("y"), totpKeyBytes)
-	if _, err := db.DB().ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)`,
-		totpKeySetting, base64.StdEncoding.EncodeToString(orphan), 1); err != nil {
-		t.Fatal(err)
-	}
-
-	a := New(db.DB(), WithTOTPKeyFile(keyPath))
-	if err := a.MigrateTOTPStorageKey(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var settingCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", totpKeySetting).Scan(&settingCount); err != nil {
-		t.Fatal(err)
-	}
-	if settingCount != 0 {
-		t.Fatal("boot migration must delete the orphaned in-database key")
-	}
-	data, err := os.ReadFile(keyPath)
+	user, err := a.CreateUser(ctx, "legacylogin", "", "password-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
-	if err != nil || !bytes.Equal(key, fresh) {
-		t.Fatal("boot migration must not overwrite an existing key file")
+	secret, _, err := a.BeginTOTPSetup(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, *now/1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := bytes.Repeat([]byte("L"), totpKeyBytes)
+	block, err := aes.NewCipher(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawSecret, err := totpSecretEncoding.DecodeString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, totpNonceLength)
+	legacyEnvelope := aead.Seal(nonce, nonce, rawSecret, totpAAD(user.ID))
+	if _, err := a.db.ExecContext(ctx, "UPDATE user_totp SET secret_envelope = ? WHERE user_id = ?", legacyEnvelope, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)`,
+		"auth.totp_key", base64.StdEncoding.EncodeToString(legacy), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.totpKeyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err == nil || !strings.Contains(err.Error(), "重新绑定") {
+		t.Fatalf("legacy-sealed TOTP must fail with rebind guidance: %v", err)
+	}
+	valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, codes[0])
+	if err != nil || !valid {
+		t.Fatalf("recovery code must stay usable after key drop: %v %v", valid, err)
 	}
 }
 

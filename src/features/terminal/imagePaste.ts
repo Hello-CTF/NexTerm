@@ -1,5 +1,3 @@
-import { ImageUploadError } from "../../ipc/webFiles";
-
 export { bytesToBase64 } from "../../ui/base64";
 
 // pureImageFiles 仅在全部文件项都是图片且至少一张时返回文件列表(all-or-nothing)。
@@ -33,38 +31,18 @@ export function clipboardHasPlainText(data: DataTransfer | null): boolean {
   }
 }
 
-// markdownImageLink 生成插入终端光标的 Markdown 图片链接。
-// alt 文本转义反斜杠与方括号; 目标含空白或圆括号时用尖括号包裹(CommonMark 合法目标)。
-export function markdownImageLink(name: string, url: string): string {
-  const alt = (name || "image").replace(/([\\\[\]])/g, "\\$1");
+// markdownFileLink 生成插入终端光标的 Markdown 链接(普通链接, 非图片嵌入)。
+// 文本转义反斜杠与方括号; 目标含空白或圆括号时用尖括号包裹(CommonMark 合法目标)。
+export function markdownFileLink(name: string, url: string): string {
+  const text = (name || "file").replace(/([\\\[\]])/g, "\\$1");
   const destination = /[\s()]/.test(url) ? `<${url}>` : url;
-  return `![${alt}](${destination})`;
+  return `[${text}](${destination})`;
 }
 
-// describeImageUploadFailure 把上传失败映射成可操作的中文提示。
-export function describeImageUploadFailure(error: unknown): string {
-  if (error instanceof ImageUploadError) {
-    let detail = "";
-    try {
-      const parsed = JSON.parse(error.bodyText) as { error?: { message?: string } } | null;
-      detail = parsed?.error?.message ?? "";
-    } catch {
-      detail = error.bodyText;
-    }
-    switch (error.status) {
-      case 401:
-      case 403:
-        return `服务端拒绝了图片上传（需要登录或没有权限）${detail ? `：${detail}` : ""}`;
-      case 413:
-        return `图片超过服务端的大小限制${detail ? `：${detail}` : ""}`;
-      case 415:
-        return `服务端不支持这种图片格式（仅 png/jpeg/gif/webp）${detail ? `：${detail}` : ""}`;
-      case 507:
-        return `服务端图片存储配额已满${detail ? `：${detail}` : ""}`;
-      default:
-        return `图片上传失败（HTTP ${error.status}）${detail ? `：${detail}` : ""}`;
-    }
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return `图片上传失败：网络或服务不可达（${message}）`;
+// pasteFileExtension 从文件名或 MIME 提取安全的小写扩展名(不含点), 缺省 png。
+export function pasteFileExtension(file: File): string {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(file.name)?.[1];
+  if (fromName) return fromName.toLowerCase();
+  const fromType = /^image\/([A-Za-z0-9]{1,8})$/.exec(file.type)?.[1];
+  return fromType ? fromType.toLowerCase() : "png";
 }

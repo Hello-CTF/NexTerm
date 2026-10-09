@@ -79,9 +79,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
-import { useUi } from "../../app/store";
-
-const CONVERSATION_KEY = "nexterm.ai.conversation.v1";
+import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
 
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
 
@@ -187,6 +185,17 @@ describe("AiSidebar session restore", () => {
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
   }
 
+  function bindConversation(id: string, title: string) {
+    useUi.setState({
+      aiBoards: {
+        [GLOBAL_AI_BOARD_KEY]: {
+          tabs: [{ id: "tab-bound", title, conversationId: id }],
+          activeTabId: "tab-bound",
+        },
+      },
+    });
+  }
+
   async function send(text: string) {
     const textarea = view!.container.querySelector("textarea");
     if (!textarea) throw new Error("input textarea not found");
@@ -195,19 +204,19 @@ describe("AiSidebar session restore", () => {
     await flush();
   }
 
-  it("restores the persisted conversation on mount instead of a blank session", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+  it("restores the bound conversation on mount instead of a blank session", async () => {
+    bindConversation("conv-1", "排查 502");
     mountSidebar();
     await flushReplay();
 
     expect(mocks.messages).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).toContain("旧问题");
     expect(textOf(view!)).toContain("旧回答");
-    expect(textOf(view!)).not.toContain("命令与输出全程留痕");
+    expect(textOf(view!)).not.toContain("新建会话");
   });
 
   it("continues the restored conversation instead of creating a blank replacement", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+    bindConversation("conv-1", "排查 502");
     mountSidebar();
     await flushReplay();
 
@@ -215,32 +224,29 @@ describe("AiSidebar session restore", () => {
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "conv-1" }),
     );
-    expect(localStorage.getItem(CONVERSATION_KEY)).toBe("conv-1");
   });
 
-  it("clears a persisted id that no longer exists and stays blank", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-gone");
+  it("stays blank when the bound conversation no longer exists", async () => {
+    bindConversation("conv-gone", "已删除的会话");
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "排查 502", updatedAt: 0 }]);
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
-    expect(localStorage.getItem(CONVERSATION_KEY)).toBeNull();
+    expect(textOf(view!)).toContain("新建会话");
     await send("新问题");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: undefined }),
     );
   });
 
-  it("keeps the persisted id and offers retry when the message reload fails transiently", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+  it("offers retry when the message reload fails transiently", async () => {
+    bindConversation("conv-1", "排查 502");
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
 
     expect(textOf(view!)).toContain("会话加载失败 · 会话库不可用");
-    expect(textOf(view!)).not.toContain("命令与输出全程留痕");
-    expect(localStorage.getItem(CONVERSATION_KEY)).toBe("conv-1");
+    expect(textOf(view!)).not.toContain("新建会话");
 
     clickButton(view!.container, "重试");
     await flushReplay();
@@ -249,7 +255,7 @@ describe("AiSidebar session restore", () => {
   });
 
   it("恢复失败后删除当前会话会清除错误态，不留无法重试的旧错误", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+    bindConversation("conv-1", "排查 502");
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
@@ -263,12 +269,11 @@ describe("AiSidebar session restore", () => {
 
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
     expect(textOf(view!)).not.toContain("会话加载失败");
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
-    expect(localStorage.getItem(CONVERSATION_KEY)).toBeNull();
+    expect(textOf(view!)).toContain("新建会话");
   });
 
   it("replays an interrupted run with a pending question into the restored session", async () => {
-    localStorage.setItem(CONVERSATION_KEY, "conv-1");
+    bindConversation("conv-1", "排查 502");
     mocks.runs.mockResolvedValue([runOf({})]);
     mocks.runEvents.mockResolvedValue([
       {

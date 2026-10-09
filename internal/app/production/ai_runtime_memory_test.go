@@ -131,7 +131,7 @@ func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 		t.Fatalf("memory_create = %+v", created.Error)
 	}
 	settings := composedMemoryDispatch(t, services, "memory_settings_get", `{"scope":`+scope+`}`)
-	if !settings.OK || !strings.Contains(string(settings.Data), `"injectionEnabled":false`) {
+	if !settings.OK || !strings.Contains(string(settings.Data), `"injectionEnabled":true`) {
 		t.Fatalf("memory_settings_get = %s err=%+v", settings.Data, settings.Error)
 	}
 
@@ -150,7 +150,7 @@ func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 	}
 }
 
-func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
+func TestComposedMemoryInjectionDefaultsOnAndOptsOut(t *testing.T) {
 	ctx := context.Background()
 	services, database, script, sessionID, dataDir := composeMemoryRuntime(t)
 
@@ -175,11 +175,15 @@ func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
 		t.Fatal("provider saw no request")
 	}
 	if strings.Contains(string(mustJSON(t, requests[0])), "Long-term operational memory") {
-		t.Fatal("default settings injected memory into the provider request")
+		t.Fatal("default settings injected memory into the provider request without entries")
 	}
+	found := map[string]bool{}
 	for _, name := range script.toolNames(0) {
-		if strings.HasPrefix(name, "memory_") {
-			t.Fatalf("default settings advertised memory tool %s", name)
+		found[name] = true
+	}
+	for _, name := range []string{"memory_save", "memory_list", "memory_recall", "memory_forget"} {
+		if !found[name] {
+			t.Fatalf("default settings missing tool %s from %v", name, found)
 		}
 	}
 
@@ -188,10 +192,6 @@ func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := memoryStore.Create(ctx, productionMemoryScope, memory.CreateInput{Topic: "operations", Content: "restart at 02:00"}); err != nil {
-		t.Fatal(err)
-	}
-	enabled := true
-	if _, err := memoryStore.UpdateSettings(ctx, productionMemoryScope, memory.SettingsInput{InjectionEnabled: &enabled, ToolsEnabled: &enabled}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := memoryStore.Close(); err != nil {
@@ -213,15 +213,41 @@ func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
 	}
 	payload := string(mustJSON(t, requests[latest]))
 	if !strings.Contains(payload, "Long-term operational memory") || !strings.Contains(payload, "restart at 02:00") {
-		t.Fatalf("opted-in injection missing from the provider request: %s", payload)
+		t.Fatalf("default-on injection missing from the provider request: %s", payload)
 	}
-	found := map[string]bool{}
+
+	disabled := false
+	memoryStore, err = memory.Open(ctx, filepath.Join(dataDir, "memory.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := memoryStore.UpdateSettings(ctx, productionMemoryScope, memory.SettingsInput{InjectionEnabled: &disabled, ToolsEnabled: &disabled}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := memoryStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	conversationID = run("third question")
+	requests = script.snapshot()
+	latest = -1
+	for index, request := range requests {
+		for _, message := range request.Messages {
+			if message.Role == "user" && spawnMessageText(message.Content) == "third question" {
+				latest = index
+			}
+		}
+	}
+	if latest < 0 {
+		t.Fatal("third chat request missing from the provider requests")
+	}
+	payload = string(mustJSON(t, requests[latest]))
+	if strings.Contains(payload, "Long-term operational memory") || strings.Contains(payload, "restart at 02:00") {
+		t.Fatalf("opted-out run still injected memory: %s", payload)
+	}
 	for _, name := range script.toolNames(latest) {
-		found[name] = true
-	}
-	for _, name := range []string{"memory_save", "memory_list", "memory_recall", "memory_forget"} {
-		if !found[name] {
-			t.Fatalf("opted-in run missing tool %s from %v", name, found)
+		if strings.HasPrefix(name, "memory_") {
+			t.Fatalf("opted-out run advertised memory tool %s", name)
 		}
 	}
 

@@ -31,7 +31,7 @@ export function VaultInitModal({
       await vaultApi.initMaster(password);
       void qc.invalidateQueries({ queryKey: ["vault-status"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
-      pushToast("success", "已开启密码保护");
+      pushToast("success", password === "" ? "已完成初始化，未设置密码" : "已开启密码保护");
       onInitialized();
     } catch (e) {
       pushToast("error", describeError(e));
@@ -72,14 +72,14 @@ export function VaultInitModal({
               ref={inputRef}
               type="password"
               className="nx-input"
-              placeholder="设置保护密码（至少 8 位）"
+              placeholder="设置保护密码（留空则不设置）"
               value={password}
               autoComplete="off"
               onChange={(e) => setPassword(e.target.value)}
             />
             <div className="nx-hint mt-1.5">
-              保存密码或私钥前，需要先给凭据库设置一个保护密码。密码只在本机使用，不会上传；
-              忘记后无法找回，已保存的凭据将永远无法解密。
+              保存密码或私钥前，需要先初始化凭据库。保护密码只在本机使用，不会上传；
+              留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。设置后忘记无法找回，已保存的凭据将永远无法解密。
             </div>
           </div>
         </div>
@@ -89,7 +89,7 @@ export function VaultInitModal({
           </button>
           <button
             className="nx-btn nx-btn-primary"
-            disabled={password.length < 8 || submitting}
+            disabled={(password.length > 0 && password.length < 8) || submitting}
             onClick={() => void submit()}
           >
             {submitting ? "启用中…" : "启用保护"}

@@ -85,7 +85,7 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
     adminApi: {
       users: mocks.adminUsers,
       settingsGet: mocks.adminSettingsGet,
-      settingsPut: vi.fn().mockResolvedValue({ registration_open: true, public_base_url: "" }),
+      settingsPut: vi.fn().mockResolvedValue({ registration_open: true }),
       createUser: vi.fn(),
       disableUser: vi.fn(),
       resetUser: vi.fn(),
@@ -196,7 +196,7 @@ beforeEach(() => {
   });
   mocks.authDevices.mockResolvedValue({ devices: [] });
   mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
-  mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, public_base_url: "", mfa_required: false });
+  mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, mfa_required: false });
 });
 
 afterEach(() => {

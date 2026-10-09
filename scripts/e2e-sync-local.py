@@ -135,7 +135,6 @@ class Instance:
         key_file.write_text(self.master_key + "\n", encoding="utf-8")
         key_file.chmod(0o600)
         environment = dict(os.environ)
-        environment.pop("NEXTERM_MASTER_KEY", None)
         environment.update(
             {
                 "NEXTERM_DATA_DIR": str(self.data_dir),

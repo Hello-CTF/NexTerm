@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -51,4 +52,27 @@ func TestPrivateKeyContentFileAndPassphrase(t *testing.T) {
 	if _, err := privateKey(AuthConfig{Method: AuthKey, KeyPEM: encrypted}); err == nil {
 		t.Fatal("missing passphrase unexpectedly succeeded")
 	}
+}
+
+func TestAuthenticationEmptyPasswordKeepsPasswordMethod(t *testing.T) {
+	for _, method := range []AuthMethod{AuthPassword, AuthKeyboardInteractive} {
+		auth, closers, err := authentication(context.Background(), AuthConfig{Method: method})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if auth == nil {
+			t.Fatalf("%s with an empty password dropped the auth method, want it kept for PermitEmptyPasswords servers", method)
+		}
+		if len(closers) != 0 {
+			t.Fatalf("%s with an empty password returned %d closers", method, len(closers))
+		}
+	}
+}
+
+func TestConnectEmptyPasswordSmoke(t *testing.T) {
+	server := newTestSSHServerConfig(t, nil, func(config *gossh.ServerConfig) {
+		config.NoClientAuth = true
+	})
+	connectTestClient(t, server, AuthConfig{Method: AuthPassword})
+	connectTestClient(t, server, AuthConfig{Method: AuthKeyboardInteractive})
 }

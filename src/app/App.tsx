@@ -19,6 +19,7 @@ import {
   DB_KIND_LABEL,
   openCredentialsSidebar,
   requestCloseTab,
+  requestCloseTabs,
   requestKillTab,
   requestKillWorkspaceTerminals,
   closeTabHint,
@@ -677,15 +678,14 @@ function AppShell() {
 
   const openDocker = useCallback(() => {
     if (!activeSessionId) return needSession();
-    const name = sessions.find((s) => s.id === activeSessionId)?.name ?? "容器";
     useUi.getState().addTab({
       id: nextTabId(`docker-${activeSessionId}`),
       kind: "docker",
-      title: `容器 · ${name}`,
+      title: "容器",
       sessionId: activeSessionId,
       closable: true,
     });
-  }, [activeSessionId, needSession, sessions]);
+  }, [activeSessionId, needSession]);
 
   const openDatabase = useCallback(async () => {
     try {
@@ -705,7 +705,7 @@ function AppShell() {
       useUi.getState().addTab({
         id: `db-${connId}`,
         kind: "db",
-        title,
+        title: DB_KIND_LABEL[dbKind],
         connId,
         dbKind,
         closable: true,
@@ -1670,6 +1670,23 @@ function PaneGroup({
       hint: closeActionHint(t),
       disabled: !t.closable,
       onSelect: () => void requestCloseTab(t.id),
+    });
+    const tabIndex = pane.tabs.findIndex((candidate) => candidate.id === t.id);
+    const closableLeft = pane.tabs.slice(0, Math.max(0, tabIndex)).filter((candidate) => candidate.closable);
+    const closableRight = pane.tabs.slice(tabIndex + 1).filter((candidate) => candidate.closable);
+    items.push({
+      kind: "item",
+      label: "关闭左边全部",
+      icon: <IconClose size={12} />,
+      disabled: closableLeft.length === 0,
+      onSelect: () => void requestCloseTabs(closableLeft.map((candidate) => candidate.id)),
+    });
+    items.push({
+      kind: "item",
+      label: "关闭右边全部",
+      icon: <IconClose size={12} />,
+      disabled: closableRight.length === 0,
+      onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
     });
     if (running) {
       items.push({ kind: "separator" });

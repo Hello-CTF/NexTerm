@@ -139,12 +139,15 @@ class Instance:
     def start(self) -> None:
         self.stop()
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        key_file = self.data_dir.parent / f"{self.data_dir.name}.master.key"
+        key_file.write_text(self.master_key + "\n", encoding="utf-8")
+        key_file.chmod(0o600)
         environment = dict(os.environ)
         environment.update(
             {
                 "NEXTERM_DATA_DIR": str(self.data_dir),
                 "NEXTERM_LISTEN": f"127.0.0.1:{self.port}",
-                "NEXTERM_MASTER_KEY": self.master_key,
+                "NEXTERM_MASTER_KEY_FILE": str(key_file),
                 "NEXTERM_AUTH": self.auth,
             }
         )

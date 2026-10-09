@@ -10,18 +10,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-// applyInstall 从 tar.gz 解出 nexterm-desktop, 原子替换当前可执行文件
-// (rename 覆盖运行中的 exe 在 Linux 上安全)。
+// applyInstall 从 deb (data.tar.gz 内的 usr/bin/nexterm-desktop) 解出
+// nexterm-desktop, 原子替换当前可执行文件 (rename 覆盖运行中的 exe 在 Linux 上安全)。
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	file, err := os.Open(archive)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	compressed, err := gzip.NewReader(file)
+	source, err := debDataTarGz(file)
+	if err != nil {
+		return err
+	}
+	compressed, err := gzip.NewReader(source)
 	if err != nil {
 		return fmt.Errorf("解压 %s 失败: %w", filepath.Base(archive), err)
 	}
@@ -70,4 +75,39 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	m.restartTarget = m.ExePath
 	return nil
+}
+
+// debDataTarGz 定位 deb (ar 容器) 里的 data.tar.gz 成员并返回其内容流;
+// 只解析本仓库打包产出的短名 GNU ar 成员, 其余布局直接报错。
+func debDataTarGz(file *os.File) (io.Reader, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(file, header); err != nil || string(header) != "!<arch>\n" {
+		return nil, fmt.Errorf("不是合法的 deb 包")
+	}
+	for {
+		member := make([]byte, 60)
+		if _, err := io.ReadFull(file, member); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("读取 deb 成员头失败: %w", err)
+		}
+		if string(member[58:60]) != "`\n" {
+			return nil, fmt.Errorf("deb 成员头损坏")
+		}
+		name := strings.TrimRight(string(member[0:16]), " ")
+		size, err := strconv.Atoi(strings.TrimSpace(string(member[48:58])))
+		if err != nil || size < 0 {
+			return nil, fmt.Errorf("deb 成员大小非法: %q", string(member[48:58]))
+		}
+		if name == "data.tar.gz" || name == "data.tar.gz/" {
+			return io.LimitReader(file, int64(size)), nil
+		}
+		if _, err := file.Seek(int64(size)+int64(size%2), io.SeekCurrent); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("deb 包中没有 data.tar.gz")
 }

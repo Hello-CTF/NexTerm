@@ -423,7 +423,7 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="新建会话"]')!);
     await flush();
     expect(textOf(view!)).not.toContain("旧问题");
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(textOf(view!)).toContain("新建会话");
   });
 
   it("deletes a history conversation only after explicit confirmation", async () => {
@@ -466,7 +466,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(mocks.conversationDelete).toHaveBeenCalledWith("c-9");
     expect(textOf(view!)).not.toContain("旧问题");
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(textOf(view!)).toContain("新建会话");
     mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-2" });
     await send("继续");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
@@ -541,7 +541,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).not.toContain("当前会话");
     expect(textOf(view!)).toContain("第一轮回答");
-    expect(textOf(view!)).not.toContain("命令与输出全程留痕");
+    expect(textOf(view!)).not.toContain("新建会话");
     emit({ type: "delta", text: "第二轮输出" });
     act(runFrames);
     expect(textOf(view!)).toContain("第二轮输出");

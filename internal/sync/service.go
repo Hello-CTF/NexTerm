@@ -132,9 +132,10 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
 		return Link{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	secret := linkSecret{}
+	// 仅信封值参与逐字段合并; 历史明文整单覆写的前提是调用方每次提交完整链接。
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
 		return Link{}, err
-	} else if found && strings.TrimSpace(value) != "" {
+	} else if found && strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
 		plaintext, err := s.revealSettingSecret(ctx, value)
 		if err != nil {
 			return Link{}, err

@@ -226,7 +226,7 @@ func newHostKeyTestProduction(t *testing.T) *Production {
 
 func createHostKeyTestAsset(t *testing.T, production *Production, port int) string {
 	t.Helper()
-	response := dispatchHostKeyTest(t, production, "asset_create", `{"args":{"kind":"ssh","name":"host-key-test","host":"127.0.0.1","port":`+strconv.Itoa(port)+`,"username":"test","authKind":"password"}}`)
+	response := dispatchHostKeyTest(t, production, "asset_create", `{"args":{"kind":"ssh","name":"host-key-test","host":"127.0.0.1","port":`+strconv.Itoa(port)+`,"username":"test","authKind":"password","options":{"password":"host-key-test-secret"}}}`)
 	var created assetDTO
 	requireStoreTestResponse(t, response, &created)
 	return created.ID

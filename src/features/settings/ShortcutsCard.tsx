@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
@@ -13,13 +13,15 @@ import {
   type KeybindingActionId,
 } from "../../app/keybindings";
 import { setSelectionAutoCopy, useInputPrefs } from "../../app/preferences";
-import { IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
+import { IconChevronDown, IconChevronRight, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 
 export function ShortcutsCard() {
   const bindings = useKeybindings();
   const prefs = useInputPrefs();
   const [captureFor, setCaptureFor] = useState<KeybindingActionId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const advancedPanelId = useId();
+  const [advancedOpen, setAdvancedOpen] = useState(() => prefs.selectionAutoCopy);
 
   const conflicts = bindingConflicts(bindings);
   const conflictPeers = new Map<string, string>();
@@ -138,7 +140,7 @@ export function ShortcutsCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        点「编辑」后按下新的组合键立即生效，设置保存在本机浏览器；捕获时 Esc 取消、Backspace
+        点「编辑」后按下新的组合键完成改绑；捕获时 Esc 取消、Backspace
         清除绑定。浏览器保留的组合键（如 Ctrl+T 新开浏览器标签）在网页版里无法拦截。
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
@@ -158,22 +160,40 @@ export function ShortcutsCard() {
         </p>
       )}
       <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
-        <label className="flex cursor-pointer items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] text-neutral-200">选中自动复制</div>
-            <p className="nx-hint mt-0.5">
-              在终端里选中文字后立即复制到剪贴板，成功或失败都会弹出提示；默认关闭。
-              浏览器可能要求剪贴板权限，被拒绝时会如实提示。
-            </p>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+          aria-expanded={advancedOpen}
+          aria-controls={advancedPanelId}
+          onClick={() => setAdvancedOpen((v) => !v)}
+        >
+          {advancedOpen ? (
+            <IconChevronDown size={12} className="shrink-0" />
+          ) : (
+            <IconChevronRight size={12} className="shrink-0" />
+          )}
+          高级设置
+        </button>
+        {advancedOpen && (
+          <div id={advancedPanelId} className="mt-2">
+            <label className="flex cursor-pointer items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] text-neutral-200">选中自动复制</div>
+                <p className="nx-hint mt-0.5">
+                  在终端里选中文字后立即复制到剪贴板，成功或失败都会弹出提示；默认关闭。
+                  浏览器可能要求剪贴板权限，被拒绝时会如实提示。
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                aria-label="选中自动复制"
+                checked={prefs.selectionAutoCopy}
+                onChange={(event) => setSelectionAutoCopy(event.target.checked)}
+              />
+            </label>
           </div>
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 shrink-0"
-            aria-label="选中自动复制"
-            checked={prefs.selectionAutoCopy}
-            onChange={(event) => setSelectionAutoCopy(event.target.checked)}
-          />
-        </label>
+        )}
       </div>
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
         SQL 编辑器内运行固定为 Ctrl+Enter，不在此列。

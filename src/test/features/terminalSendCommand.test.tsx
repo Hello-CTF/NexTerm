@@ -30,7 +30,7 @@ vi.mock("../../ipc/commands", () => ({
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
-  filesApi: { saveImage: vi.fn() },
+  fsApi: { write: vi.fn() },
 }));
 
 vi.mock("../../ipc/events", () => ({
@@ -46,12 +46,6 @@ vi.mock("../../ipc/events", () => ({
 vi.mock("../../ipc/env", () => ({
   clientId: () => "me",
   WEB: false,
-}));
-
-vi.mock("../../ipc/webFiles", () => ({
-  ImageUploadError: class extends Error {},
-  fetchImageService: vi.fn(),
-  uploadImage: vi.fn(),
 }));
 
 vi.mock("../../ui/dialogs", () => ({

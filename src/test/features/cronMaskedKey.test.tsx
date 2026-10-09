@@ -6,7 +6,6 @@ import { clickButton, flush, mount, type MountedView } from "./reactTestUtils";
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
-    conversationList: vi.fn(),
     list: vi.fn(),
     register: vi.fn(),
     setEnabled: vi.fn(),
@@ -14,6 +13,7 @@ const mocks = vi.hoisted(() => {
     modelOverview: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
+    onClose: vi.fn(),
   };
 });
 
@@ -27,7 +27,6 @@ vi.mock("../../ipc/cron", () => ({
   cronTimeoutMs: (job: { timeout: number }) => Math.round(job.timeout / 1_000_000),
 }));
 vi.mock("../../ipc/commands", () => ({
-  aiApi: { conversationList: mocks.conversationList },
   modelApi: { overview: mocks.modelOverview },
   dbApi: {},
   sessionApi: {},
@@ -36,10 +35,8 @@ vi.mock("../../ipc/commands", () => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
-import { CronCard } from "../../features/settings/CronCard";
+import { CronPanel } from "../../features/ai/CronPanel";
 import { useUi } from "../../app/store";
-
-const CONV_A = { id: "c-1", title: "运维会话" };
 
 const MASKED_KEY = "••••••••••••";
 const REAL_KEY = "sk-real-key-material";
@@ -107,14 +104,13 @@ function job(overrides: Partial<TestJob> & { id: string; sessionId: string }): T
   };
 }
 
-describe("CronCard masked key presentation", () => {
+describe("CronPanel masked key presentation", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
     useUi.setState({ pushToast: mocks.toast });
-    mocks.conversationList.mockResolvedValue([CONV_A]);
     mocks.list.mockResolvedValue([]);
     mocks.modelOverview.mockResolvedValue({
       profiles: [PROFILE_MASKED, PROFILE_EMPTY],
@@ -130,7 +126,7 @@ describe("CronCard masked key presentation", () => {
   });
 
   it("档案选择器把脱敏密钥如实标注为已保存，而非不可用", async () => {
-    mounted = mount(createElement(CronCard));
+    mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
     clickButton(mounted.container, "注册定时任务");
     const select = mounted.container.querySelector<HTMLSelectElement>(
@@ -152,7 +148,7 @@ describe("CronCard masked key presentation", () => {
     mocks.list.mockResolvedValue([
       job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-masked" }),
     ]);
-    mounted = mount(createElement(CronCard));
+    mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";
@@ -167,7 +163,7 @@ describe("CronCard masked key presentation", () => {
     mocks.list.mockResolvedValue([
       job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-empty" }),
     ]);
-    mounted = mount(createElement(CronCard));
+    mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";
@@ -180,7 +176,7 @@ describe("CronCard masked key presentation", () => {
     mocks.list.mockResolvedValue([
       job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-ghost" }),
     ]);
-    mounted = mount(createElement(CronCard));
+    mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";
@@ -195,7 +191,7 @@ describe("CronCard masked key presentation", () => {
     mocks.list.mockResolvedValue([
       job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-masked" }),
     ]);
-    mounted = mount(createElement(CronCard));
+    mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";

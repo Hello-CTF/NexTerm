@@ -13,8 +13,8 @@ func TestMatchAssetSelectsPerPlatform(t *testing.T) {
 		{Name: "NexTerm_0.3.0_arm64-setup.exe"},
 		{Name: "NexTerm_0.3.0_aarch64.dmg"},
 		{Name: "NexTerm_0.3.0_x86_64.dmg"},
-		{Name: "NexTerm-desktop_0.3.0_linux_amd64.tar.gz"},
-		{Name: "NexTerm-desktop_0.3.0_linux_arm64.tar.gz"},
+		{Name: "NexTerm-desktop_0.3.0_linux_amd64.deb"},
+		{Name: "NexTerm-desktop_0.3.0_linux_arm64.deb"},
 		{Name: "NexTerm-server_0.3.0_linux_amd64.tar.gz"},
 		{Name: "SHA256SUMS"},
 	}}
@@ -23,8 +23,8 @@ func TestMatchAssetSelectsPerPlatform(t *testing.T) {
 		"windows/arm64": "NexTerm_0.3.0_arm64-setup.exe",
 		"darwin/arm64":  "NexTerm_0.3.0_aarch64.dmg",
 		"darwin/amd64":  "NexTerm_0.3.0_x86_64.dmg",
-		"linux/amd64":   "NexTerm-desktop_0.3.0_linux_amd64.tar.gz",
-		"linux/arm64":   "NexTerm-desktop_0.3.0_linux_arm64.tar.gz",
+		"linux/amd64":   "NexTerm-desktop_0.3.0_linux_amd64.deb",
+		"linux/arm64":   "NexTerm-desktop_0.3.0_linux_arm64.deb",
 	}
 	for platform, want := range cases {
 		goos, goarch, _ := strings.Cut(platform, "/")
@@ -42,6 +42,20 @@ func TestMatchAssetSkipsServerArchive(t *testing.T) {
 	release := Release{Assets: []Asset{{Name: "NexTerm-server_0.3.0_linux_amd64.tar.gz"}}}
 	if _, ok := matchAsset(release, "linux", "amd64"); ok {
 		t.Fatal("server archive must not match the desktop update asset")
+	}
+}
+
+func TestMatchAssetRejectsTarGz(t *testing.T) {
+	legacy := Release{Assets: []Asset{{Name: "NexTerm-desktop_0.3.0_linux_amd64.tar.gz"}}}
+	if asset, ok := matchAsset(legacy, "linux", "amd64"); ok {
+		t.Fatalf("tar.gz must not match = %+v", asset)
+	}
+	both := Release{Assets: []Asset{
+		{Name: "NexTerm-desktop_0.3.0_linux_amd64.tar.gz"},
+		{Name: "NexTerm-desktop_0.3.0_linux_amd64.deb"},
+	}}
+	if asset, ok := matchAsset(both, "linux", "amd64"); !ok || asset.Name != "NexTerm-desktop_0.3.0_linux_amd64.deb" {
+		t.Fatalf("only deb must match = %+v, %v", asset, ok)
 	}
 }
 

@@ -31,7 +31,7 @@ func TestFailedSaveDoesNotCommitMemoryOrRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, _ := profiles.PresetProfile("openai")
+	profile, _ := profiles.PresetProfile("moonshot")
 	overview, err := manager.Save(ctx, profile)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestFailedSaveDoesNotCommitMemoryOrRuntime(t *testing.T) {
 		t.Fatal("injected write failure was ignored")
 	}
 	active, ok := manager.ActiveProfile()
-	if !ok || active.Model != "gpt-4o-mini" {
+	if !ok || active.Model != "kimi-k3" {
 		t.Fatalf("failed save changed runtime: %+v, active=%v", active, ok)
 	}
 	settings.fail = false
@@ -52,7 +52,7 @@ func TestFailedSaveDoesNotCommitMemoryOrRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Overview().Profiles[0].Model; got != "gpt-4o-mini" {
+	if got := reloaded.Overview().Profiles[0].Model; got != "kimi-k3" {
 		t.Fatalf("failed save reached persistence: %s", got)
 	}
 }

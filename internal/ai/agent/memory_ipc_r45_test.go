@@ -165,7 +165,7 @@ func TestMemoryIPCSecretPoliciesAndSettingsCAS(t *testing.T) {
 	if err := json.Unmarshal(settings.Data, &current); err != nil {
 		t.Fatal(err)
 	}
-	if current.InjectionEnabled || current.ToolsEnabled || current.Version != 0 {
+	if !current.InjectionEnabled || !current.ToolsEnabled || current.Version != 0 {
 		t.Fatalf("default settings = %+v", current)
 	}
 	updated := memoryDispatch(t, dispatcher, memoryCommandSettingsSet, `{"scope":`+memoryScopeJSON()+`,"expectedVersion":0,"injectionEnabled":true}`)
@@ -176,7 +176,7 @@ func TestMemoryIPCSecretPoliciesAndSettingsCAS(t *testing.T) {
 	if err := json.Unmarshal(updated.Data, &next); err != nil {
 		t.Fatal(err)
 	}
-	if !next.InjectionEnabled || next.ToolsEnabled || next.Version != 1 {
+	if !next.InjectionEnabled || !next.ToolsEnabled || next.Version != 1 {
 		t.Fatalf("updated settings = %+v", next)
 	}
 	conflict := memoryDispatch(t, dispatcher, memoryCommandSettingsSet, `{"scope":`+memoryScopeJSON()+`,"expectedVersion":0,"toolsEnabled":true}`)

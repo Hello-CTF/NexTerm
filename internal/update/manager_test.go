@@ -79,6 +79,25 @@ func tarGz(t *testing.T, name, content string) []byte {
 	return buffer.Bytes()
 }
 
+func debArchive(t *testing.T, version, content string) []byte {
+	t.Helper()
+	dataTarGz := tarGz(t, "usr/bin/nexterm-desktop", content)
+	controlTarGz := tarGz(t, "control", "Package: nexterm\nVersion: "+version+"\n")
+	var buffer bytes.Buffer
+	buffer.WriteString("!<arch>\n")
+	writeMember := func(name string, payload []byte) {
+		fmt.Fprintf(&buffer, "%-16s%-12d%-6d%-6d%-8s%-10d`\n", name+"/", 0, 0, 0, "100644", len(payload))
+		buffer.Write(payload)
+		if len(payload)%2 == 1 {
+			buffer.WriteByte('\n')
+		}
+	}
+	writeMember("debian-binary", []byte("2.0\n"))
+	writeMember("control.tar.gz", controlTarGz)
+	writeMember("data.tar.gz", dataTarGz)
+	return buffer.Bytes()
+}
+
 func sumsFor(archiveName string, archive []byte) string {
 	digest := sha256.Sum256(archive)
 	return fmt.Sprintf("%s  %s\n", hex.EncodeToString(digest[:]), archiveName)
@@ -86,8 +105,8 @@ func sumsFor(archiveName string, archive []byte) string {
 
 func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFixture {
 	t.Helper()
-	archiveName := "NexTerm-desktop_" + version + "_linux_amd64.tar.gz"
-	archive := tarGz(t, "NexTerm-desktop_"+version+"_linux_amd64/nexterm-desktop", "new-binary-"+version)
+	archiveName := "NexTerm-desktop_" + version + "_linux_amd64.deb"
+	archive := debArchive(t, version, "new-binary-"+version)
 	checksums := sumsFor(archiveName, archive)
 	if corruptChecksum {
 		checksums = strings.Repeat("0", 64) + "  " + archiveName + "\n"

@@ -23,28 +23,61 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/update"
 )
 
+func updateIPCDebArchive(t *testing.T, version string) (string, []byte) {
+	t.Helper()
+	content := "new-binary-" + version
+	var dataTarGz bytes.Buffer
+	dataCompressed := gzip.NewWriter(&dataTarGz)
+	dataWriter := tar.NewWriter(dataCompressed)
+	if err := dataWriter.WriteHeader(&tar.Header{Name: "usr/bin/nexterm-desktop", Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataWriter.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataCompressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var controlTarGz bytes.Buffer
+	controlCompressed := gzip.NewWriter(&controlTarGz)
+	controlWriter := tar.NewWriter(controlCompressed)
+	control := "Package: nexterm\nVersion: " + version + "\n"
+	if err := controlWriter.WriteHeader(&tar.Header{Name: "control", Mode: 0o644, Size: int64(len(control)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controlWriter.Write([]byte(control)); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlCompressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	archive.WriteString("!<arch>\n")
+	writeMember := func(name string, payload []byte) {
+		fmt.Fprintf(&archive, "%-16s%-12d%-6d%-6d%-8s%-10d`\n", name+"/", 0, 0, 0, "100644", len(payload))
+		archive.Write(payload)
+		if len(payload)%2 == 1 {
+			archive.WriteByte('\n')
+		}
+	}
+	writeMember("debian-binary", []byte("2.0\n"))
+	writeMember("control.tar.gz", controlTarGz.Bytes())
+	writeMember("data.tar.gz", dataTarGz.Bytes())
+	return fmt.Sprintf("NexTerm-desktop_%s_linux_%s.deb", version, runtime.GOARCH), archive.Bytes()
+}
+
 func updateIPCFixture(t *testing.T, version string) (*httptest.Server, string, []byte) {
 	t.Helper()
-	archiveName := fmt.Sprintf("NexTerm-desktop_%s_linux_%s.tar.gz", version, runtime.GOARCH)
-	var archive bytes.Buffer
-	compressed := gzip.NewWriter(&archive)
-	writer := tar.NewWriter(compressed)
-	content := "new-binary-" + version
-	if err := writer.WriteHeader(&tar.Header{Name: "NexTerm-desktop_" + version + "_linux_" + runtime.GOARCH + "/nexterm-desktop", Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte(content)); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := compressed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(archive.Bytes())
+	archiveName, archive := updateIPCDebArchive(t, version)
+	digest := sha256.Sum256(archive)
 	assets := []map[string]any{
-		{"name": archiveName, "size": archive.Len()},
+		{"name": archiveName, "size": len(archive)},
 		{"name": "NexTerm_" + version + "_x64-setup.exe"},
 		{"name": "NexTerm_" + version + "_arm64-setup.exe"},
 		{"name": "NexTerm_" + version + "_aarch64.dmg"},
@@ -73,7 +106,7 @@ func updateIPCFixture(t *testing.T, version string) (*httptest.Server, string, [
 		case "SHA256SUMS":
 			_, _ = response.Write([]byte(sums.String()))
 		case archiveName:
-			_, _ = response.Write(archive.Bytes())
+			_, _ = response.Write(archive)
 		default:
 			response.WriteHeader(http.StatusNotFound)
 		}
@@ -83,7 +116,7 @@ func updateIPCFixture(t *testing.T, version string) (*httptest.Server, string, [
 	for index := range assets {
 		assets[index]["browser_download_url"] = server.URL + "/assets/" + assets[index]["name"].(string)
 	}
-	return server, archiveName, archive.Bytes()
+	return server, archiveName, archive
 }
 
 func newUpdateTestProduction(t *testing.T, desktop bool, recorder ipc.Emitter) *Production {

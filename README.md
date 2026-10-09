@@ -33,7 +33,7 @@
 | Windows 10/11 ARM64 | 下载 `NexTerm_x.y.z_arm64-setup.exe`，运行安装器。 |
 | macOS（Apple Silicon，arm64） | 下载 `NexTerm_x.y.z_aarch64.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
 | macOS（Intel） | 下载 `NexTerm_x.y.z_x86_64.dmg`，同样拖入「应用程序」。 |
-| Linux 桌面（amd64 / arm64） | 下载 `NexTerm-desktop_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-desktop_x.y.z_linux_arm64.tar.gz`，解压后运行（自包含二进制，非 AppImage/deb；需系统已安装 GTK4 与 WebKitGTK 6.0 运行库）。 |
+| Linux 桌面（amd64 / arm64） | 下载 `NexTerm-desktop_x.y.z_linux_amd64.deb` 或 `NexTerm-desktop_x.y.z_linux_arm64.deb`，`apt install ./NexTerm-desktop_x.y.z_linux_<架构>.deb` 安装（自动装 GTK4 与 WebKitGTK 6.0 依赖）。 |
 | LinuxServer | 下载 `NexTerm-server_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-server_x.y.z_linux_arm64.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
@@ -138,30 +138,19 @@ task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck +
 | `--db-dsn` | `NEXTERM_DB_DSN` | PostgreSQL 连接串，如 `postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt`。要求 `--db=postgres`。 |
 | `--db-password-file` | `NEXTERM_DB_PASSWORD_FILE` | 从 `0600` 文件读取 PostgreSQL 密码；DSN 已带密码时拒绝。 |
 | `--db-max-open-conns` | `NEXTERM_DB_MAX_OPEN_CONNS` | PostgreSQL 连接池大小，默认 16。 |
-| `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。已弃用，请改用 `--master-key-file`。 |
-| `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从文件读取凭据库根密钥（推荐；与 `--master-key` 互斥）。 |
+| `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从 `0600` 文件读取凭据库根密钥（推荐），至少 8 个字符。 |
 | `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
 | `--sync-only` | — | 只启动账号、超管与同步路由（`/auth/*`、`/admin/*`、`/sync/v2/*`、`/sync/rpc`），无浏览器界面。`/healthz` 的 `commands` 字段在此模式下上报对端同步命令数（3）。 |
-| `--public-base-url` | `NEXTERM_PUBLIC_BASE_URL` | 仅完整模式。生成图片公开链接时使用的外部基础 URL，如 `https://term.example.com/nexterm`（反代带路径前缀时）。仅接受 http/https，拒绝 userinfo/query/fragment；未设置时生成同源相对链接。运行时可在「设置 → 文件链接」中覆盖（数据库存储优先于此默认值）。与同步地址、AI 模型地址互不影响。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免登录会话（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 | — | `NEXTERM_BLOB_MAX_BYTES` | 仅完整模式。单个文件上传的大小上限（字节），默认 268435456（256 MiB）。 |
 | — | `NEXTERM_BLOB_PERSIST_MAX_BYTES` | 仅完整模式。持久保存文件的总配额（字节），默认 1073741824（1 GiB）。 |
 | — | `NEXTERM_BLOB_DISK_MAX_PERCENT` | 仅完整模式。数据目录所在磁盘的使用率阈值（取值 (0, 100]），达到后拒绝新的持久化上传，默认 90。 |
-| — | `NEXTERM_IMAGE_MAX_BYTES` | 仅完整模式。单张图片的大小上限（字节），默认 20971520（20 MiB）。 |
-| — | `NEXTERM_IMAGE_OWNER_MAX_BYTES` | 仅完整模式。每个归属者的图片总配额（字节），默认 209715200（200 MiB）。 |
-| — | `NEXTERM_IMAGE_TTL` | 仅完整模式。图片公开链接的有效期（Go 时长，如 `24h`），默认 24h，上限 7d。 |
 
-`NEXTERM_BLOB_*` 与 `NEXTERM_IMAGE_*` 在启动时读取，无效值会被忽略并记录警告，回退到默认值。
-
-### 图片限时公开链接
-
-完整模式提供 `/files/image` 路由族，用于把终端里的图片以限时公开链接分享：上传（`POST /files/image`，要求登录会话与 CSRF 头）后返回不可猜测的链接 ID，默认 24 小时后自动过期清理（上限 7 天）。下载（`GET /files/image/{id}`）无需任何凭据即可在 `<img>` 或浏览器中直接打开，但只接受 png/jpeg/gif/webp（按内容嗅探，响应带 `X-Content-Type-Options: nosniff`，仅 inline 展示），且不会读取持久化文件区（`dataDir/files`）中的任何内容。删除（`DELETE /files/image/{id}`）仅限上传者本人或超管。上传、下载、删除与过期清理都会写审计（不含任何令牌）。
-
-`--auth loopback` 下 Host 被限制为回环地址，公开链接经域名访问会收到 421，因此该模式只适合本机使用；对外分享请使用默认 `--auth on` 并配置 `--public-base-url`（或「设置 → 文件链接」中的同名项）指向你的 HTTPS 反代入口。`--auth off` 时图片归属共享本地工作区身份，不因此获得任何账号管理能力。
+`NEXTERM_BLOB_*` 在启动时读取，无效值会被忽略并记录警告，回退到默认值。
 
 安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
 
-`NEXTERM_MASTER_KEY` 环境变量已弃用（进程环境对同机用户可见），请改用 `--master-key-file /etc/nexterm/master.key`（或 `NEXTERM_MASTER_KEY_FILE`），文件权限设为 `0600`。对凭据同步有强依赖的部署可加 `--require-vault`：启动时凭据库未能解锁（未配置密钥或密钥错误）会直接以非零状态退出。
+凭据库根密钥通过 `--master-key-file /etc/nexterm/master.key`（或 `NEXTERM_MASTER_KEY_FILE`）配置，文件权限设为 `0600`。对凭据同步有强依赖的部署可加 `--require-vault`：启动时凭据库未能解锁（未配置密钥或密钥错误）会直接以非零状态退出。
 
 `/healthz` 无需登录，响应中的 `vault` 字段报告凭据库状态（`initialized`、`mode`、`unlocked`），可用于监控凭据库是否可用。
 
@@ -190,7 +179,7 @@ systemctl status nexterm-server
 
 ### 保存密码或同步凭据失败
 
-确认服务已通过 `--master-key-file`（或已弃用的 `NEXTERM_MASTER_KEY`）配置根密钥，并且升级或迁移后仍使用原来的密钥和数据目录。同步失败时，还要检查服务端地址、HTTPS 证书和账号用户名、密码是否正确。
+确认服务已通过 `--master-key-file`（或 `NEXTERM_MASTER_KEY_FILE`）配置根密钥，并且升级或迁移后仍使用原来的密钥和数据目录。同步失败时，还要检查服务端地址、HTTPS 证书和账号用户名、密码是否正确。
 
 ### 关闭标签后终端去哪了
 

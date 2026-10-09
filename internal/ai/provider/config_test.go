@@ -15,7 +15,7 @@ func TestAllPresets(t *testing.T) {
 	for _, preset := range presets {
 		got = append(got, preset.ID)
 	}
-	want := []string{"deepseek", "openai", "dashscope", "moonshot", "zhipu", "ollama", "lmstudio", "vllm"}
+	want := []string{"moonshot", "deepseek", "zhipu", "ollama"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("preset order = %v, want %v", got, want)
 	}
@@ -24,14 +24,10 @@ func TestAllPresets(t *testing.T) {
 		model   string
 		window  uint64
 	}{
-		"deepseek":  {"https://api.deepseek.com/v1", "deepseek-chat", 64000},
-		"openai":    {"https://api.openai.com/v1", "gpt-4o-mini", 128000},
-		"dashscope": {"https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", 128000},
-		"moonshot":  {"https://api.moonshot.cn/v1", "moonshot-v1-32k", 128000},
-		"zhipu":     {"https://open.bigmodel.cn/api/paas/v4", "glm-4-flash", 128000},
-		"ollama":    {"http://127.0.0.1:11434/v1", "qwen2.5:7b", 32000},
-		"lmstudio":  {"http://127.0.0.1:1234/v1", "local-model", 32000},
-		"vllm":      {"http://127.0.0.1:8000/v1", "local-model", 32000},
+		"moonshot": {"https://api.moonshot.cn/v1", "kimi-k3", 1000000},
+		"deepseek": {"https://api.deepseek.com/v1", "deepseek-flash", 1000000},
+		"ollama":   {"http://127.0.0.1:11434/v1", "qwen2.5:7b", 32000},
+		"zhipu":    {"https://open.bigmodel.cn/api/paas/v4", "glm-4.7-flash", 200000},
 	}
 	for id, check := range checks {
 		config, err := FromPreset(id, "")
@@ -42,7 +38,7 @@ func TestAllPresets(t *testing.T) {
 			t.Fatalf("preset %s = %+v", id, config)
 		}
 	}
-	config, err := FromPreset("openai", " custom-model ")
+	config, err := FromPreset("moonshot", " custom-model ")
 	if err != nil || config.Model != "custom-model" {
 		t.Fatalf("model override = %+v, %v", config, err)
 	}

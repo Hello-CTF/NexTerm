@@ -30,7 +30,6 @@ const (
 	totpNonceLength   = 12
 	totpKeyBytes      = 32
 
-	totpKeySetting        = "auth.totp_key"
 	mfaRequiredSettingKey = "auth.mfa_required"
 
 	recoveryCodeCount      = 8
@@ -93,8 +92,8 @@ func totpAAD(userID string) []byte {
 	return aad
 }
 
-func (a *Accounts) sealTOTPSecret(ctx context.Context, userID string, secret []byte) ([]byte, error) {
-	key, err := a.totpKey(ctx)
+func (a *Accounts) sealTOTPSecret(userID string, secret []byte) ([]byte, error) {
+	key, err := a.totpKey()
 	if err != nil {
 		return nil, err
 	}
@@ -113,11 +112,11 @@ func (a *Accounts) sealTOTPSecret(ctx context.Context, userID string, secret []b
 	return aead.Seal(nonce, nonce, secret, totpAAD(userID)), nil
 }
 
-func (a *Accounts) openTOTPSecret(ctx context.Context, userID string, envelope []byte) ([]byte, error) {
+func (a *Accounts) openTOTPSecret(userID string, envelope []byte) ([]byte, error) {
 	if len(envelope) <= totpNonceLength {
 		return nil, ipc.NewError(ipc.CodeDecrypt, "TOTP 密钥信封长度不合法")
 	}
-	key, err := a.totpKey(ctx)
+	key, err := a.totpKey()
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +245,7 @@ func (a *Accounts) BeginTOTPSetup(ctx context.Context, userID, reverify string) 
 	if err != nil {
 		return "", "", err
 	}
-	envelope, err := a.sealTOTPSecret(ctx, userID, secretBytes)
+	envelope, err := a.sealTOTPSecret(userID, secretBytes)
 	if err != nil {
 		return "", "", err
 	}
@@ -291,7 +290,7 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	if err != nil {
 		return nil, dbError(err)
 	}
-	secret, err := a.openTOTPSecret(ctx, userID, pending)
+	secret, err := a.openTOTPSecret(userID, pending)
 	if err != nil {
 		return nil, err
 	}
@@ -348,9 +347,18 @@ func (a *Accounts) VerifyTOTPLoginCode(ctx context.Context, userID, code string)
 	if len(envelope) == 0 {
 		return false, nil
 	}
-	secret, err := a.openTOTPSecret(ctx, userID, envelope)
+	secret, err := a.openTOTPSecret(userID, envelope)
 	if err != nil {
-		return false, err
+		if !a.legacyTOTPKeyPresent(ctx) {
+			return false, err
+		}
+		// 旧库存储密钥已不再迁移, 动态码无法校验; 恢复码独立存储仍可用于登录后重绑。
+		if valid, recErr := a.consumeRecoveryCode(ctx, userID, code); recErr != nil {
+			return false, recErr
+		} else if valid {
+			return true, nil
+		}
+		return false, ipc.NewError(ipc.CodeCrypto, "加密错误: 两步验证密钥无法解密(存储密钥已更换), 请用恢复码登录后重新绑定 TOTP")
 	}
 	if verifyTOTPCode(secret, code, a.now()/1000) {
 		return true, nil

@@ -454,23 +454,6 @@ export const mountApi = {
     call<void>("mount_remove", { localPoint, sessionId }),
 };
 
-export interface FilesSettingsView {
-  publicBaseURL: string;
-}
-
-export interface SavedImageView {
-  path: string;
-  bytes: number;
-}
-
-export const filesApi = {
-  settingsGet: () => call<FilesSettingsView>("files_settings_get"),
-  settingsSet: (publicBaseURL: string) =>
-    call<FilesSettingsView>("files_settings_set", { publicBaseURL }),
-  saveImage: (path: string, contentBase64: string) =>
-    call<SavedImageView>("files_save_image", { path, contentBase64 }),
-};
-
 export interface ContainerSummary {
   id: string;
   name: string;
@@ -681,6 +664,8 @@ export const aiApi = {
   conversationList: () =>
     call<import("./types").ConversationDto[]>("ai_conversation_list"),
   conversationDelete: (id: string) => call<void>("ai_conversation_delete", { id }),
+  conversationRetitle: (conversationId: string) =>
+    call<string>("ai_conversation_retitle", { conversationId }),
   conversationCreate: (title?: string) =>
     call<import("./types").ConversationDto>("ai_conversation_create", { title }),
   messages: (conversationId: string) =>
@@ -714,6 +699,7 @@ export interface VaultStatus {
   mode: "not_init" | "dpapi" | "master";
   unlocked: boolean;
   autoLockMinutes: number;
+  passwordless: boolean;
 }
 
 export interface CredentialUsedBy {
@@ -747,7 +733,7 @@ export interface RevealedCredential {
 export const vaultApi = {
   status: () => call<VaultStatus>("vault_status"),
   initMaster: (password: string) => call<void>("vault_init_master", { password }),
-  initDpapi: () => call<void>("vault_init_dpapi"),
+  initDpapi: (password = "") => call<void>("vault_init_dpapi", { password }),
   unlock: (password: string) => call<void>("vault_unlock", { password }),
   lock: () => call<void>("vault_lock"),
   setAutoLock: (minutes: number) => call<void>("vault_set_autolock", { minutes }),

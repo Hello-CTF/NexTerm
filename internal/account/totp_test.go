@@ -190,7 +190,7 @@ func TestTOTPSecretStoredEncrypted(t *testing.T) {
 	if strings.Contains(string(envelope), secret) || strings.Contains(string(envelope), string(raw)) {
 		t.Fatal("pending secret stored as plaintext")
 	}
-	if _, err := a.openTOTPSecret(ctx, "u-other", envelope); err == nil {
+	if _, err := a.openTOTPSecret("u-other", envelope); err == nil {
 		t.Fatal("envelope opened under wrong user AAD")
 	}
 

@@ -162,6 +162,14 @@ describe("shortcuts editor", () => {
   });
 
   it("auto-copy preference is off by default and persists toggles", () => {
+    const advanced = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "高级设置",
+    );
+    expect(advanced?.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
+    ).toBeNull();
+    click(advanced as HTMLButtonElement);
     const checkbox = mounted?.container.querySelector<HTMLInputElement>(
       'input[aria-label="选中自动复制"]',
     );
@@ -175,6 +183,36 @@ describe("shortcuts editor", () => {
       'input[aria-label="选中自动复制"]',
     );
     expect(after?.checked).toBe(true);
+  });
+
+  it("选中自动复制已开启时高级设置挂载即展开", () => {
+    mounted?.unmount();
+    act(() => setSelectionAutoCopy(true));
+    mounted = mount(createElement(ShortcutsCard));
+    const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "高级设置",
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    const checkbox = mounted?.container.querySelector<HTMLInputElement>(
+      'input[aria-label="选中自动复制"]',
+    );
+    expect(checkbox?.checked).toBe(true);
+  });
+
+  it("手动折叠后外部写入不再强行展开", () => {
+    const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "高级设置",
+    );
+    click(toggle as HTMLButtonElement);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    click(toggle as HTMLButtonElement);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => setSelectionAutoCopy(true));
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
+    ).toBeNull();
   });
 
   it("captures switchTab digits as the full 1-9 range and they trigger tabs 1/2/9", () => {

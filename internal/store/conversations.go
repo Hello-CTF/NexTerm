@@ -88,6 +88,9 @@ func (s *Store) ConvDelete(ctx context.Context, id string) (returnErr error) {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM ai_message WHERE conversation_id = ?", id); err != nil {
 		return dbError(err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cron_job WHERE session_id = ?", id); err != nil {
+		return dbError(err)
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM ai_conversation WHERE id = ?", id); err != nil {
 		return dbError(err)
 	}

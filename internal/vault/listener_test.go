@@ -41,7 +41,7 @@ func TestUnlockListenerFiresOnDPAPIInit(t *testing.T) {
 	v := loadTestVault(db, &fakeProtector{})
 	fired := 0
 	v.AddUnlockListener(func() { fired++ })
-	if err := v.InitDPAPI(ctx); err != nil {
+	if err := v.InitDPAPI(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if fired != 1 {

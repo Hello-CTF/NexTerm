@@ -37,7 +37,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), promptText: vi.fn() }));
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
-vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));

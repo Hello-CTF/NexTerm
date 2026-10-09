@@ -291,23 +291,6 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 		}
 		return response.StatusCode, decoded
 	}
-	imageUpload := func() (int, map[string]any) {
-		t.Helper()
-		request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/files/image?name=x.png", strings.NewReader("fake"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.AddCookie(session.cookie)
-		request.Header.Set(csrfHeaderName, session.csrf)
-		response, err := fixture.client.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer response.Body.Close()
-		var decoded map[string]any
-		_ = json.NewDecoder(response.Body).Decode(&decoded)
-		return response.StatusCode, decoded
-	}
 
 	// 策略默认关闭: /rpc 与会话 cookie 正常可用。
 	if status, _ := rpcWithSession(); status != http.StatusOK {
@@ -317,7 +300,7 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 	if err := fixture.accounts.SetMFARequired(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
-	// mfa_required 未绑定: /rpc、/ws/* 与图片写全部 403 mfa_enrollment_required, 绑定必需路由不受影响。
+	// mfa_required 未绑定: /rpc 与 /ws/* 全部 403 mfa_enrollment_required, 绑定必需路由不受影响。
 	status, body := rpcWithSession()
 	if status != http.StatusForbidden || body["error"].(map[string]any)["code"] != "mfa_enrollment_required" {
 		t.Fatalf("locked rpc status=%d body=%v", status, body)
@@ -327,9 +310,6 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 		if status != http.StatusForbidden || body["error"].(map[string]any)["code"] != "mfa_enrollment_required" {
 			t.Fatalf("locked %s status=%d body=%v", path, status, body)
 		}
-	}
-	if status, body := imageUpload(); status != http.StatusForbidden || body["error"].(map[string]any)["code"] != "mfa_enrollment_required" {
-		t.Fatalf("locked image upload status=%d body=%v", status, body)
 	}
 	call := fixture.call(t, http.MethodGet, "/auth/totp", nil, session, "", nil)
 	if call.status != http.StatusOK {

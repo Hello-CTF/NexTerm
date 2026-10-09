@@ -350,7 +350,7 @@ export function AuthCard() {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          已登录的设备可以随时吊销,吊销后该设备立即退出登录。「添加设备」生成的一次性配对码 15 分钟内有效,只显示一次。
+          已登录的设备可以随时吊销,吊销后该设备立即退出登录。
         </p>
 
         {enrollCode && (

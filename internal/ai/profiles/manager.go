@@ -200,7 +200,9 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 	case m.protector == nil:
 		return profile.APIKey, nil
-	case strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
+	case !strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
+		return "", ipc.NewError(ipc.CodeCrypto, "该档案的 API Key 为旧版明文存储，请在设置中重新保存")
+	default:
 		plaintext, err := m.protector.DecryptSecret(context.Background(), profile.APIKey)
 		if err != nil {
 			return "", err
@@ -209,11 +211,6 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 			return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 		}
 		return plaintext, nil
-	default:
-		if _, err := m.protector.EncryptSecret(context.Background(), profile.APIKey); err != nil {
-			return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
-		}
-		return profile.APIKey, nil
 	}
 }
 

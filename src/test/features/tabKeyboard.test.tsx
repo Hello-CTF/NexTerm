@@ -262,6 +262,62 @@ describe("pane tab strip keyboard support", () => {
   });
 });
 
+describe("pane tab context menu bulk close", () => {
+  function openMenu(tab: HTMLElement): HTMLElement | null {
+    keyDown(tab, "F10", { shiftKey: true });
+    return document.querySelector<HTMLElement>('[role="menu"]');
+  }
+
+  function menuButton(label: string): HTMLButtonElement {
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (b) => b.textContent?.includes(label),
+    );
+    if (!item) throw new Error(`menu item not found: ${label}`);
+    return item;
+  }
+
+  it("含批量关闭项，单侧无标签时对应项禁用", async () => {
+    mounted = mountApp();
+    await flush();
+
+    const list = tablist(mounted.container, "标签页");
+    expect(openMenu(tabByText(list, "设置"))).not.toBeNull();
+    expect(menuButton("关闭标签").disabled).toBe(false);
+    expect(menuButton("关闭左边全部").disabled).toBe(true);
+    expect(menuButton("关闭右边全部").disabled).toBe(false);
+    keyDown(document.activeElement as HTMLElement, "Escape");
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+
+    expect(openMenu(tabByText(list, "审计"))).not.toBeNull();
+    expect(menuButton("关闭左边全部").disabled).toBe(false);
+    expect(menuButton("关闭右边全部").disabled).toBe(true);
+  });
+
+  it("关闭左边全部只关对应标签", async () => {
+    mounted = mountApp();
+    await flush();
+
+    const list = tablist(mounted.container, "标签页");
+    openMenu(tabByText(list, "审计"));
+    click(menuButton("关闭左边全部"));
+    await waitFor(() =>
+      expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t2"]),
+    );
+  });
+
+  it("关闭右边全部只关对应标签", async () => {
+    mounted = mountApp();
+    await flush();
+
+    const list = tablist(mounted.container, "标签页");
+    openMenu(tabByText(list, "设置"));
+    click(menuButton("关闭右边全部"));
+    await waitFor(() =>
+      expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.id)).toEqual(["t1"]),
+    );
+  });
+});
+
 describe("rail and toast accessibility", () => {
   it("labels every rail button and marks the active panel", async () => {
     mounted = mountApp();

@@ -345,13 +345,13 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     vi.useRealTimers();
   });
 
-  it("只渲染 5 个预设且 kimi 排最前，不再拉取后端预设", async () => {
+  it("只渲染 4 个预设且 moonshot 排最前，不再拉取后端预设", async () => {
     await mountManager(demoProfile());
 
     const chips = [...view!.container.querySelectorAll("button")]
       .filter((b) => b.title?.startsWith("用 "))
       .map((b) => b.textContent?.trim());
-    expect(chips).toEqual(["kimi", "deepseek", "ollama", "zhipu", "openai"]);
+    expect(chips).toEqual(["Moonshot", "DeepSeek", "Zhipu", "Ollama"]);
     expect(mocks.presets).not.toHaveBeenCalled();
   });
 
@@ -360,12 +360,12 @@ describe("ModelManager 快速填充预设与可选参数", () => {
 
     click(view!.container.querySelector('button[title="新增档案"]')!);
     await flush();
-    clickButton(view!.container, "zhipu");
+    clickButton(view!.container, "Zhipu");
     await flush();
 
     expect(inputFor("展示名").value).toBe("zhipu");
     expect(inputFor("Base URL").value).toBe("https://open.bigmodel.cn/api/paas/v4");
-    expect(inputFor("模型名").value).toBe("dsv41flash");
+    expect(inputFor("模型名").value).toBe("glm-4.7-flash");
 
     clickButton(view!.container, "高级参数");
     await flush();
@@ -380,7 +380,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
 
     const payload = savedPayload();
     expect(payload.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
-    expect(payload.model).toBe("dsv41flash");
+    expect(payload.model).toBe("glm-4.7-flash");
     expect((payload as Record<string, unknown>).temperature).toBeUndefined();
     expect((payload as Record<string, unknown>).contextWindow).toBeUndefined();
   });
@@ -388,7 +388,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
   it("编辑已有档案时预设不覆盖已填参数", async () => {
     await mountManager({ ...demoProfile(), temperature: 0.7, contextWindow: 64000 });
 
-    clickButton(view!.container, "kimi");
+    clickButton(view!.container, "Moonshot");
     await flush();
 
     expect(inputFor("展示名").value).toBe("DeepSeek 主力");

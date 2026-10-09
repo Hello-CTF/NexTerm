@@ -431,7 +431,7 @@ export function SyncBundleCard() {
         {exportFormat === "encrypted" && (
           <div className="flex flex-col gap-2">
             <p className="nx-hint text-[12px]">
-              用口令把资产包加密成 <code>.nxbm</code> 容器，只有知道口令的人才能导入。
+              用口令把资产包加密成 <code>.nxbm</code> 容器；口令可留空，留空则导入无需口令。
               口令无法找回，丢失后将无法导入，请妥善保管。
             </p>
             <div className="flex flex-wrap items-center gap-2">
@@ -540,8 +540,8 @@ export function SyncBundleCard() {
         </div>
         <p className="nx-hint mb-2 text-[12px]">
           {canEncryptBundle
-            ? "支持旧版 .json 资产包与 .nxbm 加密资产包（加密包导入时需输入口令）。"
-            : "支持旧版 .json 资产包；.nxbm 加密资产包请在桌面版 NexTerm 中导入。"}
+            ? "支持 .json 资产包与 .nxbm 加密资产包。"
+            : "支持 .json 资产包；.nxbm 加密资产包请在桌面版 NexTerm 中导入。"}
         </p>
 
         {importError && (

@@ -42,7 +42,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
 
   const st = status.data;
   const locked = !!st?.initialized && !st.unlocked;
-  const protectionOn = st?.mode === "master";
+  const protectionOn = st?.mode === "master" && !st.passwordless;
   const list = credentials.data ?? [];
   const selected = list.find((c) => c.id === credId) ?? null;
 

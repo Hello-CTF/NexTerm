@@ -11,7 +11,7 @@ const packageNames = [
   `NexTerm_${version}_aarch64.dmg`,
   `NexTerm_${version}_x86_64.dmg`,
   ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-desktop_${version}_linux_${arch}.tar.gz`,
+    `NexTerm-desktop_${version}_linux_${arch}.deb`,
     `NexTerm-server_${version}_linux_${arch}.tar.gz`,
   ]),
 ];

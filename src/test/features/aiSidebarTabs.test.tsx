@@ -5,7 +5,6 @@ import { act, createElement } from "react";
 import {
   click,
   flush,
-  flushUntil,
   mount,
   setInputValue,
   type MountedView,
@@ -25,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   conversationDelete: vi.fn(),
   messages: vi.fn(),
   overview: vi.fn(),
+  ask: vi.fn(),
   toast: vi.fn(),
   dispose: vi.fn(),
   channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
@@ -61,10 +61,10 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
   disposeChannel: mocks.dispose,
   onChannelReopen: () => () => undefined,
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), promptText: vi.fn() }));
+vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: vi.fn() }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
-import { GLOBAL_AI_BOARD_KEY, useUi, type Workspace } from "../../app/store";
+import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
 
 let convSeq = 0;
 
@@ -82,19 +82,6 @@ function stripTabs(view: MountedView): HTMLElement[] {
   return [
     ...view.container.querySelectorAll<HTMLElement>('[aria-label="AI 任务标签"] [role="tab"]'),
   ];
-}
-
-function hostWorkspace(id: string): Workspace {
-  return {
-    id,
-    kind: "session",
-    title: `主机 ${id}`,
-    sessionId: `s-${id}`,
-    panes: [{ id: `pane-${id}`, tabs: [], activeTabId: null }],
-    activePaneId: `pane-${id}`,
-    splitRatio: 0.5,
-    closable: true,
-  };
 }
 
 async function send(view: MountedView, text: string) {
@@ -134,6 +121,7 @@ describe("AiSidebar 多标签", () => {
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
+    mocks.ask.mockResolvedValue(true);
     localStorage.clear();
     useUi.setState({
       rightOpen: true,
@@ -167,7 +155,7 @@ describe("AiSidebar 多标签", () => {
     click(stripTabs(view!)[0]);
     await flush();
     expect(textOf(view!)).not.toContain("问题甲");
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(textOf(view!)).toContain("新建会话");
 
     await send(view!, "问题乙");
     expect(textOf(view!)).toContain("问题乙");
@@ -211,45 +199,41 @@ describe("AiSidebar 多标签", () => {
     expect(textOf(view!)).not.toContain("回答二");
   });
 
-  it("运行中的标签拒绝关闭并提示先停止", async () => {
+  it("运行中的标签关闭需确认：拒绝则保留，确认则停止运行并关闭", async () => {
     await flush();
     await send(view!, "长跑任务");
+    mocks.ask.mockResolvedValue(false);
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("请先停止"));
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("关闭将停止它"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.cancel).not.toHaveBeenCalled();
     expect(stripTabs(view!)).toHaveLength(1);
+    expect(useUi.getState().aiBusy).toBe(true);
 
-    emit({ type: "done", answer: "做完了" }, 0);
-    await flush();
+    mocks.ask.mockResolvedValue(true);
     const before = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();
+    expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     const board = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY];
     expect(board.tabs).toHaveLength(1);
     expect(board.tabs[0].id).not.toBe(before);
+    expect(useUi.getState().aiBusy).toBe(false);
   });
 
-  it("看板跟随工作区切换, 旧版全局会话只被全局看板继承", async () => {
+  it("旧版遗留的会话键一次性清除且不再被任何看板继承", async () => {
     localStorage.setItem("nexterm.ai.conversation.v1", "conv-legacy");
     mocks.conversationList.mockResolvedValue([{ id: "conv-legacy", title: "旧会话", updatedAt: 0 }]);
-    act(() => {
-      useUi.setState({ workspaces: [hostWorkspace("ws-1")], activeWorkspaceId: "ws-1" });
-    });
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
 
     expect(stripTabs(view!)).toHaveLength(1);
     expect(mocks.messages).not.toHaveBeenCalledWith("conv-legacy");
-
-    click(view!.container.querySelector('button[title="新建 AI 标签"]')!);
-    await flush();
-    expect(stripTabs(view!)).toHaveLength(2);
-    expect(useUi.getState().aiBoards["ws-1"]?.tabs).toHaveLength(2);
-
-    act(() => {
-      useUi.setState({ workspaces: [], activeWorkspaceId: null });
-    });
-    await flushUntil(() => mocks.messages.mock.calls.some((call) => call[0] === "conv-legacy"));
-    expect(stripTabs(view!)).toHaveLength(1);
-    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    expect(localStorage.getItem("nexterm.ai.conversation.v1")).toBeNull();
+    expect(textOf(view!)).toContain("新建会话");
   });
 });

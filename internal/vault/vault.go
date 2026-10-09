@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	settingMode     = "vault.mode"
-	settingEnvelope = "vault.dek_envelope"
-	settingSalt     = "vault.master_salt"
-	settingAutolock = "vault.autolock_ms"
-	defaultAutolock = uint64(30 * 60 * 1000)
-	maxAutoLockMS   = uint64(1440 * 60 * 1000)
+	settingMode         = "vault.mode"
+	settingEnvelope     = "vault.dek_envelope"
+	settingSalt         = "vault.master_salt"
+	settingAutolock     = "vault.autolock_ms"
+	settingPasswordless = "vault.passwordless"
+	defaultAutolock     = uint64(30 * 60 * 1000)
+	maxAutoLockMS       = uint64(1440 * 60 * 1000)
 )
 
 type Mode string
@@ -36,6 +37,7 @@ type Status struct {
 	Mode            string `json:"mode"`
 	Unlocked        bool   `json:"unlocked"`
 	AutoLockMinutes uint64 `json:"autoLockMinutes"`
+	Passwordless    bool   `json:"passwordless"`
 }
 
 type Option func(*Vault)
@@ -55,14 +57,15 @@ type Vault struct {
 	now       func() int64
 	loadErr   error
 
-	mu         sync.Mutex
-	mode       Mode
-	dek        *secretKey
-	kek        *secretKey
-	salt       []byte
-	lastUsedAt int64
-	autoLockMS uint64
-	listeners  []func()
+	mu           sync.Mutex
+	mode         Mode
+	dek          *secretKey
+	kek          *secretKey
+	salt         []byte
+	passwordless bool
+	lastUsedAt   int64
+	autoLockMS   uint64
+	listeners    []func()
 
 	autoLockMu        sync.Mutex
 	autoLockStoreHook func()
@@ -104,6 +107,18 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		} else {
 			slog.Warn("主密码盐解码失败，按无盐处理", "error", err)
 		}
+	}
+	if raw, err := readSetting(ctx, db, settingPasswordless); err != nil {
+		v.noteLoadError(settingPasswordless, err)
+	} else {
+		v.passwordless = raw == "1"
+	}
+	if v.mode == ModeMaster && v.passwordless {
+		v.mu.Lock()
+		if err := v.unlockMasterLocked(ctx, ""); err != nil {
+			slog.Warn("无密码凭据库自动解锁失败，本次按锁定处理", "error", err)
+		}
+		v.mu.Unlock()
 	}
 	if v.mode == ModeDPAPI {
 		v.mu.Lock()
@@ -161,6 +176,7 @@ func (v *Vault) Status() Status {
 	return Status{
 		Initialized: v.mode != ModeNotInit, Mode: string(v.mode), Unlocked: v.dek != nil,
 		AutoLockMinutes: v.autoLockMS / 60_000,
+		Passwordless:    v.mode == ModeMaster && v.passwordless,
 	}
 }
 
@@ -199,8 +215,8 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 	if err := v.guardLoadError(); err != nil {
 		return err
 	}
-	if len(password) < 8 {
-		return ipc.BadParam(errString("主密码至少 8 位"))
+	if password != "" && len(password) < 8 {
+		return ipc.BadParam(errString("主密码至少 8 位；留空则表示不设置密码"))
 	}
 	hasSecrets, err := v.hasUndecryptableSecrets(ctx)
 	if err != nil {
@@ -223,9 +239,10 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 		return err
 	}
 	if err := v.store.SettingSetMany(ctx, map[string]string{
-		settingEnvelope: base64.StdEncoding.EncodeToString(envelope),
-		settingSalt:     base64.StdEncoding.EncodeToString(salt),
-		settingMode:     string(ModeMaster),
+		settingEnvelope:     base64.StdEncoding.EncodeToString(envelope),
+		settingSalt:         base64.StdEncoding.EncodeToString(salt),
+		settingMode:         string(ModeMaster),
+		settingPasswordless: passwordlessFlag(password),
 	}); err != nil {
 		kek.destroy()
 		dek.destroy()
@@ -234,15 +251,23 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 	v.clearKeysLocked()
 	v.mode = ModeMaster
 	v.salt = salt
+	v.passwordless = password == ""
 	v.kek = kek
 	v.dek = dek
 	v.lastUsedAt = v.now()
 	return nil
 }
 
-func (v *Vault) InitDPAPI(ctx context.Context) error {
+func passwordlessFlag(password string) string {
+	if password == "" {
+		return "1"
+	}
+	return "0"
+}
+
+func (v *Vault) InitDPAPI(ctx context.Context, password string) error {
 	v.mu.Lock()
-	err := v.initDPAPILocked(ctx)
+	err := v.initDPAPILocked(ctx, password)
 	v.mu.Unlock()
 	if err == nil {
 		v.fireUnlocked()
@@ -250,12 +275,15 @@ func (v *Vault) InitDPAPI(ctx context.Context) error {
 	return err
 }
 
-func (v *Vault) initDPAPILocked(ctx context.Context) error {
-	if v.mode != ModeNotInit {
+func (v *Vault) initDPAPILocked(ctx context.Context, password string) error {
+	if v.mode == ModeDPAPI {
 		return ipc.NewError(ipc.CodeVaultAlreadyInit, "凭据库已初始化，不能重复初始化")
 	}
 	if err := v.guardLoadError(); err != nil {
 		return err
+	}
+	if v.mode == ModeMaster {
+		return v.migrateMasterToDPAPILocked(ctx, password)
 	}
 	v.mode = ModeDPAPI
 	if err := v.unlockDPAPILocked(ctx); err != nil {
@@ -268,6 +296,29 @@ func (v *Vault) initDPAPILocked(ctx context.Context) error {
 		v.clearKeysLocked()
 		return err
 	}
+	return nil
+}
+
+func (v *Vault) migrateMasterToDPAPILocked(ctx context.Context, password string) error {
+	if err := v.unlockMasterLocked(ctx, password); err != nil {
+		return err
+	}
+	protected, err := v.protector.Protect(v.dek.bytes[:])
+	if err != nil {
+		return err
+	}
+	if err := v.store.SettingSetMany(ctx, map[string]string{
+		settingEnvelope:     base64.StdEncoding.EncodeToString(protected),
+		settingMode:         string(ModeDPAPI),
+		settingPasswordless: "0",
+	}); err != nil {
+		return err
+	}
+	v.kek.destroy()
+	v.kek = nil
+	v.passwordless = false
+	v.mode = ModeDPAPI
+	v.lastUsedAt = v.now()
 	return nil
 }
 
@@ -364,6 +415,7 @@ func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 	v.clearKeysLocked()
 	v.kek = kek
 	v.dek = dek
+	v.passwordless = password == ""
 	v.lastUsedAt = v.now()
 	return nil
 }
@@ -417,7 +469,7 @@ func (v *Vault) AutoLockIfIdle() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	idle := v.now() - v.lastUsedAt
-	if v.autoLockMS > 0 && idle >= 0 && uint64(idle) > v.autoLockMS && v.mode == ModeMaster {
+	if v.autoLockMS > 0 && idle >= 0 && uint64(idle) > v.autoLockMS && v.mode == ModeMaster && !v.passwordless {
 		v.clearKeysLocked()
 	}
 }
@@ -486,8 +538,8 @@ func (v *Vault) ChangeMasterPassword(ctx context.Context, oldPassword, newPasswo
 	if v.mode != ModeMaster {
 		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")
 	}
-	if len(newPassword) < 8 {
-		return ipc.BadParam(errString("主密码至少 8 位"))
+	if newPassword != "" && len(newPassword) < 8 {
+		return ipc.BadParam(errString("主密码至少 8 位；留空则表示不设置密码"))
 	}
 	if len(v.salt) == 0 {
 		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化")
@@ -528,8 +580,9 @@ func (v *Vault) ChangeMasterPassword(ctx context.Context, oldPassword, newPasswo
 		return err
 	}
 	if err := v.store.SettingSetMany(ctx, map[string]string{
-		settingEnvelope: base64.StdEncoding.EncodeToString(newEnvelope),
-		settingSalt:     base64.StdEncoding.EncodeToString(newSalt),
+		settingEnvelope:     base64.StdEncoding.EncodeToString(newEnvelope),
+		settingSalt:         base64.StdEncoding.EncodeToString(newSalt),
+		settingPasswordless: passwordlessFlag(newPassword),
 	}); err != nil {
 		newKEK.destroy()
 		return err
@@ -537,6 +590,7 @@ func (v *Vault) ChangeMasterPassword(ctx context.Context, oldPassword, newPasswo
 	v.kek.destroy()
 	v.kek = newKEK
 	v.salt = newSalt
+	v.passwordless = newPassword == ""
 	v.lastUsedAt = v.now()
 	return nil
 }

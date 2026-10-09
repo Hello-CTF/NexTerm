@@ -290,7 +290,7 @@ export function AccountCard() {
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          安全默认:注册默认关闭;禁用立即吊销会话;重置不留旧密钥;管理员任何接口都拿不到用户的数据密钥明文。
+          安全默认:注册默认关闭;管理员任何接口都拿不到用户的数据密钥明文。
         </div>
       </div>
     </section>

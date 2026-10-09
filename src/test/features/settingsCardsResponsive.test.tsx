@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -11,9 +11,6 @@ const mocks = vi.hoisted(() => {
     memoryGet: vi.fn(),
     memorySetSettings: vi.fn(),
     knownHostList: vi.fn(),
-    conversationList: vi.fn(),
-    cronList: vi.fn(),
-    modelOverview: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -38,28 +35,12 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       knownHostList: mocks.knownHostList,
       knownHostRemove: vi.fn(),
     },
-    aiApi: {
-      conversationList: mocks.conversationList,
-    },
-    modelApi: {
-      overview: mocks.modelOverview,
-    },
   };
 });
-vi.mock("../../ipc/cron", () => ({
-  cronApi: {
-    list: mocks.cronList,
-    register: vi.fn(),
-    setEnabled: vi.fn(),
-    unregister: vi.fn(),
-  },
-  cronTimeoutMs: (job: { timeout: number }) => Math.round(job.timeout / 1_000_000),
-}));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { MemoryCard } from "../../features/settings/MemoryCard";
 import { KnownHostsCard } from "../../features/settings/KnownHostsCard";
-import { CronCard } from "../../features/settings/CronCard";
 import { useUi } from "../../app/store";
 import type { MemoryTopicIndex } from "../../ipc/memory";
 
@@ -83,23 +64,6 @@ const KNOWN_HOST = {
   addedAt: 1728000000000,
 };
 
-const CRON_JOB = {
-  id: "j1",
-  sessionId: "c1",
-  name: "r120-磁盘巡检任务名称故意取得很长用来验证窄屏折行",
-  prompt: "检查各分区磁盘使用率并汇报",
-  schedule: "0 2 * * *",
-  timezone: "UTC",
-  enabled: true,
-  timeout: 60000000000,
-  createdAt: "2026-10-01T00:00:00Z",
-  updatedAt: "2026-10-01T00:00:00Z",
-  revision: 1,
-  nextRunAt: "2026-10-05T02:00:00Z",
-  lease: {},
-  run: { id: "", scheduledFor: "", startedAt: "", deadline: "" },
-};
-
 let mounted: MountedView | undefined;
 
 beforeEach(() => {
@@ -118,9 +82,6 @@ beforeEach(() => {
     updatedAt: 2,
   });
   mocks.knownHostList.mockResolvedValue([KNOWN_HOST]);
-  mocks.conversationList.mockResolvedValue([{ id: "c1", title: "审查会话" }]);
-  mocks.cronList.mockResolvedValue([CRON_JOB]);
-  mocks.modelOverview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.ask.mockResolvedValue(true);
 });
 
@@ -203,32 +164,5 @@ describe("KnownHostsCard 窄屏结构", () => {
     );
     expect(revoke).toBeTruthy();
     expect(revoke!.className).toContain("shrink-0");
-  });
-});
-
-describe("CronCard 窄屏结构", () => {
-  it("长任务名断行不溢出", async () => {
-    mounted = mount(createElement(CronCard));
-    await flushUntil(() => mounted!.container.textContent?.includes(CRON_JOB.name) ?? false);
-    const nameSpan = [...mounted.container.querySelectorAll("span")].find(
-      (s) => s.textContent === CRON_JOB.name,
-    );
-    expect(nameSpan).toBeTruthy();
-    expect(nameSpan!.className).toContain("break-words");
-  });
-
-  it("模型档案选择器行可折行，下拉可收缩不撑破卡片", async () => {
-    mounted = mount(createElement(CronCard));
-    await flushUntil(() => mounted!.container.textContent?.includes(CRON_JOB.name) ?? false);
-    clickButton(mounted.container, "注册定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select).toBeTruthy();
-    const row = select.closest("div")!;
-    expect(row.className).toContain("flex-wrap");
-    expect(select.className).toContain("min-w-0");
-    expect(select.className).toContain("flex-1");
-    expect(select.value).toBe("");
   });
 });

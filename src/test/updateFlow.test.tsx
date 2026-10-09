@@ -50,7 +50,7 @@ function makeStatus(patch: Partial<UpdateStatusDto> = {}): UpdateStatusDto {
     version: "0.3.0",
     notes: "",
     prerelease: false,
-    assetName: "NexTerm-desktop_0.3.0_linux_amd64.tar.gz",
+    assetName: "NexTerm-desktop_0.3.0_linux_amd64.deb",
     assetSize: 8 << 20,
     canInstall: true,
     unavailableReason: "",

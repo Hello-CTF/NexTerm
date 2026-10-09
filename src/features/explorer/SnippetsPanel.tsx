@@ -110,7 +110,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="nx-hint px-1 py-8 text-center">
-              还没有片段 — 点右上角 + 新建一个。插入只把命令写进终端输入行，执行会在写入后回车提交；含回车/换行或控制字符时会先确认。
+              还没有片段 — 点右上角 + 新建一个。
             </div>
           )}
           {snippets.data?.map((s) => {

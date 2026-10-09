@@ -89,7 +89,7 @@ func persistedContents(t *testing.T, storage *store.Store, conversationID string
 	return contents
 }
 
-func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
+func TestMemoryInjectionDefaultsOnAndNeverPollutesHistory(t *testing.T) {
 	ctx := context.Background()
 	memoryStore := openRunnerMemory(t)
 	if _, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{Topic: "operations", Content: "restart at 02:00"}); err != nil {
@@ -106,17 +106,36 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 	if len(inputs) == 0 {
 		t.Fatal("model saw no input")
 	}
-	for _, message := range inputs[0] {
+	var ephemeral *schema.Message
+	position := -1
+	for index, message := range inputs[0] {
 		if strings.Contains(message.Content, "restart at 02:00") {
-			t.Fatalf("default-off injection leaked memory into the model input: %+v", message)
+			ephemeral = message
+			position = index
 		}
 	}
-	contents := persistedContents(t, storage, response.ConversationID)
-	if len(contents) != 2 || strings.Contains(strings.Join(contents, ""), "restart at 02:00") {
-		t.Fatalf("persisted rows = %v", contents)
+	if ephemeral == nil {
+		t.Fatalf("default-on injection produced no memory message: %+v", inputs[0])
+	}
+	if ephemeral.Role != schema.System || !strings.Contains(ephemeral.Content, "restart at 02:00") {
+		t.Fatalf("ephemeral message = %+v", ephemeral)
 	}
 
-	if _, err := memoryStore.SetInjectionEnabled(ctx, runnerMemoryScope, true, 0); err != nil {
+	for index := 0; index < position; index++ {
+		if inputs[0][index].Role != schema.System {
+			t.Fatalf("memory message at %d follows non-system message: %+v", position, inputs[0])
+		}
+	}
+	if position+1 >= len(inputs[0]) || inputs[0][position+1].Role != schema.User || inputs[0][position+1].Content != "first question" {
+		t.Fatalf("memory message must precede the conversation: %+v", inputs[0])
+	}
+	joined := strings.Join(persistedContents(t, storage, response.ConversationID), "")
+	if strings.Contains(joined, "restart at 02:00") || strings.Contains(joined, "Long-term operational memory") {
+		t.Fatalf("memory leaked into the persisted conversation: %s", joined)
+	}
+
+	disabled := false
+	if _, err := memoryStore.SetInjectionEnabled(ctx, runnerMemoryScope, disabled, 0); err != nil {
 		t.Fatal(err)
 	}
 	chat.mu.Lock()
@@ -128,38 +147,20 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 
 	inputs = chat.inputs()
 	if len(inputs) == 0 {
-		t.Fatal("model saw no input after enabling")
+		t.Fatal("model saw no input after disabling")
 	}
-	var ephemeral *schema.Message
-	position := -1
-	for index, message := range inputs[0] {
+	for _, message := range inputs[0] {
 		if strings.Contains(message.Content, "restart at 02:00") {
-			ephemeral = message
-			position = index
+			t.Fatalf("disabled injection leaked memory into the model input: %+v", message)
 		}
 	}
-	if ephemeral == nil {
-		t.Fatalf("enabled injection produced no memory message: %+v", inputs[0])
-	}
-	if ephemeral.Role != schema.System || !strings.Contains(ephemeral.Content, "restart at 02:00") {
-		t.Fatalf("ephemeral message = %+v", ephemeral)
-	}
-
-	for index := 0; index < position; index++ {
-		if inputs[0][index].Role != schema.System {
-			t.Fatalf("memory message at %d follows non-system message: %+v", position, inputs[0])
-		}
-	}
-	if position+1 >= len(inputs[0]) || inputs[0][position+1].Role != schema.User || inputs[0][position+1].Content != "second question" {
-		t.Fatalf("memory message must precede the conversation: %+v", inputs[0])
-	}
-	joined := strings.Join(persistedContents(t, storage, response.ConversationID), "")
-	if strings.Contains(joined, "restart at 02:00") || strings.Contains(joined, "Long-term operational memory") {
-		t.Fatalf("memory leaked into the persisted conversation: %s", joined)
+	contents := persistedContents(t, storage, response.ConversationID)
+	if len(contents) != 2 || strings.Contains(strings.Join(contents, ""), "restart at 02:00") {
+		t.Fatalf("persisted rows = %v", contents)
 	}
 }
 
-func TestMemoryToolsOptInAndRoundTrip(t *testing.T) {
+func TestMemoryToolsDefaultOnAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	memoryStore := openRunnerMemory(t)
 
@@ -169,7 +170,7 @@ func TestMemoryToolsOptInAndRoundTrip(t *testing.T) {
 	startTestJob(t, runner, stream, "hello")
 	waitClosed(t, stream)
 	if entries, err := memoryStore.Index(ctx, runnerMemoryScope); err != nil || len(entries) != 0 {
-		t.Fatalf("default-off tools wrote memory: %v err=%v", entries, err)
+		t.Fatalf("run without tool calls wrote memory: %v err=%v", entries, err)
 	}
 
 	enabled := true
@@ -238,17 +239,28 @@ func TestMemoryToolsAvailability(t *testing.T) {
 	}
 	memoryStore := openRunnerMemory(t)
 	runner = NewRunner(Config{Memory: memoryStore, MemoryScope: runnerMemoryScope})
-	if result, err := runner.memoryTools(ctx, false); err != nil || result != nil {
-		t.Fatalf("default-off = %v err=%v", result, err)
+	result, err := runner.memoryTools(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 4 {
+		t.Fatalf("default-on tools = %d, want 4", len(result))
 	}
 	if result, err := runner.memoryTools(ctx, true); err != nil || result != nil {
 		t.Fatalf("plan mode = %v err=%v", result, err)
 	}
-	enabled := true
-	if _, err := memoryStore.UpdateSettings(ctx, runnerMemoryScope, memory.SettingsInput{ToolsEnabled: &enabled}, 0); err != nil {
+	disabled := false
+	if _, err := memoryStore.UpdateSettings(ctx, runnerMemoryScope, memory.SettingsInput{ToolsEnabled: &disabled}, 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := runner.memoryTools(ctx, false)
+	if result, err := runner.memoryTools(ctx, false); err != nil || result != nil {
+		t.Fatalf("disabled = %v err=%v", result, err)
+	}
+	enabled := true
+	if _, err := memoryStore.UpdateSettings(ctx, runnerMemoryScope, memory.SettingsInput{ToolsEnabled: &enabled}, 1); err != nil {
+		t.Fatal(err)
+	}
+	result, err = runner.memoryTools(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}

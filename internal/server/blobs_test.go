@@ -17,6 +17,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 func TestBlobStageReserveStreamAndDelete(t *testing.T) {
@@ -473,8 +474,95 @@ func TestBlobOwnerEnforcedOnDownloadAndDelete(t *testing.T) {
 	}
 
 	legacy := stage("legacy.bin", "no-owner-recorded", nil)
-	if status, body := download(legacy.ID, other); status != http.StatusOK || body != "no-owner-recorded" {
-		t.Fatalf("legacy blob must stay accessible: %d %q", status, body)
+	if status, _ := download(legacy.ID, other); status != http.StatusNotFound {
+		t.Fatalf("blob without owner metadata must be inaccessible: %d", status)
+	}
+	if status, _ := download(legacy.ID, nil); status != http.StatusNotFound {
+		t.Fatalf("anonymous ownerless download status = %d, want 404", status)
+	}
+}
+
+func TestBlobOpenAccessOwnerlessEntries(t *testing.T) {
+	store := NewBlobStore(t.TempDir(), testLogger())
+	store.openAccess = true
+	owner := &account.Identity{UserID: "user-owner", Role: account.RoleUser, State: account.StateActive}
+	other := &account.Identity{UserID: "user-other", Role: account.RoleUser, State: account.StateActive}
+
+	request := func(method, target string, body io.Reader, identity *account.Identity) *http.Request {
+		t.Helper()
+		r := httptest.NewRequest(method, target, body)
+		if identity != nil {
+			r = r.WithContext(withAccountIdentity(r.Context(), identity))
+		}
+		return r
+	}
+	stage := func(name, content string, identity *account.Identity) stagedBlob {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		store.Stage(recorder, request(http.MethodPost, "/files/blob?name="+name, strings.NewReader(content), identity))
+		return decodeStagedBlob(t, recorder.Result())
+	}
+	download := func(id string, identity *account.Identity) (int, string) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		store.Download(recorder, request(http.MethodGet, "/files/blob?id="+id, nil, identity))
+		body, _ := io.ReadAll(recorder.Result().Body)
+		return recorder.Code, string(body)
+	}
+
+	ownerless := stage("ownerless.bin", "no-owner-recorded", nil)
+	if status, body := download(ownerless.ID, nil); status != http.StatusOK || body != "no-owner-recorded" {
+		t.Fatalf("open-access ownerless download = %d %q", status, body)
+	}
+
+	owned := stage("owned.bin", "owned-by-user", owner)
+	if status, _ := download(owned.ID, nil); status != http.StatusNotFound {
+		t.Fatalf("open-access anonymous owned download status = %d, want 404", status)
+	}
+	if status, _ := download(owned.ID, other); status != http.StatusNotFound {
+		t.Fatalf("open-access non-owner download status = %d, want 404", status)
+	}
+	if status, body := download(owned.ID, owner); status != http.StatusOK || body != "owned-by-user" {
+		t.Fatalf("open-access owner download = %d %q", status, body)
+	}
+}
+
+func TestBlobOpenAccessFollowsDeploymentForm(t *testing.T) {
+	newWithForm := func(t *testing.T, mutate func(*Config)) *BlobStore {
+		t.Helper()
+		blobs := NewBlobStore(t.TempDir(), testLogger())
+		config := testConfig(t, false)
+		config.Blobs = blobs
+		mutate(&config)
+		server, err := New(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = server.Close() })
+		return blobs
+	}
+
+	if blobs := newWithForm(t, func(*Config) {}); !blobs.openAccess {
+		t.Fatal("token form (no accounts) must open ownerless blobs")
+	}
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	accounts := account.New(database.DB())
+	if blobs := newWithForm(t, func(config *Config) {
+		config.Options.Auth = AuthOn
+		config.Accounts = accounts
+		config.Tokens = nil
+	}); blobs.openAccess {
+		t.Fatal("account form must keep ownerless blobs closed")
+	}
+	if blobs := newWithForm(t, func(config *Config) {
+		config.Options.Auth = AuthOff
+		config.Accounts = accounts
+	}); !blobs.openAccess {
+		t.Fatal("auth=off must open ownerless blobs")
 	}
 }
 
@@ -495,23 +583,28 @@ func TestBlobResolveStagedPath(t *testing.T) {
 		return decodeStagedBlob(t, recorder.Result())
 	}
 
-	legacy := stage("legacy.bin", "legacy-content", nil)
-	resolved, err := store.ResolveStagedPath(legacy.Path, "")
+	first := stage("first.bin", "first-content", owner)
+	resolved, err := store.ResolveStagedPath(first.Path, owner.UserID)
 	if err != nil {
-		t.Fatalf("legacy resolve: %v", err)
+		t.Fatalf("owner resolve: %v", err)
 	}
-	if resolved != filepath.Join(store.stageRoot(), legacy.ID, "legacy.bin") {
+	if resolved != filepath.Join(store.stageRoot(), first.ID, "first.bin") {
 		t.Fatalf("resolved path = %q", resolved)
 	}
-	if data, err := os.ReadFile(resolved); err != nil || string(data) != "legacy-content" {
-		t.Fatalf("legacy resolved file = %q, %v", data, err)
+	if data, err := os.ReadFile(resolved); err != nil || string(data) != "first-content" {
+		t.Fatalf("resolved file = %q, %v", data, err)
 	}
 
-	spaced := stage(url.QueryEscape("my file.bin"), "spaced-content", nil)
+	ownerless := stage("ownerless.bin", "ownerless-content", nil)
+	if _, err := store.ResolveStagedPath(ownerless.Path, ""); !errors.Is(err, errStagedNotFound) {
+		t.Fatalf("ownerless resolve = %v, want errStagedNotFound", err)
+	}
+
+	spaced := stage(url.QueryEscape("my file.bin"), "spaced-content", owner)
 	if spaced.Path != spaced.ID+"/my file.bin" {
 		t.Fatalf("spaced staged path = %q", spaced.Path)
 	}
-	if path, err := store.ResolveStagedPath(spaced.Path, ""); err != nil || path == "" {
+	if path, err := store.ResolveStagedPath(spaced.Path, owner.UserID); err != nil || path == "" {
 		t.Fatalf("resolve name kept by SafeBlobName = %q, %v", path, err)
 	}
 
@@ -533,10 +626,10 @@ func TestBlobResolveStagedPath(t *testing.T) {
 	}
 
 	for _, malformed := range []string{
-		"", "no-slash", "short/name", legacy.ID + "/..", legacy.ID + "/.meta.json",
-		legacy.ID + "/.META.JSON", legacy.ID + "/.meta.json ", legacy.ID + "/.hidden",
-		legacy.ID + "/na\x01me.bin", legacy.ID + "/name.bin ", legacy.ID + "/nested/name.bin",
-		legacy.ID + `\name.bin`, "/abs/name.bin", ids.New() + "/missing.bin",
+		"", "no-slash", "short/name", first.ID + "/..", first.ID + "/.meta.json",
+		first.ID + "/.META.JSON", first.ID + "/.meta.json ", first.ID + "/.hidden",
+		first.ID + "/na\x01me.bin", first.ID + "/name.bin ", first.ID + "/nested/name.bin",
+		first.ID + `\name.bin`, "/abs/name.bin", ids.New() + "/missing.bin",
 	} {
 		if _, err := store.ResolveStagedPath(malformed, ""); !errors.Is(err, errStagedNotFound) {
 			t.Fatalf("ResolveStagedPath(%q) = %v, want errStagedNotFound", malformed, err)

@@ -47,6 +47,9 @@ type BlobStore struct {
 	newID          func() string
 	now            func() time.Time
 	logger         *slog.Logger
+	// openAccess 表示部署形态不存在请求身份 (auth=off/回环监听/静态令牌/网关),
+	// 无属主元数据的暂存条目直接放行; 有账号形态保持 false, 无属主一律不可访问。
+	openAccess bool
 }
 
 type stagedBlob struct {
@@ -310,8 +313,8 @@ func (b *BlobStore) writeOwnerMeta(dir string, r *http.Request) error {
 	return os.WriteFile(filepath.Join(dir, blobMetaName), encoded, 0o600)
 }
 
-// canAccess 校验请求身份是暂存条目属主或超管；无属主元数据的存量条目
-// (未启用账号或本改动前的暂存) 保持放行。拒绝与不存在同样回 404, 不泄露存在性。
+// canAccess 校验请求身份是暂存条目属主或超管；无属主元数据的条目仅在没有请求身份的
+// 部署形态 (openAccess) 下放行。拒绝与不存在同样回 404, 不泄露存在性。
 func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 	identity := accountIdentityFrom(r.Context())
 	userID := ""
@@ -324,11 +327,11 @@ func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 }
 
 // canAccessDir 是 canAccess 的按身份判等拆分, 供 HTTP 面与 IPC 面共用;
-// userID 空串表示无身份 (静态令牌/网关/auth=off)。
+// userID 空串表示无身份 (静态令牌/网关/auth=off), 仅 openAccess 形态放行无属主条目。
 func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
 	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
 	if errors.Is(err, os.ErrNotExist) {
-		return true
+		return b.openAccess
 	}
 	if err != nil {
 		return false
@@ -338,7 +341,7 @@ func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
 		return false
 	}
 	if meta.OwnerID == "" {
-		return true
+		return b.openAccess
 	}
 	return userID != "" && (userID == meta.OwnerID || superadmin)
 }

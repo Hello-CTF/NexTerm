@@ -77,7 +77,6 @@ export interface AccountDevice {
 
 export interface AdminSettings {
   registration_open: boolean;
-  public_base_url: string;
   mfa_required: boolean;
 }
 
@@ -305,10 +304,9 @@ export const adminApi = {
 
   settingsGet: () => request<AdminSettings>("GET", "/admin/settings"),
 
-  settingsPut: (settings: { registrationOpen: boolean; publicBaseUrl?: string | null; mfaRequired?: boolean }) =>
+  settingsPut: (settings: { registrationOpen: boolean; mfaRequired?: boolean }) =>
     request<AdminSettings>("PUT", "/admin/settings", {
       registration_open: settings.registrationOpen,
-      ...(settings.publicBaseUrl === undefined ? {} : { public_base_url: settings.publicBaseUrl }),
       ...(settings.mfaRequired === undefined ? {} : { mfa_required: settings.mfaRequired }),
     }, { csrf: true }),
 };

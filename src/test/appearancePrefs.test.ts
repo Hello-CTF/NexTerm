@@ -54,7 +54,7 @@ describe("appearance prefs defaults", () => {
     localStorage.setItem(
       KEY,
       JSON.stringify({
-        uiFontPreset: 15,
+        uiFontPreset: "big",
         uiFontScale: 99,
         terminalFontSize: 99,
         terminalTheme: "blue",
@@ -64,7 +64,7 @@ describe("appearance prefs defaults", () => {
     expect(prefs.getAppearancePrefs()).toEqual({
       uiFontPreset: 13,
       uiFontScale: 2,
-      terminalFontSize: 18,
+      terminalFontSize: 32,
       terminalTheme: "dark",
     });
 
@@ -74,7 +74,7 @@ describe("appearance prefs defaults", () => {
     );
     const reloaded = await loadPrefs();
     expect(reloaded.prefs.getAppearancePrefs().uiFontScale).toBe(1);
-    expect(reloaded.prefs.getAppearancePrefs().terminalFontSize).toBe(12);
+    expect(reloaded.prefs.getAppearancePrefs().terminalFontSize).toBe(8);
   });
 
   it("snaps a stored multiplier to the nearest supported step", async () => {
@@ -111,12 +111,27 @@ describe("appearance prefs persistence", () => {
     });
   });
 
-  it("clamps the terminal font size into 12-18", async () => {
+  it("clamps the terminal font size into 8-32", async () => {
     const { prefs } = await loadPrefs();
     prefs.setTerminalFontSize(99);
-    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(18);
+    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(32);
     prefs.setTerminalFontSize(1);
-    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(12);
+    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(8);
+  });
+
+  it("persists a custom interface font size at 0.5 steps", async () => {
+    const { prefs } = await loadPrefs();
+    prefs.setUiFontPreset(15.5);
+    expect(prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
+    expect(rootStyle("--nx-ui-font-size")).toBe("15.5px");
+
+    const reloaded = await loadPrefs();
+    expect(reloaded.prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
+
+    prefs.setUiFontPreset(99);
+    expect(prefs.getAppearancePrefs().uiFontPreset).toBe(32);
+    prefs.setUiFontPreset(15.26);
+    expect(prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
   });
 
   it("notifies subscribers on change and stays silent on no-op sets", async () => {

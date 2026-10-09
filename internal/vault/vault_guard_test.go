@@ -35,14 +35,14 @@ func TestInitDPAPIRefusesWhenSettingsContainSecretEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := loadTestVault(db, &fakeProtector{})
-	requireVaultCode(t, v.InitDPAPI(ctx), ipc.CodeCrypto)
+	requireVaultCode(t, v.InitDPAPI(ctx, ""), ipc.CodeCrypto)
 	if v.Status().Initialized {
 		t.Fatal("vault must stay uninitialized while settings hold enc:v1: ciphertext")
 	}
 	if err := db.SettingDelete(ctx, "some.setting"); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.InitDPAPI(ctx); err != nil {
+	if err := v.InitDPAPI(ctx, ""); err != nil {
 		t.Fatalf("init after cleanup: %v", err)
 	}
 }
@@ -58,7 +58,7 @@ func TestInitRefusedWhenSettingsUnreadable(t *testing.T) {
 	}
 	v := Load(ctx, db, WithProtector(&fakeProtector{}), func(v *Vault) { v.derive = fastDerive })
 	requireVaultCode(t, v.InitMaster(ctx, "correct-password"), ipc.CodeCrypto)
-	requireVaultCode(t, v.InitDPAPI(ctx), ipc.CodeCrypto)
+	requireVaultCode(t, v.InitDPAPI(ctx, ""), ipc.CodeCrypto)
 	if v.Status().Initialized {
 		t.Fatal("vault must not initialize while settings state is unknown")
 	}

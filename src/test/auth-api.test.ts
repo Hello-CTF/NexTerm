@@ -203,7 +203,7 @@ describe("adminApi 线上契约", () => {
     await adminApi.disableUser("u-2");
     await adminApi.resetUser("u-2");
     await adminApi.settingsGet();
-    await adminApi.settingsPut({ registrationOpen: true, publicBaseUrl: "https://nexterm.example.com" });
+    await adminApi.settingsPut({ registrationOpen: true });
 
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       "GET /admin/users",
@@ -214,7 +214,7 @@ describe("adminApi 线上契约", () => {
       "PUT /admin/settings",
     ]);
     expect(calls[1]?.body).toEqual({ username: "bob", password: "bob-pw-123", display_name: "Bob" });
-    expect(calls[5]?.body).toEqual({ registration_open: true, public_base_url: "https://nexterm.example.com" });
+    expect(calls[5]?.body).toEqual({ registration_open: true });
     expect(calls[2]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 });

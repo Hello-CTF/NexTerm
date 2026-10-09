@@ -261,8 +261,7 @@ export function MemoryCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。默认关闭，逐项开启；
-        记忆按属主隔离。
+        让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。默认开启，可逐项关闭。
       </p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
@@ -405,7 +404,7 @@ export function MemoryCard() {
           </div>
         )
       ) : topics.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有记忆。开启开关后，AI 运行会注入这里的内容。</div>
+        <div className="nx-hint py-2 text-[12px]">还没有记忆。新建后，AI 运行会注入这里的内容。</div>
       ) : (
         <div className="flex flex-col gap-2">
           {topics.map((t) => (

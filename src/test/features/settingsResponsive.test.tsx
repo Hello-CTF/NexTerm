@@ -40,7 +40,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
-vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
@@ -122,6 +121,7 @@ describe("SettingsView 响应式结构", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const container = mounted.container;
+    clickButton(document.getElementById("settings-appearance")!, "高级设置");
     const segmentByLabel = (label: string) =>
       [...container.querySelectorAll(".nx-segment")].find(
         (s) => s.getAttribute("aria-label") === label,
@@ -139,6 +139,29 @@ describe("SettingsView 响应式结构", () => {
     }
   });
 
+  it("外观高级设置与连通性测试默认折叠，可展开", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const appearance = document.getElementById("settings-appearance")!;
+    const appearanceToggle = [...appearance.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级设置",
+    )!;
+    expect(appearanceToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(appearance.querySelector('[aria-label="界面字号"]')).toBeNull();
+    click(appearanceToggle);
+    expect(appearance.querySelector('[aria-label="界面字号"]')).not.toBeNull();
+
+    const aiModel = document.getElementById("settings-ai-model")!;
+    const connToggle = [...aiModel.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "连通性测试",
+    )!;
+    expect(connToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(aiModel.textContent).not.toContain("连通性测试（两步）");
+    click(connToggle);
+    expect(connToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(aiModel.textContent).toContain("连通性测试（两步）");
+  });
+
   it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
@@ -146,8 +169,9 @@ describe("SettingsView 响应式结构", () => {
       (s) => s.textContent === "AI 模型",
     );
     expect(title?.parentElement?.className).toContain("flex-wrap");
+    clickButton(document.getElementById("settings-ai-model")!, "连通性测试");
     const button = [...mounted.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("连通性测试"),
+      b.textContent?.includes("连通性测试（两步）"),
     );
     expect(button?.className).toContain("whitespace-normal");
     expect(button?.className).toContain("h-auto");
@@ -165,6 +189,7 @@ describe("SettingsView 响应式结构", () => {
   it("连通性成功用成功色、失败用危险色", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
+    clickButton(mounted.container, "连通性测试");
     clickButton(mounted.container, "连通性测试（两步）· 当前模型");
     await flush();
     const okAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>

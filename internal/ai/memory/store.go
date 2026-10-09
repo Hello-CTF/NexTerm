@@ -258,6 +258,10 @@ func (s *Store) Index(ctx context.Context, scope Scope) ([]TopicIndex, error) {
 	return result, nil
 }
 
+func defaultSettings() Settings {
+	return Settings{InjectionEnabled: true, ToolsEnabled: true}
+}
+
 func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	scope, err := normalizeScope(scope)
 	if err != nil {
@@ -267,7 +271,7 @@ func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	err = s.db.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
 		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).Scan(&settings.InjectionEnabled, &settings.ToolsEnabled, &settings.Version)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Settings{}, nil
+		return defaultSettings(), nil
 	}
 	if err != nil {
 		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
@@ -301,7 +305,9 @@ func (s *Store) UpdateSettings(ctx context.Context, scope Scope, input SettingsI
 	err = tx.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
 		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).
 		Scan(&current.InjectionEnabled, &current.ToolsEnabled, &current.Version)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
+		current = defaultSettings()
+	} else if err != nil {
 		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
 	}
 	if current.Version != expectedVersion {

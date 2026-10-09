@@ -74,6 +74,13 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_conversation_retitle", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+			}) (string, error) {
+				return r.RetitleConversation(ctx, args.ConversationID)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_confirm", func(ctx context.Context, call *ipc.Call, args Confirmation) (any, error) {
 				return nil, r.ConfirmStream(ctx, args, channelStreamFactory(call))
 			})

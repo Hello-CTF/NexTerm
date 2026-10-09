@@ -177,7 +177,7 @@ func TestSystemModeFirstRunReloadAndNoAutoLock(t *testing.T) {
 	protector := &fakeProtector{}
 	now := int64(1000)
 	v := loadTestVault(db, protector, func(v *Vault) { v.now = func() int64 { return now } })
-	if err := v.InitDPAPI(ctx); err != nil {
+	if err := v.InitDPAPI(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if status := v.Status(); status.Mode != "dpapi" || !status.Unlocked {
@@ -242,7 +242,7 @@ func TestSystemModeHealsOnlyWhenNoSecretsExist(t *testing.T) {
 	if degraded.Status().Initialized {
 		t.Fatal("vault with ciphertext and no key must not regenerate")
 	}
-	err := degraded.InitDPAPI(ctx)
+	err := degraded.InitDPAPI(ctx, "")
 	requireVaultCode(t, err, ipc.CodeCrypto)
 	if protectorWithSecret.protectCalls != 0 {
 		t.Fatal("protector must not be called when existing secrets would be destroyed")

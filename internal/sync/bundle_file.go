@@ -11,8 +11,6 @@ import (
 
 const maxBundleFileBytes = 8 << 20
 
-const bundlePlaintextWarning = "资产包以明文导出，获得文件的人都能直接读取其中的凭据，请妥善保管"
-
 type BundleFileRequest struct {
 	Path     string `json:"path"`
 	Content  string `json:"content"`
@@ -28,8 +26,7 @@ type BundleWriteOptions struct {
 }
 
 type BundleWriteResult struct {
-	Encrypted bool   `json:"encrypted"`
-	Warning   string `json:"warning,omitempty"`
+	Encrypted bool `json:"encrypted"`
 }
 
 func (s *Service) ReadBundleFileWithOptions(_ context.Context, path string, opts BundleReadOptions) (string, error) {
@@ -78,9 +75,5 @@ func (s *Service) WriteBundleFileWithOptions(_ context.Context, path string, con
 	if err := os.Chmod(trimmed, 0o600); err != nil {
 		return nil, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("无法设置资产包文件权限: %v", err))
 	}
-	result := &BundleWriteResult{Encrypted: opts.Password != ""}
-	if !result.Encrypted {
-		result.Warning = bundlePlaintextWarning
-	}
-	return result, nil
+	return &BundleWriteResult{Encrypted: true}, nil
 }

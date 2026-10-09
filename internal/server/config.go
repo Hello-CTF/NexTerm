@@ -32,7 +32,6 @@ type Options struct {
 	MasterKey      string
 	SyncOnly       bool
 	Auth           string
-	PublicBaseURL  string
 	AllowedOrigins []string
 }
 
@@ -64,9 +63,9 @@ func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 	if webRoot == "" && !parsed.SyncOnly && !parsed.Help && !parsed.Version {
 		webRoot = ProbeWebRoot()
 	}
-	masterKey := parsed.MasterKey
+	masterKey := ""
 	if !parsed.Help && !parsed.Version {
-		masterKey, err = ResolveMasterKey(parsed.MasterKey, parsed.MasterKeyFile)
+		masterKey, err = ResolveMasterKey(parsed.MasterKeyFile)
 		if err != nil {
 			return Invocation{}, err
 		}
@@ -76,18 +75,14 @@ func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 		Options: Options{
 			Listen: parsed.Listen, DataDir: dataDir, WebRoot: webRoot,
 			MasterKey: masterKey, SyncOnly: parsed.SyncOnly, Auth: parsed.Auth,
-			PublicBaseURL: parsed.PublicBaseURL,
 		},
 		Help: parsed.Help, Version: parsed.Version,
 	}, nil
 }
 
-func ResolveMasterKey(masterKey, masterKeyFile string) (string, error) {
+func ResolveMasterKey(masterKeyFile string) (string, error) {
 	if masterKeyFile == "" {
-		return masterKey, nil
-	}
-	if masterKey != "" {
-		return "", fmt.Errorf("--master-key and --master-key-file cannot be combined")
+		return "", nil
 	}
 	data, err := os.ReadFile(masterKeyFile)
 	if err != nil {
@@ -136,15 +131,11 @@ Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
   --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
   --web-root PATH     Web assets directory (env NEXTERM_WEB_ROOT)
-  --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY, deprecated; use --master-key-file)
   --master-key-file PATH  Read the vault master key from a file (env NEXTERM_MASTER_KEY_FILE)
   --auth MODE         Access control: on, loopback, or off (env NEXTERM_AUTH, default on)
                       on = account sessions; loopback = no auth on a loopback listener;
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
-  --public-base-url URL  Default file access base URL for public image links
-                      (env NEXTERM_PUBLIC_BASE_URL); http/https only, path prefix allowed,
-                      userinfo/query/fragment rejected; unset = same-origin relative links
   --db BACKEND        Database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
                       postgres runs the embedded migrations/postgres schema and, in this first
                       version, supports a single writer instance only

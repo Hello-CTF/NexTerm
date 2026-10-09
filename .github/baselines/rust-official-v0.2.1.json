@@ -47,8 +47,8 @@
     "ids": [
       "desktop-nsis-windows-arm64",
       "desktop-dmg-darwin-amd64",
-      "desktop-linux-archive-linux-amd64",
-      "desktop-linux-archive-linux-arm64",
+      "desktop-linux-deb-linux-amd64",
+      "desktop-linux-deb-linux-arm64",
       "server-archive-full-linux-arm64"
     ]
   }

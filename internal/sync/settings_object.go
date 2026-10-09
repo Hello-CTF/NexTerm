@@ -168,10 +168,14 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated
 	return tx.Commit()
 }
 
-// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, 历史明文原样, enc:v1: 信封走凭据库。
+// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, enc:v1: 信封走凭据库;
+// 历史明文不再识别, 报错引导重新保存。
 func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string, error) {
-	if stored == "" || !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
-		return stored, nil
+	if stored == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
+		return "", ipc.NewError(ipc.CodeCrypto, "该档案的 API Key 为旧版明文存储，请在设置中重新保存")
 	}
 	if e.vault == nil {
 		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")

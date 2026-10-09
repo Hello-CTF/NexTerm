@@ -65,24 +65,35 @@ const NOT_INIT_VAULT = {
   mode: "not_init" as const,
   unlocked: false,
   autoLockMinutes: 30,
+  passwordless: false,
 };
 const DPAPI_VAULT = {
   initialized: true,
   mode: "dpapi" as const,
   unlocked: true,
   autoLockMinutes: 30,
+  passwordless: false,
 };
 const LOCKED_VAULT = {
   initialized: true,
   mode: "master" as const,
   unlocked: false,
   autoLockMinutes: 30,
+  passwordless: false,
+};
+const PASSWORDLESS_LOCKED_VAULT = {
+  initialized: true,
+  mode: "master" as const,
+  unlocked: false,
+  autoLockMinutes: 30,
+  passwordless: true,
 };
 const MASTER_UNLOCKED_VAULT = {
   initialized: true,
   mode: "master" as const,
   unlocked: true,
   autoLockMinutes: 30,
+  passwordless: false,
 };
 const EXISTING_ASSET = {
   id: "a1",
@@ -210,10 +221,25 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     const submit = [...initModal()!.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "启用保护",
     )!;
-    expect(submit.disabled).toBe(true);
     setInputValue(initPasswordInput(), "short");
     expect(submit.disabled).toBe(true);
     expect(mocks.initMaster).not.toHaveBeenCalled();
+  });
+
+  it("初始化浮层留空密码可直接完成初始化", async () => {
+    mounted = withClient(createElement(CredentialsSidebar));
+    await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
+    click(mounted!.container.querySelector('button[title="新建凭据"]')!);
+    await flushUntil(() => !!initModal());
+
+    const submit = [...initModal()!.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "启用保护",
+    )!;
+    expect(submit.disabled).toBe(false);
+    submit.click();
+    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+    expect(mocks.initMaster).toHaveBeenCalledWith("");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
   });
 
   it("取消初始化则不打开新建表单，也不调用初始化", async () => {
@@ -523,6 +549,31 @@ describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
     });
     await flushUntil(() => onSaved.mock.calls.length > 0);
     expect(onSaved).toHaveBeenCalledWith("cred-1");
+  });
+
+  it("无密码凭据库锁定后保存直接静默解锁，不弹密码输入", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_LOCKED_VAULT);
+    const onSaved = vi.fn();
+    mounted = withClient(
+      createElement(NewCredentialModal, { onClose: () => {}, onSaved }),
+    );
+    const nameInput = mounted.container.querySelector<HTMLInputElement>(
+      'input[placeholder="例如：db-prod"]',
+    );
+    if (!nameInput) throw new Error("name input not found");
+    setInputValue(nameInput, "db-prod");
+    const valueInput = mounted.container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (!valueInput) throw new Error("value input not found");
+    setInputValue(valueInput, "s3cret");
+
+    clickButton(mounted!.container, "保存");
+    await flushUntil(() => mocks.setCredential.mock.calls.length > 0);
+    expect(mocks.promptText).not.toHaveBeenCalled();
+    expect(mocks.unlock).toHaveBeenCalledWith("");
+    expect(mocks.setCredential).toHaveBeenCalledWith("db-prod", "password", "s3cret", {
+      source: undefined,
+    });
+    await flushUntil(() => onSaved.mock.calls.length > 0);
   });
 
   it("解锁失败不创建凭据，已填内容保留", async () => {

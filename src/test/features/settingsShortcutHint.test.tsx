@@ -33,10 +33,6 @@ vi.mock("../../ipc/commands", () => ({
     setPermission: vi.fn(),
     testProvider: vi.fn(),
   },
-  filesApi: {
-    settingsGet: vi.fn().mockResolvedValue({ publicBaseURL: "" }),
-    settingsSet: vi.fn(),
-  },
 }));
 
 vi.mock("../../ui/dialogs", () => ({
@@ -55,7 +51,6 @@ vi.mock("../../ipc/env", async (importOriginal) => {
 vi.mock("../../features/settings/AppearanceCard", () => ({ AppearanceCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
-vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
 vi.mock("../../features/settings/SyncBundleCard", () => ({ SyncBundleCard: () => null }));
 vi.mock("../../features/settings/ShareCard", () => ({ ShareCard: () => null }));

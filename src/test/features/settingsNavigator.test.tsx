@@ -36,7 +36,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), promptText: vi.fn() }));
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
-vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 
@@ -82,8 +81,8 @@ function tocToggle(): HTMLButtonElement {
 }
 
 const SECTION_LABELS = [
-  "外观", "终端", "AI 模型", "AI 拦截", "长期记忆", "定时任务",
-  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键",
+  "外观", "终端", "AI 模型", "AI 拦截", "长期记忆",
+  "凭据保护", "已知主机", "账号同步", "资产包", "分享", "快捷键",
 ];
 
 beforeEach(() => {
@@ -117,8 +116,8 @@ describe("设置分区导航", () => {
     expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
     const ids = [
       "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
-      "settings-memory", "settings-cron", "settings-vault", "settings-known-hosts",
-      "settings-account", "settings-bundle", "settings-files", "settings-share", "settings-shortcuts",
+      "settings-memory", "settings-vault", "settings-known-hosts",
+      "settings-account", "settings-bundle", "settings-share", "settings-shortcuts",
     ];
     for (const id of ids) {
       expect(document.getElementById(id), `missing section #${id}`).not.toBeNull();
@@ -155,6 +154,9 @@ describe("设置分区导航", () => {
     const toggle = tocToggle();
     expect(toggle.getAttribute("aria-label")).toBe("收起设置目录");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    for (const button of tocButtons()) {
+      expect(button.className).toContain("whitespace-nowrap");
+    }
 
     click(tocButtons().find((c) => c.textContent?.trim() === "凭据保护")!);
     click(toggle);
@@ -164,6 +166,8 @@ describe("设置分区导航", () => {
     expect(tocButtons().length).toBe(0);
     const summary = toc().querySelector("span");
     expect(summary?.textContent).toBe("凭据保护");
+    expect(summary?.className).toContain("truncate");
+    expect(summary?.getAttribute("title")).toBe("凭据保护");
 
     click(tocToggle());
     await flush();
@@ -227,7 +231,8 @@ describe("AI 拦截规则文案", () => {
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
     expect(text).toContain("读写与完全静默模式下每次先向你确认");
     expect(text).toContain("只读与无人值守模式下直接拒绝");
-    expect(text).toContain("规则命中 → 读写/完全静默先确认，只读/无人值守直接拒绝");
+    expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝");
+    expect(text).not.toContain("规则命中 → 读写/完全静默先确认");
     expect(text).not.toContain("命中即拦截");
   });
 });

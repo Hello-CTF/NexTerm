@@ -3,7 +3,6 @@ package account
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -49,52 +48,14 @@ func writeTOTPKeyFile(path string, key []byte) error {
 	return nil
 }
 
-// legacyTOTPKey 读取旧版本存放在 setting 表的全局密钥(仅迁移用途, 读出不删)。
-func (a *Accounts) legacyTOTPKey(ctx context.Context) ([]byte, bool, error) {
-	var value string
-	err := a.db.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", totpKeySetting).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, dbError(err)
-	}
-	key, err := base64.StdEncoding.DecodeString(value)
-	if err != nil || len(key) != totpKeyBytes {
-		return nil, false, ipc.NewError(ipc.CodeCrypto, "加密错误: TOTP 存储密钥损坏")
-	}
-	return key, true, nil
+// legacyTOTPKeyPresent 检测 setting 表是否残留旧版本存放的 TOTP 全局密钥行。
+func (a *Accounts) legacyTOTPKeyPresent(ctx context.Context) bool {
+	var count int
+	err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Scan(&count)
+	return err == nil && count > 0
 }
 
-func (a *Accounts) deleteLegacyTOTPKey(ctx context.Context) error {
-	if _, err := a.db.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", totpKeySetting); err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
-// MigrateTOTPStorageKey 在启动时把 setting 表里的旧版 TOTP 全局密钥迁移到库外密钥文件:
-// 文件缺失时以库内密钥为准重建文件, 文件已存在时仅清理库内残留副本。
-func (a *Accounts) MigrateTOTPStorageKey(ctx context.Context) error {
-	if a.totpKeyPath == "" {
-		return nil
-	}
-	legacy, found, err := a.legacyTOTPKey(ctx)
-	if err != nil || !found {
-		return err
-	}
-	if _, statErr := os.Stat(a.totpKeyPath); statErr != nil {
-		if !errors.Is(statErr, os.ErrNotExist) {
-			return ipc.WrapError(ipc.CodeCrypto, "加密错误: TOTP 存储密钥文件不可访问", statErr)
-		}
-		if err := writeTOTPKeyFile(a.totpKeyPath, legacy); err != nil {
-			return err
-		}
-	}
-	return a.deleteLegacyTOTPKey(ctx)
-}
-
-func (a *Accounts) totpKey(ctx context.Context) ([]byte, error) {
+func (a *Accounts) totpKey() ([]byte, error) {
 	if a.totpKeyPath == "" {
 		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: TOTP 存储密钥未配置(缺少库外密钥文件)")
 	}
@@ -106,17 +67,6 @@ func (a *Accounts) totpKey(ctx context.Context) ([]byte, error) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
-	}
-	if legacy, found, err := a.legacyTOTPKey(ctx); err != nil {
-		return nil, err
-	} else if found {
-		if err := writeTOTPKeyFile(a.totpKeyPath, legacy); err != nil {
-			return nil, err
-		}
-		if err := a.deleteLegacyTOTPKey(ctx); err != nil {
-			return nil, err
-		}
-		return legacy, nil
 	}
 	key = make([]byte, totpKeyBytes)
 	if _, err := rand.Read(key); err != nil {

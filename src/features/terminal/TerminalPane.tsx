@@ -16,17 +16,16 @@ import {
 } from "./broadcast";
 import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, terminalApi, filesApi, assetApi } from "../../ipc/commands";
+import { sessionApi, terminalApi, fsApi, assetApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
-import { fetchImageService, uploadImage } from "../../ipc/webFiles";
-import { clientId, WEB } from "../../ipc/env";
+import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
-import { bytesToBase64, describeImageUploadFailure, markdownImageLink } from "./imagePaste";
+import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
 import {
   THROTTLE_RECOVERED_MS,
   throttleStateFrom,
@@ -137,12 +136,13 @@ export function TerminalPane({
   const [cwd, setCwd] = useState<string | null>(null);
   const [durable, setDurable] = useState(false);
   const [imagePaste, setImagePaste] = useState<{
-    phase: "uploading" | "saving" | "success" | "error";
+    phase: "uploading" | "success" | "error";
     message: string;
   } | null>(null);
   const [broadcastPickerOpen, setBroadcastPickerOpen] = useState(false);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
+  const resumeAttemptedRef = useRef(false);
   const observerHintAt = useRef(0);
   const writeErrorAt = useRef(0);
   const broadcastSkipAt = useRef(0);
@@ -566,7 +566,7 @@ export function TerminalPane({
   const handleAttachDead = useCallback(
     (code: string) => {
       if (code !== "not_found") return;
-      useUi.getState().updateTab(storeTabId, { tabId: undefined, dead: true });
+      useUi.getState().updateTab(storeTabId, { dead: true });
       setKernelTabId(null);
       setAttachDead(true);
     },
@@ -592,14 +592,21 @@ export function TerminalPane({
       }
       const list = useUi.getState().sessions;
       useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
-      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false, exited: false });
-      resumeRef.current = undefined;
+      const current = useUi
+        .getState()
+        .workspaces.flatMap((w) => w.panes)
+        .flatMap((p) => p.tabs)
+        .find((t) => t.id === storeTabId);
+      const resumeId = resumeAttemptedRef.current ? undefined : current?.tabId;
+      resumeAttemptedRef.current = resumeId !== undefined;
+      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: resumeId, dead: false, exited: false });
+      resumeRef.current = resumeId;
       setControl(null);
       setRemoteGrid(null);
       setAttachDead(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
-      pushToast("info", "已重新连接，正在打开一个新的终端");
+      pushToast("info", resumeId ? "已重新连接，正在接回原来的终端" : "已重新连接，正在打开一个新的终端");
     } catch (e) {
       pushToast("error", `重新连接失败：${describeError(e)}`);
     } finally {
@@ -732,68 +739,29 @@ export function TerminalPane({
         pushToast("info", "终端正由其他设备操作，点「接管控制」可接手");
         return;
       }
-      setImagePaste({ phase: "uploading", message: `正在上传 ${files.length} 张图片到服务端图床（限时公开链接）…` });
+      setImagePaste({
+        phase: "uploading",
+        message: `正在上传 ${files.length} 张图片到这台主机的 /tmp…`,
+      });
       try {
-        const service = await fetchImageService();
-        if (service) {
-          const links: string[] = [];
-          for (const file of files) {
-            const result = await uploadImage(file);
-            links.push(markdownImageLink(file.name, result.url));
-          }
-          handleRef.current?.paste(links.join(" "));
-          setImagePaste({
-            phase: "success",
-            message: `已插入 ${links.length} 张图片的 Markdown 链接（限时公开链接，过期后失效）`,
-          });
-          return;
-        }
-        if (WEB) {
-          setImagePaste({
-            phase: "error",
-            message:
-              "服务端未提供图片上传服务（未配置图床）。图片没有被上传到任何服务器；可请管理员为服务端配置数据目录后重试。",
-          });
-          return;
-        }
-        const confirmed = await ask(
-          "当前连接没有可用的图片上传服务。改为把图片保存到本地文件，并在光标处插入本地路径的 Markdown 链接？图片不会上传到任何服务器。",
-          { title: "图片粘贴", kind: "info" },
-        );
-        if (!confirmed) {
-          setImagePaste(null);
-          return;
-        }
-        setImagePaste({ phase: "saving", message: "正在保存到本地…" });
+        const stamp = Date.now();
         const links: string[] = [];
-        try {
-          for (const file of files) {
-            const path = await pickSavePath(file.name || "pasted-image.png");
-            if (!path) {
-              setImagePaste({
-                phase: "error",
-                message: "已取消保存：图片未上传，终端输入未改动。",
-              });
-              return;
-            }
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const saved = await filesApi.saveImage(path, bytesToBase64(bytes));
-            links.push(markdownImageLink(file.name, saved.path));
-          }
-        } catch (e) {
-          setImagePaste({ phase: "error", message: `保存图片到本地失败：${describeError(e)}` });
-          return;
+        for (const [index, file] of files.entries()) {
+          const path = `/tmp/nexterm-paste-${stamp}-${index + 1}.${pasteFileExtension(file)}`;
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          await fsApi.write(sessionId, path, bytesToBase64(bytes), false);
+          links.push(markdownFileLink(file.name, path));
         }
         handleRef.current?.paste(links.join(" "));
         setImagePaste({
           phase: "success",
-          message: `已保存到本地并插入 ${links.length} 个 Markdown 链接（未上传到任何服务器）`,
+          message: `已上传 ${links.length} 张图片到这台主机的 /tmp 并插入链接`,
         });
       } catch (e) {
-        setImagePaste({ phase: "error", message: describeImageUploadFailure(e) });
+        setImagePaste({ phase: "error", message: `图片上传到 /tmp 失败：${describeError(e)}` });
       }
     },
-    [kernelTabId, isObserver, pushToast],
+    [kernelTabId, isObserver, pushToast, sessionId],
   );
 
   const pasteImagesFromClipboard = async () => {
@@ -968,7 +936,7 @@ export function TerminalPane({
       {
         kind: "item",
         label: "粘贴图片",
-        hint: "上传图床或存本地，插入链接",
+        hint: "上传到这台主机的 /tmp，插入链接",
         disabled: !kernelTabId,
         onSelect: () => void pasteImagesFromClipboard(),
       },
@@ -1275,6 +1243,7 @@ export function TerminalPane({
                 setKernelTabId(id);
                 setAttachDead(false);
                 setThrottle(null);
+                resumeAttemptedRef.current = false;
                 useUi.getState().updateTab(storeTabId, { tabId: id, exited: false });
                 if (isStoreTabDead(storeTabId)) {
                   useUi.getState().updateTab(storeTabId, { dead: false });
@@ -1368,7 +1337,7 @@ export function TerminalPane({
                     : "border-neutral-600/60 bg-neutral-900/95 text-neutral-200"
               }`}
             >
-              {(imagePaste.phase === "uploading" || imagePaste.phase === "saving") && (
+              {imagePaste.phase === "uploading" && (
                 <IconRefresh size={13} className="shrink-0 animate-spin" />
               )}
               <span className="min-w-0 break-all">{imagePaste.message}</span>
@@ -1394,7 +1363,7 @@ export function TerminalPane({
                 这个终端已失效
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                它所属的连接在服务端已经不在了（服务端重启，或连接已被回收）。重新连接会在这个标签里打开一个新的终端，当前显示的内容会被清空；已经产生的输出仍可在「终端历史」中查看。
+                它所属的连接在服务端已经不在了（服务端重启，或连接已被回收）。如果这个终端仍在后台运行，重新连接会接回它并回放之前的输出；否则会在这个标签里打开一个新的终端。已经产生的输出也可在「终端历史」中查看。
               </span>
               <div className="flex items-center gap-2">
                 <button

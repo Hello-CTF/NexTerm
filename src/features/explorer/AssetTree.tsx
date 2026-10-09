@@ -1086,7 +1086,6 @@ type CredChoice = "new" | "none" | string;
 
 const CRED_KIND_LABEL: Record<string, string> = {
   password: "密码",
-  passphrase: "私钥口令",
   private_key: "私钥",
   api_key: "API Key",
 };
@@ -1974,14 +1973,12 @@ export function AssetEditor({
                       placeholder={
                         keyOrigin === "vault" && vaultMode === "existing"
                           ? "口令跟着所选凭据，改它请去凭据库"
-                          : hasBoundPassphrase
-                            ? "已设置口令 · 留空保持不变"
-                            : "没有就留空"
+                          : "没有就留空"
                       }
                     />
                     <div className="nx-hint mt-1.5">
                       ↳ 选填。私钥本身带口令才需要填，连接时自动使用。
-                      {keyOrigin === "ref" && !passphrase && !hasBoundPassphrase
+                      {keyOrigin === "ref" && !passphrase
                         ? " 留空时只引用本地文件，凭据库不存内容。"
                         : ""}
                     </div>

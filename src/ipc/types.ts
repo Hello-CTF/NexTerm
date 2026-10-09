@@ -224,7 +224,7 @@ export type AuditCountDto = { total: number, };
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 
 export type VaultStatusDto = { initialized: boolean, 
-mode: string, unlocked: boolean, autoLockMinutes: number, };
+mode: string, unlocked: boolean, autoLockMinutes: number, passwordless: boolean, };
 
 export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
 

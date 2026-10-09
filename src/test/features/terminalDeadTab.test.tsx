@@ -244,7 +244,7 @@ describe("terminal dead-tab overlay", () => {
 
     await waitFor(() => expect(overlay()).not.toBeNull());
     expect(storeTab()?.dead).toBe(true);
-    expect(storeTab()?.tabId).toBeUndefined();
+    expect(storeTab()?.tabId).toBe("kernel-1");
   });
 
   it("keeps the terminal on other attach failures such as bad_param", async () => {
@@ -259,7 +259,7 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.dead).not.toBe(true);
   });
 
-  it("reconnects with the workspace asset and recovers into a fresh terminal", async () => {
+  it("reconnects with the workspace asset and resumes the old terminal id first", async () => {
     seedTab();
     mounted = mountPane();
     await flush();
@@ -273,7 +273,33 @@ describe("terminal dead-tab overlay", () => {
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     expect(storeTab()?.dead).toBe(false);
     expect(storeTab()?.sessionId).toBe("s2");
+    await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
+    expect(storeTab()?.tabId).toBe("kernel-1");
+    expect(toastTexts()).toContain("正在接回原来的终端");
+  });
+
+  it("falls back to a fresh terminal when the resumed id is still not found", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "重新连接这台主机");
+    await flush();
+    await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
+
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "重新连接这台主机");
+    await flush();
+    await waitFor(() => expect(overlay()).toBeNull());
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(storeTab()?.dead).toBe(false);
+    expect(storeTab()?.tabId).toBeUndefined();
     await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
+    expect(toastTexts()).toContain("正在打开一个新的终端");
   });
 
   it("never auto-trusts a changed host key during reconnect", async () => {

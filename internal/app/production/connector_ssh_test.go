@@ -375,6 +375,17 @@ func TestProductionSSHKeyboardInteractiveFailureDoesNotLeakSecret(t *testing.T) 
 	}
 }
 
+func TestProductionSSHAssetWithoutCredentialConnects(t *testing.T) {
+	server := newSSHConnectorServer(t, func(config *gossh.ServerConfig) {
+		config.NoClientAuth = true
+	})
+	production := newHostKeyTestProduction(t)
+	assetID := createConnectorTestAsset(t, production, "no-credential", "127.0.0.1", server.port(), "password", "",
+		`{"autoAcceptUnknownHost":true}`)
+	connected := connectHostKeyTestAsset(t, production, assetID)
+	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
+}
+
 func TestProductionSSHCertificateAsset(t *testing.T) {
 	_, caPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

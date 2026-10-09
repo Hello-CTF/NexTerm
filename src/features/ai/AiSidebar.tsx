@@ -14,8 +14,11 @@ import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keyb
 import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
 import { isImeKeyEvent } from "../../ui/DialogHost";
+import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
+import { DESKTOP } from "../../ipc/env";
 import { ModelPanel } from "./ModelPanel";
 import { GrantPanel } from "./GrantPanel";
+import { CronPanel } from "./CronPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
@@ -52,6 +55,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconChevronUp,
+  IconClock,
   IconClose,
   IconEdit,
   IconHistory,
@@ -112,30 +116,14 @@ function extractUrls(text: string): string[] {
   return [...new Set(found)];
 }
 
-const CONVERSATION_KEY = "nexterm.ai.conversation.v1";
-
-function loadPersistedConversationId(): string | undefined {
-  try {
-    return localStorage.getItem(CONVERSATION_KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function persistConversationId(id: string | undefined): void {
-  try {
-    if (id) localStorage.setItem(CONVERSATION_KEY, id);
-    else localStorage.removeItem(CONVERSATION_KEY);
-  } catch {
-  }
-}
-
 // 各 AI 标签的忙状态登记处: 全局 aiBusy = 任一标签忙; 标签页圆点经同一登记处刷新。
 const aiTabBusyIds = new Set<string>();
+const aiTabBusyJobIds = new Map<string, string>();
 const aiTabBusyListeners = new Set<() => void>();
 let aiTabBusyVersion = 0;
 
 function setAiTabBusy(tabKey: string, busy: boolean): void {
+  if (!busy) aiTabBusyJobIds.delete(tabKey);
   if (aiTabBusyIds.has(tabKey) === busy) return;
   if (busy) aiTabBusyIds.add(tabKey);
   else aiTabBusyIds.delete(tabKey);
@@ -175,12 +163,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const aiSidebarKeyLabel = formatBinding(bindings.toggleAiSidebar);
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   useSyncExternalStore(subscribeAiTabBusy, getAiTabBusyVersion);
+  const [tabMenu, setTabMenu] = useState<ContextMenuState | null>(null);
+  const [retitlingTabId, setRetitlingTabId] = useState<string | null>(null);
 
   const boardKey =
     activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.id : GLOBAL_AI_BOARD_KEY;
   useEffect(() => {
     ensureAiBoard(boardKey);
   }, [boardKey, ensureAiBoard]);
+  useEffect(() => {
+    try {
+      localStorage.removeItem("nexterm.ai.conversation.v1");
+    } catch {
+    }
+  }, []);
 
   const board = aiBoards[boardKey];
   const tabs = board?.tabs ?? [];
@@ -203,12 +199,41 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     [boardKey, updateAiTab],
   );
 
-  const requestCloseTab = (tab: AiDockTab) => {
+  const retitleTab = async (tab: AiDockTab) => {
+    if (!tab.conversationId || retitlingTabId) return;
+    setRetitlingTabId(tab.id);
+    try {
+      const title = await aiApi.conversationRetitle(tab.conversationId);
+      updateAiTab(boardKey, tab.id, { title });
+    } catch (e) {
+      pushToast("error", `重新生成标题失败：${describeError(e)}`);
+    } finally {
+      setRetitlingTabId(null);
+    }
+  };
+
+  const closeTabWithGuard = async (tab: AiDockTab) => {
     if (aiTabBusyIds.has(tab.id)) {
-      pushToast("info", "这一轮仍在运行，请先停止再关闭标签");
-      return;
+      const ok = await ask("这一轮仍在运行，关闭将停止它。关闭这个标签？", {
+        title: "关闭 AI 标签",
+        kind: "warning",
+      });
+      if (!ok) return;
+      const jobId = aiTabBusyJobIds.get(tab.id);
+      if (jobId) await aiApi.cancel(jobId).catch(() => undefined);
+      setAiTabBusy(tab.id, false);
     }
     closeAiTab(boardKey, tab.id);
+  };
+  const requestCloseTab = (tab: AiDockTab) => {
+    void closeTabWithGuard(tab);
+  };
+  const closeTabsInOrder = (targets: AiDockTab[]) => {
+    void (async () => {
+      for (const tab of targets) {
+        await closeTabWithGuard(tab);
+      }
+    })();
   };
 
   const scopeLabel =
@@ -271,6 +296,40 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                     setActiveAiTab(boardKey, t.id);
                   }
                 }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const tabIndex = tabs.findIndex((candidate) => candidate.id === t.id);
+                  setTabMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    title: t.title,
+                    items: [
+                      {
+                        kind: "item",
+                        label: "重新生成标题",
+                        disabled:
+                          !t.conversationId ||
+                          aiTabBusyIds.has(t.id) ||
+                          retitlingTabId === t.id,
+                        onSelect: () => void retitleTab(t),
+                      },
+                      { kind: "separator" },
+                      { kind: "item", label: "关闭", onSelect: () => requestCloseTab(t) },
+                      {
+                        kind: "item",
+                        label: "关闭左边全部",
+                        disabled: tabIndex <= 0,
+                        onSelect: () => closeTabsInOrder(tabs.slice(0, tabIndex)),
+                      },
+                      {
+                        kind: "item",
+                        label: "关闭右边全部",
+                        disabled: tabIndex < 0 || tabIndex >= tabs.length - 1,
+                        onSelect: () => closeTabsInOrder(tabs.slice(tabIndex + 1)),
+                      },
+                    ],
+                  });
+                }}
               >
                 {aiTabBusyIds.has(t.id) && (
                   <span className="nx-dot nx-dot-pulse shrink-0" aria-label="运行中" />
@@ -311,7 +370,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             sessionId={sessionId}
             tabId={tabId}
             conversationId={t.conversationId}
-            allowLegacyRestore={boardKey === GLOBAL_AI_BOARD_KEY && tabs.length === 1}
             active={t.id === activeTabId}
             tabKey={t.id}
             onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}
@@ -319,6 +377,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           />
         </div>
       ))}
+
+      <ContextMenu state={tabMenu} onClose={() => setTabMenu(null)} />
     </aside>
   );
 }
@@ -327,7 +387,6 @@ interface AiChatTabProps {
   sessionId?: string;
   tabId?: string;
   conversationId?: string;
-  allowLegacyRestore: boolean;
   active: boolean;
   tabKey: string;
   onConversationChange: (conversationId: string | undefined, title?: string) => void;
@@ -338,7 +397,6 @@ function AiChatTab({
   sessionId,
   tabId,
   conversationId: boundConversationId,
-  allowLegacyRestore,
   active,
   tabKey,
   onConversationChange,
@@ -380,6 +438,8 @@ function AiChatTab({
   const setActiveRun = (run: AiRunSlot) => {
     activeRunRef.current = run;
     setActiveGeneration(run.generation);
+    if (run.jobId && !run.settled) aiTabBusyJobIds.set(tabKey, run.jobId);
+    else aiTabBusyJobIds.delete(tabKey);
   };
   const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
   const runChannelRef = useRef<{
@@ -432,7 +492,7 @@ function AiChatTab({
   };
   const markSyncing = (generation: number) => {
     const current = activeRunRef.current;
-    if (!isCurrentAiRun(current, generation) || current.settled) return;
+    if (!isCurrentAiRun(current, generation)) return;
     if (syncTimerRef.current !== null) {
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
@@ -441,7 +501,7 @@ function AiChatTab({
   };
   const markSynced = (generation: number, count: number) => {
     const current = activeRunRef.current;
-    if (!isCurrentAiRun(current, generation) || current.settled) return;
+    if (!isCurrentAiRun(current, generation)) return;
     setSyncNotice((prev) =>
       prev && prev.generation === generation ? { generation, phase: "synced", count } : prev,
     );
@@ -479,13 +539,13 @@ function AiChatTab({
   const updateConversationId = (id: string | undefined, title?: string) => {
     conversationIdRef.current = id;
     setConversationId(id);
-    persistConversationId(id);
     onConversationChange(id, title);
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
+  const [cronOpen, setCronOpen] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
@@ -495,6 +555,7 @@ function AiChatTab({
   const [historyStatus, setHistoryStatus] = useState<"loading" | "error" | "ready">("ready");
   const [historyError, setHistoryError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const follow = useConversationFollow(conv.items);
   const virtual = useVirtualWindow(conv.items.length);
   const setScrollEl = useCallback(
@@ -538,6 +599,10 @@ function AiChatTab({
         .catch(() => undefined);
     }
   }, [permOpen]);
+
+  useEffect(() => {
+    if (!conversationId) setCronOpen(false);
+  }, [conversationId]);
 
   const savePerm = async (next: AiPermissionConfig) => {
     const prev = perm;
@@ -666,6 +731,8 @@ function AiChatTab({
       if (!isCurrentAiRun(current, generation) || current.settled) return;
       if (attempt >= RESYNC_MAX_ATTEMPTS) {
         markSyncFailed(generation);
+        setActiveRun(settleAiRun(current));
+        setBusy(false);
         return;
       }
       clearResyncTimer(generation);
@@ -685,7 +752,11 @@ function AiChatTab({
 
   const armExpiryWatch = (jobId: string) => {
     const restored = restoredChannelRef.current;
-    if (!restored || restored.jobId !== jobId || restored.expiryRetries <= 0) return;
+    if (!restored || restored.jobId !== jobId) return;
+    if (restored.expiryRetries <= 0) {
+      settleRestoredRun(restored.generation);
+      return;
+    }
     restored.expiryRetries -= 1;
     restored.expiryTimer = setTimeout(() => {
       const current = restoredChannelRef.current;
@@ -839,13 +910,6 @@ function AiChatTab({
     void restoreConversation(boundConversationId);
   }, [boundConversationId, restoreConversation]);
 
-  // 旧版单栏布局只存了一个全局会话 id: 仅全局看板的唯一标签继承它, 主机看板不跟。
-  useEffect(() => {
-    if (boundConversationId || !allowLegacyRestore) return;
-    const legacy = loadPersistedConversationId();
-    if (legacy) void restoreConversation(legacy);
-  }, [allowLegacyRestore, boundConversationId, restoreConversation]);
-
   const hydrateMessageIds = async (convId: string) => {
     try {
       const msgs = await aiApi.messages(convId);
@@ -865,6 +929,7 @@ function AiChatTab({
     ) {
       return;
     }
+    if (permOpen) setPermOpen(false);
     const run = beginRun();
     const usePlan = override?.planMode ?? planMode;
     setBusy(true);
@@ -968,6 +1033,7 @@ function AiChatTab({
       pushToast("info", "终端接管这一轮不支持补充指令");
       return;
     }
+    if (permOpen) setPermOpen(false);
     const text = composeMessage(message);
     setInput("");
     const itemId = stream.appendSteer(target.generation, message);
@@ -1320,16 +1386,35 @@ function AiChatTab({
     inputRef.current?.focus();
   };
 
-  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.items)
-      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-      .map((it) => it.getAsFile())
-      .filter((f): f is File => f !== null);
+  const appendImages = (files: File[]) => {
     if (files.length === 0) return;
-    e.preventDefault();
     void Promise.all(files.map(readAsDataUrl))
       .then((urls) => setImages((prev) => [...prev, ...urls]))
       .catch((err) => pushToast("error", `读取图片失败：${describeError(err)}`));
+  };
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const fromItems = Array.from(e.clipboardData.items)
+      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null);
+    const files = [...fromItems];
+    for (const file of Array.from(e.clipboardData.files)) {
+      if (!file.type.startsWith("image/")) continue;
+      if (files.some((f) => f.name === file.name && f.size === file.size && f.type === file.type)) {
+        continue;
+      }
+      files.push(file);
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    appendImages(files);
+  };
+
+  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+    e.target.value = "";
+    appendImages(files);
   };
 
   const runTakeover = async () => {
@@ -1453,6 +1538,18 @@ function AiChatTab({
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={14} />
+        </button>
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm ${cronOpen ? "is-active" : ""}`}
+          title={
+            conversationId
+              ? "当前会话的定时任务"
+              : "定时任务挂在会话上：先发送消息开始一个会话"
+          }
+          disabled={!conversationId}
+          onClick={() => setCronOpen((v) => !v)}
+        >
+          <IconClock size={14} />
         </button>
         <button
           className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
@@ -1653,6 +1750,10 @@ function AiChatTab({
         </div>
       )}
 
+      {cronOpen && conversationId && (
+        <CronPanel conversationId={conversationId} onClose={() => setCronOpen(false)} />
+      )}
+
       {grantOpen && <GrantPanel onClose={() => setGrantOpen(false)} />}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -1685,7 +1786,7 @@ function AiChatTab({
               <span className="nx-empty-icon">
                 <IconBot size={19} />
               </span>
-              <div className="text-xs text-neutral-400">新建会话 · 命令与输出全程留痕</div>
+              <div className="text-xs text-neutral-400">新建会话</div>
             </div>
           )}
           {virtual.range.padTop > 0 && (
@@ -2021,7 +2122,9 @@ function AiChatTab({
             busy
               ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
-                ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
+                ? DESKTOP
+                  ? "向 NexTerm 提问，@ 引用资产或终端标签"
+                  : "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
                 : "未连接会话（仍可全局提问）"
           }
           aria-label="消息输入"
@@ -2047,6 +2150,24 @@ function AiChatTab({
 
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={onPickImages}
+          />
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}
+            aria-label="添加图片"
+            onClick={() => imageInputRef.current?.click()}
+          >
+            <IconImage size={13} />
+          </button>
           <div className="nx-spacer" />
           <UsageRing
             usage={conv.usage}

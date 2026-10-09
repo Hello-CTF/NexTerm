@@ -15,6 +15,10 @@ import { useUi } from "../../app/store";
 import { clickButton, mount, type MountedView } from "./reactTestUtils";
 
 function resetButton(container: ParentNode): HTMLButtonElement {
+  const toggle = [...container.querySelectorAll("button")].find(
+    (b) => b.textContent?.trim() === "高级设置",
+  ) as HTMLButtonElement | undefined;
+  if (toggle?.getAttribute("aria-expanded") === "false") clickButton(container, "高级设置");
   const button = [...container.querySelectorAll("button")].find(
     (b) => b.textContent?.trim() === "恢复默认",
   ) as HTMLButtonElement | undefined;
@@ -66,6 +70,7 @@ describe("AppearanceCard 恢复默认", () => {
 
   it("恢复默认后重新加载模块仍是默认值", async () => {
     mounted = mount(createElement(AppearanceCard));
+    clickButton(mounted.container, "高级设置");
     clickButton(mounted.container, "恢复默认");
     expect(localStorage.getItem("nexterm.theme.v1")).toBe("system");
 

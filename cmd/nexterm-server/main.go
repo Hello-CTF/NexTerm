@@ -97,12 +97,13 @@ func run(args []string) int {
 		}
 	}()
 	if os.Getenv("NEXTERM_MASTER_KEY") != "" {
-		logger.Warn("NEXTERM_MASTER_KEY is deprecated; store the master key in a 0600 file and pass --master-key-file instead")
+		fmt.Fprintln(os.Stderr, "nexterm-server: NEXTERM_MASTER_KEY is no longer supported; store the master key in a 0600 file and pass --master-key-file (or NEXTERM_MASTER_KEY_FILE) instead")
+		return 2
 	}
 	if invocation.Auth == core.AuthOff {
 		logger.Warn("access control is disabled via --auth=off: anyone who can reach the listen address can operate the server", "listen", invocation.Listen)
 	}
-	masterKey, err := server.ResolveMasterKey(invocation.MasterKey, invocation.MasterKeyFile)
+	masterKey, err := server.ResolveMasterKey(invocation.MasterKeyFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 2
@@ -176,10 +177,6 @@ func run(args []string) int {
 	var accounts *account.Accounts
 	if application.Services.Store != nil {
 		accounts = account.New(application.Services.Store.DB(), account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")))
-		if err := accounts.MigrateTOTPStorageKey(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
-			return 1
-		}
 	}
 	if invocation.Auth == core.AuthOff && accounts != nil {
 		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
@@ -230,7 +227,6 @@ func run(args []string) int {
 			WebRoot:        invocation.WebRoot,
 			SyncOnly:       invocation.SyncOnly,
 			Auth:           invocation.Auth,
-			PublicBaseURL:  invocation.PublicBaseURL,
 			AllowedOrigins: allowedOrigins(),
 		},
 		Blobs:          blobs,
@@ -255,9 +251,6 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
-	}
-	if images := transport.Images(); images != nil && !invocation.SyncOnly {
-		go images.RunSweeper(ctx)
 	}
 	if fleetService != nil {
 		rollupRunner := fleetserver.NewRollupRunner(fleetService, 0, logger.Logger)

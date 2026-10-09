@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestInjectionDefaultsOffAndNeverMutatesHistory(t *testing.T) {
+func TestInjectionDefaultsOnAndNeverMutatesHistory(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newMemoryStore(t)
 	mustCreate(t, store, testScope, "operations", "restart at 02:00")
@@ -29,19 +29,8 @@ func TestInjectionDefaultsOffAndNeverMutatesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if injection.Enabled || injection.Memory != nil || len(injection.Messages) != len(history) {
-		t.Fatalf("disabled injection = %+v", injection)
-	}
-	if &injection.Messages[0] == &history[0] {
-		t.Fatal("disabled injection reused the caller's slice")
-	}
-	mustEnableInjection(t, store, testScope)
-	injection, err = store.Inject(ctx, testScope, history, Selection{}, Budget{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !injection.Enabled || injection.Memory == nil || len(injection.Messages) != 3 {
-		t.Fatalf("enabled injection = %+v", injection)
+		t.Fatalf("default injection = %+v", injection)
 	}
 	if injection.Messages[0] != leadingSystem || injection.Messages[1] != injection.Memory || injection.Messages[2] != user {
 		t.Fatalf("message order = %+v", injection.Messages)
@@ -49,14 +38,29 @@ func TestInjectionDefaultsOffAndNeverMutatesHistory(t *testing.T) {
 	if injection.Memory.Role != schema.System || !strings.HasPrefix(injection.Memory.Content, promptHeader) {
 		t.Fatalf("memory message = %+v", injection.Memory)
 	}
+	if injection.Bytes != len(injection.Memory.Content) || injection.Bytes > DefaultPromptBytes {
+		t.Fatalf("injection bytes = %d, content = %d", injection.Bytes, len(injection.Memory.Content))
+	}
+
+	disabled := false
+	if _, err := store.SetInjectionEnabled(ctx, testScope, disabled, 0); err != nil {
+		t.Fatal(err)
+	}
+	injection, err = store.Inject(ctx, testScope, history, Selection{}, Budget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if injection.Enabled || injection.Memory != nil || len(injection.Messages) != len(history) {
+		t.Fatalf("disabled injection = %+v", injection)
+	}
+	if &injection.Messages[0] == &history[0] {
+		t.Fatal("disabled injection reused the caller's slice")
+	}
 	if len(history) != 2 || history[0] != leadingSystem || history[1] != user || backing[2] != unusedCapacity {
 		t.Fatalf("caller history changed: %+v", backing)
 	}
 	if !reflect.DeepEqual(checkpoint, history) {
-		t.Fatalf("checkpoint history changed: %+v", checkpoint)
-	}
-	if injection.Bytes != len(injection.Memory.Content) || injection.Bytes > DefaultPromptBytes {
-		t.Fatalf("injection bytes = %d, content = %d", injection.Bytes, len(injection.Memory.Content))
+		t.Fatalf("checkpoint history changed: %+v", history)
 	}
 }
 

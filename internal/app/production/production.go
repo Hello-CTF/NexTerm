@@ -108,12 +108,6 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "store",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				if err := registerFilesCommands(dispatcher, services.Store); err != nil {
-					return err
-				}
-				if err := registerFilesImageCommands(dispatcher, services.desktop); err != nil {
-					return err
-				}
 				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir, services.desktop); err != nil {
 					return err
 				}

@@ -16,8 +16,8 @@
 | Windows 10/11 ARM64 | `*_arm64-setup.exe`（NSIS 安装器，双击即装） |
 | macOS（Apple Silicon） | `*_aarch64.dmg`（拖入「应用程序」） |
 | macOS（Intel） | `*_x86_64.dmg`（拖入「应用程序」） |
-| Linux amd64 | `NexTerm-desktop_*_linux_amd64.tar.gz`（自包含 Wails 二进制，非 AppImage/deb） |
-| Linux ARM64 | `NexTerm-desktop_*_linux_arm64.tar.gz`（自包含 Wails 二进制，非 AppImage/deb） |
+| Linux amd64 | `NexTerm-desktop_*_linux_amd64.deb`（`apt install ./NexTerm-desktop_*_linux_amd64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
+| Linux ARM64 | `NexTerm-desktop_*_linux_arm64.deb`（`apt install ./NexTerm-desktop_*_linux_arm64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 
 **服务端（浏览器访问）**
 

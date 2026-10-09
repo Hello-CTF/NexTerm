@@ -69,7 +69,7 @@ func TestCRUDIndexSettingsAndRestart(t *testing.T) {
 	store, path := newMemoryStore(t)
 	sequenceIDs(store)
 	settings, err := store.Settings(ctx, testScope)
-	if err != nil || settings != (Settings{}) {
+	if err != nil || settings != defaultSettings() {
 		t.Fatalf("default settings = %+v, err = %v", settings, err)
 	}
 	settings = mustEnableInjection(t, store, testScope)

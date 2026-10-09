@@ -106,14 +106,14 @@ func TestBundleContainerRejectsWrongPasswordAndTampering(t *testing.T) {
 	}
 }
 
-func TestBundleContainerPlaintextRoundTrip(t *testing.T) {
+func TestBundleContainerEmptyPasswordRoundTrip(t *testing.T) {
 	plaintext := []byte(`{"protocol":1}`)
 	encoded, err := encodeBundleContainer(plaintext, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted != 0 {
-		t.Fatal("plaintext container marked encrypted")
+	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted == 0 {
+		t.Fatal("empty-password container must still be encrypted")
 	}
 	decoded, err := decodeBundleContainer(encoded, "")
 	if err != nil {
@@ -121,6 +121,9 @@ func TestBundleContainerPlaintextRoundTrip(t *testing.T) {
 	}
 	if string(decoded) != string(plaintext) {
 		t.Fatalf("round trip mismatch: %q", decoded)
+	}
+	if _, err := decodeBundleContainer(encoded, "non-empty"); err == nil {
+		t.Fatal("non-empty password accepted for empty-password container")
 	}
 }
 
@@ -133,7 +136,7 @@ func TestBundleFileEncryptedWriteReadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Encrypted || result.Warning != "" {
+	if !result.Encrypted {
 		t.Fatalf("write result=%+v", result)
 	}
 
@@ -168,7 +171,7 @@ func TestBundleFileEncryptedWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBundleFilePlaintextWriteReturnsRiskWarning(t *testing.T) {
+func TestBundleFileEmptyPasswordWriteReadsWithoutPrompt(t *testing.T) {
 	desktop := newTestInstance(t, true)
 	path := filepath.Join(t.TempDir(), "nexterm-assets.nxbm")
 
@@ -176,8 +179,8 @@ func TestBundleFilePlaintextWriteReturnsRiskWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Encrypted || result.Warning == "" {
-		t.Fatalf("plaintext write must carry a risk warning, got %+v", result)
+	if !result.Encrypted {
+		t.Fatalf("empty-password write must still be encrypted, got %+v", result)
 	}
 	read, err := desktop.service.ReadBundleFileWithOptions(context.Background(), path, BundleReadOptions{})
 	if err != nil {

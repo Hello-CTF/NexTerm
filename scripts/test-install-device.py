@@ -189,7 +189,7 @@ class Harness:
             hashes[name] = hashlib.sha256((self.release / name).read_bytes()).hexdigest()
         if sums_builder is None:
             lines = [f"{hashes[asset_name(VERSION, arch)]}  {asset_name(VERSION, arch)}" for arch in ("amd64", "arm64")]
-            lines.append(f"{'0' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.tar.gz")
+            lines.append(f"{'0' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.deb")
             sums_text = "\n".join(lines) + "\n"
         else:
             sums_text = sums_builder(hashes)
@@ -353,7 +353,7 @@ def test_checksum_mismatch() -> None:
 
 
 def test_checksum_missing_entry() -> None:
-    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.tar.gz\n")
+    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.deb\n")
     try:
         result = harness.run(*harness.base_args())
         check("SHA256SUMS 缺条目明确报错", result.returncode == 1 and "SHA256SUMS" in result.stderr, result.stderr)

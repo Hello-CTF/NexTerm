@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => {
     getPermission: vi.fn(),
     vaultStatus: vi.fn(),
     initMaster: vi.fn(),
+    initDpapi: vi.fn(),
+    changePassword: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -25,9 +27,9 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     },
     vaultApi: {
       status: mocks.vaultStatus,
-      initDpapi: vi.fn(),
+      initDpapi: mocks.initDpapi,
       initMaster: mocks.initMaster,
-      changePassword: vi.fn(),
+      changePassword: mocks.changePassword,
       setAutoLock: vi.fn(),
     },
     assetApi: {
@@ -37,7 +39,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), promptText: vi.fn() }));
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
-vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
@@ -50,14 +51,23 @@ const NOT_INIT_VAULT = {
   mode: "not_init" as const,
   unlocked: false,
   autoLockMinutes: 30,
+  passwordless: false,
 };
 const MASTER_VAULT = {
   initialized: true,
   mode: "master" as const,
   unlocked: true,
   autoLockMinutes: 30,
+  passwordless: false,
 };
-const DPAPI_VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 30 };
+const DPAPI_VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 30, passwordless: false };
+const PASSWORDLESS_VAULT = {
+  initialized: true,
+  mode: "master" as const,
+  unlocked: true,
+  autoLockMinutes: 30,
+  passwordless: true,
+};
 
 let mounted: MountedView | undefined;
 
@@ -92,6 +102,7 @@ beforeEach(() => {
   mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
   mocks.vaultStatus.mockResolvedValue(NOT_INIT_VAULT);
   mocks.initMaster.mockResolvedValue(undefined);
+  mocks.changePassword.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -152,5 +163,55 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     const text = vaultCard()?.textContent ?? "";
     expect(text).toContain("凭据由系统级密钥保护，启动后直接使用");
     expect(text).not.toContain("尚未初始化");
+  });
+
+  it("留空密码也能完成初始化", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("尚未初始化");
+
+    protectionToggle()!.click();
+    await flushUntil(() => passwordInput() !== null);
+    expect(vaultCard()?.textContent).toContain("留空则不设置密码");
+
+    const enableButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
+      (b) => b.textContent === "启用保护",
+    );
+    expect(enableButton).toBeDefined();
+    expect(enableButton!.disabled).toBe(false);
+    enableButton!.click();
+    await flushUntil(() => mocks.initMaster.mock.calls.length > 0);
+
+    expect(mocks.initMaster).toHaveBeenCalledWith("");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
+  });
+
+  it("无密码凭据库显示未开启，且不展示自动锁定", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("未开启");
+
+    const text = vaultCard()?.textContent ?? "";
+    expect(text).toContain("未设置保护密码，凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密");
+    expect(text).not.toContain("闲置自动锁定");
+    expect(protectionToggle()!.checked).toBe(false);
+  });
+
+  it("取消勾选开关时改空密码关闭保护", async () => {
+    mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
+    const { ask, promptText } = await import("../../ui/dialogs");
+    vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(promptText).mockResolvedValue("current-password");
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("已开启");
+
+    protectionToggle()!.click();
+    await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
+
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何拿到数据目录的人都能解密"));
+    expect(mocks.changePassword).toHaveBeenCalledWith("current-password", "");
+    expect(mocks.initDpapi).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护");
   });
 });

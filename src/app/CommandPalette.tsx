@@ -196,7 +196,7 @@ export function CommandPalette({
                   addTab({
                     id: `db-${connId}`,
                     kind: "db",
-                    title,
+                    title: DB_KIND_LABEL[dbKind],
                     connId,
                     dbKind,
                     closable: true,
@@ -267,7 +267,6 @@ export function CommandPalette({
       {
         id: "refresh-status",
         label: "刷新会话列表与凭据库状态",
-        hint: "重新拉取会话和凭据库状态",
         icon: IconRefresh,
         run: () => {
           void useUi.getState().resyncSessions();

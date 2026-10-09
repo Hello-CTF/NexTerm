@@ -67,18 +67,14 @@ func TestLinkSetRequiresUnlockedVault(t *testing.T) {
 	requireCode(t, err, ipc.CodeVaultLocked)
 }
 
-func TestLinkGetReadsLegacyPlaintext(t *testing.T) {
+func TestLinkGetRejectsLegacyPlaintext(t *testing.T) {
 	instance := newTestInstance(t, false)
 	legacy := `{"url":"https://sync.example.com","username":"alice","password":"super-secret"}`
 	if err := instance.db.SettingSet(context.Background(), settingLink, legacy); err != nil {
 		t.Fatal(err)
 	}
-	link, err := instance.service.LinkGet(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !link.HasPassword || link.Username != "alice" {
-		t.Fatalf("legacy plaintext must stay readable: %+v", link)
+	if _, err := instance.service.LinkGet(context.Background()); err == nil || !strings.Contains(err.Error(), "重新保存") {
+		t.Fatalf("legacy plaintext must not be recognized: %v", err)
 	}
 
 	instance.service.recordProbe(context.Background(), nil)
@@ -87,6 +83,39 @@ func TestLinkGetReadsLegacyPlaintext(t *testing.T) {
 		t.Fatalf("legacy link after probe: found=%v err=%v", found, err)
 	}
 	if value != legacy {
-		t.Fatal("probe must not rewrite the link while vault is uninitialized")
+		t.Fatal("probe must not rewrite the legacy link")
+	}
+}
+
+func TestLinkSetOverwritesLegacyPlaintext(t *testing.T) {
+	instance := newTestInstance(t, true)
+	legacy := `{"url":"https://sync.example.com","username":"alice","password":"super-secret"}`
+	if err := instance.db.SettingSet(context.Background(), settingLink, legacy); err != nil {
+		t.Fatal(err)
+	}
+	link, err := instance.service.LinkSet(context.Background(), LinkPatch{
+		URL:      testPtr("https://sync.example.com"),
+		Username: testPtr("alice"),
+		Password: testPtr("super-secret"),
+	})
+	if err != nil {
+		t.Fatalf("re-saving over a legacy plaintext link must succeed: %v", err)
+	}
+	if !link.HasPassword || link.Username != "alice" {
+		t.Fatalf("link view = %+v", link)
+	}
+	value, found, err := instance.db.SettingGet(context.Background(), settingLink)
+	if err != nil || !found {
+		t.Fatalf("stored link: found=%v err=%v", found, err)
+	}
+	if !strings.HasPrefix(value, store.SecretEnvelopePrefix) {
+		t.Fatalf("re-saved link must be a %s envelope: %q", store.SecretEnvelopePrefix, value)
+	}
+	view, err := instance.service.LinkGet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.HasPassword || view.Username != "alice" {
+		t.Fatalf("link get after re-save = %+v", view)
 	}
 }

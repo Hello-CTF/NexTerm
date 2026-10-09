@@ -45,16 +45,16 @@ import {
 
 interface ModelPreset {
   id: string;
+  label: string;
   baseUrl: string;
   model: string;
 }
 
 const MODEL_PRESETS: ModelPreset[] = [
-  { id: "kimi", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
-  { id: "deepseek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  { id: "ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
-  { id: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "dsv41flash" },
-  { id: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
+  { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
+  { id: "zhipu", label: "Zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.7-flash" },
+  { id: "ollama", label: "Ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b" },
 ];
 
 const REASONING_EFFORT_OPTIONS = [
@@ -423,7 +423,7 @@ export function ModelManager({
                   onClick={() => applyPreset(p.id)}
                 >
                   <IconSparkles size={10} />
-                  <span>{p.id}</span>
+                  <span>{p.label}</span>
                 </button>
               ))}
             </div>
@@ -606,7 +606,7 @@ export function ModelManager({
                       </div>
                     </Field>
 
-                    <Field label="最大输出 tokens（留空不限）" htmlFor={`${fieldId}-max-tokens`}>
+                    <Field label="最大输出 tokens" htmlFor={`${fieldId}-max-tokens`}>
                       <input
                         id={`${fieldId}-max-tokens`}
                         className="nx-input font-mono"

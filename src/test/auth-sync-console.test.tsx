@@ -73,7 +73,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
     },
     adminApi: {
       users: vi.fn().mockResolvedValue({ users: [] }),
-      settingsGet: vi.fn().mockResolvedValue({ registration_open: false, public_base_url: "", mfa_required: false }),
+      settingsGet: vi.fn().mockResolvedValue({ registration_open: false, mfa_required: false }),
       settingsPut: vi.fn(),
       createUser: vi.fn(),
       disableUser: vi.fn(),

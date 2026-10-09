@@ -73,9 +73,6 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 	if config.Server.Blobs != nil && !config.Server.Options.SyncOnly {
 		go config.Server.Blobs.RunSweeper(runCtx)
 	}
-	if images := server.Images(); images != nil && !config.Server.Options.SyncOnly {
-		go images.RunSweeper(runCtx)
-	}
 	if config.Lifecycle != nil {
 		if err := config.Lifecycle.Start(runCtx); err != nil {
 			return err

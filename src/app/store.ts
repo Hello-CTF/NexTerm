@@ -1369,6 +1369,12 @@ export async function requestCloseTab(id: string): Promise<void> {
   }
 }
 
+export async function requestCloseTabs(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await requestCloseTab(id);
+  }
+}
+
 export async function requestKillTab(id: string): Promise<void> {
   const st = useUi.getState();
   const found = findTab(id);
@@ -1538,6 +1544,15 @@ async function ensureVaultUnlocked(reason: string): Promise<boolean> {
     return true;
   }
   if (!st.initialized || st.unlocked) return true;
+  if (st.passwordless) {
+    try {
+      await vaultApi.unlock("");
+      return true;
+    } catch (e) {
+      useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+      return false;
+    }
+  }
   const { promptText } = await import("../ui/dialogs");
   const pwd = await promptText(reason, "", { secret: true });
   if (pwd === null) return false;
@@ -1590,7 +1605,7 @@ async function openConnectedAssetSession(
     addTab({
       id: nextTabId(`docker-${info.id}`),
       kind: "docker",
-      title: `容器 · ${info.name}`,
+      title: "容器",
       sessionId: info.id,
       closable: true,
     });
@@ -1697,7 +1712,7 @@ async function runConnectAsset(
       addTab({
         id: nextTabId(`db-${connId}`),
         kind: "db",
-        title,
+        title: DB_KIND_LABEL[dbKind],
         connId,
         dbKind,
         closable: true,

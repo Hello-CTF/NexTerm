@@ -5,25 +5,12 @@ import { act, createElement } from "react";
 import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
-  class ImageUploadError extends Error {
-    readonly status: number;
-    readonly bodyText: string;
-    constructor(status: number, bodyText: string) {
-      super(`image upload failed (HTTP ${status})`);
-      this.name = "ImageUploadError";
-      this.status = status;
-      this.bodyText = bodyText;
-    }
-  }
   return {
-    ImageUploadError,
     flags: { web: false },
     listLive: vi.fn(),
     ask: vi.fn(),
     pickSavePath: vi.fn(),
-    saveImage: vi.fn(),
-    fetchImageService: vi.fn(),
-    uploadImage: vi.fn(),
+    fsWrite: vi.fn(),
     paste: vi.fn(),
   };
 });
@@ -48,7 +35,7 @@ vi.mock("../../ipc/commands", () => ({
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
-  filesApi: { saveImage: mocks.saveImage },
+  fsApi: { write: mocks.fsWrite },
 }));
 
 vi.mock("../../ipc/events", () => ({
@@ -66,12 +53,6 @@ vi.mock("../../ipc/env", () => ({
   get WEB() {
     return mocks.flags.web;
   },
-}));
-
-vi.mock("../../ipc/webFiles", () => ({
-  ImageUploadError: mocks.ImageUploadError,
-  fetchImageService: mocks.fetchImageService,
-  uploadImage: mocks.uploadImage,
 }));
 
 vi.mock("../../ui/dialogs", () => ({
@@ -175,10 +156,6 @@ function statusText(): string {
   return close?.parentElement?.textContent ?? "";
 }
 
-function statusOverlay(): Element | null {
-  return mounted?.container.querySelector('[aria-label="关闭图片粘贴提示"]') ?? null;
-}
-
 describe("TerminalPane 图片粘贴编排", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -187,22 +164,7 @@ describe("TerminalPane 图片粘贴编排", () => {
     mocks.flags.web = false;
     mocks.listLive.mockResolvedValue([]);
     mocks.ask.mockResolvedValue(true);
-    mocks.pickSavePath.mockResolvedValue("/tmp/saved shot.png");
-    mocks.saveImage.mockResolvedValue({ path: "/tmp/saved shot.png", bytes: 4 });
-    mocks.fetchImageService.mockResolvedValue({
-      publicBaseURLConfigured: false,
-      maxBytes: 20 << 20,
-      ownerQuotaBytes: 200 << 20,
-      ttlSeconds: 86400,
-    });
-    mocks.uploadImage.mockResolvedValue({
-      id: "01J",
-      url: "/files/image/01J",
-      mime: "image/png",
-      bytes: 4,
-      created_at: 1,
-      expires_at: 2,
-    });
+    mocks.fsWrite.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -210,70 +172,8 @@ describe("TerminalPane 图片粘贴编排", () => {
     mounted = undefined;
   });
 
-  it("有图像服务时上传并插入 Markdown 链接, 展示成功状态", async () => {
+  it("经文件通道写到本会话主机的 /tmp 并插入普通 Markdown 链接, 展示成功状态", async () => {
     seedTab();
-    mounted = mount(
-      createElement(TerminalPane, {
-        sessionId: "s1",
-        title: "web-01",
-        storeTabId: "t1",
-        resumeTabId: "kernel-1",
-      }),
-    );
-    await flush();
-
-    await pasteImages([png("shot.png")]);
-
-    await waitFor(() => expect(mocks.paste).toHaveBeenCalledWith("![shot.png](/files/image/01J)"));
-    expect(mocks.uploadImage).toHaveBeenCalledTimes(1);
-    expect(statusText()).toContain("已插入 1 张图片的 Markdown 链接");
-    expect(statusText()).toContain("限时公开链接");
-  });
-
-  it("上传失败时展示可操作错误, 不插入任何内容", async () => {
-    seedTab();
-    mocks.uploadImage.mockRejectedValue(new mocks.ImageUploadError(413, "image exceeds the maximum allowed size"));
-    mounted = mount(
-      createElement(TerminalPane, {
-        sessionId: "s1",
-        title: "web-01",
-        storeTabId: "t1",
-        resumeTabId: "kernel-1",
-      }),
-    );
-    await flush();
-
-    await pasteImages([png("big.png")]);
-
-    await waitFor(() => expect(statusText()).toContain("大小限制"));
-    expect(mocks.paste).not.toHaveBeenCalled();
-  });
-
-  it("web 端无图像服务时报错且绝不静默上传", async () => {
-    seedTab();
-    mocks.flags.web = true;
-    mocks.fetchImageService.mockResolvedValue(null);
-    mounted = mount(
-      createElement(TerminalPane, {
-        sessionId: "s1",
-        title: "web-01",
-        storeTabId: "t1",
-        resumeTabId: "kernel-1",
-      }),
-    );
-    await flush();
-
-    await pasteImages([png("shot.png")]);
-
-    await waitFor(() => expect(statusText()).toContain("服务端未提供图片上传服务"));
-    expect(mocks.uploadImage).not.toHaveBeenCalled();
-    expect(mocks.saveImage).not.toHaveBeenCalled();
-    expect(mocks.paste).not.toHaveBeenCalled();
-  });
-
-  it("桌面端无图像服务时经确认后本地保存并插入本地路径", async () => {
-    seedTab();
-    mocks.fetchImageService.mockResolvedValue(null);
     mounted = mount(
       createElement(TerminalPane, {
         sessionId: "s1",
@@ -287,18 +187,23 @@ describe("TerminalPane 图片粘贴编排", () => {
     await pasteImages([png("shot.png")]);
 
     await waitFor(() =>
-      expect(mocks.paste).toHaveBeenCalledWith("![shot.png](</tmp/saved shot.png>)"),
+      expect(mocks.paste).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[shot\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\)$/),
+      ),
     );
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.saveImage).toHaveBeenCalledWith("/tmp/saved shot.png", expect.any(String));
-    expect(mocks.uploadImage).not.toHaveBeenCalled();
-    expect(statusText()).toContain("未上传到任何服务器");
+    expect(mocks.fsWrite).toHaveBeenCalledTimes(1);
+    expect(mocks.fsWrite).toHaveBeenCalledWith(
+      "s1",
+      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+-1\.png$/),
+      "iVBORw==",
+      false,
+    );
+    expect(statusText()).toContain("已上传 1 张图片");
+    expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("用户拒绝本地保存时不插入、不报错遗留", async () => {
+  it("多张图片逐张落盘, 链接按顺序空格拼接", async () => {
     seedTab();
-    mocks.fetchImageService.mockResolvedValue(null);
-    mocks.ask.mockResolvedValue(false);
     mounted = mount(
       createElement(TerminalPane, {
         sessionId: "s1",
@@ -309,18 +214,29 @@ describe("TerminalPane 图片粘贴编排", () => {
     );
     await flush();
 
-    await pasteImages([png("shot.png")]);
+    await pasteImages([png("a.png"), png("b.png")]);
 
-    await flush();
-    expect(mocks.paste).not.toHaveBeenCalled();
-    expect(mocks.saveImage).not.toHaveBeenCalled();
-    expect(statusOverlay()).toBeNull();
+    await waitFor(() =>
+      expect(mocks.paste).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^\[a\.png\]\(\/tmp\/nexterm-paste-\d+-1\.png\) \[b\.png\]\(\/tmp\/nexterm-paste-\d+-2\.png\)$/,
+        ),
+      ),
+    );
+    expect(mocks.fsWrite).toHaveBeenCalledTimes(2);
+    expect(mocks.fsWrite).toHaveBeenNthCalledWith(
+      2,
+      "s1",
+      expect.stringMatching(/^\/tmp\/nexterm-paste-\d+-2\.png$/),
+      "iVBORw==",
+      false,
+    );
+    expect(statusText()).toContain("已上传 2 张图片");
   });
 
-  it("本地保存失败时给出保存专属错误且不插入", async () => {
+  it("上传失败时展示失败原因, 不插入任何内容", async () => {
     seedTab();
-    mocks.fetchImageService.mockResolvedValue(null);
-    mocks.saveImage.mockRejectedValue({ code: "internal", message: "磁盘只读" });
+    mocks.fsWrite.mockRejectedValue({ code: "internal", message: "磁盘只读" });
     mounted = mount(
       createElement(TerminalPane, {
         sessionId: "s1",
@@ -331,9 +247,10 @@ describe("TerminalPane 图片粘贴编排", () => {
     );
     await flush();
 
-    await pasteImages([png("shot.png")]);
+    await pasteImages([png("big.png")]);
 
-    await waitFor(() => expect(statusText()).toContain("保存图片到本地失败"));
+    await waitFor(() => expect(statusText()).toContain("磁盘只读"));
+    expect(statusText()).toContain("/tmp");
     expect(mocks.paste).not.toHaveBeenCalled();
   });
 });
