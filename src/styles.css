@@ -881,6 +881,19 @@
     background: var(--nx-bg-pane);
     color: var(--nx-fg-strong);
   }
+  .nx-select-ghost {
+    width: auto;
+    height: 26px;
+    border-color: transparent;
+    background: transparent;
+  }
+  .nx-select-ghost:hover {
+    border-color: var(--nx-border-strong);
+  }
+  .nx-select-ghost:focus {
+    border-color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-neutral-950) 75%, transparent);
+  }
 
   .nx-input-sm {
     height: 26px;
@@ -1090,7 +1103,7 @@
     white-space: nowrap;
   }
   .nx-badge-green {
-    background: color-mix(in srgb, var(--color-green-500) 18%, transparent);
+    background: color-mix(in srgb, var(--color-green-500) 10%, transparent);
     color: var(--color-green-300);
   }
   .nx-badge-amber {
@@ -1214,6 +1227,7 @@
   }
 
   .nx-row {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 7px;
@@ -1230,11 +1244,24 @@
     background: color-mix(in srgb, var(--color-accent) 16%, transparent);
     color: var(--nx-fg-strong);
   }
+  .nx-row-name {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .nx-row-target {
+    max-width: 42%;
+    flex: 0 1 auto;
+  }
   .nx-row-actions {
+    position: absolute;
+    right: 6px;
+    top: 50%;
     display: none;
-    flex: 0 0 auto;
     align-items: center;
     gap: 2px;
+    padding-left: 14px;
+    transform: translateY(-50%);
+    background: linear-gradient(90deg, transparent, var(--nx-bg-pane) 22%);
   }
 
   .nx-row-reserve-actions .nx-row-actions {
@@ -1278,6 +1305,14 @@
 
   .nx-rail > * {
     flex-shrink: 0;
+  }
+
+  .nx-rail-sep {
+    width: 24px;
+    height: 1px;
+    margin: 6px 0;
+    flex-shrink: 0;
+    background: var(--nx-border-strong);
   }
 
   .nx-rail-btn {
@@ -1696,6 +1731,11 @@
     background: color-mix(in srgb, var(--color-red-500) 10%, transparent);
     color: var(--color-red-300);
   }
+  .nx-alert-success {
+    border-color: color-mix(in srgb, var(--color-green-500) 30%, transparent);
+    background: color-mix(in srgb, var(--color-green-500) 9%, var(--nx-bg-pane));
+    color: var(--color-green-300);
+  }
   .nx-alert-info {
     border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
     background: color-mix(in srgb, var(--color-accent) 9%, transparent);
@@ -2003,11 +2043,22 @@
 
 .nx-toasts {
   width: min(380px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   z-index: 60;
   bottom: calc(36px + var(--nx-kb-inset, 0px));
   max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px));
   overflow: hidden;
   justify-content: flex-end;
+}
+
+.nx-toasts > * {
+  max-width: 100%;
+}
+
+.nx-toasts > * > span,
+.nx-modal-body,
+.nx-modal-header {
+  overflow-wrap: anywhere;
 }
 
 .nx-app[data-nx-keys="true"] .nx-toasts {

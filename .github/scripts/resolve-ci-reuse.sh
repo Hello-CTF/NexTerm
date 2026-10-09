@@ -9,12 +9,14 @@ list_runs() {
   gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=50"
 }
 
+# CI_REUSE_EXPECTED_REF 锁定复用来源(如发布 tag): 同 SHA 可能有 master push 与 tag push
+# 两次 CI run, 只有 ref 匹配的 run 的产物版本与本次发布一致。
 green_run() {
-  jq -r '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty'
+  jq -r --arg ref "${CI_REUSE_EXPECTED_REF:-}" '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success" and ($ref == "" or .head_branch == $ref))] | sort_by(.created_at) | last | .id // empty'
 }
 
 in_progress_run() {
-  jq -r '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and (.status == "queued" or .status == "in_progress"))] | sort_by(.created_at) | last | .id // empty'
+  jq -r --arg ref "${CI_REUSE_EXPECTED_REF:-}" '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and (.status == "queued" or .status == "in_progress") and ($ref == "" or .head_branch == $ref))] | sort_by(.created_at) | last | .id // empty'
 }
 
 wait_for_green() {

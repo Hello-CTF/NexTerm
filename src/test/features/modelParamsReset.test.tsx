@@ -122,8 +122,8 @@ describe("ModelManager 恢复默认参数", () => {
     clickButton(view!.container, "恢复默认参数");
     await flush();
 
-    expect(inputFor("温度").value).toBe("0.3");
-    expect(inputFor("上下文窗口").value).toBe("32768");
+    expect(inputFor("温度").value).toBe("");
+    expect(inputFor("上下文窗口").value).toBe("");
     expect(inputFor("代理").value).toBe("");
     expect(inputFor("回退模型").value).toBe("");
     const stream = view!.container.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -140,7 +140,7 @@ describe("ModelManager 恢复默认参数", () => {
     expect(view!.container.textContent).toContain("有未保存的修改");
   });
 
-  it("重置后点保存才把默认值写入档案，密钥原样保留", async () => {
+  it("重置后点保存把清空结果写入档案，温度与上下文窗口不传", async () => {
     await mountManager(SAVED);
 
     clickButton(view!.container, "恢复默认参数");
@@ -149,14 +149,15 @@ describe("ModelManager 恢复默认参数", () => {
     await flush();
 
     expect(mocks.save).toHaveBeenCalledTimes(1);
-    expect(mocks.save.mock.calls[0][0]).toEqual({
+    const expected: Record<string, unknown> = {
       ...SAVED,
-      temperature: 0.3,
-      contextWindow: 32768,
       proxy: null,
       stream: true,
       fallbackModel: null,
-    });
+    };
+    delete expected.temperature;
+    delete expected.contextWindow;
+    expect(mocks.save.mock.calls[0][0]).toEqual(expected);
   });
 
   it("参数已在默认时按钮禁用", async () => {

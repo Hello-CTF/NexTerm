@@ -3,10 +3,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { deferred, click, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 // M209 真实 auth=on 浏览器证据: 门后应用 mounted 即发 /rpc(无 cookie)全部 401,
-// 登录成功后资产树/凭据库停在登录前错误态。这里用真实 AssetTree/CredentialsView
+// 登录成功后资产树/凭据库停在登录前错误态。这里用真实 AssetTree
 // 钉住 gate 转换后的重取(含分组/凭据/片段)与在途竞态隔离; toast 不做 ready 全清。
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -98,7 +98,6 @@ vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 import App from "../app/App";
 import { useUi } from "../app/store";
 import { useAuth } from "../features/auth/store";
-import { CredentialsView } from "../features/credentials/CredentialsView";
 import type { Asset } from "../ipc/commands";
 
 const ADMIN = {
@@ -150,7 +149,6 @@ function mountApp(): MountedView {
       QueryClientProvider,
       { client },
       createElement(App),
-      createElement(CredentialsView, { view: "text", onChange: () => {} }),
     ),
   );
 }
@@ -240,14 +238,13 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsView)", () => {
+describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
   it("gate 进 ready 后资产树(含分组)/凭据/片段/凭据库状态全部恢复, toast 不做全清", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
-    // 登录前: 资产树与凭据视图都停在 401 错误态, 状态栏凭据库不可用
+    // 登录前: 资产树停在 401 错误态, 状态栏凭据库不可用
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).toContain("访问令牌无效或缺失");
-    expect(text()).toContain("加载失败 · unauthorized: 访问令牌无效或缺失");
     expect(vaultStatusText()).toContain("凭据库不可用");
     expect(text()).not.toContain("web-01");
 
@@ -268,8 +265,6 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsVie
     expect(text()).toContain("生产");
     expect(assetTreeFooterCount("凭据库（左栏查看）")).toContain("1");
     expect(assetTreeFooterCount("命令片段（插入当前终端）")).toContain("1");
-    expect(text()).toContain("# NexTerm 凭据视图");
-    expect(text()).toContain("共 1 个资产 / 1 条凭据");
     expect(vaultStatusText()).toContain("凭据库已解锁");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
 
@@ -328,11 +323,11 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsVie
       }
       return authed ? Promise.resolve({ initialized: true, unlocked: true }) : Promise.reject(UNAUTH);
     });
-    const refreshBtn = document.querySelector<HTMLElement>(
-      'button[title="刷新会话列表与凭据库状态"]',
-    );
-    expect(refreshBtn).not.toBeNull();
-    click(refreshBtn as HTMLElement);
+    act(() => {
+      void useUi.getState().resyncSessions();
+      void mocks.vaultStatus();
+    });
+    await flush();
 
     authed = false;
     await logout();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
 import type { KnownHostDto } from "../../ipc/types";
 import { useUi } from "../../app/store";
@@ -12,6 +12,9 @@ export function KnownHostsCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 8;
 
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
@@ -61,13 +64,42 @@ export function KnownHostsCard() {
     }
   };
 
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      (hosts ?? []).filter((h) => {
+        if (!q) return true;
+        return (
+          h.host.toLowerCase().includes(q) ||
+          h.fingerprint.toLowerCase().includes(q) ||
+          h.keyType.toLowerCase().includes(q)
+        );
+      }),
+    [hosts, q],
+  );
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageHosts = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
   return (
     <section className="nx-card">
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">已知主机</span>
-        {hosts && <span className="nx-badge">{hosts.length} 台</span>}
+        {hosts && <span className="nx-badge">{filtered.length} 台</span>}
         <div className="nx-spacer" />
+        {hosts && hosts.length > 0 && (
+          <input
+            className="nx-input nx-input-sm w-40"
+            aria-label="搜索已知主机"
+            placeholder="搜索主机 / 指纹"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(0);
+            }}
+          />
+        )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
           刷新
@@ -103,7 +135,7 @@ export function KnownHostsCard() {
               <span className="min-w-0 break-words">{error}</span>
             </div>
           )}
-          {hosts.map((h) => (
+          {pageHosts.map((h) => (
             <div key={h.id} className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-neutral-200">
@@ -131,6 +163,28 @@ export function KnownHostsCard() {
               </button>
             </div>
           ))}
+          {filtered.length > pageSize && (
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-neutral-500">
+              <span>
+                第 {currentPage + 1} / {pageCount} 页
+              </span>
+              <div className="nx-spacer" />
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                disabled={currentPage === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                上一页
+              </button>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                disabled={currentPage >= pageCount - 1}
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                下一页
+              </button>
+            </div>
+          )}
         </div>
       )}
     </section>

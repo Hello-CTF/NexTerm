@@ -179,7 +179,7 @@ class Instance:
 
 
 def build(binary: pathlib.Path, package: str) -> None:
-    version = json.loads((ROOT / "wails.json").read_text(encoding="utf-8"))["info"]["version"]
+    version = os.environ.get("NEXTERM_RELEASE_VERSION") or json.loads((ROOT / "wails.json").read_text(encoding="utf-8"))["info"]["version"]
     binary.parent.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
     environment.update({"CGO_ENABLED": "0", "GOTOOLCHAIN": "go1.26.8"})

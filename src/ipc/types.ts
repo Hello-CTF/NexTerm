@@ -88,7 +88,9 @@ export type MessageDto = { id: string, conversationId: string, role: string, con
 
 export type ModelProfile = { 
 id: string, 
+// temperature 未显式设置时服务端省略该键, 运行时值为 undefined; reasoningEffort 同理。
 name: string, baseUrl: string, apiKey: string, model: string, temperature: number, 
+reasoningEffort?: string,
 contextWindow: number, 
 proxy: string | null, stream: boolean,
 fallbackModel?: string | null,
@@ -108,7 +110,7 @@ export type AiCircuitStatusDto = { consecutiveFailures: number, openUntil: numbe
 
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 
-export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean,
+export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature?: number, reasoningEffort?: string, contextWindow: number, proxy: string | null, stream: boolean,
 fallbackModel?: string | null,
 maxTokens?: number | null, };
 
@@ -197,9 +199,9 @@ export type SyncCollectKnownHost = { id: string, host: string, port: number, key
 fingerprint: string, addedAt: number, };
 
 // apiKey 只在 revealed 且档案确有密钥时给出; apiKeySet 区分「无密钥」与「密钥被扣留」。
-// proxy 无 omitempty, 服务端 null 原样传递。
+// proxy 无 omitempty, 服务端 null 原样传递; temperature/reasoningEffort 未显式设置时缺省。
 export type SyncCollectAIProfile = { id: string, name: string, baseUrl: string, model: string,
-fallbackModel?: string, temperature: number, contextWindow: number, maxTokens?: number,
+fallbackModel?: string, temperature?: number, reasoningEffort?: string, contextWindow: number, maxTokens?: number,
 proxy: string | null, stream: boolean, requestTimeoutSeconds?: number, idleTimeoutSeconds?: number,
 circuitFailureThreshold?: number, circuitCooldownSeconds?: number,
 updatedAt: number, apiKey?: string, apiKeySet: boolean, apiKeyState: SyncCollectSecretState, };

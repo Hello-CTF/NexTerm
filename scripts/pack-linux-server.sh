@@ -43,8 +43,8 @@ done
 
 case "$ARCH" in amd64|arm64) ;; *) echo "unsupported Linux server architecture: $ARCH" >&2; exit 2 ;; esac
 [ -n "$BIN" ] || BIN="$ROOT/target/go-build/nexterm-server-linux-$ARCH"
-VERSION="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(c.info.version)' "$ROOT/wails.json" 2>/dev/null)" || {
-  echo "cannot read the sole release version from wails.json" >&2; exit 1;
+VERSION="${NEXTERM_RELEASE_VERSION:-$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(c.info.version)' "$ROOT/wails.json" 2>/dev/null)}" || {
+  echo "cannot read the release version from NEXTERM_RELEASE_VERSION or wails.json" >&2; exit 1;
 }
 [ -f "$BIN" ] || {
   echo "missing Go server binary: $BIN" >&2
@@ -68,7 +68,7 @@ GO_INFO="$(go version -m "$BIN")"
 printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=0' || { echo "server was not built with CGO_ENABLED=0" >&2; exit 1; }
 BINARY_VERSION="$("$BIN" --version)"
 [ "$BINARY_VERSION" = "$VERSION" ] || {
-  echo "server --version ($BINARY_VERSION) does not match wails.json ($VERSION)" >&2; exit 1;
+  echo "server --version ($BINARY_VERSION) does not match release version ($VERSION)" >&2; exit 1;
 }
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
@@ -112,7 +112,7 @@ write_readme() {
 
 This is the only Linux server archive. It contains the stripped, static Go
 server, the real Vite frontend, both systemd units and both environment-file
-examples. Its version comes only from wails.json.
+examples. Its version comes from the release tag (NEXTERM_RELEASE_VERSION).
 
 ## Choose one runtime (do not enable both units)
 

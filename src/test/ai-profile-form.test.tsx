@@ -329,3 +329,86 @@ describe("ModelManager circuit runtime status", () => {
     expect(view!.container.textContent).not.toContain("已暂停");
   });
 });
+
+describe("ModelManager 快速填充预设与可选参数", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
+    mocks.ask.mockResolvedValue(true);
+    mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 0, openUntil: null });
+    useUi.setState({ pushToast: mocks.toast });
+  });
+
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+    vi.useRealTimers();
+  });
+
+  it("只渲染 5 个预设且 kimi 排最前，不再拉取后端预设", async () => {
+    await mountManager(demoProfile());
+
+    const chips = [...view!.container.querySelectorAll("button")]
+      .filter((b) => b.title?.startsWith("用 "))
+      .map((b) => b.textContent?.trim());
+    expect(chips).toEqual(["kimi", "deepseek", "ollama", "zhipu", "openai"]);
+    expect(mocks.presets).not.toHaveBeenCalled();
+  });
+
+  it("新档案点预设只填名称/地址/模型，温度与上下文窗口留空不传", async () => {
+    await mountManager(demoProfile());
+
+    click(view!.container.querySelector('button[title="新增档案"]')!);
+    await flush();
+    clickButton(view!.container, "zhipu");
+    await flush();
+
+    expect(inputFor("展示名").value).toBe("zhipu");
+    expect(inputFor("Base URL").value).toBe("https://open.bigmodel.cn/api/paas/v4");
+    expect(inputFor("模型名").value).toBe("dsv41flash");
+
+    clickButton(view!.container, "高级参数");
+    await flush();
+    expect(inputFor("温度").value).toBe("");
+    expect(inputFor("温度").placeholder).toBe("默认不传");
+    expect(inputFor("上下文窗口").value).toBe("");
+    expect(inputFor("上下文窗口").placeholder).toBe("默认不传");
+    expect(mocks.preset).not.toHaveBeenCalled();
+
+    clickButton(view!.container, "保存");
+    await flush();
+
+    const payload = savedPayload();
+    expect(payload.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
+    expect(payload.model).toBe("dsv41flash");
+    expect((payload as Record<string, unknown>).temperature).toBeUndefined();
+    expect((payload as Record<string, unknown>).contextWindow).toBeUndefined();
+  });
+
+  it("编辑已有档案时预设不覆盖已填参数", async () => {
+    await mountManager({ ...demoProfile(), temperature: 0.7, contextWindow: 64000 });
+
+    clickButton(view!.container, "kimi");
+    await flush();
+
+    expect(inputFor("展示名").value).toBe("DeepSeek 主力");
+    expect(inputFor("Base URL").value).toBe("https://api.moonshot.cn/v1");
+    expect(inputFor("模型名").value).toBe("kimi-k3");
+    expect(inputFor("温度").value).toBe("0.7");
+    expect(inputFor("上下文窗口").value).toBe("64000");
+  });
+
+  it("清空温度与上下文窗口后保存时省略这两个参数", async () => {
+    await mountManager({ ...demoProfile(), temperature: 0.7 });
+
+    setInputValue(inputFor("温度"), "");
+    setInputValue(inputFor("上下文窗口"), "");
+    clickButton(view!.container, "保存");
+    await flush();
+
+    const payload = savedPayload();
+    expect((payload as Record<string, unknown>).temperature).toBeUndefined();
+    expect((payload as Record<string, unknown>).contextWindow).toBeUndefined();
+    expect(payload.model).toBe("deepseek-chat");
+  });
+});

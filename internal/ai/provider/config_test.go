@@ -38,7 +38,7 @@ func TestAllPresets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if config.BaseURL != check.baseURL || config.Model != check.model || config.ContextWindow != check.window || config.Temperature != 0.3 || !config.Stream || config.Proxy != nil {
+		if config.BaseURL != check.baseURL || config.Model != check.model || config.ContextWindow != check.window || config.Temperature != nil || config.ReasoningEffort != "" || !config.Stream || config.Proxy != nil {
 			t.Fatalf("preset %s = %+v", id, config)
 		}
 	}
@@ -53,14 +53,14 @@ func TestAllPresets(t *testing.T) {
 
 func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
 	emptyProxy := "  "
-	config := Config{BaseURL: " https://example.test/v1/// ", APIKey: " key ", Model: " model ", FallbackModel: " fallback ", Temperature: math.NaN(), ContextWindow: 0, Proxy: &emptyProxy}.Normalized()
-	if config.BaseURL != "https://example.test/v1" || config.APIKey != "key" || config.Model != "model" || config.FallbackModel != "fallback" || config.Temperature != 0.3 || config.ContextWindow != 1000 || config.Proxy != nil {
+	config := Config{BaseURL: " https://example.test/v1/// ", APIKey: " key ", Model: " model ", FallbackModel: " fallback ", Temperature: ptr(math.NaN()), ContextWindow: 0, Proxy: &emptyProxy}.Normalized()
+	if config.BaseURL != "https://example.test/v1" || config.APIKey != "key" || config.Model != "model" || config.FallbackModel != "fallback" || config.Temperature != nil || config.ContextWindow != 1000 || config.Proxy != nil {
 		t.Fatalf("normalized config = %+v", config)
 	}
-	config.Temperature = math.Inf(1)
+	config.Temperature = ptr(math.Inf(1))
 	config.ContextWindow = 3_000_000
 	config = config.Normalized()
-	if config.Temperature != 0.3 || config.ContextWindow != 2_000_000 {
+	if config.Temperature != nil || config.ContextWindow != 2_000_000 {
 		t.Fatalf("non-finite/clamped config = %+v", config)
 	}
 	if same := (Config{Model: "same", FallbackModel: " same "}).Normalized(); same.FallbackModel != "" {
@@ -70,14 +70,77 @@ func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"model":"m","fallbackModel":"f"}`), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Temperature != 0.3 || decoded.ContextWindow != 32768 || !decoded.Stream || decoded.FallbackModel != "f" {
+	if decoded.Temperature != nil || decoded.ReasoningEffort != "" || decoded.ContextWindow != 32768 || !decoded.Stream || decoded.FallbackModel != "f" {
 		t.Fatalf("JSON defaults = %+v", decoded)
 	}
 	if err := json.Unmarshal([]byte(`{"temperature":0,"stream":false}`), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Temperature != 0 || decoded.Stream || decoded.FallbackModel != "" {
+	if decoded.Temperature == nil || *decoded.Temperature != 0 || decoded.Stream || decoded.FallbackModel != "" {
 		t.Fatalf("explicit zero/false were lost: %+v", decoded)
+	}
+}
+
+func TestConfigTemperatureAndReasoningEffortJSONCompat(t *testing.T) {
+	var legacy Config
+	if err := json.Unmarshal([]byte(`{"baseUrl":"https://a.test/v1","model":"m","temperature":0.3}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Temperature == nil || *legacy.Temperature != 0.3 {
+		t.Fatalf("explicit 0.3 must stay explicit: %+v", legacy)
+	}
+	encoded, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["temperature"] != 0.3 {
+		t.Fatalf("round-trip lost explicit temperature: %s", encoded)
+	}
+
+	unset := DefaultConfig()
+	encoded, err = json.Marshal(unset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire = nil
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := wire["temperature"]; exists {
+		t.Fatalf("unset temperature must be omitted: %s", encoded)
+	}
+	if _, exists := wire["reasoningEffort"]; exists {
+		t.Fatalf("unset reasoning effort must be omitted: %s", encoded)
+	}
+
+	var effort Config
+	if err := json.Unmarshal([]byte(`{"model":"m","reasoningEffort":"high"}`), &effort); err != nil {
+		t.Fatal(err)
+	}
+	if effort.ReasoningEffort != ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q", effort.ReasoningEffort)
+	}
+	for _, valid := range []ReasoningEffort{ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh} {
+		if !valid.Valid() {
+			t.Fatalf("%q must be valid", valid)
+		}
+	}
+	if ReasoningEffort("").Valid() || ReasoningEffort("max").Valid() {
+		t.Fatal("empty/unknown effort must be invalid")
+	}
+	if normalized := (Config{ReasoningEffort: "max"}).Normalized(); normalized.ReasoningEffort != "" {
+		t.Fatalf("unknown effort must normalize to unset: %+v", normalized)
+	}
+	if normalized := (Config{ReasoningEffort: ReasoningEffortMinimal}).Normalized(); normalized.ReasoningEffort != ReasoningEffortMinimal {
+		t.Fatalf("minimal effort must survive normalization: %+v", normalized)
+	}
+	clamped := (Config{Temperature: ptr(9.0)}).Normalized()
+	if clamped.Temperature == nil || *clamped.Temperature != 2 {
+		t.Fatalf("temperature must clamp to [0,2]: %+v", clamped)
 	}
 }
 

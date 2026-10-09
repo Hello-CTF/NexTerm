@@ -289,6 +289,7 @@ describe("XtermView production grid lifecycle", () => {
 
   it("applies authoritative observer grids without submitting local resize", async () => {
     await show(props({ resumeTabId: "tab-existing", canResize: false }));
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1);
     const term = harness.terminals[0];
     term.resize.mockClear();
     harness.resize.mockClear();
@@ -321,7 +322,7 @@ describe("XtermView production grid lifecycle", () => {
     harness.reopen?.();
     await flushWork();
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything());
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1);
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
     expect(harness.attach).toHaveBeenCalledTimes(1);
   });

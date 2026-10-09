@@ -81,6 +81,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const [rulePath, setRulePath] = useState("");
   const [ruleExpiry, setRuleExpiry] = useState("0");
   const [ruleBusy, setRuleBusy] = useState(false);
+  const [ruleFormOpen, setRuleFormOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -187,6 +188,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       );
       setRules((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
       setRulePath("");
+      setRuleFormOpen(false);
       pushToast("success", `已添加授权规则：${device.name} ${scope}`);
     } catch (e) {
       pushToast("error", `添加授权规则失败：${describeError(e)}`);
@@ -346,69 +348,79 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       ))}
 
       {assets !== null && assets.length > 0 && !readOnly && (
-        <div className="mt-2 rounded-lg border border-neutral-800/60 px-2 py-1.5">
-          <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
+        <div className="mt-2">
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline nx-btn-xs"
+            aria-expanded={ruleFormOpen}
+            aria-controls="ai-grant-rule-form"
+            onClick={() => setRuleFormOpen((v) => !v)}
+          >
             <IconPlus size={11} />
             添加规则
-          </div>
-          <div className="flex flex-wrap items-center gap-1">
-            <select
-              className="nx-input max-w-32 py-0.5 text-[11px]"
-              aria-label="规则设备"
-              value={ruleDevice}
-              onChange={(event) => setRuleDevice(event.target.value)}
-            >
-              <option value="">选择设备</option>
-              {assets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="nx-input py-0.5 text-[11px]"
-              aria-label="规则动作"
-              value={ruleAction}
-              onChange={(event) => setRuleAction(event.target.value as AiGrantRuleAction)}
-            >
-              {RULE_ACTION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            {actionNeedsPath && (
-              <input
-                className="nx-input min-w-36 flex-1 py-0.5 font-mono text-[11px]"
-                placeholder="/var/log/**"
-                aria-label="规则路径范围"
-                value={rulePath}
-                onChange={(event) => setRulePath(event.target.value)}
-              />
-            )}
-            <select
-              className="nx-input py-0.5 text-[11px]"
-              aria-label="规则有效期"
-              value={ruleExpiry}
-              onChange={(event) => setRuleExpiry(event.target.value)}
-            >
-              {RULE_EXPIRY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className="nx-btn nx-btn-outline nx-btn-xs"
-              disabled={ruleBusy || ruleDevice === "" || (actionNeedsPath && rulePath.trim() === "")}
-              onClick={() => void addRule()}
-            >
-              {ruleBusy ? "保存中…" : "添加"}
-            </button>
-          </div>
-          <div className="mt-1 text-[10px] leading-relaxed text-neutral-600">
-            {RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.hint}
-          </div>
+          </button>
+          {ruleFormOpen && (
+            <div id="ai-grant-rule-form" className="mt-1.5 rounded-lg border border-neutral-800/60 px-2 py-1.5">
+              <div className="flex flex-wrap items-center gap-1">
+                <select
+                  className="nx-input max-w-32 py-0.5 text-[11px]"
+                  aria-label="规则设备"
+                  value={ruleDevice}
+                  onChange={(event) => setRuleDevice(event.target.value)}
+                >
+                  <option value="">选择设备</option>
+                  {assets.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="nx-input py-0.5 text-[11px]"
+                  aria-label="规则动作"
+                  value={ruleAction}
+                  onChange={(event) => setRuleAction(event.target.value as AiGrantRuleAction)}
+                >
+                  {RULE_ACTION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {actionNeedsPath && (
+                  <input
+                    className="nx-input min-w-36 flex-1 py-0.5 font-mono text-[11px]"
+                    placeholder="/var/log/**"
+                    aria-label="规则路径范围"
+                    value={rulePath}
+                    onChange={(event) => setRulePath(event.target.value)}
+                  />
+                )}
+                <select
+                  className="nx-input py-0.5 text-[11px]"
+                  aria-label="规则有效期"
+                  value={ruleExpiry}
+                  onChange={(event) => setRuleExpiry(event.target.value)}
+                >
+                  {RULE_EXPIRY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs"
+                  disabled={ruleBusy || ruleDevice === "" || (actionNeedsPath && rulePath.trim() === "")}
+                  onClick={() => void addRule()}
+                >
+                  {ruleBusy ? "保存中…" : "添加"}
+                </button>
+              </div>
+              <div className="mt-1 text-[10px] leading-relaxed text-neutral-600">
+                {RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.hint}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const version = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
+const version = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
 const packageNames = [
   `NexTerm_${version}_x64-setup.exe`,
   `NexTerm_${version}_arm64-setup.exe`,

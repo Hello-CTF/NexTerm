@@ -109,6 +109,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				profile.Model = config.Model
 				profile.FallbackModel = config.FallbackModel
 				profile.Temperature = config.Temperature
+				profile.ReasoningEffort = config.ReasoningEffort
 				profile.ContextWindow = config.ContextWindow
 				profile.Proxy = config.Proxy
 				profile.Stream = config.Stream

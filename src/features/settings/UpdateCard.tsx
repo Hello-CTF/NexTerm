@@ -145,7 +145,7 @@ export function UpdateCard() {
       )}
 
       {installedVersion && (
-        <div className="nx-alert mt-3 flex items-start gap-2 border-green-500/40 bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))] text-green-300">
+        <div className="nx-alert nx-alert-success mt-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
             已安装 v{installedVersion}，重启应用后生效。

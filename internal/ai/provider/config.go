@@ -8,7 +8,6 @@ import (
 )
 
 const (
-	DefaultTemperature   = 0.3
 	DefaultContextWindow = 32_768
 	MinContextWindow     = 1_000
 	MaxContextWindow     = 2_000_000
@@ -17,20 +16,38 @@ const (
 
 var ErrUnknownPreset = errors.New("unknown AI provider preset")
 
+type ReasoningEffort string
+
+const (
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+)
+
+func (r ReasoningEffort) Valid() bool {
+	switch r {
+	case ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh:
+		return true
+	}
+	return false
+}
+
 type Config struct {
-	BaseURL       string  `json:"baseUrl"`
-	APIKey        string  `json:"apiKey"`
-	Model         string  `json:"model"`
-	FallbackModel string  `json:"fallbackModel,omitempty"`
-	Temperature   float64 `json:"temperature"`
-	ContextWindow uint64  `json:"contextWindow"`
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	Proxy         *string `json:"proxy"`
-	Stream        bool    `json:"stream"`
+	BaseURL         string          `json:"baseUrl"`
+	APIKey          string          `json:"apiKey"`
+	Model           string          `json:"model"`
+	FallbackModel   string          `json:"fallbackModel,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	ReasoningEffort ReasoningEffort `json:"reasoningEffort,omitempty"`
+	ContextWindow   uint64          `json:"contextWindow"`
+	MaxTokens       *int            `json:"maxTokens,omitempty"`
+	Proxy           *string         `json:"proxy"`
+	Stream          bool            `json:"stream"`
 }
 
 func DefaultConfig() Config {
-	return Config{Temperature: DefaultTemperature, ContextWindow: DefaultContextWindow, Stream: true}
+	return Config{ContextWindow: DefaultContextWindow, Stream: true}
 }
 
 func (c Config) Normalized() Config {
@@ -41,10 +58,16 @@ func (c Config) Normalized() Config {
 	if c.FallbackModel == c.Model {
 		c.FallbackModel = ""
 	}
-	if math.IsNaN(c.Temperature) || math.IsInf(c.Temperature, 0) {
-		c.Temperature = DefaultTemperature
-	} else {
-		c.Temperature = min(max(c.Temperature, 0), 2)
+	if c.Temperature != nil {
+		if math.IsNaN(*c.Temperature) || math.IsInf(*c.Temperature, 0) {
+			c.Temperature = nil
+		} else {
+			clamped := min(max(*c.Temperature, 0), 2)
+			c.Temperature = &clamped
+		}
+	}
+	if c.ReasoningEffort != "" && !c.ReasoningEffort.Valid() {
+		c.ReasoningEffort = ""
 	}
 	c.ContextWindow = min(max(c.ContextWindow, MinContextWindow), MaxContextWindow)
 	if c.MaxTokens != nil {
@@ -66,15 +89,16 @@ func (c Config) Normalized() Config {
 func (c *Config) UnmarshalJSON(data []byte) error {
 	defaults := DefaultConfig()
 	var wire struct {
-		BaseURL       string   `json:"baseUrl"`
-		APIKey        string   `json:"apiKey"`
-		Model         string   `json:"model"`
-		FallbackModel string   `json:"fallbackModel"`
-		Temperature   *float64 `json:"temperature"`
-		ContextWindow *uint64  `json:"contextWindow"`
-		MaxTokens     *int     `json:"maxTokens"`
-		Proxy         *string  `json:"proxy"`
-		Stream        *bool    `json:"stream"`
+		BaseURL         string          `json:"baseUrl"`
+		APIKey          string          `json:"apiKey"`
+		Model           string          `json:"model"`
+		FallbackModel   string          `json:"fallbackModel"`
+		Temperature     *float64        `json:"temperature"`
+		ReasoningEffort ReasoningEffort `json:"reasoningEffort"`
+		ContextWindow   *uint64         `json:"contextWindow"`
+		MaxTokens       *int            `json:"maxTokens"`
+		Proxy           *string         `json:"proxy"`
+		Stream          *bool           `json:"stream"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -83,10 +107,8 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.APIKey = wire.APIKey
 	c.Model = wire.Model
 	c.FallbackModel = wire.FallbackModel
-	c.Temperature = defaults.Temperature
-	if wire.Temperature != nil {
-		c.Temperature = *wire.Temperature
-	}
+	c.Temperature = wire.Temperature
+	c.ReasoningEffort = wire.ReasoningEffort
 	c.ContextWindow = defaults.ContextWindow
 	if wire.ContextWindow != nil {
 		c.ContextWindow = *wire.ContextWindow
@@ -106,14 +128,14 @@ type Preset struct {
 }
 
 var presetTable = []Preset{
-	{ID: "deepseek", Config: Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat", Temperature: DefaultTemperature, ContextWindow: 64_000, Stream: true}},
-	{ID: "openai", Config: Config{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini", Temperature: DefaultTemperature, ContextWindow: 128_000, Stream: true}},
-	{ID: "dashscope", Config: Config{BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-plus", Temperature: DefaultTemperature, ContextWindow: 128_000, Stream: true}},
-	{ID: "moonshot", Config: Config{BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-32k", Temperature: DefaultTemperature, ContextWindow: 128_000, Stream: true}},
-	{ID: "zhipu", Config: Config{BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4-flash", Temperature: DefaultTemperature, ContextWindow: 128_000, Stream: true}},
-	{ID: "ollama", Config: Config{BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen2.5:7b", Temperature: DefaultTemperature, ContextWindow: 32_000, Stream: true}},
-	{ID: "lmstudio", Config: Config{BaseURL: "http://127.0.0.1:1234/v1", Model: "local-model", Temperature: DefaultTemperature, ContextWindow: 32_000, Stream: true}},
-	{ID: "vllm", Config: Config{BaseURL: "http://127.0.0.1:8000/v1", Model: "local-model", Temperature: DefaultTemperature, ContextWindow: 32_000, Stream: true}},
+	{ID: "deepseek", Config: Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat", ContextWindow: 64_000, Stream: true}},
+	{ID: "openai", Config: Config{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini", ContextWindow: 128_000, Stream: true}},
+	{ID: "dashscope", Config: Config{BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-plus", ContextWindow: 128_000, Stream: true}},
+	{ID: "moonshot", Config: Config{BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-32k", ContextWindow: 128_000, Stream: true}},
+	{ID: "zhipu", Config: Config{BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4-flash", ContextWindow: 128_000, Stream: true}},
+	{ID: "ollama", Config: Config{BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen2.5:7b", ContextWindow: 32_000, Stream: true}},
+	{ID: "lmstudio", Config: Config{BaseURL: "http://127.0.0.1:1234/v1", Model: "local-model", ContextWindow: 32_000, Stream: true}},
+	{ID: "vllm", Config: Config{BaseURL: "http://127.0.0.1:8000/v1", Model: "local-model", ContextWindow: 32_000, Stream: true}},
 }
 
 func Presets() []Preset {

@@ -25,7 +25,7 @@ describe("App-level semantic tokens", () => {
   });
 
   it("styles the success toast from theme tokens", () => {
-    expect(app).toContain("bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))]");
+    expect(app).toContain("nx-alert-success");
   });
 
   it("references the runtime shadow token instead of the statically expanded utility", () => {

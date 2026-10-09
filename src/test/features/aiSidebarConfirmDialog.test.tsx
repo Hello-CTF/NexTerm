@@ -139,6 +139,7 @@ beforeEach(async () => {
     takeover: null,
     pushToast: mocks.toast,
     workspaces: [],
+    aiBoards: {},
     sessions: [],
   });
   await show();

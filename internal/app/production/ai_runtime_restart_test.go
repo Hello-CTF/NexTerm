@@ -57,7 +57,7 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 	}
 	if _, err := profileManager.Save(ctx, profiles.Profile{
 		BaseURL: providerURL, APIKey: "test-key", Model: "test-model",
-		Temperature: 0, ContextWindow: 32768, Stream: true,
+		ContextWindow: 32768, Stream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -129,6 +129,7 @@ describe("AI 会话流式渲染性能", () => {
       takeover: null,
       pushToast: mocks.toast,
       workspaces: [],
+      aiBoards: {},
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));

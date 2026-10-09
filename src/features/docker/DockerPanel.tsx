@@ -47,6 +47,20 @@ const CONTAINER_ACTION_LABELS: Record<string, string> = {
   remove: "删除",
 };
 
+const REFRESH_INTERVAL_OPTIONS = [10_000, 30_000, 60_000];
+const DEFAULT_REFRESH_INTERVAL_MS = 30_000;
+const REFRESH_INTERVAL_KEY = "nexterm.dockerRefreshMs.v1";
+
+function loadRefreshIntervalMs(): number {
+  try {
+    const raw = localStorage.getItem(REFRESH_INTERVAL_KEY);
+    const value = raw === null ? DEFAULT_REFRESH_INTERVAL_MS : Number(raw);
+    return REFRESH_INTERVAL_OPTIONS.includes(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
+  } catch {
+    return DEFAULT_REFRESH_INTERVAL_MS;
+  }
+}
+
 function TableQueryBody({
   colSpan,
   pending,
@@ -125,17 +139,26 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [refreshMs, setRefreshMs] = useState(loadRefreshIntervalMs);
   const attachInFlight = useRef(false);
+
+  const changeRefreshMs = (ms: number) => {
+    setRefreshMs(ms);
+    try {
+      localStorage.setItem(REFRESH_INTERVAL_KEY, String(ms));
+    } catch {
+    }
+  };
 
   const containers = useQuery({
     queryKey: ["docker-ps", sessionId],
     queryFn: () => dockerApi.ps(sessionId),
-    refetchInterval: visible ? 5000 : false,
+    refetchInterval: visible ? refreshMs : false,
   });
   const images = useQuery({
     queryKey: ["docker-images", sessionId],
     queryFn: () => dockerApi.images(sessionId),
-    refetchInterval: visible ? 30000 : false,
+    refetchInterval: visible ? refreshMs : false,
   });
 
   const cRows = containers.data ?? [];
@@ -484,10 +507,22 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           <IconRefresh size={13} />
           刷新
         </button>
-        <span className="nx-hint hidden min-[560px]:inline">容器 5s · 镜像与主机概览 30s 自动刷新</span>
+        <label className="nx-hint hidden items-center gap-1.5 min-[560px]:inline-flex">
+          自动刷新
+          <select
+            className="nx-select nx-input-sm"
+            aria-label="自动刷新间隔"
+            value={refreshMs}
+            onChange={(e) => changeRefreshMs(Number(e.target.value))}
+          >
+            {REFRESH_INTERVAL_OPTIONS.map((ms) => (
+              <option key={ms} value={ms}>
+                {ms / 1000} 秒
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-
-      {tab === "containers" && <OverviewStrip sessionId={sessionId} visible={visible} />}
 
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "containers" ? (
@@ -882,68 +917,6 @@ function PullBar({ sessionId }: { sessionId: string }) {
         {pulling ? <IconRefresh size={13} className="animate-spin" /> : <IconDownload size={13} />}
         {pulling ? "拉取中…" : "拉取"}
       </button>
-    </div>
-  );
-}
-
-const HOST_STAT_LABELS: Record<string, string> = {
-  containersRunning: "运行中",
-  containersTotal: "容器总数",
-  images: "镜像",
-  cpuPercent: "CPU (%)",
-  memUsedMb: "内存占用 (MB)",
-  memTotalMb: "内存总量 (MB)",
-  diskPercent: "磁盘 (%)",
-};
-
-function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boolean }) {
-  const overview = useQuery({
-    queryKey: ["docker-overview", sessionId],
-    queryFn: () => dockerApi.overview(sessionId),
-    refetchInterval: visible ? 30000 : false,
-  });
-
-  if (overview.isPending) {
-    return (
-      <div
-        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800/60 px-3 py-1.5"
-        role="status"
-        aria-label="主机概览加载中"
-      >
-        <span className="nx-skeleton nx-skeleton-chip w-16" aria-hidden="true" />
-        {Array.from({ length: 5 }, (_, i) => (
-          <span key={i} className="nx-skeleton nx-skeleton-chip w-24" aria-hidden="true" />
-        ))}
-        <span className="nx-sr-only">主机概览加载中…</span>
-      </div>
-    );
-  }
-  if (overview.isError) {
-    return (
-      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
-        <span className="nx-hint">主机概览加载失败 · {describeDockerError(overview.error)}</span>
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void overview.refetch()}>
-          <IconRefresh size={12} />
-          重试
-        </button>
-      </div>
-    );
-  }
-
-  const hostStats = overview.data.hostStats ?? {};
-  const entries = Object.entries(hostStats);
-  return (
-    <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800/60 px-3 py-1.5">
-      <span className="shrink-0 text-[11px] text-neutral-500">主机概览</span>
-      {entries.length === 0 && <span className="nx-hint">主机没有返回统计数据</span>}
-      {entries.map(([key, value]) => (
-        <span key={key} className="nx-chip shrink-0" title={key}>
-          {HOST_STAT_LABELS[key] ?? key}
-          <span className="nx-mono text-neutral-200">
-            {typeof value === "number" && !Number.isInteger(value) ? value.toFixed(1) : String(value)}
-          </span>
-        </span>
-      ))}
     </div>
   );
 }

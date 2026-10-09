@@ -5,7 +5,8 @@
 ## 分支基线
 
 - `master` 是唯一工作基线与发布基线：新分支一律从 `master` 最新提交切出，完成后合回 `master`。Pages 部署随 `master` push 触发，属既有流程。
-- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
+- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 以及 `v*` tag push 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
+- 版本号唯一来源是发布 tag：`wails.json`、`package.json`、`lazycat/package.yml` 恒为 `0.0.0` 占位，tag push 触发的 CI 从 ref 解析 `NEXTERM_RELEASE_VERSION` 烙进二进制与 dist manifest（master/PR 构建用占位版本）；release workflow 复用同 tag 的 CI run（`CI_REUSE_EXPECTED_REF` 锁定），本地/懒猫构建可经 `NEXTERM_RELEASE_VERSION` 或恰好落在 tag 上获得真实版本。
 - 推送 `master` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。
 
 ## 编码标准
@@ -33,7 +34,7 @@
 - 仅保留功能性指令，且必须原样保留：
   - Go：`//go:build`（一律在文件第 1 行）与 `//go:embed`（`migrations/migrations.go`、`cmd/nexterm-desktop/assets_production.go`）。
   - 脚本首行 shebang（`#!...`）。
-  - 打包指令：`lazycat/lzc-manifest.yml` 的 `#@build if/else/end`（被 lzc-cli 与 `scripts/verify-manifest-injects.py` 解析）。
+  - 打包指令：`lazycat/lzc-manifest.yml` 的 `#@build if/else/end`（被 lzc-cli 与 `scripts/verify-manifest-injects` 解析）。
   - 前端测试首行 pragma：`/** @vitest-environment jsdom */`。
 - 字符串字面量、模板与 heredoc 内的内容（含伪注释）是数据，任何清理不得触碰。
 
@@ -48,8 +49,8 @@
 - Go：`gofmt -l ./cmd ./internal ./migrations` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
-- 静态契约：`python3 scripts/verify-manifest-injects.py`；workflow 复用接线 `python3 .github/scripts/check-reuse-wiring.py`（CI 设 `SOURCE_DATE_EPOCH=1`）。
-- 已安装 task 时 `task check` 一次跑完上述常规项（`check-reuse-wiring.py` 不在其中，改动相关文件时单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
+- 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）。
+- 已安装 task 时 `task check` 一次跑完上述常规项（`verify-manifest-injects` 在其中，复用接线检查不在其中，改动相关文件时以 `task verify:wiring` 单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
 - CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
 - 真实 Chromium 验收缺口：原 `task acceptance:browser`（`.github/scripts/browser-acceptance.mjs`）随演示模式一并移除——它完全依赖 `?demo=1` 启动应用。真实浏览器行为（焦点与纯键盘导航、窄宽溢出、触摸命中、WebSocket 早期帧/重连、真实服务端 reload 恢复等）当前没有任何自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
 

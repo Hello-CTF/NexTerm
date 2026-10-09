@@ -199,6 +199,16 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
           className="text-neutral-600"
         />
       )}
+      <text
+        x={center}
+        y={center + size * 0.11}
+        textAnchor="middle"
+        fontSize={Math.max(6, size * 0.32)}
+        className={hasData ? ringTone(used) : "text-neutral-600"}
+        fill="currentColor"
+      >
+        {hasData ? used.toFixed(0) : "–"}
+      </text>
     </svg>
   );
 

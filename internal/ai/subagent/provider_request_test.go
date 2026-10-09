@@ -15,21 +15,21 @@ import (
 
 func TestAcceptanceTemperatureDefaultAndConfigured(t *testing.T) {
 	t.Setenv("NEXTERM_AI_TEMPERATURE", "")
-	if got := acceptanceTemperature(t); got != 0 {
-		t.Fatalf("default temperature = %v, want 0", got)
+	if got := acceptanceTemperature(t); got != nil {
+		t.Fatalf("default temperature = %v, want unset", *got)
 	}
 	t.Setenv("NEXTERM_AI_TEMPERATURE", "1")
-	if got := acceptanceTemperature(t); got != 1 {
+	if got := acceptanceTemperature(t); got == nil || *got != 1 {
 		t.Fatalf("configured temperature = %v, want 1", got)
 	}
 	t.Setenv("NEXTERM_AI_TEMPERATURE", "1.25")
-	if got := acceptanceTemperature(t); got != 1.25 {
+	if got := acceptanceTemperature(t); got == nil || *got != 1.25 {
 		t.Fatalf("configured temperature = %v, want 1.25", got)
 	}
 }
 
 func TestProfileModelFactorySendsConfiguredTemperature(t *testing.T) {
-	const configured = 1.25
+	configured := 1.25
 	var mu sync.Mutex
 	var bodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -54,7 +54,7 @@ func TestProfileModelFactorySendsConfiguredTemperature(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := manager.Save(ctx, profiles.Profile{
-		BaseURL: server.URL, Model: "test-model", Temperature: configured, ContextWindow: 32768, Stream: true,
+		BaseURL: server.URL, Model: "test-model", Temperature: &configured, ContextWindow: 32768, Stream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

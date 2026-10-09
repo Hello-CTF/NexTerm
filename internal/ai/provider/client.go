@@ -133,6 +133,10 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 
 func (c *Client) Config() Config {
 	config := c.config
+	if c.config.Temperature != nil {
+		temperature := *c.config.Temperature
+		config.Temperature = &temperature
+	}
 	if c.config.MaxTokens != nil {
 		maxTokens := *c.config.MaxTokens
 		config.MaxTokens = &maxTokens

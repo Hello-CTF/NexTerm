@@ -176,7 +176,7 @@ func TestLoadRepairsIDsOrderAndActive(t *testing.T) {
 	if len(overview.Profiles) != 2 {
 		t.Fatalf("profiles = %+v", overview.Profiles)
 	}
-	if overview.Profiles[0].ID != "same" || overview.Profiles[0].Name != "A" || overview.Profiles[0].Temperature != 2 || overview.Profiles[0].ContextWindow != 1000 {
+	if overview.Profiles[0].ID != "same" || overview.Profiles[0].Name != "A" || overview.Profiles[0].Temperature == nil || *overview.Profiles[0].Temperature != 2 || overview.Profiles[0].ContextWindow != 1000 {
 		t.Fatalf("first profile was not repaired: %+v", overview.Profiles[0])
 	}
 	if !ids.Valid(overview.Profiles[1].ID) || overview.Profiles[1].Stream {

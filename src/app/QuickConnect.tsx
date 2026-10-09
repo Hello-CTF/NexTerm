@@ -282,7 +282,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             const asset = row.asset;
             const connecting = connectingIds.includes(asset.id);
             const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
-            const Icon = assetIcon(asset.kind);
+            const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
             return (
               <button
                 key={asset.id}

@@ -10,17 +10,18 @@ import (
 )
 
 type Profile struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	BaseURL       string  `json:"baseUrl"`
-	APIKey        string  `json:"apiKey"`
-	Model         string  `json:"model"`
-	FallbackModel string  `json:"fallbackModel,omitempty"`
-	Temperature   float64 `json:"temperature"`
-	ContextWindow uint64  `json:"contextWindow"`
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	Proxy         *string `json:"proxy"`
-	Stream        bool    `json:"stream"`
+	ID              string                   `json:"id"`
+	Name            string                   `json:"name"`
+	BaseURL         string                   `json:"baseUrl"`
+	APIKey          string                   `json:"apiKey"`
+	Model           string                   `json:"model"`
+	FallbackModel   string                   `json:"fallbackModel,omitempty"`
+	Temperature     *float64                 `json:"temperature,omitempty"`
+	ReasoningEffort provider.ReasoningEffort `json:"reasoningEffort,omitempty"`
+	ContextWindow   uint64                   `json:"contextWindow"`
+	MaxTokens       *int                     `json:"maxTokens,omitempty"`
+	Proxy           *string                  `json:"proxy"`
+	Stream          bool                     `json:"stream"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -58,7 +59,6 @@ const (
 
 func DefaultProfile() Profile {
 	return Profile{
-		Temperature:   provider.DefaultTemperature,
 		ContextWindow: provider.DefaultContextWindow,
 		Stream:        true,
 	}
@@ -73,6 +73,7 @@ func (p Profile) Normalized() Profile {
 	p.Model = config.Model
 	p.FallbackModel = config.FallbackModel
 	p.Temperature = config.Temperature
+	p.ReasoningEffort = config.ReasoningEffort
 	p.ContextWindow = config.ContextWindow
 	p.MaxTokens = config.MaxTokens
 	p.Proxy = config.Proxy
@@ -112,7 +113,7 @@ func (p Profile) ClientOptions() []provider.Option {
 func (p Profile) ProviderConfig() provider.Config {
 	return provider.Config{
 		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, FallbackModel: p.FallbackModel,
-		Temperature: p.Temperature, ContextWindow: p.ContextWindow,
+		Temperature: cloneFloat64(p.Temperature), ReasoningEffort: p.ReasoningEffort, ContextWindow: p.ContextWindow,
 		MaxTokens: cloneInt(p.MaxTokens),
 		Proxy:     cloneString(p.Proxy), Stream: p.Stream,
 	}
@@ -133,17 +134,18 @@ func (p Profile) CircuitConfig() (int, time.Duration) {
 func (p *Profile) UnmarshalJSON(data []byte) error {
 	defaults := DefaultProfile()
 	var wire struct {
-		ID            string   `json:"id"`
-		Name          string   `json:"name"`
-		BaseURL       string   `json:"baseUrl"`
-		APIKey        string   `json:"apiKey"`
-		Model         string   `json:"model"`
-		FallbackModel string   `json:"fallbackModel"`
-		Temperature   *float64 `json:"temperature"`
-		ContextWindow *uint64  `json:"contextWindow"`
-		MaxTokens     *int     `json:"maxTokens"`
-		Proxy         *string  `json:"proxy"`
-		Stream        *bool    `json:"stream"`
+		ID              string                   `json:"id"`
+		Name            string                   `json:"name"`
+		BaseURL         string                   `json:"baseUrl"`
+		APIKey          string                   `json:"apiKey"`
+		Model           string                   `json:"model"`
+		FallbackModel   string                   `json:"fallbackModel"`
+		Temperature     *float64                 `json:"temperature"`
+		ReasoningEffort provider.ReasoningEffort `json:"reasoningEffort"`
+		ContextWindow   *uint64                  `json:"contextWindow"`
+		MaxTokens       *int                     `json:"maxTokens"`
+		Proxy           *string                  `json:"proxy"`
+		Stream          *bool                    `json:"stream"`
 
 		RequestTimeoutSeconds *int `json:"requestTimeoutSeconds"`
 		IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds"`
@@ -160,10 +162,8 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	p.APIKey = wire.APIKey
 	p.Model = wire.Model
 	p.FallbackModel = wire.FallbackModel
-	p.Temperature = defaults.Temperature
-	if wire.Temperature != nil {
-		p.Temperature = *wire.Temperature
-	}
+	p.Temperature = wire.Temperature
+	p.ReasoningEffort = wire.ReasoningEffort
 	p.ContextWindow = defaults.ContextWindow
 	if wire.ContextWindow != nil {
 		p.ContextWindow = *wire.ContextWindow
@@ -188,7 +188,7 @@ func PresetProfile(id string) (Profile, error) {
 	}
 	return Profile{
 		Name: id, BaseURL: config.BaseURL, Model: config.Model,
-		Temperature: config.Temperature, ContextWindow: config.ContextWindow,
+		Temperature: cloneFloat64(config.Temperature), ReasoningEffort: config.ReasoningEffort, ContextWindow: config.ContextWindow,
 		Proxy: config.Proxy, Stream: config.Stream,
 	}, nil
 }
@@ -200,6 +200,7 @@ type Overview struct {
 
 func cloneProfile(profile Profile) Profile {
 	profile.Proxy = cloneString(profile.Proxy)
+	profile.Temperature = cloneFloat64(profile.Temperature)
 	profile.MaxTokens = cloneInt(profile.MaxTokens)
 	profile.RequestTimeoutSeconds = cloneInt(profile.RequestTimeoutSeconds)
 	profile.IdleTimeoutSeconds = cloneInt(profile.IdleTimeoutSeconds)
@@ -217,6 +218,14 @@ func cloneString(value *string) *string {
 }
 
 func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneFloat64(value *float64) *float64 {
 	if value == nil {
 		return nil
 	}

@@ -15,7 +15,6 @@ import {
 const mocks = vi.hoisted(() => ({
   ps: vi.fn(),
   images: vi.fn(),
-  overview: vi.fn(),
   logsAttach: vi.fn(),
   bytesCb: null as null | ((bytes: Uint8Array) => void),
 }));
@@ -25,7 +24,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     dockerApi: {
-      overview: mocks.overview,
       ps: mocks.ps,
       images: mocks.images,
       inspect: vi.fn(),
@@ -117,7 +115,6 @@ beforeEach(() => {
   mocks.bytesCb = null;
   mocks.ps.mockResolvedValue([containerA]);
   mocks.images.mockResolvedValue([]);
-  mocks.overview.mockResolvedValue({ containers: [containerA], hostStats: {} });
   mocks.logsAttach.mockResolvedValue("tab-1");
 });
 

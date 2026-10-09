@@ -1,10 +1,9 @@
 /** @vitest-environment jsdom */
-// FLEET149 app 壳: 左侧导航「设备管理」打开 devices 标签并渲染真实视图
-// (桌面端传输, 视图必须落显式不可用态且不发 HTTP)。
+// FLEET149 app 壳: 桌面端传输不显示「设备管理」入口,避免用户点进去才发现不可用。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -47,7 +46,6 @@ vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../features/credentials/CredentialsView", () => ({ CredentialsView: () => null }));
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
@@ -79,44 +77,12 @@ afterEach(() => {
 });
 
 describe("app 壳 · 设备管理导航", () => {
-  it("导航按钮打开 devices 标签, 视图落显式不可用态且零 HTTP", async () => {
+  it("桌面端不显示设备管理入口,也不发 HTTP", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountApp();
-    await flushUntil(() => document.querySelector('button[aria-label="设备管理"]') !== null);
+    await flushUntil(() => document.querySelector('button[aria-label="设置"]') !== null);
 
-    const railButton = document.querySelector('button[aria-label="设备管理"]');
-    expect(railButton).not.toBeNull();
-    click(railButton as HTMLButtonElement);
-
-    await flushUntil(() =>
-      useUi
-        .getState()
-        .workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.kind === "devices"))),
-    );
-    const tab = useUi
-      .getState()
-      .workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs))
-      .find((t) => t.kind === "devices");
-    expect(tab?.title).toBe("设备管理");
-
-    await flushUntil(() => document.body.textContent?.includes("桌面端暂无设备管理") ?? false);
+    expect(document.querySelector('button[aria-label="设备管理"]')).toBeNull();
     expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-
-  it("重复点击复用同一个 devices 标签", async () => {
-    vi.stubGlobal("fetch", mocks.fetch);
-    mounted = mountApp();
-    await flushUntil(() => document.querySelector('button[aria-label="设备管理"]') !== null);
-
-    const railButton = document.querySelector('button[aria-label="设备管理"]') as HTMLButtonElement;
-    click(railButton);
-    await flushUntil(() => document.body.textContent?.includes("桌面端暂无设备管理") ?? false);
-    click(railButton);
-    await flushUntil(() =>
-      useUi
-        .getState()
-        .workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs))
-        .filter((t) => t.kind === "devices").length === 1,
-    );
   });
 });

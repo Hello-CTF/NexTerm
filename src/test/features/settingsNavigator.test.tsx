@@ -70,7 +70,9 @@ function toc(): HTMLElement {
 }
 
 function tocButtons(): HTMLButtonElement[] {
-  return [...toc().querySelectorAll<HTMLButtonElement>("button.nx-chip")];
+  return [...toc().querySelectorAll<HTMLButtonElement>("button")].filter(
+    (button) => !button.getAttribute("aria-label")?.endsWith("设置目录"),
+  );
 }
 
 function tocToggle(): HTMLButtonElement {
@@ -81,7 +83,7 @@ function tocToggle(): HTMLButtonElement {
 
 const SECTION_LABELS = [
   "外观", "终端", "AI 模型", "AI 拦截", "长期记忆", "定时任务",
-  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键", "软件更新",
+  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键",
 ];
 
 beforeEach(() => {
@@ -117,7 +119,6 @@ describe("设置分区导航", () => {
       "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-cron", "settings-vault", "settings-known-hosts",
       "settings-account", "settings-bundle", "settings-files", "settings-share", "settings-shortcuts",
-      "settings-update",
     ];
     for (const id of ids) {
       expect(document.getElementById(id), `missing section #${id}`).not.toBeNull();
@@ -145,7 +146,7 @@ describe("设置分区导航", () => {
     click(vaultEntry);
     expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
     expect(vaultEntry.getAttribute("aria-current")).toBe("true");
-    expect(vaultEntry.className).toContain("nx-chip-accent");
+    expect(vaultEntry.className).toContain("bg-neutral-800/70");
   });
 
   it("宽屏目录折叠后只保留开关与当前分区摘要,展开后恢复全部分区", async () => {
@@ -214,7 +215,7 @@ describe("设置分区导航", () => {
     expect(
       tocButtons()
         .find((c) => c.textContent?.trim() === "AI 模型")
-        ?.className.includes("nx-chip-accent"),
+        ?.className.includes("bg-neutral-800/70"),
     ).toBe(true);
   });
 });

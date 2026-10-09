@@ -39,6 +39,13 @@ func newTestInstance(t *testing.T, unlocked bool, options ...Option) *testInstan
 
 func testPtr[T any](value T) *T { return &value }
 
+func float64PointersEqual(left, right *float64) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
 func requireCode(t *testing.T, err error, code ipc.Code) {
 	t.Helper()
 	if err == nil {

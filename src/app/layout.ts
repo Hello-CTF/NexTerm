@@ -4,12 +4,15 @@ import { describeError } from "../ui/errorText";
 import { isDirtyFileEditor } from "../features/files/editorGuards";
 import { sanitizeLayoutPresets, type LayoutPreset } from "./layoutPresets";
 import {
+  GLOBAL_AI_BOARD_KEY,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   TOOL_TAB_KINDS,
   dbKindOf,
   nextTabId,
   useUi,
+  type AiBoard,
+  type AiDockTab,
   type AppTab,
   type LeftMode,
   type Pane,
@@ -37,6 +40,7 @@ export interface PersistedLayout {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   presets: LayoutPreset[];
+  aiBoards?: Record<string, AiBoard>;
 }
 
 const PANE_KINDS = new Set<PaneKind>([
@@ -47,7 +51,6 @@ const PANE_KINDS = new Set<PaneKind>([
   "docker",
   "db",
   "credentials",
-  "credentialsText",
   "settings",
   "audit",
   "devices",
@@ -93,7 +96,6 @@ function sanitizeTab(raw: unknown): AppTab | null {
     connId: optStr(raw.connId),
     dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     credId: optStr(raw.credId),
-    credView: raw.credView === "json" ? "json" : raw.credView === "text" ? "text" : undefined,
     path: optStr(raw.path),
     deviceId,
     closable: boolOr(raw.closable, true),
@@ -249,6 +251,37 @@ function migrateToolTabs(workspaces: Workspace[]): Workspace[] {
   );
 }
 
+function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
+  if (!isObj(raw)) return null;
+  const id = optStr(raw.id);
+  if (!id) return null;
+  const title = typeof raw.title === "string" ? raw.title.trim().slice(0, 80) : "";
+  return { id, title: title || "新会话", conversationId: optStr(raw.conversationId) };
+}
+
+function sanitizeAiBoard(raw: unknown): AiBoard | null {
+  if (!isObj(raw) || !Array.isArray(raw.tabs)) return null;
+  const tabs = raw.tabs.map(sanitizeAiDockTab).filter((t): t is AiDockTab => t !== null);
+  if (tabs.length === 0) return null;
+  const active = optStr(raw.activeTabId);
+  return {
+    tabs,
+    activeTabId: active && tabs.some((t) => t.id === active) ? active : tabs[tabs.length - 1].id,
+  };
+}
+
+function sanitizeAiBoards(raw: unknown, workspaces: Workspace[]): Record<string, AiBoard> {
+  if (!isObj(raw)) return {};
+  const wsIds = new Set(workspaces.map((w) => w.id));
+  const out: Record<string, AiBoard> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== GLOBAL_AI_BOARD_KEY && !wsIds.has(key)) continue;
+    const board = sanitizeAiBoard(value);
+    if (board) out[key] = board;
+  }
+  return out;
+}
+
 export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (!isObj(raw)) return null;
   if (raw.v !== LAYOUT_VERSION) return null;
@@ -279,6 +312,7 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
     workspaces,
     activeWorkspaceId,
     presets: sanitizeLayoutPresets(raw.presets),
+    aiBoards: sanitizeAiBoards(raw.aiBoards, workspaces),
   };
 }
 
@@ -291,6 +325,7 @@ interface LayoutSource {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   layoutPresets: LayoutPreset[];
+  aiBoards?: Record<string, AiBoard>;
 }
 
 export function serializeLayout(s: LayoutSource): PersistedLayout | null {
@@ -304,6 +339,7 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
     workspaces: s.workspaces,
     activeWorkspaceId: s.activeWorkspaceId,
     presets: s.layoutPresets,
+    aiBoards: s.aiBoards ?? {},
   });
 }
 
@@ -475,6 +511,7 @@ function applyToStore(l: PersistedLayout) {
       workspaces: merged,
       activeWorkspaceId: l.activeWorkspaceId,
       layoutPresets: l.presets,
+      aiBoards: l.aiBoards ?? {},
     });
   } finally {
     applyingRemote = false;

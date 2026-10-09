@@ -1,4 +1,7 @@
-import type { ReactNode, SVGProps } from "react";
+import type { ReactElement, ReactNode, SVGProps } from "react";
+import { ASSET_ICON_COMPONENTS } from "./assetIcons";
+
+export { ASSET_ICON_NAMES } from "./assetIcons";
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "children"> {
   size?: number;
@@ -586,6 +589,7 @@ export const KIND_ICON_MAP = {
 
 export type AssetKind = keyof typeof KIND_ICON_MAP;
 
-export function assetIcon(kind: string) {
-  return KIND_ICON_MAP[kind as AssetKind] ?? IconServer;
+export function assetIcon(kind: string, icon?: string): (p: IconProps) => ReactElement {
+  const Base = (icon && ASSET_ICON_COMPONENTS[icon]) || KIND_ICON_MAP[kind as AssetKind] || IconServer;
+  return ({ size = 16, className }: IconProps) => <Base size={size} className={className} />;
 }

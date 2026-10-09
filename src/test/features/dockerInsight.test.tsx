@@ -9,12 +9,12 @@ import {
   deferred,
   flush,
   mount,
+  setSelectValue,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
-  overview: vi.fn(),
   ps: vi.fn(),
   images: vi.fn(),
   inspect: vi.fn(),
@@ -34,7 +34,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     dockerApi: {
-      overview: mocks.overview,
       ps: mocks.ps,
       images: mocks.images,
       inspect: mocks.inspect,
@@ -167,10 +166,6 @@ describe("Docker insight controls (M61)", () => {
     mocks.reopenCbs.length = 0;
     mocks.ps.mockResolvedValue([containerA, containerB]);
     mocks.images.mockResolvedValue([]);
-    mocks.overview.mockResolvedValue({
-      containers: [containerA, containerB],
-      hostStats: { containersRunning: 1, containersTotal: 2, images: 5 },
-    });
     mocks.inspect.mockResolvedValue(inspectA);
     mocks.stats.mockResolvedValue(STATS_JSON_LINES);
     mocks.listDir.mockResolvedValue([]);
@@ -180,31 +175,20 @@ describe("Docker insight controls (M61)", () => {
     mounted = undefined;
   });
 
-  it("overview strip renders loading, then host stats chips", async () => {
-    const ov = deferred<{ containers: ContainerSummary[]; hostStats: Record<string, number> }>();
-    mocks.overview.mockReturnValue(ov.promise);
+  it("refresh interval select defaults to 30s and persists changes to localStorage", async () => {
     const m = (mounted = mountPanel());
+    await waitFor(() =>
+      expect(m.container.querySelector('select[aria-label="自动刷新间隔"]')).not.toBeNull(),
+    );
+    const select = m.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="自动刷新间隔"]',
+    )!;
+    expect(select.value).toBe("30000");
 
-    await waitFor(() => expect(m.container.textContent).toContain("主机概览加载中"));
-    ov.resolve({
-      containers: [containerA, containerB],
-      hostStats: { containersRunning: 1, containersTotal: 2, images: 5 },
-    });
-    await waitFor(() => expect(m.container.textContent).toContain("容器总数"));
-    expect(m.container.textContent).toContain("运行中");
-    expect(m.container.textContent).toContain("镜像");
-    expect(m.container.textContent).not.toContain("主机概览加载中");
-  });
-
-  it("overview strip surfaces failure and recovers via retry", async () => {
-    mocks.overview.mockRejectedValueOnce(new Error("daemon 未响应"));
-    const m = (mounted = mountPanel());
-
-    await waitFor(() => expect(m.container.textContent).toContain("主机概览加载失败"));
-    expect(m.container.textContent).toContain("daemon 未响应");
-    clickButton(m.container, "重试");
-    await waitFor(() => expect(m.container.textContent).toContain("运行中"));
-    expect(mocks.overview).toHaveBeenCalledTimes(2);
+    setSelectValue(select, "10000");
+    expect(select.value).toBe("10000");
+    expect(window.localStorage.getItem("nexterm.dockerRefreshMs.v1")).toBe("10000");
+    window.localStorage.removeItem("nexterm.dockerRefreshMs.v1");
   });
 
   it("inspect renders loading, summary and keeps secrets out of the DOM entirely", async () => {
@@ -611,10 +595,6 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     useUi.setState({ pushToast: mocks.toast, appDialog: null });
     mocks.ps.mockResolvedValue([containerA, containerB]);
     mocks.images.mockResolvedValue([imageA]);
-    mocks.overview.mockResolvedValue({
-      containers: [containerA, containerB],
-      hostStats: { containersRunning: 1, containersTotal: 2, images: 1 },
-    });
     mocks.action.mockResolvedValue(undefined);
     mocks.imageRemove.mockResolvedValue(undefined);
     mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>

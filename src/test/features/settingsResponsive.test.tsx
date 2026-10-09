@@ -95,7 +95,8 @@ describe("SettingsView 响应式结构", () => {
     const toc = nav!.querySelector<HTMLElement>('[data-testid="settings-nav-toc"]');
     expect(toc?.className).toContain("hidden");
     expect(toc?.className).toContain("md:flex");
-    expect(nav!.className).toContain("md:border-r");
+    expect(nav!.className).not.toContain("md:border-r");
+    expect(nav!.className).not.toContain("bg-[var(--nx-bg-pane)]");
     const root = mounted.container.firstElementChild as HTMLElement;
     expect(root.className).toContain("nx-pane");
     expect(root.className).not.toContain("overflow-y-auto");
@@ -169,7 +170,7 @@ describe("SettingsView 响应式结构", () => {
     const okAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>
       el.textContent?.includes("测试结果"),
     );
-    expect(okAlert?.className).toContain("text-green-300");
+    expect(okAlert?.className).toContain("nx-alert-success");
     expect(okAlert?.className).not.toContain("nx-alert-danger");
 
     mocks.testProvider.mockResolvedValueOnce({

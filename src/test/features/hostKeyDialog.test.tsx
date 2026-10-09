@@ -48,7 +48,6 @@ vi.mock("../../features/settings/SettingsView", () => ({ SettingsView: () => nul
 vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../../features/credentials/CredentialsView", () => ({ CredentialsView: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));

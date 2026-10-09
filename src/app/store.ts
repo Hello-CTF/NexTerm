@@ -27,7 +27,6 @@ export type PaneKind =
   | "docker"
   | "db"
   | "credentials"
-  | "credentialsText"
   | "settings"
   | "audit"
   | "devices"
@@ -59,7 +58,6 @@ export interface AppTab {
   connId?: string;
   dbKind?: DbKind;
   credId?: string;
-  credView?: "text" | "json";
   path?: string;
   deviceId?: string;
   pendingCommand?: string;
@@ -80,7 +78,6 @@ export const TOOL_TAB_KINDS: ReadonlySet<PaneKind> = new Set<PaneKind>([
   "background",
   "history",
   "credentials",
-  "credentialsText",
 ]);
 
 export interface Pane {
@@ -161,6 +158,21 @@ export interface TakeoverState {
   startedAt: number;
 }
 
+// AI 看板按工作区分组: 每个工作区一组标签, 每个标签绑定一个独立会话。
+export interface AiDockTab {
+  id: string;
+  title: string;
+  conversationId?: string;
+}
+
+export interface AiBoard {
+  tabs: AiDockTab[];
+  activeTabId: string | null;
+}
+
+// 没有远程主机工作区(无工作区或「工具」工作区)时, AI 看板落在全局分组。
+export const GLOBAL_AI_BOARD_KEY = "global";
+
 export interface BroadcastState {
   workspaceId: string;
   targetIds: string[];
@@ -181,6 +193,12 @@ interface UiState {
   aiBusy: boolean;
   takeover: TakeoverState | null;
   setTakeover: (t: TakeoverState | null) => void;
+  aiBoards: Record<string, AiBoard>;
+  ensureAiBoard: (key: string) => AiBoard;
+  addAiTab: (key: string) => string;
+  closeAiTab: (key: string, tabId: string) => void;
+  setActiveAiTab: (key: string, tabId: string) => void;
+  updateAiTab: (key: string, tabId: string, patch: Partial<AiDockTab>) => void;
   broadcast: BroadcastState | null;
   setBroadcast: (b: BroadcastState | null) => void;
   modelProfilesRevision: number;
@@ -229,7 +247,8 @@ interface UiState {
   updateWorkspaceSession: (workspaceId: string, sessionId: string) => void;
 
   setSessions: (s: SessionInfo[]) => void;
-  resyncSessions: () => Promise<void>;
+  resyncSessions: (options?: { silent?: boolean }) => Promise<void>;
+  resetSessions: () => void;
   sessionResyncFailed: boolean;
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
@@ -240,6 +259,9 @@ interface UiState {
 
 let toastSeq = 1;
 let tabSeq = 1;
+
+// 会话列表的 auth 守卫: 登录/登出切换账号时, 在途的旧请求可能迟到, 不允许回写覆盖新会话的数据。
+let sessionsEpoch = 0;
 
 const LEFT_MIN = 180;
 const LEFT_MAX = 560;
@@ -352,6 +374,21 @@ export function nextTabId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
 }
 
+function makeAiDockTab(): AiDockTab {
+  return { id: nextTabId("ai"), title: "新会话" };
+}
+
+function makeAiBoard(): AiBoard {
+  const tab = makeAiDockTab();
+  return { tabs: [tab], activeTabId: tab.id };
+}
+
+function omitAiBoard(boards: Record<string, AiBoard>, key: string): Record<string, AiBoard> {
+  const next = { ...boards };
+  delete next[key];
+  return next;
+}
+
 const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签"]);
 
 function workspaceFieldPatch(
@@ -397,6 +434,7 @@ export const useUi = create<UiState>((set, get) => ({
   sessions: [],
   aiBusy: false,
   takeover: restoredTakeover,
+  aiBoards: {},
   broadcast: null,
   modelProfilesRevision: 0,
   bumpModelProfilesRevision: () =>
@@ -511,6 +549,7 @@ export const useUi = create<UiState>((set, get) => ({
       activeWorkspaceId:
         activeWorkspaceId === id ? (next.length ? next[next.length - 1].id : null) : activeWorkspaceId,
       ...(get().broadcast?.workspaceId === id ? { broadcast: null } : {}),
+      ...(get().aiBoards[id] ? { aiBoards: omitAiBoard(get().aiBoards, id) } : {}),
     });
     pushWorkspaceCloseToast(target.title, outcome);
   },
@@ -781,16 +820,23 @@ export const useUi = create<UiState>((set, get) => ({
 
   setSessions: (s) => set({ sessions: s }),
   sessionResyncFailed: false,
-  resyncSessions: async () => {
+  resyncSessions: async (options) => {
+    const epoch = sessionsEpoch;
     try {
       const list = await sessionApi.list();
+      if (epoch !== sessionsEpoch) return;
       set({ sessions: list, sessionResyncFailed: false });
     } catch (e) {
       console.error("[NexTerm] 刷新会话列表失败", e);
+      if (epoch !== sessionsEpoch || options?.silent) return;
       if (get().sessionResyncFailed) return;
       set({ sessionResyncFailed: true });
       get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
     }
+  },
+  resetSessions: () => {
+    sessionsEpoch += 1;
+    set({ sessions: [], sessionResyncFailed: false });
   },
   setAiBusy: (v) => set({ aiBusy: v }),
   setTakeover: (t) => {
@@ -800,9 +846,63 @@ export const useUi = create<UiState>((set, get) => ({
   },
   setBroadcast: (b) => set({ broadcast: b }),
 
+  ensureAiBoard: (key) => {
+    const existing = get().aiBoards[key];
+    if (existing) return existing;
+    const board = makeAiBoard();
+    set((s) => (s.aiBoards[key] ? s : { aiBoards: { ...s.aiBoards, [key]: board } }));
+    return get().aiBoards[key];
+  },
+  addAiTab: (key) => {
+    get().ensureAiBoard(key);
+    const tab = makeAiDockTab();
+    set((s) => {
+      const board = s.aiBoards[key];
+      if (!board) return s;
+      return { aiBoards: { ...s.aiBoards, [key]: { tabs: [...board.tabs, tab], activeTabId: tab.id } } };
+    });
+    return tab.id;
+  },
+  closeAiTab: (key, tabId) =>
+    set((s) => {
+      const board = s.aiBoards[key];
+      if (!board) return s;
+      if (board.tabs.length <= 1) {
+        if (board.tabs[0]?.id !== tabId) return s;
+        return { aiBoards: { ...s.aiBoards, [key]: makeAiBoard() } };
+      }
+      const index = board.tabs.findIndex((t) => t.id === tabId);
+      if (index < 0) return s;
+      const tabs = board.tabs.filter((t) => t.id !== tabId);
+      const activeTabId =
+        board.activeTabId === tabId
+          ? (tabs[Math.min(index, tabs.length - 1)]?.id ?? null)
+          : board.activeTabId;
+      return { aiBoards: { ...s.aiBoards, [key]: { tabs, activeTabId } } };
+    }),
+  setActiveAiTab: (key, tabId) =>
+    set((s) => {
+      const board = s.aiBoards[key];
+      if (!board || !board.tabs.some((t) => t.id === tabId)) return s;
+      return { aiBoards: { ...s.aiBoards, [key]: { ...board, activeTabId: tabId } } };
+    }),
+  updateAiTab: (key, tabId, patch) =>
+    set((s) => {
+      const board = s.aiBoards[key];
+      if (!board || !board.tabs.some((t) => t.id === tabId)) return s;
+      return {
+        aiBoards: {
+          ...s.aiBoards,
+          [key]: { ...board, tabs: board.tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t)) },
+        },
+      };
+    }),
+
   connectingAssetIds: [],
 
   pushToast: (kind, text) => {
+    const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
+    if (existing) get().dismissToast(existing.id);
     const id = toastSeq++;
     set((st) => ({ toasts: [...st.toasts, { id, kind, text }] }));
     window.setTimeout(() => get().dismissToast(id), kind === "error" ? 8000 : 3500);
@@ -1414,16 +1514,6 @@ export function openCredentialsTab(credId?: string) {
     kind: "credentials",
     title: "凭据",
     credId,
-    closable: true,
-  });
-}
-
-export function openCredentialsViewTab(view: "text" | "json" = "text") {
-  useUi.getState().addTab({
-    id: "tab-credentials-view",
-    kind: "credentialsText",
-    title: "凭据视图",
-    credView: view,
     closable: true,
   });
 }

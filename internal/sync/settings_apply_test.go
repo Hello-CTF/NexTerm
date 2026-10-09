@@ -48,7 +48,7 @@ func applyAIProfileTombstone(t *testing.T, id string, deletedAt int64) ApplyObje
 func fullTestAIProfile(id string) aiProfileObject {
 	return aiProfileObject{
 		ID: id, Name: "同步档案", BaseURL: "https://ai.example.com/v1", APIKey: "profile-secret-值",
-		Model: "model-x", FallbackModel: "model-y", Temperature: 0.7, ContextWindow: 128000,
+		Model: "model-x", FallbackModel: "model-y", Temperature: testPtr(0.7), ReasoningEffort: "high", ContextWindow: 128000,
 		MaxTokens: testPtr(4096), Proxy: testPtr("http://proxy.example.com:8080"), Stream: true,
 		RequestTimeoutSeconds: testPtr(120), IdleTimeoutSeconds: testPtr(30),
 		CircuitFailureThreshold: testPtr(5), CircuitCooldownSeconds: testPtr(60),
@@ -486,7 +486,8 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 		t.Fatal("profile missing after apply")
 	}
 	if record.Name != payload.Name || record.BaseURL != payload.BaseURL || record.Model != payload.Model ||
-		record.FallbackModel != payload.FallbackModel || record.Temperature != payload.Temperature ||
+		record.FallbackModel != payload.FallbackModel || !float64PointersEqual(record.Temperature, payload.Temperature) ||
+		record.ReasoningEffort != payload.ReasoningEffort ||
 		record.ContextWindow != payload.ContextWindow || record.MaxTokens == nil || *record.MaxTokens != *payload.MaxTokens ||
 		record.Proxy == nil || *record.Proxy != *payload.Proxy || record.Stream != payload.Stream ||
 		record.RequestTimeoutSeconds == nil || *record.RequestTimeoutSeconds != *payload.RequestTimeoutSeconds ||
@@ -655,7 +656,8 @@ func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 		t.Fatal("profile missing from manager")
 	}
 	if profile.Name != payload.Name || profile.BaseURL != payload.BaseURL || profile.Model != payload.Model ||
-		profile.FallbackModel != payload.FallbackModel || profile.Temperature != payload.Temperature ||
+		profile.FallbackModel != payload.FallbackModel || !float64PointersEqual(profile.Temperature, payload.Temperature) ||
+		string(profile.ReasoningEffort) != payload.ReasoningEffort ||
 		profile.ContextWindow != payload.ContextWindow || profile.MaxTokens == nil || *profile.MaxTokens != *payload.MaxTokens ||
 		profile.Proxy == nil || *profile.Proxy != *payload.Proxy || profile.Stream != payload.Stream ||
 		profile.RequestTimeoutSeconds == nil || *profile.RequestTimeoutSeconds != *payload.RequestTimeoutSeconds ||

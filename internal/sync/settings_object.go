@@ -21,17 +21,18 @@ var errAIProfilesCorrupt = errors.New("AI 模型档案数据损坏")
 
 // aiProfileRecord 是 ai.models 设置中的持久化形态(无修订号), 字段与 profiles.Profile 完全一致。
 type aiProfileRecord struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	BaseURL       string  `json:"baseUrl"`
-	APIKey        string  `json:"apiKey"`
-	Model         string  `json:"model"`
-	FallbackModel string  `json:"fallbackModel,omitempty"`
-	Temperature   float64 `json:"temperature"`
-	ContextWindow uint64  `json:"contextWindow"`
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	Proxy         *string `json:"proxy"`
-	Stream        bool    `json:"stream"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	BaseURL         string   `json:"baseUrl"`
+	APIKey          string   `json:"apiKey"`
+	Model           string   `json:"model"`
+	FallbackModel   string   `json:"fallbackModel,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
+	ContextWindow   uint64   `json:"contextWindow"`
+	MaxTokens       *int     `json:"maxTokens,omitempty"`
+	Proxy           *string  `json:"proxy"`
+	Stream          bool     `json:"stream"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -50,7 +51,8 @@ func aiProfileRecordFromPayload(payload aiProfileObject) aiProfileRecord {
 	return aiProfileRecord{
 		ID: payload.ID, Name: payload.Name, BaseURL: payload.BaseURL, APIKey: payload.APIKey,
 		Model: payload.Model, FallbackModel: payload.FallbackModel, Temperature: payload.Temperature,
-		ContextWindow: payload.ContextWindow, MaxTokens: payload.MaxTokens, Proxy: payload.Proxy, Stream: payload.Stream,
+		ReasoningEffort: payload.ReasoningEffort,
+		ContextWindow:   payload.ContextWindow, MaxTokens: payload.MaxTokens, Proxy: payload.Proxy, Stream: payload.Stream,
 		RequestTimeoutSeconds: payload.RequestTimeoutSeconds, IdleTimeoutSeconds: payload.IdleTimeoutSeconds,
 		CircuitFailureThreshold: payload.CircuitFailureThreshold, CircuitCooldownSeconds: payload.CircuitCooldownSeconds,
 	}
@@ -60,7 +62,8 @@ func aiProfilePayloadFromRecord(record aiProfileRecord, updatedAt int64) aiProfi
 	return aiProfileObject{
 		ID: record.ID, Name: record.Name, BaseURL: record.BaseURL, APIKey: record.APIKey,
 		Model: record.Model, FallbackModel: record.FallbackModel, Temperature: record.Temperature,
-		ContextWindow: record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy, Stream: record.Stream,
+		ReasoningEffort: record.ReasoningEffort,
+		ContextWindow:   record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy, Stream: record.Stream,
 		RequestTimeoutSeconds: record.RequestTimeoutSeconds, IdleTimeoutSeconds: record.IdleTimeoutSeconds,
 		CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
 		UpdatedAt: updatedAt,

@@ -172,6 +172,7 @@ describe("AiSidebar session restore", () => {
       takeover: null,
       pushToast: mocks.toast,
       workspaces: [],
+      aiBoards: {},
       sessions: [],
     });
   });

@@ -16,7 +16,6 @@ import {
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
-    overview: vi.fn(),
     ps: vi.fn(),
     images: vi.fn(),
     action: vi.fn(),
@@ -39,7 +38,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     dockerApi: {
-      overview: mocks.overview,
       ps: mocks.ps,
       images: mocks.images,
       inspect: vi.fn(),
@@ -119,7 +117,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast, sessions: [] });
-  mocks.overview.mockResolvedValue({ containers: [], hostStats: {} });
   mocks.ps.mockResolvedValue([containerA, containerB]);
   mocks.images.mockResolvedValue([]);
   mocks.action.mockResolvedValue(undefined);
@@ -204,7 +201,13 @@ describe("DockerPanel 文案", () => {
 
   it("工具栏标注真实刷新节奏，镜像空态与容器一致", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
-    await flushUntil(() => text().includes("容器 5s · 镜像与主机概览 30s 自动刷新"));
+    await flushUntil(() => text().includes("自动刷新"));
+    expect(text()).not.toContain("容器 5s · 镜像与主机概览 30s 自动刷新");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="自动刷新间隔"]',
+    );
+    expect(select).not.toBeNull();
+    expect(select!.value).toBe("30000");
     const segment = [...mounted.container.querySelectorAll(".nx-segment-item")].find((b) =>
       b.textContent?.includes("镜像"),
     );

@@ -16,17 +16,17 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-func acceptanceTemperature(t *testing.T) float64 {
+func acceptanceTemperature(t *testing.T) *float64 {
 	t.Helper()
 	raw := os.Getenv("NEXTERM_AI_TEMPERATURE")
 	if raw == "" {
-		return 0
+		return nil
 	}
 	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		t.Fatalf("NEXTERM_AI_TEMPERATURE: %v", err)
 	}
-	return value
+	return &value
 }
 
 func acceptanceClient(t *testing.T, baseURL, modelName string) baseChatModelClient {

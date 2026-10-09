@@ -15,7 +15,6 @@ import {
 const mocks = vi.hoisted(() => ({
   dockerPs: vi.fn(),
   dockerImages: vi.fn(),
-  dockerOverview: vi.fn(),
   forwardEnv: vi.fn(),
   forwardList: vi.fn(),
   mountList: vi.fn(),
@@ -29,7 +28,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     dockerApi: {
       ps: mocks.dockerPs,
       images: mocks.dockerImages,
-      overview: mocks.dockerOverview,
       action: vi.fn(),
       imageRemove: vi.fn(),
       imagePull: vi.fn(),
@@ -68,7 +66,6 @@ beforeEach(() => {
   document.body.replaceChildren();
   mocks.dockerPs.mockResolvedValue([]);
   mocks.dockerImages.mockResolvedValue([]);
-  mocks.dockerOverview.mockResolvedValue({ hostStats: {} });
   mocks.forwardEnv.mockResolvedValue({ available: true, listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.mountList.mockResolvedValue([]);

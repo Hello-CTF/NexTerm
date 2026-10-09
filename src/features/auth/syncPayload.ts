@@ -85,6 +85,7 @@ export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   const o: Record<string, unknown> = { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKey ?? "", model: p.model };
   if (p.fallbackModel) o.fallbackModel = p.fallbackModel;
   o.temperature = p.temperature;
+  if (p.reasoningEffort) o.reasoningEffort = p.reasoningEffort;
   o.contextWindow = p.contextWindow;
   if (p.maxTokens !== undefined && p.maxTokens !== null) o.maxTokens = p.maxTokens;
   o.proxy = p.proxy ?? null;

@@ -164,17 +164,18 @@ type knownHostObject struct {
 // aiProfileObject 字段与 internal/ai/profiles.Profile 持久化形态一一对应, 另加修订号 updatedAt。
 // apiKey 在载荷中恒为明文(整体经 DEK 端到端加密), 落盘前必须转为 enc:v1: 信封。
 type aiProfileObject struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	BaseURL       string  `json:"baseUrl"`
-	APIKey        string  `json:"apiKey"`
-	Model         string  `json:"model"`
-	FallbackModel string  `json:"fallbackModel,omitempty"`
-	Temperature   float64 `json:"temperature"`
-	ContextWindow uint64  `json:"contextWindow"`
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	Proxy         *string `json:"proxy"`
-	Stream        bool    `json:"stream"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	BaseURL         string   `json:"baseUrl"`
+	APIKey          string   `json:"apiKey"`
+	Model           string   `json:"model"`
+	FallbackModel   string   `json:"fallbackModel,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
+	ContextWindow   uint64   `json:"contextWindow"`
+	MaxTokens       *int     `json:"maxTokens,omitempty"`
+	Proxy           *string  `json:"proxy"`
+	Stream          bool     `json:"stream"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`

@@ -7,7 +7,7 @@ import (
 
 func TestEinoChatModelConstruction(t *testing.T) {
 	client, err := NewClient(Config{
-		BaseURL: "http://127.0.0.1:8080/v1", APIKey: "key", Model: "m", Temperature: 0.4,
+		BaseURL: "http://127.0.0.1:8080/v1", APIKey: "key", Model: "m", Temperature: ptr(0.4),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -590,7 +590,8 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
-  temperature: number;
+  temperature?: number;
+  reasoningEffort?: string;
   contextWindow: number;
   proxy: string | null;
   stream: boolean;

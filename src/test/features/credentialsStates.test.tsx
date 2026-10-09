@@ -38,7 +38,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { CredentialsSidebar } from "../../features/credentials/CredentialsSidebar";
 import { CredentialsPanel } from "../../features/credentials/CredentialsPanel";
-import { CredentialsView } from "../../features/credentials/CredentialsView";
 import { NewCredentialModal } from "../../features/credentials/NewCredentialModal";
 import { useUi } from "../../app/store";
 
@@ -187,53 +186,6 @@ describe("CredentialsPanel 状态", () => {
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
     expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("凭据加载中");
   });
-
-  it("工具栏没有与命令面板重复的「凭据视图」按钮", async () => {
-    mocks.listCredentials.mockResolvedValue([]);
-    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
-    await flushUntil(() => text().includes("还没有任何凭据"));
-    expect(
-      [...mounted!.container.querySelectorAll("button")].some((b) =>
-        b.textContent?.includes("凭据视图"),
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("CredentialsView 状态", () => {
-  it("任一查询失败时显示错误与重试，而不是渲染空快照", async () => {
-    mocks.listCredentials.mockRejectedValue(new Error("保险库打不开"));
-    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
-    await flushUntil(() => text().includes("加载失败 · 保险库打不开"));
-    expect(text()).not.toContain("# NexTerm 凭据视图");
-  });
-
-  it("重试后渲染只读快照", async () => {
-    mocks.listCredentials.mockRejectedValueOnce(new Error("保险库打不开"));
-    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
-    await flushUntil(() => text().includes("加载失败"));
-    clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("# NexTerm 凭据视图"));
-  });
-
-  it("加载中带 role=status 语义", async () => {
-    mocks.listCredentials.mockReturnValue(new Promise(() => {}));
-    mocks.assetList.mockReturnValue(new Promise(() => {}));
-    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
-    await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
-    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain(
-      "凭据视图加载中",
-    );
-  });
-
-  it("空态文案不用装饰性破折号", async () => {
-    mocks.assetList.mockResolvedValue([]);
-    mocks.listCredentials.mockResolvedValue([]);
-    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
-    await flushUntil(() => text().includes("# 还没有可 SSH 的资产"));
-    expect(text()).toContain("# 还没有可 SSH 的资产：在左侧资产树里新建一台");
-    expect(text()).not.toContain("——");
-  });
 });
 
 describe("NewCredentialModal 表单与键盘", () => {
@@ -323,7 +275,6 @@ describe("凭据 amber 文字语义化（源码守卫）", () => {
   const files = [
     "CredentialsSidebar.tsx",
     "CredentialsPanel.tsx",
-    "CredentialsView.tsx",
     "NewCredentialModal.tsx",
   ];
   for (const file of files) {

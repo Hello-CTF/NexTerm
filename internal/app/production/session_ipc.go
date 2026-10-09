@@ -293,8 +293,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return attachedTabDTO{}, terminalIPCError(err)
 					}
 				}
+				replayBytes := input.ReplayBytes
+				if replayBytes == 0 {
+					replayBytes = -1
+				}
 				info, err := s.sessions.AttachTab(ctx, input.TabID, session.AttachOptions{
-					ClientID: call.ClientID, ChannelID: call.Channel.ID, ReplayBytes: input.ReplayBytes,
+					ClientID: call.ClientID, ChannelID: call.Channel.ID, ReplayBytes: replayBytes,
 				})
 				if err == nil {
 					return attachedSessionTab(info), nil

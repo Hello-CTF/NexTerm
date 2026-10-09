@@ -3,7 +3,13 @@ import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { aiApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
-import { useUi, type TakeoverState } from "../../app/store";
+import {
+  GLOBAL_AI_BOARD_KEY,
+  useActiveWorkspace,
+  useUi,
+  type AiDockTab,
+  type TakeoverState,
+} from "../../app/store";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
@@ -124,6 +130,29 @@ function persistConversationId(id: string | undefined): void {
   }
 }
 
+// 各 AI 标签的忙状态登记处: 全局 aiBusy = 任一标签忙; 标签页圆点经同一登记处刷新。
+const aiTabBusyIds = new Set<string>();
+const aiTabBusyListeners = new Set<() => void>();
+let aiTabBusyVersion = 0;
+
+function setAiTabBusy(tabKey: string, busy: boolean): void {
+  if (aiTabBusyIds.has(tabKey) === busy) return;
+  if (busy) aiTabBusyIds.add(tabKey);
+  else aiTabBusyIds.delete(tabKey);
+  aiTabBusyVersion += 1;
+  useUi.getState().setAiBusy(aiTabBusyIds.size > 0);
+  for (const listener of [...aiTabBusyListeners]) listener();
+}
+
+function subscribeAiTabBusy(listener: () => void): () => void {
+  aiTabBusyListeners.add(listener);
+  return () => {
+    aiTabBusyListeners.delete(listener);
+  };
+}
+
+const getAiTabBusyVersion = (): number => aiTabBusyVersion;
+
 export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null {
   if (runs.some((run) => run.status === "running")) return "running";
   if (runs.some((run) => run.status === "interrupted" && run.finishedAt == null)) return "interrupted";
@@ -131,9 +160,203 @@ export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null 
 }
 
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
-  const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast, rightWidth, workspaces } = useUi();
+  const setRightOpen = useUi((s) => s.setRightOpen);
+  const rightWidth = useUi((s) => s.rightWidth);
+  const pushToast = useUi((s) => s.pushToast);
+  const takeover = useUi((s) => s.takeover);
+  const activeWorkspace = useActiveWorkspace();
+  const aiBoards = useUi((s) => s.aiBoards);
+  const ensureAiBoard = useUi((s) => s.ensureAiBoard);
+  const addAiTab = useUi((s) => s.addAiTab);
+  const closeAiTab = useUi((s) => s.closeAiTab);
+  const setActiveAiTab = useUi((s) => s.setActiveAiTab);
+  const updateAiTab = useUi((s) => s.updateAiTab);
   const bindings = useKeybindings();
   const aiSidebarKeyLabel = formatBinding(bindings.toggleAiSidebar);
+  const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
+  useSyncExternalStore(subscribeAiTabBusy, getAiTabBusyVersion);
+
+  const boardKey =
+    activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.id : GLOBAL_AI_BOARD_KEY;
+  useEffect(() => {
+    ensureAiBoard(boardKey);
+  }, [boardKey, ensureAiBoard]);
+
+  const board = aiBoards[boardKey];
+  const tabs = board?.tabs ?? [];
+  const activeTabId = board?.activeTabId ?? tabs[tabs.length - 1]?.id ?? null;
+
+  const handleConversationChange = useCallback(
+    (tabId: string, conversationId: string | undefined, title?: string) => {
+      updateAiTab(
+        boardKey,
+        tabId,
+        conversationId === undefined
+          ? { conversationId: undefined, title: "新会话" }
+          : { conversationId, ...(title ? { title } : {}) },
+      );
+    },
+    [boardKey, updateAiTab],
+  );
+  const handleTitleChange = useCallback(
+    (tabId: string, title: string) => updateAiTab(boardKey, tabId, { title }),
+    [boardKey, updateAiTab],
+  );
+
+  const requestCloseTab = (tab: AiDockTab) => {
+    if (aiTabBusyIds.has(tab.id)) {
+      pushToast("info", "这一轮仍在运行，请先停止再关闭标签");
+      return;
+    }
+    closeAiTab(boardKey, tab.id);
+  };
+
+  const scopeLabel =
+    activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.title : "本机 / 全局";
+
+  return (
+    <aside
+      className="flex h-full shrink-0 flex-col overflow-y-auto border-l border-neutral-800/60 bg-neutral-950"
+      style={{ width: rightWidth }}
+    >
+      <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
+        <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
+        <span className="min-w-0 truncate text-[11px] text-neutral-500" title={scopeLabel}>
+          {scopeLabel}
+        </span>
+        {takeover && (
+          <span
+            className="nx-badge nx-badge-red"
+            title={
+              bindings.reclaimTakeover
+                ? `终端接管进行中：按 ${reclaimKeyLabel} 随时夺回`
+                : "终端接管进行中"
+            }
+          >
+            <span className="nx-dot nx-dot-pulse" />
+            接管中
+          </span>
+        )}
+        <div className="nx-spacer" />
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
+          aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
+          onClick={() => setRightOpen(false)}
+        >
+          <IconChevronRight size={14} />
+        </button>
+      </div>
+
+      <div className="flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
+        <div
+          role="tablist"
+          aria-label="AI 任务标签"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+        >
+          {tabs.map((t) => {
+            const isActive = t.id === activeTabId;
+            return (
+              <div
+                key={t.id}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                className={`nx-tab h-6 max-w-[140px] gap-1 px-2 text-[11px] ${isActive ? "is-active" : ""}`}
+                title={t.title}
+                onClick={() => setActiveAiTab(boardKey, t.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActiveAiTab(boardKey, t.id);
+                  }
+                }}
+              >
+                {aiTabBusyIds.has(t.id) && (
+                  <span className="nx-dot nx-dot-pulse shrink-0" aria-label="运行中" />
+                )}
+                <span className="truncate">{t.title}</span>
+                <button
+                  type="button"
+                  className="nx-tab-close"
+                  aria-label={`关闭标签 ${t.title}`}
+                  title="关闭标签"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestCloseTab(t);
+                  }}
+                >
+                  <IconClose size={10} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm shrink-0"
+          title="新建 AI 标签"
+          aria-label="新建 AI 标签"
+          onClick={() => addAiTab(boardKey)}
+        >
+          <IconPlus size={13} />
+        </button>
+      </div>
+
+      {tabs.map((t) => (
+        <div
+          key={t.id}
+          className={t.id === activeTabId ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+        >
+          <AiChatTab
+            sessionId={sessionId}
+            tabId={tabId}
+            conversationId={t.conversationId}
+            allowLegacyRestore={boardKey === GLOBAL_AI_BOARD_KEY && tabs.length === 1}
+            active={t.id === activeTabId}
+            tabKey={t.id}
+            onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}
+            onTitleChange={(title) => handleTitleChange(t.id, title)}
+          />
+        </div>
+      ))}
+    </aside>
+  );
+}
+
+interface AiChatTabProps {
+  sessionId?: string;
+  tabId?: string;
+  conversationId?: string;
+  allowLegacyRestore: boolean;
+  active: boolean;
+  tabKey: string;
+  onConversationChange: (conversationId: string | undefined, title?: string) => void;
+  onTitleChange: (title: string) => void;
+}
+
+function AiChatTab({
+  sessionId,
+  tabId,
+  conversationId: boundConversationId,
+  allowLegacyRestore,
+  active,
+  tabKey,
+  onConversationChange,
+  onTitleChange,
+}: AiChatTabProps) {
+  const rightOpen = useUi((s) => s.rightOpen);
+  const anyAiBusy = useUi((s) => s.aiBusy);
+  const pushToast = useUi((s) => s.pushToast);
+  const workspaces = useUi((s) => s.workspaces);
+  const [busy, setBusyState] = useState(false);
+  const busyRef = useRef(false);
+  const setBusy = (v: boolean) => {
+    busyRef.current = v;
+    setBusyState(v);
+    setAiTabBusy(tabKey, v);
+  };
+  useEffect(() => () => setAiTabBusy(tabKey, false), [tabKey]);
+  const bindings = useKeybindings();
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   const streamRef = useRef<ConversationStream | null>(null);
   if (!streamRef.current) streamRef.current = createConversationStream();
@@ -250,13 +473,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   }, [questionCard?.id]);
   const [planMode, setPlanMode] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
-  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
+  const [conversationId, setConversationId] = useState<string | undefined>(boundConversationId);
   const [conversationError, setConversationError] = useState<string | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
-  const updateConversationId = (id: string | undefined) => {
+  const updateConversationId = (id: string | undefined, title?: string) => {
     conversationIdRef.current = id;
     setConversationId(id);
     persistConversationId(id);
+    onConversationChange(id, title);
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
@@ -270,7 +494,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [runStatusByConv, setRunStatusByConv] = useState<Record<string, "running" | "interrupted">>({});
   const [historyStatus, setHistoryStatus] = useState<"loading" | "error" | "ready">("ready");
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const takeover = useUi((s) => s.takeover);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const follow = useConversationFollow(conv.items);
   const virtual = useVirtualWindow(conv.items.length);
@@ -387,7 +610,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const current = activeRunRef.current;
     if (isCurrentAiRun(current, generation) && !current.settled) {
       setActiveRun(settleAiRun(current));
-      if (!current.spawnPending) setAiBusy(false);
+      if (!current.spawnPending) setBusy(false);
     }
     const live = runChannelRef.current;
     if (live && live.generation === generation) live.dispose();
@@ -563,7 +786,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       expiryRetries: 8,
     };
     setActiveRun({ generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false });
-    setAiBusy(true);
+    setBusy(true);
     void replayHitl(generation, resumable.run.id);
   };
 
@@ -574,11 +797,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       try {
         const list = await aiApi.conversationList();
         if (conversationIdRef.current !== id) return;
-        if (!list.some((c) => c.id === id)) {
+        const hit = list.find((c) => c.id === id);
+        if (!hit) {
           updateConversationId(undefined);
           setConversationError(null);
           return;
         }
+        if (hit.title) updateConversationId(id, hit.title);
       } catch {
         if (conversationIdRef.current !== id) return;
       }
@@ -603,11 +828,23 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     [stream],
   );
 
+  // 外部绑定(持久化看板/旧版迁移)驱动的会话恢复; 标签内部主动切换已同步过 ref, 不会重复恢复。
   useEffect(() => {
-    const id = loadPersistedConversationId();
-    if (!id) return;
-    void restoreConversation(id);
-  }, [restoreConversation]);
+    if (boundConversationId === undefined) {
+      conversationIdRef.current = undefined;
+      return;
+    }
+    if (conversationIdRef.current === boundConversationId) return;
+    conversationIdRef.current = boundConversationId;
+    void restoreConversation(boundConversationId);
+  }, [boundConversationId, restoreConversation]);
+
+  // 旧版单栏布局只存了一个全局会话 id: 仅全局看板的唯一标签继承它, 主机看板不跟。
+  useEffect(() => {
+    if (boundConversationId || !allowLegacyRestore) return;
+    const legacy = loadPersistedConversationId();
+    if (legacy) void restoreConversation(legacy);
+  }, [allowLegacyRestore, boundConversationId, restoreConversation]);
 
   const hydrateMessageIds = async (convId: string) => {
     try {
@@ -623,14 +860,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const message = (override?.message ?? input).trim();
     if (
       (!message && images.length === 0) ||
-      useUi.getState().aiBusy ||
+      busyRef.current ||
       aiRunBlocksStart(activeRunRef.current)
     ) {
       return;
     }
     const run = beginRun();
     const usePlan = override?.planMode ?? planMode;
-    setAiBusy(true);
+    setBusy(true);
     setInput("");
     setRefs([]);
     setAtOpen(false);
@@ -686,7 +923,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       if (current.settled) {
         setActiveRun(finishAiRunSpawn(current));
-        setAiBusy(false);
+        setBusy(false);
         return;
       }
       setActiveRun(bindAiRunJob(current, res.jobId));
@@ -702,7 +939,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         });
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
         setActiveRun(settleAiRun(finishAiRunSpawn(current)));
-        setAiBusy(false);
+        setBusy(false);
         clearResyncState(run.generation);
       }
       dispose();
@@ -753,7 +990,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
-    if (aiBusy || aiRunBlocksStart(activeRunRef.current)) {
+    if (busy || aiRunBlocksStart(activeRunRef.current)) {
       pushToast("info", "另一轮仍在运行，请先停止再重试");
       return;
     }
@@ -813,7 +1050,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         stream.cancelRun(current.generation, false);
         clearResyncState(current.generation);
       }
-      setAiBusy(false);
+      setBusy(false);
       const live = runChannelRef.current;
       if (live) live.dispose();
       disposeRestoredChannel();
@@ -911,7 +1148,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const cancellation = completeRunCancellation(current);
       setActiveRun(cancellation.run);
       stream.cancelRun(run.generation, !cancellation.waitForTerminal);
-      if (!cancellation.waitForTerminal) setAiBusy(false);
+      if (!cancellation.waitForTerminal) setBusy(false);
       const restored = restoredChannelRef.current;
       if (restored && restored.generation === run.generation) disposeRestoredChannel();
       clearResyncState(run.generation);
@@ -957,6 +1194,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         list.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt })),
       );
       setHistoryStatus("ready");
+      const currentId = conversationIdRef.current;
+      const current = currentId ? list.find((c) => c.id === currentId) : undefined;
+      if (current?.title) onTitleChange(current.title);
     } catch (e) {
       setHistoryStatus("error");
       setHistoryError(describeError(e));
@@ -971,8 +1211,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (next) void loadConversations();
   };
 
-  const openConversation = async (id: string) => {
-    if (aiBusy || aiRunBlocksStart(activeRunRef.current)) {
+  const openConversation = async (id: string, title?: string) => {
+    if (busy || aiRunBlocksStart(activeRunRef.current)) {
       pushToast("info", "这一轮仍在运行，请先停止再切换会话");
       return;
     }
@@ -989,7 +1229,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
-      updateConversationId(id);
+      updateConversationId(id, title);
       setConversationError(null);
       setEditing(null);
       setHistoryOpen(false);
@@ -1000,7 +1240,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
 
   const newConversation = () => {
-    if (aiBusy || aiRunBlocksStart(activeRunRef.current)) {
+    if (busy || aiRunBlocksStart(activeRunRef.current)) {
       pushToast("info", "这一轮仍在运行，请先停止再新建会话");
       return;
     }
@@ -1115,7 +1355,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (choice !== "allow" && choice !== "readonly") return;
     const allowWrite = choice === "allow";
 
-    if (aiBusy || aiRunBlocksStart(activeRunRef.current)) {
+    if (anyAiBusy || aiRunBlocksStart(activeRunRef.current)) {
       pushToast("info", "另一轮 AI 仍在运行，请先停止再接管");
       return;
     }
@@ -1142,7 +1382,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       disposeChannel(channel);
     });
 
-    setAiBusy(true);
+    setBusy(true);
     let ownershipToken: string | undefined;
     try {
       ownershipToken = (await aiApi.takeoverEnter(tabId)).token;
@@ -1161,7 +1401,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       if (current.settled || holder.settled) {
         setActiveRun(finishAiRunSpawn(current));
-        setAiBusy(false);
+        setBusy(false);
         return;
       }
       setActiveRun(bindAiRunJob(current, result.jobId));
@@ -1193,35 +1433,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         });
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
         setActiveRun(settleAiRun(finishAiRunSpawn(current)));
-        setAiBusy(false);
+        setBusy(false);
         clearTakeover();
       }
       disposeChannel(channel);
     }
   };
 
-  if (!rightOpen) return null;
+  if (!rightOpen || !active) return null;
 
   return (
-    <aside
-      className="flex h-full shrink-0 flex-col overflow-y-auto border-l border-neutral-800/60 bg-neutral-950"
-      style={{ width: rightWidth }}
-    >
-      <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
-        <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
-        {takeover && (
-          <span
-            className="nx-badge nx-badge-red"
-            title={
-              bindings.reclaimTakeover
-                ? `终端接管进行中：按 ${reclaimKeyLabel} 随时夺回`
-                : "终端接管进行中"
-            }
-          >
-            <span className="nx-dot nx-dot-pulse" />
-            接管中
-          </span>
-        )}
+    <>
+      <div className="flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 [@media(max-height:480px)]:h-7">
         <div className="nx-spacer" />
         <button
           className={`nx-icon-btn nx-icon-btn-sm ${searchOpen ? "is-active" : ""}`}
@@ -1240,14 +1463,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </button>
         <button className="nx-icon-btn nx-icon-btn-sm" title="新建会话" onClick={newConversation}>
           <IconPlus size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
-          aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
-          onClick={() => setRightOpen(false)}
-        >
-          <IconChevronRight size={14} />
         </button>
       </div>
 
@@ -1329,7 +1544,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 <button
                   className="nx-menu-item flex-1"
                   title={c.title || "(未命名会话)"}
-                  onClick={() => void openConversation(c.id)}
+                  onClick={() => void openConversation(c.id, c.title)}
                 >
                   <span className="nx-menu-label">{c.title || "(未命名会话)"}</span>
                   <span className="nx-menu-hint">
@@ -1359,7 +1574,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       )}
 
       {permOpen && perm && (
-        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
+        <div className="max-h-[55%] min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
             <IconShield size={12} />
             AI 权限
@@ -1377,16 +1592,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             {MODE_OPTIONS.map((m) => (
               <button
                 key={m.value}
-                className={`nx-menu-item w-full ${
+                className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
                   perm.mode === m.value ? "bg-blue-500/15" : ""
                 }`}
                 onClick={() => switchMode(m.value)}
               >
-                <span className="nx-menu-label">
+                <span className="nx-menu-label w-full">
                   {perm.mode === m.value ? "● " : "○ "}
                   {m.label}
                 </span>
-                <span className="nx-menu-hint">{m.hint}</span>
+                <span className="nx-menu-hint w-full whitespace-normal font-sans">{m.hint}</span>
               </button>
             ))}
           </div>
@@ -1488,7 +1703,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               >
                 <ChatBubble
                   item={item}
-                  streaming={aiBusy && index === conv.items.length - 1}
+                  streaming={busy && index === conv.items.length - 1}
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
                   onEdit={handleEditResend}
@@ -1730,7 +1945,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             )}
           </div>
         )}
-        {aiBusy && hitlWaiting && (
+        {busy && hitlWaiting && (
           <div
             className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-200/90 [@media(max-height:480px)]:sr-only"
             role="status"
@@ -1740,7 +1955,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="truncate">{hitlWaiting}</span>
           </div>
         )}
-        {aiBusy && !hitlWaiting && conv.status && (
+        {busy && !hitlWaiting && conv.status && (
           <div
             className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500 [@media(max-height:480px)]:sr-only"
             role="status"
@@ -1803,7 +2018,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           ref={inputRef}
           className="nx-textarea pointer-coarse:text-[16px] max-h-40 min-h-[64px] w-full [@media(max-height:480px)]:h-9 [@media(max-height:480px)]:min-h-0"
           placeholder={
-            aiBusy
+            busy
               ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
                 ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
@@ -1823,7 +2038,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             if (e.key === "Enter" && !e.shiftKey) {
               if (isImeKeyEvent(e)) return;
               e.preventDefault();
-              if (aiBusy) void steer();
+              if (busy) void steer();
               else if (editing) void submitEditResend();
               else void send();
             }
@@ -1863,12 +2078,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                   : "终端接管（实验性功能）：AI 直接接手当前终端"
                 : "终端接管需要先打开一个终端标签"
             }
-            disabled={!tabId || aiBusy}
+            disabled={!tabId || busy}
             onClick={() => void runTakeover()}
           >
             <IconMonitor size={13} />
           </button>
-          {aiBusy ? (
+          {busy ? (
             <button
               className="nx-send-btn nx-send-btn-stop"
               title="停止这一轮（AI 会停在当前位置，已跑完的结果保留）"
@@ -1890,7 +2105,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       </div>
 
       {modelPanelOpen && <ModelPanel onClose={() => setModelPanelOpen(false)} />}
-    </aside>
+    </>
   );
 }
 

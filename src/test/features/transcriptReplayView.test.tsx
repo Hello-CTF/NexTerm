@@ -116,16 +116,16 @@ describe("TranscriptReplayView", () => {
     );
     expect(playButton).toBeDefined();
 
-    setSelectValue(mounted.container.querySelector("select[aria-label='回放倍速']") as HTMLSelectElement, "4");
+    setSelectValue(mounted.container.querySelector("select[aria-label='回放倍速']") as HTMLSelectElement, "5");
     act(() => {
       playButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(200);
     });
     expect(writtenText(terminal)).toContain("world");
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(160);
     });
     expect(terminal.resizes).toEqual([
       { cols: 80, rows: 24 },

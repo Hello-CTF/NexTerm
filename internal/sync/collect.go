@@ -256,16 +256,17 @@ type CollectKnownHost struct {
 
 // CollectAIProfile 只含档案字段与明确状态的 apiKey; apiKeySet 区分「无密钥」与「密钥被扣留」。
 type CollectAIProfile struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	BaseURL       string  `json:"baseUrl"`
-	Model         string  `json:"model"`
-	FallbackModel string  `json:"fallbackModel,omitempty"`
-	Temperature   float64 `json:"temperature"`
-	ContextWindow uint64  `json:"contextWindow"`
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	Proxy         *string `json:"proxy"`
-	Stream        bool    `json:"stream"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	BaseURL         string   `json:"baseUrl"`
+	Model           string   `json:"model"`
+	FallbackModel   string   `json:"fallbackModel,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
+	ContextWindow   uint64   `json:"contextWindow"`
+	MaxTokens       *int     `json:"maxTokens,omitempty"`
+	Proxy           *string  `json:"proxy"`
+	Stream          bool     `json:"stream"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -335,7 +336,8 @@ func (s *Service) CollectAIProfiles(ctx context.Context, request CollectAIProfil
 		entry := CollectAIProfile{
 			ID: record.ID, Name: record.Name, BaseURL: record.BaseURL, Model: record.Model,
 			FallbackModel: record.FallbackModel, Temperature: record.Temperature,
-			ContextWindow: record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy,
+			ReasoningEffort: record.ReasoningEffort,
+			ContextWindow:   record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy,
 			Stream: record.Stream, RequestTimeoutSeconds: record.RequestTimeoutSeconds,
 			IdleTimeoutSeconds:      record.IdleTimeoutSeconds,
 			CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,

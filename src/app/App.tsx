@@ -18,7 +18,6 @@ import {
   dbKindOf,
   DB_KIND_LABEL,
   openCredentialsSidebar,
-  openCredentialsViewTab,
   requestCloseTab,
   requestKillTab,
   requestKillWorkspaceTerminals,
@@ -92,7 +91,6 @@ import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
 import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
 import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
-import { CredentialsView } from "../features/credentials/CredentialsView";
 import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { QuickConnect } from "./QuickConnect";
@@ -113,7 +111,6 @@ import {
   IconChevronDown,
   IconClock,
   IconClose,
-  IconCode,
   IconEdit,
   IconMaximize,
   IconMinus,
@@ -153,7 +150,6 @@ const TAB_ICON = {
   docker: IconBox,
   db: IconDatabase,
   credentials: IconKey,
-  credentialsText: IconCode,
   settings: IconSettings,
   audit: IconHistory,
   devices: IconMonitor,
@@ -495,7 +491,7 @@ function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visib
   return <View deviceId={deviceId} visible={visible} />;
 }
 
-// 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel/CredentialsView 的
+// 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel 的
 // queryKey 对齐(资产/分组/凭据/片段/搜索/凭据库状态)。auth 转换时统一重置: 登录前
 // 这些请求全部吃到 401(分组资产不显示), 换账号则不能把上一个会话的缓存漏给下一个。
 const ACCOUNT_QUERY_KEYS = [
@@ -567,6 +563,7 @@ function AppShell() {
     : vaultQuery.isError
       ? { text: "凭据库不可用", uninitialized: false }
       : { text: "…", uninitialized: false };
+  const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list() });
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const syncLink = useQuery({
     queryKey: ["sync-link"],
@@ -628,6 +625,7 @@ function AppShell() {
       return current?.kind === "terminal";
     }) ?? false);
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
+  const connectedSessions = sessions.filter((s) => s.status === "connected").length;
 
   const needSession = useCallback(() => {
     pushToast("info", "先连接一台主机（双击左侧资产）");
@@ -739,26 +737,8 @@ function AppShell() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
-  // 序号守卫: auth 转换(登录/登出)时在途旧请求可能迟到, 不允许覆盖新会话拉到的数据。
-  const sessionsSeq = useRef(0);
-  const refreshSessions = useCallback(() => {
-    const seq = ++sessionsSeq.current;
-    void sessionApi
-      .list()
-      .then((list) => {
-        if (seq === sessionsSeq.current) setSessions(list);
-      })
-      .catch(() => undefined);
-  }, [setSessions]);
-
-  // 登出/会话过期时先递增序号使在途响应全部失效, 再清空状态: 旧账号的慢请求
-  // 迟到后不得回写(否则 seq 未变, 迟到的旧数据会覆盖清空结果)。凭据库状态由
-  // 上方共享 vault-status query 的 resetQueries 一并清空重取, 这里不再单独维护。
-  const clearSessionScopedState = useCallback(() => {
-    sessionsSeq.current += 1;
-    setSessions([]);
-  }, [setSessions]);
-
+  // 会话列表的 auth 守卫(迟到响应丢弃/登出清空)在 store 的 resyncSessions/resetSessions 里。
+  // 凭据库状态由上方共享 vault-status query 的 resetQueries 一并清空重取, 这里不再单独维护。
   const openVaultProtection = useCallback(() => {
     openSettings();
     setVaultProtectionSeq((n) => n + 1);
@@ -1085,8 +1065,8 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    refreshSessions();
-  }, [refreshSessions]);
+    void useUi.getState().resyncSessions({ silent: true });
+  }, []);
 
   // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的账号级请求全部
   // 吃到 401; resetQueries 会取消在途的旧 fetch 再重取(invalidateQueries 在 data 为空时会
@@ -1103,10 +1083,10 @@ function AppShell() {
         if (s.gate === prev.gate) return;
         if (s.gate === "ready" && prev.gate !== "loading") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          refreshSessions();
+          void useUi.getState().resyncSessions({ silent: true });
         } else if (prev.gate === "ready" && s.gate === "login") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          clearSessionScopedState();
+          useUi.getState().resetSessions();
         }
       });
     });
@@ -1114,7 +1094,7 @@ function AppShell() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [queryClient, refreshSessions, clearSessionScopedState]);
+  }, [queryClient]);
 
   useEffect(() => {
     if (bootLocalTried) return;
@@ -1146,7 +1126,7 @@ function AppShell() {
     {
       key: "assets",
       label: "资产",
-      hint: "打开资产树：管理主机和数据库，双击资产直接连接",
+      hint: "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
       icon: IconServer,
       onClick: () => {
         setLeftMode("assets");
@@ -1156,7 +1136,7 @@ function AppShell() {
     {
       key: "credentials",
       label: "凭据",
-      hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用",
+      hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用；双击本按钮收起侧栏",
       icon: IconKey,
       onClick: () => {
         openCredentialsSidebar();
@@ -1166,7 +1146,7 @@ function AppShell() {
     {
       key: "files",
       label: "文件树",
-      hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑",
+      hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑；双击本按钮收起侧栏",
       icon: IconFolderOpen,
       onClick: () => {
         if (!ws?.sessionId) return needSession();
@@ -1177,6 +1157,8 @@ function AppShell() {
   ];
 
   const railActive = leftMode;
+
+  const hasDbAssets = assetsQuery.data?.some((a) => dbKindOf(a.kind) !== null) ?? true;
 
   const railItems: {
     key: string;
@@ -1214,21 +1196,26 @@ function AppShell() {
       icon: IconBox,
       onClick: openDocker,
     },
-    {
-      key: "db",
-      label: "数据库",
-      hint: "打开数据库工作台：查询 MySQL / Redis 资产",
-      icon: IconDatabase,
-      onClick: () => void openDatabase(),
-    },
-    {
-      key: "mount",
-      label: "磁盘挂载",
-      hint: "把 SSH 资产的远程目录挂载到本地，像本地磁盘一样访问",
-      icon: IconDrive,
-      onClick: openMount,
-      unavailableReason: mountUnavailableReason() ?? undefined,
-    },
+    ...(hasDbAssets
+      ? [
+          {
+            key: "db",
+            label: "数据库",
+            hint: "打开数据库工作台：查询 MySQL / Redis 资产",
+            icon: IconDatabase,
+            onClick: () => void openDatabase(),
+          },
+        ]
+      : []),
+    ...(mountUnavailableReason()
+      ? []
+      : [{
+          key: "mount",
+          label: "磁盘挂载",
+          hint: "把 SSH 资产的远程目录挂载到本地，像本地磁盘一样访问",
+          icon: IconDrive,
+          onClick: openMount,
+        }]),
     {
       key: "forward",
       label: "端口转发",
@@ -1239,8 +1226,9 @@ function AppShell() {
   ];
 
   const railBottom = [
-    { key: "ai", label: "AI 助手", hint: "打开 AI 侧栏：就当前终端向 AI 提问", icon: IconSparkles, onClick: () => setRightOpen(!rightDockOpen) },
-    { key: "devices", label: "设备管理", hint: "打开设备管理：查看装了 agent 的设备，远程打开设备终端", icon: IconMonitor, onClick: openDevices },
+    ...(WEB
+      ? [{ key: "devices", label: "设备管理", hint: "打开设备管理：查看装了 agent 的设备，远程打开设备终端", icon: IconMonitor, onClick: openDevices }]
+      : []),
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: openAudit },
     { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: openSettings },
   ];
@@ -1285,11 +1273,12 @@ function AppShell() {
               aria-label={it.label}
               aria-current={railActive === it.key ? "true" : undefined}
               onClick={it.onClick}
+              onDoubleClick={() => setLeftOpen(false)}
             >
               <it.icon size={17} />
             </button>
           ))}
-          <div className="my-1 h-px w-5 shrink-0 bg-neutral-800" />
+          <div className="nx-rail-sep" />
           {railItems.map((it) => (
             <button
               key={it.key}
@@ -1307,7 +1296,7 @@ function AppShell() {
             </button>
           ))}
           <div className="nx-spacer" />
-          <div className="my-1 h-px w-5 shrink-0 bg-neutral-800" />
+          <div className="nx-rail-sep" />
           {railBottom.map((it) => (
             <button
               key={it.key}
@@ -1375,15 +1364,13 @@ function AppShell() {
             )}
             <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
             <button
-              className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title="刷新会话列表与凭据库状态"
-              aria-label="刷新会话列表与凭据库状态"
-              onClick={() => {
-                refreshSessions();
-                void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
-              }}
+              className={`nx-icon-btn ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
+              title="AI 助手"
+              aria-label="AI 助手"
+              aria-pressed={rightDockOpen}
+              onClick={() => setRightOpen(!rightDockOpen)}
             >
-              <IconActivity size={15} />
+              <IconSparkles size={15} />
             </button>
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
@@ -1521,17 +1508,17 @@ function AppShell() {
             <span className="flex items-center gap-1.5">
               <IconServer size={11} />
               <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
-            </span>
-            <span className="text-neutral-700">|</span>
-            <span
-              className={
-                sessions.some((s) => s.status === "connected")
-                  ? "flex items-center gap-1.5 text-green-300"
-                  : "flex items-center gap-1.5"
-              }
-            >
-              <span className="nx-dot" />
-              <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
+              <span className="text-neutral-700">·</span>
+              <span
+                className={
+                  connectedSessions > 0
+                    ? "flex items-center gap-1.5 text-green-300"
+                    : "flex items-center gap-1.5"
+                }
+              >
+                <span className="nx-dot" />
+                <strong className="font-medium">{connectedSessions}</strong> 已连接
+              </span>
             </span>
             <span className="text-neutral-700">|</span>
             {vaultStatus.uninitialized ? (
@@ -1556,13 +1543,6 @@ function AppShell() {
               <IconNetwork size={11} />
               {syncStatusText}
             </span>
-            <span className="text-neutral-700">|</span>
-            <button className="nx-link" onClick={openAudit}>
-              审计
-            </button>
-            <button className="nx-link" onClick={openSettings}>
-              设置
-            </button>
           </div>
         </footer>
       </div>
@@ -1576,7 +1556,7 @@ function AppShell() {
             t.kind === "error"
               ? "border-red-500/40 bg-red-950/90 text-red-100"
               : t.kind === "success"
-                ? "border-green-500/40 bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))] text-green-300"
+                ? "nx-alert-success"
                 : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
           return (
             <button
@@ -2010,10 +1990,6 @@ function PaneForTab({
       return <TranscriptHistoryPanel visible={active} />;
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
-    case "credentialsText":
-      return (
-        <CredentialsView view={tab.credView ?? "text"} onChange={openCredentialsViewTab} />
-      );
     default:
       return <EmptyState />;
   }

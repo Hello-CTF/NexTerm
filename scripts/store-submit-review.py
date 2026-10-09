@@ -100,7 +100,7 @@ Configuration and credentials live in /lzcapp/var and survive app upgrades.""",
 
 def default_changelog() -> dict:
     with open(os.path.join(REPO, "wails.json"), encoding="utf-8") as f:
-        version = json.load(f)["info"]["version"]
+        version = os.environ.get("NEXTERM_RELEASE_VERSION") or json.load(f)["info"]["version"]
     return {
         "zh": f"v{version}：新增服务端形态——把 NexTerm 部署到一台常开的机器，浏览器打开就是完整工作台。终端进程、会话与工作区布局都留在服务端，关掉网页不会中断，换台设备接着用；同一时刻只有一台设备能操作，其余设备观看。同时新增桌面与服务端之间的资产同步（含凭据）。懒猫版不提供端口转发，请改用微服平台自带的转发功能。",
         "en": f"v{version}: adds the server form — deploy NexTerm on an always-on machine and open it in a browser as a complete workspace. Terminal processes, sessions and workspace layout stay on the server, so closing the page does not interrupt them and another device picks up where you left off; only one device types at a time while the others watch. Also adds asset sync between desktop and server, credentials included. The LazyCat build does not provide port forwarding — use the platform's own forwarding instead.",

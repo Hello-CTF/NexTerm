@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   redisScan: vi.fn(),
   redisInspect: vi.fn(),
   redisCommand: vi.fn(),
-  overview: vi.fn(),
   ps: vi.fn(),
   images: vi.fn(),
   inspect: vi.fn(),
@@ -39,7 +38,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       redisSetTtl: vi.fn(),
     },
     dockerApi: {
-      overview: mocks.overview,
       ps: mocks.ps,
       images: mocks.images,
       inspect: mocks.inspect,
@@ -111,7 +109,6 @@ beforeEach(() => {
   mocks.redisScan.mockResolvedValue([0, ["k1"]]);
   mocks.redisInspect.mockResolvedValue({ key: "k1", keyType: "string", ttl: -1, value: "v" });
   mocks.redisCommand.mockResolvedValue("OK");
-  mocks.overview.mockResolvedValue({ containers: [containerA], hostStats: {} });
   mocks.ps.mockResolvedValue([containerA]);
   mocks.images.mockResolvedValue([]);
   mocks.inspect.mockResolvedValue({ Id: "aaaa", Name: "/web", State: {}, Config: {}, Mounts: [] });

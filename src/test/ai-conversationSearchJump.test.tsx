@@ -166,6 +166,7 @@ describe("AiSidebar search jump", () => {
       takeover: null,
       pushToast: mocks.toast,
       workspaces: [],
+      aiBoards: {},
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));

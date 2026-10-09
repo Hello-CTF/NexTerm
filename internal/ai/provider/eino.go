@@ -71,10 +71,16 @@ func (m *resilientChatModel) withBoundTools(opts []model.Option) []model.Option 
 }
 
 func (c *Client) newChatModel(ctx context.Context, servingModel string) (model.ToolCallingChatModel, error) {
-	temperature := float32(c.config.Temperature)
-	return openai.NewChatModel(ctx, &openai.ChatModelConfig{
+	config := &openai.ChatModelConfig{
 		BaseURL: c.config.BaseURL, APIKey: c.config.APIKey, Model: servingModel,
-		Temperature: &temperature, HTTPClient: c.http,
-		MaxTokens: c.config.MaxTokens,
-	})
+		HTTPClient: c.http, MaxTokens: c.config.MaxTokens,
+	}
+	if c.config.Temperature != nil {
+		temperature := float32(*c.config.Temperature)
+		config.Temperature = &temperature
+	}
+	if c.config.ReasoningEffort != "" {
+		config.ReasoningEffort = openai.ReasoningEffortLevel(c.config.ReasoningEffort)
+	}
+	return openai.NewChatModel(ctx, config)
 }

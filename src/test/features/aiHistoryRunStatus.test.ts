@@ -114,6 +114,7 @@ describe("AiSidebar 历史会话运行状态", () => {
       takeover: null,
       pushToast: mocks.toast,
       workspaces: [],
+      aiBoards: {},
       sessions: [],
     });
     mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
@@ -16,6 +16,7 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
+import { DESKTOP, WEB } from "../../ipc/env";
 import {
   IconCheckCircle,
   IconChevronLeft,
@@ -48,7 +49,11 @@ const SETTINGS_SECTIONS = [
   { id: "settings-share", label: "分享" },
   { id: "settings-shortcuts", label: "快捷键" },
   { id: "settings-update", label: "软件更新" },
-] as const;
+].filter((section) => {
+  if (section.id === "settings-files" || section.id === "settings-share") return WEB;
+  if (section.id === "settings-update") return DESKTOP;
+  return true;
+}) as readonly { id: string; label: string }[];
 
 function jumpToSection(id: string): void {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -140,6 +145,20 @@ export function SettingsView() {
   const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
   const [ruleDraft, setRuleDraft] = useState("");
   const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
+  const [ruleQuery, setRuleQuery] = useState("");
+  const [rulePage, setRulePage] = useState(0);
+  const rulePageSize = 8;
+  const ruleQ = ruleQuery.trim().toLowerCase();
+  const filteredRules = useMemo(
+    () => (aiPerm?.dangerRules ?? []).filter((r) => !ruleQ || r.toLowerCase().includes(ruleQ)),
+    [aiPerm?.dangerRules, ruleQ],
+  );
+  const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / rulePageSize));
+  const currentRulePage = Math.min(rulePage, rulePageCount - 1);
+  const pageRules = filteredRules.slice(
+    currentRulePage * rulePageSize,
+    (currentRulePage + 1) * rulePageSize,
+  );
   const rulePrefill = useUi((s) => s.aiRulePrefill);
 
   useEffect(() => {
@@ -231,8 +250,8 @@ export function SettingsView() {
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
           aria-label="设置分区"
-          className={`z-10 flex shrink-0 flex-col border-b border-neutral-800/60 bg-[var(--nx-bg-pane)] md:overflow-y-auto md:border-b-0 md:border-r ${
-            navOpen ? "md:w-56" : "md:w-16"
+          className={`z-10 flex shrink-0 flex-col md:overflow-y-auto ${
+            navOpen ? "md:w-52" : "md:w-14"
           }`}
         >
           <div
@@ -269,7 +288,11 @@ export function SettingsView() {
                 <button
                   key={s.id}
                   type="button"
-                  className={`nx-chip text-left ${s.id === activeSection ? "nx-chip-accent" : ""}`}
+                  className={`w-full rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${
+                    s.id === activeSection
+                      ? "bg-neutral-800/70 text-neutral-100"
+                      : "text-neutral-400 hover:bg-neutral-800/45 hover:text-neutral-200"
+                  }`}
                   aria-current={s.id === activeSection ? "true" : undefined}
                   onClick={() => jump(s.id)}
                 >
@@ -353,7 +376,7 @@ export function SettingsView() {
               <div
                 className={`mt-3.5 nx-alert ${
                   testPassed
-                    ? "border-green-500/40 bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))] text-green-300"
+                    ? "nx-alert-success"
                     : "nx-alert-danger"
                 }`}
               >
@@ -381,8 +404,20 @@ export function SettingsView() {
             命令命中规则后，读写与完全静默模式下每次先向你确认，只读与无人值守模式下直接拒绝；子串匹配，忽略大小写。
           </p>
 
+          {aiPerm && aiPerm.dangerRules.length > 0 && (
+            <input
+              className="nx-input nx-input-sm mb-1.5 w-full font-mono"
+              aria-label="搜索拦截规则"
+              placeholder="搜索规则"
+              value={ruleQuery}
+              onChange={(e) => {
+                setRuleQuery(e.target.value);
+                setRulePage(0);
+              }}
+            />
+          )}
           <div className="mb-1.5 flex flex-col gap-1">
-            {(aiPerm?.dangerRules ?? []).map((r) => (
+            {pageRules.map((r) => (
               <div key={r} className="flex items-center gap-1">
                 <input
                   className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
@@ -432,6 +467,28 @@ export function SettingsView() {
               <div className="nx-hint text-[11px]">还没有拦截规则</div>
             )}
           </div>
+          {filteredRules.length > rulePageSize && (
+            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
+              <span>
+                第 {currentRulePage + 1} / {rulePageCount} 页
+              </span>
+              <div className="nx-spacer" />
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                disabled={currentRulePage === 0}
+                onClick={() => setRulePage((p) => Math.max(0, p - 1))}
+              >
+                上一页
+              </button>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                disabled={currentRulePage >= rulePageCount - 1}
+                onClick={() => setRulePage((p) => Math.min(rulePageCount - 1, p + 1))}
+              >
+                下一页
+              </button>
+            </div>
+          )}
           <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setRuleDraftOpen(true)}>
             <IconPlus size={11} />
             添加一条规则
@@ -599,21 +656,27 @@ export function SettingsView() {
           <SyncBundleCard />
         </div>
 
-        <div id="settings-files" className="scroll-mt-12">
-          <FilesCard />
-        </div>
+        {WEB && (
+          <div id="settings-files" className="scroll-mt-12">
+            <FilesCard />
+          </div>
+        )}
 
-        <div id="settings-share" className="scroll-mt-12">
-          <ShareCard />
-        </div>
+        {WEB && (
+          <div id="settings-share" className="scroll-mt-12">
+            <ShareCard />
+          </div>
+        )}
 
         <div id="settings-shortcuts" className="scroll-mt-12">
           <ShortcutsCard />
         </div>
 
-        <div id="settings-update" className="scroll-mt-12">
-          <UpdateCard />
-        </div>
+        {DESKTOP && (
+          <div id="settings-update" className="scroll-mt-12">
+            <UpdateCard />
+          </div>
+        )}
           </div>
         </div>
       </div>

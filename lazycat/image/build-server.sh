@@ -19,6 +19,20 @@ esac
 echo "[lzc-build] 仓库根: $ROOT"
 echo "[lzc-build] 目标架构: ${LZC_ARCH}（linux/${LZC_ARCH}，Go 交叉编译）"
 
+# 版本解析：NEXTERM_RELEASE_VERSION 优先，其次当前提交恰好落在 tag 上；解析到就同时
+# 注入 package.yml 与 build.mjs（二进制烙同一版本），解析不到保持 0.0.0 占位。
+LZC_VERSION="${NEXTERM_RELEASE_VERSION:-}"
+if [ -z "$LZC_VERSION" ]; then
+  LZC_VERSION="$(git -C "$ROOT" describe --exact-match --tags HEAD 2>/dev/null | sed 's/^v//' || true)"
+fi
+if [ -n "$LZC_VERSION" ]; then
+  export NEXTERM_RELEASE_VERSION="$LZC_VERSION"
+  sed -i "s/^version: .*/version: ${LZC_VERSION}/" "$ROOT/lazycat/package.yml"
+  echo "[lzc-build] 包版本: ${LZC_VERSION}（tag/env 注入，package.yml 与二进制一致）"
+else
+  echo "[lzc-build] 包版本: 保持 0.0.0 占位（非 tag 构建）"
+fi
+
 BASE_REF="$(grep -E '^FROM ' "$HERE/Dockerfile" | tail -1 | awk '{print $NF}')"
 echo "[lzc-build] 1/4 基线镜像: ${BASE_REF}"
 case "$BASE_REF" in

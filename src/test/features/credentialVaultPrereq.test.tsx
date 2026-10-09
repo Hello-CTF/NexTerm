@@ -56,7 +56,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { CredentialsSidebar } from "../../features/credentials/CredentialsSidebar";
 import { CredentialsPanel } from "../../features/credentials/CredentialsPanel";
-import { CredentialsView } from "../../features/credentials/CredentialsView";
 import { NewCredentialModal } from "../../features/credentials/NewCredentialModal";
 import { AssetEditor } from "../../features/explorer/AssetTree";
 import { useUi } from "../../app/store";
@@ -260,15 +259,6 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     )!;
     click(emptyNew);
     await flushUntil(() => !!initModal());
-    expect(mocks.initMaster).not.toHaveBeenCalled();
-  });
-
-  it("只读凭据视图保持安静：不弹初始化浮层", async () => {
-    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
-    await flushUntil(() =>
-      (mounted!.container.textContent ?? "").includes("# NexTerm 凭据视图"),
-    );
-    expect(mounted!.container.querySelector(".nx-modal")).toBeNull();
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 });

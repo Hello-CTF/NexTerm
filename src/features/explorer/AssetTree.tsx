@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ask, pickKeyFile } from "../../ui/dialogs";
+import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { browserFilesAvailable } from "../../ipc/webFiles";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
@@ -13,6 +13,7 @@ import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { cloneAsset } from "./assetClone";
 import { useAssetVisibility } from "./assetVisibility";
 import {
+  ASSET_ICON_NAMES,
   assetIcon,
   IconChevronDown,
   IconChevronRight,
@@ -37,8 +38,8 @@ import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
 
 const KIND_LABEL: Record<string, string> = {
-  ssh: "SSH (Linux)",
-  winrm: "WinRM (Windows)",
+  ssh: "SSH",
+  winrm: "WinRM",
   local: "本地终端",
   docker: "Docker 主机",
   mysql: "MySQL",
@@ -585,7 +586,7 @@ function AssetRow({
   onDismissError?: () => void;
 }) {
   const coarse = useCoarsePointer();
-  const Icon = assetIcon(asset.kind);
+  const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
@@ -1142,6 +1143,10 @@ export function AssetEditor({
     return TERMINAL_ENCODINGS.includes(normalized) ? normalized : "utf-8";
   });
   const [envText, setEnvText] = useState(() => formatEnvText(initial?.options?.env));
+  const [icon, setIcon] = useState(
+    typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
+  );
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedSshOptions(initial));
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
@@ -1164,6 +1169,7 @@ export function AssetEditor({
   }, [host, port, groupKind]);
 
   const advancedPanelId = useId();
+  const IconPreview = assetIcon(groupKind, icon);
   const hostInputId = useId();
   const portInputId = useId();
   const hostErrorId = useId();
@@ -1247,6 +1253,7 @@ export function AssetEditor({
     queryFn: () => vaultApi.listCredentials(),
     refetchOnWindowFocus: false,
   });
+  const qc = useQueryClient();
   const groups = useQuery({
     queryKey: ["groups"],
     queryFn: () => assetApi.groupList(),
@@ -1260,6 +1267,18 @@ export function AssetEditor({
   const jumpCandidates = (assets.data ?? []).filter(
     (a) => (a.kind === "ssh" || a.kind === "docker") && a.id !== initial?.id,
   );
+
+  const createGroupInline = async () => {
+    const name = (await promptText("新建分组", ""))?.trim();
+    if (!name) return;
+    try {
+      const group = await assetApi.groupCreate(name);
+      await qc.invalidateQueries({ queryKey: ["groups"] });
+      setGroupId(group.id);
+    } catch (e) {
+      pushToast("error", `新建分组失败：${describeError(e)}`);
+    }
+  };
 
   const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
   const boundIsVaultKey = boundCred?.kind === "private_key";
@@ -1461,7 +1480,7 @@ export function AssetEditor({
       } else if (credChoice !== "none") {
         credId = credChoice;
       }
-      const options =
+      const baseOptions =
         groupKind === "local"
           ? {
               ...(shell.trim() ? { shell: shell.trim() } : {}),
@@ -1469,7 +1488,10 @@ export function AssetEditor({
             }
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
-            : undefined;
+            : { ...(initial?.options ?? {}) };
+      if (icon.trim()) baseOptions.icon = icon.trim();
+      else delete baseOptions.icon;
+      const options = baseOptions;
       const fields = {
         kind: groupKind,
         name,
@@ -1591,19 +1613,85 @@ export function AssetEditor({
 
           {kind === "asset" && (
             <div className="nx-form-row">
+              <label className="nx-label">图标</label>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="nx-btn nx-btn-outline nx-btn-sm"
+                    aria-pressed={iconPickerOpen}
+                    onClick={() => setIconPickerOpen((v) => !v)}
+                  >
+                    <IconPreview size={14} />
+                    选择图标
+                  </button>
+                  {icon && (
+                    <button
+                      type="button"
+                      className="nx-btn nx-btn-ghost nx-btn-sm"
+                      onClick={() => setIcon("")}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                </div>
+                {iconPickerOpen && (
+                  <div id="asset-icon-picker" className="mt-2 max-h-44 overflow-y-auto rounded-lg border border-neutral-800/60 p-1.5">
+                    <div className="grid grid-cols-8 gap-1">
+                      {ASSET_ICON_NAMES.map((name) => {
+                        const Icon = assetIcon(groupKind, name);
+                        return (
+                          <button
+                            key={name}
+                            type="button"
+                            className={`flex h-8 items-center justify-center rounded-md border ${
+                              icon === name
+                                ? "border-blue-500/60 bg-blue-500/15 text-blue-200"
+                                : "border-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-100"
+                            }`}
+                            title={name}
+                            aria-label={`选择图标 ${name}`}
+                            onClick={() => {
+                              setIcon(name);
+                              setIconPickerOpen(false);
+                            }}
+                          >
+                            <Icon size={15} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {kind === "asset" && (
+            <div className="nx-form-row">
               <label className="nx-label">分组</label>
-              <select
-                className="nx-select"
-                value={groupId ?? ""}
-                onChange={(e) => setGroupId(e.target.value || null)}
-              >
-                <option value="">（不分组）</option>
-                {(groups.data ?? []).map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex min-w-0 items-center gap-2">
+                <select
+                  className="nx-select"
+                  value={groupId ?? ""}
+                  onChange={(e) => setGroupId(e.target.value || null)}
+                >
+                  <option value="">（不分组）</option>
+                  {(groups.data ?? []).map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                  onClick={() => void createGroupInline()}
+                >
+                  <IconPlus size={11} />
+                  新建分组
+                </button>
+              </div>
             </div>
           )}
 

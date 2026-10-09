@@ -40,7 +40,6 @@ vi.mock("../../features/settings/SettingsView", () => ({ SettingsView: () => nul
 vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../../features/credentials/CredentialsView", () => ({ CredentialsView: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
@@ -287,7 +286,7 @@ describe("rail and toast accessibility", () => {
     const toast = mounted.container.querySelector<HTMLElement>(".nx-toasts button");
     expect(toast).not.toBeNull();
     expect(toast?.textContent).toContain("已保存");
-    expect(toast?.className).toContain("text-green-300");
+    expect(toast?.className).toContain("nx-alert-success");
     expect(toast?.className).not.toMatch(/#[0-9a-fA-F]{3,8}/);
   });
 });

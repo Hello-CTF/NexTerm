@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { vaultApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
-import { openCredentialsTab, openCredentialsViewTab, useCredentialsTabId } from "../../app/store";
+import { openCredentialsTab, useCredentialsTabId } from "../../app/store";
 import { isCoarsePointer } from "../../app/platform";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
@@ -10,7 +10,7 @@ import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import { useVaultInitGate } from "./useVaultInitGate";
 import { workspaceViewport } from "../terminal/workspaceLayout";
 import { describeError } from "../../ui/errorText";
-import { IconCode, IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
+import { IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
 
 function closeOverlayDockAfterNav() {
   if (workspaceViewport(window.innerWidth, isCoarsePointer()).overlaySidebars) {
@@ -26,6 +26,8 @@ export function CredentialsSidebar() {
 
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const pageSize = 30;
   const [creating, setCreating] = useState(false);
 
   const startCreate = () =>
@@ -54,6 +56,9 @@ export function CredentialsSidebar() {
     if (!q) return true;
     return c.name.toLowerCase().includes(q) || kindMeta(c.kind).label.toLowerCase().includes(q);
   });
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageList = list.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
   const counts: Record<string, number> = {};
   for (const c of all) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
@@ -112,7 +117,10 @@ export function CredentialsSidebar() {
             placeholder="搜索凭据"
             aria-label="搜索凭据"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(0);
+            }}
           />
         </div>
       </div>
@@ -131,7 +139,10 @@ export function CredentialsSidebar() {
               active={kindFilter === k}
               label={KIND_META[k].label}
               count={counts[k]}
-              onClick={() => setKindFilter((cur) => (cur === k ? null : k))}
+              onClick={() => {
+                setKindFilter((cur) => (cur === k ? null : k));
+                setPage(0);
+              }}
             />
           ))}
         </div>
@@ -170,7 +181,7 @@ export function CredentialsSidebar() {
             )}
           </div>
         ) : (
-          list.map((c) => {
+          pageList.map((c) => {
             const meta = kindMeta(c.kind);
             const sel = c.id === selectedId;
             return (
@@ -217,32 +228,28 @@ export function CredentialsSidebar() {
             <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
           </div>
         )}
-        <div className="flex items-center gap-1.5">
-          <IconCode size={13} className="shrink-0 text-neutral-500" />
-          <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-400">凭据视图</span>
-          <div className="nx-segment shrink-0">
+        {list.length > pageSize && (
+          <div className="flex items-center gap-2 text-[11px] text-neutral-500">
+            <span>
+              第 {currentPage + 1} / {pageCount} 页
+            </span>
+            <div className="nx-spacer" />
             <button
-              className="nx-segment-item"
-              title="以 ssh config 风格文本查看"
-              onClick={() => {
-                openCredentialsViewTab("text");
-                closeOverlayDockAfterNav();
-              }}
+              className="nx-btn nx-btn-ghost nx-btn-xs"
+              disabled={currentPage === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
-              文本
+              上一页
             </button>
             <button
-              className="nx-segment-item"
-              title="以 JSON 查看"
-              onClick={() => {
-                openCredentialsViewTab("json");
-                closeOverlayDockAfterNav();
-              }}
+              className="nx-btn nx-btn-ghost nx-btn-xs"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             >
-              JSON
+              下一页
             </button>
           </div>
-        </div>
+        )}
       </div>
 
       {creating && (

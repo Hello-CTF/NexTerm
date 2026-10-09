@@ -8,6 +8,7 @@ import {
 } from "./layoutPresets";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
+import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
@@ -31,11 +32,11 @@ import {
   IconEyeOff,
   IconFolderOpen,
   IconHistory,
-  IconKey,
   IconLayers,
   IconMonitor,
   IconNetwork,
   IconPlug,
+  IconRefresh,
   IconSave,
   IconSearch,
   IconSettings,
@@ -174,38 +175,37 @@ export function CommandPalette({
             .catch((error) => pushToast("error", describeError(error)));
         },
       },
-      {
-        id: "database",
-        label: "打开数据库工作台",
-        hint: "MySQL / PostgreSQL / Redis",
-        icon: IconDatabase,
-        run: () => {
-          const asset =
-            assets.find((item) => item.kind === "mysql") ??
-            assets.find((item) => item.kind === "postgres") ??
-            assets.find((item) => item.kind === "redis");
-          if (!asset) {
-            pushToast("info", "还没有数据库资产，先在资产树里新建一个");
-            return;
-          }
-          void dbApi
-            .connect(asset.id)
-            .then(({ connId }) => {
-              const dbKind = dbKindOf(asset.kind) ?? "mysql";
-              const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
-              ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
-              addTab({
-                id: `db-${connId}`,
-                kind: "db",
-                title,
-                connId,
-                dbKind,
-                closable: true,
-              });
-            })
-            .catch((error) => pushToast("error", describeError(error)));
-        },
-      },
+      ...(assets.some((item) => dbKindOf(item.kind) !== null)
+        ? [{
+            id: "database",
+            label: "打开数据库工作台",
+            hint: "MySQL / PostgreSQL / Redis",
+            icon: IconDatabase,
+            run: () => {
+              const asset =
+                assets.find((item) => item.kind === "mysql") ??
+                assets.find((item) => item.kind === "postgres") ??
+                assets.find((item) => item.kind === "redis");
+              if (!asset) return;
+              void dbApi
+                .connect(asset.id)
+                .then(({ connId }) => {
+                  const dbKind = dbKindOf(asset.kind) ?? "mysql";
+                  const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
+                  ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
+                  addTab({
+                    id: `db-${connId}`,
+                    kind: "db",
+                    title,
+                    connId,
+                    dbKind,
+                    closable: true,
+                  });
+                })
+                .catch((error) => pushToast("error", describeError(error)));
+            },
+          }]
+        : []),
       {
         id: "split-pane",
         label: "上下分屏 / 取消分屏",
@@ -265,20 +265,24 @@ export function CommandPalette({
         run: () => addTab({ id: "history", kind: "history", title: "终端历史", closable: true }),
       },
       {
-        id: "devices",
-        label: "打开设备管理",
-        hint: "装了 agent 的设备",
-        icon: IconMonitor,
-        run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
+        id: "refresh-status",
+        label: "刷新会话列表与凭据库状态",
+        hint: "重新拉取会话和凭据库状态",
+        icon: IconRefresh,
+        run: () => {
+          void useUi.getState().resyncSessions();
+          void qc.invalidateQueries({ queryKey: ["vault-status"] });
+        },
       },
-      {
-        id: "credentials-view",
-        label: "打开凭据视图",
-        hint: "集中查看已保存凭据",
-        icon: IconKey,
-        run: () =>
-          addTab({ id: "tab-credentials-view", kind: "credentialsText", title: "凭据视图", credView: "text", closable: true }),
-      },
+      ...(WEB
+        ? [{
+            id: "devices",
+            label: "打开设备管理",
+            hint: "装了 agent 的设备",
+            icon: IconMonitor,
+            run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
+          }]
+        : []),
       ...(
         [
           ["system", "主题：跟随系统"],
@@ -353,7 +357,7 @@ export function CommandPalette({
         id: `conn-${asset.id}`,
         label: `连接 ${asset.name}`,
         hint: connecting ? "连接中…" : [asset.host, asset.kind].filter(Boolean).join(" · "),
-        icon: assetIcon(asset.kind),
+        icon: assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined),
         dot: reachEntries[asset.id],
         run: () => void connectAsset(asset),
       });

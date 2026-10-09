@@ -17,7 +17,7 @@ if (!file || !id || !goos || !goarch || !cgo) {
   die("usage: verify-reused-binary.mjs <binary> <id> <os> <arch> <cgo>");
 }
 if (!fs.existsSync(file) || !fs.statSync(file).isFile()) die(`binary does not exist: ${file}`);
-const version = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info?.version;
+const version = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info?.version;
 if (!version) die("wails.json info.version is unavailable");
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const manifest = loadManifest(`${file}.manifest.json`);

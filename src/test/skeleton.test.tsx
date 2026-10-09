@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   fsList: vi.fn(),
   dockerPs: vi.fn(),
   dockerImages: vi.fn(),
-  dockerOverview: vi.fn(),
   listLive: vi.fn(),
   listenEvent: vi.fn(),
   toast: vi.fn(),
@@ -43,7 +42,6 @@ vi.mock("../ipc/commands", async (importOriginal) => {
     dockerApi: {
       ps: mocks.dockerPs,
       images: mocks.dockerImages,
-      overview: mocks.dockerOverview,
       inspect: vi.fn(),
       stats: vi.fn(),
       containerListDir: vi.fn(),
@@ -260,11 +258,9 @@ describe("FileTree 骨架屏", () => {
 });
 
 describe("DockerPanel 骨架屏", () => {
-  it("容器 pending 显示骨架行与概览骨架条，无空态，数据到达后立即替换", async () => {
+  it("容器 pending 显示骨架行，无空态，数据到达后立即替换", async () => {
     const ps = deferred<ContainerSummary[]>();
-    const overview = deferred<{ hostStats: Record<string, number | string> }>();
     mocks.dockerPs.mockReturnValue(ps.promise);
-    mocks.dockerOverview.mockReturnValue(overview.promise);
     mocks.dockerImages.mockResolvedValue(IMAGES.map((i) => ({ ...i })));
     mounted = mountWithClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
 
@@ -272,22 +268,18 @@ describe("DockerPanel 骨架屏", () => {
       () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0,
     );
     expect(mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length).toBe(5);
-    expect(mounted!.container.querySelectorAll(".nx-skeleton-chip").length).toBeGreaterThan(0);
     expect(mounted!.container.querySelector(".nx-table-empty")).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
 
     ps.resolve(CONTAINERS.map((c) => ({ ...c })));
-    overview.resolve({ hostStats: { containersRunning: 1 } });
     await waitFor(() => expect(mounted!.container.textContent).toContain("web"));
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
-    expect(mounted!.container.querySelector(".nx-skeleton-chip")).toBeNull();
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
   });
 
   it("镜像 tab pending 显示骨架行，数据到达后立即替换", async () => {
     const images = deferred<ImageSummary[]>();
     mocks.dockerPs.mockResolvedValue(CONTAINERS.map((c) => ({ ...c })));
-    mocks.dockerOverview.mockResolvedValue({ hostStats: {} });
     mocks.dockerImages.mockReturnValue(images.promise);
     mounted = mountWithClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
 
@@ -314,7 +306,6 @@ describe("DockerPanel 骨架屏", () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mocks.dockerPs.mockReturnValue(new Promise<ContainerSummary[]>(() => {}));
-      mocks.dockerOverview.mockReturnValue(new Promise(() => {}));
       mocks.dockerImages.mockResolvedValue([]);
       mounted = mountWithClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
       await flushUntil(

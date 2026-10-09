@@ -19,7 +19,8 @@ import {
 const HELP_TEXT = `#!/usr/bin/env node
 /**
  * Go/Wails delivery entry point. Rust/Cargo/Tauri are deliberately not part of
- * this path. All artifact versions come from wails.json.
+ * this path. Artifact versions come from NEXTERM_RELEASE_VERSION (set from the
+ * release tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *
  *   node scripts/build.mjs                         # frontend + host debug desktop
  *   node scripts/build.mjs release                 # reproducible frontend + native package
@@ -53,12 +54,13 @@ for (const arg of argv) {
 }
 
 const wailsConfig = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8"));
-const VERSION = wailsConfig.info?.version;
+const WAILS_VERSION_PLACEHOLDER = wailsConfig.info?.version;
+const VERSION = process.env.NEXTERM_RELEASE_VERSION || WAILS_VERSION_PLACEHOLDER;
 if (!VERSION || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(VERSION)) {
-  die(`wails.json info.version is not a release version: ${VERSION}`);
+  die(`release version is not a semver version: ${VERSION}`);
 }
 const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-if (packageVersion !== VERSION) die(`package.json version ${packageVersion} diverges from the sole wails.json release version ${VERSION}`);
+if (packageVersion !== WAILS_VERSION_PLACEHOLDER) die(`package.json version ${packageVersion} diverges from the wails.json placeholder ${WAILS_VERSION_PLACEHOLDER}`);
 let SOURCE_DATE_EPOCH = process.env.SOURCE_DATE_EPOCH || "";
 const COMMIT = output("git", ["rev-parse", "HEAD"], { allowFailure: true })?.trim() || "unknown";
 SOURCE_DATE_EPOCH ||= output("git", ["show", "-s", "--format=%ct", "HEAD"], { allowFailure: true })?.trim();
@@ -768,7 +770,7 @@ switch (command) {
   case "release": {
     if (flag("skip-frontend")) die("release does not allow --skip-frontend; reproducible real assets are mandatory");
     const tag = process.env.GITHUB_REF_NAME;
-    if (tag?.startsWith("v") && tag !== `v${VERSION}`) die(`tag ${tag} does not match wails.json version v${VERSION}`);
+    if (tag?.startsWith("v") && tag !== `v${VERSION}`) die(`tag ${tag} does not match release version v${VERSION} (set NEXTERM_RELEASE_VERSION to the tag version)`);
     buildFrontend({ repro: true });
     verifyBindings();
     options.release = "true";

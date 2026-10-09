@@ -29,12 +29,15 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_REUSE_EXPECTED_REF: ${{ github.ref_name }}
         run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
 
   ci:
     needs: ci-source
     if: needs.ci-source.outputs.reused != 'true'
     uses: ./.github/workflows/ci.yml
+    with:
+      release_version: ${{ github.ref_name }}
 
   precondition:
     needs: [ci-source, ci]
@@ -42,8 +45,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: The tag and wails.json are the same version source
-        run: node -e 'const v=require("./wails.json").info.version; if (process.env.GITHUB_REF_NAME !== `v${v}`) throw new Error(`${process.env.GITHUB_REF_NAME} != v${v}`)'
+      - name: The tag drives the release version; version files stay 0.0.0 placeholders
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "tag $tag is not a v<semver> release tag" >&2; exit 1;
+          fi
+          node -e '
+            const wails = require("./wails.json").info.version;
+            const pkg = require("./package.json").version;
+            if (wails !== "0.0.0" || pkg !== "0.0.0") {
+              throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}); the release version comes from the tag`);
+            }'
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
@@ -74,6 +87,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve the release version from the tag
+        shell: bash
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -151,6 +167,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve the release version from the tag
+        shell: bash
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -229,6 +248,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve the release version from the tag
+        shell: bash
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*

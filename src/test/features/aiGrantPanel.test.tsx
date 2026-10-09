@@ -274,6 +274,8 @@ describe("GrantPanel 授权规则", () => {
       Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
     );
     await mountPanel();
+    clickButton(view!.container, "添加规则");
+    await flush();
     setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
     setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "write_file");
     setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
@@ -296,6 +298,8 @@ describe("GrantPanel 授权规则", () => {
 
   it("写文件动作缺路径时禁用添加；命令动作不需要路径", async () => {
     await mountPanel();
+    clickButton(view!.container, "添加规则");
+    await flush();
     setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
     const addButton = () => [...view!.container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "添加");
     expect(addButton()?.disabled).toBe(true);
@@ -307,6 +311,8 @@ describe("GrantPanel 授权规则", () => {
   it("取消添加确认则不调用 ruleSet", async () => {
     mocks.ask.mockResolvedValue(false);
     await mountPanel();
+    clickButton(view!.container, "添加规则");
+    await flush();
     setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
     setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
     clickButton(view!.container, "添加");
@@ -350,7 +356,9 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
 
     const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
     expect(buttons).toContain("撤销");
-    expect(buttons).toContain("添加");
+    expect(buttons).toContain("添加规则");
+    clickButton(view!.container, "添加规则");
+    await flush();
     expect(view!.container.querySelector("select[aria-label='规则设备']")).not.toBeNull();
   });
 });

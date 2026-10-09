@@ -469,7 +469,7 @@ function CredentialDetail({
           {cred.usedBy.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {cred.usedBy.map((u) => {
-                const Icon = assetIcon(u.kind);
+                const Icon = assetIcon(u.kind, typeof (u as { options?: Record<string, unknown> }).options?.icon === "string" ? ((u as { options?: Record<string, unknown> }).options?.icon as string) : undefined);
                 return (
                   <button
                     key={u.id}

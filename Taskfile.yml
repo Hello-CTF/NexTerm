@@ -55,6 +55,12 @@ tasks:
       - pnpm test
       - node scripts/build.mjs bindings
       - node scripts/build.mjs frontend --repro-check
+      - go run ./scripts/verify-manifest-injects
+
+  verify:wiring:
+    summary: Check CI/release reuse wiring, resolver scenarios and negative controls
+    cmds:
+      - go run ./scripts/check-reuse-wiring
 
   bindings:
     summary: Regenerate Wails TypeScript bindings intentionally

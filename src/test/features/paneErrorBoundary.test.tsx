@@ -44,7 +44,6 @@ vi.mock("../../features/settings/SettingsView", () => ({
 vi.mock("../../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
 vi.mock("../../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../../features/credentials/CredentialsView", () => ({ CredentialsView: () => null }));
 vi.mock("../../features/explorer/AssetTree", () => ({
   AssetTree: (): never => {
     throw new Error("asset tree exploded");

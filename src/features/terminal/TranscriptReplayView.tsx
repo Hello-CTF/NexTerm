@@ -15,7 +15,7 @@ import {
 
 const TICK_MS = 50;
 const READ_PAGE_BYTES = 4 * 1024 * 1024;
-const SPEEDS = [0.5, 1, 2, 4];
+const SPEEDS = [1, 2, 5, 10];
 
 const REPLAY_THEME = {
   background: "#101217",
@@ -160,7 +160,7 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
           {playing ? "暂停" : "播放"}
         </button>
         <select
-          className="nx-select"
+          className="nx-select nx-select-ghost"
           aria-label="回放倍速"
           value={speed}
           disabled={!chunks || loadError !== null}

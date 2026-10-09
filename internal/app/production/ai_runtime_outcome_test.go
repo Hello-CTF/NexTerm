@@ -108,7 +108,7 @@ func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *
 	t.Cleanup(providerServer.Close)
 	if _, err := profileManager.Save(ctx, profiles.Profile{
 		BaseURL: providerServer.URL, APIKey: "test-key", Model: "test-model",
-		Temperature: 0, ContextWindow: 32768, Stream: true,
+		ContextWindow: 32768, Stream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

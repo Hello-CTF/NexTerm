@@ -68,12 +68,16 @@ describe("resyncSessions", () => {
   it("恢复成功后再次失败会重新提示", async () => {
     vi.mocked(sessionApi.list).mockRejectedValueOnce(new Error("down"));
     await useUi.getState().resyncSessions();
+    const firstId = useUi.getState().toasts[0]?.id;
     vi.mocked(sessionApi.list).mockResolvedValueOnce([]);
     await useUi.getState().resyncSessions();
     vi.mocked(sessionApi.list).mockRejectedValueOnce(new Error("down"));
 
     await useUi.getState().resyncSessions();
 
-    expect(useUi.getState().toasts).toHaveLength(2);
+    const toasts = useUi.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].id).not.toBe(firstId);
+    expect(toasts[0].text).toContain("刷新会话列表失败");
   });
 });

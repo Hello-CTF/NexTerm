@@ -21,9 +21,7 @@ import {
   maxTokensFromInput,
   maxTokensLabel,
   MODEL_PARAM_DEFAULTS,
-  modelParamsAtDefaults,
   requestTimeoutLabel,
-  resetModelParams,
   sameModelProfile,
   selectModelProfileId,
   timeoutSecondsFromInput,
@@ -45,30 +43,78 @@ import {
   IconTrash,
 } from "../../ui/icons";
 
-function blankProfile(): ModelProfile {
+interface ModelPreset {
+  id: string;
+  baseUrl: string;
+  model: string;
+}
+
+const MODEL_PRESETS: ModelPreset[] = [
+  { id: "kimi", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
+  { id: "deepseek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { id: "ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
+  { id: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "dsv41flash" },
+  { id: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
+];
+
+const REASONING_EFFORT_OPTIONS = [
+  { value: "", label: "默认不传" },
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+] as const;
+
+type ModelDraft = Omit<ModelProfile, "temperature" | "contextWindow"> & {
+  temperature: number | null;
+  contextWindow: number | null;
+};
+
+function blankProfile(): ModelDraft {
   return {
     id: "",
     name: "",
     baseUrl: "",
     apiKey: "",
     model: "",
-    ...MODEL_PARAM_DEFAULTS,
+    temperature: null,
+    contextWindow: null,
+    proxy: null,
+    stream: MODEL_PARAM_DEFAULTS.stream,
+    fallbackModel: null,
     requestTimeoutSeconds: null,
     idleTimeoutSeconds: null,
     maxTokens: null,
     circuitFailureThreshold: null,
     circuitCooldownSeconds: null,
+    reasoningEffort: "",
   };
 }
 
-function hasAdvancedModelParams(p: ModelProfile): boolean {
+function paramSpecified(value: number | null, defaultValue: number): boolean {
+  return value !== null && value !== defaultValue;
+}
+
+function modelDraftParamsAtDefaults(p: ModelDraft): boolean {
   return (
-    !modelParamsAtDefaults(p) ||
+    !paramSpecified(p.temperature, MODEL_PARAM_DEFAULTS.temperature) &&
+    !paramSpecified(p.contextWindow, MODEL_PARAM_DEFAULTS.contextWindow) &&
+    (p.proxy ?? null) === MODEL_PARAM_DEFAULTS.proxy &&
+    p.stream === MODEL_PARAM_DEFAULTS.stream &&
+    (p.fallbackModel ?? null) === MODEL_PARAM_DEFAULTS.fallbackModel &&
+    (p.reasoningEffort ?? "") === ""
+  );
+}
+
+function hasAdvancedModelParams(p: ModelDraft): boolean {
+  return (
+    !modelDraftParamsAtDefaults(p) ||
     (p.requestTimeoutSeconds ?? null) !== null ||
     (p.idleTimeoutSeconds ?? null) !== null ||
     (p.maxTokens ?? null) !== null ||
     (p.circuitFailureThreshold ?? null) !== null ||
-    (p.circuitCooldownSeconds ?? null) !== null
+    (p.circuitCooldownSeconds ?? null) !== null ||
+    (p.reasoningEffort ?? "") !== ""
   );
 }
 
@@ -85,20 +131,18 @@ export function ModelManager({
 
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ModelProfile | null>(null);
+  const [draft, setDraft] = useState<ModelDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsOpen, setModelsOpen] = useState(false);
-  const [presets, setPresets] = useState<string[]>([]);
-  const [presetsError, setPresetsError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [circuitNonce, setCircuitNonce] = useState(0);
 
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
-  const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft));
+  const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft as ModelProfile));
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
   const fieldId = useId();
   const advancedPanelId = useId();
@@ -127,25 +171,28 @@ export function ModelManager({
     }
   };
 
-  const loadPresets = useCallback(async () => {
-    try {
-      setPresets(await modelApi.presets());
-      setPresetsError(null);
-    } catch (e) {
-      setPresetsError(describeError(e));
-    }
-  }, []);
-
   useEffect(() => {
     void reload();
-    void loadPresets();
-  }, [loadPresets]);
+  }, []);
 
-  const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
+  const patch = (p: Partial<ModelDraft>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
-  const paramsAtDefaults = !!draft && modelParamsAtDefaults(draft);
+  const paramsAtDefaults = !!draft && modelDraftParamsAtDefaults(draft);
 
-  const resetParams = () => setDraft((prev) => (prev ? resetModelParams(prev) : prev));
+  const resetParams = () =>
+    setDraft((prev) =>
+      prev
+        ? {
+            ...prev,
+            temperature: null,
+            contextWindow: null,
+            proxy: null,
+            stream: MODEL_PARAM_DEFAULTS.stream,
+            fallbackModel: null,
+            reasoningEffort: "",
+          }
+        : prev,
+    );
 
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
@@ -177,7 +224,14 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const saved = await modelApi.save(draft);
+      const { temperature, contextWindow, reasoningEffort, ...rest } = draft;
+      const payload = {
+        ...rest,
+        ...(temperature === null ? {} : { temperature }),
+        ...(contextWindow === null ? {} : { contextWindow }),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      } as ModelProfile;
+      const saved = await modelApi.save(payload);
       useUi.getState().bumpModelProfilesRevision();
       setCircuitNonce((n) => n + 1);
       setView((prev) => {
@@ -243,7 +297,7 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const list = await modelApi.refresh(draft);
+      const list = await modelApi.refresh(draft as ModelProfile);
       setModels(list.models);
       setModelsOpen(true);
       if (list.malformed > 0) {
@@ -272,24 +326,18 @@ export function ModelManager({
     }
   };
 
-  const applyPreset = async (name: string) => {
-    try {
-      const tpl = await modelApi.preset(name);
-      setDraft((prev) => {
-        const base = prev ?? blankProfile();
-        return {
-          ...base,
-          name: base.name.trim() ? base.name : tpl.name,
-          baseUrl: tpl.baseUrl,
-          model: tpl.model,
-          temperature: tpl.temperature,
-          contextWindow: tpl.contextWindow,
-          stream: tpl.stream,
-        };
-      });
-    } catch (e) {
-      pushToast("error", `应用预设失败：${describeError(e)}`);
-    }
+  const applyPreset = (id: string) => {
+    const tpl = MODEL_PRESETS.find((p) => p.id === id);
+    if (!tpl) return;
+    setDraft((prev) => {
+      const base = prev ?? blankProfile();
+      return {
+        ...base,
+        name: base.name.trim() ? base.name : tpl.id,
+        baseUrl: tpl.baseUrl,
+        model: tpl.model,
+      };
+    });
   };
 
   return (
@@ -364,32 +412,22 @@ export function ModelManager({
               </>
             )}
           </div>
-          {presetsError && (
-            <div className="mt-2 flex items-center gap-1.5 text-[10.5px]">
-              <span className="min-w-0 flex-1 truncate text-red-300">预设加载失败 · {presetsError}</span>
-              <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void loadPresets()}>
-                重试
-              </button>
+          <div className="mt-2">
+            <div className="mb-1 text-[10.5px] text-neutral-500">快速填充（预设）</div>
+            <div className="flex flex-wrap gap-1">
+              {MODEL_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className="nx-chip pointer-coarse:min-h-6"
+                  title={`用 ${p.id} 的默认地址与模型填充表单`}
+                  onClick={() => applyPreset(p.id)}
+                >
+                  <IconSparkles size={10} />
+                  <span>{p.id}</span>
+                </button>
+              ))}
             </div>
-          )}
-          {presets.length > 0 && (
-            <div className="mt-2">
-              <div className="mb-1 text-[10.5px] text-neutral-500">快速填充（预设）</div>
-              <div className="flex flex-wrap gap-1">
-                {presets.map((p) => (
-                  <button
-                    key={p}
-                    className="nx-chip pointer-coarse:min-h-6"
-                    title={`用 ${p} 的默认地址与模型填充表单`}
-                    onClick={() => void applyPreset(p)}
-                  >
-                    <IconSparkles size={10} />
-                    <span>{p}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
 
         <div className="min-w-0 flex-1">
@@ -503,7 +541,7 @@ export function ModelManager({
                         id={`${fieldId}-fallback`}
                         className="nx-input font-mono"
                         placeholder="主模型失败时改用的模型名"
-                        value={fallbackModelLabel(draft)}
+                        value={fallbackModelLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
@@ -521,9 +559,13 @@ export function ModelManager({
                             min={0}
                             max={2}
                             step={0.1}
-                            value={draft.temperature}
-                            onChange={(e) => patch({ temperature: Number(e.target.value) })}
+                            placeholder="默认不传"
+                            value={draft.temperature ?? ""}
+                            onChange={(e) =>
+                              patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
+                            }
                           />
+                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，用服务端默认。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
@@ -535,12 +577,34 @@ export function ModelManager({
                             min={1000}
                             max={2000000}
                             step={1000}
-                            value={draft.contextWindow}
-                            onChange={(e) => patch({ contextWindow: Number(e.target.value) })}
+                            placeholder="默认不传"
+                            value={draft.contextWindow ?? ""}
+                            onChange={(e) =>
+                              patch({ contextWindow: e.target.value === "" ? null : Number(e.target.value) })
+                            }
                           />
+                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，按服务端默认 32K 估算。</div>
                         </Field>
                       </div>
                     </div>
+
+                    <Field label="思考强度（thinking effort）" htmlFor={`${fieldId}-reasoning-effort`}>
+                      <select
+                        id={`${fieldId}-reasoning-effort`}
+                        className="nx-select"
+                        value={draft.reasoningEffort ?? ""}
+                        onChange={(e) => patch({ reasoningEffort: e.target.value })}
+                      >
+                        {REASONING_EFFORT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="nx-hint mt-1 text-[10.5px]">
+                        只影响支持 reasoning effort 的 OpenAI 兼容端点；默认不传。
+                      </div>
+                    </Field>
 
                     <Field label="最大输出 tokens（留空不限）" htmlFor={`${fieldId}-max-tokens`}>
                       <input
@@ -550,12 +614,12 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder="不限"
-                        value={maxTokensLabel(draft)}
+                        placeholder="默认不传"
+                        value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        留空 = 不限制单次输出（旧档案默认）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
+                        留空 = 默认不传（不限）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
                       </div>
                     </Field>
 
@@ -570,7 +634,7 @@ export function ModelManager({
                             max={3600}
                             step={1}
                             placeholder="默认 300"
-                            value={requestTimeoutLabel(draft)}
+                            value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
                         </Field>
@@ -585,7 +649,7 @@ export function ModelManager({
                             max={3600}
                             step={1}
                             placeholder="默认 60"
-                            value={idleTimeoutLabel(draft)}
+                            value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
                         </Field>
@@ -603,7 +667,7 @@ export function ModelManager({
                             max={100}
                             step={1}
                             placeholder={`默认 ${CIRCUIT_DEFAULT_THRESHOLD}`}
-                            value={circuitThresholdLabel(draft)}
+                            value={circuitThresholdLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ circuitFailureThreshold: circuitThresholdFromInput(e.target.value) })}
                           />
                         </Field>
@@ -618,7 +682,7 @@ export function ModelManager({
                             max={3600}
                             step={1}
                             placeholder={`默认 ${CIRCUIT_DEFAULT_COOLDOWN_SECONDS}`}
-                            value={circuitCooldownLabel(draft)}
+                            value={circuitCooldownLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ circuitCooldownSeconds: circuitCooldownFromInput(e.target.value) })}
                           />
                         </Field>
@@ -679,8 +743,8 @@ export function ModelManager({
         <div
           className={`rounded-md border px-2.5 py-2 text-[11px] ${
             testResult.modelsOk && testResult.chatOk
-              ? "border-green-800/60 bg-green-900/20 text-green-200"
-              : "border-red-800/60 bg-red-900/20 text-red-200"
+              ? "nx-alert-success"
+              : "nx-alert-danger"
           }`}
         >
           {testResult.modelsOk && testResult.chatOk ? (
