@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
 // syncV2EchoHandler 回显注入的同步用户身份, 用于验证 /sync/v2/* 中间件链。

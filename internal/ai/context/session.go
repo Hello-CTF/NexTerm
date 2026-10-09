@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func WithSession(deps Dependencies, manager *session.Manager, storage *store.Store, database tools.Database) Dependencies {

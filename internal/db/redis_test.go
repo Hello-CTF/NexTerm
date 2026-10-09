@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	redisDriver "github.com/redis/go-redis/v9"
 )
 

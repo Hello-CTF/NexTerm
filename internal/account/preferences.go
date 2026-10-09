@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // PreferenceStore 是 setting 表的最小读写子集, 由装配层以 *store.Store 注入。

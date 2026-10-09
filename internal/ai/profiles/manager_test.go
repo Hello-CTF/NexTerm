@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func openStore(t *testing.T) *store.Store {

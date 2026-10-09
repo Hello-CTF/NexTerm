@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 func TestStartupErrorHTMLShowsActualErrorAndDataDir(t *testing.T) {

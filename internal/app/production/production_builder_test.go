@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
+	"github.com/Hello-CTF/NexTerm/internal/tasks"
 )
 
 func TestConcreteProductionCompositionAndPersistentTaskReopen(t *testing.T) {

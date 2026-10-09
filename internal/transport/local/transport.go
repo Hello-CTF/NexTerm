@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 var nextGeneration atomic.Uint64

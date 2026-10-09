@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 const (

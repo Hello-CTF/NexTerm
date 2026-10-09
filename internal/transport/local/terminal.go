@@ -3,8 +3,8 @@ package local
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/pty"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (t *Transport) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Channel, error) {

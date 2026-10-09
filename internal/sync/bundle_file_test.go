@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func dispatchJSON(t *testing.T, dispatcher *ipc.Dispatcher, command string, args string) ipc.Response {

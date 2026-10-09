@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // 资产包协议 v1: 面向文件的导入/导出, 与 v2 同步对象协议相互独立。

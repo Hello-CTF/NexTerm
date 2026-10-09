@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func (m *Manager) initGrid(tab *Tab, channel *channelHandle, generation uint64) error {

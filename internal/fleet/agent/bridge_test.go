@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
 )
 

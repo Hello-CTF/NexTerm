@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestDeviceLifecycleAndRevokeCascade(t *testing.T) {

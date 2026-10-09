@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
 )
 
 func TestDetachDuringBlockedReplayDoesNotResurrectSubscriber(t *testing.T) {

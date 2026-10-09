@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestConnectSingleFlightAndConnectionReuse(t *testing.T) {

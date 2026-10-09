@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 )
 
 func TestR1TakeoverImmediateHITLResponseDoesNotGoStale(t *testing.T) {

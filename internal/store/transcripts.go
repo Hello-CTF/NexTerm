@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 type TranscriptRow struct {

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 )
 
 type fakeSettings struct {

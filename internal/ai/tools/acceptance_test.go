@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/db"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/db"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func TestRealMySQLAcceptance(t *testing.T) {

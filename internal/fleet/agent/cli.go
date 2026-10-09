@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
-	"github.com/ProbiusOfficial/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 const cliTimeout = 30 * time.Second

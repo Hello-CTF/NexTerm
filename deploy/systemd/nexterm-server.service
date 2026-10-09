@@ -1,6 +1,6 @@
 [Unit]
 Description=NexTerm 服务端（浏览器版开发运维终端）
-Documentation=https://github.com/ProbiusOfficial/NexTerm
+Documentation=https://github.com/Hello-CTF/NexTerm
 After=network-online.target
 Wants=network-online.target
 

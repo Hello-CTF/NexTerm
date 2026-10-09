@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 func osc7(payload string) []byte {

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	_ "modernc.org/sqlite"
 )
 

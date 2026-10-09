@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type HubAdapter struct {

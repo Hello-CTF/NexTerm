@@ -13,7 +13,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 const (

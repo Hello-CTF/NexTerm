@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func discardTranscriptLogger() *slog.Logger {

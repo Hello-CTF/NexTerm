@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 type spawnScriptRequest struct {

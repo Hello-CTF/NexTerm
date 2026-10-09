@@ -12,7 +12,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/atomicfile"
+	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 )
 
 type MemoryHostKeyStore struct {

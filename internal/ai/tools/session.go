@@ -4,7 +4,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 type sessionTerminal struct {

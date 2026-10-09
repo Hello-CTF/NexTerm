@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestR1IndeterminateWriteIsReconciledOnceWithoutRetry(t *testing.T) {

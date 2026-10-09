@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 var winRMBanner = []byte("[NexTerm] WinRM line mode; each command runs in a new shell.\r\nPS> ")

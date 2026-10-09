@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // DeviceLink 把一台 daemon 设备在限定时间内分享给无账号访客: 与绑定单个

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 const groupColumns = "id, parent_id, name, sort, created_at, updated_at"

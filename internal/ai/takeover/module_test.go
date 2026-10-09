@@ -3,7 +3,7 @@ package takeover
 import (
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestTakeoverModuleRegistersOnlyTakeoverCommands(t *testing.T) {

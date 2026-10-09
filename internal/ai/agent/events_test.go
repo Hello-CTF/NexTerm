@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
 
 func TestEventGoldenJSON(t *testing.T) {

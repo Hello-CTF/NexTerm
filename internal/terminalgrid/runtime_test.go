@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	grid "github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	grid "github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func TestInitialGridAndWaitAvoidDuplicateTransport(t *testing.T) {

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 )
 
 func TestRealLocalPTYGridRuntimeResizeAndHubClients(t *testing.T) {

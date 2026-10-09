@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"

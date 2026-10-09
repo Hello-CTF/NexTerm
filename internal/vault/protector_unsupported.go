@@ -2,7 +2,7 @@
 
 package vault
 
-import "github.com/ProbiusOfficial/NexTerm/internal/ipc"
+import "github.com/Hello-CTF/NexTerm/internal/ipc"
 
 const systemProtectionAvailable = false
 

@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/update"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/update"
 )
 
 func updateIPCDebArchive(t *testing.T, version string) (string, []byte) {

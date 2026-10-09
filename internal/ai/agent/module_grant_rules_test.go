@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
 
 func TestGrantRuleCommandsLifecycle(t *testing.T) {

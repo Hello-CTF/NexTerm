@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // WithUserID/UserIDFromContext 委托 ipc 包的同一实现: /rpc(账号会话)与 /sync/v2 两条链路共享同一身份 key。

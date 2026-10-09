@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
+	"github.com/Hello-CTF/NexTerm/internal/tasks"
 )
 
 type PersistentTasks interface {

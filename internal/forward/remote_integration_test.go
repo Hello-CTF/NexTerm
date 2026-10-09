@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	gossh "golang.org/x/crypto/ssh"
 )
 

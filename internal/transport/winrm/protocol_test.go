@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const fixtureCreateShellResponse = `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:rsp="http://schemas.microsoft.com/wbem/wsman/1/windows/shell"><s:Header><a:Action>http://schemas.xmlsoap.org/ws/2004/09/transfer/CreateResponse</a:Action></s:Header><s:Body><rsp:Shell><rsp:ShellId>fixture-shell</rsp:ShellId></rsp:Shell></s:Body></s:Envelope>`

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 var ErrEventBrokerClosed = errors.New("event broker is closed")

@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type syncBuffer struct {

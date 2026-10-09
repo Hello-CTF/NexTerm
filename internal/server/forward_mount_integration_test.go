@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/forward"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/mount"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/mount"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type serverEchoDialer struct {

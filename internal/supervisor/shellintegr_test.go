@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
 
 func TestWrapShellIntegrationDecision(t *testing.T) {

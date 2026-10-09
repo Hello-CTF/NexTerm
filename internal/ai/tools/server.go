@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (r *Registry) transport(ctx context.Context, scope Scope) (base.Transport, error) {

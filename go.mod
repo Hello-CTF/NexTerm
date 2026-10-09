@@ -1,4 +1,4 @@
-module github.com/ProbiusOfficial/NexTerm
+module github.com/Hello-CTF/NexTerm
 
 go 1.26.0
 

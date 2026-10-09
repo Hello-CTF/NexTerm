@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/durable"
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func AdaptEmitter(emitter ipc.Emitter) Emitter {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )

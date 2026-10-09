@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 func testLogger() *slog.Logger {

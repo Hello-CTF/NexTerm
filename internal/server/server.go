@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/ProbiusOfficial/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 const (

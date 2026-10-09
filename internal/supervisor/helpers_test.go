@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 const testReadTimeout = 30 * time.Second

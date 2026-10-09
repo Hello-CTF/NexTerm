@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	fswinrm "github.com/ProbiusOfficial/NexTerm/internal/fs/winrm"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	fswinrm "github.com/Hello-CTF/NexTerm/internal/fs/winrm"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 var nextGeneration atomic.Uint64

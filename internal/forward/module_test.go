@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestApplicationModuleContract(t *testing.T) {

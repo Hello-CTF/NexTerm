@@ -5,7 +5,7 @@ import (
 	"io"
 	"os/exec"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
 )
 

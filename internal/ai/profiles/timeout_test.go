@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/cloudwego/eino/schema"
 )
 

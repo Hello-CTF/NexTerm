@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	grid "github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	grid "github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func TestGridForViewport(t *testing.T) {

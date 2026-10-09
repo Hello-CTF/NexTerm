@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 )

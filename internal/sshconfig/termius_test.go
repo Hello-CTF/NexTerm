@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig/termiusdb"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig/termiusdb"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"golang.org/x/crypto/nacl/secretbox"

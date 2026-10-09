@@ -3,7 +3,7 @@ package mount
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type listRequest struct {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/atomicfile"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // totpKeyMu 串行化同一进程内的「读不到则创建」路径, 避免并发首用写出两把不同的密钥。

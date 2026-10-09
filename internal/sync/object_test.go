@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 func TestObjectSealOpenRoundtrip(t *testing.T) {

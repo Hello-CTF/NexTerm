@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 const (

@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
+	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )

@@ -6,8 +6,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/db"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/db"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestProductionDatabaseModuleRegistersLifecycleCommands(t *testing.T) {

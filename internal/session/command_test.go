@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
 
 // TestTabTracksCommandLifecycle drives OSC 133 reports through the tab feed

@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (

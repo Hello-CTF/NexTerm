@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/migrations"
+	"github.com/Hello-CTF/NexTerm/migrations"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 

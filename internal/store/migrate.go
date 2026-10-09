@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/migrations"
+	"github.com/Hello-CTF/NexTerm/migrations"
 )
 
 const migrationsTable = "schema_migrations"

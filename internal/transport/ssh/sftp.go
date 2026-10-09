@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	sshfs "github.com/ProbiusOfficial/NexTerm/internal/fs/ssh"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 )

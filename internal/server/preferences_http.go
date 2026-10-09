@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // preferenceUpdateRequest 用 set/clear 表达覆盖写入与「清除以继承默认」。

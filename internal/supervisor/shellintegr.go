@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
 
 type shellLaunch struct {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
 )
 
 func hubJobStream(t *testing.T, bus *hub.Hub) Stream {

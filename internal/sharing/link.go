@@ -8,9 +8,9 @@ import (
 	stdsync "sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (

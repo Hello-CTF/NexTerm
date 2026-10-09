@@ -3,8 +3,8 @@ package production
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/update"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/update"
 )
 
 type updateInstallRequest struct {

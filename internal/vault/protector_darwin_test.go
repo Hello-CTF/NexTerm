@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 func TestKeychainRoundTrip(t *testing.T) {

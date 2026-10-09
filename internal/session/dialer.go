@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (m *Manager) Transport(ctx context.Context, sessionID string) (base.Transport, error) {

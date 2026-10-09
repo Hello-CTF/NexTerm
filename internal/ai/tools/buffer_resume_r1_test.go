@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
 
 func TestR1TerminalInputBufferReconstructsWrappedCommand(t *testing.T) {

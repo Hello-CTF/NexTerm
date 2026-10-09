@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 )
 
 type ChatMessage struct {

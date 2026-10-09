@@ -8,12 +8,12 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
-	sshfs "github.com/ProbiusOfficial/NexTerm/internal/fs/ssh"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const fsReadDefaultMaxBytes = 8 << 20

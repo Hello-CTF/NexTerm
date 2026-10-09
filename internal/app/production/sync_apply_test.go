@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 // 离线共享工作区边界: 命令层不索取会话身份(匿名上下文即可应用),

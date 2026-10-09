@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/sharing"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/sharing"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
 )
 

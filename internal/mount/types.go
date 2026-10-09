@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 const MacOSUnavailableReason = "磁盘挂载在 macOS 上暂不可用：依赖 macFUSE（系统扩展）+ sshfs，尚未完成适配"

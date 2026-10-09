@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // errHeadMismatch 表示推送所基于的 head 与服务端当前 head 不一致:

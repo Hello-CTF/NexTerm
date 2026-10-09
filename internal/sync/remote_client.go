@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 // 会话 cookie 与 CSRF 头是与 internal/server 账号路由约定的线上常量。

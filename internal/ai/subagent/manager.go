@@ -17,8 +17,8 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 )
 
 type Manager struct {

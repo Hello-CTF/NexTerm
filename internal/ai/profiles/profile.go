@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 )
 
 type Profile struct {

@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/durable"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	transportssh "github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 type fakeHost struct {

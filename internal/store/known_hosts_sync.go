@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // known_host 与 AI 模型档案的同步 opt-in 开关键, 按账号用户隔离(沿用 sync.cursor.<userID> 的键先例):

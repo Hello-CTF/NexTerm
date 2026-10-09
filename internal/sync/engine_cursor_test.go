@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 // f/x/h 反例: 补拉 ID 的高 seq 不得把游标推进跳过未返回的低 seq 游标对象,

@@ -3,8 +3,8 @@ package takeover
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {

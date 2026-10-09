@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
 )
 
 const (

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )

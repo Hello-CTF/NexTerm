@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/dbtest"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 )
 
 func TestCredentialTombstonePutPostgres(t *testing.T) {

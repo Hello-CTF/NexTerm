@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func newGridDispatcher(t *testing.T, manager *Manager) *ipc.Dispatcher {

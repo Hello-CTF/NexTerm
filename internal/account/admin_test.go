@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 func TestCountUsersAndListUsers(t *testing.T) {

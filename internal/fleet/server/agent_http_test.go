@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 )
 
 // enrollAgent 走完整的签发+兑换流程, 返回设备凭证。

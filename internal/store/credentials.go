@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 const CipherAES256GCM = "aes256gcm-v1"

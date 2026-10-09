@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 type CredentialDecryptor interface {

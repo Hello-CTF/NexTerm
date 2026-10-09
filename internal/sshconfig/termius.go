@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig/termiusdb"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig/termiusdb"
 )
 
 var ErrConfirmationRequired = errors.New("sshconfig: reading local Termius data requires explicit user confirmation")

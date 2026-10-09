@@ -3,8 +3,8 @@ package production
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
 // registerSyncApplyCommands 注册浏览器明文应用入口: 会话与 CSRF 由 /rpc 传输层把关,

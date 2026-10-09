@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/dbtest"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestAuditCountAndQueryOptionalFilterTypesPostgres(t *testing.T) {

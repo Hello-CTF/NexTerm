@@ -6,9 +6,9 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func newObjectStoreUser(t *testing.T) (context.Context, *objectStore, string) {

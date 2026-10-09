@@ -9,11 +9,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
-	"github.com/ProbiusOfficial/NexTerm/internal/db"
-	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/db"
+	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const (

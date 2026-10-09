@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 )
 
 func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {

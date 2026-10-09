@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestSnippetIPCValidationAndOriginalBytes(t *testing.T) {

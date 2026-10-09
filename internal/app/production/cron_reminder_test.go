@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/cron"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestReminderSchedulerRegistersOneShotJob(t *testing.T) {

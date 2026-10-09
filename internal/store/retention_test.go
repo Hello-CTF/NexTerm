@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func insertAuditAt(t *testing.T, db *Store, ts int64, kind string) {

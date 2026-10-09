@@ -3,8 +3,8 @@ package aicontext
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
-	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/docker"
 )
 
 func WithDocker(deps Dependencies, service *docker.Service) Dependencies {

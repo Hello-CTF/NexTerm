@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, call Call) (*preparedChange, *Preview, error) {

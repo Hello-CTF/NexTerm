@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 )
 
 func TestFallbackProfileRoundTrip(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // TestStoreRetentionPolicyCommandFields 命令日志保留策略: 单独策略字段直接生效,

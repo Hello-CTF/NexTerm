@@ -10,10 +10,10 @@
   <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口；也能部署成服务端，浏览器打开即用。" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="NexTerm" />
-  <meta property="og:url" content="https://probiusofficial.github.io/NexTerm/" />
-  <meta property="og:image" content="https://probiusofficial.github.io/NexTerm/images/social-preview.png" />
+  <meta property="og:url" content="https://nexterm.work/" />
+  <meta property="og:image" content="https://nexterm.work/images/01-dual-form.png" />
   <meta property="og:image:width" content="1280" />
-  <meta property="og:image:height" content="640" />
+  <meta property="og:image:height" content="720" />
   <meta name="twitter:card" content="summary_large_image" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -31,10 +31,11 @@
       <a href="#forms">两种形态</a>
       <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>
+      <a href="#get">下载</a>
       <a href="#faq">常见问题</a>
     </div>
     <div class="nav-actions">
-      <a class="nav-github" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">
+      <a class="nav-github" href="https://github.com/Hello-CTF/NexTerm" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         GitHub
       </a>
@@ -52,7 +53,7 @@
         <p class="hero-sub">SSH、WinRM、文件、Docker、数据库与 AI 共用一套三层工作区。标签始终挂载，切换不重连；AI 全程在权限护栏内执行。</p>
         <div class="hero-ctas">
           <a class="btn btn-primary" href="#get">获取与部署</a>
-          <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
+          <a class="btn btn-ghost" href="https://github.com/Hello-CTF/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
         </div>
         <div class="hero-meta">
           <span>桌面版 <span class="os">Windows · macOS · Linux</span>，服务端 <span class="os">Linux / 容器</span></span>
@@ -102,13 +103,11 @@
           <li>写文件前先看逐行 diff，改完留变更记录</li>
           <li>任意 OpenAI 兼容端点，密钥只存自己一侧</li>
         </ul>
-        <div class="cell-shot"><img src="images/ai-permission.png" alt="AI 权限确认卡片" loading="lazy" /></div>
       </div>
       <div class="cell cell-w">
         <span class="tag">TERMINAL</span>
         <h3>终端与工作区</h3>
         <p>工作区、分屏面板、标签三层结构；一台资产一条连接复用，断线按指数退避自动重连。终端会话自动录制，可在「终端历史」回看文本或按时间轴回放。</p>
-        <div class="cell-shot"><img src="images/split-pane-editor.png" alt="分屏终端与内置编辑器" loading="lazy" /></div>
       </div>
       <div class="cell">
         <span class="tag">FILES</span>
@@ -298,16 +297,46 @@
 
 <section class="section section-alt" id="get">
   <div class="container">
+    <div class="section-head">
+      <span class="pk">nexterm install</span>
+      <h2>获取与部署</h2>
+      <p>每次发版八个产物：Windows / macOS / Linux 桌面客户端（各 amd64 与 arm64）、Linux 服务端包（amd64 与 arm64）；懒猫微服专版在应用中心安装，不经 Release 下载。</p>
+    </div>
+
+    <div class="dl-grid">
+      <a class="dl-card" href="https://github.com/Hello-CTF/NexTerm/releases/latest">
+        <span class="dl-os">Windows</span>
+        <span class="dl-file">NexTerm_&lt;版本&gt;_x64-setup.exe · _arm64-setup.exe</span>
+        <span class="dl-go">下载 →</span>
+      </a>
+      <a class="dl-card" href="https://github.com/Hello-CTF/NexTerm/releases/latest">
+        <span class="dl-os">macOS</span>
+        <span class="dl-file">NexTerm_&lt;版本&gt;_aarch64.dmg · _x86_64.dmg</span>
+        <span class="dl-go">下载 →</span>
+      </a>
+      <a class="dl-card" href="https://github.com/Hello-CTF/NexTerm/releases/latest">
+        <span class="dl-os">Linux 桌面</span>
+        <span class="dl-file">NexTerm-desktop_&lt;版本&gt;_linux_amd64.deb · _arm64.deb</span>
+        <span class="dl-go">下载 →</span>
+      </a>
+      <a class="dl-card" href="https://github.com/Hello-CTF/NexTerm/releases/latest">
+        <span class="dl-os">Linux 服务端</span>
+        <span class="dl-file">NexTerm-server_&lt;版本&gt;_linux_amd64.tar.gz · _arm64.tar.gz</span>
+        <span class="dl-go">下载 →</span>
+      </a>
+      <div class="dl-card is-static">
+        <span class="dl-os">懒猫微服</span>
+        <span class="dl-file">在微服应用中心搜索 NexTerm，一键安装</span>
+      </div>
+    </div>
+
     <div class="get-wrap">
       <div class="get-steps">
         <span class="pk">nexterm install</span>
-        <h3>获取与部署</h3>
-        <p>每次发版八个产物：Windows / macOS / Linux 桌面客户端（各 amd64 与 arm64）、Linux 服务端包（amd64 与 arm64）；懒猫微服专版在应用中心安装，不经 Release 下载。</p>
+        <h3>部署提示</h3>
         <ul>
-          <li>桌面版：<code>NexTerm_&lt;版本&gt;_x64-setup.exe</code> / <code>_arm64-setup.exe</code>、<code>_x86_64.dmg</code> / <code>_aarch64.dmg</code>、<code>NexTerm-desktop_&lt;版本&gt;_linux_&lt;架构&gt;.deb</code></li>
-          <li>服务端：<code>NexTerm-server_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code>，含前端、两个 systemd 单元与两份 env 示例</li>
           <li>sync-only 不是独立包：同一个二进制加 <code>--sync-only</code> 即只挂同步端点</li>
-          <li>懒猫微服：在微服应用中心里安装，不经 Release 下载</li>
+          <li>桌面版自动更新：启动静默检查 Release，校验 SHA256SUMS 后安装</li>
           <li>从源码构建：Go 1.26 + Node（20.19+ 或 22.12+）+ pnpm</li>
         </ul>
       </div>
@@ -434,13 +463,13 @@
       NexTerm
     </div>
     <div class="footer-links">
-      <a href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Hello-CTF/NexTerm" target="_blank" rel="noopener">GitHub</a>
       <a href="#forms">两种形态</a>
       <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>
       <a href="#faq">常见问题</a>
     </div>
-    <div class="footer-meta">基于 xterm.js、Go 与 Wails 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
+    <div class="footer-meta">基于 xterm.js、Go 与 Wails 构建 · MIT 协议 · © 2026 Hello-CTF</div>
   </div>
 </footer>
 

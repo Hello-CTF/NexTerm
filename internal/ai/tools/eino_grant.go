@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
 
 // SessionAssetTerminal resolves the asset ID of a session on the server side.

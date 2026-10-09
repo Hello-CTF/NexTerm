@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
 const (

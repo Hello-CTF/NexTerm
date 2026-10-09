@@ -269,8 +269,8 @@ function ldflags(kind, goos) {
   const flags = [
     "-s",
     "-w",
-    `-X github.com/ProbiusOfficial/NexTerm/internal/version.Version=${VERSION}`,
-    `-X github.com/ProbiusOfficial/NexTerm/internal/version.Commit=${COMMIT}`,
+    `-X github.com/Hello-CTF/NexTerm/internal/version.Version=${VERSION}`,
+    `-X github.com/Hello-CTF/NexTerm/internal/version.Commit=${COMMIT}`,
   ];
   if (kind === "desktop" && goos === "windows") flags.push("-H windowsgui");
   return flags.join(" ");
@@ -684,7 +684,7 @@ function packageLinuxDesktop(binary, goarch) {
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
   fs.writeFileSync(path.join(dataDir, "usr/share/applications/nexterm.desktop"), "[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\n");
-  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/ProbiusOfficial/NexTerm>\nHomepage: https://github.com/ProbiusOfficial/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
+  fs.writeFileSync(path.join(work, "control", "control"), `Package: nexterm\nVersion: ${debVersion(VERSION)}\nSection: net\nPriority: optional\nArchitecture: ${goarch}\nMaintainer: Probius <https://github.com/Hello-CTF/NexTerm>\nHomepage: https://github.com/Hello-CTF/NexTerm\nDepends: libgtk-4-1, libwebkitgtk-6.0-4t64 | libwebkitgtk-6.0-4\nDescription: Browser-based SSH / SFTP / Docker / database operations terminal\n Terminal processes, sessions and workspace layout stay on your own server;\n credentials are encrypted with a vault key you control.\n`);
   const normalizeModes = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name);

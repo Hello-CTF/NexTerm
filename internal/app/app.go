@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"runtime"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 type VaultStatusFunc func(context.Context) (any, error)

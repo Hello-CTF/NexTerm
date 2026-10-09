@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )

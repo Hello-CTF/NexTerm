@@ -31,7 +31,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "public" / "install-device.sh"
 VERSION = "9.9.9-test"
-RELEASE_BASE = "https://github.com/ProbiusOfficial/NexTerm/releases/download"
+RELEASE_BASE = "https://github.com/Hello-CTF/NexTerm/releases/download"
 SERVER_URL = "https://nexterm.example.com"
 ENROLL_CODE = "TEST-CODE-SECRET-123"
 

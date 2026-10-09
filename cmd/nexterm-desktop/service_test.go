@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

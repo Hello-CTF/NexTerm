@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/cloudwego/eino/components/model"
 )
 

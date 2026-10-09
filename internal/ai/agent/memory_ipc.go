@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (

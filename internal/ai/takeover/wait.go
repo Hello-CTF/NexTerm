@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
 
 func (m *Manager) waitFor(ctx context.Context, tabID, pattern string, timeoutMS int64) (tools.Output, error) {

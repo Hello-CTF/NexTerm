@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {

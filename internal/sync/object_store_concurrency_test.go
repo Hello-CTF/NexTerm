@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // pushAllConcurrently 模拟多设备同时推送: 每个 worker 推送一批互不相同对象,

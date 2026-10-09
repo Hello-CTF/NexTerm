@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // ProtocolVersion 2: 全量载荷 E2E 对象协议。破坏性替换 v1, 不做旧版本兼容。

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestStoreAdapterWritesAudits(t *testing.T) {

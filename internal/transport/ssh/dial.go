@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (c *Client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {

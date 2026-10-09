@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/platform"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
-	"github.com/ProbiusOfficial/NexTerm/internal/update"
-	"github.com/ProbiusOfficial/NexTerm/internal/version"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	production "github.com/Hello-CTF/NexTerm/internal/app/production"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/update"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

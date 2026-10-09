@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 // opt-out 后重新 opt-in 被拒绝: 服务端墓碑保持, 本地记录保留, 不再重推删除。

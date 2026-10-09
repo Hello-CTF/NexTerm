@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
 
 // hello 上报的 state digest 必须与设备端 supervisor 按同一规则

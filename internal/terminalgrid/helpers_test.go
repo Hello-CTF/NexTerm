@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	grid "github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	grid "github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func newModel(t *testing.T, config grid.Config) *grid.Model {

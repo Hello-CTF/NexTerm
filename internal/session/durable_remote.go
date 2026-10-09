@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 // durableProviderFor resolves the durable provider backing a durable tab on

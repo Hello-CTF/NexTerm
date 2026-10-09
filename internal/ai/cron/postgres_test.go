@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/dbtest"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 )
 
 func openPostgresStore(t *testing.T) *SQLStore {

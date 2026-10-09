@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 // 两个大 snippet 的远端新 revision 分布在两页时, 引擎必须在推送前耗尽分页并完成 LWW,

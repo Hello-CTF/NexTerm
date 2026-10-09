@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const maxStreamBuffer = 64 * 1024 * 1024

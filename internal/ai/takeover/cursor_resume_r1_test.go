@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
 
 func TestR1TakeoverResumeRejectsChangedCursor(t *testing.T) {

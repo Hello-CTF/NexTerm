@@ -11,17 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
-	fleetagent "github.com/ProbiusOfficial/NexTerm/internal/fleet/agent"
-	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/platform"
-	"github.com/ProbiusOfficial/NexTerm/internal/server"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
-	"github.com/ProbiusOfficial/NexTerm/internal/version"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	production "github.com/Hello-CTF/NexTerm/internal/app/production"
+	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/server"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 func main() {

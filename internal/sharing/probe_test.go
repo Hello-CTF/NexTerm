@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // probeService 在共享夹具库上另起一个带 agent 探针的 Service, 探针行为由

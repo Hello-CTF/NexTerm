@@ -7,8 +7,8 @@ import (
 	stdsync "sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func applyPayload(t *testing.T, payload any) json.RawMessage {

@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-const DefaultReleasesAPI = "https://api.github.com/repos/ProbiusOfficial/NexTerm/releases"
+const DefaultReleasesAPI = "https://api.github.com/repos/Hello-CTF/NexTerm/releases"
 
 const checksumsAssetName = "SHA256SUMS"
 

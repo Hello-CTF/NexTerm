@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestEventBrokerSubscriberFilter(t *testing.T) {

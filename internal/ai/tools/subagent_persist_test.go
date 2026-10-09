@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestWriteSubagentRunReportsStoreFailure(t *testing.T) {

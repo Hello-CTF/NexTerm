@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/winrm"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/local"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/winrm"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type productionConnector struct {

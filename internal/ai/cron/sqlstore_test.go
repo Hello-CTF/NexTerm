@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/migrations"
+	"github.com/Hello-CTF/NexTerm/migrations"
 )
 
 func sqliteTestDSN(path string) string {

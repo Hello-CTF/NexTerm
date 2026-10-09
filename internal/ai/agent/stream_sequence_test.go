@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
-	"github.com/ProbiusOfficial/NexTerm/internal/hub"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/cloudwego/eino/schema"
 )
 

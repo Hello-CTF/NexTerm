@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 )
 
 func TestSchedulerPassesModelProfileToExecutor(t *testing.T) {

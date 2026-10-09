@@ -5,7 +5,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type ExecConn struct {

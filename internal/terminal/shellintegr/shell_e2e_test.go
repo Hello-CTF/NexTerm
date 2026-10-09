@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/pty"
 )
 
 // TestBashWrapperPreservesUserPromptCommand runs wrapped bash on a PTY with a

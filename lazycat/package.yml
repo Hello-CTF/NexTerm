@@ -5,7 +5,7 @@ name: NexTerm 运维终端
 description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端，凭据加密存在你自己的微服上。
 author: Probius
 license: MIT
-homepage: https://github.com/ProbiusOfficial/NexTerm
+homepage: https://github.com/Hello-CTF/NexTerm
 
 admin_only: false
 

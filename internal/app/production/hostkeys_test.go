@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 func TestProductionHostKeyRemoveKeepsIndentedFileFormat(t *testing.T) {

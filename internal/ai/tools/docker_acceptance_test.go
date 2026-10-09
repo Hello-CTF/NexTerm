@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/moby/moby/client"
 )
 

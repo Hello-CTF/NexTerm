@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func WithStore(deps Dependencies, storage *store.Store, database Database) Dependencies {

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
 
 type Event struct {

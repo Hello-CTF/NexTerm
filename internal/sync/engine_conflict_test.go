@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 // 真实 HTTP: 过期 head 的推送必须映射为 errHeadMismatch, 而不是普通 IPC 错误。

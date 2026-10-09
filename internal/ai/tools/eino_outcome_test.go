@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
-	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func outcomeFixture(t *testing.T) (*store.Store, *outcome.Ledger, *outcome.SQLiteStore) {

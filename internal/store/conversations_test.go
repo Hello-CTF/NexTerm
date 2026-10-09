@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/migrations"
+	"github.com/Hello-CTF/NexTerm/migrations"
 )
 
 func TestMsgListPreservesInsertionOrder(t *testing.T) {

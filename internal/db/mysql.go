@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 

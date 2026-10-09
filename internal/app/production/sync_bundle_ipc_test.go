@@ -12,13 +12,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/server"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/server"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 func newSyncBundleTestService(t *testing.T, desktop bool, initVault bool) (*store.Store, *vault.Vault, *syncservice.Service) {

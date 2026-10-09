@@ -4,7 +4,7 @@
 
 **SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台。**
 
-[![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-online-516cd6)](https://probiusofficial.github.io/NexTerm/)
+[![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-online-516cd6)](https://nexterm.work/)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
 ![Wails](https://img.shields.io/badge/Wails-v3-CC0000)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
@@ -25,7 +25,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/ProbiusOfficial/NexTerm/releases/latest) 下载最新版本，或在懒猫微服的应用中心安装。
+从 [Releases](https://github.com/Hello-CTF/NexTerm/releases/latest) 下载最新版本，或在懒猫微服的应用中心安装。
 
 | 平台 | 安装包 |
 | --- | --- |

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 )
 
 func TestProfileJSONTemperatureAndReasoningEffortCompat(t *testing.T) {

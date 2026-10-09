@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
-	sshfs "github.com/ProbiusOfficial/NexTerm/internal/fs/ssh"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	transportssh "github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 type clientHost struct {

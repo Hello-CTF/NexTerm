@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

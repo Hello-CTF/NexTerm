@@ -1,6 +1,6 @@
 package sync
 
-import "github.com/ProbiusOfficial/NexTerm/internal/store"
+import "github.com/Hello-CTF/NexTerm/internal/store"
 
 // scalarMax 返回后端标量取大函数名: PostgreSQL 没有 SQLite 的标量 max(), 对应 GREATEST。
 func scalarMax(backend store.Backend) string {

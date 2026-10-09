@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestOpenTabRunsStartupCommandInTerminal(t *testing.T) {

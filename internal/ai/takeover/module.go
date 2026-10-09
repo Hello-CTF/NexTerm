@@ -3,9 +3,9 @@ package takeover
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
-	"github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func Module(manager *Manager) app.Module {

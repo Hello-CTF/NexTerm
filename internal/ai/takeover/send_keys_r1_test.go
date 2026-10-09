@@ -3,7 +3,7 @@ package takeover
 import (
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 )
 
 func TestR1TakeoverRejectsBufferedDangerousSubmission(t *testing.T) {

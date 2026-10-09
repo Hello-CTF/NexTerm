@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
 
 func writeHistoryFile(t *testing.T, home, name, content string) {

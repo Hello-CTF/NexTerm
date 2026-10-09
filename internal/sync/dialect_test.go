@@ -3,7 +3,7 @@ package sync
 import (
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestSyncDialectTokens(t *testing.T) {

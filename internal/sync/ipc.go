@@ -3,7 +3,7 @@ package sync
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (

@@ -4,7 +4,7 @@
 # 仅支持 Linux x86_64/aarch64。二进制与同 release 的 SHA256SUMS 校验通过后才安装并 enroll, 最后装 systemd --user 服务, 全程不需要 root。
 set -eu
 
-RELEASE_BASE="https://github.com/ProbiusOfficial/NexTerm/releases/download"
+RELEASE_BASE="https://github.com/Hello-CTF/NexTerm/releases/download"
 
 die() { printf 'install-device: %s\n' "$*" >&2; exit 1; }
 

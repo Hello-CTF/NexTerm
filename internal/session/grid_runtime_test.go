@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 func openGridTestSession(t *testing.T, events chan ControlEvent) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {

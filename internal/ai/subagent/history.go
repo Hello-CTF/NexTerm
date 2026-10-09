@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
+	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/cloudwego/eino/schema"
 )
 

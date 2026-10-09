@@ -1,6 +1,6 @@
 package agent
 
-import aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
+import aicontext "github.com/Hello-CTF/NexTerm/internal/ai/context"
 
 func systemPrompt() string {
 	return aicontext.SystemPrompt()

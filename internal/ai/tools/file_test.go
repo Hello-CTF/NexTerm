@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func fileRegistry(files *fakeFS) (*Registry, *fakeTransport) {

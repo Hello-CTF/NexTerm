@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/account"
-	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	core "github.com/Hello-CTF/NexTerm/internal/app"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type accountUserView struct {

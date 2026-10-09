@@ -191,7 +191,7 @@ def build(binary: pathlib.Path, package: str) -> None:
         "-o", str(binary), package,
     ]
     if package == "./cmd/nexterm-server":
-        command[5:5] = ["-ldflags", f"-s -w -X github.com/ProbiusOfficial/NexTerm/internal/version.Version={version}"]
+        command[5:5] = ["-ldflags", f"-s -w -X github.com/Hello-CTF/NexTerm/internal/version.Version={version}"]
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
 
 

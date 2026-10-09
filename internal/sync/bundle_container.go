@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"golang.org/x/crypto/argon2"
 )
 

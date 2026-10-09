@@ -3,8 +3,8 @@ package session
 import (
 	"context"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
-	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 type coreTerminal struct {

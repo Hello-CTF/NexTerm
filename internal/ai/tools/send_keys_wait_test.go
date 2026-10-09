@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/outcome"
 )
 
 func sendKeysCall(args string) Call {

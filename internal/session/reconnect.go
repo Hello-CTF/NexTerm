@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/durable"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/durable"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func (m *Manager) StartReconnect(id string) error {

@@ -12,9 +12,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	transportssh "github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
 // Runner executes a command on the target and reports its outcome. err is

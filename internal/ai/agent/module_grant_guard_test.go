@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 // 服务端装配(ServerMode)下, 设备授权与授权规则的变更仅超管可用; 无身份的

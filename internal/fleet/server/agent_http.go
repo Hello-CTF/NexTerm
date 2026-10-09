@@ -3,7 +3,7 @@ package fleetserver
 import (
 	"net/http"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 )
 
 // serveAgentSync 处理 POST /agent/sync: 设备凭证鉴权 + 指标落库 + 服务状态回写,

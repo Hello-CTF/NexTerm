@@ -10,13 +10,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
-	"github.com/ProbiusOfficial/NexTerm/internal/keys"
-	"github.com/ProbiusOfficial/NexTerm/internal/session"
-	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig"
-	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig/termiusdb"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/keys"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig"
+	"github.com/Hello-CTF/NexTerm/internal/sshconfig/termiusdb"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 	gossh "golang.org/x/crypto/ssh"
 )
 
