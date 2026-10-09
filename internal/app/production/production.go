@@ -19,6 +19,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
+	"github.com/ProbiusOfficial/NexTerm/internal/update"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
@@ -49,6 +50,7 @@ type ProductionServices struct {
 	Agent            *agent.Runner
 	Takeover         *takeover.Manager
 	Events           ipc.Emitter
+	Update           *update.Manager
 	channelBridge    *terminalBridge
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore
@@ -195,6 +197,11 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Takeover != nil {
 		modules = append(modules, takeover.Module(services.Takeover))
+	}
+	if services.Update != nil {
+		modules = append(modules, Module{Name: "update", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return registerUpdateCommands(dispatcher, services.Update)
+		}})
 	}
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})

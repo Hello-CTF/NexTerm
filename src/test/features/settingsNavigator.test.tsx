@@ -81,7 +81,7 @@ function tocToggle(): HTMLButtonElement {
 
 const SECTION_LABELS = [
   "外观", "终端", "AI 模型", "AI 拦截", "长期记忆", "定时任务",
-  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键",
+  "凭据保护", "已知主机", "账号同步", "资产包", "文件链接", "分享", "快捷键", "软件更新",
 ];
 
 beforeEach(() => {
@@ -117,6 +117,7 @@ describe("设置分区导航", () => {
       "settings-appearance", "settings-terminal", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-cron", "settings-vault", "settings-known-hosts",
       "settings-account", "settings-bundle", "settings-files", "settings-share", "settings-shortcuts",
+      "settings-update",
     ];
     for (const id of ids) {
       expect(document.getElementById(id), `missing section #${id}`).not.toBeNull();

@@ -99,6 +99,15 @@ export const systemApi = {
   platform: () => call<string>("app_platform"),
 };
 
+import type { UpdateResultDto, UpdateStatusDto } from "./types";
+
+export const appUpdateApi = {
+  check: () => call<UpdateStatusDto>("app_update_check"),
+  install: (version?: string) =>
+    call<UpdateResultDto>("app_update_install", { version: version ?? null }),
+  restart: () => call<UpdateResultDto>("app_restart"),
+};
+
 export interface SessionInfo {
   id: string;
   assetId: string | null;

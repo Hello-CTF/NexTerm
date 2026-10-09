@@ -3,7 +3,7 @@
   "purpose": "Go feature acceptance coverage; canonical IDs are checklist labels, not required Rust wire compatibility",
   "go_source": {
     "root": "/home/huangzheng/NexTerm",
-    "commit": "addd2680494bccc9f726e9b80d014bddbbb9290f",
+    "commit": "66b7f27f8ee65f01e13442b6e2f02913ef74ff4d",
     "report": "testdata/parity/baseline/go-selfcheck.json"
   },
   "rules": {

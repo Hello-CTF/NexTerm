@@ -6,18 +6,21 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/forward"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	sshdaemon "github.com/ProbiusOfficial/NexTerm/internal/ssh"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
+	"github.com/ProbiusOfficial/NexTerm/internal/update"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
@@ -37,6 +40,9 @@ type ProductionConfig struct {
 	// StagedBlobs 由服务端装配注入 ( nexterm-server ), 把 blob Stage/Reserve 响应的
 	// 相对 path 解析为暂存文件路径; 桌面端为 nil。
 	StagedBlobs StagedBlobResolver
+	// RestartFunc 由桌面端注入: 启动新进程并退出当前 wails 应用; server 为 nil,
+	// app_restart 降级为不可用原因。
+	RestartFunc func(context.Context, string) error
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -115,10 +121,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Database: database, Logger: config.Config.Logger,
 	})
 	var durableResolver session.DurableResolver
-	if executable, err := os.Executable(); err == nil {
-		durableResolver = &sshdaemon.Resolver{Executable: executable}
+	executablePath, executableErr := os.Executable()
+	if executableErr == nil {
+		durableResolver = &sshdaemon.Resolver{Executable: executablePath}
 	} else {
-		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", err)
+		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
 	sessionManager = session.NewManager(session.Config{
 		Connector:         connector,
@@ -163,6 +170,19 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,
+	}
+	if executableErr == nil {
+		services.Update = &update.Manager{
+			CurrentVersion: config.Config.Version,
+			GOOS:           runtime.GOOS,
+			GOARCH:         runtime.GOARCH,
+			CanInstall:     config.Desktop,
+			ExePath:        executablePath,
+			RestartFunc:    config.RestartFunc,
+			Emit: func(ctx context.Context, progress update.Progress) {
+				_ = ipc.Emit(ctx, config.Config.Events, ipc.TopicUpdateProgress, progress)
+			},
+		}
 	}
 	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()

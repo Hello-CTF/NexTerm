@@ -19,6 +19,7 @@ const (
 	TopicAppError          Topic = "app://error"
 	TopicLayoutChanged     Topic = "layout://changed"
 	TopicDeviceStatus      Topic = "device://status"
+	TopicUpdateProgress    Topic = "update://progress"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

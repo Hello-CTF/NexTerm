@@ -37,7 +37,7 @@ async function ready(channel: unknown): Promise<void> {
 }
 
 describe("Wails events 与 channels", () => {
-  it("保留九个共享事件和 layout 第十事件", async () => {
+  it("保留共享事件列表和 layout 事件", async () => {
     const { EVENTS } = await import("../ipc/events");
     expect(Object.values(EVENTS)).toEqual([
       "session://status",
@@ -45,6 +45,7 @@ describe("Wails events 与 channels", () => {
       "terminal://throttled",
       "terminal://control",
       "fs://progress",
+      "update://progress",
       "docker://stats",
       "ai://event",
       "app://error",

@@ -1,17 +1,17 @@
-time=2026-10-09T09:05:29.546+08:00 level=INFO msg="open file limit ensured" limit=1048576
+time=2026-10-09T12:07:12.067+08:00 level=INFO msg="open file limit ensured" limit=1048576
 
 nexterm-server: 账号系统尚未初始化
-nexterm-server: 一次性初始化码: 5W8Joon1Antro6b7pfAd8WFZni-8UeklO-2sR0ES824
+nexterm-server: 一次性初始化码: XXuAPNnU9D46nqwIfIfpPTw_0OIdU1kozbpV9PgBzNI
 nexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)
 
-time=2026-10-09T09:05:29.577+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
+time=2026-10-09T12:07:12.404+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
 
 SELFCheck observations (Go runtime only; no Rust expected payloads):
 [
   {
     "auth_topology": {
       "mode": "loopback",
-      "listen": "127.0.0.1:49785",
+      "listen": "127.0.0.1:55719",
       "sync_only": false
     }
   },
@@ -21,7 +21,7 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
       "service": "nexterm-server",
       "version": "dev",
       "syncOnly": false,
-      "commands": 195,
+      "commands": 198,
       "eventSubscribers": 0,
       "liveChannels": 0,
       "pendingChannels": 0,
@@ -34,8 +34,8 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
       },
       "retention": {
         "enabled": true,
-        "lastAttemptAt": "2026-10-09T01:05:29.578761553Z",
-        "lastSuccessAt": "2026-10-09T01:05:29.585252001Z"
+        "lastAttemptAt": "2026-10-09T04:07:12.404939217Z",
+        "lastSuccessAt": "2026-10-09T04:07:12.404962382Z"
       },
       "imageLinks": {
         "publicBaseURLConfigured": false,
@@ -48,14 +48,14 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
         "pingOk": true,
         "pingMs": 0,
         "pool": {
-          "openConnections": 5,
+          "openConnections": 1,
           "inUse": 0,
-          "idle": 5,
+          "idle": 1,
           "waitCount": 0
         }
       }
     },
-    "expected_commands": 195,
+    "expected_commands": 198,
     "surface_source": "tests/parity/go/cmd/surfaceprobe"
   },
   {

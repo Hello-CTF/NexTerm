@@ -97,6 +97,8 @@ import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
+import { UpdateBanner } from "./UpdateBanner";
+import { getUpdateState } from "./useUpdate";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
@@ -1077,6 +1079,11 @@ function AppShell() {
     startLayoutSync();
   }, []);
 
+  // 桌面端启动后静默检查一次更新: 不弹 toast, 有更新时由 UpdateBanner 呈现。
+  useEffect(() => {
+    if (TRANSPORT === "desktop") void getUpdateState().check();
+  }, []);
+
   useEffect(() => {
     refreshSessions();
   }, [refreshSessions]);
@@ -1285,6 +1292,7 @@ function AppShell() {
         跳到主内容
       </a>
       <TakeoverBanner />
+      <UpdateBanner onOpenSettings={openSettings} />
 
       <div className="flex min-h-0 flex-1">
         <nav

@@ -1,7 +1,7 @@
 {
   "name": "nexterm",
   "private": true,
-  "version": "0.2.2-rc.7",
+  "version": "0.2.2-rc.8",
   "license": "MIT",
   "type": "module",
   "engines": {

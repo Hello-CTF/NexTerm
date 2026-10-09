@@ -1,5 +1,5 @@
 package: cloud.lazycat.app.nexterm
-version: 0.2.2-rc.7
+version: 0.2.2-rc.8
 
 name: NexTerm 运维终端
 description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端，凭据加密存在你自己的微服上。

@@ -10,6 +10,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/ProbiusOfficial/NexTerm/internal/update"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -85,6 +86,13 @@ func run(args []string) int {
 		DataDir:         paths.DataDir,
 		Desktop:         true,
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+		RestartFunc: func(_ context.Context, target string) error {
+			if err := update.StartDetached(target, os.Args[1:]); err != nil {
+				return err
+			}
+			wailsApp.Quit()
+			return nil
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)

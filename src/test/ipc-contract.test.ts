@@ -47,10 +47,10 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 178 个方法和 176 个唯一命令", () => {
+  it("保留 181 个方法和 179 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(178);
-    expect(new Set(names)).toHaveProperty("size", 176);
+    expect(names).toHaveLength(181);
+    expect(new Set(names)).toHaveProperty("size", 179);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",

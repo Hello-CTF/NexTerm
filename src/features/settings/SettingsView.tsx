@@ -15,6 +15,7 @@ import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
+import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -48,6 +49,7 @@ const SETTINGS_SECTIONS = [
   { id: "settings-files", label: "文件链接" },
   { id: "settings-share", label: "分享" },
   { id: "settings-shortcuts", label: "快捷键" },
+  { id: "settings-update", label: "软件更新" },
 ] as const;
 
 function jumpToSection(id: string): void {
@@ -625,6 +627,10 @@ export function SettingsView() {
 
         <div id="settings-shortcuts" className="scroll-mt-12">
           <ShortcutsCard />
+        </div>
+
+        <div id="settings-update" className="scroll-mt-12">
+          <UpdateCard />
         </div>
           </div>
         </div>

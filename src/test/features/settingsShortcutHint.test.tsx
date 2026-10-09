@@ -47,7 +47,7 @@ vi.mock("../../ui/dialogs", () => ({
   ask: vi.fn(),
 }));
 
-vi.mock("../../demo", () => ({ DEMO: false, TRANSPORT: "web" }));
+vi.mock("../../demo", () => ({ DEMO: false, WEB: true, TRANSPORT: "web" }));
 
 vi.mock("../../features/settings/AppearanceCard", () => ({ AppearanceCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));

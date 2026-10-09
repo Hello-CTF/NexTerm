@@ -132,7 +132,7 @@ function startStub(t, overrides = {}) {
   });
 }
 
-function runUploader(stub, directory, args = []) {
+function runUploader(stub, directory, args = [], env = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SCRIPT, directory, "--notes-file", path.join(directory, "release-body.md"), ...args], {
       cwd: ROOT,
@@ -142,6 +142,7 @@ function runUploader(stub, directory, args = []) {
         GITHUB_REPOSITORY: "stub/repo",
         GITHUB_REF_NAME: "v9.9.9-stub",
         GH_TOKEN: "stub-token",
+        ...env,
       },
     });
     let stdout = "";
@@ -221,6 +222,14 @@ test("creates the draft release and uploads all 9 assets", async (t) => {
   }
   const uploadedLines = result.stderr.split("\n").filter((line) => line.includes("release-upload: uploaded ") && line.includes(" bytes="));
   assert.equal(uploadedLines.length, 9);
+});
+
+test("marks a matching prerelease version as prerelease", async (t) => {
+  const stub = await startStub(t, { listReleases: () => [] });
+  const directory = makeCandidate(t);
+  const result = await runUploader(stub, directory, [], { GITHUB_REF_NAME: `v${VERSION}` });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(stub.state.releaseCreated.prerelease, VERSION.includes("-"));
 });
 
 test("replaces same-name assets on the existing draft discovered through the list when the tags endpoint 404s", async (t) => {

@@ -243,3 +243,10 @@ credentialsCreated: number, credentialsUpdated: number, skipped: number, warning
 
 export type GeneratedKeyDto = { id: string, name: string, algorithm: string,
 fingerprint: string, publicKey: string, };
+
+export type UpdateStatusDto = { available: boolean, currentVersion: string, version: string,
+notes: string, prerelease: boolean, assetName: string, assetSize: number, canInstall: boolean,
+unavailableReason: string, };
+
+export type UpdateResultDto = { installed: boolean, restarted: boolean, version: string,
+unavailableReason: string, };

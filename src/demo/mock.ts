@@ -1718,6 +1718,40 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         vault: { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 },
       };
 
+    case "app_update_check":
+      return {
+        available: true,
+        currentVersion: "0.1.0-demo",
+        version: "0.2.0-demo",
+        notes: "演示更新: 应用内自动更新示例。",
+        prerelease: false,
+        assetName: "NexTerm-desktop_0.2.0-demo_linux_amd64.tar.gz",
+        assetSize: 8 << 20,
+        canInstall: true,
+        unavailableReason: "",
+      };
+
+    case "app_update_install": {
+      const taskId = uid("task");
+      const total = 8 << 20;
+      for (const phase of ["download", "install"] as const) {
+        for (const ratio of [0.3, 0.7, 1]) {
+          emit("update://progress", {
+            taskId,
+            phase,
+            transferred: Math.floor(total * ratio),
+            total,
+            done: ratio === 1,
+          });
+          await new Promise((r) => window.setTimeout(r, 120));
+        }
+      }
+      return { installed: true, restarted: false, version: "0.2.0-demo", unavailableReason: "" };
+    }
+
+    case "app_restart":
+      return { installed: false, restarted: true, version: "", unavailableReason: "" };
+
     case "fs_list": {
       const path = absPath(a.path);
       return (fsTree[path] ?? []).map((e) => ({ ...e }));

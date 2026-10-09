@@ -34,8 +34,8 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 196)
-        self.assertEqual(frontend["unique_command_count"], 194)
+        self.assertEqual(frontend["method_count"], 199)
+        self.assertEqual(frontend["unique_command_count"], 197)
         self.assertEqual(
             commands["reconciliation"]["rust_only"],
             [
@@ -66,6 +66,9 @@ class InventoryTest(unittest.TestCase):
                 "ai_run_list",
                 "ai_steer",
                 "ai_usage_summary",
+                "app_restart",
+                "app_update_check",
+                "app_update_install",
                 "asset_probe_batch",
                 "audit_count",
                 "command_count",
@@ -118,16 +121,16 @@ class InventoryTest(unittest.TestCase):
         steer = {entry["name"]: entry for entry in frontend["entries"] if entry["name"] == "ai_steer"}
         self.assertEqual(
             [(steer["ai_steer"]["accessor"], steer["ai_steer"]["line"])],
-            [("aiApi.steer", 641)],
+            [("aiApi.steer", 650)],
         )
         hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
         self.assertEqual(
             [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
-            [("aiApi.hitlSnapshot", 649)],
+            [("aiApi.hitlSnapshot", 658)],
         )
         self.assertEqual(
             [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
-            [("aiApi.hitlEvents", 651)],
+            [("aiApi.hitlEvents", 660)],
         )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
@@ -144,8 +147,8 @@ class InventoryTest(unittest.TestCase):
     def test_events_and_streams_are_explicit(self):
         events = self.data["events"]
         self.assertEqual(events["rust_declared_count"], 10)
-        self.assertEqual(events["frontend_declared_count"], 10)
-        self.assertEqual(events["union_count"], 11)
+        self.assertEqual(events["frontend_declared_count"], 11)
+        self.assertEqual(events["union_count"], 12)
         self.assertEqual(events["reserved_rust_events"], ["sync://status"])
         streams = self.data["streams"]
         self.assertEqual(

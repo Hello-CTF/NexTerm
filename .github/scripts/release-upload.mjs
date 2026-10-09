@@ -47,6 +47,7 @@ function requireEnv(name) {
 const options = parseArgs(process.argv.slice(2));
 const directory = path.resolve(ROOT, options.directory || "candidate");
 const tag = requireEnv("GITHUB_REF_NAME");
+const prerelease = tag === `v${version}` && version.includes("-");
 const repository = requireEnv("GITHUB_REPOSITORY");
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 if (!token) throw new Error("GH_TOKEN or GITHUB_TOKEN is required");
@@ -162,7 +163,7 @@ if (release) {
       name: `NexTerm ${tag}`,
       body: fs.readFileSync(notesFile, "utf8"),
       draft: true,
-      prerelease: false,
+      prerelease,
     }),
   });
   if (created.response.status !== 201) {

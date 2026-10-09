@@ -175,6 +175,7 @@
           <li>本地终端 · SSH · WinRM · 文件 · Docker · 数据库</li>
           <li>AI 助手：工具调用 · 权限护栏 · 终端接管</li>
           <li>凭据落本机（DPAPI / macOS 钥匙串 / 主密码）</li>
+          <li>应用内自动更新：启动静默检查 Releases，校验 SHA256SUMS 后安装</li>
         </ul>
       </div>
       <div class="cell">
@@ -435,6 +436,10 @@
       <details>
         <summary>AI 助手接入什么模型？</summary>
         <div class="faq-body">任意 OpenAI 兼容端点均可接入。API 密钥保存在运行 NexTerm 的这一侧：桌面版在本机，服务端部署时在你的服务端；密钥只发往你配置的模型端点，不经第三方中转。</div>
+      </details>
+      <details>
+        <summary>桌面版会自动更新吗？</summary>
+        <div class="faq-body">桌面版启动后静默检查一次 GitHub Releases，发现新版本时窗口顶部显示横幅，并在「设置 → 软件更新」卡片里展示版本号、安装包大小与更新说明，可手动「立即检查」「下载并安装」或忽略该版本。安装包下载后先按 Release 附带的 SHA256SUMS 校验，校验通过才安装：Windows 运行 NSIS 安装器静默安装（失败自动回滚），macOS 用 dmg 里的新 .app 替换 /Applications 中的 NexTerm，Linux 原子替换当前可执行文件，完成后点「立即重启」生效。更新通道跟随当前版本：预发布版收预发布更新，正式版只收正式版更新。限制：检查走 GitHub API 匿名调用，受匿名速率限额约束（每 IP 每小时 60 次），超限后本次检查失败、稍后再试即可；Windows 与 macOS 的真实安装链路未在 CI 中覆盖，应用内安装失败时可到 Releases 页面手动下载。服务端不自动安装，按部署包说明升级；演示模式只演示界面流程，不执行真实下载与安装。</div>
       </details>
       <details>
         <summary>采用什么开源协议？</summary>

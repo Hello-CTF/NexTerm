@@ -25,6 +25,7 @@ export const EVENTS = {
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
   fsProgress: "fs://progress",
+  updateProgress: "update://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
   appError: "app://error",
@@ -61,6 +62,16 @@ export class EventVersionGate {
 
 export interface FsProgressEvent {
   taskId: string;
+  transferred: number;
+  total: number;
+  done: boolean;
+  error?: string;
+}
+
+// 与 Go update.Progress 对齐; phase 区分 download 与 install 阶段。
+export interface UpdateProgressEvent {
+  taskId: string;
+  phase?: string;
   transferred: number;
   total: number;
   done: boolean;
