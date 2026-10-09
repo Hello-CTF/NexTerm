@@ -337,7 +337,7 @@ describe("DeviceTerminalView 打开与输出", () => {
   it("设备代理未上报摘要 (离线) 时显式失败", async () => {
     routeDevices([{ ...DEVICE, agent: { ...DEVICE.agent, state_digest: undefined } }]);
     mounted = await mountTerminal();
-    await flushUntil(() => bodyText().includes("未上报终端状态摘要"));
+    await flushUntil(() => bodyText().includes("未返回终端状态"));
     expect(FakeWebSocket.instances).toHaveLength(0);
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, dbKindOf, DB_KIND_LABEL, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import {
@@ -15,11 +15,7 @@ import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
-import {
-  probeAssetReachability,
-  useAssetReachability,
-  type ReachabilityEntry,
-} from "../features/explorer/assetReachability";
+import { useAssetReachability, type ReachabilityEntry } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import {
   IconActivity,
@@ -35,7 +31,6 @@ import {
   IconLayers,
   IconMonitor,
   IconNetwork,
-  IconPlug,
   IconRefresh,
   IconSave,
   IconSearch,
@@ -109,26 +104,6 @@ export function CommandPalette({
       .map((a) => a.id);
     if (ids.length > 0) void useAssetReachability.getState().probe(ids);
   }, [assets, hiddenIds, showHidden]);
-
-  const runProbeOne = useCallback(
-    async (asset: Asset) => {
-      if (!asset.host) {
-        pushToast("info", `「${asset.name}」是本机资产，无需探测`);
-        return;
-      }
-      const entry = await probeAssetReachability(asset.id);
-      if (!entry || entry.state === "checking") {
-        pushToast("error", `「${asset.name}」探测失败，请稍后重试`);
-        return;
-      }
-      if (entry.state === "reachable") {
-        pushToast("success", `「${asset.name}」可达 · ${entry.durationMs ?? 0}ms`);
-      } else {
-        pushToast("error", `「${asset.name}」不可达：${entry.error ?? "未知原因"}`);
-      }
-    },
-    [pushToast],
-  );
 
   const runClone = async (asset: Asset) => {
     try {
@@ -360,15 +335,6 @@ export function CommandPalette({
         dot: reachEntries[asset.id],
         run: () => void connectAsset(asset),
       });
-      if (asset.host) {
-        list.push({
-          id: `probe-${asset.id}`,
-          label: `探测 ${asset.name}`,
-          hint: "端口可达性",
-          icon: IconPlug,
-          run: () => void runProbeOne(asset),
-        });
-      }
       list.push({
         id: `edit-${asset.id}`,
         label: `编辑资产 ${asset.name}`,
@@ -419,7 +385,6 @@ export function CommandPalette({
     reachEntries,
     connectingAssetIds,
     layoutPresets,
-    runProbeOne,
   ]);
 
   const filtered = actions.filter((action) =>

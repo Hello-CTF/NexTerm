@@ -263,7 +263,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     // 登录后: 分组与分组内资产都回来(防分组资产隐藏), 凭据/片段计数恢复
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
-    expect(assetTreeFooterCount("凭据库（左栏查看）")).toContain("1");
+    expect(assetTreeFooterCount("凭据库（左栏查看）")).toBe("");
     expect(assetTreeFooterCount("命令片段（插入当前终端）")).toContain("1");
     expect(vaultStatusText()).toContain("凭据库已解锁");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");

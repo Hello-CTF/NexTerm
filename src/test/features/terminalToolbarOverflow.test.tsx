@@ -194,7 +194,7 @@ describe("terminal toolbar overflow", () => {
 
     expect(menuLabels()).toEqual([
       "搜索终端内容",
-      "录制输出",
+      "连续录制到文件…",
       "定位到上一条命令",
       "定位到下一条命令",
       "命令块",
@@ -284,7 +284,7 @@ describe("terminal toolbar overflow", () => {
 
     keyDown(document.activeElement as Element, "ArrowDown");
     await flush();
-    expect(document.activeElement?.textContent).toContain("录制输出");
+    expect(document.activeElement?.textContent).toContain("连续录制到文件…");
 
     keyDown(document.activeElement as Element, "ArrowUp");
     await flush();
@@ -301,7 +301,7 @@ describe("terminal toolbar overflow", () => {
     await flush();
     click(overflowButton());
     await flush();
-    clickMenuItem("录制输出");
+    clickMenuItem("连续录制到文件…");
     await waitFor(() =>
       expect(harness.recordStart).toHaveBeenCalledWith("kernel-1", "/tmp/term-1.log"),
     );

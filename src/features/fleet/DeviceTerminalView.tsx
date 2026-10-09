@@ -71,7 +71,7 @@ function gateDevice(row: FleetDevice | null): DeviceGate {
   }
   const digest = row.agent.state_digest;
   if (!digest) {
-    return { ok: false, phase: { kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true } };
+    return { ok: false, phase: { kind: "failed", message: "设备未返回终端状态，可能已经离线", canRestart: true } };
   }
   return { ok: true, row, digest };
 }
@@ -245,7 +245,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       return;
     }
     if (!digest) {
-      if (!stale()) setPhase({ kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true });
+      if (!stale()) setPhase({ kind: "failed", message: "设备未返回终端状态，可能已经离线", canRestart: true });
       return;
     }
     // 设备信息 await 后、发起连接前复核: 卸载/账号切换后不再新起连接

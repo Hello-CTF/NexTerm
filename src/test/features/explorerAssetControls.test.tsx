@@ -314,7 +314,7 @@ describe("asset editor test connection", () => {
     if (password) setInputValue(password, "hunter2");
 
     mocks.probe.mockResolvedValue({ open: true });
-    clickButton(mounted!.container, "测试连接");
+    clickButton(mounted!.container, "测试端口");
     await waitFor(() => expect(mocks.probe).toHaveBeenCalledTimes(1));
     expect(mocks.probe).toHaveBeenCalledWith("10.0.0.8", 22, 3000);
     expect(mocks.probe.mock.calls[0]).toHaveLength(3);
@@ -328,9 +328,9 @@ describe("asset editor test connection", () => {
 
     const pending = deferred<{ open: boolean }>();
     mocks.probe.mockReturnValue(pending.promise);
-    clickButton(mounted!.container, "测试连接");
-    clickButton(mounted!.container, "测试连接");
-    clickButton(mounted!.container, "测试连接");
+    clickButton(mounted!.container, "测试端口");
+    clickButton(mounted!.container, "测试端口");
+    clickButton(mounted!.container, "测试端口");
     await flush();
     expect(mocks.probe).toHaveBeenCalledTimes(1);
 
@@ -345,7 +345,7 @@ describe("asset editor test connection", () => {
 
     const pending = deferred<{ open: boolean }>();
     mocks.probe.mockReturnValue(pending.promise);
-    clickButton(mounted!.container, "测试连接");
+    clickButton(mounted!.container, "测试端口");
     await flush();
 
     await setHost("10.0.0.9");
@@ -359,7 +359,7 @@ describe("asset editor test connection", () => {
     await setHost("10.0.0.8");
 
     mocks.probe.mockResolvedValue({ open: false, error: "connection refused" });
-    clickButton(mounted!.container, "测试连接");
+    clickButton(mounted!.container, "测试端口");
     await waitFor(() => expect(mocks.probe).toHaveBeenCalledTimes(1));
     await flush();
     expect(mounted!.container.textContent).toContain("端口不可达：connection refused");

@@ -1095,7 +1095,7 @@ function detachBlockLabel(block: "exec" | "winrm" | "local" | "unknown"): string
   if (block === "exec") return "容器 exec";
   if (block === "winrm") return "WinRM 非交互";
   if (block === "local") return "本地";
-  return "类型未知";
+  return "其他";
 }
 
 function assetKindForTab(t: AppTab): string | undefined {
@@ -1320,7 +1320,7 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "exec") return "结束容器 exec 进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "local") return "结束本地进程";
-  if (block === "unknown") return "结束进程（类型未知）";
+  if (block === "unknown") return "结束进程";
   return "转入后台运行";
 }
 

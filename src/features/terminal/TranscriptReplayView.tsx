@@ -200,7 +200,7 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
         {loadError && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-neutral-900/80 text-[12px] text-red-300">
             <IconAlert size={13} />
-            加载回放数据失败:{loadError}
+            加载回放数据失败：{loadError}
           </div>
         )}
         {chunks && chunks.length === 0 && (

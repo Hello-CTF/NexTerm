@@ -496,14 +496,14 @@ describe("detach capability without session metadata", () => {
     const tab = terminal();
     seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], undefined);
 
-    expect(closeActionHint(tab)).toBe("结束进程（类型未知）");
-    expect(closeTabHint(tab)).toBe("关闭标签（结束进程（类型未知））");
+    expect(closeActionHint(tab)).toBe("结束进程");
+    expect(closeTabHint(tab)).toBe("关闭标签（结束进程）");
 
     await requestCloseTab(tab.id);
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const [message] = mocks.ask.mock.calls[0];
-    expect(message).toContain("类型未知");
+    expect(message).toContain("其他");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
     expect(toastText()).not.toContain("已转入后台");
   });

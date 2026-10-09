@@ -824,7 +824,7 @@ export function TerminalPane({
     },
     {
       kind: "item",
-      label: recording ? "停止录制" : "录制输出",
+      label: recording ? "停止录制" : "连续录制到文件…",
       icon: recording ? <IconStop size={13} /> : <IconSave size={13} />,
       hint: "保存到文件",
       disabled: !kernelTabId,
@@ -978,7 +978,7 @@ export function TerminalPane({
       },
       {
         kind: "item",
-        label: "保存为日志",
+        label: "导出当前输出…",
         icon: <IconSave size={13} />,
         hint: "屏幕与滚动历史",
         disabled: !kernelTabId,

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { browserFilesAvailable } from "../../ipc/webFiles";
-import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
+import { connectAsset, useUi } from "../../app/store";
 import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
@@ -25,7 +25,6 @@ import {
   IconEye,
   IconEyeOff,
   IconFolder,
-  IconKey,
   IconLoader,
   IconPlay,
   IconPlug,
@@ -167,11 +166,6 @@ export function AssetTree() {
   const groups = useQuery({
     queryKey: ["groups"],
     queryFn: () => assetApi.groupList(),
-    refetchOnWindowFocus: false,
-  });
-  const credentials = useQuery({
-    queryKey: ["credentials"],
-    queryFn: () => vaultApi.listCredentials(),
     refetchOnWindowFocus: false,
   });
   const snippets = useQuery({
@@ -492,17 +486,6 @@ export function AssetTree() {
         <IconCommand size={14} className="shrink-0 text-neutral-500" />
         <span className="flex-1 text-left">命令片段</span>
         <span className="nx-count">{snippets.data?.length ?? "…"}</span>
-        <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
-      </button>
-
-      <button
-        className="mx-1.5 mb-1.5 flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
-        title="凭据库（左栏查看）"
-        onClick={openCredentialsSidebar}
-      >
-        <IconKey size={14} className="shrink-0 text-neutral-500" />
-        <span className="flex-1 text-left">凭据库</span>
-        <span className="nx-count">{credentials.data?.length ?? "…"}</span>
         <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
       </button>
 
@@ -1773,7 +1756,7 @@ export function AssetEditor({
                   ) : (
                     <IconPlug size={12} />
                   )}
-                  测试连接
+                  测试端口
                 </button>
                 {probe.status === "ok" && (
                   <span className="text-[11.5px] text-emerald-400">端口可达</span>

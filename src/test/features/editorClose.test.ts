@@ -103,7 +103,7 @@ describe("workspace close mixed summary", () => {
     const [message, options] = mocks.ask.mock.calls[0] as [string, { title: string }];
     expect(message).toContain("1 个文件尚未保存");
     expect(message).toContain("a.txt");
-    expect(message).toContain("1 个类型未知终端不支持转入后台");
+    expect(message).toContain("1 个其他终端不支持转入后台");
     expect(message).toContain("仍要继续？");
     expect(options.title).toBe("关闭「workspace」");
     expect(mocks.closeTab).toHaveBeenCalledTimes(1);

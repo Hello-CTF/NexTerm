@@ -299,7 +299,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
 
   const removeTranscript = async (summary: TranscriptSummary) => {
     const ok = await ask(
-      `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n记录内容将从数据库中移除，无法恢复。`,
+      `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n此操作无法撤销。`,
       { title: "删除终端记录", kind: "warning" },
     );
     if (!ok) return;

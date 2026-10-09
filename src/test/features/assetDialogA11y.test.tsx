@@ -407,7 +407,7 @@ describe("theme-aware hover feedback", () => {
   it("footer entries use a theme-aware hover class, not white 5%", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await flush();
-    for (const title of ["命令片段（插入当前终端）", "凭据库（左栏查看）"]) {
+    for (const title of ["命令片段（插入当前终端）"]) {
       const button = buttonByTitle(mounted!.container, title);
       expect(button.className).toContain("hover:bg-neutral-800/70");
       expect(button.className).not.toContain("hover:bg-white/[.05]");

@@ -148,32 +148,11 @@ describe("命令面板可达性与快速连接", () => {
     });
   });
 
-  it("探测动作单独重探并 toast 结果", async () => {
+  it("不在资产操作中重复提供手动探测入口", async () => {
     const view = await mountPalette({ onClose: vi.fn() });
     await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
-    mocks.probeBatch.mockResolvedValueOnce({
-      results: [{ assetId: "a-web", reachable: true, durationMs: 31 }],
-    });
     setInputValue(searchInput(view.container), "探测 web-01");
-    click(optionByText(view.container, "探测 web-01"));
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(2));
-    expect(mocks.probeBatch).toHaveBeenLastCalledWith(["a-web"], 2500, 8);
-    await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("31ms")),
-    );
-  });
-
-  it("探测不可达时 toast 错误原因", async () => {
-    const view = await mountPalette({ onClose: vi.fn() });
-    await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
-    mocks.probeBatch.mockResolvedValueOnce({
-      results: [{ assetId: "a-web", reachable: false, error: "connection refused", durationMs: 5 }],
-    });
-    setInputValue(searchInput(view.container), "探测 web-01");
-    click(optionByText(view.container, "探测 web-01"));
-    await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("connection refused")),
-    );
+    expect(view.container.textContent).not.toContain("探测 web-01");
   });
 
   it("快速连接动作交给调用方打开 overlay", async () => {
