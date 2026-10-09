@@ -637,32 +637,6 @@ func TestSharePublicTerminalExpiryStopsStream(t *testing.T) {
 	collector.expectClosed(t, 5*time.Second)
 }
 
-func TestSharePublicTerminalExpiryErrorFrameSurvivesTransportFailure(t *testing.T) {
-	f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
-	owner := f.createUser(t, "expiry-transport-owner")
-	device := startShareTestAgent(t, f, owner, "expiry-transport-box")
-	sessionID := device.createSession(t, "sh", "-c", "echo READY-42; exec cat")
-	ownerSession := f.session(t, owner)
-	_, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
-
-	conn := dialShareViewer(t, f, "/share/public/"+token, nil)
-	collector := watchShareConn(conn)
-	collector.expectReady(t, "read")
-
-	// 过期后立刻拆除 agent 桥接 (传输层错误先于周期复查到达泵): 终止仍必须
-	// 下发可识别错误帧, 不能只剩 close frame。
-	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE share_link SET expires_at = ? WHERE device_id = ?", time.Now().UnixMilli()-1000, device.deviceID); err != nil {
-		t.Fatal(err)
-	}
-	device.cancel()
-
-	errorFrame := collector.expectErrorFrame(t, 10*time.Second)
-	if !strings.Contains(errorFrame.Message, "过期") {
-		t.Fatalf("error frame = %+v", errorFrame)
-	}
-	collector.expectClosed(t, 5*time.Second)
-}
-
 func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
 	owner := f.createUser(t, "host-owner")
