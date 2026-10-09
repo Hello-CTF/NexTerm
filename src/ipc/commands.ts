@@ -700,6 +700,7 @@ export interface VaultStatus {
   unlocked: boolean;
   autoLockMinutes: number;
   passwordless: boolean;
+  systemProtection: boolean;
 }
 
 export interface CredentialUsedBy {

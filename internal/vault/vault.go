@@ -33,11 +33,12 @@ const (
 )
 
 type Status struct {
-	Initialized     bool   `json:"initialized"`
-	Mode            string `json:"mode"`
-	Unlocked        bool   `json:"unlocked"`
-	AutoLockMinutes uint64 `json:"autoLockMinutes"`
-	Passwordless    bool   `json:"passwordless"`
+	Initialized      bool   `json:"initialized"`
+	Mode             string `json:"mode"`
+	Unlocked         bool   `json:"unlocked"`
+	AutoLockMinutes  uint64 `json:"autoLockMinutes"`
+	Passwordless     bool   `json:"passwordless"`
+	SystemProtection bool   `json:"systemProtection"`
 }
 
 type Option func(*Vault)
@@ -173,10 +174,12 @@ func (v *Vault) hasUndecryptableSecrets(ctx context.Context) (bool, error) {
 func (v *Vault) Status() Status {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	_, usesSystemProtector := v.protector.(systemProtector)
 	return Status{
 		Initialized: v.mode != ModeNotInit, Mode: string(v.mode), Unlocked: v.dek != nil,
-		AutoLockMinutes: v.autoLockMS / 60_000,
-		Passwordless:    v.mode == ModeMaster && v.passwordless,
+		AutoLockMinutes:  v.autoLockMS / 60_000,
+		Passwordless:     v.mode == ModeMaster && v.passwordless,
+		SystemProtection: systemProtectionAvailable && usesSystemProtector,
 	}
 }
 

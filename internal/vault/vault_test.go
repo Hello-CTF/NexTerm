@@ -180,7 +180,7 @@ func TestSystemModeFirstRunReloadAndNoAutoLock(t *testing.T) {
 	if err := v.InitDPAPI(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if status := v.Status(); status.Mode != "dpapi" || !status.Unlocked {
+	if status := v.Status(); status.Mode != "dpapi" || !status.Unlocked || status.SystemProtection {
 		t.Fatalf("unexpected status %+v", status)
 	}
 	nonce, blob, err := v.EncryptCredential(ctx, "system-secret")

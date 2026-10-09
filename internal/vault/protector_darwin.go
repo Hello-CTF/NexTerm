@@ -12,7 +12,10 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
-const keychainService = "com.nexterm.desktop"
+const (
+	keychainService           = "com.nexterm.desktop"
+	systemProtectionAvailable = true
+)
 
 var (
 	keychainAccount = "vault-dek-go"

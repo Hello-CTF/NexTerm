@@ -52,7 +52,9 @@ const MASTER_VAULT = {
   unlocked: true,
   autoLockMinutes: 30,
   passwordless: false,
+  systemProtection: true,
 };
+const MASTER_VAULT_NO_SYSTEM = { ...MASTER_VAULT, systemProtection: false };
 
 let mounted: MountedView | undefined;
 
@@ -118,5 +120,43 @@ describe("桌面端凭据保护关闭路径", () => {
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
     expect(mocks.initDpapi).not.toHaveBeenCalled();
     expect(mocks.changePassword).not.toHaveBeenCalled();
+  });
+
+  it("无系统级免密保护时（如 Linux 桌面）取消勾选改走空口令，并给出数据目录警告", async () => {
+    mocks.vaultStatus.mockResolvedValue(MASTER_VAULT_NO_SYSTEM);
+    const { ask, promptText } = await import("../../ui/dialogs");
+    vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(promptText).mockResolvedValue("current-password");
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
+
+    protectionToggle()!.click();
+    await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
+
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何拿到数据目录的人都能解密"));
+    expect(mocks.changePassword).toHaveBeenCalledWith("current-password", "");
+    expect(mocks.initDpapi).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护");
+  });
+
+  it("修改密码留空时走 DPAPI 迁移而不是空口令", async () => {
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText)
+      .mockResolvedValueOnce("current-password")
+      .mockResolvedValueOnce("");
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
+
+    const changeButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent === "修改密码",
+    );
+    changeButton!.click();
+    await flushUntil(() => mocks.initDpapi.mock.calls.length > 0);
+
+    expect(mocks.initDpapi).toHaveBeenCalledWith("current-password");
+    expect(mocks.changePassword).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
   });
 });

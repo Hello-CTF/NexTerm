@@ -59,6 +59,7 @@ const MASTER_VAULT = {
   unlocked: true,
   autoLockMinutes: 30,
   passwordless: false,
+  systemProtection: false,
 };
 const DPAPI_VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 30, passwordless: false };
 const PASSWORDLESS_VAULT = {

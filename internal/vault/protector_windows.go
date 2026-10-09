@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const systemProtectionAvailable = true
+
 func systemProtect(data []byte) ([]byte, error) {
 	input := windows.DataBlob{Size: uint32(len(data)), Data: &data[0]}
 	var output windows.DataBlob

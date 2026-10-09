@@ -85,6 +85,7 @@ export function SettingsView() {
     refetchOnWindowFocus: false,
   }).data ?? null;
   const vaultPasswordProtected = vault?.mode === "master" && !vault.passwordless;
+  const systemProtection = DESKTOP && !!vault?.systemProtection;
   const refreshVault = () => void qc.invalidateQueries({ queryKey: ["vault-status"] });
   useEffect(() => {
     setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
@@ -557,14 +558,14 @@ export function SettingsView() {
               checked={vaultPasswordProtected}
               onChange={() => {
                 if (vaultPasswordProtected) {
-                  const confirmText = DESKTOP
+                  const confirmText = systemProtection
                     ? "关闭密码保护？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。"
                     : "关闭密码保护？\n关闭后凭据无需密码即可使用，但任何拿到数据目录的人都能解密。";
                   void ask(confirmText).then(async (ok) => {
                     if (!ok) return;
                     const old = await promptText("输入当前保护密码：", "", { secret: true });
                     if (old === null) return;
-                    void (DESKTOP ? vaultApi.initDpapi(old) : vaultApi.changePassword(old, ""))
+                    void (systemProtection ? vaultApi.initDpapi(old) : vaultApi.changePassword(old, ""))
                       .then(() => {
                         pushToast("success", "已关闭密码保护");
                         return refreshVault();
@@ -635,11 +636,16 @@ export function SettingsView() {
                       return;
                     }
                     try {
-                      await vaultApi.changePassword(old, next);
-                      pushToast(
-                        "success",
-                        next === "" ? "已关闭密码保护 · 凭据不受影响" : "密码已修改 · 凭据不受影响",
-                      );
+                      if (next === "" && systemProtection) {
+                        await vaultApi.initDpapi(old);
+                        pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
+                      } else {
+                        await vaultApi.changePassword(old, next);
+                        pushToast(
+                          "success",
+                          next === "" ? "已关闭密码保护 · 凭据不受影响" : "密码已修改 · 凭据不受影响",
+                        );
+                      }
                     } catch (e) {
                       pushToast("error", describeError(e));
                     }
