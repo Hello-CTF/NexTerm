@@ -1,59 +1,10 @@
 import { useState } from "react";
-import {
-  ArrowRight,
-  Bot,
-  Boxes,
-  Database,
-  Download,
-  Folder,
-  CodeXml,
-  Globe,
-  History,
-  Monitor,
-  Moon,
-  Server,
-  ShieldCheck,
-  Sun,
-  Terminal,
-} from "lucide-react";
+import { ArrowRight, CodeXml, Download, Monitor, Moon, Server, Sun } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
 
 type Theme = "dark" | "light";
-
-const features = [
-  {
-    icon: Terminal,
-    title: "完整的终端工作区",
-    text: "SSH、WinRM 和本机终端支持多标签与分屏。后台会话不会因关闭页面而中断。",
-  },
-  {
-    icon: Folder,
-    title: "远程文件与日常运维",
-    text: "直接浏览和编辑 SFTP 文件，也能处理 Docker、MySQL、Redis 和端口转发。",
-  },
-  {
-    icon: Bot,
-    title: "看得见的 AI 操作",
-    text: "AI 在当前主机上下文中工作，命令输出和文件变更清晰可见，敏感操作先确认。",
-  },
-  {
-    icon: History,
-    title: "可追溯的终端历史",
-    text: "自动保留终端输出，按文本搜索或沿时间轴回放，复现问题发生时的完整过程。",
-  },
-  {
-    icon: ShieldCheck,
-    title: "凭据留在自己手里",
-    text: "本机加密保存密码和私钥；多设备同步采用端到端加密，服务端只保存密文。",
-  },
-  {
-    icon: Globe,
-    title: "桌面与浏览器都能用",
-    text: "Windows、macOS、Linux 桌面端开箱即用，也可自托管服务端，从浏览器继续工作。",
-  },
-];
 
 const views = [
   {
@@ -122,7 +73,6 @@ function App() {
             <span>NexTerm</span>
           </a>
           <nav className="nav-links" aria-label="页面导航">
-            <a href="#features">功能</a>
             <a href="#showcase">界面</a>
             <a href="#download">下载</a>
           </nav>
@@ -141,13 +91,9 @@ function App() {
         <section className="hero">
           <div className="hero-glow" aria-hidden="true" />
           <div className="container hero-inner">
-            <a className="release-pill" href={releases} target="_blank" rel="noreferrer">
-              开源、跨平台、可自托管
-              <ArrowRight size={14} />
-            </a>
-            <h1>服务器运维，一个窗口完成</h1>
+            <h1>让服务器管理更顺手</h1>
             <p className="hero-copy">
-              NexTerm 把终端、远程文件、Docker、数据库和 AI 助手放在一起。
+              NexTerm 支持终端、文件、Docker、数据库和 AI 助手。
               <br />
               安装在桌面，或部署到自己的服务器后用浏览器访问。
             </p>
@@ -177,31 +123,11 @@ function App() {
           </div>
         </section>
 
-        <section className="section" id="features">
-          <div className="container">
-            <div className="section-heading">
-              <span className="eyebrow">功能</span>
-              <h2>常用的运维工具，已经放在一起</h2>
-              <p>从连接主机到排查问题，每一步都在同一个工作区完成。</p>
-            </div>
-            <div className="feature-grid">
-              {features.map(({ icon: Icon, title, text }) => (
-                <article className="feature-card" key={title}>
-                  <div className="feature-icon"><Icon size={20} /></div>
-                  <h3>{title}</h3>
-                  <p>{text}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
         <section className="section section-muted" id="showcase">
           <div className="container">
             <div className="section-heading">
               <span className="eyebrow">界面</span>
-              <h2>专注于正在处理的工作</h2>
-              <p>常用操作放在手边，其余功能留在需要时再打开。</p>
+              <h2>产品界面</h2>
             </div>
             <div className="showcase-grid">
               {views.map((view) => (
@@ -222,10 +148,8 @@ function App() {
         <section className="section download-section" id="download">
           <div className="container">
             <div className="download-panel">
-              <div className="download-icon"><Boxes size={26} /></div>
               <div>
-                <span className="eyebrow">开始使用</span>
-                <h2>在你的平台上运行 NexTerm</h2>
+                <h2>下载 NexTerm</h2>
                 <p>桌面安装包和 Linux 服务端都在 GitHub Releases 提供，源代码采用 MIT 协议。</p>
               </div>
               <div className="download-actions">
@@ -236,11 +160,6 @@ function App() {
                   查看安装说明 <ArrowRight size={16} />
                 </a>
               </div>
-            </div>
-            <div className="download-notes">
-              <span><Monitor size={15} /> 桌面端自动检查更新</span>
-              <span><Database size={15} /> 数据保存在你的设备</span>
-              <span><Server size={15} /> 支持私有部署</span>
             </div>
           </div>
         </section>
