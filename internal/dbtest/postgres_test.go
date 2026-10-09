@@ -19,6 +19,7 @@ var requiredTables = []string{
 	"user_setting", "device_enroll_code", "user_sync_object", "user_sync_head",
 	"device_agent", "device_metrics", "device_metrics_hourly",
 	"sync_tombstone", "sync_state", "share_link", "host_share", "schema_migrations",
+	"command_log", "device_share_link", "user_totp", "user_totp_recovery_code",
 }
 
 func TestPostgresFromScratchMigration(t *testing.T) {
@@ -29,7 +30,7 @@ func TestPostgresFromScratchMigration(t *testing.T) {
 	}
 	raw := fixture.OpenRaw(t)
 	var count int
-	if err := raw.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 18 {
+	if err := raw.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 22 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	rows, err := raw.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")
@@ -77,7 +78,7 @@ func TestPostgresIdempotentReopen(t *testing.T) {
 	}
 	second := fixture.OpenStore(t)
 	var count int
-	if err := second.DB().QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 18 {
+	if err := second.DB().QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 22 {
 		t.Fatalf("migration count after reopen=%d err=%v", count, err)
 	}
 	value, found, err := second.SettingGet(context.Background(), "reopen")
