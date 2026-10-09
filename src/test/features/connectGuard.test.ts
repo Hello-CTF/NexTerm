@@ -6,6 +6,9 @@ import { deferred, flush } from "./reactTestUtils";
 const mocks = vi.hoisted(() => ({
   sessionConnect: vi.fn(),
   sessionDisconnect: vi.fn(),
+  sessionReconnect: vi.fn(),
+  sessionList: vi.fn(),
+  probeHostKey: vi.fn(),
   dbConnect: vi.fn(),
   vaultStatus: vi.fn(),
   vaultUnlock: vi.fn(),
@@ -22,7 +25,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
-    sessionApi: { connect: mocks.sessionConnect, disconnect: mocks.sessionDisconnect },
+    sessionApi: {
+      connect: mocks.sessionConnect,
+      disconnect: mocks.sessionDisconnect,
+      reconnect: mocks.sessionReconnect,
+      list: mocks.sessionList,
+      probeHostKey: mocks.probeHostKey,
+    },
     dbApi: { connect: mocks.dbConnect },
     vaultApi: { status: mocks.vaultStatus, unlock: mocks.vaultUnlock },
   };
@@ -156,6 +165,94 @@ describe("connectAsset in-flight guard", () => {
     })) as ConnectOutcome;
     expect(outcome).toEqual({ ok: false, canceled: true });
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectAsset 资产工作区去重", () => {
+  function seedSessionWorkspace(sessionStatus: SessionInfo["status"]) {
+    useUi.setState({
+      sessions: [{ ...SESSION, status: sessionStatus }],
+      workspaces: [
+        {
+          id: "ws-1",
+          kind: "session" as const,
+          sessionId: "s1",
+          title: "web-01",
+          assetId: "asset-1",
+          assetKind: "ssh",
+          panes: [{ id: "p1", tabs: [], activeTabId: null }],
+          activePaneId: "p1",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: null,
+    });
+  }
+
+  it("资产已有活会话工作区时再次连接直接跳转，不发起新连接", async () => {
+    seedSessionWorkspace("connected");
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    const { workspaces, activeWorkspaceId } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(activeWorkspaceId).toBe("ws-1");
+  });
+
+  it("资产工作区会话已断开时直接重连，终端标签原地接管", async () => {
+    seedSessionWorkspace("disconnected");
+    mocks.probeHostKey.mockResolvedValue({ state: "known" });
+    mocks.sessionReconnect.mockResolvedValue(true);
+    mocks.sessionList.mockResolvedValue([{ ...SESSION, status: "connected" }]);
+
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    const { workspaces, activeWorkspaceId } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]?.id).toBe("ws-1");
+    expect(activeWorkspaceId).toBe("ws-1");
+  });
+
+  it("重连失败（会话已删除）时清掉残留工作区走全新连接", async () => {
+    seedSessionWorkspace("disconnected");
+    mocks.probeHostKey.mockResolvedValue({ state: "known" });
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "会话不存在" });
+
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    const { workspaces } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]?.id).not.toBe("ws-1");
+  });
+
+  it("数据库资产已有工作区时再次连接直接跳转，不发起新连接", async () => {
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-db",
+          kind: "db" as const,
+          connId: "conn-1",
+          dbKind: "mysql" as const,
+          title: "db-01 · MySQL",
+          assetId: "db-1",
+          panes: [{ id: "p1", tabs: [], activeTabId: null }],
+          activePaneId: "p1",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: null,
+    });
+    const outcome = (await connectAsset({ id: "db-1", name: "db-01", kind: "mysql" })) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+    const { workspaces, activeWorkspaceId } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(activeWorkspaceId).toBe("ws-db");
   });
 });
 

@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { buildPlaintextNxbm } from "../ipc/nxbm";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -12,8 +13,8 @@ const mocks = vi.hoisted(() => {
     importBundle: vi.fn(),
     readBundleFile: vi.fn(),
     writeBundleFile: vi.fn(),
-    pickBundleFile: vi.fn(),
-    saveBundleFile: vi.fn(),
+    pickBundleBuffer: vi.fn(),
+    saveBundleBytes: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -33,8 +34,8 @@ vi.mock("../ipc/commands", () => ({
   },
 }));
 vi.mock("../ipc/bundleFiles", () => ({
-  pickBundleFile: mocks.pickBundleFile,
-  saveBundleFile: mocks.saveBundleFile,
+  pickBundleBuffer: mocks.pickBundleBuffer,
+  saveBundleBytes: mocks.saveBundleBytes,
 }));
 
 import { SyncBundleCard } from "../features/settings/SyncBundleCard";
@@ -50,8 +51,27 @@ const DIGEST = {
   ],
 };
 
-const NXBM_HEADER_ENCRYPTED = "NXBM\u0001\u0001\u0000\u0000\u0000\u0003";
-const NXBM_HEADER_PLAINTEXT = "NXBM\u0001\u0000\u0000\u0000\u0000\u0003";
+const EXPORTED_BUNDLE = {
+  protocol: 1,
+  origin: "local",
+  exportedAt: Date.now(),
+  groups: [],
+  assets: [{ id: "a1" }],
+  creds: [],
+  warnings: [],
+};
+
+function encryptedNxbm(): ArrayBuffer {
+  const header = new Uint8Array(64);
+  header.set([0x4e, 0x58, 0x42, 0x4d, 1, 1], 0);
+  header[18] = 16;
+  header[35] = 12;
+  const body = new Uint8Array([1, 2, 3, 4]);
+  const out = new Uint8Array(68);
+  out.set(header, 0);
+  out.set(body, 64);
+  return out.buffer;
+}
 
 let mounted: MountedView | undefined;
 
@@ -60,6 +80,8 @@ beforeEach(() => {
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast });
   mocks.digest.mockResolvedValue(DIGEST);
+  mocks.exportAssets.mockResolvedValue(EXPORTED_BUNDLE);
+  mocks.saveBundleBytes.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -87,59 +109,66 @@ function openImport() {
 }
 
 describe("SyncBundleCard 网页版资产包", () => {
-  it("网页版加密格式不可选但可见；未主动选择格式前不出现明文警告、导出保持禁用", async () => {
+  it("网页版导出为未加密 .nxbm 容器，不出现口令输入", async () => {
     await mountCard();
-    const select = mounted!.container.querySelector<HTMLSelectElement>("#bundle-format")!;
-    const encryptedOption = [...select.options].find((o) => o.value === "encrypted")!;
-    expect(encryptedOption.disabled).toBe(true);
-    expect(encryptedOption.textContent).toContain("仅桌面版");
-    expect(text()).toContain("加密导出（.nxbm）仅在桌面版 NexTerm 可用");
-    expect(text()).not.toContain("将以明文导出");
+    expect(text()).toContain("浏览器导出为未加密的 .nxbm 容器");
+    expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
 
-    setSelectValue(select, "plaintext");
-    await flushUntil(() => text().includes("将以明文导出"));
+    const row = [...mounted!.container.querySelectorAll("label")].find((l) => l.textContent?.includes("web-01"))!;
+    click(row.querySelector('input[type="checkbox"]')!);
+    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    await flushUntil(() => text().includes("已导出"));
+
+    expect(mocks.saveBundleBytes).toHaveBeenCalledOnce();
+    const [name, bytes] = mocks.saveBundleBytes.mock.calls[0] as [string, Uint8Array];
+    expect(name).toContain(".nxbm");
+    expect(String.fromCharCode(...bytes.slice(0, 4))).toBe("NXBM");
+    expect(bytes[5] & 1).toBe(0);
+    expect(mocks.writeBundleFile).not.toHaveBeenCalled();
   });
 
-  it("选中 flag=1 的 NXBM 加密容器：明确提示加密与桌面版导入", async () => {
-    mocks.pickBundleFile.mockResolvedValue({ name: "backup.nxbm", text: `${NXBM_HEADER_ENCRYPTED}garbage` });
+  it("选中加密的 .nxbm 容器：明确提示去桌面版导入", async () => {
+    mocks.pickBundleBuffer.mockResolvedValue({ name: "backup.nxbm", buffer: encryptedNxbm() });
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("这是加密的资产包"));
+    await flushUntil(() => text().includes("这是加密的 .nxbm 资产包"));
     expect(text()).toContain("请在桌面版 NexTerm 中导入");
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("选中 flag=0 的 NXBM 明文容器：不误报为加密，提示去桌面版读取", async () => {
-    mocks.pickBundleFile.mockResolvedValue({ name: "plain.nxbm", text: `${NXBM_HEADER_PLAINTEXT}{"protocol":1}` });
-    await mountCard();
-    openImport();
-    clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("资产包容器"));
-    expect(text()).not.toContain("这是加密的资产包");
-    expect(text()).toContain("请在桌面版 NexTerm 中导入");
-    expect(text()).not.toContain("不是合法的 JSON");
-    expect(mocks.importBundle).not.toHaveBeenCalled();
-  });
-
-  it("旧版 .json 资产包在网页版照常预览导入", async () => {
-    mocks.pickBundleFile.mockResolvedValue({
-      name: "legacy.json",
-      text: JSON.stringify({
-        protocol: 1,
-        origin: "old-device",
-        exportedAt: Date.now(),
-        groups: [],
-        assets: [
-          { id: "a9", groupId: null, kind: "ssh", name: "legacy-01", host: "10.9.9.9", port: 22, username: "root", authKind: "password", keyPath: null, credId: null, optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 2, deletedAt: null },
-        ],
-        creds: [],
-      }),
+  it("未加密的 .nxbm 容器在网页版照常预览导入", async () => {
+    mocks.pickBundleBuffer.mockResolvedValue({
+      name: "plain.nxbm",
+      buffer: buildPlaintextNxbm(
+        JSON.stringify({
+          protocol: 1,
+          origin: "old-device",
+          exportedAt: Date.now(),
+          groups: [],
+          assets: [
+            { id: "a9", groupId: null, kind: "ssh", name: "legacy-01", host: "10.9.9.9", port: 22, username: "root", authKind: "password", keyPath: null, credId: null, optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 2, deletedAt: null },
+          ],
+          creds: [],
+        }),
+      ).buffer,
     });
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await flushUntil(() => text().includes("确认导入 1 条资产"));
     expect(text()).toContain("old-device");
+  });
+
+  it("非 .nxbm 文件明确拒绝", async () => {
+    mocks.pickBundleBuffer.mockResolvedValue({
+      name: "legacy.json",
+      buffer: new TextEncoder().encode(JSON.stringify({ protocol: 1 })).buffer as ArrayBuffer,
+    });
+    await mountCard();
+    openImport();
+    clickButton(mounted!.container, "选择资产包文件…");
+    await flushUntil(() => text().includes("只支持 .nxbm 资产包文件"));
+    expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 });

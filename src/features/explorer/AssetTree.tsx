@@ -1684,7 +1684,7 @@ export function AssetEditor({
                 </select>
                 <button
                   type="button"
-                  className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                  className="nx-btn nx-btn-outline shrink-0"
                   onClick={() => void createGroupInline()}
                 >
                   <IconPlus size={11} />

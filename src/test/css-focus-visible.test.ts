@@ -5,9 +5,9 @@ const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const a11y = readFileSync(new URL("../ui/a11y.css", import.meta.url), "utf8");
 
 describe("focus-visible 契约", () => {
-  it("命令面板输入的焦点环内嵌,避免被弹层 overflow 裁剪", () => {
+  it("命令面板输入自动聚焦,不绘制焦点环", () => {
     expect(a11y).toMatch(
-      /\.nx-overlay \.nx-command-input:focus-visible\s*\{[^}]*outline-offset:\s*-2px/,
+      /\.nx-overlay \.nx-command-input:focus-visible\s*\{[^}]*outline:\s*none/,
     );
   });
 

@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	DefaultContextWindow = 32_768
-	MinContextWindow     = 1_000
-	MaxContextWindow     = 2_000_000
-	MaxTokensHardLimit   = 32_768
+	DefaultContextWindow  = 32_768
+	MinContextWindow      = 1_000
+	MaxContextWindow      = 2_000_000
+	MaxTokensHardLimit    = 32_768
+	maxReasoningEffortLen = 64
 )
 
 var ErrUnknownPreset = errors.New("unknown AI provider preset")
@@ -24,14 +25,6 @@ const (
 	ReasoningEffortMedium  ReasoningEffort = "medium"
 	ReasoningEffortHigh    ReasoningEffort = "high"
 )
-
-func (r ReasoningEffort) Valid() bool {
-	switch r {
-	case ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh:
-		return true
-	}
-	return false
-}
 
 type Config struct {
 	BaseURL         string          `json:"baseUrl"`
@@ -66,7 +59,8 @@ func (c Config) Normalized() Config {
 			c.Temperature = &clamped
 		}
 	}
-	if c.ReasoningEffort != "" && !c.ReasoningEffort.Valid() {
+	c.ReasoningEffort = ReasoningEffort(strings.TrimSpace(string(c.ReasoningEffort)))
+	if len(c.ReasoningEffort) > maxReasoningEffortLen {
 		c.ReasoningEffort = ""
 	}
 	c.ContextWindow = min(max(c.ContextWindow, MinContextWindow), MaxContextWindow)

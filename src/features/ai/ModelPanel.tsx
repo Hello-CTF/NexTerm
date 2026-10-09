@@ -57,13 +57,7 @@ const MODEL_PRESETS: ModelPreset[] = [
   { id: "ollama", label: "Ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b" },
 ];
 
-const REASONING_EFFORT_OPTIONS = [
-  { value: "", label: "默认不传" },
-  { value: "minimal", label: "minimal" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-] as const;
+const REASONING_EFFORT_PRESETS = ["minimal", "low", "medium", "high"] as const;
 
 type ModelDraft = Omit<ModelProfile, "temperature" | "contextWindow"> & {
   temperature: number | null;
@@ -487,7 +481,7 @@ export function ModelManager({
                     onChange={(e) => patch({ model: e.target.value })}
                   />
                   <button
-                    className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                    className="nx-btn nx-btn-outline shrink-0"
                     title="用当前地址和密钥拉取模型列表"
                     disabled={busy}
                     onClick={() => void refreshModels()}
@@ -589,20 +583,21 @@ export function ModelManager({
                     </div>
 
                     <Field label="思考强度（thinking effort）" htmlFor={`${fieldId}-reasoning-effort`}>
-                      <select
+                      <input
                         id={`${fieldId}-reasoning-effort`}
-                        className="nx-select"
+                        className="nx-input font-mono"
+                        list={`${fieldId}-reasoning-effort-presets`}
+                        placeholder="默认不传"
                         value={draft.reasoningEffort ?? ""}
                         onChange={(e) => patch({ reasoningEffort: e.target.value })}
-                      >
-                        {REASONING_EFFORT_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
+                      />
+                      <datalist id={`${fieldId}-reasoning-effort-presets`}>
+                        {REASONING_EFFORT_PRESETS.map((value) => (
+                          <option key={value} value={value} />
                         ))}
-                      </select>
+                      </datalist>
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        只影响支持 reasoning effort 的 OpenAI 兼容端点；默认不传。
+                        只影响支持 reasoning effort 的 OpenAI 兼容端点；默认不传，也可直接填服务商支持的自定义值。
                       </div>
                     </Field>
 

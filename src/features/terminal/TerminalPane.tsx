@@ -1194,21 +1194,21 @@ export function TerminalPane({
             />
           </div>
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
+            className="nx-icon-btn"
             title="上一个"
             onClick={() => searchApi.current?.findPrevious(query)}
           >
             <IconArrowUp size={13} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
+            className="nx-icon-btn"
             title="下一个"
             onClick={() => searchApi.current?.findNext(query)}
           >
             <IconArrowDown size={13} />
           </button>
           <div className="nx-spacer" />
-          <button className="nx-icon-btn nx-icon-btn-sm" title="关闭搜索" onClick={() => setSearchOpen(false)}>
+          <button className="nx-icon-btn" title="关闭搜索" onClick={() => setSearchOpen(false)}>
             <IconClose size={12} />
           </button>
         </div>

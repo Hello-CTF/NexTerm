@@ -180,10 +180,10 @@ export function AccountCard() {
               autoComplete="new-password"
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={createBusy || !username.trim() || !password}>
+            <button className="nx-btn nx-btn-primary" disabled={createBusy || !username.trim() || !password}>
               {createBusy ? "创建中…" : "创建"}
             </button>
-            <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setCreateOpen(false)}>
+            <button type="button" className="nx-btn nx-btn-ghost" onClick={() => setCreateOpen(false)}>
               取消
             </button>
           </div>

@@ -55,6 +55,27 @@ func TestBundleContainerEncryptedRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBundleContainerEmptyPasswordStaysPlaintext(t *testing.T) {
+	plaintext := []byte(`{"protocol":1,"groups":[],"assets":[],"creds":[]}`)
+	encoded, err := encodeBundleContainer(plaintext, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) != bundleHeaderSize+len(plaintext) || encoded[5]&bundleFlagEncrypted != 0 {
+		t.Fatal("empty password must produce a plaintext container")
+	}
+	if string(encoded[bundleHeaderSize:]) != string(plaintext) {
+		t.Fatal("plaintext container body mismatch")
+	}
+	decoded, err := decodeBundleContainer(encoded, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != string(plaintext) {
+		t.Fatalf("round trip mismatch: %q", decoded)
+	}
+}
+
 func TestBundleContainerRejectsWrongPasswordAndTampering(t *testing.T) {
 	encoded, err := encodeBundleContainer([]byte(`{"protocol":1}`), "right-password")
 	if err != nil {
@@ -103,27 +124,6 @@ func TestBundleContainerRejectsWrongPasswordAndTampering(t *testing.T) {
 	truncated := encoded[:len(encoded)-1]
 	if _, err = decodeBundleContainer(truncated, "right-password"); err == nil {
 		t.Fatal("truncated ciphertext accepted")
-	}
-}
-
-func TestBundleContainerEmptyPasswordRoundTrip(t *testing.T) {
-	plaintext := []byte(`{"protocol":1}`)
-	encoded, err := encodeBundleContainer(plaintext, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted == 0 {
-		t.Fatal("empty-password container must still be encrypted")
-	}
-	decoded, err := decodeBundleContainer(encoded, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(decoded) != string(plaintext) {
-		t.Fatalf("round trip mismatch: %q", decoded)
-	}
-	if _, err := decodeBundleContainer(encoded, "non-empty"); err == nil {
-		t.Fatal("non-empty password accepted for empty-password container")
 	}
 }
 
@@ -179,8 +179,8 @@ func TestBundleFileEmptyPasswordWriteReadsWithoutPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Encrypted {
-		t.Fatalf("empty-password write must still be encrypted, got %+v", result)
+	if result.Encrypted {
+		t.Fatalf("empty-password write must stay plaintext, got %+v", result)
 	}
 	read, err := desktop.service.ReadBundleFileWithOptions(context.Background(), path, BundleReadOptions{})
 	if err != nil {

@@ -250,7 +250,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
           onChange={(e) => setSessionId(e.target.value.trim())}
         />
         <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
+          className="nx-btn nx-btn-ghost"
           onClick={() => void loadFirstPage(assetId, userId, sessionId)}
           disabled={loading}
         >

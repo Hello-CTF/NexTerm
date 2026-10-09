@@ -52,6 +52,14 @@ function visibleBytes(raw: Uint8Array): [string, Uint8Array<ArrayBufferLike>] {
   let index = 0;
   while (index < raw.length) {
     const current = raw[index];
+    if (current === 0x0d) {
+      if (index + 1 >= raw.length) return [visible, raw.slice(index)];
+      if (raw[index + 1] !== 0x0a) {
+        visible = visible.slice(0, visible.lastIndexOf("\n") + 1);
+      }
+      index++;
+      continue;
+    }
     if (current === 0x1b) {
       const result = escapeSequence(raw, index);
       if (!result.complete) return [visible, raw.slice(index)];

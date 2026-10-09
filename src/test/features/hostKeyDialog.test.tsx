@@ -429,7 +429,7 @@ describe("指纹确认弹窗去重", () => {
       "ssh-ed25519",
       "SHA256:newfp",
     );
-    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.probeHostKey).toHaveBeenCalledTimes(1);
   });
 
@@ -463,7 +463,7 @@ describe("指纹确认弹窗去重", () => {
     await flush();
 
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
-    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.reconnect).not.toHaveBeenCalled();
     expect(toastTexts()).toContain("已取消重连");
     expect(toastTexts()).toContain("已取消连接");

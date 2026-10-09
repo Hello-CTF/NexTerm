@@ -1695,11 +1695,46 @@ export async function connectAsset(
   return promise;
 }
 
+const LIVE_SESSION_STATUSES = new Set(["connecting", "connected", "reconnecting"]);
+
 async function runConnectAsset(
   asset: ConnectAssetInput,
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
   const { pushToast } = useUi.getState();
+
+  const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
+  if (existing) {
+    const session = useUi.getState().sessions.find((s) => s.id === existing.sessionId);
+    const live =
+      existing.kind === "db" ||
+      (session !== undefined && LIVE_SESSION_STATUSES.has(session.status));
+    if (live) {
+      useUi.getState().setActiveWorkspace(existing.id);
+      return { ok: true };
+    }
+    if (session) {
+      if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
+      try {
+        const fresh = await reconnectSessionAndWait(session);
+        if (!fresh) {
+          pushToast("info", "已取消连接");
+          return { ok: false, canceled: true };
+        }
+        const { sessions, setSessions } = useUi.getState();
+        setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
+        useUi.getState().setActiveWorkspace(existing.id);
+        useConnectHistory.getState().record(asset.id);
+        return { ok: true };
+      } catch {
+        // 会话已在服务端删除或重连失败: 落到下方清残留工作区走全新连接
+      }
+    }
+    await useUi.getState().closeWorkspace(existing.id);
+    if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {
+      return { ok: false, canceled: true };
+    }
+  }
 
   const dbKind = dbKindOf(asset.kind);
   if (dbKind) {

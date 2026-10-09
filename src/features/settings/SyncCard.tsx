@@ -808,7 +808,7 @@ function UnlockDEKCard() {
             if (e.key === "Enter" && password) void submit();
           }}
         />
-        <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !password} onClick={() => void submit()}>
+        <button className="nx-btn nx-btn-primary" disabled={busy || !password} onClick={() => void submit()}>
           {busy ? "解锁中…" : "解锁"}
         </button>
       </div>

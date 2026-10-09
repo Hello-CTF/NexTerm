@@ -650,7 +650,7 @@ export function DevicesView() {
                     ))}
                   </select>
                   <button
-                    className="nx-btn nx-btn-primary nx-btn-sm"
+                    className="nx-btn nx-btn-primary"
                     disabled={issuing}
                     onClick={() => void issueEnrollCode()}
                   >

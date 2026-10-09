@@ -456,7 +456,7 @@ export function SettingsView() {
                   }}
                 />
                 <button
-                  className="nx-icon-btn nx-icon-btn-sm"
+                  className="nx-icon-btn"
                   title="删除这条规则"
                   onClick={() =>
                     void saveRules((aiPerm?.dangerRules ?? []).filter((x) => x !== r))

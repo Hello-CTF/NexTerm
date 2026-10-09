@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushUntil, mount, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -11,8 +11,12 @@ const mocks = vi.hoisted(() => {
     digest: vi.fn(),
     exportAssets: vi.fn(),
     importBundle: vi.fn(),
-    pickBundleFile: vi.fn(),
-    saveBundleFile: vi.fn(),
+    readBundleFile: vi.fn(),
+    writeBundleFile: vi.fn(),
+    pickBundleBuffer: vi.fn(),
+    saveBundleBytes: vi.fn(),
+    openWailsFile: vi.fn(),
+    saveWailsFile: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -31,15 +35,23 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       pull: vi.fn(),
       token: vi.fn(),
       rotateToken: vi.fn(),
-      readBundleFile: vi.fn(),
-      writeBundleFile: vi.fn(),
+      readBundleFile: mocks.readBundleFile,
+      writeBundleFile: mocks.writeBundleFile,
     },
   };
 });
 vi.mock("../../ipc/bundleFiles", () => ({
-  pickBundleFile: mocks.pickBundleFile,
-  saveBundleFile: mocks.saveBundleFile,
+  pickBundleBuffer: mocks.pickBundleBuffer,
+  saveBundleBytes: mocks.saveBundleBytes,
 }));
+vi.mock("../../ipc/wails", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/wails")>();
+  return {
+    ...actual,
+    openWailsFile: mocks.openWailsFile,
+    saveWailsFile: mocks.saveWailsFile,
+  };
+});
 
 import { SyncBundleCard } from "../../features/settings/SyncBundleCard";
 import { useUi } from "../../app/store";
@@ -72,7 +84,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.digest.mockResolvedValue(DIGEST);
-  mocks.saveBundleFile.mockResolvedValue(true);
+  mocks.saveWailsFile.mockResolvedValue("/home/user/nexterm-assets.nxbm");
+  mocks.writeBundleFile.mockResolvedValue({ encrypted: false });
   useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });
 });
 afterEach(() => {
@@ -107,8 +120,9 @@ function exportableRow(name: string): HTMLElement {
   return row;
 }
 
-function choosePlaintextExport() {
-  setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#bundle-format")!, "plaintext");
+function pickDesktopBundle(fileName: string, payload: string) {
+  mocks.openWailsFile.mockResolvedValue(`/home/user/${fileName}`);
+  mocks.readBundleFile.mockResolvedValue(payload);
 }
 
 describe("SyncBundleCard 导出", () => {
@@ -124,13 +138,13 @@ describe("SyncBundleCard 导出", () => {
     });
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    choosePlaintextExport();
-    clickButton(mounted!.container, "导出为明文 JSON 文件");
-    await flushUntil(() => text().includes("导出完成"));
+    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    await flushUntil(() => text().includes("已导出"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], false);
-    expect(mocks.saveBundleFile).toHaveBeenCalledOnce();
-    const [, savedText] = mocks.saveBundleFile.mock.calls[0] as [string, string];
+    expect(mocks.writeBundleFile).toHaveBeenCalledOnce();
+    const [, savedText, password] = mocks.writeBundleFile.mock.calls[0] as [string, string, string];
     expect(savedText).not.toContain("sup3r-s3cret");
+    expect(password).toBe("");
     expect(text()).toContain("凭据 0");
   });
 
@@ -151,9 +165,8 @@ describe("SyncBundleCard 导出", () => {
     click(credsToggle.querySelector('input[type="checkbox"]')!);
     await flushUntil(() => text().includes("可还原的凭据明文"));
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    choosePlaintextExport();
-    clickButton(mounted!.container, "导出为明文 JSON 文件");
-    await flushUntil(() => text().includes("导出完成"));
+    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    await flushUntil(() => text().includes("已导出"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], true);
     expect(text()).toContain("凭据 1");
     expect(text()).not.toContain("sup3r-s3cret");
@@ -163,16 +176,15 @@ describe("SyncBundleCard 导出", () => {
     mocks.exportAssets.mockRejectedValue(new Error("凭据库已锁定"));
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    choosePlaintextExport();
-    clickButton(mounted!.container, "导出为明文 JSON 文件");
+    clickButton(mounted!.container, "导出资产包 (.nxbm)");
     await flushUntil(() => text().includes("凭据库已锁定"));
-    expect(text()).not.toContain("导出完成");
+    expect(text()).not.toContain("已导出（.nxbm 容器）");
   });
 });
 
 describe("SyncBundleCard 导入", () => {
   it("非法 JSON：显示错误且不调用 sync_import", async () => {
-    mocks.pickBundleFile.mockResolvedValue({ name: "broken.json", text: "not-json{" });
+    pickDesktopBundle("broken.nxbm", "not-json{");
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -181,10 +193,7 @@ describe("SyncBundleCard 导入", () => {
   });
 
   it("协议版本不符：显示错误且不调用 sync_import", async () => {
-    mocks.pickBundleFile.mockResolvedValue({
-      name: "future.json",
-      text: JSON.stringify({ protocol: 99, groups: [], assets: [], creds: [] }),
-    });
+    pickDesktopBundle("future.nxbm", JSON.stringify({ protocol: 99, groups: [], assets: [], creds: [] }));
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -193,10 +202,7 @@ describe("SyncBundleCard 导入", () => {
   });
 
   it("结构损坏（assets 不是数组）：显示错误且不调用 sync_import", async () => {
-    mocks.pickBundleFile.mockResolvedValue({
-      name: "bad-shape.json",
-      text: JSON.stringify({ protocol: 1, assets: "nope" }),
-    });
+    pickDesktopBundle("bad-shape.nxbm", JSON.stringify({ protocol: 1, assets: "nope" }));
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -205,7 +211,7 @@ describe("SyncBundleCard 导入", () => {
   });
 
   it("合法包：预览来源/计数/凭据安全提示（不渲染秘密），确认后展示 ImportReport", async () => {
-    mocks.pickBundleFile.mockResolvedValue({ name: "bundle.json", text: JSON.stringify(BUNDLE) });
+    pickDesktopBundle("bundle.nxbm", JSON.stringify(BUNDLE));
     mocks.importBundle.mockResolvedValue({
       groupsCreated: 1,
       groupsUpdated: 0,
@@ -240,7 +246,7 @@ describe("SyncBundleCard 导入", () => {
   });
 
   it("强制覆盖较新条目：force 以 true 传递", async () => {
-    mocks.pickBundleFile.mockResolvedValue({ name: "bundle.json", text: JSON.stringify(BUNDLE) });
+    pickDesktopBundle("bundle.nxbm", JSON.stringify(BUNDLE));
     mocks.importBundle.mockResolvedValue({
       groupsCreated: 0,
       groupsUpdated: 0,
@@ -269,9 +275,9 @@ describe("SyncBundleCard 导入", () => {
   });
 
   it("仅分组更新且资产全跳过时仍判定为成功写入", async () => {
-    mocks.pickBundleFile.mockResolvedValue({
-      name: "groups-only.json",
-      text: JSON.stringify({
+    pickDesktopBundle(
+      "groups-only.nxbm",
+      JSON.stringify({
         protocol: 1,
         origin: "other-device",
         exportedAt: Date.now(),
@@ -279,7 +285,7 @@ describe("SyncBundleCard 导入", () => {
         assets: [{ ...BUNDLE.assets[0], updatedAt: 50 }],
         creds: [],
       }),
-    });
+    );
     mocks.importBundle.mockResolvedValue({
       groupsCreated: 0,
       groupsUpdated: 1,
@@ -316,7 +322,7 @@ describe("SyncBundleCard 导入", () => {
       ...BUNDLE,
       assets: BUNDLE.assets.map((a) => (a.id === "a1" ? { ...a, deletedAt: 123 } : a)),
     };
-    mocks.pickBundleFile.mockResolvedValue({ name: "bundle.json", text: JSON.stringify(withTombstone) });
+    pickDesktopBundle("bundle.nxbm", JSON.stringify(withTombstone));
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -335,7 +341,7 @@ describe("SyncBundleCard 分区引用", () => {
   it("默认只显示说明与导出/导入按钮,点击再展开对应区域", async () => {
     mounted = withClient(createElement(SyncBundleCard));
     await flushUntil(() => text().includes("与上方「账号同步」的推送 / 拉取互不影响"));
-    expect(mounted!.container.querySelector("#bundle-format")).toBeNull();
+    expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
     expect(
       [...mounted!.container.querySelectorAll("button")].some(
         (b) => b.textContent?.trim() === "选择资产包文件…",
@@ -344,7 +350,7 @@ describe("SyncBundleCard 分区引用", () => {
 
     clickButton(mounted!.container, "导出资产包");
     await flushUntil(() => text().includes("web-01"));
-    expect(mounted!.container.querySelector("#bundle-format")).not.toBeNull();
+    expect(mounted!.container.querySelector("#bundle-password")).not.toBeNull();
 
     clickButton(mounted!.container, "导入资产包");
     await flush();

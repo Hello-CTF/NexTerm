@@ -258,8 +258,9 @@ describe("AssetTree keyboard navigation", () => {
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith("a1"));
 
     keyDown(asset, " ");
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
-    expect(useUi.getState().workspaces.length).toBeGreaterThan(0);
+    await waitFor(() => expect(useUi.getState().activeWorkspaceId).not.toBeNull());
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces.filter((w) => w.assetId === "a1")).toHaveLength(1);
   });
 
   it("moves focus between rows with ArrowDown and ArrowUp", async () => {

@@ -1,38 +1,19 @@
-import { syncApi } from "./commands";
 import { WEB } from "./env";
-import { pickBrowserFile, saveBrowserBlob, baseName } from "./webFiles";
-import { openWailsFile, saveWailsFile } from "./wails";
+import { pickBrowserFile, saveBrowserBlob } from "./webFiles";
 
-export interface PickedBundle {
+export interface PickedBundleBuffer {
   name: string;
-  text: string;
+  buffer: ArrayBuffer;
 }
 
-function browserFileApis(): boolean {
-  return WEB;
+export async function pickBundleBuffer(): Promise<PickedBundleBuffer | null> {
+  if (!WEB) return null;
+  const file = await pickBrowserFile(".nxbm");
+  if (!file) return null;
+  return { name: file.name, buffer: await file.arrayBuffer() };
 }
 
-export async function pickBundleFile(): Promise<PickedBundle | null> {
-  if (browserFileApis()) {
-    const file = await pickBrowserFile(".json,application/json");
-    if (!file) return null;
-    return { name: file.name, text: await file.text() };
-  }
-  const path = await openWailsFile([
-    { name: "NexTerm 资产包", extensions: ["json"] },
-    { name: "所有文件", extensions: ["*"] },
-  ]);
-  if (!path) return null;
-  const text = await syncApi.readBundleFile(path);
-  return { name: baseName(path), text };
-}
-
-export async function saveBundleFile(name: string, text: string): Promise<boolean> {
-  if (browserFileApis()) {
-    return saveBrowserBlob(name, new Blob([text], { type: "application/json" }));
-  }
-  const path = await saveWailsFile(name);
-  if (!path) return false;
-  await syncApi.writeBundleFile(path, text);
-  return true;
+export async function saveBundleBytes(name: string, data: Uint8Array<ArrayBuffer>): Promise<boolean> {
+  if (!WEB) return false;
+  return saveBrowserBlob(name, new Blob([data], { type: "application/octet-stream" }));
 }

@@ -262,7 +262,7 @@ export function AuditView() {
           ))}
         </div>
         <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
+          className="nx-btn nx-btn-ghost"
           onClick={() => void loadFirstPage(source, deviceId)}
           disabled={loading}
         >

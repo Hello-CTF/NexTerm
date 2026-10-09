@@ -1566,7 +1566,7 @@ function AiChatTab({
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 py-1">
           <input
-            className="nx-input min-w-0 flex-1 py-1 text-[12px]"
+            className="nx-input nx-input-sm min-w-0 flex-1"
             placeholder="搜索对话内容，Enter 下一个，Shift+Enter 上一个"
             aria-label="搜索对话内容"
             value={searchQuery}
@@ -1590,7 +1590,7 @@ function AiChatTab({
               : ""}
           </span>
           <button
-            className="nx-icon-btn nx-icon-btn-sm shrink-0"
+            className="nx-icon-btn shrink-0"
             title="上一个匹配（Shift+Enter）"
             aria-label="上一个匹配"
             disabled={searchMatches.length === 0}
@@ -1599,7 +1599,7 @@ function AiChatTab({
             <IconChevronUp size={12} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm shrink-0"
+            className="nx-icon-btn shrink-0"
             title="下一个匹配（Enter）"
             aria-label="下一个匹配"
             disabled={searchMatches.length === 0}
@@ -1608,7 +1608,7 @@ function AiChatTab({
             <IconChevronDown size={12} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm shrink-0"
+            className="nx-icon-btn shrink-0"
             title="关闭搜索"
             aria-label="关闭搜索"
             onClick={() => setSearchOpen(false)}

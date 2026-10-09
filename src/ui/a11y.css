@@ -25,7 +25,7 @@
 }
 
 .nx-overlay .nx-command-input:focus-visible {
-  outline-offset: -2px;
+  outline: none;
 }
 
 .nx-menu-item:focus-visible {

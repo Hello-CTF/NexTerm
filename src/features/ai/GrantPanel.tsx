@@ -409,7 +409,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                   ))}
                 </select>
                 <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
+                  className="nx-btn nx-btn-outline"
                   disabled={ruleBusy || ruleDevice === "" || (actionNeedsPath && rulePath.trim() === "")}
                   onClick={() => void addRule()}
                 >

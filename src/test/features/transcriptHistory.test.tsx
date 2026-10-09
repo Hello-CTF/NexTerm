@@ -425,6 +425,21 @@ describe("transcriptText", () => {
     expect(text).toBe("hello visible");
   });
 
+  it("treats lone carriage returns as line overwrites for repainting shells", () => {
+    const decoder = createTranscriptDecoder();
+    let text = decoder.push(btoa("PS C:\\> G\rPS C:\\> Ge\rPS C:\\> Get\r\ndone\r\n"));
+    text += decoder.flush();
+    expect(text).toBe("PS C:\\> Get\ndone\n");
+  });
+
+  it("keeps CRLF newlines and defers a trailing CR across chunks", () => {
+    const decoder = createTranscriptDecoder();
+    let text = decoder.push(btoa("line1\r\nline2\r"));
+    text += decoder.push(btoa("\nline3"));
+    text += decoder.flush();
+    expect(text).toBe("line1\nline2\nline3");
+  });
+
   it("strips DCS and APC control strings including split payloads", () => {
     const decoder = createTranscriptDecoder();
     const first = new TextEncoder().encode("hel\u001bP1;2|not-visible-payload");

@@ -217,7 +217,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
                 </label>
                 <button
                   type="button"
-                  className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                  className="nx-btn nx-btn-outline shrink-0"
                   disabled={saving || !input.trim() || draft.length >= MAX_BASE_URLS}
                   onClick={add}
                 >

@@ -2,6 +2,7 @@ package profiles
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
@@ -58,8 +59,12 @@ func TestProfileJSONTemperatureAndReasoningEffortCompat(t *testing.T) {
 	}
 
 	normalized := Profile{Temperature: profileFloat64Ptr(9), ReasoningEffort: "max"}.Normalized()
-	if normalized.Temperature == nil || *normalized.Temperature != 2 || normalized.ReasoningEffort != "" {
+	if normalized.Temperature == nil || *normalized.Temperature != 2 || normalized.ReasoningEffort != "max" {
 		t.Fatalf("normalized = %+v", normalized)
+	}
+	overLong := Profile{ReasoningEffort: provider.ReasoningEffort(strings.Repeat("x", 65))}.Normalized()
+	if overLong.ReasoningEffort != "" {
+		t.Fatalf("over-long effort must normalize to unset: %+v", overLong)
 	}
 }
 

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -12,8 +12,8 @@ const mocks = vi.hoisted(() => {
     importBundle: vi.fn(),
     readBundleFile: vi.fn(),
     writeBundleFile: vi.fn(),
-    pickBundleFile: vi.fn(),
-    saveBundleFile: vi.fn(),
+    pickBundleBuffer: vi.fn(),
+    saveBundleBytes: vi.fn(),
     openWailsFile: vi.fn(),
     saveWailsFile: vi.fn(),
     promptText: vi.fn(),
@@ -36,8 +36,8 @@ vi.mock("../ipc/commands", () => ({
   },
 }));
 vi.mock("../ipc/bundleFiles", () => ({
-  pickBundleFile: mocks.pickBundleFile,
-  saveBundleFile: mocks.saveBundleFile,
+  pickBundleBuffer: mocks.pickBundleBuffer,
+  saveBundleBytes: mocks.saveBundleBytes,
 }));
 vi.mock("../ipc/wails", () => ({
   openWailsFile: mocks.openWailsFile,
@@ -76,7 +76,6 @@ beforeEach(() => {
   useUi.setState({ pushToast: mocks.toast });
   mocks.digest.mockResolvedValue(DIGEST);
   mocks.exportAssets.mockResolvedValue(EXPORTED_BUNDLE);
-  mocks.saveBundleFile.mockResolvedValue(true);
   mocks.saveWailsFile.mockResolvedValue("/home/user/nexterm-assets.nxbm");
   mocks.writeBundleFile.mockResolvedValue({ encrypted: true });
 });
@@ -111,62 +110,27 @@ function exportRow(name: string): HTMLElement {
   return row;
 }
 
-function formatSelect(): HTMLSelectElement {
-  const select = mounted!.container.querySelector<HTMLSelectElement>("#bundle-format");
-  if (!select) throw new Error("format select not found");
-  return select;
-}
-
 function exportButton(): HTMLButtonElement {
   const btn = [...mounted!.container.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === "导出为 JSON 文件" || b.textContent?.trim() === "导出为明文 JSON 文件" || b.textContent?.trim() === "导出为加密资产包 (.nxbm)",
+    (b) => b.textContent?.trim() === "导出资产包 (.nxbm)",
   ) as HTMLButtonElement | undefined;
   if (!btn) throw new Error("export button not found");
   return btn;
 }
 
-function chooseFormat(format: "encrypted" | "plaintext"): void {
-  setSelectValue(formatSelect(), format);
-}
-
-describe("SyncBundleCard 导出格式显式选择", () => {
-  it("默认不选格式：导出按钮禁用，点击不发起任何导出", async () => {
+describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
+  it("勾选资产后即可导出，不再有格式选择", async () => {
     await mountCard();
+    expect(exportButton().disabled).toBe(true);
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
-    const btn = exportButton();
-    expect(btn.disabled).toBe(true);
-    expect(btn.textContent?.trim()).toBe("导出为 JSON 文件");
-    expect(btn.getAttribute("title")).toBe("先选择导出格式");
-    expect(text()).not.toContain("将以明文导出");
-    expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
-
-    click(btn);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(mocks.exportAssets).not.toHaveBeenCalled();
-    expect(mocks.saveBundleFile).not.toHaveBeenCalled();
-    expect(mocks.writeBundleFile).not.toHaveBeenCalled();
+    expect(exportButton().disabled).toBe(false);
+    expect(text()).toContain("未设置口令");
+    expect(mounted!.container.querySelector("#bundle-password")).not.toBeNull();
   });
 
-  it("主动选明文后出现常驻风险警告，按钮文案与格式一致", async () => {
+  it("口令不一致禁用导出并提示，一致后放行", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
-    chooseFormat("plaintext");
-    await flushUntil(() => text().includes("将以明文导出"));
-    expect(text()).toContain("任何拿到这个文件的人都能直接读取");
-    const btn = exportButton();
-    expect(btn.textContent?.trim()).toBe("导出为明文 JSON 文件");
-    expect(btn.disabled).toBe(false);
-  });
-
-  it("选加密后出现口令输入；口令不一致禁用导出并提示，一致后放行", async () => {
-    await mountCard();
-    click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
-    chooseFormat("encrypted");
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
-    expect(text()).toContain("口令无法找回");
-    expect(text()).not.toContain("将以明文导出");
-    expect(exportButton().textContent?.trim()).toBe("导出为加密资产包 (.nxbm)");
-
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password2")!, "battery-staple");
     expect(text()).toContain("两次输入的导出口令不一致");
@@ -175,14 +139,10 @@ describe("SyncBundleCard 导出格式显式选择", () => {
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password2")!, "correct-horse");
     await flushUntil(() => !exportButton().disabled);
   });
-});
 
-describe("SyncBundleCard 加密导出", () => {
-  it("加密导出走 .nxbm 容器写入并携带口令，摘要标注已加密", async () => {
+  it("带口令导出走 .nxbm 容器写入并携带口令，摘要标注已加密", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
-    chooseFormat("encrypted");
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password2")!, "correct-horse");
     click(exportButton());
@@ -195,34 +155,33 @@ describe("SyncBundleCard 加密导出", () => {
     expect(path).toBe("/home/user/nexterm-assets.nxbm");
     expect(JSON.parse(content).protocol).toBe(1);
     expect(password).toBe("correct-horse");
-    expect(mocks.saveBundleFile).not.toHaveBeenCalled();
-    expect(text()).toContain("已加密导出");
+    expect(mocks.saveBundleBytes).not.toHaveBeenCalled();
     expect(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.value).toBe("");
   });
 
-  it("明文导出不经过加密写入路径", async () => {
+  it("留空口令导出明文 .nxbm 容器", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
-    chooseFormat("plaintext");
-    await flushUntil(() => text().includes("将以明文导出"));
     click(exportButton());
-    await flushUntil(() => text().includes("导出完成"));
-    expect(mocks.saveBundleFile).toHaveBeenCalledOnce();
-    expect(String(mocks.saveBundleFile.mock.calls[0]?.[0])).toContain(".json");
-    expect(mocks.writeBundleFile).not.toHaveBeenCalled();
-    expect(mocks.saveWailsFile).not.toHaveBeenCalled();
-    expect(text()).toContain("导出完成");
+    await flushUntil(() => text().includes("已导出"));
+
+    expect(mocks.writeBundleFile).toHaveBeenCalledOnce();
+    const [, content, password] = mocks.writeBundleFile.mock.calls[0] as [string, string, string];
+    expect(JSON.parse(content).protocol).toBe(1);
+    expect(password).toBe("");
+    expect(text()).toContain("已导出");
   });
 });
 
 describe("SyncBundleCard 加密导入", () => {
-  it("桌面端读到加密包时提示输入口令并用口令重读；旧版 JSON 导入不受影响", async () => {
-    mocks.pickBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
-    mocks.promptText.mockResolvedValue("correct-horse");
+  it("桌面端读到加密包时提示输入口令并用口令重读同一文件", async () => {
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
-    mocks.readBundleFile.mockResolvedValue(
-      JSON.stringify({ protocol: 1, origin: "other", exportedAt: Date.now(), groups: [], assets: [], creds: [] }),
-    );
+    mocks.readBundleFile
+      .mockRejectedValueOnce({ code: "bad_param", message: "资产包已加密，请提供口令" })
+      .mockResolvedValue(
+        JSON.stringify({ protocol: 1, origin: "other", exportedAt: Date.now(), groups: [], assets: [], creds: [] }),
+      );
+    mocks.promptText.mockResolvedValue("correct-horse");
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -230,15 +189,17 @@ describe("SyncBundleCard 加密导入", () => {
 
     expect(mocks.promptText).toHaveBeenCalledOnce();
     expect(mocks.openWailsFile).toHaveBeenCalledOnce();
-    expect(mocks.readBundleFile).toHaveBeenCalledWith("/home/user/backup.nxbm", "correct-horse");
+    expect(mocks.readBundleFile).toHaveBeenCalledTimes(2);
+    expect(mocks.readBundleFile).toHaveBeenLastCalledWith("/home/user/backup.nxbm", "correct-horse");
     expect(text()).toContain("backup.nxbm");
   });
 
   it("口令错误时展示解密失败原因", async () => {
-    mocks.pickBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
-    mocks.promptText.mockResolvedValue("wrong-password");
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
-    mocks.readBundleFile.mockRejectedValue({ code: "decrypt", message: "资产包解密失败：口令错误或数据已被篡改" });
+    mocks.readBundleFile
+      .mockRejectedValueOnce({ code: "bad_param", message: "资产包已加密，请提供口令" })
+      .mockRejectedValue({ code: "decrypt", message: "资产包解密失败：口令错误或数据已被篡改" });
+    mocks.promptText.mockResolvedValue("wrong-password");
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
@@ -247,30 +208,30 @@ describe("SyncBundleCard 加密导入", () => {
   });
 
   it("取消口令输入时安静返回，不报错也不导入", async () => {
-    mocks.pickBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
+    mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
+    mocks.readBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
     mocks.promptText.mockResolvedValue(null);
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(text()).not.toContain("口令错误");
-    expect(mocks.openWailsFile).not.toHaveBeenCalled();
+    expect(mocks.readBundleFile).toHaveBeenCalledTimes(1);
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("桌面端导入提示同时声明支持 .json 与 .nxbm", async () => {
+  it("桌面端导入提示只声明 .nxbm", async () => {
     await mountCard();
     openImport();
     await flushUntil(() => text().includes("选择资产包文件"));
-    expect(text()).toContain("支持 .json 资产包与 .nxbm 加密资产包");
+    expect(text()).toContain("只支持 .nxbm 资产包");
+    expect(text()).not.toContain(".json");
   });
 });
 
 describe("SyncBundleCard 口令行窄屏结构", () => {
   it("口令行可换行、输入框可收缩", async () => {
     await mountCard();
-    chooseFormat("encrypted");
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     const row = mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.closest("div")!;
     expect(row.className).toContain("flex-wrap");
     expect(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.className).toContain("min-w-0");

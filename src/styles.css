@@ -701,7 +701,7 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    height: 28px;
+    height: 30px;
     padding: 0 10px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
@@ -771,7 +771,7 @@
   }
 
   .nx-btn-sm {
-    height: 25px;
+    height: 26px;
     padding: 0 9px;
     font-size: calc(11.5px * var(--nx-ui-text-factor));
   }

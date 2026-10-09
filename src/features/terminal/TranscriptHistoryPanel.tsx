@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   assetApi,
   transcriptApi,
@@ -26,6 +26,7 @@ import {
   type TranscriptDecoder,
 } from "./transcriptText";
 import { TranscriptReplayView } from "./TranscriptReplayView";
+import { ResizeHandle } from "../../ui/ResizeHandle";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
@@ -94,6 +95,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [searchError, setSearchError] = useState<string | null>(null);
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
+  const [listWidth, setListWidth] = useState(300);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
 
@@ -351,7 +353,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
         </select>
         <div className="nx-spacer" />
         <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
+          className="nx-btn nx-btn-ghost"
           disabled={!assetId}
           onClick={() => void loadSessions()}
         >
@@ -381,7 +383,10 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className="flex max-h-[38%] min-h-0 flex-col border-b border-neutral-800/60 md:max-h-none md:w-[300px] md:shrink-0 md:border-b-0 md:border-r">
+        <div
+          className="flex max-h-[38%] min-h-0 flex-col border-b border-neutral-800/60 md:max-h-none md:w-[var(--nx-transcript-list-w)] md:shrink-0 md:border-b-0 md:border-r"
+          style={{ "--nx-transcript-list-w": `${listWidth}px` } as CSSProperties}
+        >
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="nx-table">
               <thead>
@@ -496,6 +501,17 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="hidden md:block">
+          <ResizeHandle
+            side="left"
+            width={listWidth}
+            min={200}
+            max={520}
+            defaultWidth={300}
+            onChange={setListWidth}
+          />
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

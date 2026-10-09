@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -120,16 +121,14 @@ func TestConfigTemperatureAndReasoningEffortJSONCompat(t *testing.T) {
 	if effort.ReasoningEffort != ReasoningEffortHigh {
 		t.Fatalf("reasoning effort = %q", effort.ReasoningEffort)
 	}
-	for _, valid := range []ReasoningEffort{ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh} {
-		if !valid.Valid() {
-			t.Fatalf("%q must be valid", valid)
-		}
+	if normalized := (Config{ReasoningEffort: "max"}).Normalized(); normalized.ReasoningEffort != "max" {
+		t.Fatalf("custom effort must survive normalization: %+v", normalized)
 	}
-	if ReasoningEffort("").Valid() || ReasoningEffort("max").Valid() {
-		t.Fatal("empty/unknown effort must be invalid")
+	if normalized := (Config{ReasoningEffort: " high "}).Normalized(); normalized.ReasoningEffort != ReasoningEffortHigh {
+		t.Fatalf("effort must be trimmed: %+v", normalized)
 	}
-	if normalized := (Config{ReasoningEffort: "max"}).Normalized(); normalized.ReasoningEffort != "" {
-		t.Fatalf("unknown effort must normalize to unset: %+v", normalized)
+	if normalized := (Config{ReasoningEffort: ReasoningEffort(strings.Repeat("x", maxReasoningEffortLen+1))}).Normalized(); normalized.ReasoningEffort != "" {
+		t.Fatalf("over-long effort must normalize to unset: %+v", normalized)
 	}
 	if normalized := (Config{ReasoningEffort: ReasoningEffortMinimal}).Normalized(); normalized.ReasoningEffort != ReasoningEffortMinimal {
 		t.Fatalf("minimal effort must survive normalization: %+v", normalized)

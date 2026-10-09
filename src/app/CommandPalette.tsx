@@ -498,7 +498,7 @@ export function CommandPalette({
           <IconSearch size={15} className="shrink-0 text-neutral-400" />
           <input
             ref={inputRef}
-            className="nx-command-input border-none px-0"
+            className="nx-command-input"
             placeholder="输入命令或资产名…"
             aria-label="命令或资产搜索"
             role="combobox"

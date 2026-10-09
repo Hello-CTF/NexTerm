@@ -817,7 +817,7 @@ describe("connectAsset 主机指纹确认", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    useUi.setState({ pushToast: mocks.toast });
+    useUi.setState({ pushToast: mocks.toast, sessions: [], workspaces: [], activeWorkspaceId: null });
   });
 
   it("首次连接时弹出指纹确认，显式接受后记录信任并重连", async () => {

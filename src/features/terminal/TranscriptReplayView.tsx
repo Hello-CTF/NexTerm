@@ -187,7 +187,10 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
           {formatReplayClock(position)} / {formatReplayClock(duration)}
         </span>
       </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden"
+        style={{ background: REPLAY_THEME.background }}
+      >
         <div ref={containerRef} className="h-full w-full px-2 py-1" />
         {!chunks && !loadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">

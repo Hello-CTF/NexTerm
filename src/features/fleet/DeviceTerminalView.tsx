@@ -548,7 +548,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
                 <div className="nx-spacer" />
                 <button
                   type="button"
-                  className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+                  className="nx-btn nx-btn-primary shrink-0"
                   disabled={shareCreating}
                   onClick={() => void createShare()}
                 >

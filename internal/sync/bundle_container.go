@@ -113,6 +113,9 @@ func sealBundle(plaintext []byte, password string, header *bundleHeader) ([]byte
 
 func encodeBundleContainer(plaintext []byte, password string) ([]byte, error) {
 	header := &bundleHeader{plainLen: uint64(len(plaintext))}
+	if password == "" {
+		return append(header.marshal(), plaintext...), nil
+	}
 	header.encrypted = true
 	header.kdf = bundleKDFDefaults
 	header.cipherLen = header.plainLen + bundleGCMTagSize

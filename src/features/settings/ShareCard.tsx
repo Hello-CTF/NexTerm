@@ -343,7 +343,7 @@ function ShareManagement() {
             <span className="nx-hint text-[11px]">默认只读; 勾选后对方才可以在终端里输入</span>
             <div className="nx-spacer" />
             <button
-              className="nx-btn nx-btn-primary nx-btn-sm"
+              className="nx-btn nx-btn-primary"
               disabled={creating || !deviceId || !recipientUsername.trim()}
               onClick={() => void submitCreate()}
             >

@@ -176,7 +176,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           只读日志
         </span>
         <label
-          className="nx-btn nx-btn-ghost nx-btn-xs relative shrink-0 font-mono max-[560px]:hidden"
+          className="nx-btn nx-btn-ghost nx-btn-sm relative shrink-0 font-mono max-[560px]:hidden"
           title={`日志编码：${LOG_ENCODING_LABEL[enc]}（默认跟随资产的终端编码设置）`}
         >
           {LOG_ENCODING_LABEL[enc]}
@@ -213,7 +213,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         )}
         <div className="nx-spacer" />
         <button
-          className="nx-icon-btn nx-icon-btn-sm"
+          className="nx-icon-btn"
           title="重新读取当前分块（日志文件可能已增长）"
           disabled={loading}
           onClick={() => void load(offset)}
@@ -223,7 +223,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         <span className="nx-divider-v" />
         <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="分页">
           <button
-            className="nx-btn nx-btn-ghost nx-btn-xs"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
             disabled={loading || page <= 1}
             onClick={() => gotoPage(1)}
             title="第一页"
@@ -231,7 +231,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
             首页
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
+            className="nx-icon-btn"
             disabled={loading || page <= 1}
             onClick={() => gotoPage(page - 1)}
             title="上一页"
@@ -259,7 +259,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           </form>
           <span className="shrink-0 text-[11px] text-neutral-500">/ {pages} 页</span>
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
+            className="nx-icon-btn"
             disabled={loading || page >= pages}
             onClick={() => gotoPage(page + 1)}
             title="下一页"
@@ -268,7 +268,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
             <IconChevronRight size={13} />
           </button>
           <button
-            className="nx-btn nx-btn-ghost nx-btn-xs"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
             disabled={loading || page >= pages}
             onClick={() => gotoPage(pages)}
             title="最后一页（日志末尾）"
