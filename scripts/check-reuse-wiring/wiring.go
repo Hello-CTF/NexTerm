@@ -63,34 +63,41 @@ func runWiringChecks(in inputs) []checkResult {
 	}
 	check("ci-source checks out the resolver script", checkout, "")
 
+	validateStep := findStep(asMap(jobsOf(release)["ci-source"]), "The tag drives the release version")
+	validateRun := stepRun(validateStep)
+	check("ci-source validates the release tag and the 0.0.0 version placeholders",
+		strings.Contains(validateRun, `^v[0-9]+\.[0-9]+\.[0-9]+`) &&
+			strings.Contains(validateRun, "wails.json") && strings.Contains(validateRun, `"0.0.0"`),
+		fmt.Sprintf("run=%q", validateRun))
+
 	scenarios := []struct {
 		name     string
 		scenario map[string]string
 		expected map[string]string
 	}{
-		{"reuse: successful ci-source + skipped ci + successful precondition proceeds to packaging and publish",
+		{"reuse: successful ci-source + skipped ci proceeds to packaging and publish",
 			map[string]string{"ci-source": "success", "reused": "true", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "success", "server": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "publish": "success"}},
 		{"fallback: full CI success and release proceeds",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "success", "precondition": "success", "desktop": "success", "server": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "success", "desktop": "success", "server": "success", "publish": "success"}},
 		{"fallback: CI failure gates the release",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "failure"},
-			map[string]string{"ci-source": "success", "ci": "failure", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "failure", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
 		{"reuse: desktop packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "desktop": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "failure", "server": "success", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "failure", "server": "success", "publish": "skipped"}},
 		{"reuse: server packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "server": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "success", "server": "failure", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "failure", "publish": "skipped"}},
 		{"ci-source failure gates the release",
 			map[string]string{"ci-source": "failure", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "failure", "ci": "skipped", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "failure", "ci": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
 		{"ci-source cancellation gates the release",
 			map[string]string{"ci-source": "cancelled", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "cancelled", "ci": "skipped", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "cancelled", "ci": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
 	}
-	jobOrder := []string{"ci-source", "ci", "precondition", "desktop", "server", "publish"}
+	jobOrder := []string{"ci-source", "ci", "desktop", "server", "publish"}
 	for _, s := range scenarios {
 		actual := evaluateRelease(release, s.scenario)
 		equal := len(actual) == len(s.expected)

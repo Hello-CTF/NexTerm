@@ -71,10 +71,16 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"precondition if removal is caught",
-		"job graph: reuse: successful ci-source",
+	{"ci-source validation removal is caught",
+		"ci-source validates the release tag",
 		func(ci, release map[string]interface{}, packText string) string {
-			popJobIf(release, "precondition")
+			steps := asList(asMap(jobsOf(release)["ci-source"])["steps"])
+			for _, rawStep := range steps {
+				step := asMap(rawStep)
+				if strings.Contains(stepName(step), "The tag drives the release version") {
+					step["run"] = "true"
+				}
+			}
 			return packText
 		}},
 	{"packaging gate if removal is caught",

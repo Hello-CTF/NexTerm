@@ -18,31 +18,11 @@ env:
 
 jobs:
   ci-source:
-    name: Resolve a green same-SHA CI run
+    name: Validate the tag and resolve a green same-SHA CI run
     runs-on: ubuntu-latest
     outputs:
       artifact-run-id: ${{ steps.resolve.outputs.artifact-run-id }}
       reused: ${{ steps.resolve.outputs.reused }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Find a completed green CI run with reusable artifacts
-        id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI_REUSE_EXPECTED_REF: ${{ github.ref_name }}
-        run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
-
-  ci:
-    needs: ci-source
-    if: needs.ci-source.outputs.reused != 'true'
-    uses: ./.github/workflows/ci.yml
-    with:
-      release_version: ${{ github.ref_name }}
-
-  precondition:
-    needs: [ci-source, ci]
-    if: ${{ !failure() && !cancelled() }}
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: The tag drives the release version; version files stay 0.0.0 placeholders
@@ -57,10 +37,23 @@ jobs:
             if (wails !== "0.0.0" || pkg !== "0.0.0") {
               throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}); the release version comes from the tag`);
             }'
+      - name: Find a completed green CI run with reusable artifacts
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_REUSE_EXPECTED_REF: ${{ github.ref_name }}
+        run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: ci-source
+    if: needs.ci-source.outputs.reused != 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_version: ${{ github.ref_name }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
-    needs: [precondition, ci-source]
+    needs: [ci-source, ci]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
@@ -192,7 +185,7 @@ jobs:
 
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
-    needs: [precondition, ci-source]
+    needs: [ci-source, ci]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false

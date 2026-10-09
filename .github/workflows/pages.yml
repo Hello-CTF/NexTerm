@@ -23,8 +23,7 @@ jobs:
         run: |
           mkdir -p _site
           cp -r website/. _site/
-          mkdir -p _site/images _site/brand
-          cp website/images/*.png _site/images/
+          mkdir -p _site/brand
           cp public/brand/nexterm-mark-128.png _site/brand/
           cp .github/acceptance/real-target-gaps.json _site/acceptance-evidence-gaps.json
       - uses: actions/upload-pages-artifact@v5

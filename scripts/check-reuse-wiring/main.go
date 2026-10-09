@@ -257,7 +257,7 @@ func evaluateRelease(release map[string]interface{}, scenario map[string]string)
 	if scenario["ci-source"] == "success" {
 		outputs["reused"] = scenario["reused"]
 	}
-	order := []string{"ci", "precondition", "desktop", "server", "publish"}
+	order := []string{"ci", "desktop", "server", "publish"}
 	jobs := jobsOf(release)
 	ancestors := map[string]map[string]bool{"ci-source": {}}
 	for _, jobID := range order {
