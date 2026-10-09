@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
@@ -25,6 +26,25 @@ import (
 
 func main() {
 	os.Exit(run(os.Args[1:]))
+}
+
+// allowedOrigins 读入本实例对外的域名，并进同源白名单（逗号分隔）。
+//
+// 反代部署下网关会把 Host 改写成上游地址（实测 nexterm-server:8080），而浏览器的请求
+// 带的是对外域名的 Origin；上游的同源判定只比对 r.Host，于是整站被判跨源、连入口 JS
+// 都拿不到（网页白屏）。这里把域名交给 server.Options.AllowedOrigins —— 该切片同时
+// 喂给 transportGuard 与 WebSocket 的 OriginPatterns，一处配置两条路径都生效。
+//
+// 未配置时返回 nil，让 Server 沿用上游的 localhost 默认值（`allowedOrigins == nil`
+// 才回落；返回空切片会把默认值顶掉）。
+func allowedOrigins() []string {
+	var origins []string
+	for _, item := range strings.Split(os.Getenv("NEXTERM_ALLOWED_ORIGINS"), ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			origins = append(origins, item)
+		}
+	}
+	return origins
 }
 
 func run(args []string) int {
@@ -167,7 +187,8 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	if accounts != nil && invocation.Auth != core.AuthOff {
+	// 平台托管模式下账号随平台登录自动建立, 不存在需要抄写的一次性初始化码。
+	if accounts != nil && invocation.Auth != core.AuthOff && invocation.Auth != core.AuthPlatform {
 		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1
@@ -204,12 +225,13 @@ func run(args []string) int {
 	}
 	transport, err := server.New(server.Config{
 		Options: server.Options{
-			Listen:        invocation.Listen,
-			DataDir:       paths.DataDir,
-			WebRoot:       invocation.WebRoot,
-			SyncOnly:      invocation.SyncOnly,
-			Auth:          invocation.Auth,
-			PublicBaseURL: invocation.PublicBaseURL,
+			Listen:         invocation.Listen,
+			DataDir:        paths.DataDir,
+			WebRoot:        invocation.WebRoot,
+			SyncOnly:       invocation.SyncOnly,
+			Auth:           invocation.Auth,
+			PublicBaseURL:  invocation.PublicBaseURL,
+			AllowedOrigins: allowedOrigins(),
 		},
 		Blobs:          blobs,
 		Dispatcher:     application.Dispatcher,

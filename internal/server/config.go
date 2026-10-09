@@ -21,6 +21,7 @@ const CommandServe = core.CommandServe
 const (
 	AuthOn       = core.AuthOn
 	AuthLoopback = core.AuthLoopback
+	AuthPlatform = core.AuthPlatform
 	AuthOff      = core.AuthOff
 )
 

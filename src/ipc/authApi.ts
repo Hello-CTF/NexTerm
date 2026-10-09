@@ -253,6 +253,10 @@ export const authApi = {
 
   me: () => request<AccountSession>("GET", "/auth/me").then(rememberSession),
 
+  // 平台托管模式（--auth=platform）下的握手。前置网关已经完成认证, 这里只需换取
+  // 「平台所有者」会话; 没有这一步, 用户会看到初始化/登录界面, 而懒猫上两者都不该出现。
+  platformSession: () => request<AccountSession>("POST", "/auth/platform-session").then(rememberSession),
+
   logout: () => request<{ ok: boolean }>("POST", "/auth/logout", {}, { csrf: true }),
 
   logoutAll: () => request<{ revoked: number }>("POST", "/auth/logout-all", {}, { csrf: true }),

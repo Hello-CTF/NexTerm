@@ -214,6 +214,21 @@ export const useAuth = create<AuthState>((set, get) => ({
         }
         syncPreferenceStore(true);
       } catch {
+        // 平台托管模式(懒猫): 网关头已经过平台认证, 这里换取「平台所有者」会话。
+        // 用户既看不到登录, 也看不到初始化码 —— 打开就是所有者。
+        if (status.auth === "platform") {
+          try {
+            const session = await authApi.platformSession();
+            set({
+              user: session.user,
+              gate: session.user.state === "reset_required" ? "reset_required" : "ready",
+            });
+            syncPreferenceStore(true);
+            return;
+          } catch {
+            // 网关头缺失等(例如直连端口而非平台入口): 退回匿名可用, 由账号卡说明原因。
+          }
+        }
         // loopback 部署允许匿名继续用;auth=on 必须登录
         set({ user: null, gate: status.auth === "on" ? "login" : "ready" });
         syncPreferenceStore(false);
