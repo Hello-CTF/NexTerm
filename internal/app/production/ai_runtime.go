@@ -55,6 +55,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	grantsManager, err := guard.NewGrants(ctx, services.Store, func(ctx context.Context, event guard.GrantAuditEvent) error {
 		return toolsDeps.Audit(ctx, tools.AuditEntry{AssetID: event.DeviceID, Kind: "ai_grant", Payload: map[string]any{
 			"action": event.Action, "kinds": event.Kinds, "operation": event.Operation, "runId": event.RunID,
+			"ruleId": event.RuleID, "rulePath": event.RulePath,
 		}})
 	})
 	if err != nil {
@@ -96,6 +97,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		},
 		Memory:      memoryStore,
 		MemoryScope: productionMemoryScope,
+		ServerMode:  !services.desktop,
 	})
 	if err := runner.RecoverRuns(ctx); err != nil {
 		return err

@@ -111,11 +111,28 @@ func (g *Gate) InputAllowed() bool {
 // Check 先按 recheck 刷新授权快照 (支持权限收缩与有效期变化), 再按当前
 // ExpiresAt 判定; 过期或 recheck 失败 (吊销) 都返回错误。
 func (g *Gate) Check(ctx context.Context) error {
+	return g.check(ctx, func(ctx context.Context, grant *Grant) (*Grant, error) {
+		return g.cachedRefresh(ctx, grant, g.recheck, &g.recheckCache)
+	})
+}
+
+// CheckFresh 与 Check 判定相同, 但绕过 TTL 缓存强制重查: 集成层在数据通路
+// 已经断开时用它取当前授权状态, 缓存窗口不会掩盖刚刚发生的过期/吊销。
+func (g *Gate) CheckFresh(ctx context.Context) error {
+	return g.check(ctx, func(ctx context.Context, grant *Grant) (*Grant, error) {
+		if g.recheck == nil {
+			return nil, nil
+		}
+		return g.recheck(ctx, grant)
+	})
+}
+
+func (g *Gate) check(ctx context.Context, refresh func(ctx context.Context, grant *Grant) (*Grant, error)) error {
 	grant := g.Grant()
 	if grant == nil {
 		return errors.New("sharing: nil grant")
 	}
-	refreshed, err := g.cachedRefresh(ctx, grant, g.recheck, &g.recheckCache)
+	refreshed, err := refresh(ctx, grant)
 	if err != nil {
 		return err
 	}

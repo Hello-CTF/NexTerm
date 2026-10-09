@@ -3,14 +3,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { Asset } from "../../ipc/commands";
-import { clickButton, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   demo: false,
+  web: false,
   assetList: vi.fn(),
   grantList: vi.fn(),
   grantSet: vi.fn(),
   grantRevoke: vi.fn(),
+  ruleList: vi.fn(),
+  ruleSet: vi.fn(),
+  ruleRevoke: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
   onClose: vi.fn(),
@@ -28,7 +32,14 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 vi.mock("../../ipc/grantApi", () => ({
-  grantApi: { list: mocks.grantList, set: mocks.grantSet, revoke: mocks.grantRevoke },
+  grantApi: {
+    list: mocks.grantList,
+    set: mocks.grantSet,
+    revoke: mocks.grantRevoke,
+    ruleList: mocks.ruleList,
+    ruleSet: mocks.ruleSet,
+    ruleRevoke: mocks.ruleRevoke,
+  },
 }));
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
@@ -36,11 +47,13 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 vi.mock("../../demo", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../demo")>();
-  return { ...actual, get DEMO() { return mocks.demo; } };
+  return { ...actual, get DEMO() { return mocks.demo; }, get WEB() { return mocks.web; } };
 });
 
 import { GrantPanel } from "../../features/ai/GrantPanel";
 import { useUi } from "../../app/store";
+import { useAuth } from "../../features/auth/store";
+import type { AccountUser } from "../../ipc/authApi";
 
 function asset(id: string, name: string, kind = "ssh"): Asset {
   return {
@@ -67,6 +80,21 @@ function asset(id: string, name: string, kind = "ssh"): Asset {
 
 const ASSETS = [asset("asset-1", "生产 Web"), asset("asset-2", "数据库", "mysql")];
 
+function accountOf(role: AccountUser["role"]): AccountUser {
+  return {
+    id: "u-1",
+    username: "alice",
+    display_name: "",
+    role,
+    state: "active",
+    must_change_password: false,
+    mfa_enabled: false,
+    created_at: 1,
+    updated_at: 1,
+    last_login_at: 0,
+  };
+}
+
 let view: MountedView | null = null;
 
 function rowFor(name: string): HTMLElement {
@@ -85,13 +113,16 @@ describe("GrantPanel 设备长期授权管理", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.demo = false;
+    mocks.web = false;
     mocks.assetList.mockResolvedValue(ASSETS);
     mocks.grantList.mockResolvedValue([]);
+    mocks.ruleList.mockResolvedValue([]);
     mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
       Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
     );
     mocks.ask.mockResolvedValue(true);
     useUi.setState({ pushToast: mocks.toast });
+    useAuth.setState({ user: null });
   });
 
   it("默认全部关闭，并说明授权是安装级而非按用户隔离", async () => {
@@ -197,5 +228,143 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(view!.container.innerHTML).toBe("");
     expect(mocks.assetList).not.toHaveBeenCalled();
     expect(mocks.grantList).not.toHaveBeenCalled();
+    expect(mocks.ruleList).not.toHaveBeenCalled();
+  });
+});
+
+describe("GrantPanel 授权规则", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.demo = false;
+    mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.grantList.mockResolvedValue([]);
+    mocks.ruleList.mockResolvedValue([]);
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast });
+  });
+
+  function ruleRow(scope: string): HTMLElement {
+    const rows = [...view!.container.querySelectorAll<HTMLElement>("div.rounded-lg")];
+    const row = rows.find((r) => r.textContent?.includes(scope));
+    if (!row) throw new Error(`rule row not found: ${scope}`);
+    return row;
+  }
+
+  it("展示规则范围与有效期，永久规则明确标注", async () => {
+    mocks.ruleList.mockResolvedValue([
+      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
+      { id: "rule-2", deviceId: "asset-2", action: "exec_commands", path: "", expiresAt: 4102444800000, createdAt: 1, updatedAt: 1 },
+    ]);
+    await mountPanel();
+    const permanent = ruleRow("/var/log/**");
+    expect(permanent.textContent).toContain("生产 Web");
+    expect(permanent.textContent).toContain("写入文件 /var/log/**");
+    expect(permanent.textContent).toContain("永久");
+    const expiring = ruleRow("执行命令");
+    expect(expiring.textContent).toContain("数据库");
+    expect(expiring.textContent).toContain("全部路径");
+    expect(expiring.textContent).toContain("过期");
+  });
+
+  it("撤销规则前弹出显式确认，确认后调用撤销", async () => {
+    mocks.ruleList.mockResolvedValue([
+      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
+    ]);
+    await mountPanel();
+    clickButton(ruleRow("/var/log/**"), "撤销");
+    await flushUntil(() => mocks.ruleRevoke.mock.calls.length > 0);
+    expect(mocks.ask).toHaveBeenCalledOnce();
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("生产 Web");
+    expect(message).toContain("/var/log/**");
+    expect(mocks.ruleRevoke).toHaveBeenCalledWith("rule-1");
+    await flushUntil(() => view!.container.textContent?.includes("写入文件 /var/log/**") === false);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已撤销授权规则"));
+  });
+
+  it("添加规则：确认范围与有效期后调用 ruleSet", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
+    );
+    await mountPanel();
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "write_file");
+    setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则有效期']")!, "7d");
+    clickButton(view!.container, "添加");
+    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
+    expect(mocks.ask).toHaveBeenCalledOnce();
+    const message = mocks.ask.mock.calls[0][0] as string;
+    expect(message).toContain("生产 Web");
+    expect(message).toContain("写入文件 /var/log/**");
+    expect(message).toContain("7 天");
+    const [deviceId, action, path, expiresAt] = mocks.ruleSet.mock.calls[0];
+    expect(deviceId).toBe("asset-1");
+    expect(action).toBe("write_file");
+    expect(path).toBe("/var/log/**");
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    await flushUntil(() => view!.container.textContent?.includes("写入文件 /var/log/**") === true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已添加授权规则"));
+  });
+
+  it("写文件动作缺路径时禁用添加；命令动作不需要路径", async () => {
+    await mountPanel();
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
+    const addButton = () => [...view!.container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "添加");
+    expect(addButton()?.disabled).toBe(true);
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
+    expect(view!.container.querySelector("input[aria-label='规则路径范围']")).toBeNull();
+    expect(addButton()?.disabled).toBe(false);
+  });
+
+  it("取消添加确认则不调用 ruleSet", async () => {
+    mocks.ask.mockResolvedValue(false);
+    await mountPanel();
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!, "asset-1");
+    setInputValue(view!.container.querySelector<HTMLInputElement>("input[aria-label='规则路径范围']")!, "/var/log/**");
+    clickButton(view!.container, "添加");
+    await flush();
+    expect(mocks.ruleSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.demo = false;
+    mocks.web = true;
+    mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
+    mocks.ruleList.mockResolvedValue([
+      { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
+    ]);
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast });
+  });
+
+  it("非超管登录用户只读: 提示超管管理, 隐藏全部变更入口", async () => {
+    useAuth.setState({ user: accountOf("user") });
+    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
+    await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
+
+    const text = view!.container.textContent ?? "";
+    expect(text).toContain("当前账号不是超管");
+    expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
+    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
+    expect(buttons).not.toContain("开启授权");
+    expect(buttons).not.toContain("撤销");
+    expect(buttons).not.toContain("添加");
+    expect(view!.container.querySelector("select[aria-label='规则设备']")).toBeNull();
+  });
+
+  it("超管登录用户保留全部变更入口", async () => {
+    useAuth.setState({ user: accountOf("superadmin") });
+    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
+    await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
+
+    const buttons = [...view!.container.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.textContent);
+    expect(buttons).toContain("撤销");
+    expect(buttons).toContain("添加");
+    expect(view!.container.querySelector("select[aria-label='规则设备']")).not.toBeNull();
   });
 });

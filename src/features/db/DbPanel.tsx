@@ -8,7 +8,7 @@ import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
 import { DEMO } from "../../demo";
 import { dbApi, type QueryResult } from "../../ipc/commands";
-import { useUi } from "../../app/store";
+import { useUi, type DbKind } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
   IconChevronUp,
@@ -25,11 +25,16 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-export function DbPanel({ connId, kind }: { connId: string; kind: "mysql" | "redis" }) {
-  return kind === "mysql" ? <MysqlView connId={connId} /> : <RedisView connId={connId} />;
+export function DbPanel({ connId, kind }: { connId: string; kind: DbKind }) {
+  return kind === "redis" ? <RedisView connId={connId} /> : <SqlView connId={connId} dialect={kind} />;
 }
 
-function MysqlView({ connId }: { connId: string }) {
+const SQL_SYSTEM_SCHEMAS: Record<string, string[]> = {
+  mysql: ["information_schema", "mysql", "performance_schema", "sys"],
+  postgres: ["information_schema", "pg_catalog", "pg_toast"],
+};
+
+function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "postgres" }) {
   const { pushToast } = useUi();
   const [schema, setSchema] = useState("");
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -45,7 +50,7 @@ function MysqlView({ connId }: { connId: string }) {
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
 
-  const SYSTEM_SCHEMAS = ["information_schema", "mysql", "performance_schema", "sys"];
+  const SYSTEM_SCHEMAS = SQL_SYSTEM_SCHEMAS[dialect];
 
   const loadTables = async (next: string) => {
     setSchema(next);
@@ -169,11 +174,11 @@ function MysqlView({ connId }: { connId: string }) {
     <div className="nx-pane">
       <div className="nx-toolbar">
         <IconDatabase size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">MySQL</span>
+        <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL"}</span>
         <select
           className="nx-select nx-input-sm w-[168px]"
           value={schema}
-          aria-label="选择数据库"
+          aria-label={dialect === "postgres" ? "选择 schema" : "选择数据库"}
           onChange={(e) => void loadTables(e.target.value)}
         >
           {schemas.map((s) => (
@@ -183,7 +188,9 @@ function MysqlView({ connId }: { connId: string }) {
           ))}
         </select>
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
-        <span className="nx-hint hidden min-[560px]:inline">张表</span>
+        <span className="nx-hint hidden min-[560px]:inline">
+          {dialect === "postgres" ? "个对象" : "张表"}
+        </span>
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
@@ -236,7 +243,7 @@ function MysqlView({ connId }: { connId: string }) {
           {schemasStatus === "error" ? (
             <>
               <span className="nx-hint shrink-0 text-red-300">
-                数据库列表加载失败 · {schemasError}
+                {dialect === "postgres" ? "schema 列表加载失败" : "数据库列表加载失败"} · {schemasError}
               </span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -260,7 +267,9 @@ function MysqlView({ connId }: { connId: string }) {
               </button>
             </>
           ) : tables.length === 0 ? (
-            <span className="nx-hint">这个库里没有表</span>
+            <span className="nx-hint">
+              {dialect === "postgres" ? "这个 schema 里没有表或视图" : "这个库里没有表"}
+            </span>
           ) : (
             <>
               {tables.slice(0, 60).map((t) => (

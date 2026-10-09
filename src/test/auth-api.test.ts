@@ -33,7 +33,7 @@ function capture(): CapturedRequest[] {
   return calls;
 }
 
-import { authApi, adminApi, syncV2Api, setCsrfToken, getCsrfToken, AuthApiError, SESSION_EXPIRED_EVENT } from "../ipc/authApi";
+import { authApi, adminApi, syncV2Api, setCsrfToken, getCsrfToken, isMfaChallenge, AuthApiError, SESSION_EXPIRED_EVENT } from "../ipc/authApi";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -45,16 +45,26 @@ afterEach(() => {
 });
 
 describe("authApi 线上契约", () => {
-  it("status/me 走 GET,login 走 POST 并记住 CSRF 令牌", async () => {
+  it("status/me 走 GET,login 走 POST 并返回会话负载", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
     await authApi.status();
-    await authApi.login("alice", "secret");
-    expect(getCsrfToken()).toBe("csrf-1");
+    const result = await authApi.login("alice", "secret");
+    if (isMfaChallenge(result)) throw new Error("unexpected MFA challenge");
+    expect(result.csrf_token).toBe("csrf-1");
 
     expect(calls[0]).toMatchObject({ url: "/auth/status", method: "GET" });
     expect(calls[1]).toMatchObject({ url: "/auth/login", method: "POST", body: { username: "alice", password: "secret" } });
+  });
+
+  it("totpLogin 走 /auth/totp/login 并记住 CSRF 令牌", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+
+    await authApi.totpLogin("ticket-1", "123456");
+    expect(getCsrfToken()).toBe("csrf-1");
+    expect(calls[0]).toMatchObject({ url: "/auth/totp/login", method: "POST", body: { ticket: "ticket-1", code: "123456" } });
   });
 
   it("init 携带初始化码、账号与 DEK 信封五元组", async () => {

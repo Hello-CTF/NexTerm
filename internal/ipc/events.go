@@ -18,6 +18,7 @@ const (
 	TopicSyncStatus        Topic = "sync://status"
 	TopicAppError          Topic = "app://error"
 	TopicLayoutChanged     Topic = "layout://changed"
+	TopicDeviceStatus      Topic = "device://status"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")
@@ -29,6 +30,13 @@ type LayoutChangedEvent struct {
 type AppErrorEvent struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// DeviceStatusEvent 是设备控制通道上下线通知; 只带设备 ID 与在线状态,
+// 设备清单本身仍由 /fleet/devices 按 owner/超管边界过滤。
+type DeviceStatusEvent struct {
+	DeviceID string `json:"deviceId"`
+	Online   bool   `json:"online"`
 }
 
 type Event struct {

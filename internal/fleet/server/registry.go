@@ -63,7 +63,8 @@ func NewRegistry() *Registry {
 // RegisterControl 注册设备控制通道; 同设备已有连接时被顶替关闭。
 // 顶替是服务端单方面拆连, 用 CloseNow: 优雅关闭握手会阻塞新连接的
 // hello_ok 写出 (对端可能已不在读取)。
-func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest string) {
+// 返回 true 表示发生了顶替 (设备此前已在线, 不算新的上线迁移)。
+func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest string) (replaced bool) {
 	r.mu.Lock()
 	previous := r.controls[deviceID]
 	r.controls[deviceID] = &controlChannel{conn: conn, stateDigest: stateDigest}
@@ -71,15 +72,20 @@ func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateD
 	if previous != nil {
 		previous.conn.CloseNow()
 	}
+	return previous != nil
 }
 
 // UnregisterControl 仅当 conn 仍是当前注册连接时才移除, 避免旧连接误删新注册。
-func (r *Registry) UnregisterControl(deviceID string, conn *websocket.Conn) {
+// 返回 true 表示 conn 就是当前注册连接并被移除 (设备真正掉线); 顶替后的旧连接
+// 或服务关停 (Close 已换空表) 时返回 false, 调用方不得据此记离线。
+func (r *Registry) UnregisterControl(deviceID string, conn *websocket.Conn) (removed bool) {
 	r.mu.Lock()
 	if current := r.controls[deviceID]; current != nil && current.conn == conn {
 		delete(r.controls, deviceID)
+		removed = true
 	}
 	r.mu.Unlock()
+	return removed
 }
 
 func (r *Registry) control(deviceID string) *websocket.Conn {

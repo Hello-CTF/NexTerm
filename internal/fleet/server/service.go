@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
@@ -53,12 +54,16 @@ const (
 	auditKindDeviceAutostart = "device_autostart"
 	auditKindDeviceFailover  = "device_failover"
 	auditKindDeviceTerminal  = "device_terminal"
+	auditKindDeviceOnline    = "device_online"
+	auditKindDeviceOffline   = "device_offline"
 )
 
 type Config struct {
 	DB       *sql.DB
 	Accounts *account.Accounts
 	AuthOff  bool
+	// Events 是可选的事件出口 (EventBroker); nil 时上下线只落审计不推送。
+	Events ipc.Emitter
 }
 
 type Service struct {
@@ -67,8 +72,17 @@ type Service struct {
 	authOff    bool
 	now        func() int64
 	enrollGate *account.LoginThrottle
-	registry   *Registry
-	sharing    *sharing.Service
+	// shareResolveGate 限流匿名公开链接 resolve, 随机 token 洪水不能刷爆 audit_log。
+	shareResolveGate *account.LoginThrottle
+	registry         *Registry
+	sharing          *sharing.Service
+	events           ipc.Emitter
+
+	// presenceMu 保护 onlineDevices: 设备上下线事件与审计只在真实状态迁移时
+	// 产生一次, 顶替重连 (旧连接注销时已被顶替) 与服务关停 (Close 换空表) 不会
+	// 刷出重复或额外事件。
+	presenceMu    sync.Mutex
+	onlineDevices map[string]bool
 
 	sharePublicPage         http.Handler
 	shareRevalidateInterval time.Duration
@@ -81,6 +95,13 @@ func WithNow(now func() int64) Option {
 		if now != nil {
 			s.now = now
 		}
+	}
+}
+
+// WithEvents 覆盖事件出口 (装配层传 EventBroker); nil 表示只落审计不推送。
+func WithEvents(events ipc.Emitter) Option {
+	return func(s *Service) {
+		s.events = events
 	}
 }
 
@@ -109,12 +130,15 @@ func New(config Config, options ...Option) (*Service, error) {
 		return nil, fmt.Errorf("fleet: account service is required")
 	}
 	s := &Service{
-		db:         config.DB,
-		accounts:   config.Accounts,
-		authOff:    config.AuthOff,
-		now:        ids.NowMS,
-		enrollGate: account.NewLoginThrottle(),
-		registry:   NewRegistry(),
+		db:               config.DB,
+		accounts:         config.Accounts,
+		authOff:          config.AuthOff,
+		now:              ids.NowMS,
+		enrollGate:       account.NewLoginThrottle(),
+		shareResolveGate: account.NewLoginThrottle(),
+		registry:         NewRegistry(),
+		events:           config.Events,
+		onlineDevices:    make(map[string]bool),
 
 		shareRevalidateInterval: defaultShareRevalidateInterval,
 	}
@@ -219,16 +243,57 @@ type auditPayload struct {
 	URL       string `json:"url,omitempty"`
 }
 
+// audit 写 fleet 审计; payload 带设备 ID 时同步落 asset_id 列, 审计视图即可按
+// 设备过滤出完整时间线 (接入/上线/离线/吊销/切换接入地址), 无需解析 payload_json。
 func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
+	var assetID any
+	if payload.DeviceID != "" {
+		assetID = payload.DeviceID
+	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceFleet, kind, string(encoded)); err != nil {
+VALUES(?,NULL,?,?,?,?,NULL,NULL)`, s.now(), assetID, auditSourceFleet, kind, string(encoded)); err != nil {
 		return dbError(err)
 	}
 	return nil
+}
+
+// deviceOnline/deviceOffline 是设备上下线的唯一出口: 只在真实状态迁移时写审计并
+// 推送 device://status, 重复调用 (顶替重连的注销/注册交错) 直接忽略。
+// 调用方可能已持有取消的 ctx (控制通道断开路径), 这里统一用后台 ctx 完成落库与推送。
+func (s *Service) deviceOnline(deviceID string) {
+	s.transitionPresence(deviceID, true)
+}
+
+func (s *Service) deviceOffline(deviceID string) {
+	s.transitionPresence(deviceID, false)
+}
+
+func (s *Service) transitionPresence(deviceID string, online bool) {
+	s.presenceMu.Lock()
+	if s.onlineDevices[deviceID] == online {
+		s.presenceMu.Unlock()
+		return
+	}
+	if online {
+		s.onlineDevices[deviceID] = true
+	} else {
+		delete(s.onlineDevices, deviceID)
+	}
+	s.presenceMu.Unlock()
+
+	kind, action := auditKindDeviceOnline, "online"
+	if !online {
+		kind, action = auditKindDeviceOffline, "offline"
+	}
+	ctx := context.Background()
+	_ = s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: deviceID, Outcome: "allow"})
+	if s.events != nil {
+		_ = ipc.Emit(ctx, s.events, ipc.TopicDeviceStatus, ipc.DeviceStatusEvent{DeviceID: deviceID, Online: online})
+	}
 }
 
 type deviceGrant struct {
@@ -290,6 +355,16 @@ func (s *Service) canAccess(ctx context.Context, identity *account.Identity, dev
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
 	return grant, nil
+}
+
+// DeviceOwnerID 返回设备归属用户 ID, 供事件出口按 owner 过滤 device://status
+// 推送; 设备不存在时返回错误。
+func (s *Service) DeviceOwnerID(ctx context.Context, deviceID string) (string, error) {
+	grant, err := s.loadGrant(ctx, deviceID)
+	if err != nil {
+		return "", err
+	}
+	return grant.userID, nil
 }
 
 func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identity, targetUserID string, ttl time.Duration) (string, int64, error) {
@@ -375,7 +450,7 @@ VALUES(?,?,?,?,?)`, deviceID, credentialID, platform, appVersion, now); err != n
 		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, now, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
+VALUES(?,NULL,?,?,?,?,NULL,NULL)`, now, deviceID, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
 		return nil, dbError(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -514,6 +589,9 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 		return dbError(err)
 	}
 	s.registry.KickDevice(deviceID)
+	// 吊销即掉线: 控制通道被踢后不会再有注销回调 (KickDevice 已摘表),
+	// 这里补一次离线迁移, 让审计时间线与 device://status 推送保持完整。
+	s.deviceOffline(deviceID)
 	return nil
 }
 
@@ -777,7 +855,7 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {
+VALUES(?,NULL,?,?,?,?,NULL,NULL)`, s.now(), deviceID, auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {
 		return dbError(err)
 	}
 	if err := tx.Commit(); err != nil {

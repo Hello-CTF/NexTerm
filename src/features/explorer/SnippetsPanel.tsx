@@ -4,11 +4,12 @@ import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { insertSnippet, type Snippet } from "./snippetInsert";
+import { insertSnippet, executeSnippet, type Snippet } from "./snippetInsert";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
   IconCommand,
   IconEdit,
+  IconInsert,
   IconLoader,
   IconPlay,
   IconPlus,
@@ -35,6 +36,10 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const insert = async (s: Snippet) => {
     if (await insertSnippet(s)) onClose();
+  };
+
+  const execute = async (s: Snippet) => {
+    if (await executeSnippet(s)) onClose();
   };
 
   const remove = async (s: Snippet) => {
@@ -105,57 +110,76 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="nx-hint px-1 py-8 text-center">
-              还没有片段 — 点右上角 + 新建一个。插入只把命令写进终端，含回车/换行或控制字符时会先确认。
+              还没有片段 — 点右上角 + 新建一个。插入只把命令写进终端输入行，执行会在写入后回车提交；含回车/换行或控制字符时会先确认。
             </div>
           )}
-          {snippets.data?.map((s) => (
-            <div key={s.id} className="nx-row nx-row-reserve-actions mb-0.5">
-              <IconCommand size={13} className="shrink-0 text-neutral-500" />
-              <span className="min-w-0 flex-1 truncate text-[12.5px]">{s.name}</span>
-              <span className="nx-row-actions">
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
-                  title="插入到当前终端"
-                  disabled={deletingId === s.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void insert(s);
-                  }}
-                >
-                  <IconPlay size={12} />
-                </button>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
-                  title="编辑片段"
-                  disabled={deletingId === s.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditing(s);
-                  }}
-                >
-                  <IconEdit size={12} />
-                </button>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm is-danger"
-                  title="删除片段"
-                  disabled={deletingId === s.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void remove(s);
-                  }}
-                >
-                  {deletingId === s.id ? (
-                    <IconLoader size={12} className="animate-spin" />
-                  ) : (
-                    <IconTrash size={12} />
-                  )}
-                </button>
-              </span>
-            </div>
-          ))}
+          {snippets.data?.map((s) => {
+            const insertLabel = `插入片段「${s.name}」`;
+            const executeLabel = `执行片段「${s.name}」`;
+            return (
+              <div key={s.id} className="nx-row nx-row-reserve-actions mb-0.5">
+                <IconCommand size={13} className="shrink-0 text-neutral-500" />
+                <span className="min-w-0 flex-1 truncate text-[12.5px]">{s.name}</span>
+                <span className="nx-row-actions">
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm"
+                    title="插入到当前终端"
+                    aria-label={insertLabel}
+                    disabled={deletingId === s.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void insert(s);
+                    }}
+                  >
+                    <IconInsert size={12} />
+                  </button>
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm"
+                    title="在当前终端执行"
+                    aria-label={executeLabel}
+                    disabled={deletingId === s.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void execute(s);
+                    }}
+                  >
+                    <IconPlay size={12} />
+                  </button>
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm"
+                    title="编辑片段"
+                    aria-label="编辑片段"
+                    disabled={deletingId === s.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditing(s);
+                    }}
+                  >
+                    <IconEdit size={12} />
+                  </button>
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm is-danger"
+                    title="删除片段"
+                    aria-label="删除片段"
+                    disabled={deletingId === s.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void remove(s);
+                    }}
+                  >
+                    {deletingId === s.id ? (
+                      <IconLoader size={12} className="animate-spin" />
+                    ) : (
+                      <IconTrash size={12} />
+                    )}
+                  </button>
+                </span>
+              </div>
+            );
+          })}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <span className="nx-hint mr-auto">插入 = 写入终端输入行；回车/换行或控制字符会先确认</span>
+          <span className="nx-hint mr-auto">插入 = 写入输入行不执行；执行 = 写入后回车提交；回车/换行或控制字符会先确认</span>
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -297,7 +321,7 @@ function SnippetEditor({
               aria-describedby={hintId}
             />
             <div id={hintId} className="nx-hint mt-1.5">
-              ↳ 插入终端时只写入输入行，不会自动执行；含回车/换行或控制字符的片段插入前会再确认一次。
+              ↳ 插入只写入输入行、不自动执行；执行会写入并回车提交。含回车/换行或控制字符的片段会先确认一次。
             </div>
           </div>
           {error && (

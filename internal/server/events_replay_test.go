@@ -51,7 +51,7 @@ func TestEventBrokerSubscribeReplaysMissedEventsInOrder(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		emitSeq(t, broker, ipc.TopicSessionStatus, i)
 	}
-	subscriber, unsubscribe, err := broker.subscribe(7, true, false)
+	subscriber, unsubscribe, err := broker.subscribe(7, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestEventBrokerSubscribeReplaysMissedEventsInOrder(t *testing.T) {
 func TestEventBrokerSubscribeCaughtUpAndInvalidCursor(t *testing.T) {
 	broker := NewEventBroker()
 	emitSeq(t, broker, ipc.TopicSessionStatus, 1)
-	subscriber, unsubscribe, err := broker.subscribe(1, true, false)
+	subscriber, unsubscribe, err := broker.subscribe(1, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestEventBrokerSubscribeCaughtUpAndInvalidCursor(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	ahead, unsubscribeAhead, err := broker.subscribe(99, true, false)
+	ahead, unsubscribeAhead, err := broker.subscribe(99, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestEventBrokerSubscribeCaughtUpAndInvalidCursor(t *testing.T) {
 		t.Fatalf("ahead-of-server cursor marker = %+v", markers[0])
 	}
 
-	invalid, unsubscribeInvalid, err := broker.subscribe(0, true, true)
+	invalid, unsubscribeInvalid, err := broker.subscribe(0, true, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestEventBrokerSubscribeResyncWhenGapExceedsBufferOrQueue(t *testing.T) {
 	for i := 1; i <= 20; i++ {
 		emitSeq(t, broker, ipc.TopicSessionStatus, i)
 	}
-	stale, unsubscribeStale, err := broker.subscribe(1, true, false)
+	stale, unsubscribeStale, err := broker.subscribe(1, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestEventBrokerSubscribeResyncWhenGapExceedsBufferOrQueue(t *testing.T) {
 		t.Fatalf("stale cursor marker = %+v", markers[0])
 	}
 
-	withinBuffer, unsubscribeWithin, err := broker.subscribe(15, true, false)
+	withinBuffer, unsubscribeWithin, err := broker.subscribe(15, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestEventBrokerSubscribeResyncWhenGapExceedsBufferOrQueue(t *testing.T) {
 		t.Fatalf("gap-exceeds-queue marker = %+v", markers[0])
 	}
 
-	small, unsubscribeSmall, err := broker.subscribe(18, true, false)
+	small, unsubscribeSmall, err := broker.subscribe(18, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

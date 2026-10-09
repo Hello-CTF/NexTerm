@@ -49,6 +49,10 @@ func (s *Server) requireImageWrite(next http.Handler) http.Handler {
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
 			return
 		}
+		if s.mfaEnrollLocked(r) {
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
+			return
+		}
 		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return

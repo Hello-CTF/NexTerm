@@ -32,6 +32,8 @@ type Event struct {
 	Reason              string
 	Preview             *tools.Preview
 	Question            *tools.Question
+	Commands            []string
+	RulePattern         string
 	RequestID           string
 	Attempt             uint64
 	TabID               string
@@ -82,6 +84,12 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "confirmRequired":
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk
 		payload["rendered"], payload["reason"], payload["preview"] = e.Rendered, e.Reason, e.Preview
+		if len(e.Commands) != 0 {
+			payload["commands"] = e.Commands
+		}
+		if e.RulePattern != "" {
+			payload["rulePattern"] = e.RulePattern
+		}
 		payload["confirmationNonce"] = e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
 	case "questionRequired":

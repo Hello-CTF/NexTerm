@@ -62,11 +62,7 @@ func connectMySQL(ctx context.Context, config MySQLConfig) (*mysqlConnection, er
 	return &mysqlConnection{db: database, database: config.Database}, nil
 }
 
-func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) {
-	connection, err := s.mysqlOf(connID)
-	if err != nil {
-		return nil, err
-	}
+func mysqlSchemas(ctx context.Context, connection *mysqlConnection) ([]string, error) {
 	schemas, err := queryStrings(ctx, connection.db, "SHOW DATABASES")
 	if err != nil {
 		return nil, internalError("读取 MySQL 数据库列表", err)
@@ -74,12 +70,8 @@ func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) 
 	return schemas, nil
 }
 
-func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, error) {
-	connection, err := s.mysqlOf(connID)
-	if err != nil {
-		return nil, err
-	}
-	schema, err = mysqlSchema(ctx, connection, schema)
+func mysqlTables(ctx context.Context, connection *mysqlConnection, schema string) ([]string, error) {
+	schema, err := mysqlSchema(ctx, connection, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -90,12 +82,8 @@ func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, 
 	return tables, nil
 }
 
-func (s *Service) Describe(ctx context.Context, connID, schema, table string) (TableDescribe, error) {
-	connection, err := s.mysqlOf(connID)
-	if err != nil {
-		return TableDescribe{}, err
-	}
-	schema, err = mysqlSchema(ctx, connection, schema)
+func mysqlDescribe(ctx context.Context, connection *mysqlConnection, schema, table string) (TableDescribe, error) {
+	schema, err := mysqlSchema(ctx, connection, schema)
 	if err != nil {
 		return TableDescribe{}, err
 	}
@@ -151,15 +139,11 @@ func (s *Service) Describe(ctx context.Context, connID, schema, table string) (T
 	return description, nil
 }
 
-func (s *Service) Query(ctx context.Context, connID, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
-	connection, err := s.mysqlOf(connID)
-	if err != nil {
-		return QueryResult{}, err
-	}
-	return queryMySQL(ctx, connection.db, statement, limit, timeout)
+func queryMySQL(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
+	return querySQL(ctx, database, statement, limit, timeout, mysqlJSONValue)
 }
 
-func queryMySQL(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration) (result QueryResult, returnedErr error) {
+func querySQL(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration, jsonValue func(any, string) any) (result QueryResult, returnedErr error) {
 	started := time.Now()
 	result.Columns = []string{}
 	result.Rows = [][]any{}
@@ -174,7 +158,7 @@ func queryMySQL(ctx context.Context, database *sql.DB, statement string, limit u
 
 	var err error
 	if statementReturnsRows(statement) {
-		err = readMySQLRows(queryContext, database, statement, normalizeRowLimit(limit), &result)
+		err = readSQLRows(queryContext, database, statement, normalizeRowLimit(limit), &result, jsonValue)
 	} else {
 		var execution sql.Result
 		execution, err = database.ExecContext(queryContext, statement)
@@ -200,7 +184,7 @@ func queryMySQL(ctx context.Context, database *sql.DB, statement string, limit u
 	return result, nil
 }
 
-func readMySQLRows(ctx context.Context, database *sql.DB, statement string, limit uint64, result *QueryResult) error {
+func readSQLRows(ctx context.Context, database *sql.DB, statement string, limit uint64, result *QueryResult, jsonValue func(any, string) any) error {
 	rows, err := database.QueryContext(ctx, statement)
 	if err != nil {
 		return err
@@ -238,7 +222,7 @@ func readMySQLRows(ctx context.Context, database *sql.DB, statement string, limi
 		}
 		row := make([]any, len(values))
 		for i, value := range values {
-			row[i] = mysqlJSONValue(value, typeNames[i])
+			row[i] = jsonValue(value, typeNames[i])
 		}
 		result.Rows = append(result.Rows, row)
 	}

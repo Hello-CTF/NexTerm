@@ -25,11 +25,13 @@ const (
 	CodeBadMasterPass    Code = "bad_master_password"
 	CodeDecrypt          Code = "decrypt"
 	CodeForbidden        Code = "forbidden"
-	CodeNotController    Code = "not_controller"
-	CodeNeedsConfirm     Code = "needs_confirm"
-	CodeTimeout          Code = "timeout"
-	CodeCrypto           Code = "crypto"
-	CodeInternal         Code = "internal"
+	// CodeMFAEnrollmentRequired 表示 mfa_required 策略下未绑定会话被限制在绑定相关路由。
+	CodeMFAEnrollmentRequired Code = "mfa_enrollment_required"
+	CodeNotController         Code = "not_controller"
+	CodeNeedsConfirm          Code = "needs_confirm"
+	CodeTimeout               Code = "timeout"
+	CodeCrypto                Code = "crypto"
+	CodeInternal              Code = "internal"
 )
 
 type Error struct {

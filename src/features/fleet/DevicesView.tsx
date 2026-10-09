@@ -10,6 +10,8 @@ import { openDeviceTerminalTab, useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
+import { onEventsResync } from "../../ipc/webTransport";
 import {
   IconCheckCircle,
   IconCopy,
@@ -21,7 +23,7 @@ import {
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
-import { formatBytes, formatTime, formatUptime, isOnline, relativeTime } from "./format";
+import { formatBytes, formatTime, formatUptime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./format";
 import { BaseUrlsSection } from "./BaseUrlsSection";
 import { oneLineInstallCommand, shellQuote } from "./installCommand";
 
@@ -172,18 +174,20 @@ function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean 
 interface DeviceCardProps {
   device: FleetDevice;
   now: number;
+  online: boolean;
   isAdmin: boolean;
   onPatch: (id: string, patch: Partial<FleetDevice>) => void;
   onRevoked: (id: string) => void;
 }
 
-function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
+function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
   const { pushToast } = useUi();
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const revoked = device.revoked_at !== 0;
   const agent = device.agent;
-  const online = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
+  // 心跳判定的在线用于徽章提示文案: 事件驱动的在线以控制通道为准。
+  const heartbeatOnline = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
 
   const revoke = async () => {
     const ok = await ask(`吊销设备「${device.name}」?\n\n吊销后设备凭证立即失效、控制通道断开, 且不可恢复。`, {
@@ -244,7 +248,7 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
         ) : agent ? (
           <span
             className={`nx-badge shrink-0 ${online ? "nx-badge-green" : ""}`}
-            title={online ? "最近 3 分钟内有心跳" : `最近心跳 ${relativeTime(agent.last_seen_at || device.last_seen_at, now)}`}
+            title={online ? (heartbeatOnline ? "最近 3 分钟内有心跳" : "控制通道实时在线") : `最近心跳 ${relativeTime(agent.last_seen_at || device.last_seen_at, now)}`}
           >
             {online ? "在线" : "离线"}
           </span>
@@ -384,6 +388,9 @@ export function DevicesView() {
   // serverVersion 是 /healthz 的真实服务端版本 (一键安装 --version 用);
   // null 表示不可用, 一键安装指令整段隐藏, 绝不伪造版本。
   const [serverVersion, setServerVersion] = useState<string | null>(null);
+  // presence 是 device://status 事件的实时信号 (设备 ID → 在线状态 + 收到时间)。
+  // 超过心跳阈值后回落到心跳判定 (轮询兜底), 与既有展示语义一致。
+  const [presence, setPresence] = useState<Record<string, { online: boolean; at: number }>>({});
   const loadSeq = useRef(0);
   const versionSeq = useRef(0);
   // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离签发在途的
@@ -409,6 +416,7 @@ export function DevicesView() {
     setIssuing(false);
     setLoading(false);
     setServerVersion(null);
+    setPresence({});
   }
 
   const load = useCallback(() => {
@@ -441,6 +449,58 @@ export function DevicesView() {
     if (!WEB || !user) return;
     load();
   }, [user, load]);
+
+  // 轮询兜底: 事件流之外每 60 秒静默刷新一次设备列表, 事件丢失/WS 断开时
+  // 在线状态仍能收敛; 静默刷新不碰 loading 态, 避免周期性打扰界面。
+  const poll = useCallback(() => {
+    if (!WEB) return;
+    const seq = ++loadSeq.current;
+    fleetApi
+      .devices()
+      .then((r) => {
+        if (seq === loadSeq.current) setDevices(r.devices);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!WEB || !user) return;
+    const timer = setInterval(poll, 60_000);
+    return () => clearInterval(timer);
+  }, [user, poll]);
+
+  // device://status 实时上下线: 只写入 presence, 徽章与终端按钮随渲染更新;
+  // 不在当前账号设备清单内的 ID (他人设备) 不会被渲染, 自然忽略。
+  useEffect(() => {
+    if (!WEB || !user) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listenEvent<DeviceStatusEvent>(EVENTS.deviceStatus, (p) => {
+      if (!p || typeof p.deviceId !== "string" || typeof p.online !== "boolean") return;
+      setPresence((prev) => ({ ...prev, [p.deviceId]: { online: p.online, at: Date.now() } }));
+    }).then((off) => {
+      if (cancelled) off();
+      else unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [user]);
+
+  // 事件 WS 重连并错过事件 (resync) 时立即刷新, 不等下一轮轮询。
+  useEffect(() => {
+    if (!WEB || !user) return;
+    return onEventsResync(() => load());
+  }, [user, load]);
+
+  // 有效在线 = 实时事件优先 (心跳阈值内), 否则回落心跳判定; 非 agent 设备恒离线。
+  const onlineOf = (d: FleetDevice): boolean => {
+    if (!d.agent) return false;
+    const p = presence[d.id];
+    if (p && now - p.at <= ONLINE_THRESHOLD_MS) return p.online;
+    return isOnline(d.agent.last_seen_at || d.last_seen_at, now);
+  };
 
   // 打开接入面板时经 /healthz 读取真实服务端版本 (一键安装的 --version);
   // 失败或空串都归为 null: 一键安装指令整段隐藏, 绝不伪造版本。
@@ -718,6 +778,7 @@ export function DevicesView() {
             key={d.id}
             device={d}
             now={now}
+            online={onlineOf(d)}
             isAdmin={Boolean(isAdmin)}
             onPatch={patchDevice}
             onRevoked={(id) => {

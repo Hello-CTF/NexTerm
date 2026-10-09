@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -23,6 +24,7 @@ import {
   findWritableTerminal,
   openFileTab,
   openFileTabInSplit,
+  openLogTab,
   openTerminalTab,
   useUi,
 } from "../../app/store";
@@ -37,6 +39,15 @@ import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUt
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
+import { useCwdFollow } from "./cwdFollow";
+import { dropUploadFiles } from "./transferActions";
+import {
+  enqueueDownload,
+  enqueueUploads,
+  subscribeTransferSettled,
+  useTransferStore,
+} from "./transferStore";
+import { TransferPanel } from "./TransferPanel";
 import {
   IconAlert,
   IconArchive,
@@ -44,9 +55,11 @@ import {
   IconCopy,
   IconDownload,
   IconEdit,
+  IconEye,
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconLocate,
   IconLock,
   IconRefresh,
   IconShieldCheck,
@@ -78,6 +91,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
   const coarse = useCoarsePointer();
+  const follow = useCwdFollow(sessionId, path, (next) => {
+    setPath(next);
+    setSelected(null);
+  });
 
   const entries = useQuery({
     queryKey: ["fs", sessionId, path],
@@ -98,6 +115,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const [progress, setProgress] = useState<FileProgressMap>({});
   useEffect(() => {
     const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
+      if (useTransferStore.getState().runningId) return;
       if (event.error) {
         pushToast("error", `文件传输失败：${event.error}`);
       }
@@ -107,6 +125,15 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       void un.then((f) => f());
     };
   }, [pushToast]);
+
+  useEffect(
+    () =>
+      subscribeTransferSettled((task) => {
+        if (task.sessionId !== sessionId || !task.refreshDir) return;
+        void qc.invalidateQueries({ queryKey: ["fs", sessionId, task.refreshDir] });
+      }),
+    [qc, sessionId],
+  );
 
   useEffect(() => {
     setDraft(path);
@@ -189,6 +216,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     const file = await pickLocalFile();
     if (!file) return;
     const remote = joinPath(dir, baseName(file));
+    let handed = false;
     try {
       const check = await checkUploadOverwrite(sessionId, dir, remote, dir === path ? entries.data : undefined);
       if (check === "cancelled") {
@@ -196,13 +224,12 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         return;
       }
       pushToast("info", "开始上传…");
-      const bytes = await fsApi.upload(sessionId, file, remote, false);
-      refreshDir(dir);
-      pushToast("success", `已上传到 ${remote}（${bytes} 字节）`);
+      handed = true;
+      enqueueUploads(sessionId, [{ localPath: file, remotePath: remote }], dir);
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
     } finally {
-      await discardStaged(file);
+      if (!handed) await discardStaged(file);
     }
   };
 
@@ -210,13 +237,20 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     const target = await pickSavePath(baseName(remotePath));
     if (!target) return;
     pushToast("info", "开始下载…");
-    try {
-      const bytes = await fsApi.download(sessionId, remotePath, target);
-      const where = await finishSave(target, baseName(remotePath));
-      pushToast(where ? "success" : "info", where ? `已下载到 ${where}（${bytes} 字节）` : "已取消保存");
-    } catch (e) {
-      pushToast("error", `下载失败：${describeError(e)}`);
-    }
+    enqueueDownload(sessionId, { remotePath, localPath: target });
+  };
+
+  const dropUpload = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
+    const dir = row?.dataset.dropPath ?? path;
+    void dropUploadFiles({
+      sessionId,
+      dir,
+      dataTransfer: event.dataTransfer,
+      knownSiblings: dir === path ? entries.data : undefined,
+    });
   };
 
   const removePath = async (remotePath: string, isDir: boolean) => {
@@ -354,6 +388,14 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         icon: <IconEdit size={13} />,
         disabled: !isEditableFile(entry.name),
         onSelect: () => openFileTabInSplit(sessionId, entry.path),
+      });
+      items.push({
+        kind: "item",
+        label: "查看日志",
+        icon: <IconEye size={13} />,
+        hint: "只读分块",
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => openLogTab(sessionId, entry.path),
       });
       if (isExtractableArchive(entry.name)) {
         items.push({
@@ -535,6 +577,21 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         >
           <IconRefresh size={14} />
         </button>
+        {follow.supported && (
+          <button
+            className={`nx-icon-btn${follow.enabled ? " is-active" : ""}`}
+            title={
+              follow.enabled
+                ? "跟随终端目录：开。终端切换目录时，文件列表自动跟随"
+                : "跟随终端目录：关。点击开启自动跟随"
+            }
+            aria-label="跟随终端目录"
+            aria-pressed={follow.enabled}
+            onClick={follow.toggle}
+          >
+            <IconLocate size={14} />
+          </button>
+        )}
         <span className="nx-divider-v max-[560px]:hidden" />
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
@@ -553,6 +610,15 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         >
           <IconDownload size={13} />
           下载
+        </button>
+        <button
+          className="nx-btn nx-btn-sm max-[560px]:hidden"
+          disabled={!selected || selectedEntry?.kind === "dir"}
+          onClick={() => selected && openLogTab(sessionId, selected)}
+          title="用只读日志查看器打开选中文件（SFTP 分块读取，不整文件下载）"
+        >
+          <IconEye size={13} />
+          日志
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
@@ -603,7 +669,17 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <span className="w-40 text-right max-[560px]:hidden">修改时间</span>
       </div>
 
-      <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto" onContextMenu={openBlankMenu}>
+      <div
+        ref={parentRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onContextMenu={openBlankMenu}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={dropUpload}
+      >
         {entries.isLoading ? (
           <div role="status" aria-label="加载中">
             {Array.from({ length: 10 }, (_, i) => (
@@ -656,6 +732,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   aria-level={1}
                   aria-selected={isSel}
                   tabIndex={0}
+                  data-drop-path={isDir ? e.path : undefined}
                   className={`nx-row-reserve-actions flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 ${
                     isSel ? "bg-blue-500/[0.14]" : "hover:bg-neutral-800/50"
                   }`}
@@ -733,6 +810,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           </div>
         )}
       </div>
+
+      <TransferPanel />
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>{list.length} 项</span>

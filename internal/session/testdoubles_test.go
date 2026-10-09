@@ -65,6 +65,7 @@ type fakeTransport struct {
 	channels []*fakeChannel
 	options  []base.PTYOptions
 	execs    []string
+	writeErr error
 }
 
 func newFakeTransport(kind string, generation uint64) *fakeTransport {
@@ -102,6 +103,7 @@ func (t *fakeTransport) OpenPTY(_ context.Context, options base.PTYOptions) (bas
 		return nil, base.ErrStaleGeneration
 	}
 	channel := newFakeChannel(t.generation)
+	channel.writeErr = t.writeErr
 	t.mu.Lock()
 	t.channels = append(t.channels, channel)
 	t.options = append(t.options, options)
@@ -141,6 +143,7 @@ type fakeChannel struct {
 	closed     chan struct{}
 	closeOnce  sync.Once
 	closeCount atomic.Int32
+	writeErr   error
 
 	mu         sync.Mutex
 	pending    []byte
@@ -185,6 +188,9 @@ func (c *fakeChannel) Write(data []byte) (int, error) {
 	case <-c.closed:
 		return 0, base.ErrClosed
 	default:
+	}
+	if c.writeErr != nil {
+		return 0, c.writeErr
 	}
 	c.mu.Lock()
 	c.input = append(c.input, data...)

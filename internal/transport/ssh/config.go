@@ -48,6 +48,7 @@ type Config struct {
 	KeepAliveInterval time.Duration
 	KeepAliveMax      int
 	ClientVersion     string
+	Env               map[string]string
 }
 
 const maxJumpDepth = 16

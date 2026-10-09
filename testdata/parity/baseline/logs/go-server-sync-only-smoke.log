@@ -1,17 +1,17 @@
-time=2026-10-08T13:13:44.236+08:00 level=INFO msg="open file limit ensured" limit=1048576
+time=2026-10-09T09:05:29.687+08:00 level=INFO msg="open file limit ensured" limit=1048576
 
 nexterm-server: 账号系统尚未初始化
-nexterm-server: 一次性初始化码: KqqQqSZeZ7ZlqvUZP4V3zRp-dZInP3_pv1h_O70-dbo
+nexterm-server: 一次性初始化码: 7-Q6oTgECgq5pp2HoYGTks5Ssy2qKfQ_YxhW_pWiROY
 nexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)
 
-time=2026-10-08T13:13:44.260+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
+time=2026-10-09T09:05:29.710+08:00 level=WARN msg="no vault master key provided; credential synchronization may be unavailable"
 
 SELFCheck observations (Go runtime only; no Rust expected payloads):
 [
   {
     "auth_topology": {
       "mode": "loopback",
-      "listen": "127.0.0.1:54119",
+      "listen": "127.0.0.1:37335",
       "sync_only": true
     }
   },
@@ -34,17 +34,17 @@ SELFCheck observations (Go runtime only; no Rust expected payloads):
       },
       "retention": {
         "enabled": true,
-        "lastAttemptAt": "2026-10-08T05:13:44.262794563Z",
-        "lastSuccessAt": "2026-10-08T05:13:44.262813478Z"
+        "lastAttemptAt": "2026-10-09T01:05:29.711777627Z",
+        "lastSuccessAt": "2026-10-09T01:05:29.713306936Z"
       },
       "db": {
         "backend": "sqlite",
         "pingOk": true,
         "pingMs": 0,
         "pool": {
-          "openConnections": 1,
+          "openConnections": 4,
           "inUse": 0,
-          "idle": 1,
+          "idle": 4,
           "waitCount": 0
         }
       }

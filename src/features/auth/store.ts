@@ -6,9 +6,12 @@ import { create } from "zustand";
 import {
   authApi,
   AuthApiError,
+  isMfaChallenge,
   setCsrfToken,
+  MFA_ENROLLMENT_REQUIRED_EVENT,
   SESSION_EXPIRED_EVENT,
   type AccountDevice,
+  type AccountSession,
   type AccountStatus,
   type AccountUser,
 } from "../../ipc/authApi";
@@ -35,11 +38,18 @@ function syncPreferenceStore(loggedIn: boolean): void {
   }
 }
 
-export type AuthGateKind = "loading" | "ready" | "setup" | "login" | "reset_required";
+export type AuthGateKind = "loading" | "ready" | "setup" | "login" | "reset_required" | "mfa_enroll";
 
 export interface RecoveryKeyIssue {
   formatted: string;
   canonical: string;
+}
+
+export interface PendingMfa {
+  ticket: string;
+  username: string;
+  password: string;
+  deviceId?: string;
 }
 
 interface AuthState {
@@ -49,10 +59,20 @@ interface AuthState {
   gate: AuthGateKind;
   /** 最近一次初始化/注册/改密签发的恢复密钥,展示一次后由界面清除。 */
   pendingRecoveryKey: RecoveryKeyIssue | null;
+  /** 密码已通过、待 TOTP 第二因子的中间态; 密码仅驻留内存,验证完成或取消即清除。 */
+  pendingMfa: PendingMfa | null;
+  /**
+   * mfa_required 策略下未绑定会话被服务端锁到只能绑定;
+   * 登录密码暂存于此,绑定完成后用于解 DEK 进入应用,完成或登出即清除。
+   */
+  mfaEnrollmentPassword: string | null;
   error: AppError | null;
 
   refresh: () => Promise<void>;
   login: (username: string, password: string, deviceId?: string) => Promise<void>;
+  verifyMfa: (code: string) => Promise<void>;
+  cancelMfa: () => void;
+  finishMfaEnrollment: () => Promise<void>;
   logout: () => Promise<void>;
   initSuperadmin: (code: string, username: string, password: string) => Promise<void>;
   register: (username: string, password: string, displayName: string) => Promise<void>;
@@ -138,12 +158,45 @@ async function fetchAndUnwrapDEK(password: string): Promise<Uint8Array> {
   return r;
 }
 
+type AuthSet = (partial: Partial<AuthState>) => void;
+
+// finishPasswordLogin 完成密码认证后的公共收尾: 记录 CSRF 令牌、拉取/初始化 DEK 信封并进入应用。
+// mfa_required 策略下的未绑定会话进入强制绑定门(服务端已把会话锁到只能绑定)。
+async function finishPasswordLogin(set: AuthSet, session: AccountSession, password: string): Promise<void> {
+  setCsrfToken(session.csrf_token);
+  set({ user: session.user });
+  if (session.user.state === "reset_required") {
+    set({ gate: "reset_required" });
+    return;
+  }
+  if (!session.user.mfa_enabled && session.mfa_required) {
+    set({ gate: "mfa_enroll", mfaEnrollmentPassword: password });
+    return;
+  }
+  // 管理员创建的用户可能还没有 DEK 信封:用登录密码本地生成并上传(insert-only)。
+  let dek: Uint8Array;
+  let recovery: RecoveryKeyIssue | null = null;
+  try {
+    dek = await fetchAndUnwrapDEK(password);
+  } catch (e) {
+    if (!isNotFoundError(e)) throw e;
+    dek = generateDEK();
+    const built = await buildEnvelopes(password, dek);
+    await authApi.dekUpload(built.fields);
+    recovery = built.recovery;
+  }
+  set({ dek, gate: "ready", ...(recovery ? { pendingRecoveryKey: recovery } : {}) });
+  syncPreferenceStore(true);
+}
+
 export const useAuth = create<AuthState>((set, get) => ({
   status: null,
   user: null,
   dek: null,
   gate: "loading",
   pendingRecoveryKey: null,
+  pendingMfa: null,
+  mfaEnrollmentPassword: null,
   error: null,
 
   refresh: async () => {
@@ -169,7 +222,13 @@ export const useAuth = create<AuthState>((set, get) => ({
       try {
         const session = await authApi.me();
         set({ user: session.user });
-        set({ gate: session.user.state === "reset_required" ? "reset_required" : "ready" });
+        if (session.user.state === "reset_required") {
+          set({ gate: "reset_required" });
+        } else if (!session.user.mfa_enabled && session.mfa_required) {
+          set({ gate: "mfa_enroll" });
+        } else {
+          set({ gate: "ready" });
+        }
         syncPreferenceStore(true);
       } catch {
         // loopback 部署允许匿名继续用;auth=on 必须登录
@@ -191,26 +250,49 @@ export const useAuth = create<AuthState>((set, get) => ({
   login: async (username, password, deviceId) => {
     set({ error: null });
     try {
-      const session = await authApi.login(username, password, deviceId);
-      set({ user: session.user });
-      if (session.user.state === "reset_required") {
-        set({ gate: "reset_required" });
+      const result = await authApi.login(username, password, deviceId);
+      if (isMfaChallenge(result)) {
+        set({ pendingMfa: { ticket: result.ticket, username, password, ...(deviceId ? { deviceId } : {}) } });
         return;
       }
-      // 管理员创建的用户可能还没有 DEK 信封:用登录密码本地生成并上传(insert-only)。
-      let dek: Uint8Array;
-      let recovery: RecoveryKeyIssue | null = null;
-      try {
-        dek = await fetchAndUnwrapDEK(password);
-      } catch (e) {
-        if (!isNotFoundError(e)) throw e;
-        dek = generateDEK();
-        const built = await buildEnvelopes(password, dek);
-        await authApi.dekUpload(built.fields);
-        recovery = built.recovery;
+      await finishPasswordLogin(set, result, password);
+    } catch (e) {
+      set({ error: toAppError(e) });
+      throw e;
+    }
+  },
+
+  // verifyMfa 用动态码或恢复码完成第二步; 成功路径与密码登录一致(解 DEK、进门)。
+  verifyMfa: async (code) => {
+    const pending = get().pendingMfa;
+    if (!pending) return;
+    set({ error: null });
+    try {
+      const session = await authApi.totpLogin(pending.ticket, code);
+      await finishPasswordLogin(set, session, pending.password);
+      set({ pendingMfa: null });
+    } catch (e) {
+      set({ error: toAppError(e) });
+      throw e;
+    }
+  },
+
+  cancelMfa: () => set({ pendingMfa: null, error: null }),
+
+  // finishMfaEnrollment 在强制绑定完成后进门: 刷新会话(已绑定), 有暂存密码时顺带解 DEK。
+  finishMfaEnrollment: async () => {
+    set({ error: null });
+    try {
+      const session = await authApi.me();
+      const password = get().mfaEnrollmentPassword;
+      if (password) {
+        await finishPasswordLogin(set, session, password);
+      } else {
+        setCsrfToken(session.csrf_token);
+        set({ user: session.user, gate: "ready" });
+        syncPreferenceStore(true);
       }
-      set({ dek, gate: "ready", ...(recovery ? { pendingRecoveryKey: recovery } : {}) });
-      syncPreferenceStore(true);
+      set({ mfaEnrollmentPassword: null });
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -225,7 +307,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
     zeroize(get().dek);
     setCsrfToken(null);
-    set({ user: null, dek: null, gate: get().status?.auth === "on" ? "login" : "ready", pendingRecoveryKey: null });
+    set({ user: null, dek: null, gate: get().status?.auth === "on" ? "login" : "ready", pendingRecoveryKey: null, pendingMfa: null, mfaEnrollmentPassword: null });
     syncPreferenceStore(false);
   },
 
@@ -239,10 +321,14 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({
         user: session.user,
         dek,
-        gate: "ready",
         pendingRecoveryKey: recovery,
         ...(status ? { status: { ...status, initialized: true } } : {}),
       });
+      if (!session.user.mfa_enabled && session.mfa_required) {
+        set({ gate: "mfa_enroll", mfaEnrollmentPassword: password });
+      } else {
+        set({ gate: "ready" });
+      }
       syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
@@ -257,7 +343,12 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       const { fields, recovery } = await buildEnvelopes(password, dek);
       const session = await authApi.register({ username, password, displayName, ...fields });
-      set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      set({ user: session.user, dek, pendingRecoveryKey: recovery });
+      if (!session.user.mfa_enabled && session.mfa_required) {
+        set({ gate: "mfa_enroll", mfaEnrollmentPassword: password });
+      } else {
+        set({ gate: "ready" });
+      }
       syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
@@ -275,7 +366,12 @@ export const useAuth = create<AuthState>((set, get) => ({
       const { fields, recovery } = await buildEnvelopes(newPassword, dek);
       await authApi.changePassword({ oldPassword: tempPassword, newPassword, ...fields });
       const session = await authApi.me();
-      set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      set({ user: session.user, dek, pendingRecoveryKey: recovery });
+      if (!session.user.mfa_enabled && session.mfa_required) {
+        set({ gate: "mfa_enroll", mfaEnrollmentPassword: newPassword });
+      } else {
+        set({ gate: "ready" });
+      }
       syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
@@ -356,8 +452,15 @@ if (typeof window !== "undefined") {
     if (state.user) {
       zeroize(state.dek);
       setCsrfToken(null);
-      useAuth.setState({ user: null, dek: null, gate: state.status?.auth === "on" ? "login" : "ready" });
+      useAuth.setState({ user: null, dek: null, gate: state.status?.auth === "on" ? "login" : "ready", pendingMfa: null, mfaEnrollmentPassword: null });
       syncPreferenceStore(false);
+    }
+  });
+  // 服务端以 mfa_enrollment_required 拒绝(策略中途开启等): 已登录未绑定的会话切入强制绑定门。
+  window.addEventListener(MFA_ENROLLMENT_REQUIRED_EVENT, () => {
+    const state = useAuth.getState();
+    if (state.user && !state.user.mfa_enabled) {
+      useAuth.setState({ gate: "mfa_enroll" });
     }
   });
 }

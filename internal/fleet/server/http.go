@@ -111,10 +111,14 @@ var fleetRoutePatterns = []string{
 	"POST /share/links",
 	"GET /share/links",
 	"POST /share/links/{id}/revoke",
+	"POST /share/device-links",
+	"GET /share/device-links",
+	"POST /share/device-links/{id}/revoke",
 	"POST /share/host-shares",
 	"GET /share/host-shares",
 	"POST /share/host-shares/{id}/revoke",
 	"GET /share/public/{token}",
+	"GET /share/public/device/{token}",
 	"GET /share/devices/{id}/terminal",
 }
 
@@ -167,6 +171,9 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	sessionCSRF("POST /share/links", s.serveShareLinkCreate)
 	session("GET /share/links", s.serveShareLinkList)
 	sessionCSRF("POST /share/links/{id}/revoke", s.serveShareLinkRevoke)
+	sessionCSRF("POST /share/device-links", s.serveDeviceShareLinkCreate)
+	session("GET /share/device-links", s.serveDeviceShareLinkList)
+	sessionCSRF("POST /share/device-links/{id}/revoke", s.serveDeviceShareLinkRevoke)
 	sessionCSRF("POST /share/host-shares", s.serveHostShareCreate)
 	session("GET /share/host-shares", s.serveHostShareList)
 	sessionCSRF("POST /share/host-shares/{id}/revoke", s.serveHostShareRevoke)
@@ -176,6 +183,7 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	// 不要求 CSRF。公开链接的普通 GET (浏览器导航) 在 handler 内分流给静态
 	// SPA 入口, 只有 WS upgrade 进入 token 鉴权。
 	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
+	mux.HandleFunc("GET /share/public/device/{token}", s.serveSharePublicDeviceTerminal)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }
 
@@ -208,8 +216,32 @@ func (s *Service) requireFleetSession(next http.Handler) http.Handler {
 			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置")))
 			return
 		}
+		if s.mfaEnrollLocked(r) {
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeMFAEnrollmentRequired, "管理员已要求启用两步验证: 完成 TOTP 绑定前,该账号只能使用绑定相关功能")))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mfaEnrollAllowedPaths 与主服务 account_session.go 保持一致:
+// mfa_required 策略下未绑定会话只能访问绑定所需路由(绑定面在主服务 /auth/totp*)。
+var mfaEnrollAllowedPaths = map[string]bool{
+	"/auth/me":           true,
+	"/auth/totp":         true,
+	"/auth/totp/setup":   true,
+	"/auth/totp/confirm": true,
+	"/auth/logout":       true,
+	"/auth/logout-all":   true,
+}
+
+func (s *Service) mfaEnrollLocked(r *http.Request) bool {
+	identity := identityFrom(r)
+	if identity == nil || identity.MFAEnabled || identity.State == account.StateResetRequired || mfaEnrollAllowedPaths[r.URL.Path] {
+		return false
+	}
+	required, err := s.accounts.MFARequired(r.Context())
+	return err == nil && required
 }
 
 func (s *Service) requireFleetCSRF(next http.Handler) http.Handler {

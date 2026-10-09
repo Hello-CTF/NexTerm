@@ -6,13 +6,22 @@ import { Cwd } from "./Cwd";
 import { Daemon } from "./Daemon";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
+import {
+  broadcastInput,
+  broadcastRiskMessage,
+  collectBroadcastCandidates,
+  describeBroadcastSkips,
+  localRemoteMix,
+  quickBroadcastIds,
+} from "./broadcast";
+import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, terminalApi, filesApi } from "../../ipc/commands";
+import { sessionApi, terminalApi, filesApi, assetApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { fetchImageService, uploadImage } from "../../ipc/webFiles";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
+import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
@@ -45,6 +54,7 @@ import {
   IconSearch,
   IconSplitH,
   IconStop,
+  IconZap,
 } from "../../ui/icons";
 
 export interface TerminalPaneProps {
@@ -61,15 +71,22 @@ const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
 const AUTO_OPEN_BLOCKS = 3;
 
-type TerminalControlStateEvent = TerminalControlEvent & {
-  cwd?: string;
-  durable?: boolean;
-};
-
 function isStoreTabDead(id: string): boolean {
   return useUi
     .getState()
     .workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === id && t.dead === true)));
+}
+
+function findWorkspacePane(
+  workspaces: Workspace[],
+  storeTabId: string,
+): { wsId: string; paneId: string } | null {
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      if (p.tabs.some((t) => t.id === storeTabId)) return { wsId: w.id, paneId: p.id };
+    }
+  }
+  return null;
 }
 
 function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
@@ -123,10 +140,14 @@ export function TerminalPane({
     phase: "uploading" | "saving" | "success" | "error";
     message: string;
   } | null>(null);
+  const [broadcastPickerOpen, setBroadcastPickerOpen] = useState(false);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
   const observerHintAt = useRef(0);
   const writeErrorAt = useRef(0);
+  const broadcastSkipAt = useRef(0);
+  const broadcastChainRef = useRef<Promise<void>>(Promise.resolve());
+  const broadcastDisposedRef = useRef(false);
   const controlRef = useRef(control);
   controlRef.current = control;
   const controlRefreshGen = useRef(0);
@@ -148,6 +169,51 @@ export function TerminalPane({
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
+  const workspaceId = useUi(
+    (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
+  );
+  const myPaneId = useUi(
+    (s) => findWorkspacePane(s.workspaces, storeTabId)?.paneId ?? null,
+  );
+  const broadcastCount = useUi((s) => {
+    const wsId = findWorkspacePane(s.workspaces, storeTabId)?.wsId;
+    if (!wsId || !s.broadcast || s.broadcast.workspaceId !== wsId) return 0;
+    return s.broadcast.targetIds.length;
+  });
+  const memberBroadcastCount = useUi((s) => {
+    const found = findWorkspacePane(s.workspaces, storeTabId);
+    const bc = s.broadcast;
+    if (!found || !bc || bc.workspaceId !== found.wsId || !bc.targetIds.includes(storeTabId)) return 0;
+    const ws = s.workspaces.find((w) => w.id === found.wsId);
+    if (!ws) return 0;
+    const members = new Set(bc.targetIds);
+    return collectBroadcastCandidates(ws, s.sessions).filter(
+      (c) => members.has(c.storeTabId) && c.eligible,
+    ).length;
+  });
+  const [assetEncoding, setAssetEncoding] = useState<string | null>(null);
+  useEffect(() => {
+    if (!sessionAssetId || typeof assetApi.list !== "function") return;
+    let cancelled = false;
+    void assetApi
+      .list()
+      .then((assets) => {
+        if (cancelled) return;
+        const raw = assets.find((a) => a.id === sessionAssetId)?.options?.encoding;
+        if (typeof raw !== "string") return;
+        const value = raw.trim().toLowerCase();
+        const normalized = value === "utf8" ? "utf-8" : value === "iso-8859-1" ? "latin1" : value;
+        if (ENCODINGS.includes(normalized)) setAssetEncoding(normalized);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionAssetId]);
+  const encodingTouchedRef = useRef(false);
+  useEffect(() => {
+    if (assetEncoding && !encodingTouchedRef.current) setEncoding(assetEncoding);
+  }, [assetEncoding]);
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
   const statusText = sessionStatusText(sessionStatus);
   const canReconnect =
@@ -224,6 +290,28 @@ export function TerminalPane({
     [kernelTabId],
   );
 
+  const broadcastContext = useCallback((): { ws: Workspace; targetIds: string[]; key: string } | null => {
+    const st = useUi.getState();
+    const found = findWorkspacePane(st.workspaces, storeTabId);
+    const ws = found ? st.workspaces.find((w) => w.id === found.wsId) : undefined;
+    const broadcastState = st.broadcast;
+    if (!ws || !broadcastState || broadcastState.workspaceId !== ws.id || !broadcastState.targetIds.includes(storeTabId)) {
+      return null;
+    }
+    return {
+      ws,
+      targetIds: broadcastState.targetIds,
+      key: `${broadcastState.workspaceId}:${broadcastState.targetIds.join(",")}`,
+    };
+  }, [storeTabId]);
+
+  useEffect(() => {
+    broadcastDisposedRef.current = false;
+    return () => {
+      broadcastDisposedRef.current = true;
+    };
+  }, []);
+
   const sendData = useCallback(
     async (text: string, opts?: { fromCommand?: boolean }): Promise<"sent" | "observer" | "failed"> => {
       if (!kernelTabId) return "failed";
@@ -237,6 +325,37 @@ export function TerminalPane({
       if (isObserver) {
         hintObserver();
         return "observer";
+      }
+      const broadcast = broadcastContext();
+      if (broadcast) {
+        const queued = broadcastChainRef.current.then(async () => {
+          if (broadcastDisposedRef.current) return null;
+          const current = broadcastContext();
+          if (!current || current.key !== broadcast.key) return null;
+          return broadcastInput({
+            candidates: collectBroadcastCandidates(current.ws, useUi.getState().sessions),
+            targetIds: current.targetIds,
+            data: text,
+            write: (id, bytes) => terminalApi.write(id, bytes),
+          });
+        });
+        broadcastChainRef.current = queued.then(
+          () => undefined,
+          () => undefined,
+        );
+        const outcome = await queued;
+        if (!outcome) return "failed";
+        if (outcome.skipped.length > 0) {
+          const now = Date.now();
+          if (opts?.fromCommand || now - broadcastSkipAt.current > 4000) {
+            broadcastSkipAt.current = now;
+            pushToast(
+              "info",
+              `广播：${outcome.sent} 个终端已发送，跳过 ${outcome.skipped.length} 个（${describeBroadcastSkips(outcome.skipped)}）`,
+            );
+          }
+        }
+        return outcome.sent > 0 ? "sent" : "failed";
       }
       try {
         await terminalApi.write(kernelTabId, new TextEncoder().encode(text));
@@ -259,7 +378,7 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, isObserver, me, pushToast, refreshControl],
+    [kernelTabId, isObserver, me, pushToast, refreshControl, broadcastContext],
   );
 
   const takeControl = useCallback(async () => {
@@ -279,9 +398,43 @@ export function TerminalPane({
     }
   }, [kernelTabId, claiming, me, pushToast]);
 
+  const enableBroadcastScope = useCallback(
+    async (scope: "pane" | "workspace") => {
+      const st = useUi.getState();
+      const found = findWorkspacePane(st.workspaces, storeTabId);
+      const ws = found ? st.workspaces.find((w) => w.id === found.wsId) : undefined;
+      if (!ws || !found) return;
+      const candidates = collectBroadcastCandidates(ws, st.sessions);
+      const ids = quickBroadcastIds(candidates, scope, found.paneId);
+      if (ids.length < 2) {
+        pushToast(
+          "info",
+          scope === "pane"
+            ? "当前分屏里没有至少 2 个可广播的终端"
+            : "这个工作区里没有至少 2 个可广播的终端",
+        );
+        return;
+      }
+      const mix = localRemoteMix(candidates.filter((c) => ids.includes(c.storeTabId)));
+      const confirmed = await ask(broadcastRiskMessage(ids.length, mix), {
+        title: "开启命令广播",
+        kind: "warning",
+      });
+      if (!confirmed) return;
+      st.setBroadcast({ workspaceId: ws.id, targetIds: ids });
+      pushToast("info", `广播已开启：输入将发送到 ${ids.length} 个终端`);
+    },
+    [storeTabId, pushToast],
+  );
+
+  const closeBroadcast = useCallback(() => {
+    useUi.getState().setBroadcast(null);
+    pushToast("info", "广播已关闭，输入只发送到当前终端");
+  }, [pushToast]);
+
   const controlVersions = useRef(new EventVersionGate());
-  const pendingControl = useRef(new Map<string, TerminalControlStateEvent>());
-  const applyControl = useCallback((p: TerminalControlStateEvent) => {
+  const pendingControl = useRef(new Map<string, TerminalControlEvent>());
+  const applyControl = useCallback((p: TerminalControlEvent) => {
     if (!controlVersions.current.accept(p.tabId, p.version)) return;
     controlRefreshGen.current += 1;
     setControl({
@@ -324,7 +477,7 @@ export function TerminalPane({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    void listenEvent<TerminalControlStateEvent>(EVENTS.terminalControl, (p) => {
+    void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, (p) => {
       if (p.tabId !== kernelTabIdRef.current) {
         if (p.cwd !== undefined || p.durable !== undefined) {
           pendingControl.current.set(p.tabId, p);
@@ -496,6 +649,7 @@ export function TerminalPane({
     }
     try {
       await terminalApi.switchEncoding(kernelTabId, v);
+      encodingTouchedRef.current = true;
       setEncoding(v);
       pushToast("info", `编码已切换为 ${v}（对之后的输出生效，已显示的内容不变）`);
     } catch (e) {
@@ -732,6 +886,37 @@ export function TerminalPane({
             icon: <IconList size={13} />,
             hint: blocks.length > 0 ? `${blocks.length} 条` : "折叠输出 / 复制 / 定位",
             onSelect: toggleBlocksPanel,
+          },
+        ] satisfies MenuItem[])
+      : []),
+    { kind: "separator" },
+    { kind: "group", label: "命令广播" },
+    {
+      kind: "item",
+      label: "广播到当前分屏",
+      icon: <IconZap size={13} />,
+      hint: "同面板全部终端",
+      onSelect: () => void enableBroadcastScope("pane"),
+    },
+    {
+      kind: "item",
+      label: "广播到全部终端",
+      hint: "整个工作区",
+      onSelect: () => void enableBroadcastScope("workspace"),
+    },
+    {
+      kind: "item",
+      label: "选择广播目标…",
+      hint: broadcastCount > 0 ? `已选 ${broadcastCount} 个` : "逐个勾选",
+      onSelect: () => setBroadcastPickerOpen(true),
+    },
+    ...(broadcastCount > 0
+      ? ([
+          {
+            kind: "item",
+            label: "关闭广播",
+            danger: true,
+            onSelect: closeBroadcast,
           },
         ] satisfies MenuItem[])
       : []),
@@ -990,6 +1175,18 @@ export function TerminalPane({
             录制中
           </button>
         )}
+        {broadcastCount > 0 && (
+          <button
+            type="button"
+            className="nx-badge nx-badge-red shrink-0 cursor-pointer"
+            title={`命令广播已开启：输入将发送到 ${broadcastCount} 个终端，点击关闭广播`}
+            aria-label="关闭命令广播"
+            onClick={closeBroadcast}
+          >
+            <span className="nx-dot nx-dot-pulse" />
+            广播 {broadcastCount}
+          </button>
+        )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="更多终端操作（搜索 / 编码 / 录制 / 命令块）"
@@ -999,6 +1196,14 @@ export function TerminalPane({
           ⋯
         </button>
       </div>
+
+      {workspaceId && (
+        <BroadcastStrip
+          workspaceId={workspaceId}
+          myStoreTabId={storeTabId}
+          onManage={() => setBroadcastPickerOpen(true)}
+        />
+      )}
 
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 bg-neutral-900/70 px-2.5 py-1.5">
@@ -1064,6 +1269,7 @@ export function TerminalPane({
                   viewers: info.viewers,
                   exited: info.exited,
                 });
+                if (info.encoding) setEncoding(info.encoding);
               }}
               onAttach={(id) => {
                 setKernelTabId(id);
@@ -1229,8 +1435,16 @@ export function TerminalPane({
       <TerminalKeysBar
         onSend={(data) => void sendData(data)}
         onFocus={() => handleRef.current?.focus()}
+        broadcastCount={memberBroadcastCount}
       />
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+      {broadcastPickerOpen && workspaceId && myPaneId && (
+        <BroadcastPickerModal
+          workspaceId={workspaceId}
+          myPaneId={myPaneId}
+          onClose={() => setBroadcastPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

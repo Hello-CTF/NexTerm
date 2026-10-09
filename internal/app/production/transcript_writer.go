@@ -3,15 +3,13 @@ package production
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-	"strings"
 	"sync"
 	"time"
 
+	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -23,10 +21,10 @@ const (
 	transcriptBatchMaxItems            = 256
 	transcriptBatchMaxBytes            = 4 << 20
 	transcriptDefaultMaxSessionBytes   = 64 << 20
-	transcriptRetentionSettingKey      = "transcript.retention"
+	transcriptRetentionSettingKey      = core.TranscriptRetentionSettingKey
 	transcriptRetentionInterval        = 6 * time.Hour
-	transcriptDefaultRetentionMaxAge   = 30 * 24 * time.Hour
-	transcriptDefaultRetentionMaxCount = 2000
+	transcriptDefaultRetentionMaxAge   = core.TranscriptDefaultRetentionMaxAge
+	transcriptDefaultRetentionMaxCount = core.TranscriptDefaultRetentionMaxCount
 )
 
 var transcriptTruncationMarker = []byte("\r\n\x1b[33m[NexTerm] transcript size limit reached; further output not recorded\x1b[0m\r\n")
@@ -463,35 +461,5 @@ func (w *transcriptWriter) enforceRetention(ctx context.Context) {
 }
 
 func (w *transcriptWriter) retentionPolicy(ctx context.Context) (store.TranscriptRetentionPolicy, error) {
-	policy := store.TranscriptRetentionPolicy{
-		MaxAge:   transcriptDefaultRetentionMaxAge,
-		MaxCount: transcriptDefaultRetentionMaxCount,
-	}
-	raw, found, err := w.database.SettingGet(ctx, transcriptRetentionSettingKey)
-	if err != nil {
-		return policy, err
-	}
-	if !found || strings.TrimSpace(raw) == "" {
-		return policy, nil
-	}
-	var settings struct {
-		MaxAgeMS int64 `json:"maxAgeMs"`
-		MaxCount int64 `json:"maxCount"`
-	}
-	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
-		return policy, fmt.Errorf("decode %s: %w", transcriptRetentionSettingKey, err)
-	}
-	if settings.MaxAgeMS < 0 || settings.MaxCount < 0 {
-		return policy, fmt.Errorf("%s must not be negative", transcriptRetentionSettingKey)
-	}
-	if settings.MaxAgeMS > math.MaxInt64/int64(time.Millisecond) {
-		return policy, fmt.Errorf("%s maxAgeMs is too large", transcriptRetentionSettingKey)
-	}
-	if settings.MaxAgeMS > 0 {
-		policy.MaxAge = time.Duration(settings.MaxAgeMS) * time.Millisecond
-	}
-	if settings.MaxCount > 0 {
-		policy.MaxCount = settings.MaxCount
-	}
-	return policy, nil
+	return core.TranscriptRetentionPolicy(ctx, w.database)
 }

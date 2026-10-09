@@ -67,6 +67,7 @@ const ADMIN = {
   role: "superadmin" as const,
   state: "active" as const,
   must_change_password: false,
+  mfa_enabled: false,
   created_at: 1,
   updated_at: 1,
   last_login_at: 1,
@@ -268,7 +269,7 @@ describe("AuthGate 恢复密钥全屏门", () => {
   it("恢复密钥页在同一全屏门内,复制前不能进入", async () => {
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
-      user: { id: "u-admin", username: "root", display_name: "", role: "superadmin", state: "active", must_change_password: false, created_at: 1, updated_at: 1, last_login_at: 1 },
+      user: { id: "u-admin", username: "root", display_name: "", role: "superadmin", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 },
       dek: new Uint8Array(32).fill(9),
       gate: "ready",
       pendingRecoveryKey: { canonical: "X3QSWQP4PY4PVVAYPH7RNDV2CUAIQUKU", formatted: "X3QS-WQP4-PY4P-VVAY-PH7R-NDV2-CUAI-QUKU" },

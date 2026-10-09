@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -45,6 +46,36 @@ func TestIPCRegistrationAndWireShapes(t *testing.T) {
 	response = dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_schemas", Args: json.RawMessage(`{"connId":"conn-1"}`)}, ipc.Environment{})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound || response.Error.Message == "" {
 		t.Fatalf("error response=%+v", response)
+	}
+}
+
+func TestIPCPostgresConnectDispatch(t *testing.T) {
+	state := &fakeSQLState{query: func(_ context.Context, statement string) (driver.Rows, error) {
+		if strings.Contains(statement, "information_schema.schemata") {
+			return newFakeRows([]string{"schema_name"}, nil, [][]driver.Value{{"public"}}), nil
+		}
+		return newFakeRows([]string{"id"}, []string{"INT8"}, nil), nil
+	}}
+	database := newFakeSQLDB(t, state)
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "pg-1", nil }
+	service.openPostgres = func(_ context.Context, config PostgresConfig) (*postgresConnection, error) {
+		if config.Port != 5432 {
+			t.Fatalf("port=%d", config.Port)
+		}
+		return &postgresConnection{db: database}, nil
+	}
+	dispatcher := ipc.NewDispatcher()
+	if err := service.RegisterCommands(dispatcher); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"inline":{"kind":"postgres","host":"localhost"}}}`)}, ipc.Environment{})
+	if !response.OK || string(response.Data) != `{"connId":"pg-1"}` {
+		t.Fatalf("connect response=%+v data=%s error=%v", response, response.Data, response.Error)
+	}
+	response = dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_schemas", Args: json.RawMessage(`{"connId":"pg-1"}`)}, ipc.Environment{})
+	if !response.OK || string(response.Data) != `["public"]` {
+		t.Fatalf("schemas response=%+v data=%s", response, response.Data)
 	}
 }
 

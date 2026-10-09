@@ -35,6 +35,7 @@ type Manager struct {
 	ownsBus     bool
 	emitter     Emitter
 	transcripts TranscriptSink
+	commands    CommandSink
 	logger      *slog.Logger
 
 	hookMu        sync.RWMutex
@@ -68,6 +69,7 @@ func NewManager(config Config) *Manager {
 		resolver:         config.DurableResolver,
 		emitter:          config.Emitter,
 		transcripts:      config.Transcripts,
+		commands:         config.Commands,
 		idleTimeout:      config.IdleTimeout,
 		sweepInterval:    config.SweepInterval,
 		reconnectMax:     config.ReconnectMax,
@@ -199,6 +201,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ID:          newID(),
 		CreatedAt:   time.Now(),
 		asset:       asset,
+		userID:      userIDFromContext(ctx),
 		status:      StatusConnecting,
 		generation:  generation,
 		ctx:         sessionCtx,

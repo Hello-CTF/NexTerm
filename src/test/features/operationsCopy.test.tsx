@@ -325,7 +325,7 @@ describe("AuditView 文案", () => {
     ]);
     mounted = mount(createElement(AuditView));
     await flushUntil(() => text().includes("✓ 0"));
-    expect(text()).toContain("所有会话命令、AI 动作、文件写操作都会落库，逐条标注来源；有退出码的记录会一并展示。");
+    expect(text()).toContain("会话命令、AI 动作、文件写操作与设备上下线都会落库，逐条标注来源；有退出码的记录会一并展示。");
     expect(text()).not.toContain("齐全");
     expect(text()).not.toContain("可导出");
     expect(text()).not.toContain("§");

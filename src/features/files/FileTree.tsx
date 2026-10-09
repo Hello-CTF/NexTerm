@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
@@ -19,6 +19,7 @@ import {
   findWritableTerminal,
   openFileTab,
   openFileTabInSplit,
+  openLogTab,
   openTerminalTab,
   useUi,
 } from "../../app/store";
@@ -36,6 +37,10 @@ import {
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
+import { useCwdFollow } from "./cwdFollow";
+import { dropUploadFiles } from "./transferActions";
+import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
+import { TransferPanel } from "./TransferPanel";
 import {
   IconArchive,
   IconArrowUp,
@@ -44,10 +49,12 @@ import {
   IconClose,
   IconDownload,
   IconEdit,
+  IconEye,
   IconFilePlus,
   IconFoldAll,
   IconFolderPlus,
   IconHome,
+  IconLocate,
   IconLock,
   IconRefresh,
   IconShieldCheck,
@@ -94,6 +101,11 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const crumbRef = useRef<HTMLDivElement>(null);
   const fileOps = useFileOps(sessionId);
   const coarse = useCoarsePointer();
+  const follow = useCwdFollow(sessionId, root, (next) => {
+    setExpanded([]);
+    setSelected(null);
+    setRoot(next);
+  });
 
   useEffect(() => {
     const el = crumbRef.current;
@@ -106,6 +118,15 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     setSelected(null);
     setRoot("/");
   }, [sessionKind, root]);
+
+  useEffect(
+    () =>
+      subscribeTransferSettled((task) => {
+        if (task.sessionId !== sessionId) return;
+        void qc.invalidateQueries({ queryKey: ["fs", sessionId] });
+      }),
+    [qc, sessionId],
+  );
 
   const beginEdit = () => {
     setDraft(root);
@@ -279,21 +300,22 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const upload = async () => {
     const file = await pickLocalFile();
     if (!file) return;
-    const remote = joinPath(targetDir(), baseName(file));
+    const dir = targetDir();
+    const remote = joinPath(dir, baseName(file));
+    let handed = false;
     try {
-      const check = await checkUploadOverwrite(sessionId, targetDir(), remote);
+      const check = await checkUploadOverwrite(sessionId, dir, remote);
       if (check === "cancelled") {
         pushToast("info", `已取消上传，${remote} 保持原样`);
         return;
       }
       pushToast("info", "开始上传…");
-      await fsApi.upload(sessionId, file, remote, false);
-      refresh();
-      pushToast("success", `已上传到 ${remote}`);
+      handed = true;
+      enqueueUploads(sessionId, [{ localPath: file, remotePath: remote }], dir);
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
     } finally {
-      await discardStaged(file);
+      if (!handed) await discardStaged(file);
     }
   };
 
@@ -301,13 +323,20 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     const target = await pickSavePath(baseName(path));
     if (!target) return;
     pushToast("info", "开始下载…");
-    try {
-      await fsApi.download(sessionId, path, target);
-      const where = await finishSave(target, baseName(path));
-      pushToast(where ? "success" : "info", where ? `已下载到 ${where}` : "已取消保存");
-    } catch (e) {
-      pushToast("error", `下载失败：${describeError(e)}`);
-    }
+    enqueueDownload(sessionId, { remotePath: path, localPath: target });
+  };
+
+  const dropUpload = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
+    const dir = row?.dataset.dropPath ?? targetDir();
+    void dropUploadFiles({
+      sessionId,
+      dir,
+      dataTransfer: event.dataTransfer,
+      knownSiblings: dirMap.get(dir),
+    });
   };
 
   const remove = async (path: string) => {
@@ -443,6 +472,14 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         disabled: !isEditableFile(entry.name),
         onSelect: () => openFileTabInSplit(sessionId, entry.path),
       });
+      items.push({
+        kind: "item",
+        label: "查看日志",
+        icon: <IconEye size={13} />,
+        hint: "只读分块",
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => openLogTab(sessionId, entry.path),
+      });
       if (isExtractableArchive(entry.name)) {
         items.push({
           kind: "item",
@@ -564,6 +601,21 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         >
           <IconFoldAll size={14} />
         </button>
+        {follow.supported && (
+          <button
+            className={`nx-icon-btn nx-icon-btn-sm${follow.enabled ? " is-active" : ""}`}
+            title={
+              follow.enabled
+                ? "跟随终端目录：开。终端切换目录时，文件树自动跟随"
+                : "跟随终端目录：关。点击开启自动跟随"
+            }
+            aria-label="跟随终端目录"
+            aria-pressed={follow.enabled}
+            onClick={follow.toggle}
+          >
+            <IconLocate size={14} />
+          </button>
+        )}
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
@@ -670,7 +722,17 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      <div role="tree" aria-label="文件" className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
+      <div
+        role="tree"
+        aria-label="文件"
+        className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={dropUpload}
+      >
         {rows.map(({ entry, depth, error, dir }) => {
           if (error) {
             return (
@@ -719,6 +781,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               aria-expanded={isDir ? open : undefined}
               aria-selected={isSel}
               tabIndex={0}
+              data-drop-path={isDir ? entry.path : undefined}
               className={`nx-row nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => {
@@ -850,6 +913,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           </div>
         )}
       </div>
+
+      <TransferPanel compact />
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
         <span>{rows.filter((r) => r.entry).length} 项</span>

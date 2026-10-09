@@ -535,9 +535,25 @@ func (e *actionExecution) readScreen(ctx context.Context) (tools.Output, error) 
 
 func (e *actionExecution) decide(ctx context.Context, ruling guard.Ruling) guard.Decision {
 	if e.manager.deps.Grants != nil {
-		return e.manager.deps.Grants.Evaluate(ctx, e.runtime.permission, ruling, e.state.memory, e.state.assetID, "send_keys", e.state.id)
+		return e.manager.deps.Grants.EvaluateResource(ctx, e.runtime.permission, ruling, e.state.memory, e.state.assetID, "send_keys", e.state.id, guard.Resource{Action: "send_keys"})
 	}
 	return guard.Decide(e.runtime.permission, ruling, e.state.memory)
+}
+
+// persistPermanentGrant 把「永久允许」决策落成 send_keys 的持久规则；
+// 任何一步无法安全确定范围都拒绝，调用方按失败关闭处理。
+func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools.InteractionState) error {
+	if state.Info.Risk != "needs_confirm" {
+		return errors.New("该操作必须逐次确认，不支持永久授权")
+	}
+	if e.manager.deps.Grants == nil {
+		return errors.New("永久授权未配置")
+	}
+	if e.state.assetID == "" {
+		return errors.New("无法确定设备身份，不能保存永久授权")
+	}
+	_, err := e.manager.deps.Grants.AddRule(ctx, e.state.assetID, "send_keys", "", time.Time{})
+	return err
 }
 
 func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
@@ -554,7 +570,7 @@ func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs
 		if decision == "deny" {
 			return tools.Fail(errors.New("用户拒绝了此操作")), nil
 		}
-		if decision != "allow" && decision != "allow_session" {
+		if decision != "allow" && decision != "allow_session" && decision != "allow_persistent" {
 			return tools.Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
 		screen, err := e.manager.deps.Snapshot(ctx, e.state.args.TabID)
@@ -571,6 +587,11 @@ func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs
 			}
 			if len(state.MemoryKinds) == 0 {
 				e.state.memory.Add(state.MemoryKind)
+			}
+		}
+		if decision == "allow_persistent" {
+			if err := e.persistPermanentGrant(ctx, state); err != nil {
+				return tools.Fail(err), nil
 			}
 		}
 		return e.writeKeys(ctx, callID, input)

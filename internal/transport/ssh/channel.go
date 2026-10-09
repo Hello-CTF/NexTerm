@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -170,6 +171,9 @@ func (c *Client) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Cha
 		}
 		return nil, fmt.Errorf("request SSH PTY: %w", err)
 	}
+	for _, key := range sortedEnvKeys(c.env) {
+		_ = session.Setenv(key, c.env[key])
+	}
 	if c.forwardAgent {
 		if err := agent.RequestAgentForwarding(session); err != nil {
 			if opCtx.Err() != nil {
@@ -186,6 +190,15 @@ func (c *Client) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Cha
 	}
 	failed = false
 	return newChannel(session, stdin, stdout, stderr, nil, opCtx, cancel, stop, c.generation, true), nil
+}
+
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func newChannel(session *gossh.Session, stdin io.WriteCloser, stdout, stderr io.Reader, output *base.OutputRouter, ctx context.Context, cancel context.CancelFunc, stop func() bool, generation uint64, resizable bool) *channel {

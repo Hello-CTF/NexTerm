@@ -12,7 +12,7 @@ vi.hoisted(() => {
 });
 
 import { deliverStaged, dropStaged, requestSaveTarget, stageFile } from "../ipc/webFiles";
-import { authApi, getCsrfToken, setCsrfToken } from "../ipc/authApi";
+import { authApi, getCsrfToken, isMfaChallenge, setCsrfToken } from "../ipc/authApi";
 import { clearServerToken } from "../ipc/serverAuth";
 
 interface ObservedRequest {
@@ -215,6 +215,9 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
 
   it("authApi.login 建立会话后可直接暂存(复用 M125 登录 API)", async () => {
     const session = await authApi.login("u", "p");
+    if (isMfaChallenge(session)) throw new Error("unexpected MFA challenge");
+    // 会话建立后由调用方记住 CSRF 令牌(login 可能返回 MFA 挑战,不能代记)
+    setCsrfToken(session.csrf_token);
 
     expect(session.user.username).toBe("u");
     expect(getCsrfToken()).toBe("csrf-1");

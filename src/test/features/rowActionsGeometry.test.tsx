@@ -273,6 +273,11 @@ describe("行内操作条常驻占位的 DOM 契约", () => {
     );
     if (!row) throw new Error("snippet row not found: 看容器状态");
     expect(row.className).toContain("nx-row-reserve-actions");
-    expect(actionLabels(row)).toEqual(["插入到当前终端", "编辑片段", "删除片段"]);
+    expect(actionLabels(row)).toEqual([
+      "插入片段「看容器状态」",
+      "执行片段「看容器状态」",
+      "编辑片段",
+      "删除片段",
+    ]);
   });
 });

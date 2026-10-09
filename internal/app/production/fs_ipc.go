@@ -18,6 +18,11 @@ import (
 
 const fsReadDefaultMaxBytes = 8 << 20
 
+const (
+	fsRangeReadDefaultMaxBytes = 256 << 10
+	fsRangeReadMaxBytes        = 4 << 20
+)
+
 // StagedBlobResolver 把 blob Stage/Reserve 响应里的相对 path (id/name) 解析为服务器
 // 暂存文件路径; 由 *server.BlobStore 满足, 只在服务端装配注入。桌面端为 nil,
 // fs_upload/fs_download 等的 localPath 是用户经系统对话框选定的真实本地路径, 原样使用。
@@ -47,6 +52,7 @@ type fsRequest struct {
 	SessionID     string `json:"sessionId"`
 	Path          string `json:"path"`
 	MaxBytes      int64  `json:"maxBytes"`
+	Offset        int64  `json:"offset"`
 	ContentBase64 string `json:"contentBase64"`
 	Backup        bool   `json:"backup"`
 	From          string `json:"from"`
@@ -75,6 +81,18 @@ type fsReadDTO struct {
 	Path          string `json:"path"`
 	Size          int    `json:"size"`
 	ContentBase64 string `json:"contentBase64"`
+}
+
+type fsRangeReadDTO struct {
+	Path          string `json:"path"`
+	Offset        int64  `json:"offset"`
+	Size          int64  `json:"size"`
+	ContentBase64 string `json:"contentBase64"`
+	Truncated     bool   `json:"truncated"`
+}
+
+type rangeReadProvider interface {
+	ReadRange(context.Context, string, int64, int64) ([]byte, int64, error)
 }
 
 type sshPackDownloader interface {
@@ -128,6 +146,36 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 				}
 				data, err := filesystem.ReadFile(ctx, input.Path, maxBytes)
 				return fsReadDTO{Path: input.Path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, fsIPCError(kind, err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "fs_read_range", func(ctx context.Context, _ *ipc.Call, input fsRequest) (fsRangeReadDTO, error) {
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				if err != nil {
+					return fsRangeReadDTO{}, fsIPCError(kind, err)
+				}
+				provider, ok := filesystem.(rangeReadProvider)
+				if !ok {
+					return fsRangeReadDTO{}, terminalIPCError(base.ErrUnsupported)
+				}
+				if input.Offset < 0 {
+					return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("offset 不能为负数"))
+				}
+				maxBytes := input.MaxBytes
+				if maxBytes == 0 {
+					maxBytes = fsRangeReadDefaultMaxBytes
+				}
+				if maxBytes < 0 || maxBytes > fsRangeReadMaxBytes {
+					return fsRangeReadDTO{}, ipc.BadParam(fmt.Errorf("maxBytes 必须在 1 到 %d 字节之间", fsRangeReadMaxBytes))
+				}
+				data, size, err := provider.ReadRange(ctx, input.Path, input.Offset, maxBytes)
+				return fsRangeReadDTO{
+					Path:          input.Path,
+					Offset:        input.Offset,
+					Size:          size,
+					ContentBase64: base64.StdEncoding.EncodeToString(data),
+					Truncated:     input.Offset+int64(len(data)) < size,
+				}, fsIPCError(kind, err)
 			})
 		},
 		func() error {

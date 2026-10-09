@@ -76,6 +76,11 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
       enrollCode: vi.fn().mockResolvedValue({ code: "enroll-1", expires_at: 1 }),
+      totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
+      totpSetup: vi.fn(),
+      totpConfirm: vi.fn(),
+      totpDisable: vi.fn(),
+      totpLogin: vi.fn(),
     },
     adminApi: {
       users: mocks.adminUsers,
@@ -136,6 +141,7 @@ const DEMO_USER = {
   role: "user" as const,
   state: "active" as const,
   must_change_password: false,
+  mfa_enabled: false,
   created_at: 1,
   updated_at: 1,
   last_login_at: 1,
@@ -190,7 +196,7 @@ beforeEach(() => {
   });
   mocks.authDevices.mockResolvedValue({ devices: [] });
   mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
-  mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, public_base_url: "" });
+  mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, public_base_url: "", mfa_required: false });
 });
 
 afterEach(() => {

@@ -327,6 +327,35 @@ func TestGateRevalidateTTLAppliesRevocationAfterTTL(t *testing.T) {
 	}
 }
 
+func TestGateCheckFreshBypassesRevalidateTTL(t *testing.T) {
+	current := time.Now().UnixMilli()
+	calls := 0
+	recheckErr := errors.New("share revoked")
+	gate := NewGate(testGrant(PermissionReadWrite, current+time.Hour.Milliseconds()),
+		WithGateNow(func() int64 { return current }),
+		WithRevalidateTTL(2*time.Second),
+		WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+			calls++
+			if calls > 1 {
+				return nil, recheckErr
+			}
+			return grant, nil
+		}))
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current += 500
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatalf("cached window must not surface the revocation early: %v", err)
+	}
+	if err := gate.CheckFresh(context.Background()); !errors.Is(err, recheckErr) {
+		t.Fatalf("CheckFresh err = %v, want recheck error despite the TTL window", err)
+	}
+	if calls != 2 {
+		t.Fatalf("recheck calls = %d, want 2", calls)
+	}
+}
+
 func TestGateRevalidateTTLCachesInputCheck(t *testing.T) {
 	current := time.Now().UnixMilli()
 	inputCalls := 0

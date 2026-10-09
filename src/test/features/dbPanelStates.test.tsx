@@ -100,6 +100,24 @@ describe("DbPanel MySQL 状态", () => {
   });
 });
 
+describe("DbPanel PostgreSQL 状态", () => {
+  it("默认选中第一个非系统 schema，标题标注 PostgreSQL", async () => {
+    mocks.schemas.mockResolvedValue(["pg_catalog", "public"]);
+    mocks.tables.mockResolvedValue(["orders"]);
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
+    await flushUntil(() => text().includes("orders"));
+    expect(text()).toContain("PostgreSQL");
+    expect(mocks.tables).toHaveBeenCalledWith("c1", "public");
+  });
+
+  it("空 schema 显示「没有表或视图」", async () => {
+    mocks.schemas.mockResolvedValue(["public"]);
+    mocks.tables.mockResolvedValue([]);
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
+    await flushUntil(() => text().includes("这个 schema 里没有表或视图"));
+  });
+});
+
 describe("DbPanel Redis 状态", () => {
   it("SCAN 失败时给出真实错误与重试，而不是「没有匹配的键」", async () => {
     mocks.redisScan.mockRejectedValue(new Error("LOADING 错误"));

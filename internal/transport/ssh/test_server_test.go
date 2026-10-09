@@ -34,6 +34,7 @@ type testSSHServer struct {
 	active       atomic.Int32
 	agentResult  chan error
 	agentKey     gossh.PublicKey
+	envReqs      chan [2]string
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
@@ -165,6 +166,18 @@ func (s *testSSHServer) handleSession(conn *gossh.ServerConn, channel gossh.Chan
 		case "auth-agent-req@openssh.com":
 			request.Reply(true, nil)
 			go s.checkForwardedAgent(conn)
+		case "env":
+			var payload struct{ Name, Value string }
+			if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			if s.envReqs == nil {
+				request.Reply(false, nil)
+				continue
+			}
+			s.envReqs <- [2]string{payload.Name, payload.Value}
+			request.Reply(true, nil)
 		case "shell":
 			request.Reply(true, nil)
 			shellDone = make(chan struct{})

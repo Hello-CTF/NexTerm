@@ -128,6 +128,15 @@ type MySQLConfig struct {
 	TLSConfig *tls.Config
 }
 
+type PostgresConfig struct {
+	Host      string
+	Port      uint16
+	Username  string
+	Password  string
+	Database  string
+	TLSConfig *tls.Config
+}
+
 type RedisConfig struct {
 	Host      string
 	Port      uint16

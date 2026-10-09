@@ -70,7 +70,7 @@ func TestMigrationCreatesCompleteSchema(t *testing.T) {
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 19 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 22 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -133,7 +133,7 @@ func TestMigrationConcurrentFirstOpen(t *testing.T) {
 		}
 		for _, db := range stores {
 			var count int
-			if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 19 {
+			if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 22 {
 				t.Errorf("round %d migration count=%d err=%v", round, count, err)
 				failed = true
 			}

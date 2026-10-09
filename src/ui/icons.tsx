@@ -325,6 +325,14 @@ export const IconPlay = (p: IconProps) => (
   </Svg>
 );
 
+export const IconInsert = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 12h11" />
+    <path d="m11 7 5 5-5 5" />
+    <path d="M20 5v14" />
+  </Svg>
+);
+
 export const IconStop = (p: IconProps) => (
   <Svg {...p}>
     <rect x="6" y="6" width="12" height="12" rx="2.2" />
@@ -572,6 +580,7 @@ export const KIND_ICON_MAP = {
   local: IconMonitor,
   docker: IconBox,
   mysql: IconDatabase,
+  postgres: IconDatabase,
   redis: IconLayers,
 } as const;
 

@@ -2,6 +2,7 @@
 import {
   assets,
   auditEntries,
+  commandEntries,
   containerStats,
   containers,
   conversations,
@@ -1204,6 +1205,30 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return { ...s };
     }
 
+    case "session_connect_quick": {
+      const username = typeof a.username === "string" && a.username ? a.username : "demo";
+      const host = str(a.host);
+      const port = typeof a.port === "number" ? a.port : 22;
+      const s: DemoSession = {
+        id: uid("s"),
+        assetId: null,
+        name: `${username}@${host}${port === 22 ? "" : `:${port}`}`,
+        kind: "ssh",
+        status: "connecting",
+        tabs: [],
+        createdAt: Date.now(),
+      };
+      sessions.push(s);
+      later(420, () => {
+        s.status = "connected";
+        emitSessionStatus(s.id, "connected", null);
+      });
+      return { ...s };
+    }
+
+    case "session_quick_connect_user":
+      return "demo";
+
     case "session_disconnect": {
       const i = sessions.findIndex((s) => s.id === str(a.sessionId));
       if (i >= 0) {
@@ -1611,6 +1636,28 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return { total: auditEntries.filter((e) => !source || e.source === source).length };
     }
 
+    case "command_query": {
+      const sessionId = str(a.sessionId);
+      const assetId = str(a.assetId);
+      const userId = str(a.userId);
+      const limit = num(a.limit, 300);
+      const offset = num(a.offset, 0);
+      return commandEntries
+        .filter((e) => (!sessionId || e.sessionId === sessionId) && (!assetId || e.assetId === assetId) && (!userId || e.userId === userId))
+        .slice(offset, offset + limit);
+    }
+
+    case "command_count": {
+      const sessionId = str(a.sessionId);
+      const assetId = str(a.assetId);
+      const userId = str(a.userId);
+      return {
+        total: commandEntries.filter(
+          (e) => (!sessionId || e.sessionId === sessionId) && (!assetId || e.assetId === assetId) && (!userId || e.userId === userId),
+        ).length,
+      };
+    }
+
     case "known_host_list":
       return [
         { id: "kh1", host: "127.0.0.1", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:9xKq7mP2vL4nR8sT1uW3yA5bC6dE7fG8hI9jK0lM1nO", addedAt: Date.now() - 40 * 86_400_000 },
@@ -1681,6 +1728,21 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const text = demoFsContent(path);
       const bytes = new TextEncoder().encode(text);
       return { path, size: bytes.length, contentBase64: bytesToBase64(bytes) };
+    }
+
+    case "fs_read_range": {
+      const path = absPath(a.path);
+      const bytes = new TextEncoder().encode(demoFsContent(path));
+      const offset = Math.max(0, num(a.offset, 0));
+      const maxBytes = num(a.maxBytes, 256 * 1024) || 256 * 1024;
+      const slice = bytes.slice(offset, offset + maxBytes);
+      return {
+        path,
+        offset,
+        size: bytes.length,
+        contentBase64: bytesToBase64(slice),
+        truncated: offset + slice.length < bytes.length,
+      };
     }
 
     case "fs_write": {

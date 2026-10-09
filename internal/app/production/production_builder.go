@@ -126,6 +126,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		DurableResolver:   durableResolver,
 		TranscriptOffsets: durableTranscriptOffsets{database: database},
 		Transcripts:       transcriptWriter,
+		Commands:          commandLogSink{database: database, logger: config.Config.Logger},
 		Logger:            config.Config.Logger,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {

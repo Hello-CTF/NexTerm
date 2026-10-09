@@ -99,6 +99,55 @@ func (f *serviceFixture) auditRows(t *testing.T, kind string) []map[string]any {
 	return payloads
 }
 
+// auditAssetIDs 返回指定 kind 的 fleet 审计行的 asset_id 列 (设备时间线的过滤锚点)。
+func auditAssetIDs(t *testing.T, db *sql.DB, kind string) []string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), "SELECT asset_id FROM audit_log WHERE source = ? AND kind = ? ORDER BY id", auditSourceFleet, kind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id.String)
+	}
+	return ids
+}
+
+// 上下线只在真实状态迁移时落审计: 未上线先下线忽略, 重复上线/重复下线只记一次。
+func TestDevicePresenceTransitionDedup(t *testing.T) {
+	fixture := newServiceFixture(t)
+
+	fixture.service.deviceOffline("dev-dedup")
+	if rows := fixture.auditRows(t, auditKindDeviceOffline); len(rows) != 0 {
+		t.Fatalf("未上线先下线写出了离线审计: %v", rows)
+	}
+
+	fixture.service.deviceOnline("dev-dedup")
+	fixture.service.deviceOnline("dev-dedup")
+	fixture.service.deviceOffline("dev-dedup")
+	fixture.service.deviceOffline("dev-dedup")
+
+	onlines := fixture.auditRows(t, auditKindDeviceOnline)
+	if len(onlines) != 1 || onlines[0]["action"] != "online" || onlines[0]["device_id"] != "dev-dedup" {
+		t.Fatalf("online audits=%v", onlines)
+	}
+	offlines := fixture.auditRows(t, auditKindDeviceOffline)
+	if len(offlines) != 1 || offlines[0]["action"] != "offline" || offlines[0]["device_id"] != "dev-dedup" {
+		t.Fatalf("offline audits=%v", offlines)
+	}
+	if ids := auditAssetIDs(t, fixture.db, auditKindDeviceOnline); len(ids) != 1 || ids[0] != "dev-dedup" {
+		t.Fatalf("online audit asset_ids=%v", ids)
+	}
+	if ids := auditAssetIDs(t, fixture.db, auditKindDeviceOffline); len(ids) != 1 || ids[0] != "dev-dedup" {
+		t.Fatalf("offline audit asset_ids=%v", ids)
+	}
+}
+
 func requireIPCCode(t *testing.T, err error, code ipc.Code) {
 	t.Helper()
 	if err == nil {
@@ -152,6 +201,9 @@ func TestFleetEnrollCodeSingleUse(t *testing.T) {
 	audits := fixture.auditRows(t, auditKindDeviceEnroll)
 	if len(audits) != 1 || audits[0]["device_id"] != result.DeviceID || audits[0]["outcome"] != "allow" || audits[0]["requester"] != owner.ID {
 		t.Fatalf("enroll audits=%v", audits)
+	}
+	if ids := auditAssetIDs(t, fixture.db, auditKindDeviceEnroll); len(ids) != 1 || ids[0] != result.DeviceID {
+		t.Fatalf("enroll audit asset_ids=%v", ids)
 	}
 }
 

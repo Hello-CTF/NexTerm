@@ -372,7 +372,7 @@ func answerValue(kind Kind, answer Answer) (string, error) {
 			return "", ErrInvalidArgument
 		}
 		switch answer.Decision {
-		case DecisionAllow, DecisionAllowSession, DecisionDeny:
+		case DecisionAllow, DecisionAllowSession, DecisionAllowPersist, DecisionDeny:
 			return string(answer.Decision), nil
 		default:
 			return "", ErrInvalidArgument

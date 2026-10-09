@@ -2,10 +2,13 @@
 //
 // Public share links grant time-boxed access to one live terminal session on
 // a daemon device: read-only unless the owner explicitly opts into write,
-// revocable, expiring, with every access and input audited. Registered-user
-// host shares let a recipient open new terminals through the host agent at
-// any time while the share is valid. Both kinds bind owner, device,
-// permission and expiry, and neither ever reads or returns stored host
+// revocable, expiring, with every access and input audited. Device share
+// links do the same for the whole device: an anonymous visitor holding the
+// link opens a fresh terminal through the host agent at any time while the
+// link is valid, instead of attaching to one existing session. Registered-
+// user host shares let a recipient open new terminals through the host agent
+// at any time while the share is valid. All kinds bind owner, device,
+// permission and expiry, and none ever reads or returns stored host
 // passwords, private keys or sync payloads: the package touches no
 // credential, asset or sync table, and only SHA-256 token hashes are stored.
 //
@@ -46,8 +49,11 @@ const (
 
 	defaultLinkTTL      = time.Hour
 	defaultHostShareTTL = 24 * time.Hour
-	minShareTTL         = time.Minute
-	maxShareTTL         = 30 * 24 * time.Hour
+	// defaultDeviceShareTTL 是设备公开链接的默认有效期: 设备级分享面向更长
+	// 的协作窗口, 与注册主机分享的默认对齐。
+	defaultDeviceShareTTL = 24 * time.Hour
+	minShareTTL           = time.Minute
+	maxShareTTL           = 30 * 24 * time.Hour
 
 	defaultAgentStaleness = 5 * time.Minute
 )
@@ -60,6 +66,11 @@ const (
 	auditKindHostCreate   = "host_share_create"
 	auditKindHostRevoke   = "host_share_revoke"
 	auditKindHostTerminal = "host_share_terminal"
+
+	auditKindDeviceLinkCreate = "device_share_link_create"
+	auditKindDeviceLinkRevoke = "device_share_link_revoke"
+	auditKindDeviceLinkAccess = "device_share_link_access"
+	auditKindDeviceLinkInput  = "device_share_link_input"
 )
 
 type Permission string
@@ -70,6 +81,10 @@ const (
 )
 
 func (p Permission) AllowsWrite() bool { return p == PermissionReadWrite }
+
+// ErrTokenNotFound 表示公开链接 token 不存在; HTTP 入口据此把随机 token 尝试
+// 计入限流退避, 其余拒绝原因 (吊销/过期/未生效/设备离线) 不惩罚链接持有者。
+var ErrTokenNotFound = ipc.NewError(ipc.CodeForbidden, "分享链接无效")
 
 func permissionFor(write bool) Permission {
 	if write {

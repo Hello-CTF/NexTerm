@@ -169,6 +169,14 @@ type Decision struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// DecideResource 在 Decide 之上叠加本会话记住的路径级授权。
+func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resource) Decision {
+	if ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
+	}
+	return Decide(config, ruling, memory)
+}
+
 func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	config = config.Normalized()
 	if ruling.Risk == Forbidden {
@@ -202,6 +210,12 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 type Memory struct {
 	mu    sync.RWMutex
 	kinds map[Kind]struct{}
+	rules []pathRule
+}
+
+type pathRule struct {
+	action  string
+	pattern string
 }
 
 func NewMemory() *Memory {
@@ -225,4 +239,35 @@ func (m *Memory) Contains(kind Kind) bool {
 	_, ok := m.kinds[kind]
 	m.mu.RUnlock()
 	return ok
+}
+
+// AddPathRule 记住一条本会话有效的路径级授权（如某目录下的写入）。
+func (m *Memory) AddPathRule(action, pattern string) {
+	if m == nil || action == "" {
+		return
+	}
+	m.mu.Lock()
+	for _, existing := range m.rules {
+		if existing.action == action && existing.pattern == pattern {
+			m.mu.Unlock()
+			return
+		}
+	}
+	m.rules = append(m.rules, pathRule{action: action, pattern: pattern})
+	m.mu.Unlock()
+}
+
+// CoversPathRule 报告本会话是否已记住覆盖该动作与路径的授权。
+func (m *Memory) CoversPathRule(action, path string) bool {
+	if m == nil || action == "" {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, rule := range m.rules {
+		if rule.action == action && MatchPath(rule.pattern, path) {
+			return true
+		}
+	}
+	return false
 }

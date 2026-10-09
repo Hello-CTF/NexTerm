@@ -325,7 +325,7 @@ func (r *Runner) ConfirmStream(ctx context.Context, confirmation Confirmation, f
 		return ErrInvalidConfirmation
 	}
 	switch confirmation.Decision {
-	case "allow", "allow_session", "deny":
+	case "allow", "allow_session", "allow_persistent", "deny":
 	default:
 		return ErrInvalidConfirmation
 	}

@@ -1,15 +1,17 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { clickButton, deferred, flush, flushUntil, mount, setSelectValue, type MountedView } from "./features/reactTestUtils";
 import type { AuditEntryDto } from "../ipc/types";
 import { AuditView } from "../features/settings/AuditView";
+import { useAuth } from "../features/auth/store";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
     auditQuery: vi.fn(),
     auditCount: vi.fn(),
+    fleetDevices: vi.fn(),
   };
 });
 
@@ -21,6 +23,14 @@ vi.mock("../ipc/commands", async (importOriginal) => {
       auditQuery: mocks.auditQuery,
       auditCount: mocks.auditCount,
     },
+  };
+});
+
+vi.mock("../ipc/fleetApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/fleetApi")>();
+  return {
+    ...actual,
+    fleetApi: { ...actual.fleetApi, devices: mocks.fleetDevices },
   };
 });
 
@@ -63,6 +73,7 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  mocks.fleetDevices.mockResolvedValue({ devices: [] });
 });
 
 afterEach(() => {
@@ -340,5 +351,78 @@ describe("AuditView 响应式", () => {
       mounted.unmount();
       mounted = undefined;
     }
+  });
+});
+
+describe("AuditView 设备时间线", () => {
+  const DEVICE = { id: "d-1", name: "web-01", kind: "agent", created_at: 1, last_seen_at: 1, revoked_at: 0 };
+
+  function seedAdmin() {
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: {
+        id: "u-1",
+        username: "root",
+        display_name: "Root",
+        role: "superadmin" as const,
+        state: "active" as const,
+        must_change_password: false,
+        mfa_enabled: false,
+        created_at: 1,
+        updated_at: 1,
+        last_login_at: 1,
+      },
+      dek: null,
+      gate: "ready",
+      pendingRecoveryKey: null,
+      error: null,
+    });
+  }
+
+  afterEach(() => {
+    useAuth.setState({ user: null });
+  });
+
+  it("选中设备后按 assetId 过滤出设备时间线, 渲染中文事件标签, 来源筛选让位", async () => {
+    mocks.fleetDevices.mockResolvedValue({ devices: [DEVICE] });
+    mocks.auditCount.mockResolvedValue({ total: 2 });
+    mocks.auditQuery.mockResolvedValue([
+      { id: 2, ts: 2000, sessionId: null, assetId: "d-1", source: "fleet", kind: "device_online", payload: {}, exitCode: null, durationMs: null },
+      { id: 1, ts: 1000, sessionId: null, assetId: "d-1", source: "fleet", kind: "device_enroll", payload: {}, exitCode: null, durationMs: null },
+    ] satisfies AuditEntryDto[]);
+    seedAdmin();
+    mounted = mount(createElement(AuditView));
+
+    await flushUntil(() => mounted!.container.querySelector('select[aria-label="按设备过滤"]') !== null);
+    const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
+    if (!select) throw new Error("设备过滤下拉未出现");
+    // 未选设备时维持来源筛选。
+    expect(mocks.auditQuery).toHaveBeenCalledWith({ source: undefined, limit: 100, offset: 0 });
+
+    setSelectValue(select, "d-1");
+    await flushUntil(() => text(mounted!.container).includes("设备上线"));
+    expect(mocks.auditQuery).toHaveBeenLastCalledWith({ assetId: "d-1", limit: 100, offset: 0 });
+
+    const body = text(mounted!.container);
+    expect(body).toContain("设备上线");
+    expect(body).toContain("设备接入");
+    const badges = [...mounted!.container.querySelectorAll("tbody .nx-badge")].map((b) => b.textContent);
+    expect(badges).toContain("设备");
+    // 设备过滤期间来源筛选禁用 (避免“来源+设备”组合出空集)。
+    const userSegment = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-segment-item")].find(
+      (b) => b.textContent?.trim() === "用户",
+    );
+    expect(userSegment?.disabled).toBe(true);
+  });
+
+  it("未登录(WEB)不请求设备清单, 不显示设备过滤入口", async () => {
+    mocks.auditCount.mockResolvedValue({ total: 0 });
+    mocks.auditQuery.mockResolvedValue([]);
+    useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });
+    mounted = mount(createElement(AuditView));
+    await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
+
+    expect(mocks.fleetDevices).not.toHaveBeenCalled();
+    expect(mounted!.container.querySelector('select[aria-label="按设备过滤"]')).toBeNull();
   });
 });

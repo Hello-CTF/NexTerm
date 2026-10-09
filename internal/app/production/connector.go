@@ -12,6 +12,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
@@ -33,6 +34,7 @@ type productionAssetOptions struct {
 	AuthKind              string            `json:"authKind"`
 	KeyPath               string            `json:"keyPath"`
 	CredID                string            `json:"credId"`
+	Password              string            `json:"password"`
 	Shell                 string            `json:"shell"`
 	CWD                   string            `json:"cwd"`
 	Env                   map[string]string `json:"env"`
@@ -52,6 +54,8 @@ type productionAssetOptions struct {
 	CACert                string            `json:"caCert"`
 	RequestTimeoutMS      int64             `json:"requestTimeoutMs"`
 	InitialCommand        string            `json:"initialCommand"`
+	StartupCommand        string            `json:"startupCommand"`
+	Encoding              string            `json:"encoding"`
 }
 
 func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter) (*productionConnector, error) {
@@ -75,6 +79,14 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 	}
 	var transport base.Transport
 	var err error
+	if options.Encoding != "" {
+		if _, err := terminal.ParseEncoding(options.Encoding); err != nil {
+			return nil, ipc.BadParam(fmt.Errorf("资产终端编码无效: %w", err))
+		}
+	}
+	if strings.TrimSpace(options.StartupCommand) != "" && asset.Kind != session.KindSSH && asset.Kind != session.KindDocker {
+		return nil, ipc.BadParam(fmt.Errorf("启动命令仅支持 SSH 资产，%s 资产不执行启动命令", asset.Kind))
+	}
 	switch asset.Kind {
 	case session.KindLocal:
 		transport = local.NewWithConfig(local.Config{Shell: options.Shell, CWD: options.CWD, Env: options.Env})
@@ -151,10 +163,11 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 		ProxyURL: options.Proxy, ProxyCommand: options.ProxyCommand, ForwardAgent: options.ForwardAgent,
 		AutoAcceptUnknown: generation == 1 && options.AutoAcceptUnknownHost,
 		ConnectTimeout:    time.Duration(options.ConnectTimeout) * time.Second,
+		Env:               options.Env,
 	}
 	switch options.AuthKind {
 	case "password":
-		secret, _, err := c.secret(ctx, options.CredID)
+		secret, err := c.passwordSecret(ctx, options)
 		if err != nil {
 			return ssh.Config{}, err
 		}
@@ -330,6 +343,14 @@ func (c *productionConnector) secret(ctx context.Context, id string) (string, st
 	}
 	secret, err := c.vault.DecryptCredentialString(ctx, row)
 	return secret, row, err
+}
+
+func (c *productionConnector) passwordSecret(ctx context.Context, options productionAssetOptions) (string, error) {
+	if options.CredID == "" {
+		return options.Password, nil
+	}
+	secret, _, err := c.secret(ctx, options.CredID)
+	return secret, err
 }
 
 func stringValue(value *string) string {

@@ -32,11 +32,12 @@ type Session struct {
 }
 
 type Identity struct {
-	UserID    string
-	SessionID string
-	Role      Role
-	State     State
-	DeviceID  string
+	UserID     string
+	SessionID  string
+	Role       Role
+	State      State
+	DeviceID   string
+	MFAEnabled bool
 }
 
 func sessionTokenHash(token string) string {
@@ -103,15 +104,17 @@ VALUES(?,?,?,?,?,?,?)`, session.ID, session.UserID, nullableID(session.DeviceID)
 }
 
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
-	row := a.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.device_id, s.created_at, s.touched_at, s.expires_at, s.revoked_at, u.role, u.state, d.revoked_at
+	row := a.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.device_id, s.created_at, s.touched_at, s.expires_at, s.revoked_at, u.role, u.state, d.revoked_at, t.secret_envelope
 FROM user_session s JOIN `+userTable+` u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
+LEFT JOIN user_totp t ON t.user_id = s.user_id
 WHERE s.token_hash = ?`, sessionTokenHash(token))
 	var session Session
 	var role, state string
 	var deviceID sql.NullString
 	var revokedAt, deviceRevokedAt sql.NullInt64
+	var totpEnvelope []byte
 	if err := row.Scan(&session.ID, &session.UserID, &deviceID, &session.CreatedAt, &session.TouchedAt,
-		&session.ExpiresAt, &revokedAt, &role, &state, &deviceRevokedAt); err != nil {
+		&session.ExpiresAt, &revokedAt, &role, &state, &deviceRevokedAt, &totpEnvelope); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
 		}
@@ -146,7 +149,7 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 			return nil, dbError(err)
 		}
 	}
-	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), State: State(state), DeviceID: session.DeviceID}, nil
+	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), State: State(state), DeviceID: session.DeviceID, MFAEnabled: len(totpEnvelope) > 0}, nil
 }
 
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {

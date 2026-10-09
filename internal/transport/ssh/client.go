@@ -29,6 +29,7 @@ type Client struct {
 	sftp         *sftpState
 	closers      []io.Closer
 	forwardAgent bool
+	env          map[string]string
 }
 
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
@@ -108,6 +109,7 @@ func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
 		generation:   nextGeneration.Add(1),
 		done:         make(chan struct{}),
 		forwardAgent: cfg.ForwardAgent,
+		env:          cfg.Env,
 	}
 	if jumpClient != nil {
 		client.closers = append(client.closers, jumpClient)

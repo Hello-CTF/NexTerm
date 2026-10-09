@@ -16,6 +16,7 @@ export interface AccountUser {
   role: AccountRole;
   state: AccountState;
   must_change_password: boolean;
+  mfa_enabled: boolean;
   created_at: number;
   updated_at: number;
   last_login_at: number;
@@ -30,6 +31,31 @@ export interface AccountStatus {
 export interface AccountSession {
   user: AccountUser;
   csrf_token: string;
+  /** mfa_required 策略: 开启且 user.mfa_enabled 为 false 时会话被锁到只能完成 TOTP 绑定。 */
+  mfa_required: boolean;
+}
+
+// MfaChallenge 是已绑定 TOTP 的账号在密码通过后拿到的中间态: 凭 ticket 换会话。
+export interface MfaChallenge {
+  mfa_required: true;
+  ticket: string;
+  expires_at: number;
+}
+
+export function isMfaChallenge(payload: AccountSession | MfaChallenge): payload is MfaChallenge {
+  return typeof (payload as MfaChallenge).ticket === "string";
+}
+
+export interface TotpStatus {
+  enabled: boolean;
+  pending: boolean;
+  mfa_required: boolean;
+  recovery_codes_left: number;
+}
+
+export interface TotpSetup {
+  secret: string;
+  otpauth_uri: string;
 }
 
 export interface DekEnvelopesView {
@@ -52,6 +78,7 @@ export interface AccountDevice {
 export interface AdminSettings {
   registration_open: boolean;
   public_base_url: string;
+  mfa_required: boolean;
 }
 
 export interface SyncIdEntry {
@@ -92,6 +119,8 @@ export interface SyncPushResponse {
 
 export const SYNC_PROTOCOL_VERSION = 2;
 export const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
+// 服务端在 mfa_required 策略下拒绝未绑定会话时广播, 门据此切入强制绑定页(覆盖策略中途开启的场景)。
+export const MFA_ENROLLMENT_REQUIRED_EVENT = "nexterm:mfa-enrollment-required";
 
 let csrfToken: string | null = null;
 
@@ -154,6 +183,9 @@ export async function request<T>(method: string, path: string, body?: unknown, o
     if (response.status === 401) {
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
     }
+    if (code === "mfa_enrollment_required") {
+      window.dispatchEvent(new CustomEvent(MFA_ENROLLMENT_REQUIRED_EVENT));
+    }
     throw new AuthApiError(code, message, response.status);
   }
   return payload as T;
@@ -193,11 +225,27 @@ export const authApi = {
     request<AccountSession>("POST", "/auth/init", { code: input.code, username: input.username, password: input.password, ...envelopesBody(input) }).then(rememberSession),
 
   login: (username: string, password: string, deviceId?: string) =>
-    request<AccountSession>("POST", "/auth/login", {
+    request<AccountSession | MfaChallenge>("POST", "/auth/login", {
       username,
       password,
       ...(deviceId ? { device_id: deviceId } : {}),
-    }).then(rememberSession),
+    }),
+
+  // totpLogin 用登录票据 + 动态码(或一次性恢复码)换会话; 与 login 一样建立 cookie 会话。
+  totpLogin: (ticket: string, code: string) =>
+    request<AccountSession>("POST", "/auth/totp/login", { ticket, code }).then(rememberSession),
+
+  totpStatus: () => request<TotpStatus>("GET", "/auth/totp"),
+
+  // totpSetup 开启或换绑 TOTP; 已绑定用户必须带 reverify(当前动态码、恢复码或登录密码)。
+  totpSetup: (reverify?: string) =>
+    request<TotpSetup>("POST", "/auth/totp/setup", reverify ? { reverify } : {}, { csrf: true }),
+
+  totpConfirm: (code: string) =>
+    request<{ recovery_codes: string[] }>("POST", "/auth/totp/confirm", { code }, { csrf: true }),
+
+  totpDisable: (code: string) =>
+    request<{ ok: boolean }>("DELETE", "/auth/totp", { code }, { csrf: true }),
 
   register: (input: { username: string; password: string; displayName: string } & Parameters<typeof envelopesBody>[0]) =>
     request<AccountSession>("POST", "/auth/register", {
@@ -257,10 +305,11 @@ export const adminApi = {
 
   settingsGet: () => request<AdminSettings>("GET", "/admin/settings"),
 
-  settingsPut: (settings: { registrationOpen: boolean; publicBaseUrl?: string | null }) =>
+  settingsPut: (settings: { registrationOpen: boolean; publicBaseUrl?: string | null; mfaRequired?: boolean }) =>
     request<AdminSettings>("PUT", "/admin/settings", {
       registration_open: settings.registrationOpen,
       ...(settings.publicBaseUrl === undefined ? {} : { public_base_url: settings.publicBaseUrl }),
+      ...(settings.mfaRequired === undefined ? {} : { mfa_required: settings.mfaRequired }),
     }, { csrf: true }),
 };
 

@@ -95,13 +95,20 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 
 // serveDeviceControl 注册控制通道并回复 hello_ok, 随后阻塞读直到连接结束;
 // 读只是保活探测 (ping 由 websocket 层自动应答), agent 合同里不再上行数据帧。
+// hello_ok 写出后才记上线 (握手失败不产生上线); 注销只在 conn 仍是当前注册
+// 连接时记离线 (顶替的旧连接与服务关停换表后的注销都会被 Registry 拒绝)。
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
 	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest)
-	defer s.registry.UnregisterControl(hello.DeviceID, conn)
+	defer func() {
+		if s.registry.UnregisterControl(hello.DeviceID, conn) {
+			s.deviceOffline(hello.DeviceID)
+		}
+	}()
 	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok"}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello ack failed")
 		return
 	}
+	s.deviceOnline(hello.DeviceID)
 	for {
 		if _, _, err := conn.Read(context.Background()); err != nil {
 			conn.CloseNow()

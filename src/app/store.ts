@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
+import { DESKTOP } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
+import { formatQuickConnectTarget, type QuickConnectTarget } from "./quickConnectTarget";
 import { dirtyFileEditors } from "../features/files/editorGuards";
 import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
@@ -14,10 +16,12 @@ import {
   type ResolvedTheme,
   type ThemeMode,
 } from "./theme";
+import type { LayoutPreset } from "./layoutPresets";
 
 export type PaneKind =
   | "terminal"
   | "files"
+  | "log"
   | "mount"
   | "forward"
   | "docker"
@@ -33,6 +37,18 @@ export type PaneKind =
 
 export type LeftMode = "assets" | "files" | "credentials";
 
+export type DbKind = "mysql" | "postgres" | "redis";
+
+export const DB_KIND_LABEL: Record<DbKind, string> = {
+  mysql: "SQL",
+  postgres: "PostgreSQL",
+  redis: "Redis",
+};
+
+export function dbKindOf(kind: string): DbKind | null {
+  return kind === "mysql" || kind === "postgres" || kind === "redis" ? kind : null;
+}
+
 export interface AppTab {
   id: string;
   kind: PaneKind;
@@ -41,7 +57,7 @@ export interface AppTab {
   tabId?: string;
   containerId?: string;
   connId?: string;
-  dbKind?: "mysql" | "redis";
+  dbKind?: DbKind;
   credId?: string;
   credView?: "text" | "json";
   path?: string;
@@ -80,7 +96,7 @@ export interface Workspace {
   sessionId?: string;
   assetId?: string;
   connId?: string;
-  dbKind?: "mysql" | "redis";
+  dbKind?: DbKind;
   assetKind?: string;
   panes: Pane[];
   activePaneId: string;
@@ -94,7 +110,7 @@ export interface WorkspaceSpec {
   sessionId?: string;
   assetId?: string;
   connId?: string;
-  dbKind?: "mysql" | "redis";
+  dbKind?: DbKind;
   assetKind?: string;
 }
 
@@ -145,6 +161,11 @@ export interface TakeoverState {
   startedAt: number;
 }
 
+export interface BroadcastState {
+  workspaceId: string;
+  targetIds: string[];
+}
+
 interface UiState {
   leftOpen: boolean;
   leftMode: LeftMode;
@@ -154,10 +175,14 @@ interface UiState {
   setThemeMode: (m: ThemeMode) => void;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  layoutPresets: LayoutPreset[];
+  setLayoutPresets: (presets: LayoutPreset[]) => void;
   sessions: SessionInfo[];
   aiBusy: boolean;
   takeover: TakeoverState | null;
   setTakeover: (t: TakeoverState | null) => void;
+  broadcast: BroadcastState | null;
+  setBroadcast: (b: BroadcastState | null) => void;
   modelProfilesRevision: number;
   bumpModelProfilesRevision: () => void;
   connectFocusRevision: number;
@@ -367,9 +392,12 @@ export const useUi = create<UiState>((set, get) => ({
   rightWidth: initialLayout.rightWidth,
   workspaces: [],
   activeWorkspaceId: null,
+  layoutPresets: [],
+  setLayoutPresets: (presets) => set({ layoutPresets: presets }),
   sessions: [],
   aiBusy: false,
   takeover: restoredTakeover,
+  broadcast: null,
   modelProfilesRevision: 0,
   bumpModelProfilesRevision: () =>
     set((state) => ({ modelProfilesRevision: state.modelProfilesRevision + 1 })),
@@ -482,6 +510,7 @@ export const useUi = create<UiState>((set, get) => ({
       workspaces: next,
       activeWorkspaceId:
         activeWorkspaceId === id ? (next.length ? next[next.length - 1].id : null) : activeWorkspaceId,
+      ...(get().broadcast?.workspaceId === id ? { broadcast: null } : {}),
     });
     pushWorkspaceCloseToast(target.title, outcome);
   },
@@ -676,31 +705,42 @@ export const useUi = create<UiState>((set, get) => ({
         return false;
       }
     }
-    set((s2) => ({
-      workspaces: s2.workspaces.map((w) => {
-        if (w.id !== wsId) return w;
-        const pane = w.panes.find((p) => p.id === paneId);
-        if (!pane) return w;
-        const tabs = pane.tabs.filter((t) => t.id !== id);
-        const dropPane = tabs.length === 0 && w.panes.length > 1;
-        const panes = dropPane
-          ? w.panes.filter((p) => p.id !== paneId)
-          : w.panes.map((p) =>
-              p.id === paneId
-                ? {
-                    ...p,
-                    tabs,
-                    activeTabId: p.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : p.activeTabId,
-                  }
-                : p,
-            );
-        return {
-          ...w,
-          panes,
-          activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
+    set((s2) => {
+      const bc = s2.broadcast;
+      let broadcastPatch: Partial<Pick<UiState, "broadcast">> = {};
+      if (bc && bc.targetIds.includes(id)) {
+        const remaining = bc.targetIds.filter((t) => t !== id);
+        broadcastPatch = {
+          broadcast: remaining.length > 0 ? { workspaceId: bc.workspaceId, targetIds: remaining } : null,
         };
-      }),
-    }));
+      }
+      return {
+        workspaces: s2.workspaces.map((w) => {
+          if (w.id !== wsId) return w;
+          const pane = w.panes.find((p) => p.id === paneId);
+          if (!pane) return w;
+          const tabs = pane.tabs.filter((t) => t.id !== id);
+          const dropPane = tabs.length === 0 && w.panes.length > 1;
+          const panes = dropPane
+            ? w.panes.filter((p) => p.id !== paneId)
+            : w.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      tabs,
+                      activeTabId: p.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : p.activeTabId,
+                    }
+                  : p,
+              );
+          return {
+            ...w,
+            panes,
+            activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
+          };
+        }),
+        ...broadcastPatch,
+      };
+    });
     return true;
   },
 
@@ -758,6 +798,7 @@ export const useUi = create<UiState>((set, get) => ({
     persistTakeover(t);
     set({ takeover: t });
   },
+  setBroadcast: (b) => set({ broadcast: b }),
 
   connectingAssetIds: [],
 
@@ -1152,6 +1193,27 @@ function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome):
   pushToast("info", `已关闭「${title}」：${parts.join("，")}`);
 }
 
+// reclaimWorkspaceTabs 汇总确认后收回标签占用(终端转后台/结束、数据库断开)但不关闭工作区;
+// 供布局预设「应用到当前工作区」在重建分屏前复用同一套确认与收回语义。
+export async function reclaimWorkspaceTabs(
+  tabs: AppTab[],
+  title: string,
+  assetKind?: string,
+): Promise<boolean> {
+  const summary = collectWorkspaceClose(tabs, assetKind);
+  if (!(await confirmWorkspaceClose(summary, title))) return false;
+  const outcome = await executeWorkspaceClose(summary);
+  if (outcome.dbFailed > 0) {
+    useUi.getState().pushToast(
+      "error",
+      `「${title}」保持打开：${outcome.dbFailed}/${summary.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
+    );
+    return false;
+  }
+  pushWorkspaceCloseToast(title, outcome);
+  return true;
+}
+
 export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
@@ -1305,6 +1367,18 @@ export function openFileTabInSplit(sessionId: string, path: string) {
   useUi.getState().openInLowerPane(fileTabSpec(sessionId, path, name));
 }
 
+export function openLogTab(sessionId: string, path: string) {
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  useUi.getState().addTab({
+    id: `log-${sessionId}-${path}`,
+    kind: "log",
+    title: name,
+    sessionId,
+    path,
+    closable: true,
+  });
+}
+
 function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
   return {
     id: `file-${sessionId}-${path}`,
@@ -1366,8 +1440,7 @@ export function useCredentialsTabId(): string | undefined {
   });
 }
 
-async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }): Promise<boolean> {
-  if (!asset.credId) return true;
+async function ensureVaultUnlocked(reason: string): Promise<boolean> {
   let st: VaultStatus;
   try {
     st = await vaultApi.status();
@@ -1376,11 +1449,7 @@ async function ensureVaultReadyFor(asset: { name: string; credId?: string | null
   }
   if (!st.initialized || st.unlocked) return true;
   const { promptText } = await import("../ui/dialogs");
-  const pwd = await promptText(
-    `连接「${asset.name}」需要使用凭据，请先输入保护密码：`,
-    "",
-    { secret: true },
-  );
+  const pwd = await promptText(reason, "", { secret: true });
   if (pwd === null) return false;
   try {
     await vaultApi.unlock(pwd);
@@ -1389,6 +1458,11 @@ async function ensureVaultReadyFor(asset: { name: string; credId?: string | null
     useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
     return false;
   }
+}
+
+async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }): Promise<boolean> {
+  if (!asset.credId) return true;
+  return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`);
 }
 
 function sidebarsOverlayWorkspace(): boolean {
@@ -1446,6 +1520,41 @@ export interface ConnectAssetOptions {
   silent?: boolean;
 }
 
+// connectAssetSession 只建立会话并登记进会话列表, 不打开任何标签;
+// 供布局预设恢复等「先连上再按预设摆标签」的入口使用。
+export async function connectAssetSession(
+  asset: ConnectAssetInput,
+): Promise<SessionInfo | null> {
+  const { pushToast } = useUi.getState();
+  try {
+    if (!(await ensureVaultReadyFor(asset))) return null;
+    const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id));
+    if (!info) {
+      pushToast("info", "已取消连接");
+      return null;
+    }
+    const { sessions, setSessions } = useUi.getState();
+    setSessions([...sessions.filter((s) => s.id !== info.id), info]);
+    return info;
+  } catch (e) {
+    const err = e as { message?: string };
+    pushToast("error", err.message || describeError(e));
+    return null;
+  }
+}
+
+// connectDbAsset 建立数据库连接并返回 connId, 不打开标签; 布局预设恢复数据库标签时使用。
+export async function connectDbAsset(asset: ConnectAssetInput): Promise<string | null> {
+  try {
+    if (!(await ensureVaultReadyFor(asset))) return null;
+    const { connId } = await dbApi.connect(asset.id);
+    return connId;
+  } catch (e) {
+    useUi.getState().pushToast("error", describeError(e));
+    return null;
+  }
+}
+
 export type ConnectOutcome =
   | { ok: true }
   | { ok: false; error?: string; canceled?: boolean };
@@ -1487,20 +1596,20 @@ async function runConnectAsset(
 ): Promise<ConnectOutcome> {
   const { pushToast } = useUi.getState();
 
-  if (asset.kind === "mysql" || asset.kind === "redis") {
+  const dbKind = dbKindOf(asset.kind);
+  if (dbKind) {
     try {
       if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
       const { connId } = await dbApi.connect(asset.id);
-      const kind = asset.kind === "redis" ? "redis" : "mysql";
-      const title = `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`;
+      const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
       const { addTab, ensureWorkspace } = useUi.getState();
-      ensureWorkspace({ kind: "db", connId, dbKind: kind, title });
+      ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
       addTab({
         id: nextTabId(`db-${connId}`),
         kind: "db",
         title,
         connId,
-        dbKind: kind,
+        dbKind,
         closable: true,
       });
       useConnectHistory.getState().record(asset.id);
@@ -1521,6 +1630,105 @@ async function runConnectAsset(
     await openConnectedAssetSession(info, asset);
     useConnectHistory.getState().record(asset.id);
     return { ok: true };
+  } catch (e) {
+    const err = e as { message?: string };
+    const message = err.message || describeError(e);
+    if (!options?.silent) pushToast("error", message);
+    return { ok: false, error: message };
+  }
+}
+
+const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
+
+async function promptQuickConnectPassword(display: string): Promise<string | null> {
+  const { promptText } = await import("../ui/dialogs");
+  return promptText(`输入 ${display} 的登录密码（留空则使用 SSH agent）`, "", {
+    secret: true,
+  });
+}
+
+export function connectQuickTarget(
+  target: QuickConnectTarget,
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
+  const key = formatQuickConnectTarget(target);
+  const inflight = inflightQuickConnects.get(key);
+  if (inflight) return inflight;
+  const promise = runQuickConnectTarget(target, options).finally(() => {
+    inflightQuickConnects.delete(key);
+  });
+  inflightQuickConnects.set(key, promise);
+  return promise;
+}
+
+async function runQuickConnectTarget(
+  target: QuickConnectTarget,
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
+  const { pushToast } = useUi.getState();
+  const display = formatQuickConnectTarget(target);
+  const password = await promptQuickConnectPassword(display);
+  if (password === null) return { ok: false, canceled: true };
+  try {
+    const info = await connectWithHostKeyConfirm(() =>
+      sessionApi.connectQuick({
+        host: target.host,
+        port: target.port,
+        ...(target.username ? { username: target.username } : {}),
+        authKind: password ? "password" : "agent",
+        ...(password ? { password } : {}),
+      }),
+    );
+    if (!info) {
+      pushToast("info", "已取消连接");
+      return { ok: false, canceled: true };
+    }
+    await openConnectedAssetSession(info, { id: "", name: info.name, kind: "ssh" });
+    return { ok: true };
+  } catch (e) {
+    const err = e as { message?: string };
+    const message = err.message || describeError(e);
+    if (!options?.silent) pushToast("error", message);
+    return { ok: false, error: message };
+  }
+}
+
+export async function saveQuickConnectAsset(
+  target: QuickConnectTarget,
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
+  const { pushToast } = useUi.getState();
+  const display = formatQuickConnectTarget(target);
+  const password = await promptQuickConnectPassword(display);
+  if (password === null) return { ok: false, canceled: true };
+  try {
+    // 服务端装配禁用了 session_quick_connect_user: web 模式下不回填服务器 OS 用户。
+    const username = target.username ?? (DESKTOP ? await sessionApi.quickConnectDefaultUser() : "");
+    let credId: string | null = null;
+    if (password) {
+      if (!(await ensureVaultUnlocked("保存凭据前需要解锁凭据库"))) {
+        return { ok: false, canceled: true };
+      }
+      const res = await vaultApi.setCredential(display, "password", password);
+      credId = res.id;
+    }
+    let created: Awaited<ReturnType<typeof assetApi.create>>;
+    try {
+      created = await assetApi.create({
+        kind: "ssh",
+        name: display,
+        host: target.host,
+        port: target.port,
+        username,
+        authKind: password ? "password" : "agent",
+        keyPath: null,
+        credId,
+      });
+    } catch (e) {
+      if (credId) await vaultApi.deleteCredential(credId).catch(() => undefined);
+      throw e;
+    }
+    return await connectAsset(created, options);
   } catch (e) {
     const err = e as { message?: string };
     const message = err.message || describeError(e);

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -52,11 +54,12 @@ const (
 )
 
 type Asset struct {
-	ID       string
-	Name     string
-	Kind     string
-	Encoding string
-	Options  any
+	ID             string
+	Name           string
+	Kind           string
+	Encoding       string
+	StartupCommand string
+	Options        any
 }
 
 type Connector interface {
@@ -139,6 +142,7 @@ type Config struct {
 	Hub               *hub.Hub
 	Emitter           Emitter
 	Transcripts       TranscriptSink
+	Commands          CommandSink
 	Logger            *slog.Logger
 	IdleTimeout       time.Duration
 	SweepInterval     time.Duration
@@ -171,6 +175,7 @@ type TabInfo struct {
 	Ephemeral    bool   `json:"ephemeral,omitempty"`
 	Durable      bool   `json:"durable,omitempty"`
 	Cwd          string `json:"cwd,omitempty"`
+	Encoding     string `json:"encoding,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -235,7 +240,8 @@ type Session struct {
 	ID        string
 	CreatedAt time.Time
 
-	asset Asset
+	asset  Asset
+	userID string
 
 	mu              sync.Mutex
 	status          Status
@@ -320,6 +326,21 @@ func ptyBacked(kind string) bool {
 	return kind == KindLocal || kind == KindSSH || kind == KindDocker
 }
 
+func startupCommandSupported(kind string) bool {
+	return kind == KindSSH || kind == KindDocker
+}
+
+func canonicalEncoding(encoding string) string {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "", "utf-8", "utf8":
+		return "utf-8"
+	case "latin1", "iso-8859-1":
+		return "latin1"
+	default:
+		return strings.ToLower(strings.TrimSpace(encoding))
+	}
+}
+
 func validSize(cols, rows uint32) bool {
 	return cols > 0 && rows > 0 && cols <= 1024 && rows <= 1024
 }
@@ -329,4 +350,12 @@ func clientID(id string) string {
 		return "desktop"
 	}
 	return id
+}
+
+// userIDFromContext captures the account user that opened a session, when the
+// call chain carries one (server account sessions); desktop and background
+// callers yield "" and the command log stores NULL.
+func userIDFromContext(ctx context.Context) string {
+	userID, _ := ipc.UserIDFromContext(ctx)
+	return userID
 }

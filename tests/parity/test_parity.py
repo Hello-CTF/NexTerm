@@ -34,8 +34,8 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 188)
-        self.assertEqual(frontend["unique_command_count"], 186)
+        self.assertEqual(frontend["method_count"], 196)
+        self.assertEqual(frontend["unique_command_count"], 194)
         self.assertEqual(
             commands["reconciliation"]["rust_only"],
             [
@@ -56,6 +56,9 @@ class InventoryTest(unittest.TestCase):
                 "ai_edit_resend",
                 "ai_grant_list",
                 "ai_grant_revoke",
+                "ai_grant_rule_list",
+                "ai_grant_rule_revoke",
+                "ai_grant_rule_set",
                 "ai_grant_set",
                 "ai_hitl_events",
                 "ai_hitl_snapshot",
@@ -65,6 +68,8 @@ class InventoryTest(unittest.TestCase):
                 "ai_usage_summary",
                 "asset_probe_batch",
                 "audit_count",
+                "command_count",
+                "command_query",
                 "cron_get",
                 "cron_list",
                 "cron_register",
@@ -74,6 +79,7 @@ class InventoryTest(unittest.TestCase):
                 "files_settings_get",
                 "files_settings_set",
                 "forward_create_remote",
+                "fs_read_range",
                 "memory_create",
                 "memory_delete",
                 "memory_edit",
@@ -81,7 +87,9 @@ class InventoryTest(unittest.TestCase):
                 "memory_index",
                 "memory_settings_get",
                 "memory_settings_set",
+                "session_connect_quick",
                 "session_probe_host_key",
+                "session_quick_connect_user",
                 "ssh_import_apply",
                 "ssh_import_preview",
                 "sync_apply_objects",
@@ -110,16 +118,16 @@ class InventoryTest(unittest.TestCase):
         steer = {entry["name"]: entry for entry in frontend["entries"] if entry["name"] == "ai_steer"}
         self.assertEqual(
             [(steer["ai_steer"]["accessor"], steer["ai_steer"]["line"])],
-            [("aiApi.steer", 614)],
+            [("aiApi.steer", 641)],
         )
         hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
         self.assertEqual(
             [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
-            [("aiApi.hitlSnapshot", 622)],
+            [("aiApi.hitlSnapshot", 649)],
         )
         self.assertEqual(
             [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
-            [("aiApi.hitlEvents", 624)],
+            [("aiApi.hitlEvents", 651)],
         )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
@@ -136,8 +144,8 @@ class InventoryTest(unittest.TestCase):
     def test_events_and_streams_are_explicit(self):
         events = self.data["events"]
         self.assertEqual(events["rust_declared_count"], 10)
-        self.assertEqual(events["frontend_declared_count"], 9)
-        self.assertEqual(events["union_count"], 10)
+        self.assertEqual(events["frontend_declared_count"], 10)
+        self.assertEqual(events["union_count"], 11)
         self.assertEqual(events["reserved_rust_events"], ["sync://status"])
         streams = self.data["streams"]
         self.assertEqual(

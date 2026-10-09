@@ -18,12 +18,12 @@ func TestEventBrokerDropsSlowSubscriberWithoutStallingEmit(t *testing.T) {
 	slowDrops := 0
 	broker.OnSlowSubscriber = func() { slowDrops++ }
 
-	slow, unsubscribeSlow, err := broker.subscribe(0, false, false)
+	slow, unsubscribeSlow, err := broker.subscribe(0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unsubscribeSlow()
-	fast, unsubscribeFast, err := broker.subscribe(0, false, false)
+	fast, unsubscribeFast, err := broker.subscribe(0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEventBrokerDropsSlowSubscriberWithoutStallingEmit(t *testing.T) {
 func TestEventBrokerEmitContextCancelStillReported(t *testing.T) {
 	broker := NewEventBroker()
 	broker.QueueSize = 1
-	subscriber, unsubscribe, err := broker.subscribe(0, false, false)
+	subscriber, unsubscribe, err := broker.subscribe(0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

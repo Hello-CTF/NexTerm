@@ -74,7 +74,7 @@ func TestConnectValidationAndErrorCodes(t *testing.T) {
 	service := NewService(nil)
 	for _, args := range []ConnectArgs{
 		{},
-		{Inline: &InlineConnection{Kind: "postgres"}},
+		{Inline: &InlineConnection{Kind: "mongodb"}},
 		{Inline: &InlineConnection{Kind: "redis", Database: "-1"}},
 		{AssetID: "missing"},
 	} {

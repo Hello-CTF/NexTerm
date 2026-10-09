@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
+import { useUi, connectAsset, dbKindOf, DB_KIND_LABEL, nextTabId, openTerminalTab, requestKillTab } from "./store";
+import {
+  choosePresetTargetAndApply,
+  deleteLayoutPreset,
+  saveLayoutPresetFromWorkspace,
+} from "./layoutPresets";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
@@ -28,13 +33,16 @@ import {
   IconFolderOpen,
   IconHistory,
   IconKey,
+  IconLayers,
   IconMonitor,
   IconNetwork,
   IconPlug,
+  IconSave,
   IconSearch,
   IconSettings,
   IconSplitH,
   IconTerminal,
+  IconTrash,
   IconZap,
   assetIcon,
 } from "../ui/icons";
@@ -65,7 +73,7 @@ export function CommandPalette({
   onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode, connectingAssetIds } =
+  const { sessions, setSessions, addTab, ensureWorkspace, pushToast, themeMode, setThemeMode, connectingAssetIds, layoutPresets } =
     useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -174,10 +182,13 @@ export function CommandPalette({
       {
         id: "database",
         label: "打开数据库工作台",
-        hint: "MySQL / Redis",
+        hint: "MySQL / PostgreSQL / Redis",
         icon: IconDatabase,
         run: () => {
-          const asset = assets.find((item) => item.kind === "mysql") ?? assets.find((item) => item.kind === "redis");
+          const asset =
+            assets.find((item) => item.kind === "mysql") ??
+            assets.find((item) => item.kind === "postgres") ??
+            assets.find((item) => item.kind === "redis");
           if (!asset) {
             pushToast("info", "还没有数据库资产，先在资产树里新建一个");
             return;
@@ -185,13 +196,15 @@ export function CommandPalette({
           void dbApi
             .connect(asset.id)
             .then(({ connId }) => {
-              const kind = asset.kind === "redis" ? "redis" : "mysql";
+              const dbKind = dbKindOf(asset.kind) ?? "mysql";
+              const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
+              ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
               addTab({
                 id: `db-${connId}`,
                 kind: "db",
-                title: `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`,
+                title,
                 connId,
-                dbKind: kind,
+                dbKind,
                 closable: true,
               });
             })
@@ -310,6 +323,32 @@ export function CommandPalette({
           void requestKillTab(tab.id);
         },
       },
+      {
+        id: "save-layout-preset",
+        label: "保存布局预设…",
+        hint: "把当前工作区的分屏与标签存成预设",
+        icon: IconSave,
+        run: () => void saveLayoutPresetFromWorkspace(),
+      },
+      ...layoutPresets.flatMap((p) => {
+        const tabCount = p.workspace.panes.reduce((n, pane) => n + pane.tabs.length, 0);
+        return [
+          {
+            id: `apply-preset-${p.id}`,
+            label: `应用布局预设「${p.name}」`,
+            hint: `${tabCount} 个标签${p.workspace.panes.length > 1 ? " · 已分屏" : ""}`,
+            icon: IconLayers,
+            run: () => void choosePresetTargetAndApply(p.id),
+          },
+          {
+            id: `delete-preset-${p.id}`,
+            label: `删除布局预设「${p.name}」`,
+            hint: "不影响当前打开的工作区",
+            icon: IconTrash,
+            run: () => void deleteLayoutPreset(p.id),
+          },
+        ];
+      }),
     ];
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
@@ -381,6 +420,7 @@ export function CommandPalette({
     setThemeMode,
     reachEntries,
     connectingAssetIds,
+    layoutPresets,
     runProbeOne,
   ]);
 

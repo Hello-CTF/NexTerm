@@ -7,17 +7,22 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
+	sshfs "github.com/ProbiusOfficial/NexTerm/internal/fs/ssh"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
+	"github.com/pkg/sftp"
 )
 
 type fsEventRecorder struct {
@@ -293,5 +298,130 @@ func TestProductionFSStagedLocalPathResolution(t *testing.T) {
 	response = dispatch("fs_download", `{"sessionId":"`+connected.ID+`","remotePath":`+jsonString(remote)+`,"localPath":"other-id/download.bin"}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("unknown staged ref = %+v, want not_found", response)
+	}
+}
+
+type rangeFakeTransport struct {
+	fs base.FileSystem
+}
+
+func (t *rangeFakeTransport) Kind() string       { return "ssh" }
+func (t *rangeFakeTransport) Generation() uint64 { return 1 }
+func (t *rangeFakeTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+	return base.ExecResult{}, base.ErrUnsupported
+}
+func (t *rangeFakeTransport) Ping(context.Context) (time.Duration, error) { return 0, nil }
+func (t *rangeFakeTransport) IsAlive() bool                               { return true }
+func (t *rangeFakeTransport) Close() error                                { return nil }
+func (t *rangeFakeTransport) FileSystem(context.Context) (base.FileSystem, error) {
+	return t.fs, nil
+}
+
+func newRangeTestSFTP(t *testing.T) *sshfs.FS {
+	t.Helper()
+	root := t.TempDir()
+	clientSide, serverSide := net.Pipe()
+	server, err := sftp.NewServer(serverSide, sftp.WithServerWorkingDirectory(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve() }()
+	client, err := sftp.NewClientPipe(clientSide, clientSide)
+	if err != nil {
+		clientSide.Close()
+		serverSide.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+		clientSide.Close()
+		serverSide.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(2 * time.Second):
+			t.Error("SFTP test server did not stop")
+		}
+	})
+	return sshfs.New(client, nil)
+}
+
+func TestProductionFSReadRange(t *testing.T) {
+	events := &fsEventRecorder{}
+	filesystem := newRangeTestSFTP(t)
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return &rangeFakeTransport{fs: filesystem}, nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-range", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("0123456789", 100)
+	if err := filesystem.WriteFile(t.Context(), "app.log", []byte(content), false); err != nil {
+		t.Fatal(err)
+	}
+	dispatch := func(args string) ipc.Response {
+		return production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_read_range", Args: json.RawMessage(args)}, production.Environment(""))
+	}
+
+	response := dispatch(`{"sessionId":"` + connected.ID + `","path":"app.log","offset":100,"maxBytes":50}`)
+	var read fsRangeReadDTO
+	requireStoreTestResponse(t, response, &read)
+	decoded, err := base64.StdEncoding.DecodeString(read.ContentBase64)
+	if err != nil || string(decoded) != content[100:150] {
+		t.Fatalf("fs_read_range chunk = %q, %v", decoded, err)
+	}
+	if read.Offset != 100 || read.Size != 1000 || !read.Truncated {
+		t.Fatalf("fs_read_range meta = %+v", read)
+	}
+
+	response = dispatch(`{"sessionId":"` + connected.ID + `","path":"app.log","offset":950,"maxBytes":100}`)
+	requireStoreTestResponse(t, response, &read)
+	decoded, _ = base64.StdEncoding.DecodeString(read.ContentBase64)
+	if string(decoded) != content[950:] || read.Truncated {
+		t.Fatalf("fs_read_range tail = %q, %+v", decoded, read)
+	}
+
+	response = dispatch(`{"sessionId":"` + connected.ID + `","path":"app.log","offset":-1}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("negative offset = %+v, want bad_param", response)
+	}
+	response = dispatch(`{"sessionId":"` + connected.ID + `","path":"app.log","offset":0,"maxBytes":` + strconv.FormatInt(fsRangeReadMaxBytes+1, 10) + `}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("over-cap maxBytes = %+v, want bad_param", response)
+	}
+}
+
+func TestProductionFSReadRangeUnsupportedForNonSSH(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-range-local", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_read_range", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/tmp/app.log","offset":0}`)}, production.Environment(""))
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("local fs_read_range = %+v, want unsupported", response)
 	}
 }

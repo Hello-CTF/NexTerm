@@ -67,6 +67,9 @@ export type ChatItem =
       reason?: string;
       preview?: FilePreviewItem | null;
       nonce: string;
+      risk?: string;
+      commands?: string[];
+      rulePattern?: string;
       requestId?: string;
       hitlAttempt?: number;
       resolution?: string;
@@ -623,6 +626,9 @@ export function applyAiEvent(
       if (id && hasItem(state, id)) return rejected(state);
       const seqId = id || nextId(state, "c").id;
       const seq = id ? state.seq : state.seq + 1;
+      const commands = Array.isArray(ev.commands)
+        ? ev.commands.filter((command): command is string => typeof command === "string")
+        : undefined;
       return accepted(
         appendItems({ ...state, seq }, [
           {
@@ -636,6 +642,9 @@ export function applyAiEvent(
             reason: (ev.reason as string) || "",
             preview: (ev.preview as FilePreviewItem | null) ?? null,
             nonce: confirmationNonceOf(ev),
+            risk: typeof ev.risk === "string" ? ev.risk : undefined,
+            commands: commands && commands.length > 0 ? commands : undefined,
+            rulePattern: typeof ev.rulePattern === "string" ? ev.rulePattern : undefined,
             ...interactionIdentityOf(ev),
           },
         ]),

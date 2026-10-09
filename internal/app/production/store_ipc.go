@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -185,6 +186,27 @@ type auditDTO struct {
 	Payload    json.RawMessage `json:"payload"`
 	ExitCode   *int32          `json:"exitCode"`
 	DurationMS *int64          `json:"durationMs"`
+}
+
+type commandLogQueryRequest struct {
+	SessionID *string `json:"sessionId"`
+	AssetID   *string `json:"assetId"`
+	UserID    *string `json:"userId"`
+	Limit     int64   `json:"limit"`
+	Offset    int64   `json:"offset"`
+}
+
+type commandLogDTO struct {
+	ID         int64   `json:"id"`
+	SessionID  string  `json:"sessionId"`
+	TabID      string  `json:"tabId"`
+	AssetID    string  `json:"assetId"`
+	UserID     *string `json:"userId"`
+	Command    string  `json:"command"`
+	Source     string  `json:"source"`
+	ExitCode   *int32  `json:"exitCode"`
+	StartedAt  int64   `json:"startedAt"`
+	FinishedAt int64   `json:"finishedAt"`
 }
 
 type knownHostRequest struct {
@@ -405,6 +427,29 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 			})
 		},
 		func() error {
+			return ipc.RegisterNested(dispatcher, "command_query", func(ctx context.Context, _ *ipc.Call, input commandLogQueryRequest) ([]commandLogDTO, error) {
+				rows, err := database.CommandLogQuery(ctx, store.CommandLogQuery{
+					SessionID: input.SessionID, AssetID: input.AssetID, UserID: commandLogUserFilter(ctx, desktop, input.UserID), Limit: input.Limit, Offset: input.Offset,
+				})
+				result := make([]commandLogDTO, len(rows))
+				for index, row := range rows {
+					result[index] = commandLogDTO{
+						ID: row.ID, SessionID: row.SessionID, TabID: row.TabID, AssetID: row.AssetID, UserID: row.UserID,
+						Command: row.Command, Source: row.Source, ExitCode: row.ExitCode, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
+					}
+				}
+				return result, err
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "command_count", func(ctx context.Context, _ *ipc.Call, input commandLogQueryRequest) (auditCountDTO, error) {
+				total, err := database.CommandLogCount(ctx, store.CommandLogQuery{
+					SessionID: input.SessionID, AssetID: input.AssetID, UserID: commandLogUserFilter(ctx, desktop, input.UserID),
+				})
+				return auditCountDTO{Total: total}, err
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "known_host_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) (any, error) {
 				return database.KnownHostList(ctx)
 			})
@@ -449,6 +494,24 @@ func productionSnippetDTO(row store.SnippetRow) snippetDTO {
 		ID: row.ID, Name: row.Name, Body: row.Body, GroupID: row.GroupID, Sort: row.Sort,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
+}
+
+// commandLogUserFilter 返回命令日志查询生效的 userId 过滤: 服务端装配
+// (desktop=false)下, 已登录的非超管调用者一律强制收敛为自己的 userId,
+// 客户端自报过滤不被信任; 超管可任意查询, 桌面端与无身份的开放部署
+// (auth=off / loopback 免登录 / 遗留静态令牌)保持客户端给定过滤。
+func commandLogUserFilter(ctx context.Context, desktop bool, requested *string) *string {
+	if desktop {
+		return requested
+	}
+	userID, ok := ipc.UserIDFromContext(ctx)
+	if !ok {
+		return requested
+	}
+	if role, _ := ipc.RoleFromContext(ctx); role == string(account.RoleSuperadmin) {
+		return requested
+	}
+	return &userID
 }
 
 func productionJSONText(raw json.RawMessage, fallback string) string {

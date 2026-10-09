@@ -14,11 +14,21 @@ import {
 } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
-  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
+  // 快速连接(临时连接)是桌面端能力; web 模式的隐藏行为见 quickConnectWeb.test.tsx。
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
     list: vi.fn(),
     probeBatch: vi.fn(),
     sessionConnect: vi.fn(),
+    sessionConnectQuick: vi.fn(),
+    quickConnectDefaultUser: vi.fn(),
+    assetCreate: vi.fn(),
+    knownHostAccept: vi.fn(),
+    setCredential: vi.fn(),
+    deleteCredential: vi.fn(),
+    vaultStatus: vi.fn(),
+    ask: vi.fn(),
+    promptText: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -27,12 +37,26 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
-    assetApi: { list: mocks.list, probeBatch: mocks.probeBatch },
-    sessionApi: { connect: mocks.sessionConnect },
+    assetApi: {
+      list: mocks.list,
+      probeBatch: mocks.probeBatch,
+      create: mocks.assetCreate,
+      knownHostAccept: mocks.knownHostAccept,
+    },
+    sessionApi: {
+      connect: mocks.sessionConnect,
+      connectQuick: mocks.sessionConnectQuick,
+      quickConnectDefaultUser: mocks.quickConnectDefaultUser,
+    },
     dbApi: {},
-    vaultApi: {},
+    vaultApi: { status: mocks.vaultStatus, setCredential: mocks.setCredential, deleteCredential: mocks.deleteCredential },
     terminalApi: {},
   };
+});
+
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  return { ...actual, ask: mocks.ask, promptText: mocks.promptText };
 });
 
 import { QuickConnect } from "../../app/QuickConnect";
@@ -85,6 +109,26 @@ const SESSION = {
   tabs: [],
   createdAt: 0,
 };
+
+const QUICK_SESSION = {
+  id: "s-quick",
+  assetId: null,
+  name: "deploy@example.com:2222",
+  kind: "ssh",
+  status: "connected" as const,
+  tabs: [],
+  createdAt: 0,
+};
+
+const CREATED_ASSET = assetOf({
+  id: "a-new",
+  name: "example.com:2222",
+  host: "example.com",
+  port: 2222,
+  username: "ubuntu",
+  authKind: "password",
+  credId: "cred-1",
+});
 
 let mounted: MountedView | undefined;
 const mountedViews: MountedView[] = [];
@@ -151,6 +195,20 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([{ ...WEB }, { ...DB }, { ...LOCAL }]);
   mocks.probeBatch.mockResolvedValue({ results: [] });
   mocks.sessionConnect.mockResolvedValue(SESSION);
+  mocks.sessionConnectQuick.mockResolvedValue(QUICK_SESSION);
+  mocks.quickConnectDefaultUser.mockResolvedValue("ubuntu");
+  mocks.assetCreate.mockResolvedValue({ ...CREATED_ASSET });
+  mocks.knownHostAccept.mockResolvedValue(undefined);
+  mocks.setCredential.mockResolvedValue({ id: "cred-1" });
+  mocks.deleteCredential.mockResolvedValue(undefined);
+  mocks.vaultStatus.mockResolvedValue({
+    initialized: true,
+    unlocked: true,
+    mode: "master",
+    autoLockMinutes: 0,
+  });
+  mocks.ask.mockResolvedValue(true);
+  mocks.promptText.mockResolvedValue("secret");
 });
 
 afterEach(() => {
@@ -469,5 +527,245 @@ describe("QuickConnect 屏幕阅读器与响应式契约", () => {
     const list = view.container.querySelector('[role="listbox"]');
     expect(list?.className).toContain("max-h-");
     expect(list?.className).toContain("overflow-y-auto");
+  });
+});
+
+describe("QuickConnect 快速连接", () => {
+  it("输入 user@host:port 时出现临时连接与保存为资产两行，Enter 默认临时连接", async () => {
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    const input = searchInput(view.container);
+    setInputValue(input, "deploy@example.com:2222");
+    await flush();
+
+    const rows = options(view.container);
+    expect(rows[0]?.textContent).toContain("临时连接 deploy@example.com:2222");
+    expect(rows[1]?.textContent).toContain("保存为资产并连接 deploy@example.com:2222");
+    expect(input.getAttribute("aria-activedescendant")).toBe(rows[0]?.id);
+
+    pressKey(input, "Enter");
+    await waitFor(() =>
+      expect(mocks.sessionConnectQuick).toHaveBeenCalledWith({
+        host: "example.com",
+        port: 2222,
+        username: "deploy",
+        authKind: "password",
+        password: "secret",
+      }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mocks.promptText).toHaveBeenCalledWith(
+      "输入 deploy@example.com:2222 的登录密码（留空则使用 SSH agent）",
+      "",
+      { secret: true },
+    );
+    expect(mocks.assetCreate).not.toHaveBeenCalled();
+    expect(mocks.setCredential).not.toHaveBeenCalled();
+  });
+
+  it("密码留空时使用 SSH agent 认证", async () => {
+    mocks.promptText.mockResolvedValue("");
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "example.com:2222");
+    await flush();
+
+    pressKey(searchInput(view.container), "Enter");
+    await waitFor(() =>
+      expect(mocks.sessionConnectQuick).toHaveBeenCalledWith({
+        host: "example.com",
+        port: 2222,
+        authKind: "agent",
+      }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("取消密码输入不发起连接也不关闭弹层", async () => {
+    mocks.promptText.mockResolvedValue(null);
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "deploy@example.com");
+    await flush();
+
+    pressKey(searchInput(view.container), "Enter");
+    await flush();
+    expect(mocks.sessionConnectQuick).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("复用 host key 审批：确认后信任并重试成功", async () => {
+    mocks.sessionConnectQuick
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "主机指纹待确认",
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+      })
+      .mockResolvedValueOnce(QUICK_SESSION);
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "deploy@example.com:2222");
+    await flush();
+
+    pressKey(searchInput(view.container), "Enter");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "example.com",
+      2222,
+      "ssh-ed25519",
+      "SHA256:abc",
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2);
+  });
+
+  it("连接失败时内联展示错误，重试可再次发起", async () => {
+    mocks.sessionConnectQuick.mockRejectedValueOnce({
+      code: "ssh",
+      message: "SSH 连接 example.com:2222 失败：认证失败，请检查用户名、密码或 SSH agent 配置",
+    });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "deploy@example.com:2222");
+    await flush();
+
+    pressKey(searchInput(view.container), "Enter");
+    await flush();
+    const alert = await waitForAlert(view.container);
+    expect(alert.textContent).toContain("认证失败");
+    expect(onClose).not.toHaveBeenCalled();
+
+    const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
+    click(retry as HTMLButtonElement);
+    await waitFor(() => expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("保存为资产并连接：落库凭据与资产后走既有资产连接流程", async () => {
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "example.com:2222");
+    await flush();
+
+    const saveRow = options(view.container)[1] as HTMLButtonElement;
+    expect(saveRow.textContent).toContain("保存为资产并连接");
+    click(saveRow);
+
+    await waitFor(() =>
+      expect(mocks.setCredential).toHaveBeenCalledWith("example.com:2222", "password", "secret"),
+    );
+    await waitFor(() =>
+      expect(mocks.assetCreate).toHaveBeenCalledWith({
+        kind: "ssh",
+        name: "example.com:2222",
+        host: "example.com",
+        port: 2222,
+        username: "ubuntu",
+        authKind: "password",
+        keyPath: null,
+        credId: "cred-1",
+      }),
+    );
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledWith("a-new"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mocks.sessionConnectQuick).not.toHaveBeenCalled();
+    expect(mocks.quickConnectDefaultUser).toHaveBeenCalled();
+    expect(mocks.deleteCredential).not.toHaveBeenCalled();
+  });
+
+  it("资产创建失败时回滚已保存的凭据，不留孤儿凭据", async () => {
+    mocks.assetCreate.mockRejectedValueOnce({ code: "io", message: "asset create boom" });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "example.com:2222");
+    await flush();
+
+    click(options(view.container)[1] as HTMLButtonElement);
+    await waitFor(() => expect(mocks.setCredential).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.deleteCredential).toHaveBeenCalledWith("cred-1"));
+    const alert = await waitForAlert(view.container);
+    expect(alert.textContent).toContain("asset create boom");
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("资产已创建但连接失败时保留凭据", async () => {
+    mocks.sessionConnect.mockRejectedValueOnce({ code: "ssh", message: "connect boom" });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "example.com:2222");
+    await flush();
+
+    click(options(view.container)[1] as HTMLButtonElement);
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledWith("a-new"));
+    const alert = await waitForAlert(view.container);
+    expect(alert.textContent).toContain("connect boom");
+    expect(mocks.deleteCredential).not.toHaveBeenCalled();
+  });
+
+  it("输入 quick target 后重置光标，Enter 激活临时连接而不是旧资产行", async () => {
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    const input = searchInput(view.container);
+
+    pressKey(input, "ArrowDown");
+    await flush();
+    const assetRow = options(view.container)[1];
+    expect(input.getAttribute("aria-activedescendant")).toBe(assetRow?.id);
+
+    setInputValue(input, "deploy@example.com:2222");
+    await flush();
+    const rows = options(view.container);
+    expect(rows[0]?.textContent).toContain("临时连接 deploy@example.com:2222");
+    expect(input.getAttribute("aria-activedescendant")).toBe(rows[0]?.id);
+
+    pressKey(input, "Enter");
+    await waitFor(() =>
+      expect(mocks.sessionConnectQuick).toHaveBeenCalledWith({
+        host: "example.com",
+        port: 2222,
+        username: "deploy",
+        authKind: "password",
+        password: "secret",
+      }),
+    );
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("输入无法解析时不出现快速连接行，保持资产搜索", async () => {
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "web-01");
+    await flush();
+    const rows = options(view.container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("web-01");
+    expect(view.container.textContent).not.toContain("临时连接");
+
+    setInputValue(searchInput(view.container), "10.0.0.8");
+    await flush();
+    expect(options(view.container)).toHaveLength(1);
+    expect(options(view.container)[0]?.textContent).toContain("web-01");
+  });
+
+  it("在途期间重复 Enter 不重复发起快速连接", async () => {
+    const gate = deferred<typeof QUICK_SESSION>();
+    mocks.sessionConnectQuick.mockReturnValueOnce(gate.promise);
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    const input = searchInput(view.container);
+    setInputValue(input, "deploy@example.com:2222");
+    await flush();
+
+    pressKey(input, "Enter");
+    await waitFor(() => expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(1));
+    pressKey(input, "Enter");
+    await flush();
+    expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(1);
+    expect(options(view.container)[0]?.textContent).toContain("连接中…");
+
+    gate.resolve(QUICK_SESSION);
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });

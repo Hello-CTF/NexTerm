@@ -1,17 +1,27 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { connectAsset, useUi } from "./store";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { connectAsset, connectQuickTarget, saveQuickConnectAsset, useUi } from "./store";
 import { assetApi, type Asset } from "../ipc/commands";
+import { WEB } from "../demo";
 import { describeError } from "../ui/errorText";
 import { isEditableTarget, isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { orderQuickConnectAssets, useConnectHistory } from "../features/explorer/connectHistory";
 import { useAssetReachability } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
-import { IconLoader, IconSearch, assetIcon } from "../ui/icons";
+import { IconLoader, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
+import {
+  formatQuickConnectTarget,
+  parseQuickConnectTarget,
+  type QuickConnectTarget,
+} from "./quickConnectTarget";
 
 const PROBE_DEBOUNCE_MS = 250;
 const PROBE_VISIBLE_LIMIT = 24;
+
+type QuickConnectRow =
+  | { kind: "quick"; mode: "temporary" | "save"; target: QuickConnectTarget; label: string }
+  | { kind: "asset"; asset: Asset };
 
 export function QuickConnect({ onClose }: { onClose: () => void }) {
   const assetsQuery = useQuery({
@@ -27,11 +37,18 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   const batchError = useAssetReachability((s) => s.batchError);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
-  const [connectError, setConnectError] = useState<{ asset: Asset; message: string } | null>(null);
+  const [connectError, setConnectError] = useState<{
+    label: string;
+    message: string;
+    retry: () => void;
+  } | null>(null);
+  const [pendingQuick, setPendingQuick] = useState<"temporary" | "save" | null>(null);
+  const quickPendingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
   const probeSeq = useRef(0);
+  const queryClient = useQueryClient();
   const listId = useId();
   const titleId = useId();
   const helpId = useId();
@@ -66,9 +83,24 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     return () => window.clearTimeout(timer);
   }, [probeTargets]);
 
-  const filtered = visible;
-  const activeIndex = filtered.length > 0 ? Math.min(cursor, filtered.length - 1) : 0;
-  const activeOptionId = filtered[activeIndex] ? `${listId}-option-${activeIndex}` : undefined;
+  const quickTarget = useMemo(() => parseQuickConnectTarget(query), [query]);
+  useEffect(() => {
+    setCursor(0);
+  }, [quickTarget]);
+  const rows = useMemo<QuickConnectRow[]>(() => {
+    const list: QuickConnectRow[] = [];
+    if (quickTarget) {
+      const label = formatQuickConnectTarget(quickTarget);
+      // 服务端装配禁用了 session_connect_quick (防借服务器 pivot), web 模式只提供"保存为资产"。
+      if (!WEB) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
+      list.push({ kind: "quick", mode: "save", target: quickTarget, label });
+    }
+    for (const asset of visible) list.push({ kind: "asset", asset });
+    return list;
+  }, [quickTarget, visible]);
+
+  const activeIndex = rows.length > 0 ? Math.min(cursor, rows.length - 1) : 0;
+  const activeOptionId = rows[activeIndex] ? `${listId}-option-${activeIndex}` : undefined;
   useEffect(() => {
     if (!activeOptionId) return;
     const option = document.getElementById(activeOptionId);
@@ -103,11 +135,49 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
       return;
     }
     if (outcome.canceled) return;
-    setConnectError({ asset, message: outcome.error ?? "连接失败" });
+    setConnectError({
+      label: asset.name,
+      message: outcome.error ?? "连接失败",
+      retry: () => void connect(asset),
+    });
+  };
+
+  const runQuick = async (row: QuickConnectRow & { kind: "quick" }) => {
+    if (quickPendingRef.current) return;
+    quickPendingRef.current = true;
+    setConnectError(null);
+    refocusInput();
+    setPendingQuick(row.mode);
+    try {
+      const outcome =
+        row.mode === "temporary"
+          ? await connectQuickTarget(row.target, { silent: true })
+          : await saveQuickConnectAsset(row.target, { silent: true });
+      if (closedRef.current) return;
+      if (outcome.ok) {
+        if (row.mode === "save") void queryClient.invalidateQueries({ queryKey: ["assets"] });
+        closeOverlay();
+        return;
+      }
+      if (outcome.canceled) return;
+      setConnectError({
+        label: row.label,
+        message: outcome.error ?? "连接失败",
+        retry: () => void runQuick(row),
+      });
+    } finally {
+      quickPendingRef.current = false;
+      if (!closedRef.current) setPendingQuick(null);
+    }
+  };
+
+  const activate = (row: QuickConnectRow) => {
+    if (row.kind === "asset") void connect(row.asset);
+    else void runQuick(row);
   };
 
   const moveCursor = (next: number) => {
-    if (filtered.length > 0) setCursor((next + filtered.length) % filtered.length);
+    if (rows.length > 0) setCursor((next + rows.length) % rows.length);
   };
   const onOverlayKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -131,11 +201,11 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
       moveCursor(0);
     } else if (event.key === "End") {
       event.preventDefault();
-      moveCursor(filtered.length - 1);
-    } else if (event.key === "Enter" && !event.repeat && filtered[activeIndex]) {
+      moveCursor(rows.length - 1);
+    } else if (event.key === "Enter" && !event.repeat && rows[activeIndex]) {
       if (isEditableTarget(event.target)) {
         event.preventDefault();
-        void connect(filtered[activeIndex]);
+        activate(rows[activeIndex]);
       }
     }
   };
@@ -159,7 +229,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
           <input
             ref={inputRef}
             className="nx-command-input border-none px-0"
-            placeholder="搜索资产：名称 / 主机 / 用户 / 标签"
+            placeholder="搜索资产，或输入 user@host:port 快速连接"
             aria-label="资产搜索"
             role="combobox"
             aria-autocomplete="list"
@@ -174,14 +244,49 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
           />
         </div>
         <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="资产连接" tabIndex={-1}>
-          {filtered.map((asset, index) => {
+          {rows.map((row, index) => {
+            const optionId = `${listId}-option-${index}`;
+            if (row.kind === "quick") {
+              const Icon = row.mode === "temporary" ? IconTerminal : IconSave;
+              const pending = pendingQuick === row.mode;
+              return (
+                <button
+                  key={`quick-${row.mode}`}
+                  id={optionId}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  tabIndex={-1}
+                  className={`nx-command-item ${index === activeIndex ? "is-active" : ""}`}
+                  onMouseEnter={() => setCursor(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => activate(row)}
+                >
+                  <Icon size={15} className="shrink-0 text-neutral-400" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {row.mode === "temporary" ? `临时连接 ${row.label}` : `保存为资产并连接 ${row.label}`}
+                  </span>
+                  {pending ? (
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
+                      <IconLoader size={11} className="animate-spin" />
+                      连接中…
+                    </span>
+                  ) : (
+                    <span className="nx-command-hint shrink-0 text-[11px]">
+                      {row.mode === "temporary" ? "不保存资产" : "存入资产树"}
+                    </span>
+                  )}
+                </button>
+              );
+            }
+            const asset = row.asset;
             const connecting = connectingIds.includes(asset.id);
             const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
             const Icon = assetIcon(asset.kind);
             return (
               <button
                 key={asset.id}
-                id={`${listId}-option-${index}`}
+                id={optionId}
                 type="button"
                 role="option"
                 aria-selected={index === activeIndex}
@@ -189,7 +294,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
                 className={`nx-command-item ${index === activeIndex ? "is-active" : ""}`}
                 onMouseEnter={() => setCursor(index)}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void connect(asset)}
+                onClick={() => activate(row)}
               >
                 <Icon size={15} className="shrink-0 text-neutral-400" />
                 <span className="min-w-0 flex-1 truncate">{asset.name}</span>
@@ -209,7 +314,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
               </button>
             );
           })}
-          {filtered.length === 0 && (
+          {rows.length === 0 && (
             <div className="nx-command-empty px-4 py-8 text-center text-xs" role="status">
               {assets.length === 0 ? "还没有资产，先在左侧资产树新建一个" : "没有匹配的资产"}
             </div>
@@ -218,12 +323,12 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         {connectError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={connectError.message}>
-              「{connectError.asset.name}」连接失败：{connectError.message}
+              「{connectError.label}」连接失败：{connectError.message}
             </span>
             <button
               type="button"
               className="nx-link shrink-0"
-              onClick={() => void connect(connectError.asset)}
+              onClick={() => void connectError.retry()}
             >
               重试
             </button>

@@ -61,7 +61,7 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	if err := runner.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	runtime := []string{"ai_chat", "ai_cancel", "ai_steer", "ai_edit_resend", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_run_list", "ai_run_events", "ai_get_permission", "ai_set_permission", "ai_grant_list", "ai_grant_set", "ai_grant_revoke"}
+	runtime := []string{"ai_chat", "ai_cancel", "ai_steer", "ai_edit_resend", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_run_list", "ai_run_events", "ai_get_permission", "ai_set_permission", "ai_grant_list", "ai_grant_set", "ai_grant_revoke", "ai_grant_rule_list", "ai_grant_rule_set", "ai_grant_rule_revoke"}
 	registered := dispatcher.Commands()
 	if len(registered) != len(runtime) {
 		t.Fatalf("agent module must register exactly the runtime surface, got %v", registered)

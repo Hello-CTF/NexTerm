@@ -2,12 +2,19 @@ package fleetserver
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -27,7 +34,7 @@ func newHTTPFixture(t *testing.T, authOff bool, options ...Option) *httpFixture 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
+	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	service, err := New(Config{DB: database.DB(), Accounts: accounts, AuthOff: authOff}, options...)
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +117,22 @@ func (f *httpFixture) createUser(t *testing.T, username string) *account.User {
 	return user
 }
 
+func totpCodeForTest(t *testing.T, secretBase32 string, unixSeconds int64) string {
+	t.Helper()
+	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secretBase32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac := hmac.New(sha1.New, secret)
+	var counter [8]byte
+	binary.BigEndian.PutUint64(counter[:], uint64(unixSeconds)/30)
+	_, _ = mac.Write(counter[:])
+	sum := mac.Sum(nil)
+	offset := sum[len(sum)-1] & 0x0f
+	value := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
+	return fmt.Sprintf("%06d", value%1_000_000)
+}
+
 func (f *httpFixture) createSuperadmin(t *testing.T, username string) *account.User {
 	t.Helper()
 	code, err := f.accounts.GenerateInitCode(context.Background())
@@ -140,6 +163,38 @@ func TestFleetHTTPOffMode(t *testing.T) {
 		if call.status != http.StatusForbidden {
 			t.Fatalf("call %d status=%d body=%v", i, call.status, call.body)
 		}
+	}
+}
+
+// mfa_required 策略下未绑定会话在 fleet 面同样被锁: 绑定只能走主服务 /auth/totp*。
+func TestFleetHTTPMFAEnrollLock(t *testing.T) {
+	fixture := newHTTPFixture(t, false)
+	alice := fixture.createUser(t, "alice")
+	session := fixture.session(t, alice)
+
+	call := fixture.call(t, http.MethodGet, "/fleet/devices", nil, session, "")
+	if call.status != http.StatusOK {
+		t.Fatalf("default status=%d body=%v", call.status, call.body)
+	}
+	if err := fixture.accounts.SetMFARequired(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	call = fixture.call(t, http.MethodGet, "/fleet/devices", nil, session, "")
+	if call.status != http.StatusForbidden || call.body["error"].(map[string]any)["code"] != "mfa_enrollment_required" {
+		t.Fatalf("locked status=%d body=%v", call.status, call.body)
+	}
+
+	secret, _, err := fixture.accounts.BeginTOTPSetup(context.Background(), alice.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := totpCodeForTest(t, secret, time.Now().Unix())
+	if _, err := fixture.accounts.ConfirmTOTPSetup(context.Background(), alice.ID, code); err != nil {
+		t.Fatal(err)
+	}
+	call = fixture.call(t, http.MethodGet, "/fleet/devices", nil, session, "")
+	if call.status != http.StatusOK {
+		t.Fatalf("unlocked after binding status=%d body=%v", call.status, call.body)
 	}
 }
 

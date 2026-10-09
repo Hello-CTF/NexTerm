@@ -204,6 +204,12 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_dek WHERE user_id = ?", userID); err != nil {
 		return dbError(err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp WHERE user_id = ?", userID); err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp_recovery_code WHERE user_id = ?", userID); err != nil {
+		return dbError(err)
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", a.now(), userID); err != nil {
 		return dbError(err)
 	}

@@ -48,21 +48,48 @@ func NewCommandTracker() *CommandTracker { return &CommandTracker{} }
 // State returns the current command lifecycle snapshot.
 func (t *CommandTracker) State() CommandState { return t.state }
 
+// Report describes one parsed OSC 133 lifecycle report observed in the
+// stream, in stream order.
+type Report struct {
+	Letter      byte
+	ExitCode    int
+	HasExitCode bool
+	// Sequence is the tracker sequence after the report was applied.
+	Sequence uint64
+	// Started is true only for a B that transitioned the tracker to running,
+	// i.e. a deduplicated repeat B is reported with Started false.
+	Started bool
+}
+
 // Observe scans p for OSC 133 sequences without modifying p. It returns the
 // state after scanning and whether the state changed within p; sequences
 // split across chunk boundaries are picked up once the completing chunk
 // arrives.
 func (t *CommandTracker) Observe(p []byte) (CommandState, bool) {
+	_, state, changed := t.ObserveReports(p)
+	return state, changed
+}
+
+// ObserveReports is Observe plus the individual parsed reports in stream
+// order, so consumers can react to single command boundaries instead of
+// diffing state snapshots.
+func (t *CommandTracker) ObserveReports(p []byte) ([]Report, CommandState, bool) {
 	before := t.state
+	var reports []Report
 	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
 		letter, exitCode, hasExit, ok := parseOSC133(payload)
 		if !ok {
 			return
 		}
+		started := letter == 'B' && !t.state.Running
 		t.apply(letter, exitCode, hasExit)
+		reports = append(reports, Report{
+			Letter: letter, ExitCode: exitCode, HasExitCode: hasExit,
+			Sequence: t.state.Sequence, Started: started,
+		})
 	})
 	t.pending = append(t.pending[:0], tail...)
-	return t.state, t.state != before
+	return reports, t.state, t.state != before
 }
 
 func (t *CommandTracker) apply(letter byte, exitCode int, hasExit bool) {

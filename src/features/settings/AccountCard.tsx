@@ -30,6 +30,7 @@ export function AccountCard() {
   const [listError, setListError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [registrationDraft, setRegistrationDraft] = useState(false);
+  const [mfaDraft, setMfaDraft] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -46,6 +47,7 @@ export function AccountCard() {
       adminApi.settingsGet().then((s) => {
         setSettings(s);
         setRegistrationDraft(s.registration_open);
+        setMfaDraft(s.mfa_required);
       }),
     ]).catch((e: unknown) => setListError(describeError(e)));
   }, []);
@@ -109,18 +111,21 @@ export function AccountCard() {
     }
   };
 
-  const saveRegistration = async () => {
+  const saveSettings = async () => {
     if (!settings) return;
     setSettingsBusy(true);
     try {
-      const next = await adminApi.settingsPut({ registrationOpen: registrationDraft });
+      const next = await adminApi.settingsPut({ registrationOpen: registrationDraft, mfaRequired: mfaDraft });
       setSettings(next);
-      pushToast("success", next.registration_open ? "已开放注册" : "已关闭注册");
+      setRegistrationDraft(next.registration_open);
+      setMfaDraft(next.mfa_required);
+      pushToast("success", "设置已保存");
       // /auth/status 的注册开关变了,刷新门状态缓存
       void authApi.status().then((s) => useAuth.setState({ status: s })).catch(() => undefined);
     } catch (e) {
       pushToast("error", describeError(e));
       setRegistrationDraft(settings.registration_open);
+      setMfaDraft(settings.mfa_required);
     } finally {
       setSettingsBusy(false);
     }
@@ -218,6 +223,9 @@ export function AccountCard() {
                 </span>
                 {u.role === "superadmin" && <span className="nx-badge shrink-0 nx-badge-blue">超管</span>}
                 <span className={`nx-badge shrink-0 ${st.tone}`}>{st.text}</span>
+                <span className={`nx-badge shrink-0 ${u.mfa_enabled ? "nx-badge-green" : "nx-badge-amber"}`}>
+                  {u.mfa_enabled ? "MFA 已开启" : "未绑 MFA"}
+                </span>
                 <span className="nx-hint shrink-0 text-[11px]">最近登录 {formatTime(u.last_login_at)}</span>
                 {!isSelf && u.state !== "disabled" && (
                   <>
@@ -251,10 +259,17 @@ export function AccountCard() {
             checked={registrationDraft}
             onChange={(e) => setRegistrationDraft(e.target.checked)}
           />
+          <span className="text-[12.5px] text-neutral-200">要求两步验证 (MFA)</span>
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={mfaDraft}
+            onChange={(e) => setMfaDraft(e.target.checked)}
+          />
           <button
             className="nx-btn nx-btn-outline nx-btn-sm"
-            disabled={settingsBusy || !settings || registrationDraft === settings.registration_open}
-            onClick={() => void saveRegistration()}
+            disabled={settingsBusy || !settings || (registrationDraft === settings.registration_open && mfaDraft === settings.mfa_required)}
+            onClick={() => void saveSettings()}
           >
             {settingsBusy ? "保存中…" : "保存"}
           </button>
@@ -263,6 +278,11 @@ export function AccountCard() {
           {registrationDraft
             ? "任何知道这台服务器地址的人都能注册普通用户账号;建议只在受信网络内临时开放。"
             : "默认关闭。新用户只能由管理员在上面手动添加。"}
+        </p>
+        <p className="nx-hint mt-1.5">
+          {mfaDraft
+            ? "强制启用两步验证:未绑定 TOTP 的账号登录后只能进入绑定页,完成绑定前无法使用其他任何功能(含管理面);已绑定的账号登录时必须输入动态码。开启前请确认所有用户都能完成绑定。"
+            : "默认不强制。用户可在自己的账号卡里自愿开启 TOTP 两步验证。"}
         </p>
       </div>
 

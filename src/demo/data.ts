@@ -71,6 +71,19 @@ export interface DemoAuditEntry {
   durationMs: number | null;
 }
 
+export interface DemoCommandEntry {
+  id: number;
+  sessionId: string;
+  tabId: string;
+  assetId: string;
+  userId: string | null;
+  command: string;
+  source: string;
+  exitCode: number | null;
+  startedAt: number;
+  finishedAt: number;
+}
+
 const NOW = Date.now();
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -1053,6 +1066,17 @@ export const auditEntries: DemoAuditEntry[] = [
   { id: 32, ts: NOW - 3 * HOUR, sessionId: null, assetId: "a-docker", source: "user", kind: "docker_action", payload: { container: "api-server", action: "restart" }, exitCode: 0, durationMs: 1810 },
   { id: 31, ts: NOW - 4 * HOUR, sessionId: null, assetId: null, source: "ai", kind: "guard_block", payload: { rendered: "rm -rf /var/lib/mysql", reason: "forbidden: rm -rf 根路径" }, exitCode: null, durationMs: null },
   { id: 30, ts: NOW - 6 * HOUR, sessionId: "s-web01", assetId: "a-web01", source: "ai", kind: "takeover_enter", payload: { task: "安装 nginx 并启动", allowWrite: true }, exitCode: null, durationMs: null },
+];
+
+export const commandEntries: DemoCommandEntry[] = [
+  { id: 208, sessionId: "s-web01", tabId: "t-web01-1", assetId: "a-web01", userId: null, command: "[root@web-01 ~]# systemctl status nginx", source: "terminal", exitCode: 0, startedAt: NOW - 3 * MIN, finishedAt: NOW - 3 * MIN + 420 },
+  { id: 207, sessionId: "s-web01", tabId: "t-web01-1", assetId: "a-web01", userId: null, command: "[root@web-01 ~]# nginx -t", source: "terminal", exitCode: 0, startedAt: NOW - 6 * MIN, finishedAt: NOW - 6 * MIN + 90 },
+  { id: 206, sessionId: "s-web01", tabId: "t-web01-1", assetId: "a-web01", userId: null, command: "[root@web-01 ~]# tail -n 50 /var/log/nginx/error.log", source: "terminal", exitCode: 0, startedAt: NOW - 9 * MIN, finishedAt: NOW - 9 * MIN + 1300 },
+  { id: 205, sessionId: "s-web01", tabId: "t-web01-1", assetId: "a-web01", userId: null, command: "[root@web-01 ~]# docker ps --format '{{.Names}}\\t{{.Status}}'", source: "terminal", exitCode: 0, startedAt: NOW - 14 * MIN, finishedAt: NOW - 14 * MIN + 260 },
+  { id: 204, sessionId: "s-build", tabId: "t-build-1", assetId: "a-build", userId: null, command: "[ci@build-01 ~]$ git pull --rebase", source: "terminal", exitCode: 1, startedAt: NOW - 32 * MIN, finishedAt: NOW - 32 * MIN + 180 },
+  { id: 203, sessionId: "s-build", tabId: "t-build-1", assetId: "a-build", userId: null, command: "[ci@build-01 ~]$ df -h /var/lib/docker", source: "terminal", exitCode: 0, startedAt: NOW - 35 * MIN, finishedAt: NOW - 35 * MIN + 75 },
+  { id: 202, sessionId: "s-win", tabId: "t-win-1", assetId: "a-win", userId: null, command: "Get-Service Winmgmt", source: "exec", exitCode: 0, startedAt: NOW - 51 * MIN, finishedAt: NOW - 51 * MIN + 640 },
+  { id: 201, sessionId: "s-win", tabId: "t-win-1", assetId: "a-win", userId: null, command: "ipconfig /all", source: "exec", exitCode: 0, startedAt: NOW - 53 * MIN, finishedAt: NOW - 53 * MIN + 310 },
 ];
 
 export const providerPresets = ["deepseek", "openai", "dashscope", "moonshot", "zhipu", "ollama", "lmstudio", "vllm"];

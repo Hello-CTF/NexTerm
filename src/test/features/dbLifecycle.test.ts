@@ -16,7 +16,7 @@ vi.mock("../../ipc/commands", () => ({
 
 import { useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
 
-function dbTab(id: string, connId: string, kind: "mysql" | "redis"): AppTab {
+function dbTab(id: string, connId: string, kind: "mysql" | "postgres" | "redis"): AppTab {
   return { id, kind: "db", title: id, connId, dbKind: kind, closable: true };
 }
 
@@ -82,6 +82,19 @@ describe("数据库标签关闭", () => {
     await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(true);
 
     expect(mocks.disconnect).toHaveBeenCalledWith("conn-redis");
+    expect(tabExists(tab.id)).toBe(false);
+  });
+
+  it("PostgreSQL 标签关闭同样真实断开", async () => {
+    const tab = dbTab("db-pg", "conn-pg", "postgres");
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
+      activeWorkspaceId: "ws",
+    });
+
+    await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(true);
+
+    expect(mocks.disconnect).toHaveBeenCalledWith("conn-pg");
     expect(tabExists(tab.id)).toBe(false);
   });
 

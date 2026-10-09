@@ -4,11 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
+
+// guardGrantMutation 在服务端装配(ServerMode)下把设备授权/授权规则的变更收敛为
+// 超管: 授权状态是全局设置, 普通用户修改等于替全体用户授权。桌面端与无身份的
+// 开放部署(auth=off / loopback 免登录)保持原行为。
+func (r *Runner) guardGrantMutation(ctx context.Context) error {
+	if !r.config.ServerMode {
+		return nil
+	}
+	if _, ok := ipc.UserIDFromContext(ctx); !ok {
+		return nil
+	}
+	if role, _ := ipc.RoleFromContext(ctx); role != string(account.RoleSuperadmin) {
+		return ipc.NewError(ipc.CodeForbidden, "需要超管权限")
+	}
+	return nil
+}
 
 func channelStreamFactory(call *ipc.Call) StreamFactory {
 	if call == nil || call.Channel.ID == "" {
@@ -134,6 +152,9 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				DeviceID string   `json:"deviceId"`
 				Kinds    []string `json:"kinds"`
 			}) (guard.DeviceGrant, error) {
+				if err := r.guardGrantMutation(ctx); err != nil {
+					return guard.DeviceGrant{}, err
+				}
 				if r.config.Grants == nil {
 					return guard.DeviceGrant{}, errors.New("设备授权未配置")
 				}
@@ -148,10 +169,54 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return ipc.Register(dispatcher, "ai_grant_revoke", func(ctx context.Context, _ *ipc.Call, args struct {
 				DeviceID string `json:"deviceId"`
 			}) (any, error) {
+				if err := r.guardGrantMutation(ctx); err != nil {
+					return nil, err
+				}
 				if r.config.Grants == nil {
 					return nil, errors.New("设备授权未配置")
 				}
 				return nil, r.config.Grants.Revoke(ctx, args.DeviceID)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_rule_list", func(context.Context, *ipc.Call, struct{}) ([]guard.GrantRule, error) {
+				if r.config.Grants == nil {
+					return nil, errors.New("设备授权未配置")
+				}
+				return r.config.Grants.Rules(), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_rule_set", func(ctx context.Context, _ *ipc.Call, args struct {
+				DeviceID  string `json:"deviceId"`
+				Action    string `json:"action"`
+				Path      string `json:"path"`
+				ExpiresAt int64  `json:"expiresAt"`
+			}) (guard.GrantRule, error) {
+				if err := r.guardGrantMutation(ctx); err != nil {
+					return guard.GrantRule{}, err
+				}
+				if r.config.Grants == nil {
+					return guard.GrantRule{}, errors.New("设备授权未配置")
+				}
+				var expiresAt time.Time
+				if args.ExpiresAt != 0 {
+					expiresAt = time.UnixMilli(args.ExpiresAt)
+				}
+				return r.config.Grants.AddRule(ctx, args.DeviceID, args.Action, args.Path, expiresAt)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_rule_revoke", func(ctx context.Context, _ *ipc.Call, args struct {
+				ID string `json:"id"`
+			}) (any, error) {
+				if err := r.guardGrantMutation(ctx); err != nil {
+					return nil, err
+				}
+				if r.config.Grants == nil {
+					return nil, errors.New("设备授权未配置")
+				}
+				return nil, r.config.Grants.RevokeRule(ctx, args.ID)
 			})
 		},
 	}

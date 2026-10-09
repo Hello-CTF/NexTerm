@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
@@ -154,7 +155,11 @@ func run(args []string) int {
 	}
 	var accounts *account.Accounts
 	if application.Services.Store != nil {
-		accounts = account.New(application.Services.Store.DB())
+		accounts = account.New(application.Services.Store.DB(), account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")))
+		if err := accounts.MigrateTOTPStorageKey(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
 	}
 	if invocation.Auth == core.AuthOff && accounts != nil {
 		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
@@ -174,6 +179,7 @@ func run(args []string) int {
 			DB:       application.Services.Store.DB(),
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
+			Events:   broker,
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)

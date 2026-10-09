@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 // FLEET149 交互测试: 角色差异(超管看 owner/编辑接入地址, 普通用户只读)、
-// 一次性接入码签发与安装指令、吊销确认、期望/实际自启动(离线语义)、指标展示。
+// 一次性接入码签发与安装指令、吊销确认、期望/实际自启动(离线语义)、指标展示、
+// device://status 上下线事件实时翻转在线状态。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
@@ -10,10 +11,16 @@ const mocks = vi.hoisted(() => {
   return {
     fetch: vi.fn(),
     ask: vi.fn(),
+    listenEvent: vi.fn(),
+    deviceStatusHandlers: [] as ((payload: unknown) => void)[],
   };
 });
 
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ipc/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/events")>()),
+  listenEvent: mocks.listenEvent,
+}));
 
 import { DevicesView } from "../../features/fleet/DevicesView";
 import { useAuth } from "../../features/auth/store";
@@ -27,6 +34,7 @@ const SUPERADMIN = {
   role: "superadmin" as const,
   state: "active" as const,
   must_change_password: false,
+  mfa_enabled: false,
   created_at: 1,
   updated_at: 1,
   last_login_at: 1,
@@ -176,6 +184,11 @@ function seedUser(user: typeof SUPERADMIN | typeof PLAIN_USER) {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  mocks.deviceStatusHandlers.length = 0;
+  mocks.listenEvent.mockImplementation((event: string, handler: (payload: unknown) => void) => {
+    if (event === "device://status") mocks.deviceStatusHandlers.push(handler);
+    return Promise.resolve(() => {});
+  });
 });
 
 afterEach(() => {
@@ -610,5 +623,46 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
     expect(document.body.textContent).not.toContain("old-admin-code");
+  });
+});
+
+describe("设备管理视图 · 上下线实时事件", () => {
+  it("device://status 实时翻转在线状态, 不重新拉列表; 未知设备 ID 忽略", async () => {
+    const calls = route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const cardOf = (name: string) =>
+      [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
+    expect(cardOf("db-02")?.textContent).toContain("离线");
+    expect(cardOf("web-01")?.textContent).toContain("在线");
+
+    const handler = mocks.deviceStatusHandlers.at(-1);
+    if (!handler) throw new Error("device://status 未订阅");
+    const fetchesBefore = calls.length;
+
+    // 未知设备 ID (他人设备): 忽略, 不污染任何卡片。
+    act(() => handler({ deviceId: "d-x", online: true }));
+    await flush();
+    expect(cardOf("db-02")?.textContent).toContain("离线");
+
+    // db-02 上线: 徽章立即翻转, 离线提示消失, 不发列表请求。
+    act(() => handler({ deviceId: "d-2", online: true }));
+    await flush();
+    expect(cardOf("db-02")?.textContent).toContain("在线");
+    expect(cardOf("db-02")?.textContent).not.toContain("设备离线: 修改只会保存为期望状态");
+    expect(calls.length).toBe(fetchesBefore);
+
+    // web-01 下线: 徽章变离线, 终端按钮禁用, 同样不发列表请求。
+    act(() => handler({ deviceId: "d-1", online: false }));
+    await flush();
+    const webCard = cardOf("web-01");
+    expect(webCard?.textContent).toContain("离线");
+    const terminalButton = [...(webCard?.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent?.trim() === "终端",
+    );
+    expect(terminalButton?.disabled).toBe(true);
+    expect(calls.length).toBe(fetchesBefore);
   });
 });

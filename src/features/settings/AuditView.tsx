@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
 import type { AuditEntryDto } from "../../ipc/types";
+import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
+import { useAuth } from "../auth/store";
+import { WEB } from "../../demo";
 import { describeError } from "../../ui/errorText";
 import { IconHistory, IconRefresh } from "../../ui/icons";
+import { CommandLogView } from "./CommandLogView";
 
 interface AuditEntry {
   id: number;
@@ -16,13 +20,31 @@ interface AuditEntry {
   durationMs: number | null;
 }
 
-type SourceFilter = "" | "user" | "ai";
+type SourceFilter = "" | "user" | "ai" | "fleet";
 
 const FILTERS: { value: SourceFilter; label: string }[] = [
   { value: "", label: "全部" },
   { value: "user", label: "用户" },
   { value: "ai", label: "AI" },
+  { value: "fleet", label: "设备" },
 ];
+
+// fleet 设备审计 kind 的中文标签 (audit_log.asset_id 落的是设备 ID)。
+const KIND_LABELS: Record<string, string> = {
+  device_enroll: "设备接入",
+  device_online: "设备上线",
+  device_offline: "设备离线",
+  device_revoke: "设备吊销",
+  device_autostart: "设备自启动",
+  device_failover: "设备切换接入",
+  device_terminal: "设备终端",
+};
+
+function sourceLabel(source: string): string {
+  if (source === "ai") return "AI";
+  if (source === "fleet") return "设备";
+  return "用户";
+}
 
 const PAGE_SIZE = 100;
 const SKELETON_ROWS = 8;
@@ -83,8 +105,12 @@ function AuditSkeletonRows() {
 }
 
 export function AuditView() {
+  const user = useAuth((s) => s.user);
+  const [view, setView] = useState<"audit" | "command">("audit");
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [source, setSource] = useState<SourceFilter>("");
+  const [devices, setDevices] = useState<FleetDevice[] | null>(null);
+  const [deviceId, setDeviceId] = useState("");
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -94,7 +120,33 @@ export function AuditView() {
   const loadSeq = useRef(0);
   const fetchedRef = useRef(0);
 
-  const loadFirstPage = useCallback(async (src: SourceFilter) => {
+  // 设备清单只用于"按设备过滤"下拉 (WEB 账号模式); 桌面端/演示模式/未登录
+  // 一律不请求, 过滤入口整体隐藏。401 会触发全局会话过期事件, 未登录绝不能发。
+  useEffect(() => {
+    if (!WEB || !user) return;
+    let cancelled = false;
+    fleetApi
+      .devices()
+      .then((r) => {
+        if (!cancelled) setDevices(r.devices);
+      })
+      .catch(() => {
+        if (!cancelled) setDevices(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // 选中设备时按 assetId 查该设备的完整时间线 (来源筛选让位);
+  // 未选中时维持按来源筛选。
+  const queryArgs = useCallback(
+    (src: SourceFilter, device: string): Record<string, unknown> =>
+      device ? { assetId: device } : { source: src || undefined },
+    [],
+  );
+
+  const loadFirstPage = useCallback(async (src: SourceFilter, device: string) => {
     const seq = ++loadSeq.current;
     fetchedRef.current = 0;
     setEntries([]);
@@ -106,14 +158,14 @@ export function AuditView() {
     setLoading(true);
     void (async () => {
       try {
-        const count = await assetApi.auditCount({ source: src || undefined });
+        const count = await assetApi.auditCount(queryArgs(src, device));
         if (seq === loadSeq.current) setTotal(count.total);
       } catch {
         if (seq === loadSeq.current) setTotal(null);
       }
     })();
     try {
-      const rows = await assetApi.auditQuery({ source: src || undefined, limit: PAGE_SIZE, offset: 0 });
+      const rows = await assetApi.auditQuery({ ...queryArgs(src, device), limit: PAGE_SIZE, offset: 0 });
       if (seq !== loadSeq.current) return;
       fetchedRef.current = rows.length;
       setLastPageFull(rows.length === PAGE_SIZE);
@@ -124,11 +176,15 @@ export function AuditView() {
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, []);
+  }, [queryArgs]);
 
   useEffect(() => {
-    void loadFirstPage(source);
-  }, [source, loadFirstPage]);
+    void loadFirstPage(source, deviceId);
+  }, [source, deviceId, loadFirstPage]);
+
+  if (view === "command") {
+    return <CommandLogView onShowAudit={() => setView("audit")} />;
+  }
 
   const knownTotal = total !== null ? total : lastPageFull ? null : entries.length;
   const hasMore = lastPageFull && (knownTotal === null || entries.length < knownTotal);
@@ -140,7 +196,7 @@ export function AuditView() {
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const rows = await assetApi.auditQuery({ source: source || undefined, limit: PAGE_SIZE, offset });
+      const rows = await assetApi.auditQuery({ ...queryArgs(source, deviceId), limit: PAGE_SIZE, offset });
       if (seq !== loadSeq.current) return;
       fetchedRef.current += rows.length;
       setLastPageFull(rows.length === PAGE_SIZE);
@@ -157,6 +213,14 @@ export function AuditView() {
       <div className="nx-toolbar flex-wrap">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
+        <div className="nx-segment">
+          <button className="nx-segment-item is-active" disabled>
+            审计
+          </button>
+          <button className="nx-segment-item" onClick={() => setView("command")}>
+            命令
+          </button>
+        </div>
         <span className="nx-hint">
           {error && entries.length === 0
             ? "审计记录加载失败"
@@ -168,12 +232,30 @@ export function AuditView() {
           <span className="nx-hint text-red-300">刷新失败 · {error}</span>
         )}
         <div className="nx-spacer" />
+        {devices !== null && devices.length > 0 && (
+          <select
+            className="nx-select shrink-0"
+            style={{ width: 140 }}
+            aria-label="按设备过滤"
+            value={deviceId}
+            onChange={(e) => setDeviceId(e.target.value)}
+          >
+            <option value="">全部设备</option>
+            {devices.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="nx-segment">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               className={`nx-segment-item ${source === f.value ? "is-active" : ""}`}
               onClick={() => setSource(f.value)}
+              disabled={deviceId !== ""}
+              title={deviceId !== "" ? "按设备过滤时已覆盖来源筛选" : undefined}
             >
               {f.label}
             </button>
@@ -181,7 +263,7 @@ export function AuditView() {
         </div>
         <button
           className="nx-btn nx-btn-ghost nx-btn-sm"
-          onClick={() => void loadFirstPage(source)}
+          onClick={() => void loadFirstPage(source, deviceId)}
           disabled={loading}
         >
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
@@ -210,11 +292,13 @@ export function AuditView() {
               <tr key={e.id}>
                 <td className="nx-mono whitespace-nowrap">{new Date(e.ts).toLocaleString()}</td>
                 <td>
-                  <span className={`nx-badge ${e.source === "ai" ? "nx-badge-purple" : "nx-badge-blue"}`}>
-                    {e.source === "ai" ? "AI" : "用户"}
+                  <span className={`nx-badge ${e.source === "ai" ? "nx-badge-purple" : e.source === "fleet" ? "nx-badge-green" : "nx-badge-blue"}`}>
+                    {sourceLabel(e.source)}
                   </span>
                 </td>
-                <td className="font-mono text-[11.5px] text-neutral-200">{e.kind}</td>
+                <td className="font-mono text-[11.5px] text-neutral-200" title={e.kind}>
+                  {KIND_LABELS[e.kind] ?? e.kind}
+                </td>
                 <td className="nx-mono max-w-[520px] truncate" title={JSON.stringify(e.payload)}>
                   {JSON.stringify(e.payload)}
                 </td>
@@ -244,7 +328,7 @@ export function AuditView() {
                   <span className="text-red-300">审计记录加载失败 · {error}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
-                    onClick={() => void loadFirstPage(source)}
+                    onClick={() => void loadFirstPage(source, deviceId)}
                     disabled={loading}
                   >
                     <IconRefresh size={12} />
@@ -297,7 +381,7 @@ export function AuditView() {
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>所有会话命令、AI 动作、文件写操作都会落库，逐条标注来源；有退出码的记录会一并展示。</span>
+        <span>会话命令、AI 动作、文件写操作与设备上下线都会落库，逐条标注来源；有退出码的记录会一并展示。</span>
       </div>
     </div>
   );

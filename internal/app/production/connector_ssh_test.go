@@ -26,6 +26,8 @@ type sshConnectorServer struct {
 	agentKey     gossh.PublicKey
 	agentResult  chan error
 	execCommands chan string
+	envReqs      chan [2]string
+	shellInput   chan string
 }
 
 func newSSHConnectorServer(t *testing.T, customize func(*gossh.ServerConfig)) *sshConnectorServer {
@@ -151,6 +153,24 @@ func (s *sshConnectorServer) handleSession(conn *gossh.ServerConn, channel gossh
 		case "auth-agent-req@openssh.com":
 			request.Reply(true, nil)
 			go s.checkForwardedAgent(conn)
+		case "pty-req":
+			request.Reply(true, nil)
+		case "env":
+			var payload struct{ Name, Value string }
+			if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			if s.envReqs == nil {
+				request.Reply(false, nil)
+				continue
+			}
+			s.envReqs <- [2]string{payload.Name, payload.Value}
+			request.Reply(true, nil)
+		case "shell":
+			request.Reply(true, nil)
+			s.recordShellInput(channel)
+			return
 		default:
 			if request.WantReply {
 				request.Reply(false, nil)
@@ -177,6 +197,26 @@ func (s *sshConnectorServer) checkForwardedAgent(conn *gossh.ServerConn) {
 		return
 	}
 	s.reportAgentResult(nil)
+}
+
+func (s *sshConnectorServer) recordShellInput(channel gossh.Channel) {
+	if s.shellInput == nil {
+		_, _ = io.Copy(io.Discard, channel)
+		return
+	}
+	buffer := make([]byte, 4096)
+	for {
+		count, err := channel.Read(buffer)
+		if count > 0 {
+			select {
+			case s.shellInput <- string(buffer[:count]):
+			default:
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (s *sshConnectorServer) reportAgentResult(err error) {

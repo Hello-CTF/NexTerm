@@ -16,11 +16,12 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 export interface TerminalKeysBarProps {
   onSend: (data: string) => void;
   onFocus: () => void;
+  broadcastCount?: number;
 }
 
 type ConfigFocusRequest = { id: string; control: "toggle" | "up" | "down" };
 
-export function TerminalKeysBar({ onSend, onFocus }: TerminalKeysBarProps) {
+export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKeysBarProps) {
   const [ctrlActive, setCtrlActive] = useState(false);
   const [altActive, setAltActive] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
@@ -222,6 +223,14 @@ export function TerminalKeysBar({ onSend, onFocus }: TerminalKeysBarProps) {
 
   return (
     <div className="nx-terminal-keys" aria-label="终端辅助按键">
+      {broadcastCount != null && broadcastCount > 0 && (
+        <span
+          className="nx-badge nx-badge-red shrink-0"
+          title="命令广播已开启：这里的按键将同时发送到多个终端"
+        >
+          广播 {broadcastCount}
+        </span>
+      )}
       <button
         type="button"
         className={`nx-terminal-key ${ctrlActive ? "is-active" : ""}`}

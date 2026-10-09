@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   probeBatch: vi.fn(),
   write: vi.fn(),
   ask: vi.fn(),
+  promptText: vi.fn(),
   toast: vi.fn(),
   addTab: vi.fn(),
   setSessions: vi.fn(),
@@ -26,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
-  return { ...actual, ask: mocks.ask };
+  return { ...actual, ask: mocks.ask, promptText: mocks.promptText };
 });
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
@@ -48,6 +49,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 import { CommandPalette } from "../../app/CommandPalette";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useUi } from "../../app/store";
+import type { LayoutPreset } from "../../app/layoutPresets";
 import type { Asset } from "../../ipc/commands";
 
 function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
@@ -157,6 +159,7 @@ beforeEach(() => {
     addTab: mocks.addTab,
     setSessions: mocks.setSessions,
     pushToast: mocks.toast,
+    layoutPresets: [],
   });
 });
 
@@ -295,5 +298,61 @@ describe("命令面板资产二级操作", () => {
     await flush();
     expect(useAssetVisibility.getState().hiddenIds).not.toContain("a1");
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已取消隐藏"));
+  });
+});
+
+function presetFixture(): LayoutPreset {
+  return {
+    id: "p1",
+    name: "开发环境",
+    createdAt: 1,
+    updatedAt: 1,
+    workspace: {
+      kind: "session",
+      title: "web-01",
+      sessionId: "s1",
+      assetId: "a1",
+      assetKind: "ssh",
+      splitRatio: 0.5,
+      panes: [
+        { tabs: [{ kind: "terminal", title: "终端 1", sessionId: "s1" }], activeTabIndex: 0 },
+      ],
+      activePaneIndex: 0,
+    },
+  };
+}
+
+describe("命令面板布局预设", () => {
+  it("列出保存/应用/删除预设条目", async () => {
+    useUi.setState({ layoutPresets: [presetFixture()] });
+    await mountPalette({ onClose: vi.fn() });
+    expect(optionByText(mounted!.container, "保存布局预设")).toBeTruthy();
+    expect(optionByText(mounted!.container, "应用布局预设「开发环境」")).toBeTruthy();
+    expect(optionByText(mounted!.container, "删除布局预设「开发环境」")).toBeTruthy();
+  });
+
+  it("保存布局预设走命名提示并写入 store", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.promptText.mockResolvedValue("我的预设");
+    await mountPalette({ onClose: vi.fn() });
+    setInputValue(searchInput(mounted!.container), "保存布局预设");
+    click(optionByText(mounted!.container, "保存布局预设"));
+    await waitFor(() => expect(useUi.getState().layoutPresets).toHaveLength(1));
+    expect(mocks.promptText).toHaveBeenCalledWith("预设名称：", "ws");
+    expect(useUi.getState().layoutPresets[0].name).toBe("我的预设");
+    expect(useUi.getState().layoutPresets[0].workspace.panes[0].tabs[0].kind).toBe("terminal");
+  });
+
+  it("删除布局预设需确认", async () => {
+    useUi.setState({ layoutPresets: [presetFixture()] });
+    mocks.ask.mockResolvedValueOnce(true);
+    await mountPalette({ onClose: vi.fn() });
+    setInputValue(searchInput(mounted!.container), "删除布局预设");
+    click(optionByText(mounted!.container, "删除布局预设「开发环境」"));
+    await waitFor(() => expect(useUi.getState().layoutPresets).toHaveLength(0));
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("删除预设「开发环境」"),
+      expect.anything(),
+    );
   });
 });

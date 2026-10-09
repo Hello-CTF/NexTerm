@@ -29,6 +29,7 @@ type terminalCommandService struct {
 	sshConnector *productionConnector
 	events       ipc.Emitter
 	stagedBlobs  StagedBlobResolver
+	desktop      bool
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -93,6 +94,7 @@ type attachedTabDTO struct {
 	Subscribers int     `json:"subscribers"`
 	Viewers     int     `json:"viewers"`
 	Exited      bool    `json:"exited"`
+	Encoding    string  `json:"encoding,omitempty"`
 }
 
 type terminalWriteRequest struct {
@@ -127,11 +129,11 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
 	return &terminalCommandService{
 		database: database, sessions: sessions, docker: dockerService, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), hostKeys: hostKeys, sshConnector: sshConnector,
-		events: events, stagedBlobs: stagedBlobs,
+		events: events, stagedBlobs: stagedBlobs, desktop: desktop,
 	}
 }
 
@@ -156,6 +158,24 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return sessionInfoDTO{}, terminalIPCError(err)
 				}
 				return productionSessionInfo(connected.Info()), nil
+			})
+		},
+		// 快速连接让服务端直接向任意 host:port 发起 SSH; 服务端装配 (desktop=false)
+		// 下一律禁用, 任意登录用户不能借服务器 pivot 到内网任意地址。桌面单用户模式保持可用。
+		func() error {
+			return ipc.RegisterNested(dispatcher, "session_connect_quick", func(ctx context.Context, _ *ipc.Call, input sessionQuickConnectRequest) (sessionInfoDTO, error) {
+				if !s.desktop {
+					return sessionInfoDTO{}, ipc.NewError(ipc.CodeUnsupported, "快速连接只在桌面端可用")
+				}
+				return s.connectQuick(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "session_quick_connect_user", func(_ context.Context, _ *ipc.Call, _ struct{}) (string, error) {
+				if !s.desktop {
+					return "", ipc.NewError(ipc.CodeUnsupported, "快速连接只在桌面端可用")
+				}
+				return quickConnectDefaultUsername(), nil
 			})
 		},
 		func() error {
@@ -526,7 +546,8 @@ func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Ass
 		options["autoAcceptUnknownHost"] = true
 	}
 	encoding, _ := options["encoding"].(string)
-	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, Options: options}, nil
+	startupCommand, _ := options["startupCommand"].(string)
+	return session.Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Encoding: encoding, StartupCommand: startupCommand, Options: options}, nil
 }
 
 func productionSessionInfo(info session.SessionInfo) sessionInfoDTO {
@@ -544,6 +565,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
+		Encoding: info.Encoding,
 	}
 }
 

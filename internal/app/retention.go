@@ -16,6 +16,15 @@ import (
 
 const RetentionSettingKey = "retention.policy"
 
+// TranscriptRetentionSettingKey 是 transcript retention 设置键 (生产 transcript
+// writer 拥有该设置); 命令日志保留策略可选择镜像它。
+const TranscriptRetentionSettingKey = "transcript.retention"
+
+const (
+	TranscriptDefaultRetentionMaxAge   = 30 * 24 * time.Hour
+	TranscriptDefaultRetentionMaxCount = 2000
+)
+
 type RetentionPolicySource interface {
 	RetentionPolicy(context.Context) (store.RetentionPolicy, error)
 }
@@ -64,10 +73,49 @@ type RetentionRunner struct {
 }
 
 type retentionSettings struct {
-	AuditMaxAgeMS     int64 `json:"auditMaxAgeMs"`
-	AuditMaxCount     int64 `json:"auditMaxCount"`
-	RecordingMaxAgeMS int64 `json:"recordingMaxAgeMs"`
-	RecordingMaxCount int64 `json:"recordingMaxCount"`
+	AuditMaxAgeMS           int64 `json:"auditMaxAgeMs"`
+	AuditMaxCount           int64 `json:"auditMaxCount"`
+	RecordingMaxAgeMS       int64 `json:"recordingMaxAgeMs"`
+	RecordingMaxCount       int64 `json:"recordingMaxCount"`
+	CommandMaxAgeMS         int64 `json:"commandMaxAgeMs"`
+	CommandMaxCount         int64 `json:"commandMaxCount"`
+	CommandFollowTranscript bool  `json:"commandFollowTranscript"`
+}
+
+// TranscriptRetentionPolicy 读取 transcript retention 设置; 未设置或字段为 0
+// 时回落到默认保留 (与生产 transcript writer 的生效语义一致)。
+func TranscriptRetentionPolicy(ctx context.Context, database *store.Store) (store.TranscriptRetentionPolicy, error) {
+	policy := store.TranscriptRetentionPolicy{
+		MaxAge:   TranscriptDefaultRetentionMaxAge,
+		MaxCount: TranscriptDefaultRetentionMaxCount,
+	}
+	raw, found, err := database.SettingGet(ctx, TranscriptRetentionSettingKey)
+	if err != nil {
+		return policy, err
+	}
+	if !found || strings.TrimSpace(raw) == "" {
+		return policy, nil
+	}
+	var settings struct {
+		MaxAgeMS int64 `json:"maxAgeMs"`
+		MaxCount int64 `json:"maxCount"`
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return policy, fmt.Errorf("decode %s: %w", TranscriptRetentionSettingKey, err)
+	}
+	if settings.MaxAgeMS < 0 || settings.MaxCount < 0 {
+		return policy, fmt.Errorf("%s must not be negative", TranscriptRetentionSettingKey)
+	}
+	if settings.MaxAgeMS > math.MaxInt64/int64(time.Millisecond) {
+		return policy, fmt.Errorf("%s maxAgeMs is too large", TranscriptRetentionSettingKey)
+	}
+	if settings.MaxAgeMS > 0 {
+		policy.MaxAge = time.Duration(settings.MaxAgeMS) * time.Millisecond
+	}
+	if settings.MaxCount > 0 {
+		policy.MaxCount = settings.MaxCount
+	}
+	return policy, nil
 }
 
 func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
@@ -91,15 +139,30 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 		if err != nil {
 			return store.RetentionPolicy{}, err
 		}
-		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 {
+		commandAge, err := retentionDuration("commandMaxAgeMs", settings.CommandMaxAgeMS)
+		if err != nil {
+			return store.RetentionPolicy{}, err
+		}
+		if settings.AuditMaxCount < 0 || settings.RecordingMaxCount < 0 || settings.CommandMaxCount < 0 {
 			return store.RetentionPolicy{}, fmt.Errorf("%s counts must not be negative", RetentionSettingKey)
 		}
-		return store.RetentionPolicy{
+		policy := store.RetentionPolicy{
 			AuditMaxAge:       auditAge,
 			AuditMaxCount:     settings.AuditMaxCount,
 			RecordingMaxAge:   recordingAge,
 			RecordingMaxCount: settings.RecordingMaxCount,
-		}, nil
+			CommandMaxAge:     commandAge,
+			CommandMaxCount:   settings.CommandMaxCount,
+		}
+		if settings.CommandFollowTranscript {
+			transcript, err := TranscriptRetentionPolicy(ctx, database)
+			if err != nil {
+				return store.RetentionPolicy{}, err
+			}
+			policy.CommandMaxAge = transcript.MaxAge
+			policy.CommandMaxCount = transcript.MaxCount
+		}
+		return policy, nil
 	})
 }
 
@@ -191,7 +254,8 @@ func (r *RetentionRunner) enforce(ctx context.Context) {
 }
 
 func retentionEnabled(policy store.RetentionPolicy) bool {
-	return policy.AuditMaxAge > 0 || policy.AuditMaxCount > 0 || policy.RecordingMaxAge > 0 || policy.RecordingMaxCount > 0
+	return policy.AuditMaxAge > 0 || policy.AuditMaxCount > 0 || policy.RecordingMaxAge > 0 || policy.RecordingMaxCount > 0 ||
+		policy.CommandMaxAge > 0 || policy.CommandMaxCount > 0
 }
 
 func (r *RetentionRunner) Status(_ context.Context) (RetentionHealth, error) {

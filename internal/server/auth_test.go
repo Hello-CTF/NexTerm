@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/coder/websocket"
 )
@@ -527,7 +528,8 @@ func TestRequireAuthAccountSessionInjectsSharedUserID(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	err := fixture.server.dispatcher.RegisterRaw("test_echo_user", func(ctx context.Context, _ *ipc.Call) (any, error) {
 		userID, ok := ipc.UserIDFromContext(ctx)
-		result := map[string]any{"userID": userID, "ok": ok}
+		role, roleOK := ipc.RoleFromContext(ctx)
+		result := map[string]any{"userID": userID, "ok": ok, "role": role, "roleOK": roleOK}
 		if identity := accountIdentityFrom(ctx); identity != nil {
 			result["identityUserID"] = identity.UserID
 		}
@@ -553,6 +555,9 @@ func TestRequireAuthAccountSessionInjectsSharedUserID(t *testing.T) {
 	data, _ := authorized.body["data"].(map[string]any)
 	if data["ok"] != true || data["userID"] != userID || data["identityUserID"] != userID {
 		t.Fatalf("injected identity mismatch: %v", data)
+	}
+	if data["roleOK"] != true || data["role"] != string(account.RoleSuperadmin) {
+		t.Fatalf("injected role mismatch: %v", data)
 	}
 
 	anonymous := echo(nil, "")

@@ -60,6 +60,7 @@ export interface XtermViewProps {
     subscribers: number;
     viewers: number;
     exited: boolean;
+    encoding?: string;
   }) => void;
   canResize?: boolean;
   remoteGrid?: { cols: number; rows: number; revision: number };
@@ -231,6 +232,7 @@ export function XtermView(props: XtermViewProps) {
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
+            encoding: info.encoding,
           });
         } else if (props.containerId) {
           if (!dimensions) return;
@@ -309,6 +311,7 @@ export function XtermView(props: XtermViewProps) {
             subscribers: info.subscribers,
             viewers: info.viewers,
             exited: info.exited,
+            encoding: info.encoding,
           });
         } catch (e) {
           if (disposed) return;

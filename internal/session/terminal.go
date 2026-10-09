@@ -149,6 +149,9 @@ func (m *Manager) SwitchEncoding(tabID, encoding string) error {
 		return ErrUnsupported
 	}
 	core.SwitchEncoding(parsed)
+	tab.mu.Lock()
+	tab.encoding = canonicalEncoding(encoding)
+	tab.mu.Unlock()
 	return nil
 }
 

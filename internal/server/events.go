@@ -36,11 +36,16 @@ type eventSubscription struct {
 	queue chan []byte
 	done  chan struct{}
 	once  sync.Once
+	// filter 为 nil 表示全量接收; 非 nil 时 Emit 与重放都逐事件判定,
+	// 被拒事件不下发 (如 device://status 按订阅者身份过滤)。
+	filter func(ipc.Event) bool
 }
 
 type bufferedEvent struct {
 	id   uint64
 	data []byte
+	// event 保留原始事件, 供订阅重放时按订阅者 filter 重新判定。
+	event ipc.Event
 }
 
 func NewEventBroker() *EventBroker {
@@ -85,7 +90,7 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 		b.mu.Unlock()
 		return err
 	}
-	b.appendBufferLocked(id, data)
+	b.appendBufferLocked(id, event, data)
 	subscribers := make([]*eventSubscription, 0, len(b.subscribers))
 	for _, subscriber := range b.subscribers {
 		subscribers = append(subscribers, subscriber)
@@ -93,6 +98,9 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 	b.mu.Unlock()
 
 	for _, subscriber := range subscribers {
+		if subscriber.filter != nil && !subscriber.filter(event) {
+			continue
+		}
 		select {
 		case subscriber.queue <- data:
 		case <-subscriber.done:
@@ -107,12 +115,12 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 	return nil
 }
 
-func (b *EventBroker) appendBufferLocked(id uint64, data []byte) {
+func (b *EventBroker) appendBufferLocked(id uint64, event ipc.Event, data []byte) {
 	size := b.BufferSize
 	if size <= 0 {
 		size = DefaultEventBufferSize
 	}
-	b.buffer = append(b.buffer, bufferedEvent{id: id, data: data})
+	b.buffer = append(b.buffer, bufferedEvent{id: id, data: data, event: event})
 	if len(b.buffer) > size {
 		b.buffer = append([]bufferedEvent(nil), b.buffer[len(b.buffer)-size:]...)
 	}
@@ -124,7 +132,7 @@ func (b *EventBroker) SubscriberCount() int {
 	return len(b.subscribers)
 }
 
-func (b *EventBroker) subscribe(since uint64, present, resync bool) (*eventSubscription, func(), error) {
+func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(ipc.Event) bool) (*eventSubscription, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -136,7 +144,7 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool) (*eventSubsc
 	if size <= 0 {
 		size = DefaultEventQueueSize
 	}
-	subscriber := &eventSubscription{id: id, queue: make(chan []byte, size), done: make(chan struct{})}
+	subscriber := &eventSubscription{id: id, queue: make(chan []byte, size), done: make(chan struct{}), filter: filter}
 	b.subscribers[id] = subscriber
 	if resync {
 		subscriber.queue <- b.resyncMarkerLocked()
@@ -153,7 +161,7 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool) (*eventSubsc
 				break
 			}
 			for _, event := range b.buffer {
-				if event.id > since {
+				if event.id > since && (filter == nil || filter(event.event)) {
 					subscriber.queue <- event.data
 				}
 			}

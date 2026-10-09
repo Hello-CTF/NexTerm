@@ -265,6 +265,11 @@ type Interaction struct {
 	Reason   string
 	Preview  *Preview
 	Question *Question
+
+	// Commands 携带 exec_commands 的完整命令列表，供确认对话框全量展示。
+	Commands []string
+	// RulePattern 是「永久允许」将授予的路径范围；空串表示该动作不限路径。
+	RulePattern string
 }
 
 type InteractionState struct {
@@ -277,6 +282,7 @@ type InteractionState struct {
 	Info           Interaction
 
 	AuthorizationID string
+	Resource        guard.Resource
 }
 
 func init() {
@@ -601,6 +607,13 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 	if call.ID == "" {
 		return Output{}, errors.New("Eino tool call id is empty")
 	}
+	if call.Name == "write_file" || call.Name == "edit_file" {
+		normalized, err := normalizeWritePathArgs(call.Args)
+		if err != nil {
+			return Fail(err), nil
+		}
+		call.Args = normalized
+	}
 	if wasInterrupted, _, state := tool.GetInterruptState[InteractionState](ctx); wasInterrupted {
 		target, hasData, data := tool.GetResumeContext[string](ctx)
 		if !target {
@@ -618,7 +631,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 		if data == "deny" {
 			return Fail(errors.New("用户拒绝了此操作")), nil
 		}
-		if data != "allow" && data != "allow_session" {
+		if data != "allow" && data != "allow_session" && data != "allow_persistent" {
 			return Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
 		if call.Name == "send_keys" {
@@ -636,11 +649,20 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			}
 		}
 		if data == "allow_session" {
-			for _, kind := range state.MemoryKinds {
-				e.Memory.Add(kind)
+			if guard.RuleActionNeedsPath(state.Resource.Action) && state.Resource.Path != "" {
+				e.Memory.AddPathRule(state.Resource.Action, guard.DirPattern(state.Resource.Path))
+			} else {
+				for _, kind := range state.MemoryKinds {
+					e.Memory.Add(kind)
+				}
+				if len(state.MemoryKinds) == 0 {
+					e.Memory.Add(state.MemoryKind)
+				}
 			}
-			if len(state.MemoryKinds) == 0 {
-				e.Memory.Add(state.MemoryKind)
+		}
+		if data == "allow_persistent" {
+			if err := e.persistPermanentGrant(ctx, state); err != nil {
+				return Fail(err), nil
 			}
 		}
 		call.AuthorizationID = state.AuthorizationID
@@ -701,12 +723,22 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return Fail(err), nil
 	}
 	if decision.Action == guard.ActionAsk {
+		resource := resourceForCall(call)
 		rendered := DisplayCall(call)
 		if call.Name == "send_keys" {
 			rendered = DisplaySendKeys(call, terminalInput, cursor)
 		}
 		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision)}
+		if ruling.Risk == guard.NeedsConfirm && guard.RuleActionSupported(resource.Action) {
+			info.RulePattern = persistentRulePattern(resource)
+			if call.Name == "exec_commands" {
+				var input ExecCommandsArgs
+				if json.Unmarshal(call.Args, &input) == nil {
+					info.Commands = input.Commands
+				}
+			}
+		}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Resource: resource}
 		if forcedConfirm {
 			state.MemoryKind = ""
 			state.MemoryKinds = nil

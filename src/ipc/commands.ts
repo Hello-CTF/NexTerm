@@ -112,6 +112,15 @@ export interface SessionInfo {
 export const sessionApi = {
   connect: (assetId: string, acceptHostKey = false) =>
     call<SessionInfo>("session_connect", { args: { assetId, acceptHostKey } }),
+  connectQuick: (args: {
+    host: string;
+    port: number;
+    username?: string;
+    authKind: "password" | "agent";
+    password?: string;
+    acceptHostKey?: boolean;
+  }) => call<SessionInfo>("session_connect_quick", { args }),
+  quickConnectDefaultUser: () => call<string>("session_quick_connect_user"),
   connectLocal: () => call<SessionInfo>("session_connect_local"),
   disconnect: (sessionId: string) =>
     call<void>("session_disconnect", { sessionId }),
@@ -148,6 +157,7 @@ export interface AttachedTabInfo {
   subscribers: number;
   viewers: number;
   exited: boolean;
+  encoding?: string;
 }
 
 export interface LiveTabInfo {
@@ -290,7 +300,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "mysql" | "redis";
+  kind: "ssh" | "winrm" | "local" | "docker" | "mysql" | "postgres" | "redis";
   name: string;
   host: string | null;
   port: number | null;
@@ -349,6 +359,10 @@ export const assetApi = {
     call<import("./types").AuditEntryDto[]>("audit_query", { args }),
   auditCount: (args: Record<string, unknown> = {}) =>
     call<import("./types").AuditCountDto>("audit_count", { args }),
+  commandQuery: (args: Record<string, unknown> = {}) =>
+    call<import("./types").CommandEntryDto[]>("command_query", { args }),
+  commandCount: (args: Record<string, unknown> = {}) =>
+    call<import("./types").AuditCountDto>("command_count", { args }),
   probeBatch: (assetIds: string[], timeoutMs?: number, maxConcurrent?: number) =>
     call<import("./types").AssetProbeBatchDto>("asset_probe_batch", {
       args: { assetIds, timeoutMs, maxConcurrent },
@@ -379,6 +393,19 @@ export const fsApi = {
     call<{ path: string; size: number; contentBase64: string }>("fs_read", {
       sessionId,
       path,
+      maxBytes,
+    }),
+  readRange: (sessionId: string, path: string, offset: number, maxBytes?: number) =>
+    call<{
+      path: string;
+      offset: number;
+      size: number;
+      contentBase64: string;
+      truncated: boolean;
+    }>("fs_read_range", {
+      sessionId,
+      path,
+      offset,
       maxBytes,
     }),
   write: (
@@ -571,7 +598,7 @@ export interface AiPermissionConfig {
   dangerRules: string[];
 }
 
-export type AiDecision = "allow" | "allow_session" | "deny";
+export type AiDecision = "allow" | "allow_session" | "allow_persistent" | "deny";
 
 export interface AiConfirmationInput {
   jobId: string;

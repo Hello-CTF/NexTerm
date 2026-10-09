@@ -246,3 +246,66 @@ func TestParseOSC133EdgeCases(t *testing.T) {
 		t.Errorf("parseOSC133(133;A) = %c, _, %v, %v; want A, _, false, true", letter, hasExit, ok)
 	}
 }
+
+func TestCommandTrackerObserveReports(t *testing.T) {
+	tr := NewCommandTracker()
+	stream := append(append([]byte("prompt$ "), osc133("B")...), osc133("B")...)
+	stream = append(stream, osc133("D;3")...)
+	stream = append(stream, osc133("A")...)
+	reports, state, changed := tr.ObserveReports(stream)
+	if !changed {
+		t.Fatal("ObserveReports() reported no change")
+	}
+	if len(reports) != 4 {
+		t.Fatalf("reports = %+v, want B, deduped B, D;3, A", reports)
+	}
+	if reports[0].Letter != 'B' || !reports[0].Started || reports[0].Sequence != 1 {
+		t.Fatalf("first report = %+v, want started B at sequence 1", reports[0])
+	}
+	if reports[1].Letter != 'B' || reports[1].Started || reports[1].Sequence != 1 {
+		t.Fatalf("second report = %+v, want deduped B at sequence 1", reports[1])
+	}
+	if reports[2].Letter != 'D' || !reports[2].HasExitCode || reports[2].ExitCode != 3 || reports[2].Sequence != 1 {
+		t.Fatalf("third report = %+v, want D exit 3 at sequence 1", reports[2])
+	}
+	if reports[3].Letter != 'A' || reports[3].HasExitCode || reports[3].Started {
+		t.Fatalf("fourth report = %+v, want bare A", reports[3])
+	}
+	if state.Sequence != 1 || state.Running || state.LastExitCode != 3 {
+		t.Fatalf("State() = %+v, want idle, sequence 1, exit 3", state)
+	}
+}
+
+func TestCommandTrackerObserveReportsAcrossChunkBoundaries(t *testing.T) {
+	stream := append(append([]byte("$ "), osc133("B")...), osc133("D;9")...)
+	for split := 0; split <= len(stream); split++ {
+		tr := NewCommandTracker()
+		var reports []Report
+		for _, chunk := range [][]byte{stream[:split], stream[split:]} {
+			var chunkReports []Report
+			chunkReports, _, _ = tr.ObserveReports(chunk)
+			reports = append(reports, chunkReports...)
+		}
+		if len(reports) != 2 || reports[0].Letter != 'B' || !reports[0].Started || reports[1].Letter != 'D' || reports[1].ExitCode != 9 {
+			t.Fatalf("split %d: reports = %+v, want started B and D;9", split, reports)
+		}
+	}
+}
+
+func TestCommandTrackerObserveReportsIgnoresNoise(t *testing.T) {
+	tr := NewCommandTracker()
+	reports, _, changed := tr.ObserveReports([]byte("\x1b[2J\x1b]0;title\x07 \x1b]7;file://h/tmp\x1b\\ \x1b]52;c;Y2xpcGJvYXJk\x07"))
+	if changed || len(reports) != 0 {
+		t.Fatalf("foreign OSC produced %+v (changed=%v), want no reports", reports, changed)
+	}
+	// An unknown letter and a malformed exit code still parse as OSC 133
+	// reports; the state machine ignores the former and treats the latter as
+	// a finish without an exit code, so consumers see them verbatim.
+	reports, _, _ = tr.ObserveReports(append(osc133("X"), osc133("D;abc")...))
+	if len(reports) != 2 || reports[0].Letter != 'X' || reports[0].Started {
+		t.Fatalf("unknown-letter report = %+v, want bare X", reports)
+	}
+	if reports[1].Letter != 'D' || reports[1].HasExitCode || reports[1].ExitCode != 0 {
+		t.Fatalf("malformed-exit report = %+v, want D without exit code", reports[1])
+	}
+}

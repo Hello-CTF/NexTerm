@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -249,6 +250,75 @@ func TestProductionDockerExecDetachReattach(t *testing.T) {
 	}
 
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`","clientId":"client-a"}`, "", "client-a"))
+}
+
+func TestProductionTerminalWriteIsolatesTabsForBroadcast(t *testing.T) {
+	dataDir := durableTestDataDir(t)
+	factory := &bridgeTestFactory{}
+	production := newTerminalTestProduction(t, dataDir, factory, nil)
+	connected := connectLocalTerminalTest(t, production)
+
+	channelA := "broadcast-tab-a"
+	channelB := "broadcast-tab-b"
+	attachA := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelA, "client-a")
+	var tabA string
+	requireStoreTestResponse(t, attachA, &tabA)
+	attachB := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelB, "client-a")
+	var tabB string
+	requireStoreTestResponse(t, attachB, &tabB)
+	if tabA == tabB {
+		t.Fatalf("two attaches returned the same tab %s", tabA)
+	}
+	streamA := factory.at(channelA, 0)
+	streamB := factory.at(channelB, 0)
+
+	writeDurableTestCommand(t, production, tabA, "broadcast-only-a", "client-a")
+	waitForProductionOutput(t, streamA, "broadcast-only-a")
+	if bytes.Contains(streamB.output(), []byte("broadcast-only-a")) {
+		t.Fatalf("write to tab A leaked to tab B: %q", streamB.output())
+	}
+
+	writeDurableTestCommand(t, production, tabB, "broadcast-only-b", "client-a")
+	waitForProductionOutput(t, streamB, "broadcast-only-b")
+	if bytes.Contains(streamA.output(), []byte("broadcast-only-b")) {
+		t.Fatalf("write to tab B leaked to tab A: %q", streamA.output())
+	}
+
+	attachA2 := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabA+`","replayBytes":262144}`, "broadcast-tab-a2", "client-b")
+	var info attachedTabDTO
+	requireStoreTestResponse(t, attachA2, &info)
+	if info.Controller == nil || *info.Controller != "client-a" {
+		t.Fatalf("controller after second attach = %+v, want client-a", info.Controller)
+	}
+	writeForeign := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabA+`","data":[101,99,104,111,13],"clientId":"client-b"}}`, "", "client-b")
+	if writeForeign.OK || writeForeign.Error == nil || writeForeign.Error.Code != ipc.CodeNotController {
+		t.Fatalf("write from non-controller = %+v, want not_controller", writeForeign)
+	}
+
+	writeDurableTestInput(t, production, tabB, "exit", "client-a")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		listResponse := dispatchDurableTest(t, production, "terminal_list", `null`, "", "")
+		var live []liveTabDTO
+		requireStoreTestResponse(t, listResponse, &live)
+		exited := false
+		for _, candidate := range live {
+			if candidate.TabID == tabB && candidate.Exited {
+				exited = true
+			}
+		}
+		if exited {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tab B never marked exited: %+v", live)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	writeExited := dispatchDurableTest(t, production, "terminal_write", `{"args":{"tabId":"`+tabB+`","data":[101,99,104,111,13],"clientId":"client-a"}}`, "", "client-a")
+	if writeExited.OK || writeExited.Error == nil || writeExited.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("write to exited tab = %+v, want disconnected", writeExited)
+	}
 }
 
 type fakeStreamExecSession struct {

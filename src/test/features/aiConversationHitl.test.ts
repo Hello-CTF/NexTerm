@@ -437,3 +437,50 @@ describe("conversationStream HITL replay", () => {
     expect(roles).toEqual(["assistant", "confirm"]);
   });
 });
+
+describe("confirmRequired 事件字段", () => {
+  it("captures risk, commands and rulePattern on the pending card", () => {
+    let state = createConversation();
+    state = beginRun(state, 1);
+    const result = applyAiEvent(state, 1, {
+      type: "confirmRequired",
+      id: "call-9",
+      tool: "exec_commands",
+      rendered: "$ ls",
+      risk: "needs_confirm",
+      commands: ["ls -l", "pwd"],
+      rulePattern: "/var/log/**",
+      confirmationNonce: "n-9",
+    });
+    expect(result.accepted).toBe(true);
+    const card = pendingInteraction(result.state, 1, "confirm");
+    expect(card?.risk).toBe("needs_confirm");
+    expect(card?.commands).toEqual(["ls -l", "pwd"]);
+    expect(card?.rulePattern).toBe("/var/log/**");
+  });
+
+  it("drops malformed commands and non-string risk fields", () => {
+    let state = createConversation();
+    state = beginRun(state, 1);
+    const result = applyAiEvent(state, 1, {
+      type: "confirmRequired",
+      id: "call-10",
+      tool: "exec_commands",
+      rendered: "$ ls",
+      risk: 7,
+      commands: [1, "ok"],
+      confirmationNonce: "n-10",
+    });
+    const card = pendingInteraction(result.state, 1, "confirm");
+    expect(card?.risk).toBeUndefined();
+    expect(card?.commands).toEqual(["ok"]);
+    expect(card?.rulePattern).toBeUndefined();
+  });
+
+  it("leaves commands undefined for events without them", () => {
+    const state = withConfirmCard();
+    const card = pendingInteraction(state, 1, "confirm");
+    expect(card?.commands).toBeUndefined();
+    expect(card?.risk).toBeUndefined();
+  });
+});

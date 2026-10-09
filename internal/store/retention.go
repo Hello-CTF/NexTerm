@@ -15,12 +15,15 @@ type RetentionPolicy struct {
 	RecordingMaxCount int64
 	AIRunMaxAge       time.Duration
 	AIRunMaxCount     int64
+	CommandMaxAge     time.Duration
+	CommandMaxCount   int64
 }
 
 type RetentionResult struct {
 	AuditDeleted      int64 `json:"auditDeleted"`
 	RecordingsDeleted int64 `json:"recordingsDeleted"`
 	AIRunsDeleted     int64 `json:"aiRunsDeleted"`
+	CommandsDeleted   int64 `json:"commandsDeleted"`
 }
 
 type RetentionStatus struct {
@@ -39,6 +42,7 @@ func (p RetentionPolicy) validate() error {
 		"audit max age":     p.AuditMaxAge,
 		"recording max age": p.RecordingMaxAge,
 		"AI run max age":    p.AIRunMaxAge,
+		"command max age":   p.CommandMaxAge,
 	} {
 		if value < 0 {
 			return fmt.Errorf("%s must not be negative", name)
@@ -48,6 +52,7 @@ func (p RetentionPolicy) validate() error {
 		"audit max count":     p.AuditMaxCount,
 		"recording max count": p.RecordingMaxCount,
 		"AI run max count":    p.AIRunMaxCount,
+		"command max count":   p.CommandMaxCount,
 	} {
 		if value < 0 {
 			return fmt.Errorf("%s must not be negative", name)
@@ -59,7 +64,8 @@ func (p RetentionPolicy) validate() error {
 func (p RetentionPolicy) empty() bool {
 	return p.AuditMaxAge == 0 && p.AuditMaxCount == 0 &&
 		p.RecordingMaxAge == 0 && p.RecordingMaxCount == 0 &&
-		p.AIRunMaxAge == 0 && p.AIRunMaxCount == 0
+		p.AIRunMaxAge == 0 && p.AIRunMaxCount == 0 &&
+		p.CommandMaxAge == 0 && p.CommandMaxCount == 0
 }
 
 func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (result RetentionResult, returnErr error) {
@@ -116,6 +122,26 @@ WHERE ended_at IS NOT NULL AND id IN (
 		result.RecordingsDeleted += deleted
 		if err != nil {
 			return RetentionResult{}, fmt.Errorf("recording count retention: %w", dbError(err))
+		}
+	}
+	if policy.CommandMaxAge > 0 {
+		cutoff := now.Add(-policy.CommandMaxAge).UnixMilli()
+		var deleted int64
+		deleted, err = retentionDelete(ctx, tx,
+			"DELETE FROM command_log WHERE started_at < ?", cutoff)
+		result.CommandsDeleted = deleted
+		if err != nil {
+			return RetentionResult{}, fmt.Errorf("command age retention: %w", dbError(err))
+		}
+	}
+	if policy.CommandMaxCount > 0 {
+		var deleted int64
+		deleted, err = retentionDelete(ctx, tx, `DELETE FROM command_log WHERE id IN (
+	SELECT id FROM command_log ORDER BY started_at DESC, id DESC `+s.dialect.limitOffset()+`
+)`, policy.CommandMaxCount)
+		result.CommandsDeleted += deleted
+		if err != nil {
+			return RetentionResult{}, fmt.Errorf("command count retention: %w", dbError(err))
 		}
 	}
 	if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {

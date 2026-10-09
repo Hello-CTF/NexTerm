@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func newAccountFixtureListen(t *testing.T, auth, listen string) *accountFixture 
 	config := testConfig(t, false)
 	config.Options.Auth = auth
 	config.Options.Listen = listen
-	accounts := account.New(database.DB())
+	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{

@@ -761,8 +761,12 @@ func TestTranscriptWriterCrashBeforeFlushDoesNotSuppressUnflushed(t *testing.T) 
 		t.Fatal(err)
 	}
 	writer.SessionOutput(ctx, "tab-1", "session-unflushed", "tab-1", []byte("unflushed-tail\r\n"))
-	time.Sleep(200 * time.Millisecond)
 	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lockConn.ExecContext(ctx, "ROLLBACK"); err != nil {

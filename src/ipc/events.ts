@@ -28,6 +28,7 @@ export const EVENTS = {
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
   appError: "app://error",
+  deviceStatus: "device://status",
 } as const;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
@@ -42,6 +43,8 @@ export interface TerminalControlEvent {
   rows: number;
   gridRevision: number;
   version: number;
+  cwd?: string;
+  durable?: boolean;
 }
 
 export class EventVersionGate {
@@ -75,6 +78,13 @@ export interface TerminalThrottledEvent {
 export interface AppErrorEvent {
   code: string;
   message: string;
+}
+
+// 设备控制通道上下线推送; 只含设备 ID 与在线状态, 可见范围仍由
+// /fleet/devices 的 owner/超管过滤决定, 视图对不在清单内的设备 ID 直接忽略。
+export interface DeviceStatusEvent {
+  deviceId: string;
+  online: boolean;
 }
 
 function demoChannel<T>(): IpcChannel<T> {

@@ -28,6 +28,10 @@ const defaultShareRevalidateInterval = 10 * time.Second
 // 背压) 不得把输出泵与连接拆除无限期挂死。
 const shareViewerWriteTimeout = 30 * time.Second
 
+// shareTerminateCheckTimeout 是终止前强制授权重查的超时: 重查只读数据库,
+// 超时后按无终止码处理 (视同纯传输错误), 不拖延连接拆除。
+const shareTerminateCheckTimeout = 5 * time.Second
+
 type shareLinkView struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -76,6 +80,35 @@ type shareLinkCreateRequest struct {
 	TTLMS     int64  `json:"ttl_ms"`
 }
 
+// deviceShareLinkView 是设备公开链接的管理视图; 与 shareLinkView 的区别是
+// 绑定设备而非单个会话, 并携带 not_before (延迟生效时刻)。
+type deviceShareLinkView struct {
+	ID             string `json:"id"`
+	OwnerID        string `json:"owner_id"`
+	DeviceID       string `json:"device_id"`
+	Permission     string `json:"permission"`
+	CreatedAt      int64  `json:"created_at"`
+	NotBefore      int64  `json:"not_before"`
+	ExpiresAt      int64  `json:"expires_at"`
+	RevokedAt      int64  `json:"revoked_at,omitempty"`
+	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
+}
+
+func newDeviceShareLinkView(link *sharing.DeviceLink) deviceShareLinkView {
+	return deviceShareLinkView{
+		ID: link.ID, OwnerID: link.OwnerID, DeviceID: link.DeviceID,
+		Permission: string(link.Permission), CreatedAt: link.CreatedAt, NotBefore: link.NotBefore, ExpiresAt: link.ExpiresAt,
+		RevokedAt: link.RevokedAt, LastAccessedAt: link.LastAccessedAt,
+	}
+}
+
+type deviceShareLinkCreateRequest struct {
+	DeviceID    string `json:"device_id"`
+	Write       bool   `json:"write"`
+	NotBeforeMS int64  `json:"not_before_ms"`
+	TTLMS       int64  `json:"ttl_ms"`
+}
+
 type hostShareCreateRequest struct {
 	DeviceID          string `json:"device_id"`
 	RecipientUsername string `json:"recipient_username"`
@@ -116,6 +149,47 @@ func (s *Service) serveShareLinkList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) serveShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
 	if err := s.sharing.RevokeLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// serveDeviceShareLinkCreate 处理 POST /share/device-links: 创建设备公开链接,
+// 响应是唯一携带一次性 token 的入口 (列表/吊销响应不含 token)。
+func (s *Service) serveDeviceShareLinkCreate(w http.ResponseWriter, r *http.Request) {
+	var request deviceShareLinkCreateRequest
+	if err := decodeFleetJSON(w, r, &request); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	link, token, err := s.sharing.CreateDeviceLink(r.Context(), identityFrom(r), request.DeviceID, request.Write, request.NotBeforeMS, time.Duration(request.TTLMS)*time.Millisecond)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	view := newDeviceShareLinkView(link)
+	writeFleetJSON(w, http.StatusOK, struct {
+		deviceShareLinkView
+		Token string `json:"token"`
+	}{deviceShareLinkView: view, Token: token})
+}
+
+func (s *Service) serveDeviceShareLinkList(w http.ResponseWriter, r *http.Request) {
+	links, err := s.sharing.ListDeviceLinks(r.Context(), identityFrom(r))
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	views := make([]deviceShareLinkView, 0, len(links))
+	for _, link := range links {
+		views = append(views, newDeviceShareLinkView(link))
+	}
+	writeFleetJSON(w, http.StatusOK, map[string][]deviceShareLinkView{"links": views})
+}
+
+func (s *Service) serveDeviceShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
+	if err := s.sharing.RevokeDeviceLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
@@ -267,6 +341,29 @@ func (v *shareTerminalWS) discardInput() error {
 	}
 }
 
+// shareResolveKey 是匿名公开链接 resolve 的限流键: 按客户端 IP 计数, 成功
+// resolve 重置窗口; 随机 token 洪水刷不动 audit_log。
+func (s *Service) shareResolveKey(w http.ResponseWriter, r *http.Request) (string, bool) {
+	key := "share-resolve|" + clientIP(r)
+	if !s.shareResolveGate.Allow(key) {
+		writeFleetJSON(w, http.StatusTooManyRequests, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试")))
+		return "", false
+	}
+	return key, true
+}
+
+// recordShareResolveOutcome 只对 token 不存在计入限流退避 (随机 token 洪水);
+// 吊销/过期/未生效/设备离线等真实 token 的拒绝不惩罚持有者。
+func (s *Service) recordShareResolveOutcome(key string, err error) {
+	if err == nil {
+		s.shareResolveGate.RecordSuccess(key)
+		return
+	}
+	if errors.Is(err, sharing.ErrTokenNotFound) {
+		s.shareResolveGate.RecordFailure(key)
+	}
+}
+
 // serveSharePublicTerminal 处理 GET /share/public/{token}: 浏览器普通导航
 // (非 WS upgrade) 由配置的静态入口直接服务 SPA 页面, 不做 token 校验/审计/
 // 持久化; WS upgrade 才是数据面 — 匿名 viewer 用公开 token 换取一次性授权
@@ -278,12 +375,40 @@ func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Reques
 		s.serveSharePublicPage(w, r)
 		return
 	}
+	key, allowed := s.shareResolveKey(w, r)
+	if !allowed {
+		return
+	}
 	grant, err := s.sharing.ResolveLink(r.Context(), r.PathValue("token"))
+	s.recordShareResolveOutcome(key, err)
 	if err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
 	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
+}
+
+// serveSharePublicDeviceTerminal 处理 GET /share/public/device/{token}: 设备
+// 公开链接的数据面, 与 serveSharePublicTerminal 同一合同 — 普通导航由静态
+// 入口直接服务 SPA (不做 token 校验), WS upgrade 才进入 token 鉴权; 区别在
+// 于 Grant 不带 SessionID, 数据面经 host agent 为访客新建终端 (而不是 attach
+// 分享者的既有会话), 全程不接触主机密码或私钥。
+func (s *Service) serveSharePublicDeviceTerminal(w http.ResponseWriter, r *http.Request) {
+	if !isShareWSUpgrade(r) {
+		s.serveSharePublicPage(w, r)
+		return
+	}
+	key, allowed := s.shareResolveKey(w, r)
+	if !allowed {
+		return
+	}
+	grant, err := s.sharing.ResolveDeviceLink(r.Context(), r.PathValue("token"))
+	s.recordShareResolveOutcome(key, err)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	s.serveShareTerminal(w, r, grant, s.sharing.NewDeviceLinkGate(grant))
 }
 
 // isShareWSUpgrade 判定请求是否为 WebSocket 升级; 判定条件与
@@ -437,7 +562,18 @@ func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.
 	err := <-done
 	cancel()
 	_ = stream.Close()
-	if code, message, ok := shareTermination(err); ok {
+	code, message, ok := shareTermination(err)
+	if !ok && err != nil {
+		// 传输层错误 (桥接断开等) 先于授权复查到时不会映射终止码, 终止前
+		// 强制重查一次授权: 过期/吊销仍下发可识别错误帧, 不让传输错误掩盖
+		// 真实终止原因。
+		checkCtx, checkCancel := context.WithTimeout(context.Background(), shareTerminateCheckTimeout)
+		defer checkCancel()
+		if checkErr := gate.CheckFresh(checkCtx); checkErr != nil {
+			code, message, ok = shareTermination(checkErr)
+		}
+	}
+	if ok {
 		_ = viewer.writeJSON(context.Background(), shareErrorFrame{Type: "error", Code: code, Message: message})
 	}
 	status := websocket.StatusNormalClosure

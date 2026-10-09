@@ -108,7 +108,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 		if auditErr != nil {
 			return nil, auditErr
 		}
-		return nil, ipc.NewError(ipc.CodeForbidden, "分享链接无效")
+		return nil, ErrTokenNotFound
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -351,7 +351,7 @@ func (s *Service) RevalidateLinkInput(ctx context.Context, grant *Grant) (*Grant
 		payload.Reason = ""
 		payload.Permission = string(refreshed.Permission)
 	}
-	if auditErr := s.auditLinkInputAggregated(ctx, payload); auditErr != nil {
+	if auditErr := s.auditInputAggregated(ctx, auditKindLinkInput, payload); auditErr != nil {
 		return nil, auditErr
 	}
 	if err != nil {
@@ -376,14 +376,19 @@ var linkInputAudits = struct {
 	windows map[string]*linkInputAuditState
 }{windows: map[string]*linkInputAuditState{}}
 
-// auditLinkInputAggregated 按会话 + 时间窗口聚合输入审计: 窗口内同类事件只
-// 计数不落行; 窗口过期后的同类事件把计数折算成一行; 类别变化 (如 allow ->
-// deny) 先把旧窗口计数折算落行, 再立即落新事件的一行, 拒绝不被延迟。
-func (s *Service) auditLinkInputAggregated(ctx context.Context, payload auditPayload) error {
+// auditInputAggregated 按分享类别 + 会话/设备 + 时间窗口聚合输入审计: 窗口内
+// 同类事件只计数不落行; 窗口过期后的同类事件把计数折算成一行; 类别变化 (如
+// allow -> deny) 先把旧窗口计数折算落行, 再立即落新事件的一行, 拒绝不被延迟。
+// 设备链接没有会话 ID, 按设备聚合 (匿名 read_write 连接无法逐块刷爆 audit_log)。
+func (s *Service) auditInputAggregated(ctx context.Context, kind string, payload auditPayload) error {
 	key := payload.SessionID
 	if key == "" {
-		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+		key = payload.DeviceID
 	}
+	if key == "" {
+		return s.auditInput(ctx, kind, linkInputAuditPayload{auditPayload: payload})
+	}
+	key = kind + "|" + key
 	now := s.now()
 	linkInputAudits.mu.Lock()
 	state := linkInputAudits.windows[key]
@@ -398,7 +403,7 @@ func (s *Service) auditLinkInputAggregated(ctx context.Context, payload auditPay
 		}
 		linkInputAudits.windows[key] = &linkInputAuditState{startedAt: now, payload: payload}
 		linkInputAudits.mu.Unlock()
-		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+		return s.auditInput(ctx, kind, linkInputAuditPayload{auditPayload: payload})
 	case now-state.startedAt < linkInputAuditWindow.Milliseconds() && state.payload.Outcome == payload.Outcome && state.payload.Reason == payload.Reason:
 		state.suppressed++
 		linkInputAudits.mu.Unlock()
@@ -407,28 +412,28 @@ func (s *Service) auditLinkInputAggregated(ctx context.Context, payload auditPay
 		count := state.suppressed + 1
 		state.startedAt, state.suppressed = now, 0
 		linkInputAudits.mu.Unlock()
-		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload, Suppressed: count})
+		return s.auditInput(ctx, kind, linkInputAuditPayload{auditPayload: payload, Suppressed: count})
 	default:
 		flushed := state.payload
 		count := state.suppressed
 		state.startedAt, state.payload, state.suppressed = now, payload, 0
 		linkInputAudits.mu.Unlock()
 		if count > 0 {
-			if err := s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: flushed, Suppressed: count}); err != nil {
+			if err := s.auditInput(ctx, kind, linkInputAuditPayload{auditPayload: flushed, Suppressed: count}); err != nil {
 				return err
 			}
 		}
-		return s.auditLinkInput(ctx, linkInputAuditPayload{auditPayload: payload})
+		return s.auditInput(ctx, kind, linkInputAuditPayload{auditPayload: payload})
 	}
 }
 
-func (s *Service) auditLinkInput(ctx context.Context, payload linkInputAuditPayload) error {
+func (s *Service) auditInput(ctx context.Context, kind string, payload linkInputAuditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, auditKindLinkInput, string(encoded)); err != nil {
+VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
 		return dbError(err)
 	}
 	return nil

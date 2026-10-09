@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
@@ -25,18 +26,20 @@ type Service struct {
 	conns  map[string]managedConnection
 	closed bool
 
-	openMySQL func(context.Context, MySQLConfig) (*mysqlConnection, error)
-	openRedis func(context.Context, RedisConfig) (*redisConnection, error)
-	newID     func() (string, error)
+	openMySQL    func(context.Context, MySQLConfig) (*mysqlConnection, error)
+	openPostgres func(context.Context, PostgresConfig) (*postgresConnection, error)
+	openRedis    func(context.Context, RedisConfig) (*redisConnection, error)
+	newID        func() (string, error)
 }
 
 func NewService(resolver AssetResolver) *Service {
 	return &Service{
-		resolver:  resolver,
-		conns:     make(map[string]managedConnection),
-		openMySQL: connectMySQL,
-		openRedis: connectRedis,
-		newID:     randomID,
+		resolver:     resolver,
+		conns:        make(map[string]managedConnection),
+		openMySQL:    connectMySQL,
+		openPostgres: connectPostgres,
+		openRedis:    connectRedis,
+		newID:        randomID,
 	}
 }
 
@@ -89,6 +92,19 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 			port = *inline.Port
 		}
 		connection, err = s.openMySQL(ctx, MySQLConfig{
+			Host:      inline.Host,
+			Port:      port,
+			Username:  inline.Username,
+			Password:  inline.Password,
+			Database:  inline.Database,
+			TLSConfig: tlsConfig,
+		})
+	case "postgres":
+		port := uint16(5432)
+		if inline.Port != nil {
+			port = *inline.Port
+		}
+		connection, err = s.openPostgres(ctx, PostgresConfig{
 			Host:      inline.Host,
 			Port:      port,
 			Username:  inline.Username,
@@ -199,30 +215,108 @@ func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineC
 	return inline, nil
 }
 
-func (s *Service) mysqlOf(id string) (*mysqlConnection, error) {
+func (s *Service) connOf(id string) (managedConnection, error) {
 	s.mu.RLock()
 	connection := s.conns[id]
 	s.mu.RUnlock()
 	if connection == nil {
 		return nil, notFound(id)
 	}
+	return connection, nil
+}
+
+func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) {
+	connection, err := s.connOf(connID)
+	if err != nil {
+		return nil, err
+	}
+	switch typed := connection.(type) {
+	case *mysqlConnection:
+		return mysqlSchemas(ctx, typed)
+	case *postgresConnection:
+		return postgresSchemas(ctx, typed)
+	default:
+		return nil, badParam(errors.New("该连接是 Redis"))
+	}
+}
+
+func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, error) {
+	connection, err := s.connOf(connID)
+	if err != nil {
+		return nil, err
+	}
+	switch typed := connection.(type) {
+	case *mysqlConnection:
+		return mysqlTables(ctx, typed, schema)
+	case *postgresConnection:
+		return postgresTables(ctx, typed, schema)
+	default:
+		return nil, badParam(errors.New("该连接是 Redis"))
+	}
+}
+
+func (s *Service) Describe(ctx context.Context, connID, schema, table string) (TableDescribe, error) {
+	connection, err := s.connOf(connID)
+	if err != nil {
+		return TableDescribe{}, err
+	}
+	switch typed := connection.(type) {
+	case *mysqlConnection:
+		return mysqlDescribe(ctx, typed, schema, table)
+	case *postgresConnection:
+		return postgresDescribe(ctx, typed, schema, table)
+	default:
+		return TableDescribe{}, badParam(errors.New("该连接是 Redis"))
+	}
+}
+
+func (s *Service) Query(ctx context.Context, connID, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
+	connection, err := s.connOf(connID)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	switch typed := connection.(type) {
+	case *mysqlConnection:
+		return queryMySQL(ctx, typed.db, statement, limit, timeout)
+	case *postgresConnection:
+		return queryPostgres(ctx, typed.db, statement, limit, timeout)
+	default:
+		return QueryResult{}, badParam(errors.New("该连接是 Redis"))
+	}
+}
+
+func (s *Service) mysqlOf(id string) (*mysqlConnection, error) {
+	connection, err := s.connOf(id)
+	if err != nil {
+		return nil, err
+	}
 	mysql, ok := connection.(*mysqlConnection)
 	if !ok {
-		return nil, badParam(errors.New("该连接是 Redis"))
+		return nil, badParam(errors.New("该连接不是 MySQL"))
 	}
 	return mysql, nil
 }
 
+func (s *Service) postgresOf(id string) (*postgresConnection, error) {
+	connection, err := s.connOf(id)
+	if err != nil {
+		return nil, err
+	}
+	postgres, ok := connection.(*postgresConnection)
+	if !ok {
+		return nil, badParam(errors.New("该连接不是 PostgreSQL"))
+	}
+	return postgres, nil
+}
+
 func (s *Service) redisOf(id string) (*redisConnection, error) {
-	s.mu.RLock()
-	connection := s.conns[id]
-	s.mu.RUnlock()
-	if connection == nil {
-		return nil, notFound(id)
+	connection, err := s.connOf(id)
+	if err != nil {
+		return nil, err
 	}
 	redis, ok := connection.(*redisConnection)
 	if !ok {
-		return nil, badParam(errors.New("该连接是 MySQL"))
+		return nil, badParam(errors.New("该连接不是 Redis"))
 	}
 	return redis, nil
 }

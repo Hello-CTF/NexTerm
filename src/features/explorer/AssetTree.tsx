@@ -42,6 +42,7 @@ const KIND_LABEL: Record<string, string> = {
   local: "本地终端",
   docker: "Docker 主机",
   mysql: "MySQL",
+  postgres: "PostgreSQL",
   redis: "Redis",
 };
 
@@ -61,15 +62,49 @@ function validateAssetPort(port: number): string | null {
   return null;
 }
 
+const TERMINAL_ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
+
+const ENV_LINE_PATTERN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+
+function isNonDefaultEncoding(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "" && value.trim().toLowerCase() !== "utf-8" && value.trim().toLowerCase() !== "utf8";
+}
+
+function formatEnvText(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => `${key}=${typeof item === "string" ? item : String(item)}`)
+    .join("\n");
+}
+
+function parseEnvText(text: string): { ok: true; env: Record<string, string> } | { ok: false; error: string } {
+  const env: Record<string, string> = {};
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    const match = ENV_LINE_PATTERN.exec(line);
+    if (!match) {
+      return { ok: false, error: `环境变量第 ${index + 1} 行不是有效的 KEY=VALUE：${line}` };
+    }
+    env[match[1]] = match[2];
+  }
+  return { ok: true, env };
+}
+
 function hasAdvancedSshOptions(asset?: Asset): boolean {
   const options = asset?.options;
   if (!options) return false;
+  const env = options.env;
   return (
     (typeof options.jumpAssetId === "string" && options.jumpAssetId.trim() !== "") ||
     (typeof options.proxyCommand === "string" && options.proxyCommand.trim() !== "") ||
     options.forwardAgent === true ||
     (typeof options.agentSocket === "string" && options.agentSocket.trim() !== "") ||
-    (typeof options.certPath === "string" && options.certPath.trim() !== "")
+    (typeof options.certPath === "string" && options.certPath.trim() !== "") ||
+    (typeof options.startupCommand === "string" && options.startupCommand.trim() !== "") ||
+    isNonDefaultEncoding(options.encoding) ||
+    (!!env && typeof env === "object" && !Array.isArray(env) && Object.keys(env).length > 0)
   );
 }
 
@@ -1070,7 +1105,7 @@ export function AssetEditor({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [groupKind, setGroupKind] = useState<
-    "ssh" | "winrm" | "local" | "docker" | "mysql" | "redis"
+    "ssh" | "winrm" | "local" | "docker" | "mysql" | "postgres" | "redis"
   >((initial?.kind as "ssh") ?? "ssh");
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
   const [host, setHost] = useState(initial?.host ?? "");
@@ -1098,6 +1133,15 @@ export function AssetEditor({
   const [certPath, setCertPath] = useState(
     typeof initial?.options?.certPath === "string" ? (initial.options.certPath as string) : "",
   );
+  const [startupCommand, setStartupCommand] = useState(
+    typeof initial?.options?.startupCommand === "string" ? (initial.options.startupCommand as string) : "",
+  );
+  const [encoding, setEncoding] = useState(() => {
+    const raw = typeof initial?.options?.encoding === "string" ? (initial.options.encoding as string) : "";
+    const normalized = raw.trim().toLowerCase() === "utf8" ? "utf-8" : raw.trim().toLowerCase() === "iso-8859-1" ? "latin1" : raw.trim().toLowerCase();
+    return TERMINAL_ENCODINGS.includes(normalized) ? normalized : "utf-8";
+  });
+  const [envText, setEnvText] = useState(() => formatEnvText(initial?.options?.env));
   const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedSshOptions(initial));
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
@@ -1243,7 +1287,7 @@ export function AssetEditor({
     if (!keyPath && boundIsRefKey && boundCred?.refPath) setKeyPath(boundCred.refPath);
   }, [boundIsRefKey, boundCred?.refPath]);
 
-  const isDb = groupKind === "mysql" || groupKind === "redis";
+  const isDb = groupKind === "mysql" || groupKind === "postgres" || groupKind === "redis";
   const keyAuth = authKind === "key";
   const usesCred = isDb || authKind === "password" || authKind === "keyboard-interactive";
   const credKind = "password";
@@ -1309,6 +1353,12 @@ export function AssetEditor({
     setOrDelete("proxyCommand", proxyCommand);
     setOrDelete("agentSocket", agentSocket);
     setOrDelete("certPath", certPath);
+    setOrDelete("startupCommand", startupCommand);
+    if (encoding !== "utf-8") options.encoding = encoding;
+    else delete options.encoding;
+    const parsedEnv = parseEnvText(envText);
+    if (parsedEnv.ok && Object.keys(parsedEnv.env).length > 0) options.env = parsedEnv.env;
+    else delete options.env;
     if (forwardAgent) options.forwardAgent = true;
     else delete options.forwardAgent;
     return options;
@@ -1322,6 +1372,13 @@ export function AssetEditor({
       setHostError(nextHostError);
       setPortError(nextPortError);
       if (nextHostError || nextPortError) return;
+    }
+    if (kind === "asset" && (groupKind === "ssh" || groupKind === "docker")) {
+      const parsedEnv = parseEnvText(envText);
+      if (!parsedEnv.ok) {
+        setSaveError(parsedEnv.error);
+        return;
+      }
     }
     savingRef.current = true;
     setSaving(true);
@@ -1502,6 +1559,7 @@ export function AssetEditor({
                   setPortError(null);
                   if (v === "winrm") setPort(5985);
                   else if (v === "mysql") setPort(3306);
+                  else if (v === "postgres") setPort(5432);
                   else if (v === "redis") setPort(6379);
                   else setPort(22);
                 }}
@@ -1980,6 +2038,55 @@ export function AssetEditor({
                           </div>
                         </div>
                       )}
+
+                      <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                        <div className="nx-form-row">
+                          <label className="nx-label">启动命令</label>
+                          <input
+                            className="nx-input font-mono text-[12px]"
+                            value={startupCommand}
+                            onChange={(e) => setStartupCommand(e.target.value)}
+                            placeholder="连接成功后在该终端自动执行"
+                          />
+                          <div className="nx-hint mt-1.5">
+                            ↳ 选填。相当于连接成功后手动输入并回车；输出与报错直接显示在终端里，执行失败不影响连接本身。仅 SSH/Docker
+                            资产支持，WinRM 与本地终端不执行。
+                          </div>
+                        </div>
+
+                        <div className="nx-form-row">
+                          <label className="nx-label">终端编码</label>
+                          <select
+                            className="nx-select"
+                            value={encoding}
+                            onChange={(e) => setEncoding(e.target.value)}
+                          >
+                            {TERMINAL_ENCODINGS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="nx-hint mt-1.5">
+                            ↳ 该资产终端的默认字符编码，连接成功后自动应用；也可在终端「更多终端操作」菜单里临时切换。
+                          </div>
+                        </div>
+
+                        <div className="nx-form-row">
+                          <label className="nx-label">环境变量</label>
+                          <textarea
+                            className="nx-textarea font-mono text-[11.5px]"
+                            rows={3}
+                            value={envText}
+                            onChange={(e) => setEnvText(e.target.value)}
+                            placeholder={"每行一个 KEY=VALUE\n例如：\nLANG=en_US.UTF-8"}
+                          />
+                          <div className="nx-hint mt-1.5">
+                            ↳ 选填。连接时通过 SSH 环境变量请求下发到新终端；需服务端 sshd 配置 AcceptEnv
+                            才生效，被服务端拒绝时不影响连接。
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

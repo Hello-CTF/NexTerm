@@ -53,6 +53,7 @@ const DEMO_USER = {
   role: "user" as const,
   state: "active" as const,
   must_change_password: false,
+  mfa_enabled: false,
   created_at: 1,
   updated_at: 1,
   last_login_at: 1,

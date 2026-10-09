@@ -146,8 +146,24 @@ func resetRequiredLocked(r *http.Request) bool {
 	return identity != nil && identity.State == account.StateResetRequired && !resetRequiredAllowedPaths[r.URL.Path]
 }
 
+// mfaEnrollAllowedPaths 列出 mfa_required 策略下未绑定会话在完成 TOTP 绑定前唯一可用的路由。
+var mfaEnrollAllowedPaths = map[string]bool{
+	"/auth/me":           true,
+	"/auth/totp":         true,
+	"/auth/totp/setup":   true,
+	"/auth/totp/confirm": true,
+	"/auth/logout":       true,
+	"/auth/logout-all":   true,
+}
+
+// mfaEnrollLocked 落实 mfa_required 强制语义: 未绑定会话除绑定所需路由外一律 403。
+func (s *Server) mfaEnrollLocked(r *http.Request) bool {
+	return !mfaEnrollAllowedPaths[r.URL.Path] && s.mfaEnrollmentLockedFor(r, accountIdentityFrom(r.Context()))
+}
+
 // requireAccountSession 要求已通过 accountGuard 解析出会话身份。
-// reset_required 会话仅限完成重置所需路由, 其余一律 403。
+// reset_required 会话仅限完成重置所需路由, 其余一律 403;
+// mfa_required 策略下的未绑定会话仅限完成 TOTP 绑定所需路由, 其余一律 403。
 func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if accountIdentityFrom(r.Context()) == nil {
@@ -156,6 +172,10 @@ func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 		}
 		if resetRequiredLocked(r) {
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
+			return
+		}
+		if s.mfaEnrollLocked(r) {
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
 			return
 		}
 		next.ServeHTTP(w, r)

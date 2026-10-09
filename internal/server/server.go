@@ -91,6 +91,7 @@ type Server struct {
 	tokens          TokenVerifier
 	accounts        *account.Accounts
 	accountThrottle accountThrottles
+	mfaTickets      *mfaTicketStore
 	gatewayAuthKey  string
 	authRequired    bool
 	events          *EventBroker
@@ -121,6 +122,7 @@ type accountThrottles struct {
 	init     *account.LoginThrottle
 	register *account.LoginThrottle
 	enroll   *account.LoginThrottle
+	mfa      *account.LoginThrottle
 }
 
 type Health struct {
@@ -244,7 +246,9 @@ func New(config Config) (*Server, error) {
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
 			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(), enroll: account.NewLoginThrottle(),
+			mfa: account.NewLoginThrottle(),
 		},
+		mfaTickets:     newMFATicketStore(),
 		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,

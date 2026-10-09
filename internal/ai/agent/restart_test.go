@@ -74,6 +74,22 @@ func waitRunStatus(t *testing.T, storage *store.Store, jobID, status string) sto
 	return store.RunRow{}
 }
 
+func waitTerminalJournal(t *testing.T, storage *store.Store, jobID, eventType string) []store.RunEventRow {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		events := runEventsOf(t, storage, jobID)
+		requireContiguousSeq(t, events)
+		if len(events) > 0 && events[len(events)-1].Type == eventType {
+			return events
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s journal never reached terminal event %q: %+v", jobID, eventType, events)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestRestartRecoversRunningRunAsInterrupted(t *testing.T) {
 	storage := restartStore(t)
 	var calls atomic.Int64
@@ -180,8 +196,7 @@ func TestRestartReplaysCompleteTranscriptWithoutGaps(t *testing.T) {
 	if row.Answer != "完成" || row.TokensIn != 3 || row.TokensOut != 2 || row.Turns != 1 {
 		t.Fatalf("completed row = %+v", row)
 	}
-	journal := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, journal)
+	journal := waitTerminalJournal(t, storage, response.JobID, "done")
 	if len(journal) != len(live) {
 		t.Fatalf("journal has %d events, live stream had %d", len(journal), len(live))
 	}
@@ -189,9 +204,6 @@ func TestRestartReplaysCompleteTranscriptWithoutGaps(t *testing.T) {
 		if journal[index].Seq != live[index].Seq || journal[index].Type != live[index].Type {
 			t.Fatalf("journal[%d] = seq %d type %s, live = seq %d type %s", index, journal[index].Seq, journal[index].Type, live[index].Seq, live[index].Type)
 		}
-	}
-	if journal[len(journal)-1].Type != "done" {
-		t.Fatalf("last journal event = %+v", journal[len(journal)-1])
 	}
 }
 
@@ -231,13 +243,9 @@ func TestRestartResumesPendingHITL(t *testing.T) {
 		t.Fatalf("tool actions = %d", actions.Load())
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
-	journal := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, journal)
+	journal := waitTerminalJournal(t, storage, response.JobID, "done")
 	if uint64(len(preRestart)) >= journal[len(journal)-1].Seq {
 		t.Fatalf("journal seq did not advance across the restart: pre=%d post=%d", len(preRestart), journal[len(journal)-1].Seq)
-	}
-	if journal[len(journal)-1].Type != "done" {
-		t.Fatalf("last journal event = %+v", journal[len(journal)-1])
 	}
 }
 
@@ -274,10 +282,9 @@ func TestRestartExpiresPendingHITL(t *testing.T) {
 	if err := restarted.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}); err == nil {
 		t.Fatal("expired confirmation accepted after restart")
 	}
-	events := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, events)
+	events := waitTerminalJournal(t, storage, response.JobID, "error")
 	last := events[len(events)-1]
-	if last.Type != "error" || !strings.Contains(last.PayloadJSON, "过期") {
+	if !strings.Contains(last.PayloadJSON, "过期") {
 		t.Fatalf("terminal journal event = %+v", last)
 	}
 }

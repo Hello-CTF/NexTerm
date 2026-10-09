@@ -77,10 +77,15 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       devices: vi.fn().mockResolvedValue({ devices: [] }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
       enrollCode: vi.fn().mockResolvedValue({ code: "e", expires_at: 1 }),
+      totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
+      totpSetup: vi.fn(),
+      totpConfirm: vi.fn(),
+      totpDisable: vi.fn(),
+      totpLogin: vi.fn(),
     },
     adminApi: {
       users: vi.fn().mockResolvedValue({ users: [] }),
-      settingsGet: vi.fn().mockResolvedValue({ registration_open: false, public_base_url: "" }),
+      settingsGet: vi.fn().mockResolvedValue({ registration_open: false, public_base_url: "", mfa_required: false }),
       settingsPut: vi.fn(),
       createUser: vi.fn(),
       disableUser: vi.fn(),
@@ -239,7 +244,7 @@ describe("SyncCard 对照区时钟提示", () => {
     });
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
-      user: { id: "u-1", username: "alice", display_name: "", role: "user", state: "active", must_change_password: false, created_at: 1, updated_at: 1, last_login_at: 1 },
+      user: { id: "u-1", username: "alice", display_name: "", role: "user", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 },
       dek,
       gate: "ready",
       pendingRecoveryKey: null,

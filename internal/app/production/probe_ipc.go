@@ -243,7 +243,7 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 		return result
 	}
 	switch target.kind {
-	case session.KindSSH, session.KindDocker, session.KindWinRM, "mysql", "redis":
+	case session.KindSSH, session.KindDocker, session.KindWinRM, "mysql", "postgres", "redis":
 	default:
 		result.Kind = "unsupported"
 		result.Error = fmt.Sprintf("asset kind %s cannot be probed", target.kind)
@@ -311,6 +311,8 @@ func (s *terminalCommandService) probeSSHReachability(ctx context.Context, targe
 			port = 5985
 		case "mysql":
 			port = 3306
+		case "postgres":
+			port = 5432
 		case "redis":
 			port = 6379
 		}

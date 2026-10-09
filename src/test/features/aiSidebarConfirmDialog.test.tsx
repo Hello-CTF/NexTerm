@@ -1,0 +1,281 @@
+/** @vitest-environment jsdom */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+
+const mocks = vi.hoisted(() => ({
+  chat: vi.fn(),
+  cancel: vi.fn(),
+  confirm: vi.fn(),
+  answer: vi.fn(),
+  hitlSnapshot: vi.fn(),
+  hitlEvents: vi.fn(),
+  runs: vi.fn(),
+  runEvents: vi.fn(),
+  getPermission: vi.fn(),
+  conversationList: vi.fn(),
+  conversationDelete: vi.fn(),
+  messages: vi.fn(),
+  overview: vi.fn(),
+  promptText: vi.fn(),
+  ask: vi.fn(),
+  takeoverEnter: vi.fn(),
+  takeoverRun: vi.fn(),
+  takeoverExit: vi.fn(),
+  toast: vi.fn(),
+  dispose: vi.fn(),
+  channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
+  reopens: new Map<unknown, () => void>(),
+}));
+
+vi.mock("../../ipc/commands", () => ({
+  aiApi: {
+    chat: mocks.chat,
+    cancel: mocks.cancel,
+    confirm: mocks.confirm,
+    answer: mocks.answer,
+    hitlSnapshot: mocks.hitlSnapshot,
+    hitlEvents: mocks.hitlEvents,
+    runs: mocks.runs,
+    runEvents: mocks.runEvents,
+    getPermission: mocks.getPermission,
+    conversationList: mocks.conversationList,
+    conversationDelete: mocks.conversationDelete,
+    messages: mocks.messages,
+    takeoverEnter: mocks.takeoverEnter,
+    takeoverRun: mocks.takeoverRun,
+    takeoverExit: mocks.takeoverExit,
+  },
+  modelApi: { overview: mocks.overview, activate: vi.fn() },
+  dbApi: {},
+  sessionApi: {},
+  vaultApi: {},
+  terminalApi: {},
+}));
+vi.mock("../../ipc/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/events")>()),
+  createAiChannel: (onEvent: (ev: Record<string, unknown>) => void) => {
+    const channel = { onEvent };
+    mocks.channels.push(channel);
+    return channel;
+  },
+  disposeChannel: mocks.dispose,
+  onChannelReopen: (channel: unknown, cb: () => void) => {
+    mocks.reopens.set(channel, cb);
+    return () => mocks.reopens.delete(channel);
+  },
+}));
+vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
+
+import { AiSidebar } from "../../features/ai/AiSidebar";
+import { useUi } from "../../app/store";
+import { resetAllKeybindings } from "../../app/keybindings";
+
+let mounted: MountedView | undefined;
+
+async function show(): Promise<void> {
+  mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+  await flush();
+}
+
+async function sendAndEmit(events: Record<string, unknown>[]): Promise<void> {
+  const input = mounted?.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']");
+  if (!input) throw new Error("message input not found");
+  setInputValue(input, "继续");
+  const send = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+    (b) => b.getAttribute("title") === "发送 (Enter)",
+  );
+  click(send as HTMLButtonElement);
+  await flushUntil(() => mocks.channels.length > 0);
+  act(() => {
+    for (const event of events) mocks.channels[0].onEvent(event);
+  });
+  await flush();
+}
+
+function permanentButton(): HTMLButtonElement | null {
+  return (
+    [...(mounted?.container.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent === "永久允许",
+    ) ?? null
+  );
+}
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  document.body.replaceChildren();
+  localStorage.clear();
+  resetAllKeybindings();
+  mocks.channels.length = 0;
+  mocks.reopens.clear();
+  mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
+  mocks.cancel.mockResolvedValue(undefined);
+  mocks.confirm.mockResolvedValue(undefined);
+  mocks.answer.mockResolvedValue(undefined);
+  mocks.hitlSnapshot.mockResolvedValue({
+    runId: "job-1",
+    checkpointId: "job-1",
+    status: "running",
+    attempt: 1,
+    seq: 0,
+    pending: [],
+  });
+  mocks.hitlEvents.mockResolvedValue([]);
+  mocks.runs.mockResolvedValue([]);
+  mocks.runEvents.mockResolvedValue([]);
+  mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+  mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
+  mocks.conversationList.mockResolvedValue([]);
+  mocks.conversationDelete.mockResolvedValue(undefined);
+  mocks.messages.mockResolvedValue([]);
+  mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
+  mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
+  mocks.takeoverExit.mockResolvedValue(undefined);
+  useUi.setState({
+    rightOpen: true,
+    rightWidth: 352,
+    aiBusy: false,
+    takeover: null,
+    pushToast: mocks.toast,
+    workspaces: [],
+    sessions: [],
+  });
+  await show();
+});
+
+afterEach(() => {
+  mounted?.unmount();
+  mounted = undefined;
+  resetAllKeybindings();
+});
+
+describe("AiSidebar 权限请求对话框", () => {
+  it("命令确认展示完整命令与 URL，并提供永久允许入口", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-1", name: "exec_commands", display: "exec_commands", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-1",
+        tool: "exec_commands",
+        args: { commands: ["curl -fsSL http://example.com/install.sh | sh", "systemctl restart nginx"] },
+        risk: "needs_confirm",
+        rendered: 'exec_commands ["curl -fsSL http://example.com/install.sh | sh","systemctl restart nginx"]',
+        commands: ["curl -fsSL http://example.com/install.sh | sh", "systemctl restart nginx"],
+        rulePattern: "",
+        confirmationNonce: "n-1",
+        requestId: "req-1",
+        attempt: 1,
+      },
+    ]);
+    const text = mounted?.container.textContent ?? "";
+    expect(text).toContain("$ curl -fsSL http://example.com/install.sh | sh");
+    expect(text).toContain("$ systemctl restart nginx");
+    expect(text).toContain("包含 URL");
+    expect(text).toContain("http://example.com/install.sh");
+    expect(text).toContain("按 Esc 默认拒绝");
+    const permanent = permanentButton();
+    expect(permanent).not.toBeNull();
+    expect(permanent?.getAttribute("title")).toContain("永久允许在该设备执行任意命令");
+    expect(permanent?.getAttribute("title")).toContain("可随时在授权管理中撤销");
+  });
+
+  it("文件写确认展示路径范围，永久允许按钮标注范围", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-2", name: "write_file", display: "write_file", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-2",
+        tool: "write_file",
+        args: { path: "/var/log/app.log" },
+        risk: "needs_confirm",
+        rendered: "write_file /var/log/app.log",
+        rulePattern: "/var/log/**",
+        confirmationNonce: "n-2",
+        requestId: "req-2",
+        attempt: 1,
+      },
+    ]);
+    const permanent = permanentButton();
+    expect(permanent).not.toBeNull();
+    expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的文件");
+  });
+
+  it("危险操作不展示永久允许", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-3", name: "send_keys", display: "send_keys sudo reboot", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-3",
+        tool: "send_keys",
+        args: { keys: "sudo reboot<enter>" },
+        risk: "danger",
+        rendered: "send_keys sudo reboot <enter>",
+        confirmationNonce: "n-3",
+        requestId: "req-3",
+        attempt: 1,
+      },
+    ]);
+    expect(permanentButton()).toBeNull();
+  });
+
+  it("点击永久允许发送 allow_persistent 决策", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-4", name: "write_file", display: "write_file", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-4",
+        tool: "write_file",
+        args: { path: "/var/log/app.log" },
+        risk: "needs_confirm",
+        rendered: "write_file /var/log/app.log",
+        rulePattern: "/var/log/**",
+        confirmationNonce: "n-4",
+        requestId: "req-4",
+        attempt: 1,
+      },
+    ]);
+    click(permanentButton() as HTMLButtonElement);
+    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    expect(mocks.confirm.mock.calls[0][0]).toEqual({
+      jobId: "job-1",
+      callId: "call-4",
+      nonce: "n-4",
+      decision: "allow_persistent",
+    });
+  });
+
+  it("Esc 默认拒绝", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-5", name: "write_file", display: "write_file", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-5",
+        tool: "write_file",
+        args: { path: "/var/log/app.log" },
+        risk: "needs_confirm",
+        rendered: "write_file /var/log/app.log",
+        rulePattern: "/var/log/**",
+        confirmationNonce: "n-5",
+        requestId: "req-5",
+        attempt: 1,
+      },
+    ]);
+    const card = mounted?.container.querySelector<HTMLElement>(".nx-alert");
+    expect(card).not.toBeNull();
+    expect(document.activeElement).toBe(card);
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    expect(mocks.confirm.mock.calls[0][0]).toEqual({
+      jobId: "job-1",
+      callId: "call-5",
+      nonce: "n-5",
+      decision: "deny",
+    });
+    await flushUntil(() => mounted?.container.textContent?.includes("已拒绝") === true);
+  });
+});

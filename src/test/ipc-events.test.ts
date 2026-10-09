@@ -37,7 +37,7 @@ async function ready(channel: unknown): Promise<void> {
 }
 
 describe("Wails events 与 channels", () => {
-  it("保留八个共享事件和 layout 第九事件", async () => {
+  it("保留九个共享事件和 layout 第十事件", async () => {
     const { EVENTS } = await import("../ipc/events");
     expect(Object.values(EVENTS)).toEqual([
       "session://status",
@@ -48,6 +48,7 @@ describe("Wails events 与 channels", () => {
       "docker://stats",
       "ai://event",
       "app://error",
+      "device://status",
     ]);
     expect(layoutSource).toContain('"layout://changed"');
   });

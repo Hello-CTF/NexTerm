@@ -20,6 +20,7 @@ type accountUserView struct {
 	Role               account.Role  `json:"role"`
 	State              account.State `json:"state"`
 	MustChangePassword bool          `json:"must_change_password"`
+	MFAEnabled         bool          `json:"mfa_enabled"`
 	CreatedAt          int64         `json:"created_at"`
 	UpdatedAt          int64         `json:"updated_at"`
 	LastLoginAt        int64         `json:"last_login_at"`
@@ -89,7 +90,7 @@ func accountErrorStatus(err *ipc.Error) int {
 	switch err.Code {
 	case ipc.CodeBadParam:
 		return http.StatusBadRequest
-	case ipc.CodeForbidden:
+	case ipc.CodeForbidden, ipc.CodeMFAEnrollmentRequired:
 		return http.StatusForbidden
 	case ipc.CodeNotFound:
 		return http.StatusNotFound
@@ -131,6 +132,7 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	public("GET /auth/status", s.serveAccountStatus)
 	public("POST /auth/init", s.serveAccountInit)
 	public("POST /auth/login", s.serveAccountLogin)
+	public("POST /auth/totp/login", s.serveAccountTOTPLogin)
 	public("POST /auth/register", s.serveAccountRegister)
 	public("POST /auth/recovery/reset", s.serveAccountRecoveryReset)
 	public("POST /auth/devices/enroll", s.serveAccountDeviceEnroll)
@@ -138,11 +140,15 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	session("GET /auth/me", s.serveAccountMe)
 	session("GET /auth/dek", s.serveAccountDEKGet)
 	session("GET /auth/devices", s.serveAccountDeviceList)
+	session("GET /auth/totp", s.serveAccountTOTPStatus)
 	sessionCSRF("POST /auth/logout", s.serveAccountLogout)
 	sessionCSRF("POST /auth/logout-all", s.serveAccountLogoutAll)
 	sessionCSRF("POST /auth/password", s.serveAccountPasswordChange)
 	sessionCSRF("POST /auth/dek", s.serveAccountDEKUpload)
 	sessionCSRF("POST /auth/devices/enroll-code", s.serveAccountEnrollCode)
+	sessionCSRF("POST /auth/totp/setup", s.serveAccountTOTPSetup)
+	sessionCSRF("POST /auth/totp/confirm", s.serveAccountTOTPConfirm)
+	sessionCSRF("DELETE /auth/totp", s.serveAccountTOTPDisable)
 	sessionCSRF("DELETE /auth/devices/{id}", s.serveAccountDeviceRevoke)
 
 	admin("GET /admin/users", s.serveAdminUserList)
@@ -194,6 +200,8 @@ type accountInitRequest struct {
 type accountSessionView struct {
 	User      accountUserView `json:"user"`
 	CSRFToken string          `json:"csrf_token"`
+	// MFARequired 随会话下发 mfa_required 策略, 前端据此把未绑定会话引入强制绑定门。
+	MFARequired bool `json:"mfa_required"`
 }
 
 func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string) {
@@ -202,8 +210,19 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountFailure(w, err)
 		return
 	}
+	view := newAccountUserView(user)
+	view.MFAEnabled, err = s.accounts.TOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	required, err := s.accounts.MFARequired(r.Context())
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	setSessionCookie(w, r, token)
-	writeAccountJSON(w, http.StatusOK, accountSessionView{User: newAccountUserView(user), CSRFToken: accountCSRFToken(session.ID)})
+	writeAccountJSON(w, http.StatusOK, accountSessionView{User: view, CSRFToken: accountCSRFToken(session.ID), MFARequired: required})
 }
 
 func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +273,20 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	if mfaEnabled {
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, user.Username, request.DeviceID)
+		if ticket == "" {
+			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
+			return
+		}
+		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
+		return
+	}
 	s.writeAccountSession(w, r, user, request.DeviceID)
 }
 
@@ -370,7 +403,18 @@ func (s *Server) serveAccountMe(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	writeAccountJSON(w, http.StatusOK, accountSessionView{User: newAccountUserView(user), CSRFToken: accountCSRFToken(identity.SessionID)})
+	view := newAccountUserView(user)
+	view.MFAEnabled, err = s.accounts.TOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	required, err := s.accounts.MFARequired(r.Context())
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	writeAccountJSON(w, http.StatusOK, accountSessionView{User: view, CSRFToken: accountCSRFToken(identity.SessionID), MFARequired: required})
 }
 
 func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
@@ -504,9 +548,16 @@ func (s *Server) serveAdminUserList(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	mfaEnabled, err := s.accounts.TOTPEnabledMap(r.Context())
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	views := make([]accountUserView, 0, len(users))
 	for _, user := range users {
-		views = append(views, newAccountUserView(user))
+		view := newAccountUserView(user)
+		view.MFAEnabled = mfaEnabled[user.ID]
+		views = append(views, view)
 	}
 	writeAccountJSON(w, http.StatusOK, map[string][]accountUserView{"users": views})
 }
@@ -556,12 +607,14 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 type accountAdminSettingsView struct {
 	RegistrationOpen bool   `json:"registration_open"`
 	PublicBaseURL    string `json:"public_base_url"`
+	MFARequired      bool   `json:"mfa_required"`
 }
 
 // accountAdminSettingsPutRequest 用指针区分「未携带」(保持不变)与「空串」(清除)。
 type accountAdminSettingsPutRequest struct {
 	RegistrationOpen bool    `json:"registration_open"`
 	PublicBaseURL    *string `json:"public_base_url"`
+	MFARequired      *bool   `json:"mfa_required"`
 }
 
 func (s *Server) serveAdminSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -570,7 +623,12 @@ func (s *Server) serveAdminSettingsGet(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	view := accountAdminSettingsView{RegistrationOpen: registration}
+	mfaRequired, err := s.accounts.MFARequired(r.Context())
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	view := accountAdminSettingsView{RegistrationOpen: registration, MFARequired: mfaRequired}
 	if s.settings != nil {
 		if value, ok, err := s.settings.SettingGet(r.Context(), core.FilePublicBaseURLSettingKey); err == nil && ok {
 			view.PublicBaseURL = value
@@ -597,6 +655,12 @@ func (s *Server) serveAdminSettingsPut(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else if err := s.settings.SettingSet(r.Context(), core.FilePublicBaseURLSettingKey, base); err != nil {
+			writeAccountFailure(w, err)
+			return
+		}
+	}
+	if request.MFARequired != nil {
+		if err := s.accounts.SetMFARequired(r.Context(), *request.MFARequired); err != nil {
 			writeAccountFailure(w, err)
 			return
 		}

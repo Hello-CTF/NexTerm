@@ -42,6 +42,7 @@ type Tab struct {
 	channel      *channelHandle
 	generation   uint64
 	eventVersion uint64
+	encoding     string
 	subscribers  map[string]subscriber
 	controller   string
 	controlled   bool
@@ -54,6 +55,7 @@ type Tab struct {
 	cwd          string
 	commandTrack *shellintegr.CommandTracker
 	commandState shellintegr.CommandState
+	pendingCmd   *pendingCommand
 	durableFed   int64
 
 	catchUpRemaining int64
@@ -82,7 +84,7 @@ func (t *Tab) infoLocked() TabInfo {
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
-		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd,
+		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
 	}
 }
 
@@ -158,6 +160,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	transport := session.transport
 	kind := session.asset.Kind
 	encoding := session.asset.Encoding
+	startupCommand := session.asset.StartupCommand
 	session.mu.Unlock()
 	m.mu.Unlock()
 	var provider base.DurableProvider
@@ -252,7 +255,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal,
-		ephemeral: options.Ephemeral, cols: cols, rows: rows,
+		ephemeral: options.Ephemeral, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
@@ -322,6 +325,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 	} else if !m.startPump(tab, channel, generation) {
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
+	}
+	if options.Durable == nil && startupCommand != "" && startupCommandSupported(kind) {
+		_ = writeAll(channel, []byte(startupCommand+"\n"))
 	}
 	return info, nil
 }
@@ -792,6 +798,7 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 	transport := tab.session.transport
 	tab.session.mu.Unlock()
 	result, execErr := transport.Exec(ctx, command, base.ExecOptions{ExpectedGeneration: transport.Generation()})
+	m.recordExecCommand(ctx, tab, command, result)
 	if result.Stdout != "" {
 		if err := m.feed(ctx, tab, generation, []byte(result.Stdout)); err != nil {
 			return result, err
@@ -896,6 +903,7 @@ func (m *Manager) closeTabResources(tab *Tab) {
 			_ = channel.Close()
 		}
 		<-tab.feedGate
+		m.flushPendingCommand(tab)
 		tab.terminal.Close()
 		tab.feedGate <- struct{}{}
 		tab.mu.Lock()
@@ -933,7 +941,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		tab.mu.Unlock()
 		m.emit(feedCtx, TopicTerminalControl, event)
 	}
-	tab.observeCommand(data)
+	m.observeCommand(tab, data)
 	tab.mu.Lock()
 	subscribers := make([]subscriber, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {

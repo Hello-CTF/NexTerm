@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuth, type RecoveryKeyIssue } from "./store";
 import { DEMO } from "../../demo";
 import { describeError } from "../../ui/errorText";
-import type { AccountDevice } from "../../ipc/authApi";
+import { authApi, type AccountDevice, type TotpSetup } from "../../ipc/authApi";
 import {
   IconCheckCircle,
   IconCopy,
@@ -17,13 +17,14 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-type Screen = "setup" | "login" | "register" | "reset_required" | "recovery" | "enroll";
+type Screen = "setup" | "login" | "register" | "reset_required" | "recovery" | "enroll" | "mfa_enroll";
 
 export function AuthGate() {
   const gate = useAuth((s) => s.gate);
   const status = useAuth((s) => s.status);
   const pendingRecoveryKey = useAuth((s) => s.pendingRecoveryKey);
   const clearPendingRecoveryKey = useAuth((s) => s.clearPendingRecoveryKey);
+  const pendingMfa = useAuth((s) => s.pendingMfa);
 
   const [screen, setScreen] = useState<Screen | null>(null);
   const [recoveryIssue, setRecoveryIssue] = useState<RecoveryKeyIssue | null>(null);
@@ -36,6 +37,7 @@ export function AuthGate() {
     if (gate === "setup") setScreen("setup");
     else if (gate === "login") setScreen("login");
     else if (gate === "reset_required") setScreen("reset_required");
+    else if (gate === "mfa_enroll") setScreen("mfa_enroll");
     else setScreen(null);
   }, [gate]);
 
@@ -72,11 +74,12 @@ export function AuthGate() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
       <div className="nx-card w-full max-w-[420px]">
         {screen === "setup" && <SetupForm />}
-        {screen === "login" && <LoginForm onNavigate={setScreen} registrationOpen={status?.registration_open ?? false} />}
+        {screen === "login" && (pendingMfa ? <TotpChallengeForm /> : <LoginForm onNavigate={setScreen} registrationOpen={status?.registration_open ?? false} />)}
         {screen === "register" && <RegisterForm onBack={() => setScreen("login")} />}
         {screen === "reset_required" && <ResetRequiredForm />}
         {screen === "recovery" && <RecoveryForm onBack={() => setScreen("login")} />}
         {screen === "enroll" && <EnrollForm onBack={() => setScreen("login")} />}
+        {screen === "mfa_enroll" && <MfaEnrollForm />}
       </div>
     </div>
   );
@@ -237,6 +240,215 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
           </button>
         )}
       </div>
+    </form>
+  );
+}
+
+function TotpChallengeForm() {
+  const verifyMfa = useAuth((s) => s.verifyMfa);
+  const cancelMfa = useAuth((s) => s.cancelMfa);
+  const error = useAuth((s) => s.error);
+  const clearError = useAuth((s) => s.clearError);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    clearError();
+    setBusy(true);
+    try {
+      await verifyMfa(code.trim());
+    } catch {
+      // 错误已在 store 里
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={(e) => void submit(e)}>
+      <div className="mb-1 flex items-center gap-2">
+        <IconShield size={15} className="text-neutral-400" />
+        <span className="nx-card-title">两步验证</span>
+      </div>
+      <p className="nx-hint">
+        这个账号已开启 TOTP 两步验证。输入认证器 App 中的 6 位动态码;
+        手机丢失时也可以输入一枚未使用的恢复码。
+      </p>
+      <Field label="动态码 / 恢复码" value={code} onChange={setCode} mono placeholder="6 位数字或恢复码" autoComplete="one-time-code" />
+      <GateError error={error} />
+      <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim()}>
+        {busy ? "验证中…" : "验证并登录"}
+      </button>
+      <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={cancelMfa}>
+        返回重新登录
+      </button>
+    </form>
+  );
+}
+
+// MfaEnrollForm 是 mfa_required 策略下未绑定会话的强制绑定门:
+// 服务端把这类会话锁到只能绑定, 完成 TOTP 绑定(并保存恢复码)后才能进入应用。
+function MfaEnrollForm() {
+  const finishMfaEnrollment = useAuth((s) => s.finishMfaEnrollment);
+  const logout = useAuth((s) => s.logout);
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
+  const [code, setCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const startSetup = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setSetup(await authApi.totpSetup());
+      setCode("");
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void startSetup();
+  }, []);
+
+  const submitConfirm = async (e: FormEvent) => {
+    e.preventDefault();
+    if (code.trim().length !== 6) {
+      setError("请输入认证器中的 6 位动态码");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await authApi.totpConfirm(code.trim());
+      setRecoveryCodes(r.recovery_codes);
+      setCopied(false);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finish = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await finishMfaEnrollment();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (recoveryCodes) {
+    return (
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <IconShield size={15} className="text-amber-300" />
+          <span className="nx-card-title">保存恢复码</span>
+        </div>
+        <p className="nx-hint">
+          两步验证已开启。恢复码是手机丢失时登录账号的唯一凭证(每枚只能用一次),
+          服务端只保存散列,关闭后<b>无法再次查看</b>。请复制并保存在安全的地方。
+        </p>
+        <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
+            {recoveryCodes.map((recoveryCode) => (
+              <code key={recoveryCode}>{recoveryCode}</code>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              onClick={() => {
+                setCopied(true);
+                void navigator.clipboard?.writeText(recoveryCodes.join("\n")).catch(() => undefined);
+              }}
+            >
+              <IconCopy size={12} />
+              {copied ? "已复制" : "复制全部"}
+            </button>
+          </div>
+        </div>
+        {error && <GateError error={{ code: "internal", message: error }} />}
+        <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !copied} onClick={() => void finish()}>
+          <IconCheckCircle size={12} />
+          我已安全保存,进入应用
+        </button>
+        {!copied && <p className="nx-hint mt-2 text-center text-[11px]">先复制保存,再进入应用</p>}
+      </div>
+    );
+  }
+
+  if (!setup) {
+    return (
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <IconShield size={15} className="text-amber-300" />
+          <span className="nx-card-title">必须启用两步验证</span>
+        </div>
+        <p className="nx-hint">管理员已要求所有账号启用 TOTP 两步验证,完成绑定前无法使用其他功能。</p>
+        {error && <GateError error={{ code: "internal", message: error }} />}
+        <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy} onClick={() => void startSetup()}>
+          {busy ? "生成中…" : "重试"}
+        </button>
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
+          退出登录
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={(e) => void submitConfirm(e)}>
+      <div className="mb-1 flex items-center gap-2">
+        <IconShield size={15} className="text-amber-300" />
+        <span className="nx-card-title">必须启用两步验证</span>
+      </div>
+      <p className="nx-hint">
+        管理员已要求所有账号启用 TOTP 两步验证,完成绑定前无法使用其他功能。
+        用认证器 App(如 Google Authenticator、1Password 等)扫描或录入以下密钥绑定。
+      </p>
+      <div className="nx-alert nx-alert-info mt-3 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline nx-btn-sm"
+            onClick={() => void navigator.clipboard?.writeText(setup.otpauth_uri).catch(() => undefined)}
+          >
+            <IconCopy size={12} />
+            复制
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="nx-code font-mono text-[12.5px]">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline nx-btn-sm"
+            onClick={() => void navigator.clipboard?.writeText(setup.secret).catch(() => undefined)}
+          >
+            <IconCopy size={12} />
+            复制
+          </button>
+        </div>
+      </div>
+      <Field label="动态码" value={code} onChange={setCode} mono placeholder="输入 6 位动态码完成绑定" autoComplete="one-time-code" />
+      <GateError error={error ? { code: "internal", message: error } : null} />
+      <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || code.trim().length === 0}>
+        {busy ? "确认中…" : "确认绑定"}
+      </button>
+      <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
+        退出登录
+      </button>
     </form>
   );
 }

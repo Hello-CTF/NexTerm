@@ -38,6 +38,10 @@ export type AssetGroupDto = { id: string, parentId: string | null, name: string,
 export type AuditEntryDto = { id: number, ts: number, sessionId: string | null, assetId: string | null, 
 source: string, kind: string, payload: JsonValue, exitCode: number | null, durationMs: number | null, };
 
+export type CommandEntryDto = { id: number, sessionId: string, tabId: string, assetId: string,
+userId: string | null, command: string, source: string, exitCode: number | null,
+startedAt: number, finishedAt: number, };
+
 export type ContainerSummaryDto = { id: string, name: string, image: string, state: string, status: string, ports: string, composeProject: string | null, };
 
 export type ConversationDto = { id: string, title: string, scope: JsonValue, createdAt: number, updatedAt: number, };

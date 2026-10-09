@@ -671,7 +671,7 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 		args := hitl.WithNonce(json.RawMessage(interaction.Args), request.Nonce)
 		switch kind {
 		case hitl.KindConfirm:
-			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
+			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, Commands: interaction.Commands, RulePattern: interaction.RulePattern, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
 				return err
 			}
 		case hitl.KindQuestion:

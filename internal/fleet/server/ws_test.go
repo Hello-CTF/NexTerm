@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/fleet/agent"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/coder/websocket"
 )
 
@@ -337,5 +339,137 @@ func TestDeviceBridgeRelayRequiresTerminalEnabled(t *testing.T) {
 	response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, session, "")
 	if response.status != http.StatusForbidden {
 		t.Fatalf("relay with terminal disabled: HTTP %d %v", response.status, response.body)
+	}
+}
+
+// presenceCapture 捕获 device://status 推送, 供上下线断言。
+type presenceCapture struct {
+	mu     sync.Mutex
+	events []ipc.DeviceStatusEvent
+}
+
+func (c *presenceCapture) Emit(_ context.Context, event ipc.Event) error {
+	if event.Event != ipc.TopicDeviceStatus {
+		return nil
+	}
+	payload, ok := event.Payload.(ipc.DeviceStatusEvent)
+	if !ok {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, payload)
+	return nil
+}
+
+func (c *presenceCapture) snapshot() []ipc.DeviceStatusEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]ipc.DeviceStatusEvent(nil), c.events...)
+}
+
+func (c *presenceCapture) waitFor(t *testing.T, count int) []ipc.DeviceStatusEvent {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if events := c.snapshot(); len(events) >= count {
+			return events
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("等待 %d 个设备状态事件超时, 当前 %+v", count, c.snapshot())
+	return nil
+}
+
+// requireNoPresenceEvent 断言窗口期内没有新事件 (顶替重连/关停不去重时会漏出)。
+func (c *presenceCapture) requireNoPresenceEvent(t *testing.T, want int) {
+	t.Helper()
+	time.Sleep(300 * time.Millisecond)
+	if events := c.snapshot(); len(events) != want {
+		t.Fatalf("设备状态事件数 = %d, want %d: %+v", len(events), want, events)
+	}
+}
+
+func TestDevicePresenceLifecycle(t *testing.T) {
+	capture := &presenceCapture{}
+	f := newHTTPFixture(t, false, WithEvents(capture))
+	owner := f.createUser(t, "presence-owner")
+	deviceID, secret := enrollWSAgent(t, f, owner, "presence-box")
+	hello := agent.HelloMessage{Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret}
+
+	control := dialDeviceWS(t, f)
+	helloDevice(t, control, hello)
+	events := capture.waitFor(t, 1)
+	if events[0].DeviceID != deviceID || !events[0].Online {
+		t.Fatalf("首个事件 = %+v, want 设备上线", events[0])
+	}
+	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOnline); len(ids) != 1 || ids[0] != deviceID {
+		t.Fatalf("online audit asset_ids=%v", ids)
+	}
+
+	// 顶替重连: 旧连接被服务端拆连, 但设备始终在线, 不产生任何新事件。
+	replacement := dialDeviceWS(t, f)
+	helloDevice(t, replacement, hello)
+	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := control.Read(readCtx); err == nil {
+		t.Fatal("被顶替的控制通道仍然打开")
+	}
+	capture.requireNoPresenceEvent(t, 1)
+
+	// 顶替后的连接断开: 恰好一个离线事件与一条离线审计。
+	_ = replacement.Close(websocket.StatusNormalClosure, "")
+	events = capture.waitFor(t, 2)
+	if events[1].DeviceID != deviceID || events[1].Online {
+		t.Fatalf("第二个事件 = %+v, want 设备离线", events[1])
+	}
+	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 1 || ids[0] != deviceID {
+		t.Fatalf("offline audit asset_ids=%v", ids)
+	}
+
+	// 重新接入是真实迁移: 再次上线。
+	reconnected := dialDeviceWS(t, f)
+	helloDevice(t, reconnected, hello)
+	events = capture.waitFor(t, 3)
+	if events[2].DeviceID != deviceID || !events[2].Online {
+		t.Fatalf("第三个事件 = %+v, want 设备重新上线", events[2])
+	}
+
+	// 吊销踢线: KickDevice 已摘表, 注销回调不再触发, 由吊销路径补记离线。
+	session := f.session(t, owner)
+	if response := f.call(t, "POST", "/fleet/devices/"+deviceID+"/revoke", nil, session, session.csrf); response.status != http.StatusOK {
+		t.Fatalf("revoke: HTTP %d %v", response.status, response.body)
+	}
+	events = capture.waitFor(t, 4)
+	if events[3].DeviceID != deviceID || events[3].Online {
+		t.Fatalf("第四个事件 = %+v, want 吊销后离线", events[3])
+	}
+	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 2 || ids[1] != deviceID {
+		t.Fatalf("offline audit asset_ids=%v", ids)
+	}
+	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceRevoke); len(ids) != 1 || ids[0] != deviceID {
+		t.Fatalf("revoke audit asset_ids=%v", ids)
+	}
+}
+
+// 服务关停不刷离线: Registry.Close 换空表后再注销拿不到当前连接, 全部静默。
+func TestDevicePresenceShutdownSilent(t *testing.T) {
+	capture := &presenceCapture{}
+	f := newHTTPFixture(t, false, WithEvents(capture))
+	owner := f.createUser(t, "shutdown-owner")
+	deviceID, secret := enrollWSAgent(t, f, owner, "shutdown-box")
+
+	control := dialDeviceWS(t, f)
+	helloDevice(t, control, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+	})
+	capture.waitFor(t, 1)
+
+	if err := f.service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	capture.requireNoPresenceEvent(t, 1)
+	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 0 {
+		t.Fatalf("关停写出了离线审计: %v", ids)
 	}
 }

@@ -17,6 +17,7 @@ const demoSuperadmin: AccountUser = {
   role: "superadmin",
   state: "active",
   must_change_password: false,
+  mfa_enabled: false,
   created_at: now() - 90 * 24 * 3600_000,
   updated_at: now() - 90 * 24 * 3600_000,
   last_login_at: now() - 3600_000,
@@ -29,6 +30,7 @@ const demoUser: AccountUser = {
   role: "user",
   state: "active",
   must_change_password: false,
+  mfa_enabled: false,
   created_at: now() - 30 * 24 * 3600_000,
   updated_at: now() - 30 * 24 * 3600_000,
   last_login_at: now() - 2 * 3600_000,
@@ -57,11 +59,15 @@ const demoEnvelope: DekEnvelopesView = {
 interface DemoAuthState {
   initialized: boolean;
   registrationOpen: boolean;
+  mfaRequired: boolean;
   user: AccountUser | null;
   users: AccountUser[];
   devices: AccountDevice[];
   enrollCodes: { code: string; userId: string; expiresAt: number; consumedAt: number | null }[];
   deviceOwners: Record<string, string>;
+  totpPending: Record<string, string>;
+  totpBindings: Record<string, { recovery: string[] }>;
+  mfaTickets: Record<string, { userId: string; expiresAt: number }>;
   nextUserNum: number;
   nextCodeNum: number;
   nextDeviceNum: number;
@@ -70,6 +76,7 @@ interface DemoAuthState {
 const state: DemoAuthState = {
   initialized: true,
   registrationOpen: false,
+  mfaRequired: false,
   user: demoSuperadmin,
   users: [demoSuperadmin, demoUser],
   devices: seedDevices(),
@@ -79,17 +86,38 @@ const state: DemoAuthState = {
     "d-demo-2": demoSuperadmin.id,
     "d-demo-3": demoSuperadmin.id,
   },
+  totpPending: {},
+  totpBindings: {},
+  mfaTickets: {},
   nextUserNum: 1,
   nextCodeNum: 1,
   nextDeviceNum: 1,
 };
 
 function session(user: AccountUser): AccountSession {
-  return { user, csrf_token: `demo-csrf-${user.id}` };
+  return { user, csrf_token: `demo-csrf-${user.id}`, mfa_required: state.mfaRequired };
 }
 
 function fail(message: string): never {
   throw { code: "forbidden", message };
+}
+
+const demoBase32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function demoSecret(): string {
+  let out = "";
+  for (let i = 0; i < 32; i++) out += demoBase32[Math.floor(Math.random() * demoBase32.length)];
+  return out;
+}
+
+function demoRecoveryCodes(): string[] {
+  const codes: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    let raw = "";
+    for (let j = 0; j < 16; j++) raw += demoBase32[Math.floor(Math.random() * demoBase32.length)];
+    codes.push(raw.replace(/(.{4})/g, "$1-").replace(/-$/, ""));
+  }
+  return codes;
 }
 
 function findUser(username: string): AccountUser | undefined {
@@ -102,6 +130,24 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
 
   if (path === "/auth/status" && method === "GET") {
     return { initialized: state.initialized, registration_open: state.registrationOpen, auth: "on" } as T;
+  }
+  // 与真实后端一致: mfa_required 策略下未绑定会话被锁到只能完成 TOTP 绑定(公共路由不受影响)。
+  const mfaEnrollExempt = new Set([
+    "/auth/login",
+    "/auth/totp/login",
+    "/auth/init",
+    "/auth/register",
+    "/auth/recovery/reset",
+    "/auth/devices/enroll",
+    "/auth/me",
+    "/auth/totp",
+    "/auth/totp/setup",
+    "/auth/totp/confirm",
+    "/auth/logout",
+    "/auth/logout-all",
+  ]);
+  if (state.mfaRequired && state.user && !state.user.mfa_enabled && !mfaEnrollExempt.has(path)) {
+    throw { code: "mfa_enrollment_required", message: "管理员已要求启用两步验证: 完成 TOTP 绑定前,该账号只能使用绑定相关功能" };
   }
   if (path === "/auth/me" && method === "GET") {
     if (!state.user) fail("会话无效或缺失");
@@ -119,9 +165,77 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
       if (device.revoked_at) fail("设备已吊销");
       device.last_seen_at = now();
     }
+    if (state.totpBindings[user.id]) {
+      // 与真实后端一致: 密码通过不直接建会话, 发 MFA 票据等第二因子。
+      const ticket = `demo-mfa-${now().toString(36)}-${state.nextCodeNum++}`;
+      const expiresAt = now() + 5 * 60_000;
+      state.mfaTickets[ticket] = { userId: user.id, expiresAt };
+      return { mfa_required: true, ticket, expires_at: expiresAt } as T;
+    }
     state.user = user;
     user.last_login_at = now();
     return session(user) as T;
+  }
+  if (path === "/auth/totp/login" && method === "POST") {
+    const record = state.mfaTickets[String(payload.ticket ?? "")];
+    if (!record || record.expiresAt <= now()) fail("登录状态已过期，请重新登录");
+    const user = state.users.find((u) => u.id === record.userId);
+    const binding = user ? state.totpBindings[user.id] : undefined;
+    if (!user || !binding) fail("登录状态已过期，请重新登录");
+    const code = String(payload.code ?? "").trim();
+    const recoveryIndex = binding.recovery.indexOf(code);
+    // 演示模式不实现真实 TOTP 算法: 任意 6 位数字或一枚未使用的恢复码即通过。
+    if (!/^\d{6}$/.test(code) && recoveryIndex < 0) fail("验证码错误");
+    if (recoveryIndex >= 0) binding.recovery.splice(recoveryIndex, 1);
+    delete state.mfaTickets[String(payload.ticket ?? "")];
+    state.user = user;
+    user.last_login_at = now();
+    return session(user) as T;
+  }
+  if (path === "/auth/totp" && method === "GET") {
+    if (!state.user) fail("会话无效或缺失");
+    const binding = state.totpBindings[state.user.id];
+    return {
+      enabled: Boolean(binding),
+      pending: Boolean(state.totpPending[state.user.id]),
+      mfa_required: state.mfaRequired,
+      recovery_codes_left: binding?.recovery.length ?? 0,
+    } as T;
+  }
+  if (path === "/auth/totp/setup" && method === "POST") {
+    if (!state.user) fail("会话无效或缺失");
+    const binding = state.totpBindings[state.user.id];
+    if (binding) {
+      // 与真实后端一致: 已绑定用户换绑前必须用当前动态码或恢复码重验(演示模式不验密码)。
+      const reverify = String(payload.reverify ?? "").trim();
+      const recoveryIndex = binding.recovery.indexOf(reverify);
+      if (!/^\d{6}$/.test(reverify) && recoveryIndex < 0) fail("已开启两步验证: 换绑前需要当前动态码、恢复码或登录密码");
+      if (recoveryIndex >= 0) binding.recovery.splice(recoveryIndex, 1);
+    }
+    const secret = demoSecret();
+    state.totpPending[state.user.id] = secret;
+    return { secret, otpauth_uri: `otpauth://totp/NexTerm:${state.user.username}?secret=${secret}&issuer=NexTerm` } as T;
+  }
+  if (path === "/auth/totp/confirm" && method === "POST") {
+    if (!state.user) fail("会话无效或缺失");
+    if (!state.totpPending[state.user.id]) throw { code: "bad_param", message: "参数错误: 尚未开始 TOTP 绑定" };
+    if (!/^\d{6}$/.test(String(payload.code ?? ""))) fail("验证码错误");
+    delete state.totpPending[state.user.id];
+    const recovery = demoRecoveryCodes();
+    state.totpBindings[state.user.id] = { recovery };
+    state.user.mfa_enabled = true;
+    return { recovery_codes: [...recovery] } as T;
+  }
+  if (path === "/auth/totp" && method === "DELETE") {
+    if (!state.user) fail("会话无效或缺失");
+    const binding = state.totpBindings[state.user.id];
+    if (!binding) fail("验证码错误");
+    const code = String(payload.code ?? "").trim();
+    if (!/^\d{6}$/.test(code) && !binding.recovery.includes(code)) fail("验证码错误");
+    delete state.totpBindings[state.user.id];
+    delete state.totpPending[state.user.id];
+    state.user.mfa_enabled = false;
+    return { ok: true } as T;
   }
   if (path === "/auth/init" && method === "POST") {
     if (state.initialized) fail("服务器已完成初始化，不能重复初始化");
@@ -141,6 +255,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
       role: "user",
       state: "active",
       must_change_password: false,
+      mfa_enabled: false,
       created_at: now(),
       updated_at: now(),
       last_login_at: now(),
@@ -230,6 +345,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
       role: "user",
       state: "active",
       must_change_password: true,
+      mfa_enabled: false,
       created_at: now(),
       updated_at: now(),
       last_login_at: 0,
@@ -254,11 +370,12 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     }
   }
   if (path === "/admin/settings" && method === "GET") {
-    return { registration_open: state.registrationOpen, public_base_url: "" } as T;
+    return { registration_open: state.registrationOpen, public_base_url: "", mfa_required: state.mfaRequired } as T;
   }
   if (path === "/admin/settings" && method === "PUT") {
     state.registrationOpen = Boolean(payload.registration_open);
-    return { registration_open: state.registrationOpen, public_base_url: "" } as T;
+    if (payload.mfa_required !== undefined) state.mfaRequired = Boolean(payload.mfa_required);
+    return { registration_open: state.registrationOpen, public_base_url: "", mfa_required: state.mfaRequired } as T;
   }
 
   if (path === "/sync/v2/ids" && method === "POST") {
@@ -278,6 +395,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
 export function resetDemoAuth(): void {
   state.initialized = true;
   state.registrationOpen = false;
+  state.mfaRequired = false;
   state.user = demoSuperadmin;
   state.users = [demoSuperadmin, demoUser];
   state.devices = seedDevices();
@@ -287,5 +405,10 @@ export function resetDemoAuth(): void {
     "d-demo-2": demoSuperadmin.id,
     "d-demo-3": demoSuperadmin.id,
   };
+  state.totpPending = {};
+  state.totpBindings = {};
+  state.mfaTickets = {};
+  demoSuperadmin.mfa_enabled = false;
+  demoUser.mfa_enabled = false;
   // id/配对码计数器保持单调不重置: reset 只恢复数据,跨 reset 不复用任何 id 或码。
 }

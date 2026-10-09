@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
@@ -33,11 +32,7 @@ func TestResilientStreamKicksFullQueueWithoutFreezingRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
-	events := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, events)
-	if events[len(events)-1].Type != "done" {
-		t.Fatalf("terminal journal event = %+v", events[len(events)-1])
-	}
+	events := waitTerminalJournal(t, storage, response.JobID, "done")
 	deltas := 0
 	deltaText := ""
 	for _, event := range events {
@@ -75,8 +70,7 @@ func TestResilientStreamKickKeepsJournalReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
-	events := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, events)
+	events := waitTerminalJournal(t, storage, response.JobID, "done")
 	replayed, err := runner.RunEvents(context.Background(), response.JobID, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -170,12 +164,8 @@ func TestUserCancelJournalsCanceledTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCanceled)
-	events := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, events)
+	events := waitTerminalJournal(t, storage, response.JobID, "canceled")
 	last := events[len(events)-1]
-	if last.Type != "canceled" {
-		t.Fatalf("terminal journal event = %+v, want canceled", last)
-	}
 	if strings.Contains(last.PayloadJSON, "retryable") {
 		t.Fatalf("canceled event must not carry retryable: %s", last.PayloadJSON)
 	}
@@ -207,12 +197,8 @@ func TestStreamCanceledErrorJournalsCanceledTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCanceled)
-	events := runEventsOf(t, storage, response.JobID)
-	requireContiguousSeq(t, events)
+	events := waitTerminalJournal(t, storage, response.JobID, "canceled")
 	last := events[len(events)-1]
-	if last.Type != "canceled" {
-		t.Fatalf("terminal journal event = %+v, want canceled", last)
-	}
 	if strings.Contains(last.PayloadJSON, "retryable") {
 		t.Fatalf("canceled event must not carry retryable: %s", last.PayloadJSON)
 	}
@@ -234,15 +220,5 @@ func TestRestartCanceledRestoredRunJournalsCanceledTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, storage, response.JobID, store.RunStatusCanceled)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		events := runEventsOf(t, storage, response.JobID)
-		requireContiguousSeq(t, events)
-		if last := events[len(events)-1]; last.Type == "canceled" {
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatalf("restored cancel terminal journal event = %+v", last)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitTerminalJournal(t, storage, response.JobID, "canceled")
 }

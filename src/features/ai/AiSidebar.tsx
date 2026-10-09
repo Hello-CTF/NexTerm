@@ -73,7 +73,7 @@ interface RefChip {
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
   { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权允许的终端写入或命令执行除外，其余改动与拿不准的操作都会被拒绝" },
-  { value: "read_write", label: "读写", hint: "只读直接做；改动先问你，选「本会话允许此类」后同类不再问" },
+  { value: "read_write", label: "读写", hint: "只读直接做；改动先问你，选「本会话允许此类」后同类不再问（文件写入限同目录）" },
   { value: "silent", label: "完全静默", hint: "改动直接执行不逐次问；拦截规则命中或拿不准的仍会问你" },
 ];
 
@@ -85,11 +85,27 @@ const MODE_LABEL: Record<AiPermissionMode, string> = {
 
 const PLAN_MODE_HINT = "先出方案，批准后执行";
 
-const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
+const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" | "deny", string> = {
   allow: "已允许一次",
   allow_session: "本会话已允许此类",
+  allow_persistent: "已永久允许（可在授权管理中撤销）",
   deny: "已拒绝",
 };
+
+const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", "send_keys"]);
+
+function permanentScopeText(card: ConfirmItem): string {
+  if (card.tool === "write_file" || card.tool === "edit_file") {
+    return `永久允许写入 ${card.rulePattern || "该路径"} 下的文件`;
+  }
+  if (card.tool === "send_keys") return "永久允许在该设备发送任意按键";
+  return "永久允许在该设备执行任意命令";
+}
+
+function extractUrls(text: string): string[] {
+  const found = text.match(/https?:\/\/[^\s"'<>）)\]]+/g) ?? [];
+  return [...new Set(found)];
+}
 
 const CONVERSATION_KEY = "nexterm.ai.conversation.v1";
 
@@ -221,6 +237,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
+  const confirmCardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (confirmCard) confirmCardRef.current?.focus({ preventScroll: true });
+  }, [confirmCard?.id]);
   const hitlWaiting = confirmCard
     ? "等待你确认后继续…"
     : questionCard
@@ -807,7 +827,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  const confirm = async (decision: "allow" | "allow_session" | "deny") => {
+  const confirm = async (decision: "allow" | "allow_session" | "allow_persistent" | "deny") => {
     const run = activeRunRef.current;
     const card = confirmCard;
     const id = run?.jobId;
@@ -1481,7 +1501,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <div style={{ height: virtual.range.padBottom }} aria-hidden="true" />
           )}
           {confirmCard && (
-            <div className="nx-alert">
+            <div
+              ref={confirmCardRef}
+              tabIndex={-1}
+              className="nx-alert outline-none"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void confirm("deny");
+                }
+              }}
+            >
               <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
                 <IconAlert size={13} />
                 需要你确认
@@ -1490,7 +1521,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本会话允许此类」，或在权限设置里调模式。
+                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本会话允许此类」，或在权限设置里调模式。按 Esc 默认拒绝。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -1507,6 +1538,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 >
                   本会话允许此类
                 </button>
+                {confirmCard.risk === "needs_confirm" && RULE_CAPABLE_TOOLS.has(confirmCard.tool) && (
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    title={`${permanentScopeText(confirmCard)}；授权保存在本安装（服务器）上，可随时在授权管理中撤销`}
+                    disabled={submittingCardId === confirmCard.id}
+                    onClick={() => void confirm("allow_persistent")}
+                  >
+                    永久允许
+                  </button>
+                )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
                   disabled={submittingCardId === confirmCard.id}
@@ -2223,11 +2264,43 @@ function PlanBubble({
 
 function ConfirmBody({ card }: { card: ConfirmItem }) {
   const pv = card.preview;
+  const urls = extractUrls([...(card.commands ?? []), card.rendered].join("\n"));
+  const urlBlock =
+    urls.length > 0 ? (
+      <div className="mb-1.5 rounded border border-neutral-800 bg-neutral-950/70 px-2 py-1.5">
+        <div className="mb-0.5 text-[10.5px] text-neutral-500">包含 URL</div>
+        {urls.map((url) => (
+          <div key={url} className="truncate font-mono text-[10.5px] text-blue-300" title={url}>
+            {url}
+          </div>
+        ))}
+      </div>
+    ) : null;
+  if (card.commands && card.commands.length > 0) {
+    return (
+      <>
+        <div className="mb-1.5 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-neutral-800 bg-neutral-950/70 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-neutral-200">
+          {card.commands.map((command, index) => (
+            <div key={index}>$ {command}</div>
+          ))}
+        </div>
+        {urlBlock}
+        {card.reason ? (
+          <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
+            {card.reason}
+          </div>
+        ) : null}
+      </>
+    );
+  }
   if (!pv) {
     return (
-      <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
-        {card.rendered}
-      </pre>
+      <>
+        <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
+          {card.rendered}
+        </pre>
+        {urlBlock}
+      </>
     );
   }
   return (
@@ -2243,6 +2316,7 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
       <div className="mb-1.5 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-neutral-800 bg-neutral-950/70 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed">
         <DiffLines before={pv.before} after={pv.after} />
       </div>
+      {urlBlock}
       {card.reason ? (
         <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
           {card.reason}

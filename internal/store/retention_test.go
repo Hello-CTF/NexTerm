@@ -299,12 +299,16 @@ DROP TABLE device_metrics;
 DROP TABLE device_metrics_hourly;
 DROP TABLE sync_credential;
 DROP TABLE user_session;
+DROP TABLE command_log;
 DROP TABLE share_link;
 DROP TABLE host_share;
+DROP TABLE device_share_link;
 DROP TABLE user_device;
 DROP TABLE user_dek;
+DROP TABLE user_totp_recovery_code;
+DROP TABLE user_totp;
 DROP TABLE app_user;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20, 21, 22)`)
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20, 21, 22, 23, 24, 25)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +333,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 19)
+	requireTableCount(t, reopened, migrationsTable, 22)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

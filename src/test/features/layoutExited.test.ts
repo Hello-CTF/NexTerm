@@ -87,6 +87,7 @@ describe("remote layout preserves exited terminal state", () => {
       rightWidth: 352,
       workspaces: [workspace([{ id: "pane", tabs: [terminal()] }])],
       activeWorkspaceId: "ws",
+      presets: [],
     };
     const merged = mergeExitedTabs(staleRemote, current);
     expect(merged[0].panes[0].tabs[0].exited).toBe(true);
@@ -169,6 +170,7 @@ describe("remote layout preserves exited terminal state", () => {
         workspace([{ id: "pane", tabs: [{ ...terminal("shared"), tabId: "kernel-new" }] }]),
       ],
       activeWorkspaceId: "ws",
+      presets: [],
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
@@ -206,6 +208,7 @@ describe("remote layout preserves exited terminal state", () => {
         ]),
       ],
       activeWorkspaceId: "ws",
+      presets: [],
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
@@ -241,6 +244,7 @@ describe("remote layout preserves exited terminal state", () => {
         ]),
       ],
       activeWorkspaceId: "ws",
+      presets: [],
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 

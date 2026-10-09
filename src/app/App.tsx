@@ -15,6 +15,8 @@ import {
   openTerminalTab,
   nextTabId,
   connectAsset,
+  dbKindOf,
+  DB_KIND_LABEL,
   openCredentialsSidebar,
   openCredentialsViewTab,
   requestCloseTab,
@@ -45,6 +47,10 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
+import {
+  applyLayoutPreset,
+  saveLayoutPresetFromWorkspace,
+} from "./layoutPresets";
 import {
   formatBinding,
   matchAppKeybinding,
@@ -79,6 +85,7 @@ import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
 import { ForwardPanel } from "../features/forward/ForwardPanel";
 import { FileEditor } from "../features/files/FileEditor";
+import { LogViewer } from "../features/files/LogViewer";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
 import { AiSidebar } from "../features/ai/AiSidebar";
@@ -116,11 +123,13 @@ import {
   IconInfo,
   IconKey,
   IconLayers,
+  IconList,
   IconLoader,
   IconLock,
   IconMonitor,
   IconNetwork,
   IconPlus,
+  IconSave,
   IconServer,
   IconSettings,
   IconSparkles,
@@ -136,6 +145,7 @@ import {
 const TAB_ICON = {
   terminal: IconTerminal,
   files: IconFolderOpen,
+  log: IconList,
   mount: IconDrive,
   forward: IconNetwork,
   docker: IconBox,
@@ -183,7 +193,7 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
 }
 
 function tabIcon(t: AppTab) {
-  if (t.kind === "files" && t.path) return fileVisual(t.path, "file").Icon;
+  if ((t.kind === "files" || t.kind === "log") && t.path) return fileVisual(t.path, "file").Icon;
   return TAB_ICON[t.kind] ?? IconTerminal;
 }
 
@@ -528,6 +538,7 @@ function AppShell() {
     dismissToast,
     pushToast,
     connectFocusRevision,
+    layoutPresets,
   } = useUi();
 
   const ws = useActiveWorkspace();
@@ -679,19 +690,24 @@ function AppShell() {
   const openDatabase = useCallback(async () => {
     try {
       const list = await assetApi.list();
-      const asset = list.find((a) => a.kind === "mysql") ?? list.find((a) => a.kind === "redis");
+      const asset =
+        list.find((a) => a.kind === "mysql") ??
+        list.find((a) => a.kind === "postgres") ??
+        list.find((a) => a.kind === "redis");
       if (!asset) {
         pushToast("info", "还没有数据库资产，先在资产树里新建一个");
         return;
       }
       const { connId } = await dbApi.connect(asset.id);
-      const kind = asset.kind === "redis" ? "redis" : "mysql";
+      const dbKind = dbKindOf(asset.kind) ?? "mysql";
+      const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
+      useUi.getState().ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
       useUi.getState().addTab({
         id: `db-${connId}`,
         kind: "db",
-        title: `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`,
+        title,
         connId,
-        dbKind: kind,
+        dbKind,
         closable: true,
       });
     } catch (e) {
@@ -877,10 +893,42 @@ function AppShell() {
           disabled: running === 0,
           onSelect: () => void requestKillWorkspaceTerminals(ws.id),
         });
+        items.push({ kind: "separator" });
+        items.push({
+          kind: "item",
+          label: "保存为布局预设…",
+          icon: <IconSave size={12} />,
+          hint: "分屏与打开的标签",
+          onSelect: () => void saveLayoutPresetFromWorkspace(ws.id),
+        });
+        items.push({
+          kind: "item",
+          label: "应用布局预设",
+          icon: <IconLayers size={12} />,
+          submenu:
+            layoutPresets.length > 0
+              ? layoutPresets.map((p) => ({
+                  kind: "item" as const,
+                  label: p.name,
+                  submenu: [
+                    {
+                      kind: "item" as const,
+                      label: "应用到当前工作区",
+                      onSelect: () => void applyLayoutPreset(p.id, "current"),
+                    },
+                    {
+                      kind: "item" as const,
+                      label: "应用到新工作区",
+                      onSelect: () => void applyLayoutPreset(p.id, "new"),
+                    },
+                  ],
+                }))
+              : [{ kind: "item" as const, label: "还没有预设", disabled: true }],
+        });
       }
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, setLeftMode, setLeftOpen, pushToast],
+    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, setLeftMode, setLeftOpen, pushToast, layoutPresets],
   );
 
   const runSyncNow = useCallback(async () => {
@@ -1955,6 +2003,9 @@ function PaneForTab({
       ) : (
         <FileBrowser sessionId={tab.sessionId} />
       );
+    case "log":
+      if (!tab.sessionId || !tab.path) return <EmptyState />;
+      return <LogViewer sessionId={tab.sessionId} path={tab.path} onClose={onClose} />;
     case "docker":
       return tab.sessionId ? <DockerPanel sessionId={tab.sessionId} visible={active} /> : <EmptyState />;
     case "db":

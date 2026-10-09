@@ -637,6 +637,32 @@ func TestSharePublicTerminalExpiryStopsStream(t *testing.T) {
 	collector.expectClosed(t, 5*time.Second)
 }
 
+func TestSharePublicTerminalExpiryErrorFrameSurvivesTransportFailure(t *testing.T) {
+	f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
+	owner := f.createUser(t, "expiry-transport-owner")
+	device := startShareTestAgent(t, f, owner, "expiry-transport-box")
+	sessionID := device.createSession(t, "sh", "-c", "echo READY-42; exec cat")
+	ownerSession := f.session(t, owner)
+	_, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
+
+	conn := dialShareViewer(t, f, "/share/public/"+token, nil)
+	collector := watchShareConn(conn)
+	collector.expectReady(t, "read")
+
+	// 过期后立刻拆除 agent 桥接 (传输层错误先于周期复查到达泵): 终止仍必须
+	// 下发可识别错误帧, 不能只剩 close frame。
+	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE share_link SET expires_at = ? WHERE device_id = ?", time.Now().UnixMilli()-1000, device.deviceID); err != nil {
+		t.Fatal(err)
+	}
+	device.cancel()
+
+	errorFrame := collector.expectErrorFrame(t, 10*time.Second)
+	if !strings.Contains(errorFrame.Message, "过期") {
+		t.Fatalf("error frame = %+v", errorFrame)
+	}
+	collector.expectClosed(t, 5*time.Second)
+}
+
 func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
 	owner := f.createUser(t, "host-owner")
@@ -835,10 +861,14 @@ func TestShareRoutesAuthOff(t *testing.T) {
 		f.call(t, "POST", "/share/links", map[string]any{"device_id": "d", "session_id": "s"}, session, session.csrf),
 		f.call(t, "GET", "/share/links", nil, session, ""),
 		f.call(t, "POST", "/share/links/x/revoke", nil, session, session.csrf),
+		f.call(t, "POST", "/share/device-links", map[string]any{"device_id": "d"}, session, session.csrf),
+		f.call(t, "GET", "/share/device-links", nil, session, ""),
+		f.call(t, "POST", "/share/device-links/x/revoke", nil, session, session.csrf),
 		f.call(t, "POST", "/share/host-shares", map[string]any{"device_id": "d", "recipient_username": "r"}, session, session.csrf),
 		f.call(t, "GET", "/share/host-shares", nil, session, ""),
 		f.call(t, "POST", "/share/host-shares/x/revoke", nil, session, session.csrf),
 		f.call(t, "GET", "/share/public/sometoken", nil, nil, ""),
+		f.call(t, "GET", "/share/public/device/sometoken", nil, nil, ""),
 		f.call(t, "GET", "/share/devices/d/terminal", nil, session, ""),
 	}
 	for i, call := range calls {
@@ -882,4 +912,15 @@ func TestShareViewerWriteTimeoutUnblocksStalledViewer(t *testing.T) {
 		t.Fatalf("stalled write took %s to unblock, want the per-message timeout", elapsed)
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// 会话公开链接与设备公开链接共用同一限流: 随机 token 首次 403, 随后 429。
+func TestSharePublicLinkResolveRateLimited(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	if status := dialShareViewerStatus(t, f, "/share/public/not-a-token"); status != http.StatusForbidden {
+		t.Fatalf("first invalid resolve = %d, want 403", status)
+	}
+	if status := dialShareViewerStatus(t, f, "/share/public/not-a-token"); status != http.StatusTooManyRequests {
+		t.Fatalf("flooded resolve = %d, want 429", status)
+	}
 }

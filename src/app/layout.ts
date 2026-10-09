@@ -2,10 +2,12 @@ import { layoutApi, terminalApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
 import { isDirtyFileEditor } from "../features/files/editorGuards";
+import { sanitizeLayoutPresets, type LayoutPreset } from "./layoutPresets";
 import {
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   TOOL_TAB_KINDS,
+  dbKindOf,
   nextTabId,
   useUi,
   type AppTab,
@@ -34,6 +36,7 @@ export interface PersistedLayout {
   rightWidth: number;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  presets: LayoutPreset[];
 }
 
 const PANE_KINDS = new Set<PaneKind>([
@@ -88,7 +91,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     tabId,
     containerId: optStr(raw.containerId),
     connId: optStr(raw.connId),
-    dbKind: raw.dbKind === "mysql" || raw.dbKind === "redis" ? raw.dbKind : undefined,
+    dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     credId: optStr(raw.credId),
     credView: raw.credView === "json" ? "json" : raw.credView === "text" ? "text" : undefined,
     path: optStr(raw.path),
@@ -133,7 +136,7 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
     sessionId: optStr(raw.sessionId),
     assetId: optStr(raw.assetId),
     connId: optStr(raw.connId),
-    dbKind: raw.dbKind === "mysql" || raw.dbKind === "redis" ? raw.dbKind : undefined,
+    dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     assetKind: optStr(raw.assetKind),
     panes,
     activePaneId,
@@ -275,6 +278,7 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
     ),
     workspaces,
     activeWorkspaceId,
+    presets: sanitizeLayoutPresets(raw.presets),
   };
 }
 
@@ -286,6 +290,7 @@ interface LayoutSource {
   rightWidth: number;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  layoutPresets: LayoutPreset[];
 }
 
 export function serializeLayout(s: LayoutSource): PersistedLayout | null {
@@ -298,6 +303,7 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
     rightWidth: s.rightWidth,
     workspaces: s.workspaces,
     activeWorkspaceId: s.activeWorkspaceId,
+    presets: s.layoutPresets,
   });
 }
 
@@ -468,6 +474,7 @@ function applyToStore(l: PersistedLayout) {
       rightWidth: l.rightWidth,
       workspaces: merged,
       activeWorkspaceId: l.activeWorkspaceId,
+      layoutPresets: l.presets,
     });
   } finally {
     applyingRemote = false;

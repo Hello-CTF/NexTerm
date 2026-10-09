@@ -30,6 +30,11 @@ export enum Code {
     CodeBadMasterPass = "bad_master_password",
     CodeDecrypt = "decrypt",
     CodeForbidden = "forbidden",
+
+    /**
+     * CodeMFAEnrollmentRequired 表示 mfa_required 策略下未绑定会话被限制在绑定相关路由。
+     */
+    CodeMFAEnrollmentRequired = "mfa_enrollment_required",
     CodeNotController = "not_controller",
     CodeNeedsConfirm = "needs_confirm",
     CodeTimeout = "timeout",

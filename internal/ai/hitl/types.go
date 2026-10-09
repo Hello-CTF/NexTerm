@@ -21,6 +21,7 @@ type Decision string
 const (
 	DecisionAllow        Decision = "allow"
 	DecisionAllowSession Decision = "allow_session"
+	DecisionAllowPersist Decision = "allow_persistent"
 	DecisionDeny         Decision = "deny"
 )
 

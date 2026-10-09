@@ -1,10 +1,10 @@
-// 个人账号卡片:当前用户、修改密码(重包裹 DEK)、恢复密钥、设备管理、退出登录。
+// 个人账号卡片:当前用户、修改密码(重包裹 DEK)、两步验证(TOTP)、恢复密钥、设备管理、退出登录。
 // 未登录时是设置页唯一的登录入口(WEB/DEMO);桌面端本地优先,账号体系在同步服务端
 // (见 SyncCard 桌面端登录卡),未登录不渲染。
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { authApi, authAvailable, type AccountDevice } from "../../ipc/authApi";
+import { authApi, authAvailable, type AccountDevice, type TotpSetup, type TotpStatus } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
@@ -273,6 +273,8 @@ export function AuthCard() {
         </form>
       </section>
 
+      <TotpCard />
+
       {pendingRecoveryKey && (
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
@@ -403,5 +405,325 @@ export function AuthCard() {
         </p>
       </section>
     </>
+  );
+}
+
+// TotpCard 管理当前账号的 TOTP 两步验证: 开启(密钥/otpauth URI → 确认码 → 一次性恢复码)、
+// 关闭(需当前动态码或恢复码)。服务端只存加密密钥与恢复码散列, 恢复码明文只展示一次。
+function TotpCard() {
+  const { pushToast } = useUi();
+  const [status, setStatus] = useState<TotpStatus | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
+  const [confirmCode, setConfirmCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableCode, setDisableCode] = useState("");
+  const [rebindOpen, setRebindOpen] = useState(false);
+  const [reverify, setReverify] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoadError(null);
+    return authApi
+      .totpStatus()
+      .then(setStatus)
+      .catch((e: unknown) => setLoadError(describeError(e)));
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const copyText = (text: string, label: string) => {
+    void navigator.clipboard
+      ?.writeText(text)
+      .then(() => pushToast("success", `${label}已复制`))
+      .catch(() => pushToast("error", "复制失败,请手动选中复制"));
+  };
+
+  const startSetup = async (reverifyCredential?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setSetup(await authApi.totpSetup(reverifyCredential));
+      setConfirmCode("");
+      setRebindOpen(false);
+      setReverify("");
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitConfirm = async (e: FormEvent) => {
+    e.preventDefault();
+    if (confirmCode.trim().length !== 6) {
+      setError("请输入认证器中的 6 位动态码");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await authApi.totpConfirm(confirmCode.trim());
+      setRecoveryCodes(r.recovery_codes);
+      setCopied(false);
+      setSetup(null);
+      setConfirmCode("");
+      await load();
+      pushToast("success", "两步验证已开启");
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitDisable = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await authApi.totpDisable(disableCode.trim());
+      setDisableOpen(false);
+      setDisableCode("");
+      await load();
+      pushToast("success", "两步验证已关闭");
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitRebind = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!reverify.trim()) {
+      setError("请输入当前动态码、恢复码或登录密码");
+      return;
+    }
+    await startSetup(reverify.trim());
+  };
+
+  return (
+    <section className="nx-card">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <IconShield size={15} className="text-neutral-400" />
+        <span className="nx-card-title">两步验证 (TOTP)</span>
+        {status?.enabled && <span className="nx-badge nx-badge-green">已开启</span>}
+        <div className="nx-spacer" />
+        {status && !loadError && (
+          <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void load()}>
+            <IconRefresh size={12} />
+            刷新
+          </button>
+        )}
+      </div>
+
+      {loadError && (
+        <div className="nx-alert nx-alert-danger flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">两步验证状态读取失败 · {loadError}</span>
+          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
+            <IconRefresh size={12} />
+            重试
+          </button>
+        </div>
+      )}
+
+      {status?.mfa_required && !status.enabled && (
+        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
+          <IconInfo size={14} className="mt-0.5 shrink-0" />
+          <div>
+            管理员已要求所有账号启用两步验证。完成绑定前,这个账号只能使用绑定相关功能;
+            绑定完成后一切恢复正常。
+          </div>
+        </div>
+      )}
+
+      {recoveryCodes && (
+        <div className="nx-alert nx-alert-danger flex flex-col gap-2">
+          <div className="flex items-start gap-2">
+            <IconInfo size={14} className="mt-0.5 shrink-0" />
+            <div>
+              恢复码(只显示这一次)。手机丢失时,可用任意一枚恢复码代替动态码登录;
+              每枚只能用一次。服务端只保存它们的散列,关闭后<b>无法再次查看</b>。
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
+            {recoveryCodes.map((code) => (
+              <code key={code}>{code}</code>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              onClick={() => {
+                setCopied(true);
+                copyText(recoveryCodes.join("\n"), "恢复码");
+              }}
+            >
+              <IconCopy size={12} />
+              {copied ? "已复制" : "复制全部"}
+            </button>
+            <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={!copied} onClick={() => setRecoveryCodes(null)}>
+              <IconCheckCircle size={12} />
+              我已安全保存
+            </button>
+          </div>
+          {!copied && <p className="nx-hint text-[11px]">先复制保存,再关闭本页</p>}
+        </div>
+      )}
+
+      {!recoveryCodes && setup && (
+        <div>
+          <p className="nx-hint mb-3">
+            用认证器 App(如 Google Authenticator、1Password 等)扫描或录入以下密钥绑定。
+            otpauth 链接可整体复制到支持 URI 导入的认证器;也可以把链接自行编码成二维码扫描。
+          </p>
+          <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.otpauth_uri, "绑定链接")}>
+                <IconCopy size={12} />
+                复制
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="nx-code font-mono text-[12.5px]">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => copyText(setup.secret, "密钥")}>
+                <IconCopy size={12} />
+                复制
+              </button>
+            </div>
+          </div>
+          <form onSubmit={(e) => void submitConfirm(e)} className="flex flex-col gap-2">
+            <input
+              className="nx-input max-w-[280px] font-mono"
+              placeholder="输入 6 位动态码完成绑定"
+              value={confirmCode}
+              autoComplete="one-time-code"
+              onChange={(e) => setConfirmCode(e.target.value)}
+            />
+            {error && (
+              <div className="nx-alert nx-alert-danger flex items-start gap-2">
+                <IconXCircle size={13} className="mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || confirmCode.trim().length === 0}>
+                {busy ? "确认中…" : "确认绑定"}
+              </button>
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setSetup(null)}>
+                取消
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {!recoveryCodes && !setup && status && (
+        <div>
+          {status.enabled ? (
+            <div className="flex flex-col gap-2">
+              <p className="nx-hint">
+                登录时在密码后需要输入认证器中的 6 位动态码。剩余恢复码 <b>{status.recovery_codes_left}</b> 枚。
+              </p>
+              {disableOpen ? (
+                <form onSubmit={(e) => void submitDisable(e)} className="flex flex-col gap-2">
+                  <input
+                    className="nx-input max-w-[280px] font-mono"
+                    placeholder="当前动态码或恢复码"
+                    value={disableCode}
+                    autoComplete="one-time-code"
+                    onChange={(e) => setDisableCode(e.target.value)}
+                  />
+                  {error && (
+                    <div className="nx-alert nx-alert-danger flex items-center gap-2">
+                      <IconXCircle size={13} className="shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !disableCode.trim()}>
+                      {busy ? "关闭中…" : "确认关闭"}
+                    </button>
+                    <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setDisableOpen(false)}>
+                      取消
+                    </button>
+                  </div>
+                </form>
+              ) : rebindOpen ? (
+                <form onSubmit={(e) => void submitRebind(e)} className="flex flex-col gap-2">
+                  <input
+                    className="nx-input max-w-[280px]"
+                    placeholder="当前动态码、恢复码或登录密码"
+                    value={reverify}
+                    autoComplete="off"
+                    onChange={(e) => setReverify(e.target.value)}
+                  />
+                  {error && (
+                    <div className="nx-alert nx-alert-danger flex items-center gap-2">
+                      <IconXCircle size={13} className="shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !reverify.trim()}>
+                      {busy ? "验证中…" : "验证并换绑"}
+                    </button>
+                    <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setRebindOpen(false)}>
+                      取消
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div>
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-sm"
+                    title="换绑需要当前动态码、恢复码或登录密码验证"
+                    onClick={() => { setError(null); setRebindOpen(true); }}
+                  >
+                    换绑认证器
+                  </button>
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-sm ml-2"
+                    onClick={() => { setError(null); setDisableOpen(true); }}
+                  >
+                    关闭两步验证
+                  </button>
+                  {error && (
+                    <div className="nx-alert nx-alert-danger mt-2 flex items-center gap-2">
+                      <IconXCircle size={13} className="shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <p className="nx-hint mb-2">
+                开启后,登录时除密码外还需输入认证器 App 中的 6 位动态码;即使密码泄漏,账号也多一道防线。
+                服务端以加密形式保存密钥,恢复码只保存散列。
+              </p>
+              <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void startSetup()}>
+                {busy ? "生成中…" : status.pending ? "继续绑定" : "开启两步验证"}
+              </button>
+              {error && (
+                <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">
+                  <IconXCircle size={13} className="mt-0.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
