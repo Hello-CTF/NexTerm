@@ -14,6 +14,8 @@ _tmp_*
 
 .sitetest
 
+_site
+
 .workbuddy/
 
 __pycache__/

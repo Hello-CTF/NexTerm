@@ -19,13 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Assemble site without claiming deployed-target acceptance
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build site
         run: |
-          mkdir -p _site
-          cp -r website/. _site/
-          mkdir -p _site/brand
-          cp public/brand/nexterm-mark-128.png _site/brand/
-          cp .github/acceptance/real-target-gaps.json _site/acceptance-evidence-gaps.json
+          pnpm exec tsc -p website/tsconfig.json --noEmit
+          pnpm exec vite build --config website/vite.config.mjs
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
