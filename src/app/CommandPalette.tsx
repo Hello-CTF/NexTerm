@@ -9,7 +9,6 @@ import {
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { DEMO } from "../demo";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { insertSnippet } from "../features/explorer/snippetInsert";
@@ -112,10 +111,6 @@ export function CommandPalette({
 
   const runProbeOne = useCallback(
     async (asset: Asset) => {
-      if (DEMO) {
-        pushToast("info", "演示模式不发起真实探测");
-        return;
-      }
       if (!asset.host) {
         pushToast("info", `「${asset.name}」是本机资产，无需探测`);
         return;

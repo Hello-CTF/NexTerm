@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as Reac
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { connectAsset, connectQuickTarget, saveQuickConnectAsset, useUi } from "./store";
 import { assetApi, type Asset } from "../ipc/commands";
-import { WEB } from "../demo";
+import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { isEditableTarget, isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";

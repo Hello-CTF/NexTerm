@@ -1,6 +1,0 @@
-{
-  "schema_version": 1,
-  "implementation": "rust",
-  "baseline_ref": "rwig before the Go rewrite missions",
-  "commit": "25c2fa003cc05f04347b1d33c4d4be25f820f870"
-}

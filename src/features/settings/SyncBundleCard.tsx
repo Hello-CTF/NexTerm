@@ -6,7 +6,7 @@ import { pickBundleFile, saveBundleFile } from "../../ipc/bundleFiles";
 import { baseName } from "../../ipc/webFiles";
 import { openWailsFile, saveWailsFile } from "../../ipc/wails";
 import { useUi } from "../../app/store";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ImportReportView } from "./SyncCardReport";
@@ -26,7 +26,7 @@ import {
 
 const BUNDLE_PROTOCOL = 1;
 
-const canEncryptBundle = !WEB && !DEMO;
+const canEncryptBundle = !WEB;
 
 type ExportFormat = "" | "encrypted" | "plaintext";
 

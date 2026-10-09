@@ -1,5 +1,5 @@
 // 个人账号卡片:当前用户、修改密码(重包裹 DEK)、两步验证(TOTP)、恢复密钥、设备管理、退出登录。
-// 未登录时是设置页唯一的登录入口(WEB/DEMO);桌面端本地优先,账号体系在同步服务端
+// 未登录时是设置页唯一的登录入口(WEB);桌面端本地优先,账号体系在同步服务端
 // (见 SyncCard 桌面端登录卡),未登录不渲染。
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";

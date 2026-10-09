@@ -1,18 +1,21 @@
 /** @vitest-environment jsdom */
 // FLEET149 app 壳: 左侧导航「设备管理」打开 devices 标签并渲染真实视图
-// (jsdom 默认 demo 传输, 视图必须落显式不可用态且不发 HTTP)。
+// (桌面端传输, 视图必须落显式不可用态且不发 HTTP)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
-const mocks = vi.hoisted(() => ({
-  fetch: vi.fn(),
-  assetList: vi.fn(),
-  assetSearch: vi.fn(),
-  sessionList: vi.fn(),
-  vaultStatus: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
+  return {
+    fetch: vi.fn(),
+    assetList: vi.fn(),
+    assetSearch: vi.fn(),
+    sessionList: vi.fn(),
+    vaultStatus: vi.fn(),
+  };
+});
 
 vi.mock("../ipc/commands", () => ({
   assetApi: { list: mocks.assetList, search: mocks.assetSearch, groupList: vi.fn(), snippetList: vi.fn() },
@@ -30,6 +33,7 @@ vi.mock("../ipc/commands", () => ({
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
+vi.mock("../app/layout", () => ({ layoutBootstrapped: Promise.resolve(), startLayoutSync: () => {} }));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
@@ -95,7 +99,7 @@ describe("app 壳 · 设备管理导航", () => {
       .find((t) => t.kind === "devices");
     expect(tab?.title).toBe("设备管理");
 
-    await flushUntil(() => document.body.textContent?.includes("演示模式没有设备管理") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("桌面端暂无设备管理") ?? false);
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
@@ -106,7 +110,7 @@ describe("app 壳 · 设备管理导航", () => {
 
     const railButton = document.querySelector('button[aria-label="设备管理"]') as HTMLButtonElement;
     click(railButton);
-    await flushUntil(() => document.body.textContent?.includes("演示模式没有设备管理") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("桌面端暂无设备管理") ?? false);
     click(railButton);
     await flushUntil(() =>
       useUi

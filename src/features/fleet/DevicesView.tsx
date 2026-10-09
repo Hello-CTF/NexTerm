@@ -1,13 +1,13 @@
 // 设备管理视图 (FLEET149): WEB 账号模式下的真实设备管理界面。
 // 数据全部来自 /fleet/* 真实 HTTP 合同 (见 internal/fleet/server/http.go):
 // 设备列表由服务端按角色过滤 (超管看全部+owner, 普通用户只看自己的);
-// 桌面端与演示模式没有账号体系/fleet 后端, 一律给显式不可用态, 不发任何请求。
+// 桌面端没有账号体系/fleet 后端, 一律给显式不可用态, 不发任何请求。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetBaseURLEntry, type FleetDevice, type FleetMetricsSample } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { openDeviceTerminalTab, useUi } from "../../app/store";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
@@ -55,7 +55,6 @@ function copyText(text: string, pushToast: (kind: "info" | "error" | "success", 
 }
 
 function FleetUnsupported() {
-  const demo = DEMO;
   return (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
@@ -69,12 +68,10 @@ function FleetUnsupported() {
           </div>
           <div>
             <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">
-              {demo ? "演示模式没有设备管理" : "桌面端暂无设备管理"}
+              桌面端暂无设备管理
             </div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
-              {demo
-                ? "演示模式不连接真实服务器, 不会伪造设备列表或接入码。请用浏览器模式连接真实服务器后使用设备管理。"
-                : "桌面端是本地优先模式, 没有账号体系; 设备管理仅在浏览器模式连接服务器并登录后可用。"}
+              桌面端是本地优先模式, 没有账号体系; 设备管理仅在浏览器模式连接服务器并登录后可用。
             </div>
           </div>
         </div>

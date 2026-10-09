@@ -3,6 +3,12 @@
   "policy": "Unavailable real targets are evidence gaps, never skipped passes. Desktop/server artifacts alone do not cover LazyCat, deployed Pages, real Linux host deployment, mobile devices, or native soft keyboards.",
   "gaps": [
     {
+      "id": "real-browser-acceptance",
+      "status": "evidence-gap",
+      "owner": "release-acceptance",
+      "required": "Real Chromium acceptance (focus and keyboard navigation, narrow-viewport overflow, touch hit-testing, WebSocket early frames/reconnect, reload restore against a real server) has no automated harness since the demo mode and task acceptance:browser were removed; restore an equivalent harness or record manual evidence before claiming coverage."
+    },
+    {
       "id": "physical-mobile-and-soft-keyboard",
       "status": "evidence-gap",
       "owner": "release-acceptance",

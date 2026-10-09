@@ -1,5 +1,5 @@
 import { DESKTOP } from "../../ipc/env";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { formatBytes } from "../../ui/format";
 import {
   IconCheckCircle,
@@ -35,11 +35,9 @@ export function UpdateCard() {
   const verdict = updateVerdict(update);
   const badge = verdictBadge(verdict);
 
-  const envReason = DEMO
-    ? "演示模式不执行真实安装"
-    : WEB
-      ? "服务端模式不支持应用内安装，请到 Releases 页面手动下载"
-      : null;
+  const envReason = WEB
+    ? "服务端模式不支持应用内安装，请到 Releases 页面手动下载"
+    : null;
   const installAllowed = updateInstallAllowed(status);
   const blockReason =
     (verdict === "available" || verdict === "unavailable") && !installAllowed

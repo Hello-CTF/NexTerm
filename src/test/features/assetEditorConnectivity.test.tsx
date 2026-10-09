@@ -5,16 +5,19 @@ import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
-const mocks = vi.hoisted(() => ({
-  create: vi.fn(),
-  update: vi.fn(),
-  groupList: vi.fn(),
-  listAssets: vi.fn(),
-  listCredentials: vi.fn(),
-  setCredential: vi.fn(),
-  probe: vi.fn(),
-  toast: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
+  return {
+    create: vi.fn(),
+    update: vi.fn(),
+    groupList: vi.fn(),
+    listAssets: vi.fn(),
+    listCredentials: vi.fn(),
+    setCredential: vi.fn(),
+    probe: vi.fn(),
+    toast: vi.fn(),
+  };
+});
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {

@@ -1,16 +1,19 @@
 /** @vitest-environment jsdom */
-// 演示模式门控: demo 假数据把 canInstall 报成 true, 前端仍不得显示安装按钮,
+// WEB 门控: 服务端把 canInstall 报成 true, 前端仍不得显示安装按钮(应用内安装仅桌面端),
 // 也不得显示桌面端更新横幅。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 import type { UpdateStatusDto } from "../ipc/types";
 
-const mocks = vi.hoisted(() => ({
-  check: vi.fn(),
-  install: vi.fn(),
-  restart: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
+  return {
+    check: vi.fn(),
+    install: vi.fn(),
+    restart: vi.fn(),
+  };
+});
 
 vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
@@ -58,15 +61,15 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("软件更新 · 演示模式门控", () => {
-  it("有更新但不显示安装按钮,并说明演示模式原因", async () => {
+describe("软件更新 · WEB 门控", () => {
+  it("有更新但不显示安装按钮,并说明服务端模式原因", async () => {
     mocks.check.mockResolvedValue(DEMO_STATUS);
     mounted = mount(createElement(UpdateCard));
     clickButton(mounted.container, "立即检查");
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("发现新版本 v0.2.0-demo"));
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("演示模式不执行真实安装");
+    expect(text).toContain("服务端模式不支持应用内安装");
     expect(
       [...mounted.container.querySelectorAll("button")].some(
         (b) => b.textContent?.trim() === "下载并安装",
@@ -75,7 +78,7 @@ describe("软件更新 · 演示模式门控", () => {
     expect(mocks.install).not.toHaveBeenCalled();
   });
 
-  it("演示模式不显示更新横幅", async () => {
+  it("WEB 不显示更新横幅", async () => {
     useUpdateStore.setState({ status: DEMO_STATUS });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();

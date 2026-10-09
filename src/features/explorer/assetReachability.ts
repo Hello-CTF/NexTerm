@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { assetApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
-import { DEMO } from "../../demo";
 
 export type ReachabilityState = "checking" | "reachable" | "unreachable";
 
@@ -30,7 +29,6 @@ export const useAssetReachability = create<AssetReachabilityState>((set) => ({
   entries: {},
   batchError: null,
   probe: async (assetIds) => {
-    if (DEMO) return;
     const ids = [...new Set(assetIds)].slice(0, REACHABILITY_BATCH_LIMIT);
     if (ids.length === 0) return;
     const myGen = new Map<string, number>();

@@ -1,6 +1,6 @@
 // /fleet/* 与 /device/enroll-codes 的浏览器端 HTTP 客户端, 与 authApi 共用
 // 同一会话 cookie 与 CSRF 头 (request 直接复用, 401 同样走 SESSION_EXPIRED_EVENT)。
-// 仅 WEB 传输可用: 桌面端无账号体系, DEMO 没有 fleet 假后端, 由视图层给出显式不可用态。
+// 仅 WEB 传输可用: 桌面端无账号体系, 由视图层给出显式不可用态。
 
 import { request } from "./authApi";
 

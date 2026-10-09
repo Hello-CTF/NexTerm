@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { assetApi, type Asset } from "../../ipc/commands";
 import type { CommandEntryDto } from "../../ipc/types";
-import { WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconTerminal } from "../../ui/icons";

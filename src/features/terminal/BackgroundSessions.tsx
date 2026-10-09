@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
 import { nextTabId, useUi } from "../../app/store";
-import { TRANSPORT } from "../../demo";
+import { TRANSPORT } from "../../ipc/env";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
@@ -19,16 +19,12 @@ function persistenceFootnote(): string {
   if (TRANSPORT === "web") {
     return "这里的终端进程都跑在服务端：关掉本页面、换一台设备打开，它们都还在。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
   }
-  if (TRANSPORT === "desktop") {
-    return "SSH 持久终端由本机后台服务保持，其他已分离终端随本应用退出而结束。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
-  }
-  return "演示模式：这里的后台终端都是内存里的模拟数据，刷新页面就会消失。「接管」不会新开 shell。";
+  return "SSH 持久终端由本机后台服务保持，其他已分离终端随本应用退出而结束。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
 }
 
 function runningCopy(count: number): string {
   if (TRANSPORT === "web") return `${count} 个终端在服务端运行 · 5 秒自动刷新`;
-  if (TRANSPORT === "desktop") return `${count} 个终端在后台运行 · 5 秒自动刷新`;
-  return `${count} 个模拟终端在内存中 · 5 秒自动刷新`;
+  return `${count} 个终端在后台运行 · 5 秒自动刷新`;
 }
 
 function ago(ms: number): string {

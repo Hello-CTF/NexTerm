@@ -8,7 +8,6 @@ import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keyb
 import { describeError } from "../../ui/errorText";
 import { formatBytes } from "../../ui/format";
 import { isImeKeyEvent } from "../../ui/DialogHost";
-import { DEMO } from "../../demo";
 import { ModelPanel } from "./ModelPanel";
 import { GrantPanel } from "./GrantPanel";
 import { ModelSelector } from "./ModelSelector";
@@ -1848,15 +1847,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           >
             <IconShield size={13} />
           </button>
-          {!DEMO && (
-            <button
-              className={`nx-icon-btn nx-icon-btn-sm ${grantOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-              title="设备长期授权管理（默认关闭，按设备开启）"
-              onClick={() => setGrantOpen((v) => !v)}
-            >
-              <IconKey size={13} />
-            </button>
-          )}
+          <button
+            className={`nx-icon-btn nx-icon-btn-sm ${grantOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
+            title="设备长期授权管理（默认关闭，按设备开启）"
+            onClick={() => setGrantOpen((v) => !v)}
+          >
+            <IconKey size={13} />
+          </button>
           <button
             className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
             title={

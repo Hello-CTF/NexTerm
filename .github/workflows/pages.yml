@@ -19,22 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 11
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build reproducible demo assets through the shared Go/Wails delivery entry
-        run: node scripts/build.mjs frontend --repro-check --base=/NexTerm/demo/
       - name: Assemble site without claiming deployed-target acceptance
         run: |
           mkdir -p _site
           cp -r website/. _site/
-          cp -r dist _site/demo
           mkdir -p _site/images _site/brand
           cp website/images/*.png _site/images/
           cp public/brand/nexterm-mark-128.png _site/brand/

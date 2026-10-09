@@ -31,7 +31,6 @@
       <a href="#forms">两种形态</a>
       <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>
-      <a href="#demo">在线体验</a>
       <a href="#faq">常见问题</a>
     </div>
     <div class="nav-actions">
@@ -39,7 +38,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         GitHub
       </a>
-      <a class="btn btn-primary btn-sm" href="demo/">在线体验</a>
+      <a class="btn btn-primary btn-sm" href="#get">获取与部署</a>
     </div>
   </div>
 </nav>
@@ -52,7 +51,7 @@
         <h1>一体化<span class="grad">开发运维</span>终端</h1>
         <p class="hero-sub">SSH、WinRM、文件、Docker、数据库与 AI 共用一套三层工作区。标签始终挂载，切换不重连；AI 全程在权限护栏内执行。</p>
         <div class="hero-ctas">
-          <a class="btn btn-primary" href="demo/">在线体验</a>
+          <a class="btn btn-primary" href="#get">获取与部署</a>
           <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
         </div>
         <div class="hero-meta">
@@ -297,27 +296,6 @@
   </div>
 </section>
 
-<section class="section" id="demo">
-  <div class="container">
-    <div class="demo-panel">
-      <div>
-        <span class="pk">live demo</span>
-        <h2>打开浏览器，立即体验</h2>
-        <p class="lead">在线演示运行完整界面：虚拟 shell、资产树、文件管理、数据库面板与 AI 对话全部可操作，无需安装任何软件。</p>
-        <a class="btn btn-primary" href="demo/">立即体验</a>
-        <div class="demo-note"><span class="dot"></span>演示数据存于内存，不连接任何真实服务器</div>
-      </div>
-      <div class="demo-cmd">
-        <div><span class="p">$</span> open nexterm/demo</div>
-        <div><span class="ok">✓</span> 演示模式已就绪</div>
-        <div><span class="ok">✓</span> 虚拟 shell · 8 台资产 · MySQL 与 Redis 面板</div>
-        <div><span class="ok">✓</span> AI 流式对话与确认卡片</div>
-        <div><span class="p">$</span> <span class="caret"></span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section class="section section-alt" id="get">
   <div class="container">
     <div class="get-wrap">
@@ -390,10 +368,6 @@
     </div>
     <div class="faq">
       <details>
-        <summary>在线体验连接的是真实服务器吗？</summary>
-        <div class="faq-body">演示环境全部数据存于内存，不连接任何真实服务器。虚拟 shell 为内置回显实现，支持常用命令、Tab 补全与历史记录。</div>
-      </details>
-      <details>
         <summary>支持哪些操作系统？</summary>
         <div class="faq-body">桌面版支持 Windows 10/11、macOS 与 Linux（amd64 / arm64 安装包）；服务端是同一个 Go 核心编译的 Linux（amd64 / arm64）静态二进制，可装进容器，也可直接装在任意 Linux 机器上、用浏览器访问，因而不限客户端操作系统。</div>
       </details>
@@ -415,7 +389,7 @@
       </details>
       <details>
         <summary>如何把一台设备接入设备管理？</summary>
-        <div class="faq-body">用浏览器连接服务端并登录（桌面端与演示模式没有设备管理）。打开「设备管理」，点「接入新设备」签发一次性接入码：接入码单次使用、限时、只显示这一次；超级管理员先在「接入地址」里添加并保存接入地址。然后在设备上执行 <code>nexterm-server agent enroll --server &lt;接入地址&gt; --code &lt;接入码&gt;</code>，把接入码兑换成设备凭证，再执行 <code>nexterm-server agent install</code> 把设备 agent 装成随登录自启的 per-user 服务。回到「设备管理」刷新，设备显示「在线」。全新 Linux 机器（无需已装二进制）可用面板里的一行安装命令一次完成下载、校验、注册与服务安装。</div>
+        <div class="faq-body">用浏览器连接服务端并登录（桌面端没有设备管理）。打开「设备管理」，点「接入新设备」签发一次性接入码：接入码单次使用、限时、只显示这一次；超级管理员先在「接入地址」里添加并保存接入地址。然后在设备上执行 <code>nexterm-server agent enroll --server &lt;接入地址&gt; --code &lt;接入码&gt;</code>，把接入码兑换成设备凭证，再执行 <code>nexterm-server agent install</code> 把设备 agent 装成随登录自启的 per-user 服务。回到「设备管理」刷新，设备显示「在线」。全新 Linux 机器（无需已装二进制）可用面板里的一行安装命令一次完成下载、校验、注册与服务安装。</div>
       </details>
       <details>
         <summary>懒猫微服上的端口转发为什么不可用？</summary>
@@ -439,7 +413,7 @@
       </details>
       <details>
         <summary>桌面版会自动更新吗？</summary>
-        <div class="faq-body">桌面版启动后静默检查一次 GitHub Releases，发现新版本时窗口顶部显示横幅，并在「设置 → 软件更新」卡片里展示版本号、安装包大小与更新说明，可手动「立即检查」「下载并安装」或忽略该版本。安装包下载后先按 Release 附带的 SHA256SUMS 校验，校验通过才安装：Windows 运行 NSIS 安装器静默安装（失败自动回滚），macOS 用 dmg 里的新 .app 替换 /Applications 中的 NexTerm，Linux 原子替换当前可执行文件，完成后点「立即重启」生效。更新通道跟随当前版本：预发布版收预发布更新，正式版只收正式版更新。限制：检查走 GitHub API 匿名调用，受匿名速率限额约束（每 IP 每小时 60 次），超限后本次检查失败、稍后再试即可；Windows 与 macOS 的真实安装链路未在 CI 中覆盖，应用内安装失败时可到 Releases 页面手动下载。服务端不自动安装，按部署包说明升级；演示模式只演示界面流程，不执行真实下载与安装。</div>
+        <div class="faq-body">桌面版启动后静默检查一次 GitHub Releases，发现新版本时窗口顶部显示横幅，并在「设置 → 软件更新」卡片里展示版本号、安装包大小与更新说明，可手动「立即检查」「下载并安装」或忽略该版本。安装包下载后先按 Release 附带的 SHA256SUMS 校验，校验通过才安装：Windows 运行 NSIS 安装器静默安装（失败自动回滚），macOS 用 dmg 里的新 .app 替换 /Applications 中的 NexTerm，Linux 原子替换当前可执行文件，完成后点「立即重启」生效。更新通道跟随当前版本：预发布版收预发布更新，正式版只收正式版更新。限制：检查走 GitHub API 匿名调用，受匿名速率限额约束（每 IP 每小时 60 次），超限后本次检查失败、稍后再试即可；Windows 与 macOS 的真实安装链路未在 CI 中覆盖，应用内安装失败时可到 Releases 页面手动下载。服务端不自动安装，按部署包说明升级。</div>
       </details>
       <details>
         <summary>采用什么开源协议？</summary>
@@ -461,7 +435,6 @@
     </div>
     <div class="footer-links">
       <a href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub</a>
-      <a href="demo/">在线体验</a>
       <a href="#forms">两种形态</a>
       <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>

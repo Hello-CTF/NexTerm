@@ -5,7 +5,7 @@
 ## 分支基线
 
 - `master` 是唯一工作基线与发布基线：新分支一律从 `master` 最新提交切出，完成后合回 `master`。Pages 部署随 `master` push 触发，属既有流程。
-- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 时运行，`quality` job 除 Go/前端门禁外还包含 parity unittest、inventory/manifest 防漂移、manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
+- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
 - 推送 `master` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。
 
 ## 编码标准
@@ -48,9 +48,10 @@
 - Go：`gofmt -l ./cmd ./internal ./migrations` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
-- parity 与静态契约：`python3 -m unittest discover -s tests/parity`；`python3 scripts/parity/inventory.py --check` 与 `python3 scripts/parity/manifest.py --check` 守住生成物不漂移，漂移时依次重跑 `inventory.py`、`manifest.py` 重新生成并同步更新 `tests/parity/test_parity.py` 的钉值；`python3 scripts/verify-manifest-injects.py`；workflow 复用接线 `python3 .github/scripts/check-reuse-wiring.py`（CI 设 `SOURCE_DATE_EPOCH=1`）。
-- 已安装 task 时 `task check` 一次跑完上述常规项（含 parity inventory/manifest 防漂移校验；parity unittest 与 `check-reuse-wiring.py` 不在其中，改动相关文件时单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
-- CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑、Real Chromium 验收与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
+- 静态契约：`python3 scripts/verify-manifest-injects.py`；workflow 复用接线 `python3 .github/scripts/check-reuse-wiring.py`（CI 设 `SOURCE_DATE_EPOCH=1`）。
+- 已安装 task 时 `task check` 一次跑完上述常规项（`check-reuse-wiring.py` 不在其中，改动相关文件时单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
+- CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
+- 真实 Chromium 验收缺口：原 `task acceptance:browser`（`.github/scripts/browser-acceptance.mjs`）随演示模式一并移除——它完全依赖 `?demo=1` 启动应用。真实浏览器行为（焦点与纯键盘导航、窄宽溢出、触摸命中、WebSocket 早期帧/重连、真实服务端 reload 恢复等）当前没有任何自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
 
 ## 分层测试节奏
 

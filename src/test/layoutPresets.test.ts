@@ -15,13 +15,23 @@ const mocks = vi.hoisted(() => ({
   promptText: vi.fn(),
 }));
 
-const demoState = vi.hoisted(() => ({
-  DEMO: false,
+const envState = vi.hoisted(() => ({
   WEB: false,
-  TRANSPORT: "desktop" as "desktop" | "web" | "demo",
+  TRANSPORT: "desktop" as "desktop" | "web",
 }));
 
-vi.mock("../demo", () => demoState);
+vi.mock("../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/env")>();
+  return {
+    ...actual,
+    get WEB() {
+      return envState.WEB;
+    },
+    get TRANSPORT() {
+      return envState.TRANSPORT;
+    },
+  };
+});
 
 vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();

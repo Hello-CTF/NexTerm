@@ -156,20 +156,6 @@ describe("Wails events 与 channels", () => {
     off();
     expect(reopened).not.toHaveBeenCalled();
   });
-
-  it("demo 仍使用内存通道，不加载 Wails listener", async () => {
-    vi.resetModules();
-    vi.stubGlobal("window", { location: { search: "?demo=1" } });
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { createBinaryChannel } = await import("../ipc/events");
-    const frames: number[][] = [];
-    const channel = createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
-
-    channel.onmessage([9, 8]);
-    expect(channel.toJSON()).toBeNull();
-    expect(frames).toEqual([[9, 8]]);
-    expect(runtime.Events.On).not.toHaveBeenCalled();
-  });
 });
 
 describe("共享事件 DTO 与版本高水位", () => {

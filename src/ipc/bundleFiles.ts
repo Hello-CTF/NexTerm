@@ -1,5 +1,5 @@
 import { syncApi } from "./commands";
-import { DEMO, WEB } from "./env";
+import { WEB } from "./env";
 import { pickBrowserFile, saveBrowserBlob, baseName } from "./webFiles";
 import { openWailsFile, saveWailsFile } from "./wails";
 
@@ -9,7 +9,7 @@ export interface PickedBundle {
 }
 
 function browserFileApis(): boolean {
-  return WEB || DEMO;
+  return WEB;
 }
 
 export async function pickBundleFile(): Promise<PickedBundle | null> {

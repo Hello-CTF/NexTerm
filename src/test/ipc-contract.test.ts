@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ts from "typescript";
 import commandsSource from "../ipc/commands.ts?raw";
 import cronSource from "../ipc/cron.ts?raw";
+import grantSource from "../ipc/grantApi.ts?raw";
+import memorySource from "../ipc/memory.ts?raw";
+import eventsSource from "../ipc/events.ts?raw";
+import layoutSource from "../app/layout.ts?raw";
 import appSource from "../app/App.tsx?raw";
 
 function propertyName(node: ts.PropertyName | undefined): string | undefined {
@@ -111,6 +115,54 @@ describe("IPC facade 静态契约", () => {
       "cron_unregister",
     ]);
     expect(calls.filter((call) => call.nested)).toEqual([]);
+  });
+
+  it("grantApi 保留 6 个命令且全部扁平 args", () => {
+    const calls = commandCalls("grantApi.ts", grantSource);
+    expect(calls.map((call) => call.command)).toEqual([
+      "ai_grant_list",
+      "ai_grant_set",
+      "ai_grant_revoke",
+      "ai_grant_rule_list",
+      "ai_grant_rule_set",
+      "ai_grant_rule_revoke",
+    ]);
+    expect(calls.filter((call) => call.nested)).toEqual([]);
+  });
+
+  it("memoryApi 保留 7 个命令且全部扁平 args", () => {
+    const calls = commandCalls("memory.ts", memorySource);
+    expect(calls.map((call) => call.command)).toEqual([
+      "memory_create",
+      "memory_get",
+      "memory_edit",
+      "memory_delete",
+      "memory_index",
+      "memory_settings_get",
+      "memory_settings_set",
+    ]);
+    expect(calls.filter((call) => call.nested)).toEqual([]);
+  });
+
+  it("事件钉值: EVENTS 十个通道与 layout://changed 保持不变", () => {
+    const block = /export const EVENTS = \{([^}]*)\}/.exec(eventsSource)?.[1] ?? "";
+    const entries = [...block.matchAll(/^  (\w+): "([^"]+)",$/gm)].map((match) => [
+      match[1],
+      match[2],
+    ]);
+    expect(entries).toEqual([
+      ["sessionStatus", "session://status"],
+      ["terminalExit", "terminal://exit"],
+      ["terminalThrottled", "terminal://throttled"],
+      ["terminalControl", "terminal://control"],
+      ["fsProgress", "fs://progress"],
+      ["updateProgress", "update://progress"],
+      ["dockerStats", "docker://stats"],
+      ["aiEvent", "ai://event"],
+      ["appError", "app://error"],
+      ["deviceStatus", "device://status"],
+    ]);
+    expect(layoutSource).toContain('const LAYOUT_CHANGED = "layout://changed";');
   });
 
   it("拖动区域内的每个按钮都有 no-drag，双击只匹配目标自身", () => {

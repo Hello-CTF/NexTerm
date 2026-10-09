@@ -47,7 +47,10 @@ vi.mock("../../ui/dialogs", () => ({
   ask: vi.fn(),
 }));
 
-vi.mock("../../demo", () => ({ DEMO: false, WEB: true, TRANSPORT: "web" }));
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return { ...actual, WEB: true, TRANSPORT: "web" as const, DESKTOP: false };
+});
 
 vi.mock("../../features/settings/AppearanceCard", () => ({ AppearanceCard: () => null }));
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));

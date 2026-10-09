@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
-import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelManager } from "../ai/ModelPanel";
@@ -22,7 +21,6 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClose,
-  IconInfo,
   IconLock,
   IconPlus,
   IconRefresh,
@@ -228,11 +226,6 @@ export function SettingsView() {
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
         <div className="nx-spacer" />
-        {DEMO && (
-          <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，不会连真实服务">
-            演示模式
-          </span>
-        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -293,17 +286,6 @@ export function SettingsView() {
 
         <div className="min-w-0 flex-1 overflow-y-auto" ref={contentRef}>
           <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
-            {DEMO && (
-              <section className="nx-alert nx-alert-info flex items-start gap-2.5">
-                <IconInfo size={15} className="mt-0.5 shrink-0" />
-                <div>
-                  <b>当前是演示模式。</b>
-                  资产、容器、数据库、终端、AI 回复全部来自前端内置的假数据，不会连接任何真实服务器，
-                  输入的内容也不会外发。想接真实后端请启动桌面端或 nexterm-server（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
-                </div>
-              </section>
-            )}
-
         <div id="settings-appearance" className="scroll-mt-12">
           <AppearanceCard />
         </div>

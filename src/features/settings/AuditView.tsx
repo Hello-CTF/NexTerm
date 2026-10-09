@@ -3,7 +3,7 @@ import { assetApi } from "../../ipc/commands";
 import type { AuditEntryDto } from "../../ipc/types";
 import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 import { CommandLogView } from "./CommandLogView";
@@ -120,7 +120,7 @@ export function AuditView() {
   const loadSeq = useRef(0);
   const fetchedRef = useRef(0);
 
-  // 设备清单只用于"按设备过滤"下拉 (WEB 账号模式); 桌面端/演示模式/未登录
+  // 设备清单只用于"按设备过滤"下拉 (WEB 账号模式); 桌面端/未登录
   // 一律不请求, 过滤入口整体隐藏。401 会触发全局会话过期事件, 未登录绝不能发。
   useEffect(() => {
     if (!WEB || !user) return;

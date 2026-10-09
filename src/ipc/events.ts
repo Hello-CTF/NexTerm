@@ -1,4 +1,4 @@
-import { DEMO, WEB, subscribe } from "../demo";
+import { WEB } from "./env";
 import {
   newBinaryChannel,
   onChannelReopen as onWsChannelReopen,
@@ -98,23 +98,10 @@ export interface DeviceStatusEvent {
   online: boolean;
 }
 
-function demoChannel<T>(): IpcChannel<T> {
-  return {
-    onmessage: (_msg: T) => undefined,
-    toJSON() {
-      return null;
-    },
-  };
-}
-
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
 ): IpcChannel<unknown> {
-  const channel = DEMO
-    ? demoChannel<unknown>()
-    : WEB
-      ? newBinaryChannel()
-      : newWailsChannel();
+  const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = (raw) => decodeBytes(raw, onBytes);
   return channel;
 }
@@ -132,7 +119,7 @@ export function onChannelReopen(ch: unknown, cb: () => void): () => void {
 
 export function disposeChannel(ch: unknown): void {
   const id = channelIdOf(ch);
-  if (id === undefined || DEMO) return;
+  if (id === undefined) return;
   if (WEB) {
     disposeWsChannel(id);
     return;
@@ -166,11 +153,7 @@ export function createAiChannel(
       }
     }
   };
-  const channel = DEMO
-    ? demoChannel<unknown>()
-    : WEB
-      ? newBinaryChannel()
-      : newWailsChannel();
+  const channel = WEB ? newBinaryChannel() : newWailsChannel();
   channel.onmessage = push;
   return channel;
 }
@@ -179,10 +162,6 @@ export function listenEvent<T>(
   event: string,
   handler: (payload: T) => void,
 ): Promise<UnlistenFn> {
-  if (DEMO) {
-    const off = subscribe(event, (payload) => handler(payload as T));
-    return Promise.resolve(off);
-  }
   if (WEB) {
     const off = subscribeEvent(event, (payload) => handler(payload as T));
     return Promise.resolve(off);

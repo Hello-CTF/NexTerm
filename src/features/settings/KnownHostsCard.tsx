@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
 import type { KnownHostDto } from "../../ipc/types";
 import { useUi } from "../../app/store";
-import { DEMO } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconShield, IconTrash, IconXCircle } from "../../ui/icons";
@@ -41,11 +40,8 @@ export function KnownHostsCard() {
   }, []);
 
   useEffect(() => {
-    if (DEMO) return;
     void reload();
   }, [reload]);
-
-  if (DEMO) return null;
 
   const revoke = async (host: KnownHostDto) => {
     const ok = await ask(

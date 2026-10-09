@@ -1,6 +1,5 @@
 import { askWails, messageWails, openWailsFile, saveWailsFile } from "../ipc/wails";
-import { DEMO, TRANSPORT } from "../demo";
-import { isMac } from "../app/platform";
+import { TRANSPORT, WEB } from "../ipc/env";
 import {
   deliverStaged,
   dropStaged,
@@ -75,7 +74,7 @@ export function registerDialogHandlers(h: DialogHandlers) {
   handlers = h;
 }
 
-const NATIVE_BROWSER_DIALOG = DEMO || TRANSPORT === "web";
+const NATIVE_BROWSER_DIALOG = WEB;
 
 const nativeAsk: AskFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
@@ -114,11 +113,6 @@ export function askChoice(message: string, options: ChoiceOptions): Promise<stri
 }
 
 export async function pickLocalFile(): Promise<string | null> {
-  if (DEMO) {
-    return isMac()
-      ? "~/Downloads/nginx-access.log"
-      : "C:\\Users\\you\\Downloads\\nginx-access.log";
-  }
   if (TRANSPORT === "web") {
     const picked = await pickBrowserFile();
     if (!picked) return null;
@@ -129,9 +123,6 @@ export async function pickLocalFile(): Promise<string | null> {
 }
 
 export async function pickKeyFile(): Promise<string | null> {
-  if (DEMO) {
-    return isMac() ? "~/.ssh/id_ed25519" : "C:\\Users\\you\\.ssh\\id_ed25519";
-  }
   return openWailsFile([
     {
       name: "私钥文件",
@@ -142,9 +133,6 @@ export async function pickKeyFile(): Promise<string | null> {
 }
 
 export async function pickSavePath(defaultName: string): Promise<string | null> {
-  if (DEMO) {
-    return isMac() ? `~/Desktop/${defaultName}` : `C:\\Users\\you\\Desktop\\${defaultName}`;
-  }
   if (TRANSPORT === "web") {
     return requestSaveTarget(defaultName);
   }

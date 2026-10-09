@@ -823,7 +823,7 @@ def mutate_readd_xvfb(ci, release, pack_text):
 def mutate_readd_production_go_test(ci, release, pack_text):
     steps = ci["jobs"]["quality"]["steps"]
     for index, step in enumerate(steps):
-        if str(step.get("name", "")).startswith("Go self-consistency"):
+        if str(step.get("name", "")).startswith("LazyCat manifest injects"):
             steps.insert(index, {"name": "Go production tests with embedded desktop assets",
                                  "run": "go test -mod=readonly -tags production ./..."})
             return

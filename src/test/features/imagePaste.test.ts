@@ -9,7 +9,6 @@ import {
 } from "../../features/terminal/imagePaste";
 import { normalizePublicBaseURL } from "../../features/settings/FilesCard";
 import { ImageUploadError } from "../../ipc/webFiles";
-import { mockInvoke } from "../../demo/mock";
 
 interface StubItem {
   kind: string;
@@ -169,47 +168,5 @@ describe("normalizePublicBaseURL 与后端共享边界表", () => {
       const result = normalizePublicBaseURL(tc.raw);
       expect(result.ok, tc.raw).toBe(false);
     }
-  });
-});
-
-describe("demo mock 文件命令", () => {
-  it("files_settings_get/set 回显并持久化演示值", async () => {
-    const initial = (await mockInvoke("files_settings_get")) as { publicBaseURL: string };
-    expect(initial.publicBaseURL).toBe("");
-
-    const saved = (await mockInvoke("files_settings_set", {
-      publicBaseURL: "https://example.com/nexterm/",
-    })) as { publicBaseURL: string };
-    expect(saved.publicBaseURL).toBe("https://example.com/nexterm");
-
-    const reloaded = (await mockInvoke("files_settings_get")) as { publicBaseURL: string };
-    expect(reloaded.publicBaseURL).toBe("https://example.com/nexterm");
-
-    const cleared = (await mockInvoke("files_settings_set", { publicBaseURL: "" })) as {
-      publicBaseURL: string;
-    };
-    expect(cleared.publicBaseURL).toBe("");
-  });
-
-  it("files_settings_set 拒绝非法 URL", async () => {
-    await expect(mockInvoke("files_settings_set", { publicBaseURL: "ftp://example.com" })).rejects.toMatchObject({
-      code: "bad_param",
-    });
-    await expect(
-      mockInvoke("files_settings_set", { publicBaseURL: "https://example.com/?q=1" }),
-    ).rejects.toMatchObject({ code: "bad_param" });
-  });
-
-  it("files_save_image 回显路径并估算字节数", async () => {
-    const saved = (await mockInvoke("files_save_image", {
-      path: "/tmp/a.png",
-      contentBase64: "aGk=",
-    })) as { path: string; bytes: number };
-    expect(saved.path).toBe("/tmp/a.png");
-    expect(saved.bytes).toBe(2);
-
-    await expect(mockInvoke("files_save_image", { path: "", contentBase64: "aGk=" })).rejects.toMatchObject({
-      code: "bad_param",
-    });
   });
 });

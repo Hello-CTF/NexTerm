@@ -16,7 +16,7 @@ export interface AccountPreferenceStore {
 }
 
 // createHttpPreferenceStore 是生产用的账号偏好存储:读取/写回/清除都走 /auth/preferences。
-// 动态引入 authApi,避免 keybindings→preferences→authApi→demo 的静态链把 demo 拉进无关测试的 env mock。
+// 动态引入 authApi,避免 keybindings→preferences→authApi 的静态链把账号模块拉进无关测试的 env mock。
 export function createHttpPreferenceStore(): AccountPreferenceStore {
   return {
     async getView() {

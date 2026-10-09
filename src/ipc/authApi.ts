@@ -1,8 +1,8 @@
 // /auth/* 与 /admin/* 的浏览器端 HTTP 客户端:HttpOnly cookie 会话 + 每会话 CSRF 头。
-// 仅 WEB 传输可用;桌面端无账号体系(本地优先),DEMO 走 src/demo/auth 假后端。
+// 仅 WEB 传输可用;桌面端无账号体系(本地优先)。
 // 错误一律规整为 AppError 形状({ code, message }),与 /rpc 的 toAppError 对齐。
 
-import { DEMO, WEB } from "../demo";
+import { WEB } from "./env";
 import { httpUrl } from "./env";
 import type { AppError } from "./commands";
 
@@ -150,10 +150,6 @@ export function toAuthError(e: unknown): AppError {
 }
 
 export async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean } = {}): Promise<T> {
-  if (DEMO) {
-    const { demoAuthRequest } = await import("../demo/auth");
-    return demoAuthRequest<T>(method, path, body);
-  }
   const headers: Record<string, string> = { accept: "application/json" };
   if (body !== undefined) headers["content-type"] = "application/json";
   if (options.csrf && csrfToken) headers["X-NexTerm-CSRF"] = csrfToken;
@@ -357,5 +353,5 @@ export const preferencesApi = {
 };
 
 export function authAvailable(): boolean {
-  return WEB || DEMO;
+  return WEB;
 }

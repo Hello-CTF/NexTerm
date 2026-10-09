@@ -5,7 +5,7 @@ const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const a11y = readFileSync(new URL("../ui/a11y.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 
-const sources = import.meta.glob("../{app,demo,features,ipc,ui}/**/*.{ts,tsx}", {
+const sources = import.meta.glob("../{app,features,ipc,ui}/**/*.{ts,tsx}", {
   eager: true,
   query: "?raw",
   import: "default",

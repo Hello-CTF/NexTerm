@@ -9,8 +9,8 @@
 // - 公开链接 (GET /share/links + /share/links/{id}/revoke): 本切片只有列表与
 //   吊销, 没有创建入口, 也不展示任何 token (列表合同不含 token, 一次性 token
 //   只可能来自真实创建响应)。
-// 列表由服务端按 owner/superadmin 过滤; 桌面端与演示模式没有分享后端,
-// 一律给显式不可用态, 不发任何请求 (DEMO 也不落 demoAuthRequest 假后端)。
+// 列表由服务端按 owner/superadmin 过滤; 桌面端没有分享后端,
+// 一律给显式不可用态, 不发任何请求。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
@@ -22,7 +22,7 @@ import {
 } from "../../ipc/sharingApi";
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
@@ -60,18 +60,15 @@ function shareState(expiresAt: number, revokedAt: number | undefined, now: numbe
 }
 
 function ShareUnsupported() {
-  const demo = DEMO;
   return (
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
-        <span className="nx-badge nx-badge-amber">{demo ? "演示模式不可用" : "桌面端不可用"}</span>
+        <span className="nx-badge nx-badge-amber">桌面端不可用</span>
       </div>
       <p className="nx-hint">
-        {demo
-          ? "演示模式不连接真实服务器, 不会伪造分享列表。终端分享需要真实账号, 请用浏览器模式连接真实服务器。"
-          : "桌面端是本地优先模式, 没有账号体系; 终端分享仅在浏览器模式连接服务器并登录后可用。"}
+        桌面端是本地优先模式, 没有账号体系; 终端分享仅在浏览器模式连接服务器并登录后可用。
       </p>
     </section>
   );

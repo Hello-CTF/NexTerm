@@ -8,7 +8,7 @@ function windowWith(value: Record<string, unknown>, search = "") {
   return { ...value, location: { search } };
 }
 
-describe("desktop/web/demo 检测", () => {
+describe("desktop/web 检测", () => {
   it("显式 desktop 标记和 Wails 全局都识别为桌面", async () => {
     vi.stubGlobal("window", windowWith({ __NEXTERM_TRANSPORT__: "desktop" }));
     let env = await import("../ipc/env");
@@ -20,7 +20,7 @@ describe("desktop/web/demo 检测", () => {
     expect(env.TRANSPORT).toBe("desktop");
   });
 
-  it("Web 标记、普通浏览器和 demo 优先级不变", async () => {
+  it("Web 标记与普通浏览器兜底都是 web", async () => {
     vi.stubGlobal("window", windowWith({ __NEXTERM_TRANSPORT__: "web" }));
     let env = await import("../ipc/env");
     expect(env.TRANSPORT).toBe("web");
@@ -29,7 +29,7 @@ describe("desktop/web/demo 检测", () => {
     vi.resetModules();
     vi.stubGlobal("window", windowWith({}));
     env = await import("../ipc/env");
-    expect(env.TRANSPORT).toBe("demo");
+    expect(env.TRANSPORT).toBe("web");
 
     vi.resetModules();
     vi.stubGlobal(
@@ -37,7 +37,7 @@ describe("desktop/web/demo 检测", () => {
       windowWith({ __NEXTERM_TRANSPORT__: "desktop", wails: {} }, "?demo=1"),
     );
     env = await import("../ipc/env");
-    expect(env.TRANSPORT).toBe("demo");
+    expect(env.TRANSPORT).toBe("desktop");
   });
 
   it("clientId 持久化并在存储不可用时稳定退回内存", async () => {

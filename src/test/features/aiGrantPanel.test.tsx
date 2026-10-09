@@ -6,7 +6,6 @@ import type { Asset } from "../../ipc/commands";
 import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
-  demo: false,
   web: false,
   assetList: vi.fn(),
   grantList: vi.fn(),
@@ -45,9 +44,9 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   return { ...actual, ask: mocks.ask };
 });
-vi.mock("../../demo", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../demo")>();
-  return { ...actual, get DEMO() { return mocks.demo; }, get WEB() { return mocks.web; } };
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return { ...actual, get WEB() { return mocks.web; } };
 });
 
 import { GrantPanel } from "../../features/ai/GrantPanel";
@@ -112,7 +111,6 @@ async function mountPanel(): Promise<void> {
 describe("GrantPanel 设备长期授权管理", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.demo = false;
     mocks.web = false;
     mocks.assetList.mockResolvedValue(ASSETS);
     mocks.grantList.mockResolvedValue([]);
@@ -220,22 +218,11 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("开启授权失败"));
     expect(rowFor("生产 Web").textContent).toContain("未授权");
   });
-
-  it("demo 下不渲染也不派发 IPC", async () => {
-    mocks.demo = true;
-    view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
-    await flush();
-    expect(view!.container.innerHTML).toBe("");
-    expect(mocks.assetList).not.toHaveBeenCalled();
-    expect(mocks.grantList).not.toHaveBeenCalled();
-    expect(mocks.ruleList).not.toHaveBeenCalled();
-  });
 });
 
 describe("GrantPanel 授权规则", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.demo = false;
     mocks.assetList.mockResolvedValue(ASSETS);
     mocks.grantList.mockResolvedValue([]);
     mocks.ruleList.mockResolvedValue([]);
@@ -331,7 +318,6 @@ describe("GrantPanel 授权规则", () => {
 describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.demo = false;
     mocks.web = true;
     mocks.assetList.mockResolvedValue(ASSETS);
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { aiApi, modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
 import { useUi } from "../../app/store";
-import { DEMO } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { profileKeyUnavailable as profileKeyMasked } from "../ai/modelLifecycle";
@@ -112,7 +111,6 @@ export function CronCard() {
   }, []);
 
   useEffect(() => {
-    if (DEMO) return;
     void loadProfiles();
   }, [loadProfiles, profilesRevision]);
 
@@ -170,7 +168,6 @@ export function CronCard() {
   }, []);
 
   useEffect(() => {
-    if (DEMO) return;
     void reload();
   }, [reload]);
 
@@ -183,8 +180,6 @@ export function CronCard() {
       applyReplaceConflict(null);
     }
   }, [jobs, jobsGen, coveredSessionIds, replaceConflict, applyReplaceConflict]);
-
-  if (DEMO) return null;
 
   const titleOf = (sessionId: string) =>
     conversations?.find((c) => c.id === sessionId)?.title ?? sessionId;

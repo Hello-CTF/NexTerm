@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "Optional canonical-feature-ID to Go-internal-name mapping; aliases are not Rust wire-compatibility requirements",
-  "commands": {},
-  "events": {},
-  "streams": {}
-}

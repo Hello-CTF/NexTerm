@@ -92,7 +92,6 @@ import { SyncCard } from "../features/settings/SyncCard";
 import { useAuth } from "../features/auth/store";
 import { useUi } from "../app/store";
 import { GO_SYNC_FIXTURES } from "./auth-sync-fixtures";
-import { mockInvoke } from "../demo/mock";
 
 const DEK = new Uint8Array(32).fill(7);
 const DEMO_USER = {
@@ -387,43 +386,6 @@ describe("M165 AI 档案同步", () => {
     expect(objects[0].kind).toBe("ai_profile");
     expect(objects[0].payload.apiKey).toBe("sk-live<>&\u2028key");
     expect(objects[0].payload.updatedAt).toBe(1700000001000);
-  });
-});
-
-describe("M165 demo mock 命令形态", () => {
-  it("sync_kind_opt_in_get 默认全 false, set 回显合并结果", async () => {
-    await expect(mockInvoke("sync_kind_opt_in_get")).resolves.toEqual({ knownHost: false, aiProfile: false });
-    await expect(mockInvoke("sync_kind_opt_in_set", { args: { knownHost: true } })).resolves.toEqual({ knownHost: true, aiProfile: false });
-  });
-
-  it("sync_collect_known_hosts 与生产同形(knownHosts + hasMore)", async () => {
-    const result = (await mockInvoke("sync_collect_known_hosts", { args: {} })) as {
-      knownHosts: { id: string; host: string; port: number; keyType: string; fingerprint: string; addedAt: number }[];
-      hasMore: boolean;
-    };
-    expect(result.hasMore).toBe(false);
-    expect(result.knownHosts.length).toBeGreaterThan(0);
-    for (const host of result.knownHosts) {
-      expect(host).toMatchObject({ id: expect.any(String), host: expect.any(String), port: expect.any(Number), keyType: expect.any(String), fingerprint: expect.any(String), addedAt: expect.any(Number) });
-    }
-  });
-
-  it("sync_collect_ai_profiles: 未请求明文时 apiKey 扣留(withheld), 请求后按 revealed 给出", async () => {
-    const withheld = (await mockInvoke("sync_collect_ai_profiles", { args: { revealSecrets: false } })) as {
-      profiles: { apiKey?: string; apiKeySet: boolean; apiKeyState: string }[];
-    };
-    for (const profile of withheld.profiles) {
-      expect(profile.apiKey).toBeUndefined();
-      expect(profile.apiKeyState).toBe("withheld");
-    }
-    const revealed = (await mockInvoke("sync_collect_ai_profiles", { args: { revealSecrets: true } })) as {
-      profiles: { apiKey?: string; apiKeySet: boolean; apiKeyState: string }[];
-    };
-    for (const profile of revealed.profiles) {
-      expect(profile.apiKeyState).toBe("revealed");
-      if (profile.apiKeySet) expect(profile.apiKey).toBeDefined();
-      else expect(profile.apiKey).toBeUndefined();
-    }
   });
 });
 

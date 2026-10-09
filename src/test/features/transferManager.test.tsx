@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   finishSave: vi.fn(),
   discardStaged: vi.fn(),
   dropStaged: vi.fn(),
+  stageFile: vi.fn(),
   list: vi.fn(),
   upload: vi.fn(),
   download: vi.fn(),
@@ -60,7 +61,7 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 });
 vi.mock("../../ipc/webFiles", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/webFiles")>();
-  return { ...actual, dropStaged: mocks.dropStaged };
+  return { ...actual, dropStaged: mocks.dropStaged, stageFile: mocks.stageFile };
 });
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -170,6 +171,10 @@ beforeEach(() => {
   mocks.finishSave.mockResolvedValue(LOCAL_SAVE);
   mocks.discardStaged.mockResolvedValue(undefined);
   mocks.dropStaged.mockResolvedValue(undefined);
+  mocks.stageFile.mockImplementation(async (file: File) => ({
+    id: `staged-${file.name}`,
+    path: `/staged/${file.name}`,
+  }));
   mocks.upload.mockResolvedValue(100);
   mocks.download.mockResolvedValue(100);
   mocks.listenEvent.mockImplementation((_t: string, cb: (e: unknown) => void) => {

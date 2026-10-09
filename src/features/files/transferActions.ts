@@ -1,8 +1,7 @@
 import { askChoice } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
-import { DEMO, WEB } from "../../ipc/env";
+import { WEB } from "../../ipc/env";
 import { dropStaged, stageFile } from "../../ipc/webFiles";
-import { isMac } from "../../app/platform";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
@@ -105,10 +104,6 @@ export async function localPathsFromDataTransfer(dt: DataTransfer): Promise<stri
   const files = Array.from(dt.files ?? []);
   if (files.length === 0) return null;
   const pushToast = useUi.getState().pushToast;
-  if (DEMO) {
-    const base = isMac() ? "~/Downloads" : "C:\\Users\\you\\Downloads";
-    return files.map((f) => `${base}/${f.name}`);
-  }
   if (WEB) {
     const staged: string[] = [];
     try {

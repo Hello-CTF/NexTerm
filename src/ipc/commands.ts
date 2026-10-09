@@ -1,4 +1,4 @@
-import { DEMO, WEB } from "../demo";
+import { WEB } from "./env";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
 import { authedFetch } from "./serverAuth";
@@ -19,10 +19,6 @@ export function toAppError(e: unknown): AppError {
 
 export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    if (DEMO) {
-      const { mockInvoke } = await import("../demo/mock");
-      return (await mockInvoke(cmd, args)) as T;
-    }
     if (WEB) {
       return await callWeb<T>(cmd, args);
     }
@@ -69,7 +65,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
     ...(channel === undefined ? {} : { channel }),
     ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
   });
-  // 延迟加载 authApi:避免静态依赖链把 demo/index 拉进只 mock 了 ipc/env 的测试。
+  // 延迟加载 authApi: commands 与 authApi 互相引用, 动态加载避免静态环。
   const { authApi, getCsrfToken } = await import("./authApi");
   let res = await postRpc(requestPayload, getCsrfToken());
   let text = await res.text();

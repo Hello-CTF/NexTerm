@@ -52,7 +52,6 @@ vi.mock("../features/auth/crypto", async (importOriginal) => {
 import { AuthGate } from "../features/auth/AuthGate";
 import { useAuth } from "../features/auth/store";
 import { getCsrfToken } from "../ipc/authApi";
-import { demoAuthRequest } from "../demo/auth";
 
 const ADMIN = {
   id: "u-admin",
@@ -167,50 +166,5 @@ describe("AuthGate TOTP 挑战表单", () => {
     await flush();
     expect(useAuth.getState().pendingMfa).toBeNull();
     await flushUntil(() => mounted!.container.querySelectorAll("input").length >= 2);
-  });
-});
-
-describe("demo 假后端 TOTP 契约", () => {
-  it("开启后登录走 MFA 挑战, 动态码/恢复码完成第二步", async () => {
-    const call = <T,>(method: string, path: string, body?: unknown) => demoAuthRequest<T>(method, path, body);
-    const setup = await call<{ secret: string; otpauth_uri: string }>("POST", "/auth/totp/setup", {});
-    expect(setup.secret).toHaveLength(32);
-    expect(setup.otpauth_uri).toContain("otpauth://totp/");
-
-    const confirm = await call<{ recovery_codes: string[] }>("POST", "/auth/totp/confirm", { code: "123456" });
-    expect(confirm.recovery_codes).toHaveLength(8);
-
-    const status = await call<{ enabled: boolean; recovery_codes_left: number }>("GET", "/auth/totp");
-    expect(status.enabled).toBe(true);
-    expect(status.recovery_codes_left).toBe(8);
-
-    const challenge = await call<{ mfa_required: boolean; ticket: string }>("POST", "/auth/login", {
-      username: "demo",
-      password: "任意密码",
-    });
-    expect(challenge.mfa_required).toBe(true);
-
-    const bad = await call("POST", "/auth/totp/login", { ticket: challenge.ticket, code: "abc" }).catch((e) => e);
-    expect(bad).toMatchObject({ code: "forbidden" });
-
-    const session = await call<{ user: { mfa_enabled: boolean }; csrf_token: string }>("POST", "/auth/totp/login", {
-      ticket: challenge.ticket,
-      code: confirm.recovery_codes[0],
-    });
-    expect(session.user.mfa_enabled).toBe(true);
-
-    // 恢复码一次性: 再次挑战时同一枚恢复码不再可用
-    const challenge2 = await call<{ ticket: string }>("POST", "/auth/login", { username: "demo", password: "x" });
-    const reuse = await call("POST", "/auth/totp/login", {
-      ticket: challenge2.ticket,
-      code: confirm.recovery_codes[0],
-    }).catch((e) => e);
-    expect(reuse).toMatchObject({ code: "forbidden" });
-    await call("POST", "/auth/totp/login", { ticket: challenge2.ticket, code: "654321" });
-
-    // 关闭后回到密码直登
-    await call("DELETE", "/auth/totp", { code: "654321" });
-    const direct = await call<{ csrf_token: string }>("POST", "/auth/login", { username: "demo", password: "x" });
-    expect(direct.csrf_token).toBeTruthy();
   });
 });

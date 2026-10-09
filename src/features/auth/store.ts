@@ -25,13 +25,13 @@ import {
   wrapDEKWithRecovery,
   type DekEnvelopes,
 } from "./crypto";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
 
 // syncPreferenceStore 在登录/刷新后注册账号偏好存储(M140 /auth/preferences),登出时注销。
 function syncPreferenceStore(loggedIn: boolean): void {
-  if (loggedIn && (WEB || DEMO)) {
+  if (loggedIn && WEB) {
     registerAccountPreferenceStore(createHttpPreferenceStore());
   } else {
     registerAccountPreferenceStore(null);
@@ -111,19 +111,6 @@ async function buildEnvelopes(
   dek: Uint8Array,
 ): Promise<{ fields: DekEnvelopes; recovery: RecoveryKeyIssue }> {
   const canonical = generateRecoveryKey();
-  if (DEMO) {
-    // 演示模式不做真实 KDF;信封为形状合法的假数据。
-    return {
-      fields: {
-        dekEnvelope: new Uint8Array(60),
-        kdfSalt: new Uint8Array(16),
-        kdfParams: '{"t":3,"m":65536,"p":4}',
-        recoveryEnvelope: new Uint8Array(60),
-        recoveryHash: "0".repeat(64),
-      },
-      recovery: { canonical, formatted: formatGroups(canonical) },
-    };
-  }
   const { envelope, salt, params } = await wrapDEKWithPassword(password, dek);
   const recoveryEnvelope = await wrapDEKWithRecovery(canonical, dek);
   const hash = await recoveryKeyHash(canonical);
@@ -144,10 +131,6 @@ function formatGroups(canonical: string): string {
 }
 
 async function fetchAndUnwrapDEK(password: string): Promise<Uint8Array> {
-  if (DEMO) {
-    // 演示模式不做真实 KDF(避免每次登录跑 64MiB argon2);同步数据同样是假数据。
-    return new Uint8Array(32).fill(0x5a);
-  }
   const view = await authApi.dekGet();
   const r = await unwrapDEKWithPassword(
     password,
@@ -200,7 +183,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   error: null,
 
   refresh: async () => {
-    if (!WEB && !DEMO) {
+    if (!WEB) {
       set({ gate: "ready", status: null, user: null });
       return;
     }

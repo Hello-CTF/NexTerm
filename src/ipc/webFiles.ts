@@ -1,5 +1,5 @@
 
-import { DEMO, WEB, httpUrl } from "./env";
+import { WEB, httpUrl } from "./env";
 import { authedFetch } from "./serverAuth";
 
 export interface StagedRef {
@@ -33,7 +33,7 @@ function isCsrfRejection(status: number, text: string): boolean {
 // 刷新并重试同一请求一次。CSRF 拒绝发生在 requireAuth 中间件、未触达 blob handler,
 // 重试不会重复暂存/预留/删除; 其他 403 原样返回给调用方, 不重试。
 async function csrfFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  // 延迟加载 authApi: 部分测试只给 ipc/env mock clientId, 静态链会把 demo/index 拉进来。
+  // 延迟加载 authApi: webFiles 与 authApi 互相引用, 动态加载避免静态环。
   const { authApi, getCsrfToken } = await import("./authApi");
   const send = (csrf: string | null): Promise<Response> =>
     authedFetch(url, {
@@ -60,7 +60,7 @@ export function browserFilesAvailable(): boolean {
 }
 
 export function pickBrowserFile(accept?: string): Promise<File | null> {
-  if ((!WEB && !DEMO) || typeof document === "undefined") return Promise.resolve(null);
+  if (!WEB || typeof document === "undefined") return Promise.resolve(null);
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -309,7 +309,7 @@ export async function fetchImageService(): Promise<ImageLinkHealth | null> {
 // 401 时派发 SESSION_EXPIRED_EVENT 交给账号门重新登录(与 authApi.request 同一语义),
 // 不做第二套登录流程。失败抛 ImageUploadError(带状态码与后端文本), 不静默回退。
 export async function uploadImage(file: File): Promise<ImageUploadResult> {
-  // 延迟加载 authApi: 部分测试只给 ipc/env mock clientId, 静态链会把 demo/index 拉进来。
+  // 延迟加载 authApi: webFiles 与 authApi 互相引用, 动态加载避免静态环。
   const { getCsrfToken, SESSION_EXPIRED_EVENT } = await import("./authApi");
   const q = new URLSearchParams({ name: file.name || "pasted-image" });
   const headers: Record<string, string> = {

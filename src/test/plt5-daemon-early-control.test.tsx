@@ -58,7 +58,6 @@ vi.mock("../ipc/events", async (importOriginal) => {
 vi.mock("../ipc/env", () => ({
   clientId: () => "me",
   TRANSPORT: "desktop",
-  DEMO: false,
   WEB: false,
   DESKTOP: true,
 }));

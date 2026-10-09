@@ -6,7 +6,6 @@ import { sql as sqlLang } from "@codemirror/lang-sql";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
-import { DEMO } from "../../demo";
 import { dbApi, type QueryResult } from "../../ipc/commands";
 import { useUi, type DbKind } from "../../app/store";
 import { describeError } from "../../ui/errorText";
@@ -93,9 +92,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
     if (!hostRef.current || viewRef.current) return;
     const view = new EditorView({
       state: EditorState.create({
-        doc: DEMO
-          ? "-- 演示模式：数据都是假的。试试：\nSELECT channel, COUNT(*) AS orders\nFROM orders GROUP BY channel;\n"
-          : "",
+        doc: "",
         extensions: [
           basicSetup,
           sqlLang(),

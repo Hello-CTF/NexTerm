@@ -1,9 +1,8 @@
 // 账号门:首次初始化 / 登录 / 注册 / reset_required 强制改密 / 恢复密钥一次性展示。
-// 仅在 WEB/DEMO 且门状态非 ready 时渲染全屏覆盖。
+// 仅在 WEB 且门状态非 ready 时渲染全屏覆盖。
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth, type RecoveryKeyIssue } from "./store";
-import { DEMO } from "../../demo";
 import { describeError } from "../../ui/errorText";
 import { authApi, type AccountDevice, type TotpSetup } from "../../ipc/authApi";
 import {
@@ -766,7 +765,6 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
         我已安全保存
       </button>
       {!copied && <p className="nx-hint mt-2 text-center text-[11px]">先复制密钥,再进入应用</p>}
-      {DEMO && <p className="nx-hint mt-2 text-center text-[11px]">演示模式:这是一枚假密钥</p>}
     </div>
   );
 }

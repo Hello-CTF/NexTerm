@@ -1,28 +1,17 @@
 
-export type Transport = "desktop" | "web" | "demo";
+export type Transport = "desktop" | "web";
 
 function detect(): Transport {
   if (typeof window === "undefined") return "desktop";
   const w = window as unknown as Record<string, unknown>;
   const marker = w.__NEXTERM_TRANSPORT__;
-  const isWails = marker === "desktop" || w.wails !== undefined;
-  const isWeb = marker === "web";
-
-  let flag: string | null = null;
-  try {
-    flag = new URLSearchParams(window.location.search).get("demo");
-  } catch {
-  }
-
-  if (flag === "1") return "demo";
-  if (isWails) return "desktop";
-  if (isWeb) return "web";
-  return "demo";
+  if (marker === "desktop" || w.wails !== undefined) return "desktop";
+  // 无 marker 的普通浏览器一律按 web 处理: 静态托管 fail-fast 到真实 API 错误,
+  // 而不是静默进演示。
+  return "web";
 }
 
 export const TRANSPORT: Transport = detect();
-
-export const DEMO = TRANSPORT === "demo";
 
 export const WEB = TRANSPORT === "web";
 

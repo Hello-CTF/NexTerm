@@ -61,7 +61,6 @@
 - 检查走 GitHub REST API 匿名调用，受匿名速率限额约束（每个 IP 每小时 60 次）；触发限额时本次检查失败，稍后再试即可，不影响其他功能。
 - Windows 与 macOS 的真实安装链路（NSIS 静默安装、dmg 替换 `/Applications`）未在 CI 中覆盖；应用内安装失败时，可到 Releases 页面手动下载安装。
 - 服务端不自动安装，请按部署包内的说明升级（懒猫微服在应用中心更新）。
-- 演示模式只演示更新界面流程，不执行真实下载与安装。
 
 ## 服务端与懒猫微服
 
@@ -99,7 +98,7 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 
 ## 设备接入（agent）
 
-设备管理只在浏览器模式（连接服务端并登录）下可用，桌面端与演示模式没有设备列表。接入分三步：
+设备管理只在浏览器模式（连接服务端并登录）下可用，桌面端没有设备列表。接入分三步：
 
 1. 在「设备管理」点「接入新设备」，选择有效期并签发一次性接入码。接入码单次使用、只显示这一次，到期自动作废。超级管理员先在「接入地址」里添加并保存接入地址，否则设备无法接入；配置了多个接入地址时按顺序尝试，第一个可达的即接入点。
 2. 在设备上执行 `nexterm-server agent enroll --server <接入地址> --code <接入码>`，把接入码兑换成设备凭证；凭证只写入设备本地数据目录，界面不会再显示任何设备密钥。
@@ -120,7 +119,7 @@ go build ./...   # 编译全部 Go 包
 质量门禁与 CI 一致，装好 task 后可一次跑完：
 
 ```bash
-task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验 + parity inventory/manifest 防漂移校验
+task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验
 ```
 
 也可分别执行 `go test ./...`、`pnpm typecheck`、`pnpm lint`、`pnpm test`。PostgreSQL 真实测试读取环境变量 `NEXTERM_TEST_PG_DSN`，未设置时自动跳过。桌面端与服务端安装包的完整打包见 `node scripts/build.mjs --help`。

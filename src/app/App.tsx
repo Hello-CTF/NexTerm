@@ -60,7 +60,7 @@ import {
 import { connectWithHostKeyConfirm } from "./hostKeys";
 import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { DEMO, TRANSPORT, WEB } from "../demo";
+import { TRANSPORT, WEB } from "../ipc/env";
 import {
   coarsePointerMedia,
   isCoarsePointer,
@@ -424,11 +424,11 @@ function useAiToastInset(active: boolean): void {
   }, [active]);
 }
 
-// LazyAuthGate 仅在 WEB/DEMO 下加载账号门,避免桌面端把 auth store(经 demo 引 env)拉进终端等测试的 env mock。
+// LazyAuthGate 仅在 WEB 下加载账号门,避免桌面端把 auth store 拉进终端等测试的 env mock。
 function LazyAuthGate() {
   const [gate, setGate] = useState<React.ComponentType | null>(null);
   useEffect(() => {
-    if (!WEB && !DEMO) return;
+    if (!WEB) return;
     let alive = true;
     void import("../features/auth/AuthGate").then((m) => {
       if (alive) setGate(() => m.AuthGate);
@@ -461,7 +461,7 @@ function LazyDeviceTerminalBoundary() {
   return <View />;
 }
 
-// LazyDevicesView 同理:设备管理经 auth store 引 demo/env,懒加载避免拖进桌面端测试的模块图。
+// LazyDevicesView 同理:设备管理经 auth store 引 env,懒加载避免拖进桌面端测试的模块图。
 function LazyDevicesView() {
   const [view, setView] = useState<React.ComponentType | null>(null);
   useEffect(() => {
@@ -574,7 +574,7 @@ function AppShell() {
     enabled: !WEB,
   });
   useEffect(() => {
-    if (WEB || DEMO) {
+    if (WEB) {
       void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
     }
   }, []);
@@ -935,7 +935,7 @@ function AppShell() {
 
   const runSyncNow = useCallback(async () => {
     const { pushToast: toast } = useUi.getState();
-    if (WEB || DEMO) {
+    if (WEB) {
       toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
       return;
     }
@@ -1094,7 +1094,7 @@ function AppShell() {
   // 列表与凭据库状态, 避免上一个会话的数据漏给下一个账号。toast 不做 ready 全清:
   // 8s/3.5s 自动消失已是有限生命周期, 终端/文件/AI 与非 401 错误在登录后仍是有效反馈。
   useEffect(() => {
-    if (!WEB || DEMO) return;
+    if (!WEB) return;
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     void import("../features/auth/store").then((m) => {
@@ -1117,31 +1117,6 @@ function AppShell() {
   }, [queryClient, refreshSessions, clearSessionScopedState]);
 
   useEffect(() => {
-    if (!DEMO) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        await layoutBootstrapped;
-        const list = await assetApi.list();
-        const web = list.find((a) => a.name === "web-01");
-        if (!web || cancelled) return;
-        if (useUi.getState().workspaces.length > 0) return;
-        await connectAsset(web);
-        const s = await sessionApi.list();
-        if (!cancelled) setSessions(s);
-        useUi
-          .getState()
-          .pushToast("info", "演示模式：数据都是假的，随便点。终端里输入 help 看可用命令");
-      } catch {
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [setSessions]);
-
-  useEffect(() => {
-    if (DEMO) return;
     if (bootLocalTried) return;
     bootLocalTried = true;
     void (async () => {
@@ -1577,11 +1552,6 @@ function AppShell() {
             )}
           </div>
           <div className="nx-statusbar-side">
-            {DEMO && (
-              <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，未连接真实服务器">
-                演示模式
-              </span>
-            )}
             <span className="nx-statusbar-truncate flex items-center gap-1.5">
               <IconNetwork size={11} />
               {syncStatusText}

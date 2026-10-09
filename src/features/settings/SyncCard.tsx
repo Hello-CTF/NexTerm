@@ -25,7 +25,7 @@ import {
   transcriptPayload,
 } from "../auth/syncPayload";
 import { useUi } from "../../app/store";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
@@ -54,7 +54,6 @@ export function SyncCard() {
 }
 
 function SyncBody() {
-  if (DEMO) return <DemoSyncConsole />;
   if (WEB) return <WebSyncConsole />;
   return <DesktopLinkCard />;
 }
@@ -1248,52 +1247,6 @@ function CompareConsole() {
           冲突按最后修改时间裁决,请保持各设备时钟准确(系统默认的自动对时即可);
           时钟不准时「较新」判定可能不符合预期。
         </div>
-      </div>
-    </section>
-  );
-}
-
-// ---------- DEMO ----------
-
-function DemoSyncConsole() {
-  return (
-    <section className="nx-card">
-      <div className="mb-1 flex items-center gap-2">
-        <IconServer size={15} className="text-neutral-400" />
-        <span className="nx-card-title">账号同步</span>
-        <span className="nx-badge nx-badge-amber">演示</span>
-      </div>
-      <p className="nx-hint mb-3">
-        演示模式下同步数据是假的。真实环境里,登录后这里会显示本机与云端密文副本的对比,
-        并能手动推送到云端或拉取并应用;数据在你的设备上加密,服务端只存密文。
-      </p>
-      <div className="max-h-[200px] overflow-y-auto rounded border border-neutral-800/60">
-        {[
-          { name: "web-01", kind: "资产", state: "已一致", tone: "nx-badge-green" },
-          { name: "db-02", kind: "资产", state: "本机较新", tone: "nx-badge-amber" },
-          { name: "生产环境", kind: "分组", state: "已一致", tone: "nx-badge-green" },
-          { name: "常用命令", kind: "片段", state: "仅本机", tone: "" },
-          { name: "old-laptop", kind: "资产", state: "云端已删", tone: "nx-badge-amber" },
-        ].map((r) => (
-          <div
-            key={r.name}
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0"
-          >
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200">{r.name}</span>
-            <span className="nx-hint shrink-0 text-[11px]">{r.kind}</span>
-            <span className={`nx-badge shrink-0 ${r.tone}`}>{r.state}</span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button className="nx-btn nx-btn-primary nx-btn-sm" disabled>
-          <IconUpload size={12} />
-          推送到云端 (2)
-        </button>
-        <button className="nx-btn nx-btn-outline nx-btn-sm" disabled>
-          <IconDownload size={12} />
-          拉取并应用 (1)
-        </button>
       </div>
     </section>
   );

@@ -59,7 +59,6 @@ vi.mock("../features/auth/crypto", async (importOriginal) => {
 import { AuthGate } from "../features/auth/AuthGate";
 import { AuthCard } from "../features/settings/AuthCard";
 import { useAuth } from "../features/auth/store";
-import { demoAuthRequest, resetDemoAuth } from "../demo/auth";
 
 const UNBOUND_USER = {
   id: "u-1",
@@ -95,7 +94,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   resetStore();
-  resetDemoAuth();
   mocks.status.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
   mocks.me.mockRejectedValue({ code: "forbidden", message: "会话无效或缺失", status: 401 });
   mocks.login.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
@@ -268,36 +266,5 @@ describe("mfa_enrollment_required 全局事件", () => {
     await expect(request("GET", "/auth/dek")).rejects.toMatchObject({ code: "mfa_enrollment_required" });
     expect(useAuth.getState().gate).toBe("ready");
     vi.unstubAllGlobals();
-  });
-});
-
-describe("demo 假后端强制绑定契约", () => {
-  it("mfa_required 开启后未绑定会话被锁, 完成绑定解锁; 换绑需重验", async () => {
-    const call = <T,>(method: string, path: string, body?: unknown) => demoAuthRequest<T>(method, path, body);
-    await call("PUT", "/admin/settings", { registration_open: false, mfa_required: true });
-
-    const locked = await call("GET", "/auth/devices").catch((e) => e);
-    expect(locked).toMatchObject({ code: "mfa_enrollment_required" });
-    const status = await call<{ mfa_required: boolean; enabled: boolean }>("GET", "/auth/totp");
-    expect(status.mfa_required).toBe(true);
-    expect(status.enabled).toBe(false);
-
-    const setup = await call<{ secret: string }>("POST", "/auth/totp/setup", {});
-    expect(setup.secret).toHaveLength(32);
-    const confirm = await call<{ recovery_codes: string[] }>("POST", "/auth/totp/confirm", { code: "123456" });
-    expect(confirm.recovery_codes).toHaveLength(8);
-
-    const devices = await call<{ devices: unknown[] }>("GET", "/auth/devices");
-    expect(devices.devices.length).toBeGreaterThan(0);
-
-    // 换绑: 无重验 403, 恢复码可重验且一次性
-    const denied = await call("POST", "/auth/totp/setup", {}).catch((e) => e);
-    expect(denied).toMatchObject({ code: "forbidden" });
-    const rebind = await call<{ secret: string }>("POST", "/auth/totp/setup", { reverify: confirm.recovery_codes[0] });
-    expect(rebind.secret).toHaveLength(32);
-    const reused = await call("POST", "/auth/totp/setup", { reverify: confirm.recovery_codes[0] }).catch((e) => e);
-    expect(reused).toMatchObject({ code: "forbidden" });
-
-    await call("PUT", "/admin/settings", { registration_open: false, mfa_required: false });
   });
 });

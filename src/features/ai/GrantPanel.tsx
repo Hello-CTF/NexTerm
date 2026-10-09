@@ -10,7 +10,7 @@ import {
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { DEMO, WEB } from "../../demo";
+import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { IconClose, IconKey, IconLoader, IconPlus } from "../../ui/icons";
 
@@ -102,11 +102,8 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (DEMO) return;
     void reload();
   }, [reload]);
-
-  if (DEMO) return null;
 
   const kindsFor = (asset: Asset): AiGrantKind[] =>
     drafts[asset.id] ?? (grants[asset.id]?.kinds.length ? grants[asset.id].kinds : ["terminal_write"]);
