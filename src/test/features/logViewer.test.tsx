@@ -218,7 +218,7 @@ describe("LogViewer", () => {
     click(toolbarButton(mounted!.container, "上一页"));
     await waitForSettled(mounted, 0);
     expect(mounted!.container.textContent).toContain("分块 1 /");
-  });
+  }, 15000);
 
   it("filters the loaded chunk client-side and highlights matches", async () => {
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));

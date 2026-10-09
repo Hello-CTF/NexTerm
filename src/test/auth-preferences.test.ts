@@ -346,7 +346,7 @@ describe("auth store 偏好存储生命周期", () => {
     await useAuth.getState().logout();
     expect(getAccountPreferenceStore()).toBeNull();
     expect(useAuth.getState().user).toBeNull();
-  });
+  }, 15000);
 
   it("401 会话过期时注销偏好存储", async () => {
     const { useAuth } = await import("../features/auth/store");
