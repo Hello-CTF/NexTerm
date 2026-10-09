@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = path.join(ROOT, ".github", "scripts", "release-upload.mjs");
-const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
+const VERSION = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
 const PACKAGE_NAMES = [
   `NexTerm_${VERSION}_x64-setup.exe`,
   `NexTerm_${VERSION}_arm64-setup.exe`,

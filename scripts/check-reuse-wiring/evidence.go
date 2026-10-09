@@ -221,7 +221,10 @@ func runEvidenceChecks(in inputs) []checkResult {
 	if err := json.Unmarshal(wailsRaw, &wailsConfig); err != nil {
 		fatalf("%v", err)
 	}
-	version := wailsConfig.Info.Version
+	version := os.Getenv("NEXTERM_RELEASE_VERSION")
+	if version == "" {
+		version = wailsConfig.Info.Version
+	}
 	cgo := "1"
 
 	cli := []string{"node", filepath.Join(root, "scripts", "build.mjs"), "report", "--kind=desktop",
