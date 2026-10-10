@@ -47,7 +47,7 @@
 
 ## 质量命令（提交前须全绿，与 CI 一致）
 
-- Go：`gofmt -l ./cmd ./internal ./migrations` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
+- Go：`gofmt -l ./cmd ./internal ./migrations ./scripts` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
 - 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）。

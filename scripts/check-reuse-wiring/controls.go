@@ -83,6 +83,13 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
+	{"lazycat placeholder validation removal is caught",
+		"ci-source validates the release tag and the 0.0.0 version placeholders",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(release)["ci-source"]), "The tag drives the release version")
+			step["run"] = strings.ReplaceAll(stepRun(step), "lazycat/package.yml", "lazycat/package.json")
+			return packText
+		}},
 	{"packaging gate if removal is caught",
 		"job graph: reuse: successful ci-source",
 		func(ci, release map[string]interface{}, packText string) string {

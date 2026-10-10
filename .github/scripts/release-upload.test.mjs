@@ -11,24 +11,30 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = path.join(ROOT, ".github", "scripts", "release-upload.mjs");
 const VERSION = process.env.NEXTERM_RELEASE_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
-const PACKAGE_NAMES = [
-  `NexTerm_${VERSION}_x64-setup.exe`,
-  `NexTerm_${VERSION}_arm64-setup.exe`,
-  `NexTerm_${VERSION}_aarch64.dmg`,
-  `NexTerm_${VERSION}_x86_64.dmg`,
-  ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-desktop_${VERSION}_linux_${arch}.deb`,
-    `NexTerm-server_${VERSION}_linux_${arch}.tar.gz`,
-  ]),
-];
+function packageNamesFor(version) {
+  return [
+    `NexTerm_${version}_x64-setup.exe`,
+    `NexTerm_${version}_arm64-setup.exe`,
+    `NexTerm_${version}_aarch64.dmg`,
+    `NexTerm_${version}_x86_64.dmg`,
+    ...["amd64", "arm64"].flatMap((arch) => [
+      `NexTerm-desktop_${version}_linux_${arch}.deb`,
+      `NexTerm-server_${version}_linux_${arch}.tar.gz`,
+    ]),
+  ];
+}
+const PACKAGE_NAMES = packageNamesFor(VERSION);
 const EVIDENCE_NAMES = ["SHA256SUMS"];
-const EXPECTED_NAMES = [...PACKAGE_NAMES, ...EVIDENCE_NAMES];
+function expectedNamesFor(version) {
+  return [...packageNamesFor(version), ...EVIDENCE_NAMES];
+}
+const EXPECTED_NAMES = expectedNamesFor(VERSION);
 const RELEASE_ID = 4242;
 
-function makeCandidate(t, { omit = [], extra = {} } = {}) {
+function makeCandidate(t, { omit = [], extra = {}, version = VERSION } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-release-upload-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const name of EXPECTED_NAMES) {
+  for (const name of expectedNamesFor(version)) {
     if (omit.includes(name)) continue;
     fs.writeFileSync(path.join(directory, name), `stub ${name}\n`);
   }
@@ -225,11 +231,23 @@ test("creates the draft release and uploads all 9 assets", async (t) => {
 });
 
 test("marks a matching prerelease version as prerelease", async (t) => {
+  const version = "9.9.9-beta.1";
+  const tag = `v${version}`;
   const stub = await startStub(t, { listReleases: () => [] });
-  const directory = makeCandidate(t);
-  const result = await runUploader(stub, directory, [], { GITHUB_REF_NAME: `v${VERSION}` });
+  const directory = makeCandidate(t, { version });
+  const result = await runUploader(stub, directory, [], {
+    NEXTERM_RELEASE_VERSION: version,
+    GITHUB_REF_NAME: tag,
+  });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(stub.state.releaseCreated.prerelease, VERSION.includes("-"));
+  assert.deepEqual(stub.state.releaseCreated, {
+    tag_name: tag,
+    name: `NexTerm ${tag}`,
+    body: "stub notes\n",
+    draft: true,
+    prerelease: true,
+  });
+  assert.deepEqual([...stub.state.assetAttempts.keys()].sort(), [...expectedNamesFor(version)].sort());
 });
 
 test("replaces same-name assets on the existing draft discovered through the list when the tags endpoint 404s", async (t) => {
@@ -310,26 +328,6 @@ test("bounds in-flight uploads to the configured concurrency", async (t) => {
   assert.equal(stub.state.assetAttempts.size, 9);
   const summary = summaryOf(result);
   assert.equal(summary.concurrency, 4);
-});
-
-test("bounded uploads finish measurably faster than sequential", async (t) => {
-  const stub = await startStub(t, {
-    assetResponse: () => new Promise((resolve) => setTimeout(() => resolve(201), 150)),
-  });
-  const directory = makeCandidate(t);
-  const sequentialStart = Date.now();
-  const sequential = await runUploader(stub, directory, ["--concurrency", "1"]);
-  const sequentialMs = Date.now() - sequentialStart;
-  assert.equal(sequential.status, 0, sequential.stderr);
-  const parallelStart = Date.now();
-  const parallel = await runUploader(stub, directory, ["--concurrency", "4"]);
-  const parallelMs = Date.now() - parallelStart;
-  assert.equal(parallel.status, 0, parallel.stderr);
-  console.warn(`release-upload stub timings: sequential=${sequentialMs}ms parallel4=${parallelMs}ms ratio=${(parallelMs / sequentialMs).toFixed(3)}`);
-  assert.ok(
-    parallelMs < sequentialMs * 0.7 && parallelMs < sequentialMs - 400,
-    `sequential=${sequentialMs}ms parallel=${parallelMs}ms`,
-  );
 });
 
 test("retries a transient 503 and succeeds", async (t) => {

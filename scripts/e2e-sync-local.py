@@ -134,31 +134,47 @@ class Instance:
         key_file = self.data_dir.parent / f"{self.data_dir.name}.master.key"
         key_file.write_text(self.master_key + "\n", encoding="utf-8")
         key_file.chmod(0o600)
-        environment = dict(os.environ)
-        environment.update(
-            {
-                "NEXTERM_DATA_DIR": str(self.data_dir),
-                "NEXTERM_LISTEN": f"127.0.0.1:{self.port}",
-                "NEXTERM_MASTER_KEY_FILE": str(key_file),
-                "NEXTERM_AUTH": "on",
-            }
-        )
-        arguments = [
-            str(self.binary), "--listen", f"127.0.0.1:{self.port}", "--data-dir", str(self.data_dir), "--auth=on",
-        ]
-        self.log_handle = self.log_path.open("ab")
-        self.process = subprocess.Popen(arguments, cwd=ROOT, env=environment, stdout=self.log_handle, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                raise AssertionError(f"server exited with {self.process.returncode}; log={self.log_path}")
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/healthz", timeout=1) as response:
-                    if response.status == 200:
-                        return
-            except Exception:
-                time.sleep(0.1)
-        raise AssertionError(f"server readiness timed out; log={self.log_path}")
+        retries = 5
+        while True:
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "NEXTERM_DATA_DIR": str(self.data_dir),
+                    "NEXTERM_LISTEN": f"127.0.0.1:{self.port}",
+                    "NEXTERM_MASTER_KEY_FILE": str(key_file),
+                    "NEXTERM_AUTH": "on",
+                }
+            )
+            arguments = [
+                str(self.binary), "--listen", f"127.0.0.1:{self.port}", "--data-dir", str(self.data_dir), "--auth=on",
+            ]
+            log_offset = self.log_path.stat().st_size if self.log_path.exists() else 0
+            self.log_handle = self.log_path.open("ab")
+            self.process = subprocess.Popen(arguments, cwd=ROOT, env=environment, stdout=self.log_handle, stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + 30
+            retry = False
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    returncode = self.process.returncode
+                    self.stop()
+                    with self.log_path.open("rb") as log:
+                        log.seek(log_offset)
+                        output = log.read().decode("utf-8", errors="replace").lower()
+                    if retries > 0 and ("address already in use" in output or "eaddrinuse" in output):
+                        retries -= 1
+                        self.port = free_port()
+                        retry = True
+                        break
+                    raise AssertionError(f"server exited with {returncode}; log={self.log_path}")
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/healthz", timeout=1) as response:
+                        if response.status == 200:
+                            return
+                except Exception:
+                    time.sleep(0.1)
+            if retry:
+                continue
+            raise AssertionError(f"server readiness timed out; log={self.log_path}")
 
     def init_code(self) -> str:
         deadline = time.monotonic() + 15

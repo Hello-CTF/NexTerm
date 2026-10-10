@@ -32,10 +32,12 @@ jobs:
             echo "tag $tag is not a v<semver> release tag" >&2; exit 1;
           fi
           node -e '
+            const fs = require("node:fs");
             const wails = require("./wails.json").info.version;
             const pkg = require("./package.json").version;
-            if (wails !== "0.0.0" || pkg !== "0.0.0") {
-              throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}); the release version comes from the tag`);
+            const lazycat = fs.readFileSync("./lazycat/package.yml", "utf8").match(/^version:\s*(\S+)\s*$/m)?.[1];
+            if (wails !== "0.0.0" || pkg !== "0.0.0" || lazycat !== "0.0.0") {
+              throw new Error(`version files must stay 0.0.0 placeholders (wails.json=${wails}, package.json=${pkg}, lazycat/package.yml=${lazycat}); the release version comes from the tag`);
             }'
       - name: Find a completed green CI run with reusable artifacts
         id: resolve

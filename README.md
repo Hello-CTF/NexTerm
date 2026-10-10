@@ -16,7 +16,7 @@
 
 - **终端与文件**：SSH、WinRM 和本机终端，支持多标签、分屏、SFTP 文件管理与在线编辑。SSH 终端是守护终端：关闭标签或断开后转入「后台会话」继续运行，随时可接管；本机、WinRM 非交互与容器 exec 等普通终端随关闭结束。
 - **终端历史**：每条终端会话自动录制（输出、键盘输入与窗口尺寸变化），可按文本查看、搜索或按时间轴回放。注意键盘输入会原样留在记录中，在终端里输入的密码、令牌等敏感内容也会被记录；记录默认只存本机，可对单条开启端到端加密同步，也可逐条删除。
-- **日常运维**：管理 Docker 容器与镜像，使用 MySQL、Redis 和 SSH 端口转发。
+- **日常运维**：管理 Docker 容器与镜像，使用 PostgreSQL、MySQL、Redis 和 SSH 端口转发；PostgreSQL 与普通 SSH/SFTP 均不需要远端 agent，agent 仅用于设备管理。
 - **AI 助手**：接入 OpenAI 兼容接口；命令输出和文件变更可见，敏感操作需要确认；支持终端接管与定时任务。
 - **多用户账号**：服务端内置账号体系，超管初始化后可创建用户或开放注册；同步数据按账号隔离并端到端加密。
 - **设备管理与分享**：主机安装设备 agent 后纳入设备列表，可远程打开设备终端；主机可分享给其他注册用户，或生成公开链接（默认只读），全程不暴露主机密码与私钥。
@@ -64,13 +64,20 @@ pnpm build       # 类型检查并构建前端产物到 dist/
 go build ./...   # 编译全部 Go 包
 ```
 
-质量门禁与 CI 一致，装好 task 后一次跑完：
+常规本地质量门禁，装好 task 后一次跑完：
 
 ```bash
-task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验
+task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验 + LazyCat manifest injects 校验
 ```
 
-PostgreSQL 真实测试读取环境变量 `NEXTERM_TEST_PG_DSN`，未设置时自动跳过。桌面端与服务端安装包的完整打包见 `node scripts/build.mjs --help`。
+workflow 复用接线检查与 PostgreSQL 真实测试使用单独入口：
+
+```bash
+task verify:wiring
+NEXTERM_TEST_PG_DSN='<dsn>' task test:pg
+```
+
+PostgreSQL 门控测试直接经 Go 运行时，未设置 `NEXTERM_TEST_PG_DSN` 会跳过；`task test:pg` 在 DSN 缺失时直接失败，不把 SKIP 当作通过。桌面端与服务端安装包的完整打包见 `node scripts/build.mjs --help`。
 
 ## License
 

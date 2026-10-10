@@ -67,7 +67,9 @@ func runWiringChecks(in inputs) []checkResult {
 	validateRun := stepRun(validateStep)
 	check("ci-source validates the release tag and the 0.0.0 version placeholders",
 		strings.Contains(validateRun, `^v[0-9]+\.[0-9]+\.[0-9]+`) &&
-			strings.Contains(validateRun, "wails.json") && strings.Contains(validateRun, `"0.0.0"`),
+			strings.Contains(validateRun, "wails.json") &&
+			strings.Contains(validateRun, "lazycat/package.yml") &&
+			strings.Contains(validateRun, `"0.0.0"`),
 		fmt.Sprintf("run=%q", validateRun))
 
 	scenarios := []struct {

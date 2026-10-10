@@ -90,7 +90,7 @@ jobs:
       - name: Go formatting
         shell: bash
         run: |
-          files="$(gofmt -l ./cmd ./internal ./migrations)"
+          files="$(gofmt -l ./cmd ./internal ./migrations ./scripts)"
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go vet
         run: go vet -mod=readonly ./...
