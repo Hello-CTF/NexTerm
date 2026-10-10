@@ -53,17 +53,6 @@ func (v *fakeVault) UnlockMaster(_ context.Context, password string) error {
 	return v.err
 }
 
-type fakeTokenStore struct {
-	mu    sync.Mutex
-	token string
-}
-
-func (s *fakeTokenStore) VerifyToken(_ context.Context, presented string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return presented != "" && presented == s.token, nil
-}
-
 func TestResolveMasterKey(t *testing.T) {
 	key, err := ResolveMasterKey("")
 	if err != nil || key != "" {

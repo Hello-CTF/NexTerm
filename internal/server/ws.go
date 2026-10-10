@@ -68,7 +68,6 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{wsAuthProtocol},
 	})
 	if err != nil {
 		return
@@ -111,7 +110,7 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 }
 
 // deviceStatusFilter 按订阅者身份过滤 device://status: 超管与无身份连接
-// (开放部署/网关/遗留静态令牌)不做过滤; 普通登录用户只收到自己设备的上下线
+// (开放部署/网关)不做过滤; 普通登录用户只收到自己设备的上下线
 // 推送, 不广播全部设备 ID。设备归属查询失败一律不下发 (失败关闭)。
 func (s *Server) deviceStatusFilter(identity *account.Identity) func(ipc.Event) bool {
 	if identity == nil || s.fleet == nil || identity.Role == account.RoleSuperadmin {
@@ -137,7 +136,6 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: s.options.AllowedOrigins,
-		Subprotocols:   []string{wsAuthProtocol},
 	})
 	if err != nil {
 		return

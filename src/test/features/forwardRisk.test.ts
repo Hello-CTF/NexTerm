@@ -116,7 +116,11 @@ describe("SOCKS exposure confirmation", () => {
 
   it("does not retry or claim success when the user rejects the exposure", async () => {
     mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
-    mocks.createSocks.mockRejectedValueOnce({ code: "needs_confirm", message: "需要确认" });
+    mocks.createSocks.mockRejectedValueOnce({
+      code: "needs_confirm",
+      message: "需要确认",
+      detail: { risk: "unauthenticated_exposed_socks", listenHost: "0.0.0.0", authentication: "none" },
+    });
     mocks.ask.mockResolvedValue(false);
     mounted = await mountForward();
     clickButton(mounted.container, "创建");

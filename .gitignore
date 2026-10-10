@@ -21,8 +21,6 @@ _site
 __pycache__/
 
 *.lpk
-lazycat/store/raw/
-lazycat/store/_verify/
 lazycat/content/
 target-linux/
 lazycat/image/nexterm-server

@@ -73,7 +73,7 @@ func TestLinkGetRejectsLegacyPlaintext(t *testing.T) {
 	if err := instance.db.SettingSet(context.Background(), settingLink, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := instance.service.LinkGet(context.Background()); err == nil || !strings.Contains(err.Error(), "重新保存") {
+	if _, err := instance.service.LinkGet(context.Background()); err == nil || !strings.Contains(err.Error(), "解密失败") {
 		t.Fatalf("legacy plaintext must not be recognized: %v", err)
 	}
 

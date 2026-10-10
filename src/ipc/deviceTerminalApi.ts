@@ -448,8 +448,11 @@ export class DeviceBridge {
       if (frame.kind !== SupervisorFrameKind.InputAck) {
         throw new DeviceTerminalError("protocol", `expected input_ack, got frame ${frame.kind}`);
       }
-      const ack = JSON.parse(new TextDecoder().decode(frame.payload)) as { written?: number };
-      return ack.written ?? data.length;
+      const ack = JSON.parse(new TextDecoder().decode(frame.payload)) as { written?: unknown };
+      if (typeof ack.written !== "number") {
+        throw new DeviceTerminalError("protocol", "input_ack 缺少 written 字段");
+      }
+      return ack.written;
     });
   }
 

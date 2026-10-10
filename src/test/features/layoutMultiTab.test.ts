@@ -80,7 +80,7 @@ function workspace(id: string, title: string): Workspace {
 
 function layout(leftWidth: number, title: string): PersistedLayout {
   return {
-    v: 1,
+    v: 2,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -89,6 +89,7 @@ function layout(leftWidth: number, title: string): PersistedLayout {
     workspaces: [workspace("ws", title)],
     activeWorkspaceId: "ws",
     presets: [],
+    aiBoards: {},
   };
 }
 

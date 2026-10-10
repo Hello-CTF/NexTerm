@@ -49,7 +49,7 @@ type BlobStore struct {
 	newID          func() string
 	now            func() time.Time
 	logger         *slog.Logger
-	// openAccess 表示部署形态不存在请求身份 (auth=off/回环监听/静态令牌/网关),
+	// openAccess 表示部署形态不存在请求身份 (auth=off/回环监听/网关),
 	// 无属主元数据的暂存条目直接放行; 有账号形态保持 false, 无属主一律不可访问。
 	openAccess bool
 }
@@ -342,7 +342,7 @@ func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 }
 
 // canAccessDir 是 canAccess 的按身份判等拆分, 供 HTTP 面与 IPC 面共用;
-// userID 空串表示无身份 (静态令牌/网关/auth=off), 仅 openAccess 形态放行无属主条目。
+// userID 空串表示无身份 (网关/auth=off), 仅 openAccess 形态放行无属主条目。
 func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
 	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
 	if errors.Is(err, os.ErrNotExist) {

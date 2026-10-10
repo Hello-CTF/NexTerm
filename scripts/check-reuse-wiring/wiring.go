@@ -164,15 +164,6 @@ func runWiringChecks(in inputs) []checkResult {
 	check("quality runs no build harness unit tests", len(harnessTestSteps) == 0,
 		fmt.Sprintf("steps=%v", harnessTestSteps))
 
-	var removedJobs []string
-	for _, name := range []string{"browser", "windows-supervisor", "ssh-windows"} {
-		if jobsOf(ci)[name] != nil {
-			removedJobs = append(removedJobs, name)
-		}
-	}
-	check("ci.yml drops the browser acceptance and standalone windows native jobs", len(removedJobs) == 0,
-		fmt.Sprintf("jobs=%v", removedJobs))
-
 	ageOffenders := minimumReleaseAgeOffenders(ci, "ci.yml")
 	check("ci.yml carries no pnpm minimumReleaseAge bypass", len(ageOffenders) == 0,
 		fmt.Sprintf("offenders=%v", ageOffenders))
@@ -229,40 +220,12 @@ func runWiringChecks(in inputs) []checkResult {
 	check("release-upload expects the same 8 packages as the evidence gate", len(drifted) == 0,
 		fmt.Sprintf("drifted=%v", drifted))
 	check("release-upload expects SHA256SUMS", strings.Contains(in.uploadText, "SHA256SUMS"), "")
-	var removedAssets []string
-	for _, name := range []string{"release-evidence.json", "real-target-gaps.json"} {
-		if strings.Contains(in.uploadText, name) || strings.Contains(in.evidenceText, name) {
-			removedAssets = append(removedAssets, name)
-		}
-	}
-	check("release pipeline requires no removed JSON evidence assets", len(removedAssets) == 0,
-		fmt.Sprintf("still required=%v", removedAssets))
-	notesRun := stepRun(findStep(asMap(jobsOf(release)["publish"]), "Assemble release notes"))
-	check("release notes advertise no removed JSON assets",
-		!strings.Contains(notesRun, "release-evidence.json") && !strings.Contains(notesRun, "real-target-gaps.json"),
-		fmt.Sprintf("run=%q", notesRun))
 	for _, envName := range []string{"GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"} {
 		check(fmt.Sprintf("release-upload.mjs reads %s", envName), strings.Contains(in.uploadText, envName), "")
 	}
 	check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
 		!strings.Contains(in.uploadText, "releases/tags/") && strings.Contains(in.uploadText, "releases?per_page="),
 		"drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
-
-	for _, name := range []string{"custom-go.json", "rust-official-v0.2.1.json"} {
-		raw, err := os.ReadFile(filepath.Join(in.root, ".github", "baselines", name))
-		document := ""
-		if err == nil {
-			var parsed interface{}
-			if json.Unmarshal(raw, &parsed) == nil {
-				if normalized, marshalErr := json.Marshal(parsed); marshalErr == nil {
-					document = string(normalized)
-				}
-			}
-		}
-		check(fmt.Sprintf(".github/baselines/%s stays informational-only, never a release gate", name),
-			strings.Contains(document, "informational") && strings.Contains(document, "never") && strings.Contains(document, "gate"),
-			"the baseline document must keep declaring informational-only, never-gate semantics")
-	}
 
 	desktopSteps := asList(asMap(jobsOf(release)["desktop"])["steps"])
 	cacheIndex := -1
@@ -387,21 +350,6 @@ func runWiringChecks(in inputs) []checkResult {
 	check("server production build stays free of frontend dist handling",
 		!strings.Contains(serverBuildRun, "--consume-dist") && !strings.Contains(serverBuildRun, "--skip-frontend"),
 		fmt.Sprintf("run=%q", serverBuildRun))
-	var aptInstallRuns []string
-	for _, rawStep := range nativeSteps {
-		if run := stepRun(asMap(rawStep)); strings.Contains(run, "apt-get install") {
-			aptInstallRuns = append(aptInstallRuns, run)
-		}
-	}
-	noXvfb := true
-	for _, run := range aptInstallRuns {
-		if strings.Contains(run, "xvfb") {
-			noXvfb = false
-		}
-	}
-	check("native job installs no virtual display for removed smoke runs", noXvfb,
-		fmt.Sprintf("runs=%v", aptInstallRuns))
-
 	downloadPaths := map[string]string{}
 	for _, jobKey := range []string{"desktop", "server"} {
 		step := findNativeDownloadStep(release, jobKey)

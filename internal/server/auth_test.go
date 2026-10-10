@@ -3,10 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,20 +28,17 @@ func TestAuthModeMatrixAcrossListens(t *testing.T) {
 				config := testConfig(t, false)
 				config.Options.Listen = listen
 				config.Options.Auth = mode
+				config.Accounts = newTestAccounts(t)
 				_, httpServer := newTestHTTP(t, config)
 
 				authRequired := mode == AuthOn || mode == AuthLoopback && listen != "127.0.0.1:0"
 
 				status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", nil)
 				if authRequired && status != http.StatusUnauthorized {
-					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusUnauthorized)
+					t.Fatalf("anonymous RPC = %d, want %d", status, http.StatusUnauthorized)
 				}
 				if !authRequired && status != http.StatusOK {
-					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusOK)
-				}
-				status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
-				if status != http.StatusOK {
-					t.Fatalf("token RPC = %d, want %d", status, http.StatusOK)
+					t.Fatalf("anonymous RPC = %d, want %d", status, http.StatusOK)
 				}
 
 				request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/files/blob?name=matrix.txt", strings.NewReader("payload"))
@@ -56,10 +51,10 @@ func TestAuthModeMatrixAcrossListens(t *testing.T) {
 				}
 				response.Body.Close()
 				if authRequired && response.StatusCode != http.StatusUnauthorized {
-					t.Fatalf("tokenless blob = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+					t.Fatalf("anonymous blob = %d, want %d", response.StatusCode, http.StatusUnauthorized)
 				}
 				if !authRequired && response.StatusCode != http.StatusOK {
-					t.Fatalf("tokenless blob = %d, want %d", response.StatusCode, http.StatusOK)
+					t.Fatalf("anonymous blob = %d, want %d", response.StatusCode, http.StatusOK)
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -68,17 +63,17 @@ func TestAuthModeMatrixAcrossListens(t *testing.T) {
 				if authRequired {
 					if err == nil {
 						connection.Close(websocket.StatusNormalClosure, "")
-						t.Fatal("tokenless websocket was accepted")
+						t.Fatal("anonymous websocket was accepted")
 					}
 					if wsResponse == nil || wsResponse.StatusCode != http.StatusUnauthorized {
-						t.Fatalf("tokenless websocket response = %+v", wsResponse)
+						t.Fatalf("anonymous websocket response = %+v", wsResponse)
 					}
 					if wsResponse != nil {
 						wsResponse.Body.Close()
 					}
 				} else {
 					if err != nil {
-						t.Fatalf("tokenless websocket: %v", err)
+						t.Fatalf("anonymous websocket: %v", err)
 					}
 					_ = connection.Close(websocket.StatusNormalClosure, "")
 				}
@@ -95,91 +90,53 @@ func TestAuthModeConfigurationValidation(t *testing.T) {
 	}
 
 	plainHandler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	requireVerifier := func(mode, listen string) error {
+	requireAccounts := func(mode, listen string) error {
 		t.Helper()
 		config := testConfig(t, false)
 		config.Options.Listen = listen
 		config.Options.Auth = mode
-		config.Tokens = nil
 		config.SyncObjects = plainHandler
 		_, err := New(config)
 		return err
 	}
-	if err := requireVerifier(AuthOn, "127.0.0.1:0"); err == nil {
-		t.Fatal("auth=on without token verifier was accepted")
+	if err := requireAccounts(AuthOn, "127.0.0.1:0"); err == nil {
+		t.Fatal("auth=on without account service was accepted")
 	}
-	if err := requireVerifier(AuthLoopback, "0.0.0.0:8080"); err == nil {
-		t.Fatal("auth=loopback on non-loopback listen without token verifier was accepted")
+	if err := requireAccounts(AuthLoopback, "0.0.0.0:8080"); err == nil {
+		t.Fatal("auth=loopback on non-loopback listen without account service was accepted")
 	}
-	if err := requireVerifier(AuthLoopback, "127.0.0.1:0"); err != nil {
+	if err := requireAccounts(AuthLoopback, "127.0.0.1:0"); err != nil {
 		t.Fatalf("auth=loopback on loopback listen: %v", err)
 	}
-	if err := requireVerifier(AuthOff, "0.0.0.0:8080"); err != nil {
+	if err := requireAccounts(AuthOff, "0.0.0.0:8080"); err != nil {
 		t.Fatalf("auth=off: %v", err)
 	}
 }
 
-func TestExposedListenRequiresTokenForRPC(t *testing.T) {
-	_, httpServer := newTestHTTP(t, exposedConfig(t))
-	url := httpServer.URL + "/rpc"
+func TestExposedListenRequiresSessionForRPC(t *testing.T) {
+	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
+	url := fixture.http.URL + "/rpc"
 
-	status, body := postRPC(t, httpServer.Client(), url, "app_info", nil)
+	status, body := postRPC(t, fixture.client, url, "app_info", nil)
 	if status != http.StatusUnauthorized || body.OK || body.Error == nil || body.Error.Code != ipc.CodeForbidden {
-		t.Fatalf("missing token = %d %+v", status, body)
+		t.Fatalf("missing credential = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{TokenHeader: "wrong"})
-	if status != http.StatusUnauthorized || body.OK {
-		t.Fatalf("wrong token = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusOK || !body.OK {
-		t.Fatalf("valid token = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{"X-HC-User-ID": "forged"})
+	status, body = postRPC(t, fixture.client, url, "app_info", map[string]string{"X-HC-User-ID": "forged"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform identity = %d %+v", status, body)
 	}
-}
 
-func TestExposedListenRejectsAfterTokenRotation(t *testing.T) {
-	current := "before-rotation"
-	config := exposedConfig(t)
-	config.Tokens = TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
-		return token == current, nil
-	})
-	_, httpServer := newTestHTTP(t, config)
-
-	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "before-rotation"})
-	if status != http.StatusOK {
-		t.Fatalf("token before rotation = %d", status)
-	}
-	current = "after-rotation"
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "before-rotation"})
-	if status != http.StatusUnauthorized {
-		t.Fatalf("rotated-out token = %d", status)
-	}
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "after-rotation"})
-	if status != http.StatusOK {
-		t.Fatalf("rotated token = %d", status)
-	}
-}
-
-func TestExposedListenVerifierErrorIsServerError(t *testing.T) {
-	config := exposedConfig(t)
-	config.Tokens = TokenVerifierFunc(func(context.Context, string) (bool, error) {
-		return false, errors.New("store unavailable")
-	})
-	_, httpServer := newTestHTTP(t, config)
-
-	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusInternalServerError {
-		t.Fatalf("verifier error status = %d", status)
+	session, _ := fixture.initSuperadmin(t, "root", "password-rpc-1")
+	call := fixture.call(t, http.MethodPost, "/rpc", map[string]any{"cmd": "app_info", "args": map[string]any{}}, session, session.csrf, nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("session rpc = %d body=%v", call.status, call.body)
 	}
 }
 
 func TestExposedListenGatewayKeyAdmission(t *testing.T) {
 	config := exposedConfig(t)
 	config.GatewayAuthKey = "gateway-secret"
+	config.Accounts = newTestAccounts(t)
 	_, httpServer := newTestHTTP(t, config)
 
 	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "gateway-secret"})
@@ -209,7 +166,9 @@ func TestExposedListenGatewayKeyAdmission(t *testing.T) {
 }
 
 func TestExposedListenEmptyGatewayKeyIgnoresHeader(t *testing.T) {
-	_, httpServer := newTestHTTP(t, exposedConfig(t))
+	config := exposedConfig(t)
+	config.Accounts = newTestAccounts(t)
+	_, httpServer := newTestHTTP(t, config)
 	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "anything"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("gateway header without configured key = %d %+v", status, body)
@@ -218,6 +177,7 @@ func TestExposedListenEmptyGatewayKeyIgnoresHeader(t *testing.T) {
 
 func TestExposedListenKeepsHealthAndStaticPublic(t *testing.T) {
 	config := exposedConfig(t)
+	config.Accounts = newTestAccounts(t)
 	config.Static = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("index"))
 	})
@@ -241,284 +201,117 @@ func TestExposedListenKeepsHealthAndStaticPublic(t *testing.T) {
 	}
 }
 
-func TestExposedListenRequiresTokenForBlobs(t *testing.T) {
-	config := exposedConfig(t)
-	config.Blobs = NewBlobStore(t.TempDir(), testLogger())
-	_, httpServer := newTestHTTP(t, config)
+func TestExposedListenRequiresSessionForBlobs(t *testing.T) {
+	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
+	session, _ := fixture.initSuperadmin(t, "root", "password-blob-1")
 
-	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/files/blob?name=a.txt", strings.NewReader("payload"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := httpServer.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("blob stage without token = %d", response.StatusCode)
-	}
-
-	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/files/blob?name=a.txt", strings.NewReader("payload"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set(TokenHeader, "secret")
-	response, err = httpServer.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var staged struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&staged); err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK || !staged.OK || staged.Data.ID == "" {
-		t.Fatalf("blob stage with token = %d %+v", response.StatusCode, staged)
+	stage := func(withSession bool) (int, string) {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/files/blob?name=a.txt", strings.NewReader("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if withSession {
+			request.AddCookie(session.cookie)
+			request.Header.Set(csrfHeaderName, session.csrf)
+		}
+		response, err := fixture.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var staged struct {
+			OK   bool `json:"ok"`
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if response.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(response.Body).Decode(&staged); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return response.StatusCode, staged.Data.ID
 	}
 
-	response, err = httpServer.Client().Get(httpServer.URL + "/files/blob?id=" + staged.Data.ID)
-	if err != nil {
-		t.Fatal(err)
+	if status, _ := stage(false); status != http.StatusUnauthorized {
+		t.Fatalf("blob stage without credential = %d", status)
 	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("blob download without token = %d", response.StatusCode)
+	status, id := stage(true)
+	if status != http.StatusOK || id == "" {
+		t.Fatalf("blob stage with session = %d id=%q", status, id)
 	}
-	request, err = http.NewRequest(http.MethodGet, httpServer.URL+"/files/blob?id="+staged.Data.ID, nil)
-	if err != nil {
-		t.Fatal(err)
+
+	download := func(withSession bool) int {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodGet, fixture.http.URL+"/files/blob?id="+id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if withSession {
+			request.AddCookie(session.cookie)
+		}
+		response, err := fixture.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
 	}
-	request.Header.Set(TokenHeader, "secret")
-	response, err = httpServer.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
+	if status := download(false); status != http.StatusUnauthorized {
+		t.Fatalf("blob download without credential = %d", status)
 	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("blob download with token = %d", response.StatusCode)
+	if status := download(true); status != http.StatusOK {
+		t.Fatalf("blob download with session = %d", status)
 	}
 }
 
 func TestExposedListenWebSocketAdmission(t *testing.T) {
-	server, httpServer := newTestHTTP(t, exposedConfig(t))
-	wsURL := strings.Replace(httpServer.URL, "http", "ws", 1)
+	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
+	session, _ := fixture.initSuperadmin(t, "root", "password-ws-1")
+	wsURL := strings.Replace(fixture.http.URL, "http", "ws", 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	connection, response, err := websocket.Dial(ctx, wsURL+"/ws/events", nil)
 	if err == nil {
 		connection.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("websocket without token was accepted")
+		t.Fatal("websocket without credential was accepted")
 	}
 	if response == nil || response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("websocket without token response = %+v", response)
+		t.Fatalf("websocket without credential response = %+v", response)
 	}
 	if response != nil {
 		response.Body.Close()
 	}
 
-	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		HTTPHeader: http.Header{TokenHeader: []string{"wrong"}},
-	})
-	if err == nil {
-		connection.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("websocket with wrong token was accepted")
+	cookieOptions := func() *websocket.DialOptions {
+		return &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": []string{session.cookie.String()}}}
 	}
-	if response == nil || response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("websocket wrong token response = %+v", response)
-	}
-	if response != nil {
-		response.Body.Close()
-	}
-
-	connection, _, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		HTTPHeader: http.Header{TokenHeader: []string{"secret"}},
-	})
+	connection, _, err = websocket.Dial(ctx, wsURL+"/ws/events", cookieOptions())
 	if err != nil {
-		t.Fatalf("websocket with header token: %v", err)
+		t.Fatalf("websocket with session cookie: %v", err)
 	}
-	waitFor(t, func() bool { return server.Events().SubscriberCount() == 1 })
+	waitFor(t, func() bool { return fixture.server.Events().SubscriberCount() == 1 })
 	_ = connection.Close(websocket.StatusNormalClosure, "")
 
-	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		Subprotocols: []string{wsAuthProtocol, "wrong"},
-	})
-	if err == nil {
-		connection.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("websocket with wrong subprotocol token was accepted")
-	}
-	if response != nil {
-		response.Body.Close()
-	}
-
-	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		Subprotocols: []string{wsAuthProtocol, "secret"},
-	})
+	connection, _, err = websocket.Dial(ctx, wsURL+"/ws/channel/any", cookieOptions())
 	if err != nil {
-		t.Fatalf("websocket with subprotocol token: %v", err)
-	}
-	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != wsAuthProtocol {
-		t.Fatalf("negotiated subprotocol = %q", got)
-	}
-	waitFor(t, func() bool { return server.Events().SubscriberCount() == 1 })
-	_ = connection.Close(websocket.StatusNormalClosure, "")
-
-	connection, _, err = websocket.Dial(ctx, wsURL+"/ws/channel/any", &websocket.DialOptions{
-		Subprotocols: []string{wsAuthProtocol, "secret"},
-	})
-	if err != nil {
-		t.Fatalf("channel websocket with subprotocol token: %v", err)
+		t.Fatalf("channel websocket with session cookie: %v", err)
 	}
 	_ = connection.Close(websocket.StatusNormalClosure, "")
 }
 
-func TestExposedListenWebSocketTokenVerificationIsBounded(t *testing.T) {
-	var verifyCalls atomic.Int32
+func TestExposedListenWithoutAccountsFailsClosed(t *testing.T) {
 	config := exposedConfig(t)
-	config.Tokens = TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
-		verifyCalls.Add(1)
-		return token == "secret", nil
-	})
-	_, httpServer := newTestHTTP(t, config)
-	wsURL := strings.Replace(httpServer.URL, "http", "ws", 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	dial := func(options *websocket.DialOptions) error {
-		connection, response, err := websocket.Dial(ctx, wsURL+"/ws/events", options)
-		if err != nil {
-			if response != nil && response.Body != nil {
-				response.Body.Close()
-			}
-			return err
-		}
-		_ = connection.Close(websocket.StatusNormalClosure, "")
-		return nil
-	}
-
-	garbage := make([]string, 2000)
-	for i := range garbage {
-		garbage[i] = "junk"
-	}
-	if err := dial(&websocket.DialOptions{Subprotocols: garbage}); err == nil {
-		t.Fatal("garbage candidates were accepted")
-	}
-	if calls := verifyCalls.Load(); calls != 0 {
-		t.Fatalf("garbage candidates triggered %d verifications", calls)
-	}
-
-	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "secret", "extra"}}); err == nil {
-		t.Fatal("extra candidates were accepted")
-	}
-	if calls := verifyCalls.Load(); calls != 0 {
-		t.Fatalf("extra candidates triggered %d verifications", calls)
-	}
-
-	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol}}); err == nil {
-		t.Fatal("marker without token was accepted")
-	}
-	if calls := verifyCalls.Load(); calls != 0 {
-		t.Fatalf("missing token triggered %d verifications", calls)
-	}
-
-	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "wrong"}}); err == nil {
-		t.Fatal("wrong token was accepted")
-	}
-	if calls := verifyCalls.Load(); calls != 1 {
-		t.Fatalf("wrong token verifications = %d", calls)
-	}
-
-	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "secret"}}); err != nil {
-		t.Fatalf("valid subprotocol token: %v", err)
-	}
-	if calls := verifyCalls.Load(); calls != 2 {
-		t.Fatalf("valid token verifications = %d", calls)
-	}
-
-	if err := dial(&websocket.DialOptions{
-		HTTPHeader:   http.Header{TokenHeader: []string{"wrong"}},
-		Subprotocols: []string{wsAuthProtocol, "secret"},
-	}); err == nil {
-		t.Fatal("wrong header token with valid subprotocol was accepted")
-	}
-	if calls := verifyCalls.Load(); calls != 3 {
-		t.Fatalf("header token must not fall through to subprotocol, verifications = %d", calls)
-	}
-}
-
-func TestExposedListenWebSocketGatewayKeySkipsTokenVerification(t *testing.T) {
-	var verifyCalls atomic.Int32
-	config := exposedConfig(t)
-	config.GatewayAuthKey = "gateway-secret"
-	config.Tokens = TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
-		verifyCalls.Add(1)
-		return token == "secret", nil
-	})
-	_, httpServer := newTestHTTP(t, config)
-	wsURL := strings.Replace(httpServer.URL, "http", "ws", 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	garbage := make([]string, 2000)
-	for i := range garbage {
-		garbage[i] = "junk"
-	}
-	connection, _, err := websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		HTTPHeader:   http.Header{GatewayAuthHeader: []string{"gateway-secret"}},
-		Subprotocols: garbage,
-	})
-	if err != nil {
-		t.Fatalf("gateway key with garbage candidates: %v", err)
-	}
-	_ = connection.Close(websocket.StatusNormalClosure, "")
-	if calls := verifyCalls.Load(); calls != 0 {
-		t.Fatalf("gateway key triggered %d verifications", calls)
-	}
-}
-
-func TestExposedListenWebSocketVerifierErrorIsServerError(t *testing.T) {
-	config := exposedConfig(t)
-	config.Tokens = TokenVerifierFunc(func(context.Context, string) (bool, error) {
-		return false, errors.New("store unavailable")
-	})
-	_, httpServer := newTestHTTP(t, config)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	connection, response, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/events", &websocket.DialOptions{
-		HTTPHeader: http.Header{TokenHeader: []string{"secret"}},
-	})
-	if err == nil {
-		connection.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("websocket handshake unexpectedly succeeded")
-	}
-	if response == nil || response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("websocket verifier error response = %+v", response)
-	}
-	if response != nil {
-		response.Body.Close()
-	}
-}
-
-func TestExposedListenWithoutVerifierFailsClosed(t *testing.T) {
-	config := exposedConfig(t)
-	config.Tokens = nil
 	if _, err := New(config); err == nil {
-		t.Fatal("non-loopback listen without token verifier was accepted")
+		t.Fatal("non-loopback listen without account service was accepted")
 	}
 
 	loopback := testConfig(t, false)
-	loopback.Tokens = nil
 	loopback.SyncObjects = nil
 	if _, err := New(loopback); err == nil {
-		t.Fatal("missing sync object handler and token verifier was accepted")
+		t.Fatal("missing sync object handler and account service was accepted")
 	}
 }
 

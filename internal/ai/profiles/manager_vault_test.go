@@ -127,8 +127,8 @@ func TestPlaintextProfileKeysRejectedUntilResaved(t *testing.T) {
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
 		t.Fatal("load must not rewrite a plaintext-keyed store")
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
-		t.Fatalf("plaintext key must be rejected with re-save guidance: %v", err)
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+		t.Fatalf("plaintext key must be rejected as undecryptable: %v", err)
 	}
 	config, ok := manager.ActiveConfig()
 	if !ok || config.APIKey != "" {
@@ -196,8 +196,8 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locked startup with plaintext keys must not fail: %v", err)
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
-		t.Fatalf("locked plaintext profile must report re-save guidance: %v", err)
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+		t.Fatalf("locked plaintext profile must report decrypt failure: %v", err)
 	}
 	if got := manager.Overview().Profiles[0].APIKey; got != profiles.MaskedAPIKey {
 		t.Fatalf("locked overview key = %q", got)
@@ -209,8 +209,8 @@ func TestLockedStartupWithPlaintextProfile(t *testing.T) {
 	if err := credentialVault.UnlockMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "重新保存") {
-		t.Fatalf("unlocked plaintext profile must still require re-save: %v", err)
+	if _, err := manager.ActiveClient(); err == nil || !strings.Contains(err.Error(), "解密失败") {
+		t.Fatalf("unlocked plaintext profile must still fail decryption: %v", err)
 	}
 	if got := storedSetting(t, database, profiles.SettingKey); got != raw {
 		t.Fatal("unlock must not rewrite the plaintext row without an explicit save")
@@ -355,25 +355,4 @@ func TestReloadAdoptsExternalEncryptedSave(t *testing.T) {
 		t.Fatalf("Reload did not adopt the external save: %d profiles", got)
 	}
 	requireClientKey(t, reader, "sk-external")
-}
-
-func TestReloadAdoptsExternalSaveWithoutVault(t *testing.T) {
-	ctx := context.Background()
-	database := openStore(t)
-	writer, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saveKeyedProfile(t, writer, "external", "sk-plaintext")
-	if err := reader.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(reader.Overview().Profiles); got != 1 {
-		t.Fatalf("Reload did not adopt the external save: %d profiles", got)
-	}
-	requireClientKey(t, reader, "sk-plaintext")
 }

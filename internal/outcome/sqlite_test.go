@@ -18,9 +18,9 @@ func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = storage.Close() })
-	var version int64
-	if err := storage.DB().QueryRowContext(context.Background(), `SELECT version FROM schema_migrations WHERE version = 4`).Scan(&version); err != nil {
-		t.Fatalf("migration 0004 not applied: %v", err)
+	var table string
+	if err := storage.DB().QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'outcome_record'`).Scan(&table); err != nil {
+		t.Fatalf("outcome_record table missing: %v", err)
 	}
 	sqliteStore, err := outcome.NewSQLiteStore(storage.DB())
 	if err != nil {

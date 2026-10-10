@@ -2,10 +2,8 @@ package sync
 
 import (
 	"context"
-	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func (s *Service) vaultStatus() (initialized, unlocked bool) {
@@ -29,12 +27,9 @@ func (s *Service) protectSettingSecret(ctx context.Context, plaintext string) (s
 	return s.vault.EncryptSecret(ctx, plaintext)
 }
 
-// revealSettingSecret 读取落盘的同步链接设置：enc:v1: 信封走凭据库解密；
-// 历史明文不再识别，报错引导在设置中重新保存。
+// revealSettingSecret 读取落盘的同步链接设置: 一律经凭据库解密, 非信封或无法解密
+// 统一报解密失败, 由设置页重新保存。
 func (s *Service) revealSettingSecret(ctx context.Context, stored string) (string, error) {
-	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
-		return "", ipc.NewError(ipc.CodeCrypto, "同步链接设置为旧版明文存储，请在设置中重新保存")
-	}
 	if s.vault == nil {
 		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}

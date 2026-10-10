@@ -22,6 +22,7 @@ func TestAICircuitStatusCommandRegistrationAndInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	initTestVault(t, ctx, database)
 	manager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)

@@ -145,12 +145,6 @@ export function createAiChannel(
   const push = (raw: unknown) => {
     if (raw && typeof raw === "object") {
       onEvent(raw as Record<string, unknown>);
-    } else if (typeof raw === "string") {
-      try {
-        onEvent(JSON.parse(raw) as Record<string, unknown>);
-      } catch {
-        onEvent({ type: "delta", text: raw });
-      }
     }
   };
   const channel = WEB ? newBinaryChannel() : newWailsChannel();

@@ -33,7 +33,6 @@ func newSyncV2Fixture(t *testing.T) *accountFixture {
 			Listen: "127.0.0.1:0", DataDir: t.TempDir(), Auth: AuthOn,
 		},
 		Dispatcher:  testDispatcher(t),
-		Tokens:      TokenVerifierFunc(func(_ context.Context, token string) (bool, error) { return token == "secret", nil }),
 		SyncObjects: syncV2EchoHandler(),
 		Accounts:    accounts,
 		Channels:    unavailableChannels(),

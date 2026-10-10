@@ -112,7 +112,7 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([]);
   });
 
-  it("AI channel 保留对象、JSON 字符串和 delta 文本", async () => {
+  it("AI channel 仅投递对象帧", async () => {
     const { createAiChannel } = await import("../ipc/events");
     const events: Record<string, unknown>[] = [];
     const channel = createAiChannel((event) => events.push(event));
@@ -124,11 +124,7 @@ describe("Wails events 与 channels", () => {
     push({ data: "正在思考" });
     push({ data: 42 });
 
-    expect(events).toEqual([
-      { type: "done" },
-      { type: "confirmRequired", jobId: "job-1" },
-      { type: "delta", text: "正在思考" },
-    ]);
+    expect(events).toEqual([{ type: "done" }]);
   });
 
   it("命名事件解包 data，dispose 返回异步退订函数", async () => {

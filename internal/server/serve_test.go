@@ -54,9 +54,7 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	hub := newReplayHub()
 	config.Channels = hub
 	config.ChannelStats = hub.Stats
-	tokens := &fakeTokenStore{token: "secret"}
 	credentialVault := &fakeVault{}
-	config.Tokens = tokens
 	config.Vault = credentialVault
 	config.Options.MasterKey = "correct-password"
 	lifecycle := newTestLifecycle()
@@ -90,7 +88,7 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	if !health.OK || health.Vault == nil {
 		t.Fatalf("health = %+v", health)
 	}
-	status, body := postRPC(t, client, "http://"+listener.Addr().String()+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
+	status, body := postRPC(t, client, "http://"+listener.Addr().String()+"/rpc", "app_info", nil)
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("rpc response = %d %+v", status, body)
 	}

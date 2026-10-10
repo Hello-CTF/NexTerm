@@ -260,7 +260,7 @@ func TestRetentionSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestRetentionMigrationPreservesStoreAndVaultRows(t *testing.T) {
+func TestRetentionReopenPreservesStoreAndVaultRows(t *testing.T) {
 	ctx := context.Background()
 	db, path := fileStore(t)
 	credentialID := "credential-retention-migration"
@@ -272,46 +272,6 @@ func TestRetentionMigrationPreservesStoreAndVaultRows(t *testing.T) {
 	now := time.Now().UnixMilli()
 	insertAuditAt(t, db, now, "kept")
 	insertRecordingAt(t, db, "kept", "external.cast", now, nil)
-	_, err := db.DB().Exec(`CREATE INDEX idx_audit_ts ON audit_log(ts DESC);
-DROP INDEX idx_audit_retention;
-DROP INDEX idx_terminal_recording_retention;
-DROP INDEX idx_ai_msg_conv_seq;
-ALTER TABLE ai_message DROP COLUMN seq;
-ALTER TABLE cron_job DROP COLUMN model_profile_id;
-DROP TABLE ai_run_event;
-DROP TABLE ai_run;
-DROP TABLE ai_checkpoint;
-DROP TABLE ai_hitl_run;
-DROP TABLE transcript_chunk;
-DROP TABLE transcript;
-DROP TABLE durable_transcript_offset;
-DROP TABLE credential_tombstone;
-DROP TABLE user_sync_head;
-DROP TABLE user_sync_object;
-DROP TABLE sync_tombstone;
-DROP TABLE sync_state;
-DROP TRIGGER sync_tombstone_asset_group_delete;
-DROP TRIGGER sync_tombstone_snippet_delete;
-DROP TABLE device_enroll_code;
-DROP TABLE user_setting;
-DROP TABLE device_agent;
-DROP TABLE device_metrics;
-DROP TABLE device_metrics_hourly;
-DROP TABLE sync_credential;
-DROP TABLE user_session;
-DROP TABLE command_log;
-DROP TABLE share_link;
-DROP TABLE host_share;
-DROP TABLE device_share_link;
-DROP TABLE user_device;
-DROP TABLE user_dek;
-DROP TABLE user_totp_recovery_code;
-DROP TABLE user_totp;
-DROP TABLE app_user;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20, 21, 22, 23, 24, 25)`)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +293,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 22)
+	requireTableCount(t, reopened, migrationsTable, 1)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

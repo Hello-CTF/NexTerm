@@ -1,7 +1,6 @@
 package account
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -46,13 +45,6 @@ func writeTOTPKeyFile(path string, key []byte) error {
 		return ipc.WrapError(ipc.CodeCrypto, "加密错误: TOTP 存储密钥文件写入失败", err)
 	}
 	return nil
-}
-
-// legacyTOTPKeyPresent 检测 setting 表是否残留旧版本存放的 TOTP 全局密钥行。
-func (a *Accounts) legacyTOTPKeyPresent(ctx context.Context) bool {
-	var count int
-	err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Scan(&count)
-	return err == nil && count > 0
 }
 
 func (a *Accounts) totpKey() ([]byte, error) {

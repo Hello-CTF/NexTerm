@@ -108,20 +108,6 @@ func TestServerProcessBootstrapsVaultFromMasterKeyFile(t *testing.T) {
 	}
 }
 
-func TestServerProcessRejectsRemovedMasterKeyEnv(t *testing.T) {
-	binary := buildServerBinary(t)
-	cmd := exec.Command(binary, "--listen", "127.0.0.1:0", "--data-dir", t.TempDir())
-	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=legacy-secret")
-	output, err := cmd.CombinedOutput()
-	exitErr, ok := err.(*exec.ExitError)
-	if !ok || exitErr.ExitCode() != 2 {
-		t.Fatalf("exit = %v, want code 2, output %q", err, output)
-	}
-	if !strings.Contains(string(output), "--master-key-file") {
-		t.Fatalf("missing migration guidance: %q", output)
-	}
-}
-
 func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
@@ -373,9 +359,6 @@ func TestServerProcessRequireVault(t *testing.T) {
 	}
 	if !status.Initialized || !status.Unlocked {
 		t.Fatalf("vault status = %+v", status)
-	}
-	if strings.Contains(process.output.String(), "deprecated") {
-		t.Fatalf("master key file triggered env deprecation warning: %q", process.output.String())
 	}
 	process.stop(t)
 

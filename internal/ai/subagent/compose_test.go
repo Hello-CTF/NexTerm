@@ -2,12 +2,15 @@ package subagent_test
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 type fakeSettings struct {
@@ -27,6 +30,30 @@ func (s *fakeSettings) SettingSet(_ context.Context, key, value string) error {
 	defer s.mu.Unlock()
 	s.values[key] = value
 	return nil
+}
+
+func (s *fakeSettings) SecretProtector() store.SecretProtector {
+	return stubProtector{}
+}
+
+type stubProtector struct{}
+
+func (stubProtector) EncryptSecret(_ context.Context, plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	return store.SecretEnvelopePrefix + base64.StdEncoding.EncodeToString([]byte(plaintext)), nil
+}
+
+func (stubProtector) DecryptSecret(_ context.Context, envelope string) (string, error) {
+	if !strings.HasPrefix(envelope, store.SecretEnvelopePrefix) {
+		return "", errors.New("not a secret envelope")
+	}
+	raw, err := base64.StdEncoding.DecodeString(envelope[len(store.SecretEnvelopePrefix):])
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func newFakeSettings() *fakeSettings {

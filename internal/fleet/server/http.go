@@ -162,7 +162,7 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)
 
 	// agent 合同路由: 设备凭证 (device_id+secret) 鉴权写在 handler 内,
-	// 不接受会话/gateway/静态令牌, 因此不套任何用户态中间件。
+	// 不接受会话/gateway, 因此不套任何用户态中间件。
 	mux.HandleFunc("POST /agent/sync", s.serveAgentSync)
 	mux.HandleFunc("POST /agent/current-url", s.serveAgentCurrentURL)
 	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)

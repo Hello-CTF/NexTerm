@@ -180,6 +180,7 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 	if _, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "server"}); err != nil {
 		t.Fatal(err)
 	}
+	initTestVault(t, ctx, database)
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)

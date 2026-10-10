@@ -100,7 +100,7 @@ function deviceTabs(): AppTab[] {
 
 function persistedLayout(workspaces: Workspace[]): PersistedLayout {
   return {
-    v: 1,
+    v: 2,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -109,6 +109,7 @@ function persistedLayout(workspaces: Workspace[]): PersistedLayout {
     workspaces,
     activeWorkspaceId: workspaces[0]?.id ?? null,
     presets: [],
+    aiBoards: {},
   };
 }
 
@@ -153,9 +154,8 @@ describe("device tabs in the layout pane contract", () => {
     const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(dto)));
     expect(parsed).not.toBeNull();
 
-    // 设备管理/设备终端是全局工具标签, 往返后落在「工具」工作区
     expect(parsed?.workspaces).toHaveLength(1);
-    expect(parsed?.workspaces[0].kind).toBe("tools");
+    expect(parsed?.workspaces[0].kind).toBe("session");
     const pane = parsed?.workspaces[0].panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
     expect(pane?.activeTabId).toBe("devterm-1");
@@ -171,10 +171,9 @@ describe("device tabs in the layout pane contract", () => {
       persistedLayout([workspace([panelTab("devices", "devices", "设备管理")], "devices")]),
     );
     expect(parsed?.workspaces).toHaveLength(1);
-    expect(parsed?.workspaces[0].kind).toBe("tools");
     expect(parsed?.workspaces[0].panes[0].tabs.map((t) => t.kind)).toEqual(["devices"]);
     expect(parsed?.workspaces[0].panes[0].activeTabId).toBe("devices");
-    expect(parsed?.activeWorkspaceId).toBe("ws-tools");
+    expect(parsed?.activeWorkspaceId).toBe("ws");
   });
 
   it("sanitizeLayout drops deviceTerminal tabs whose deviceId is missing or invalid", async () => {
@@ -193,7 +192,7 @@ describe("device tabs in the layout pane contract", () => {
         ),
       ]),
     );
-    const pane = parsed?.workspaces.find((w) => w.kind === "tools")?.panes[0];
+    const pane = parsed?.workspaces[0].panes[0];
     expect(pane?.tabs.map((t) => t.id)).toEqual(["devices", "devterm-ok"]);
     expect(pane?.tabs[1].deviceId).toBe("device-9");
     expect(pane?.activeTabId).toBe("devterm-ok");
@@ -207,13 +206,11 @@ describe("device tabs in the layout pane contract", () => {
         workspace([panelTab("devterm-missing", "deviceTerminal", "终端 · 丢失")], "devterm-missing"),
       ]),
     );
-    // 只剩非法 deviceTerminal 标签的工作区保持空面板; devices 标签迁入工具工作区
     expect(parsed?.workspaces).toHaveLength(2);
+    expect(parsed?.workspaces[0].panes[0].tabs.map((t) => t.id)).toEqual(["devices"]);
     const emptied = parsed?.workspaces.find((w) => w.panes.every((p) => p.tabs.length === 0));
     expect(emptied?.panes[0].tabs).toEqual([]);
     expect(emptied?.panes[0].activeTabId).toBeNull();
-    const tools = parsed?.workspaces.find((w) => w.kind === "tools");
-    expect(tools?.panes[0].tabs.map((t) => t.id)).toEqual(["devices"]);
     expect(parsed?.activeWorkspaceId).toBe("ws");
   });
 
@@ -221,7 +218,7 @@ describe("device tabs in the layout pane contract", () => {
     server.data = JSON.stringify(persistedLayout([workspace(deviceTabs(), "devterm-1")]));
     const { store } = await openTab();
 
-    const pane = store.getState().workspaces.find((w) => w.kind === "tools")?.panes[0];
+    const pane = store.getState().workspaces[0]?.panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
     expect(pane?.activeTabId).toBe("devterm-1");
     expect(findTab(store.getState(), "devices")?.title).toBe("设备管理");
@@ -240,7 +237,7 @@ describe("device tabs in the layout pane contract", () => {
     await vi.waitFor(() => {
       expect(findTab(store.getState(), "devterm-1")?.deviceId).toBe("device-1");
     });
-    const pane = store.getState().workspaces.find((w) => w.kind === "tools")?.panes[0];
+    const pane = store.getState().workspaces[0]?.panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
     expect(pane?.activeTabId).toBe("devterm-1");
   });
@@ -256,7 +253,7 @@ describe("device tabs in the layout pane contract", () => {
     await layout.flushLayout();
 
     const state = store.getState();
-    const pane = state.workspaces.find((w) => w.kind === "tools")?.panes[0];
+    const pane = state.workspaces[0]?.panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
     expect(pane?.activeTabId).toBe("devterm-1");
     expect(findTab(state, "devterm-1")?.deviceId).toBe("device-1");

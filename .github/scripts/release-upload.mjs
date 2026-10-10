@@ -58,7 +58,7 @@ if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
   process.exit(1);
 }
 const missing = expectedNames.filter((name) => !fs.existsSync(path.join(directory, name)));
-const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|tar\.gz)$/.test(name) && !packageNames.includes(name));
+const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|deb|tar\.gz)$/.test(name) && !packageNames.includes(name));
 if (missing.length || unexpected.length) {
   if (missing.length) console.error(`release-upload: missing candidate files: ${missing.join(", ")}`);
   if (unexpected.length) console.error(`release-upload: unexpected candidate files: ${unexpected.join(", ")}`);

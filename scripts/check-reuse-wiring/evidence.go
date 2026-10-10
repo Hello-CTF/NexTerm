@@ -12,14 +12,6 @@ import (
 	"strings"
 )
 
-var sizeRuleMarkers = []string{
-	"rust.informational = true",
-	`rust.rule = "historical reference only; never a pass/fail gate"`,
-	"custom.informational = true",
-	`custom.rule = "full-Eino size impact reporting only; never a pass/fail gate"`,
-	"stay informational and never gate release",
-}
-
 func whichOn(pathEnv, name string) bool {
 	for _, dir := range filepath.SplitList(pathEnv) {
 		if dir == "" {
@@ -165,15 +157,6 @@ func runEvidenceChecks(in inputs) []checkResult {
 			strings.Contains(buildTextStr, `assertion("embedded-index"`) &&
 			strings.Contains(buildTextStr, `assertion("embedded-script"`),
 		"build.mjs no longer wires embedded dist assertions into the desktop release report")
-
-	var missingMarkers []string
-	for _, marker := range sizeRuleMarkers {
-		if !strings.Contains(buildTextStr, marker) {
-			missingMarkers = append(missingMarkers, marker)
-		}
-	}
-	check("build.mjs keeps Rust and custom-Go size comparisons informational, never a gate",
-		len(missingMarkers) == 0, fmt.Sprintf("missing markers: %v", missingMarkers))
 
 	hostGOOS := runtime.GOOS
 	hostGOARCH := runtime.GOARCH

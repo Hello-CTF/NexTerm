@@ -147,6 +147,7 @@ func (s *takeoverScript) ServeHTTP(writer http.ResponseWriter, request *http.Req
 func composeTakeoverRuntime(t *testing.T, database *store.Store, providerURL, assetID string) (*ProductionServices, *takeoverFakeTransport) {
 	t.Helper()
 	ctx := context.Background()
+	initTestVault(t, ctx, database)
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)

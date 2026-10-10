@@ -171,12 +171,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   useEffect(() => {
     ensureAiBoard(boardKey);
   }, [boardKey, ensureAiBoard]);
-  useEffect(() => {
-    try {
-      localStorage.removeItem("nexterm.ai.conversation.v1");
-    } catch {
-    }
-  }, []);
 
   const board = aiBoards[boardKey];
   const tabs = board?.tabs ?? [];
@@ -918,7 +912,7 @@ function AiChatTab({
     [stream],
   );
 
-  // 外部绑定(持久化看板/旧版迁移)驱动的会话恢复; 标签内部主动切换已同步过 ref, 不会重复恢复。
+  // 外部绑定(持久化看板)驱动的会话恢复; 标签内部主动切换已同步过 ref, 不会重复恢复。
   useEffect(() => {
     if (boundConversationId === undefined) {
       conversationIdRef.current = undefined;

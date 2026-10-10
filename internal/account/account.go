@@ -14,7 +14,7 @@ type Accounts struct {
 	totpKeyPath string
 }
 
-// userTable 集中账号表名, 便于后续存储后端调整(migrations/0018_app_user.sql 由 user 改名而来)。
+// userTable 集中账号表名, 便于后续存储后端调整。
 const userTable = "app_user"
 
 type Option func(*Accounts)

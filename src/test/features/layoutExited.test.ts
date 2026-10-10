@@ -79,7 +79,7 @@ describe("remote layout preserves exited terminal state", () => {
     const exitedTab = { ...terminal(), exited: true };
     const current = [workspace([{ id: "pane", tabs: [exitedTab] }])];
     const staleRemote: PersistedLayout = {
-      v: 1,
+      v: 2,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -88,6 +88,7 @@ describe("remote layout preserves exited terminal state", () => {
       workspaces: [workspace([{ id: "pane", tabs: [terminal()] }])],
       activeWorkspaceId: "ws",
       presets: [],
+      aiBoards: {},
     };
     const merged = mergeExitedTabs(staleRemote, current);
     expect(merged[0].panes[0].tabs[0].exited).toBe(true);
@@ -160,7 +161,7 @@ describe("remote layout preserves exited terminal state", () => {
     const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
     seed([{ id: "pane", tabs: [exitedTab] }]);
     const remoteDto: PersistedLayout = {
-      v: 1,
+      v: 2,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -171,6 +172,7 @@ describe("remote layout preserves exited terminal state", () => {
       ],
       activeWorkspaceId: "ws",
       presets: [],
+      aiBoards: {},
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
@@ -195,7 +197,7 @@ describe("remote layout preserves exited terminal state", () => {
       { id: "p2", tabs: [exitedTab] },
     ]);
     const remoteDto: PersistedLayout = {
-      v: 1,
+      v: 2,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -209,6 +211,7 @@ describe("remote layout preserves exited terminal state", () => {
       ],
       activeWorkspaceId: "ws",
       presets: [],
+      aiBoards: {},
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 
@@ -231,7 +234,7 @@ describe("remote layout preserves exited terminal state", () => {
       { id: "p2", tabs: [exitedTab] },
     ]);
     const remoteDto: PersistedLayout = {
-      v: 1,
+      v: 2,
       leftOpen: true,
       leftMode: "assets",
       rightOpen: true,
@@ -245,6 +248,7 @@ describe("remote layout preserves exited terminal state", () => {
       ],
       activeWorkspaceId: "ws",
       presets: [],
+      aiBoards: {},
     };
     mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
 

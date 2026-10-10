@@ -32,7 +32,7 @@ function workspace(tabs: AppTab[]): Workspace {
 }
 function layout(workspaces: Workspace[]): PersistedLayout {
   return {
-    v: 1,
+    v: 2,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -41,6 +41,7 @@ function layout(workspaces: Workspace[]): PersistedLayout {
     workspaces,
     activeWorkspaceId: workspaces[0]?.id ?? null,
     presets: [],
+    aiBoards: {},
   };
 }
 

@@ -162,7 +162,7 @@ describe("sanitizeLayoutPresets", () => {
 
 describe("布局 blob 中的预设", () => {
   const base = {
-    v: 1,
+    v: 2,
     leftOpen: true,
     leftMode: "assets",
     rightOpen: true,
@@ -170,6 +170,7 @@ describe("布局 blob 中的预设", () => {
     rightWidth: 352,
     workspaces: [],
     activeWorkspaceId: null,
+    aiBoards: {},
   };
 
   it("sanitizeLayout 缺省 presets 为空数组", () => {

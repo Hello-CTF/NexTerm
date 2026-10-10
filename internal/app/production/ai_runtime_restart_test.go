@@ -51,6 +51,7 @@ func (s *restartScriptServer) ServeHTTP(writer http.ResponseWriter, request *htt
 func composeRestartRuntime(t *testing.T, database *store.Store, providerURL string) (*ProductionServices, string) {
 	t.Helper()
 	ctx := context.Background()
+	initTestVault(t, ctx, database)
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)

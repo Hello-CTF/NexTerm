@@ -32,7 +32,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *     --os=darwin --arch=arm64 --require-evidence
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
- *     --flavor=full --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
+ *     --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -40,9 +40,9 @@ const WAILS_VERSION = "v3.0.0-beta.27";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const KNOWN_OPTIONS = new Set([
-  "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist", "custom-go-baseline",
-  "dist-manifest", "file", "flavor", "id", "kind", "os", "out", "output", "package",
-  "package-only", "release", "repro-check", "require-evidence", "rust-official-baseline",
+  "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist",
+  "dist-manifest", "file", "id", "kind", "os", "out", "output", "package",
+  "package-only", "release", "repro-check", "require-evidence",
   "skip-frontend",
 ]);
 const options = {};
@@ -536,67 +536,8 @@ function packageAssertions(kind, file, goos, goarch) {
     ));
     return checks;
   }
-  if (kind === "sync-archive") return [assertion("separate-sync-archive-removed", false, "restricted --sync-only is a runtime mode of the full archive, not a separate artifact")];
   if (kind === "desktop-dmg") return [assertion("dmg-container", data.length > 512, "DMG was already validated with hdiutil")];
   return [];
-}
-
-function officialRustBaseline(id) {
-  const relative = option("rust-official-baseline", ".github/baselines/rust-official-v0.2.1.json");
-  const absolute = path.resolve(ROOT, relative);
-  if (!fs.existsSync(absolute)) return null;
-  const document = JSON.parse(fs.readFileSync(absolute, "utf8"));
-  const entry = document.artifacts?.[id];
-  if (!entry?.size_bytes) return null;
-  return {
-    source: `${relative}#${id} (${document.release?.tag} ${entry.file}${entry.inner_path ? `#${entry.inner_path}` : ""})`,
-    url: `${document.release?.base_url}/${entry.file}`,
-    sha256: entry.sha256,
-    provenance: "official-release",
-    historical: false,
-    size_bytes: entry.size_bytes,
-    contents_difference: entry.contents_difference,
-  };
-}
-
-function rustBaseline(id) {
-  const official = officialRustBaseline(id);
-  if (official) return official;
-  return { status: "unavailable", reason: `no like-for-like recorded Rust baseline for ${id}` };
-}
-
-function customGoBaseline(id) {
-  const relative = option("custom-go-baseline", ".github/baselines/custom-go.json");
-  const absolute = path.resolve(ROOT, relative);
-  if (!fs.existsSync(absolute)) return { status: "unavailable", reason: `custom-Go baseline does not exist: ${relative}` };
-  const document = JSON.parse(fs.readFileSync(absolute, "utf8"));
-  const entry = document.artifacts?.[id];
-  if (!entry || !Number.isInteger(entry.size_bytes) || entry.size_bytes <= 0 || entry.like_for_like !== true || entry.feature_set !== "full-pre-eino") {
-    return { status: "unavailable", reason: `no full like-for-like pre-Eino custom-Go measurement for ${id}` };
-  }
-  return { source: `${relative}#${id}`, size_bytes: entry.size_bytes };
-}
-
-function sizeComparisons(id, bytes) {
-  const rust = rustBaseline(id);
-  if (rust.size_bytes) {
-    rust.go_bytes = bytes;
-    rust.delta_bytes = bytes - rust.size_bytes;
-    rust.go_to_rust_ratio = bytes / rust.size_bytes;
-    rust.smaller = bytes < rust.size_bytes;
-    rust.status = "measured";
-  }
-  rust.informational = true;
-  rust.rule = "historical reference only; never a pass/fail gate";
-  const custom = customGoBaseline(id);
-  if (Number.isInteger(custom.size_bytes) && custom.size_bytes > 0) {
-    custom.release_bytes = bytes;
-    custom.eino_delta_bytes = bytes - custom.size_bytes;
-    custom.status = "measured";
-  }
-  custom.informational = true;
-  custom.rule = "full-Eino size impact reporting only; never a pass/fail gate";
-  return { rust, custom_go: custom };
 }
 
 function sha256(file) {
@@ -610,7 +551,6 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   const inspected = rawBinary
     ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
     : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
-  const comparisons = sizeComparisons(id, bytes);
   const assertionsFailed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed");
   const report = {
     schema_version: 2,
@@ -634,7 +574,6 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     },
     format: inspected.inspected,
     assertions: inspected.assertions,
-    comparisons,
     status: assertionsFailed ? "failed" : "passed",
     feature_parity_claim: false,
     real_target_acceptance_claim: false,
@@ -642,7 +581,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
-  log(`${id}: ${bytes} bytes; Rust=${comparisons.rust.status}; custom-Go=${comparisons.custom_go.status}; report=${destination}`);
+  log(`${id}: ${bytes} bytes; report=${destination}`);
   if (assertionsFailed) die(`${id} has failed artifact assertions; see ${destination}`);
   if (requireEvidence) requireReportPassed(report);
   return report;
@@ -652,7 +591,7 @@ function requireReportPassed(report) {
   const assertionsPassed = Array.isArray(report.assertions) && report.assertions.length > 0 && report.assertions.every((item) => item.status === "passed");
   const ready = report.status === "passed" && assertionsPassed;
   if (!ready) {
-    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks, while Rust and custom-Go size comparisons stay informational and never gate release`);
+    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks`);
   }
 }
 
@@ -783,14 +722,7 @@ function reportOnly() {
   const goos = targetOS();
   const goarch = targetArch();
   const kind = option("kind", "server-archive");
-  const flavor = option("flavor", "full");
-  const defaultID = kind === "desktop" || kind === "server"
-    ? `${kind}-${goos}-${goarch}`
-    : kind === "server-archive"
-      ? `server-archive-${flavor}-${goos}-${goarch}`
-      : `${kind}-${goos}-${goarch}`;
-  const id = option("id", defaultID);
-  if (kind === "server-archive" && flavor !== "full") die("only --flavor=full is published; --sync-only remains a runtime mode, not an archive");
+  const id = option("id", `${kind}-${goos}-${goarch}`);
   if (!options.file) die("report requires --file=PATH");
   writeArtifactReport({ id, kind, goos, goarch, file, cgo: option("cgo", "0"), requireEvidence: flag("require-evidence"), stripped: true });
 }

@@ -140,8 +140,7 @@ up with /var/lib/nexterm.
 - Full: curl http://127.0.0.1:8080/healthz and check syncOnly=false.
 - Restricted: check syncOnly=true and commands=0; /rpc must return 404.
 - Account sign-in: POST /auth/login with username and password returns a
-  session cookie; the old static sync tokens and the token/rotate-token CLI
-  are gone. Desktop clients sign in under Settings -> Account Sync with
+  session cookie. Desktop clients sign in under Settings -> Account Sync with
   server address + username + password.
 
 LazyCat package assembly and real LazyCat/box acceptance are separate external
@@ -188,7 +187,7 @@ package_full() {
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
-report_args=(--kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT")
+report_args=(--kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT")
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
   report_args+=(--require-evidence)
 fi

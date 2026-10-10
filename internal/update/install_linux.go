@@ -102,7 +102,7 @@ func debDataTarGz(file *os.File) (io.Reader, error) {
 		if err != nil || size < 0 {
 			return nil, fmt.Errorf("deb 成员大小非法: %q", string(member[48:58]))
 		}
-		if name == "data.tar.gz" || name == "data.tar.gz/" {
+		if name == "data.tar.gz/" {
 			return io.LimitReader(file, int64(size)), nil
 		}
 		if _, err := file.Seek(int64(size)+int64(size%2), io.SeekCurrent); err != nil {

@@ -724,10 +724,6 @@ func TestAccountHTTPSessionAcceptedOnLegacyRPC(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Fatalf("no credential status=%d", status)
 	}
-	status, body := postRPC(t, fixture.client, fixture.http.URL+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusOK || !body.OK {
-		t.Fatalf("token-era staging path status=%d body=%v", status, body)
-	}
 }
 
 func TestAccountHTTPNoRawDEK(t *testing.T) {
@@ -792,10 +788,9 @@ func TestAccountHTTPDEKUploadOnce(t *testing.T) {
 func TestAccountHTTPConfigValidation(t *testing.T) {
 	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
-	config.Tokens = nil
 	config.Accounts = nil
 	if _, err := New(config); err == nil {
-		t.Fatal("auth=on without tokens and accounts must fail")
+		t.Fatal("auth=on without account service must fail")
 	}
 
 	database, err := store.OpenInMemory(context.Background())
@@ -805,7 +800,6 @@ func TestAccountHTTPConfigValidation(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	config = testConfig(t, false)
 	config.Options.Auth = AuthOn
-	config.Tokens = nil
 	config.Accounts = account.New(database.DB())
 	server, err := New(config)
 	if err != nil {

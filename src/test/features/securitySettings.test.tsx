@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     collectAssets: vi.fn(),
     collectTombstones: vi.fn(),
     collectCredentials: vi.fn(),
+    kindOptInGet: vi.fn(),
     applyObjects: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock("../../ipc/commands", () => ({
     collectAssets: mocks.collectAssets,
     collectTombstones: mocks.collectTombstones,
     collectCredentials: mocks.collectCredentials,
+    kindOptInGet: mocks.kindOptInGet,
   },
   dbApi: {},
   sessionApi: { connect: mocks.sessionConnect },
@@ -182,6 +184,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });

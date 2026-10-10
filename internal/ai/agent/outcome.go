@@ -77,11 +77,7 @@ func (r *Runner) editTarget(ctx context.Context, conversationID, messageID strin
 		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
 			return nil, 0, errors.New("消息内容损坏")
 		}
-		role := persisted.Role
-		if role == "" {
-			role = row.Role
-		}
-		if role != "user" {
+		if persisted.Role != "user" {
 			return nil, 0, errors.New("只能编辑用户消息")
 		}
 		return rows, index, nil

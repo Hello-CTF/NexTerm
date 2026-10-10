@@ -30,7 +30,7 @@ func TestPostgresFromScratchMigration(t *testing.T) {
 	}
 	raw := fixture.OpenRaw(t)
 	var count int
-	if err := raw.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 22 {
+	if err := raw.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	rows, err := raw.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")
@@ -55,7 +55,7 @@ func TestPostgresFromScratchMigration(t *testing.T) {
 		}
 	}
 	if tables["sync_tokens"] {
-		t.Error("sync_tokens must be dropped by migration 0020")
+		t.Error("sync_tokens must not exist in the merged init schema")
 	}
 	var assetFKs int
 	if err := raw.QueryRow(`SELECT count(*) FROM information_schema.table_constraints
@@ -78,7 +78,7 @@ func TestPostgresIdempotentReopen(t *testing.T) {
 	}
 	second := fixture.OpenStore(t)
 	var count int
-	if err := second.DB().QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 22 {
+	if err := second.DB().QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("migration count after reopen=%d err=%v", count, err)
 	}
 	value, found, err := second.SettingGet(context.Background(), "reopen")

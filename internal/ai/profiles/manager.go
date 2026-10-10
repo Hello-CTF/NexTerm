@@ -199,9 +199,7 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 	case profile.APIKey == MaskedAPIKey:
 		return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 	case m.protector == nil:
-		return profile.APIKey, nil
-	case !strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
-		return "", ipc.NewError(ipc.CodeCrypto, "该档案的 API Key 为旧版明文存储，请在设置中重新保存")
+		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")
 	default:
 		plaintext, err := m.protector.DecryptSecret(context.Background(), profile.APIKey)
 		if err != nil {
@@ -365,7 +363,7 @@ func load(ctx context.Context, settings Settings) (loadResult, error) {
 		slog.Warn("AI 模型档案数据损坏，已隔离并替换为空状态", "error", err)
 		return loadResult{state: state{Version: StoreVersion, Profiles: []Profile{}}, needsSave: true}, nil
 	}
-	if persisted.Version < 0 || persisted.Version > StoreVersion {
+	if persisted.Version <= 0 || persisted.Version > StoreVersion {
 		return loadResult{}, fmt.Errorf("unsupported AI profile store version %d", persisted.Version)
 	}
 	before, _ := json.Marshal(persisted)

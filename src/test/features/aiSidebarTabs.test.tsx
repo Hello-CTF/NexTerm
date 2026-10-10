@@ -223,17 +223,4 @@ describe("AiSidebar 多标签", () => {
     expect(board.tabs[0].id).not.toBe(before);
     expect(useUi.getState().aiBusy).toBe(false);
   });
-
-  it("旧版遗留的会话键一次性清除且不再被任何看板继承", async () => {
-    localStorage.setItem("nexterm.ai.conversation.v1", "conv-legacy");
-    mocks.conversationList.mockResolvedValue([{ id: "conv-legacy", title: "旧会话", updatedAt: 0 }]);
-    view?.unmount();
-    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    await flush();
-
-    expect(stripTabs(view!)).toHaveLength(1);
-    expect(mocks.messages).not.toHaveBeenCalledWith("conv-legacy");
-    expect(localStorage.getItem("nexterm.ai.conversation.v1")).toBeNull();
-    expect(textOf(view!)).toContain("新建会话");
-  });
 });

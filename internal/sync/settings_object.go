@@ -132,7 +132,7 @@ func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bo
 	if err := json.Unmarshal([]byte(value), &state); err != nil {
 		return aiProfilesState{}, 0, true, fmt.Errorf("%w: %v", errAIProfilesCorrupt, err)
 	}
-	if state.Version < 0 || state.Version > aiProfilesStoreVersion {
+	if state.Version <= 0 || state.Version > aiProfilesStoreVersion {
 		return aiProfilesState{}, 0, true, fmt.Errorf("%w: 不支持的版本 %d", errAIProfilesCorrupt, state.Version)
 	}
 	if state.Profiles == nil {
@@ -143,9 +143,6 @@ func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bo
 
 // aiProfilesSave 整体写回 ai.models 设置并原样保留指定修订号; 与清除同 ID 删除墓碑同一事务。
 func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, updatedAt int64, clearTombstoneID string) error {
-	if state.Version <= 0 || state.Version > aiProfilesStoreVersion {
-		state.Version = aiProfilesStoreVersion
-	}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码 AI 模型档案", err)
@@ -168,14 +165,11 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated
 	return tx.Commit()
 }
 
-// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, enc:v1: 信封走凭据库;
-// 历史明文不再识别, 报错引导重新保存。
+// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, 其余一律经凭据库解密,
+// 非信封或无法解密统一报解密失败。
 func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string, error) {
 	if stored == "" {
 		return "", nil
-	}
-	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
-		return "", ipc.NewError(ipc.CodeCrypto, "该档案的 API Key 为旧版明文存储，请在设置中重新保存")
 	}
 	if e.vault == nil {
 		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")

@@ -123,7 +123,7 @@ describe("AI 看板布局持久化", () => {
 
   it("sanitizeLayout 丢弃不属于任何工作区的看板分组, 保留全局分组", () => {
     const parsed = sanitizeLayout({
-      v: 1,
+      v: 2,
       workspaces: [workspace("ws-1")],
       activeWorkspaceId: "ws-1",
       aiBoards: {
@@ -135,18 +135,27 @@ describe("AI 看板布局持久化", () => {
     expect(Object.keys(parsed?.aiBoards ?? {}).sort()).toEqual([GLOBAL_AI_BOARD_KEY, "ws-1"].sort());
   });
 
-  it("旧布局没有 aiBoards 字段时读为空看板表", () => {
-    const parsed = sanitizeLayout({
-      v: 1,
-      workspaces: [workspace("ws-1")],
-      activeWorkspaceId: "ws-1",
-    });
-    expect(parsed?.aiBoards).toEqual({});
+  it("旧版本布局整体判无效, 缺 aiBoards 字段同样判无效", () => {
+    expect(
+      sanitizeLayout({
+        v: 1,
+        workspaces: [workspace("ws-1")],
+        activeWorkspaceId: "ws-1",
+        aiBoards: {},
+      }),
+    ).toBeNull();
+    expect(
+      sanitizeLayout({
+        v: 2,
+        workspaces: [workspace("ws-1")],
+        activeWorkspaceId: "ws-1",
+      }),
+    ).toBeNull();
   });
 
   it("看板标签缺字段时被清洗: 无 id 丢弃, 无标题回落「新会话」, 激活标签指向存在的标签", () => {
     const parsed = sanitizeLayout({
-      v: 1,
+      v: 2,
       workspaces: [workspace("ws-1")],
       activeWorkspaceId: "ws-1",
       aiBoards: {

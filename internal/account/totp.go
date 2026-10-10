@@ -358,16 +358,7 @@ func (a *Accounts) VerifyTOTPLoginCode(ctx context.Context, userID, code string)
 	}
 	secret, err := a.openTOTPSecret(userID, envelope)
 	if err != nil {
-		if !a.legacyTOTPKeyPresent(ctx) {
-			return false, err
-		}
-		// 旧库存储密钥已不再迁移, 动态码无法校验; 恢复码独立存储仍可用于登录后重绑。
-		if valid, recErr := a.consumeRecoveryCode(ctx, userID, code); recErr != nil {
-			return false, recErr
-		} else if valid {
-			return true, nil
-		}
-		return false, ipc.NewError(ipc.CodeCrypto, "加密错误: 两步验证密钥无法解密(存储密钥已更换), 请用恢复码登录后重新绑定 TOTP")
+		return false, err
 	}
 	if verifyTOTPCode(secret, code, a.now()/1000) {
 		return true, nil

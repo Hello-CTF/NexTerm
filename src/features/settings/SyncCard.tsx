@@ -860,7 +860,6 @@ function CompareConsole() {
   }, [anyOptIn]);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // opt-in 读取失败(旧服务端没有该命令/网络错误)按默认关处理, 不阻断对比台
   useEffect(() => {
     let cancelled = false;
     Promise.resolve()
@@ -868,8 +867,8 @@ function CompareConsole() {
       .then((view) => {
         if (!cancelled) setKindOptIn(view);
       })
-      .catch(() => {
-        if (!cancelled) setKindOptIn({ knownHost: false, aiProfile: false });
+      .catch((e: unknown) => {
+        if (!cancelled) setError(`读取同步开关失败：${describeError(e)}`);
       });
     return () => {
       cancelled = true;

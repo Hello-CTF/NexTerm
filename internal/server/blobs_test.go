@@ -609,7 +609,7 @@ func TestBlobOpenAccessFollowsDeploymentForm(t *testing.T) {
 	}
 
 	if blobs := newWithForm(t, func(*Config) {}); !blobs.openAccess {
-		t.Fatal("token form (no accounts) must open ownerless blobs")
+		t.Fatal("loopback form without accounts must open ownerless blobs")
 	}
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -620,7 +620,6 @@ func TestBlobOpenAccessFollowsDeploymentForm(t *testing.T) {
 	if blobs := newWithForm(t, func(config *Config) {
 		config.Options.Auth = AuthOn
 		config.Accounts = accounts
-		config.Tokens = nil
 	}); blobs.openAccess {
 		t.Fatal("account form must keep ownerless blobs closed")
 	}

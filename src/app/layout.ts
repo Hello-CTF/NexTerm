@@ -7,7 +7,6 @@ import {
   GLOBAL_AI_BOARD_KEY,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
-  TOOL_TAB_KINDS,
   dbKindOf,
   nextTabId,
   useUi,
@@ -28,7 +27,7 @@ const SAVE_DEBOUNCE_MS = 600;
 const RETRY_MS = 3000;
 const MAX_RETRY = 3;
 
-const LAYOUT_VERSION = 1;
+const LAYOUT_VERSION = 2;
 
 export interface PersistedLayout {
   v: number;
@@ -40,7 +39,7 @@ export interface PersistedLayout {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   presets: LayoutPreset[];
-  aiBoards?: Record<string, AiBoard>;
+  aiBoards: Record<string, AiBoard>;
 }
 
 const PANE_KINDS = new Set<PaneKind>([
@@ -148,110 +147,6 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
   };
 }
 
-// 工具工作区用固定 id: 迁移幂等, 多设备同步同一份布局也不会各生成一个。
-const TOOLS_WORKSPACE_ID = "ws-tools";
-const TOOLS_PANE_ID = "ws-tools-pane";
-
-// migrateToolTabs 把散在主机/数据库工作区的全局工具标签收进唯一的「工具」工作区;
-// 多余的 tools 工作区(如不同设备各自创建后汇入同一份布局)整体并入第一个, 搬空的工作区不再保留。
-// 已是目标形态的输入原样返回, 重复 sanitize 结果不变。
-function migrateToolTabs(workspaces: Workspace[]): Workspace[] {
-  const stray: AppTab[] = [];
-  let strayActiveId: string | null = null;
-  let changed = false;
-  const stripped = workspaces
-    .map((w): Workspace | null => {
-      if (w.kind === "tools") return w;
-      let wsChanged = false;
-      const panes = w.panes.map((p) => {
-        const tools = p.tabs.filter((t) => TOOL_TAB_KINDS.has(t.kind));
-        if (tools.length === 0) return p;
-        wsChanged = true;
-        if (p.activeTabId !== null && tools.some((t) => t.id === p.activeTabId)) {
-          strayActiveId ??= p.activeTabId;
-        }
-        stray.push(...tools);
-        const tabs = p.tabs.filter((t) => !TOOL_TAB_KINDS.has(t.kind));
-        const activeTabId =
-          p.activeTabId !== null && tabs.some((t) => t.id === p.activeTabId)
-            ? p.activeTabId
-            : (tabs[tabs.length - 1]?.id ?? null);
-        return { ...p, tabs, activeTabId };
-      });
-      if (!wsChanged) return w;
-      changed = true;
-      const remaining = panes.filter((p) => p.tabs.length > 0);
-      if (remaining.length === 0) return null;
-      const activePaneId = remaining.some((p) => p.id === w.activePaneId)
-        ? w.activePaneId
-        : remaining[0].id;
-      return { ...w, panes: remaining, activePaneId };
-    })
-    .filter((w): w is Workspace => w !== null);
-
-  const toolsWorkspaces = stripped.filter((w) => w.kind === "tools");
-  if (!changed && toolsWorkspaces.length <= 1) return workspaces;
-
-  // 多余 tools 工作区的全部标签(不限工具种类)并入第一个, 其活动标签随迁入保留。
-  const extraTabs: AppTab[] = [];
-  let extraActiveId: string | null = null;
-  for (const extra of toolsWorkspaces.slice(1)) {
-    for (const p of extra.panes) extraTabs.push(...p.tabs);
-    const activePane = extra.panes.find((p) => p.id === extra.activePaneId) ?? extra.panes[0];
-    if (activePane?.activeTabId) extraActiveId ??= activePane.activeTabId;
-  }
-
-  const target = toolsWorkspaces[0];
-  const kept = stripped.filter((w) => w.kind !== "tools" || w.id === target?.id);
-  if (!target) {
-    return [
-      ...kept,
-      {
-        id: TOOLS_WORKSPACE_ID,
-        kind: "tools",
-        title: "工具",
-        panes: [
-          {
-            id: TOOLS_PANE_ID,
-            tabs: stray,
-            activeTabId: strayActiveId ?? (stray[stray.length - 1]?.id ?? null),
-          },
-        ],
-        activePaneId: TOOLS_PANE_ID,
-        splitRatio: 0.5,
-        closable: true,
-      },
-    ];
-  }
-
-  const first = target.panes[0];
-  const seen = new Set(target.panes.flatMap((p) => p.tabs.map((t) => t.id)));
-  const add: AppTab[] = [];
-  for (const t of [...stray, ...extraTabs]) {
-    if (seen.has(t.id)) continue;
-    seen.add(t.id);
-    add.push(t);
-  }
-  if (add.length === 0) return kept;
-
-  // 跨 pane 边缘: 源工作区的活动标签可能因 id 重复而没有迁入本 pane(同名标签留在
-  // 目标工作区的其他 pane), activeTabId 只能指向本 pane 真实存在的标签, 否则保留原活动标签。
-  const tabs = [...first.tabs, ...add];
-  const mergedActiveId = strayActiveId ?? extraActiveId;
-  const activeTabId =
-    mergedActiveId !== null && tabs.some((t) => t.id === mergedActiveId)
-      ? mergedActiveId
-      : (first.activeTabId ?? add[add.length - 1].id);
-  return kept.map((w) =>
-    w.id === target.id
-      ? {
-          ...w,
-          panes: w.panes.map((p) => (p.id === first.id ? { ...p, tabs, activeTabId } : p)),
-        }
-      : w,
-  );
-}
-
 function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
   if (!isObj(raw)) return null;
   const id = optStr(raw.id);
@@ -271,8 +166,10 @@ function sanitizeAiBoard(raw: unknown): AiBoard | null {
   };
 }
 
-function sanitizeAiBoards(raw: unknown, workspaces: Workspace[]): Record<string, AiBoard> {
-  if (!isObj(raw)) return {};
+function sanitizeAiBoards(
+  raw: Record<string, unknown>,
+  workspaces: Workspace[],
+): Record<string, AiBoard> {
   const wsIds = new Set(workspaces.map((w) => w.id));
   const out: Record<string, AiBoard> = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -287,16 +184,13 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (!isObj(raw)) return null;
   if (raw.v !== LAYOUT_VERSION) return null;
   if (!Array.isArray(raw.workspaces)) return null;
-  const parsed = raw.workspaces
+  if (!isObj(raw.aiBoards)) return null;
+  const workspaces = raw.workspaces
     .map(sanitizeWorkspace)
     .filter((w): w is Workspace => w !== null);
-  const workspaces = migrateToolTabs(parsed);
   const activeWorkspaceId = workspaces.some((w) => w.id === raw.activeWorkspaceId)
     ? (raw.activeWorkspaceId as string)
-    : // 原活动工作区被迁移搬空时, 落到接收其标签的工具工作区, 而不是任意第一个工作区
-      (parsed.some((w) => w.id === raw.activeWorkspaceId)
-        ? (workspaces.find((w) => w.kind === "tools")?.id ?? workspaces[0]?.id ?? null)
-        : (workspaces[0]?.id ?? null));
+    : (workspaces[0]?.id ?? null);
   return {
     v: LAYOUT_VERSION,
     leftOpen: boolOr(raw.leftOpen, true),
@@ -512,7 +406,7 @@ function applyToStore(l: PersistedLayout) {
       workspaces: merged,
       activeWorkspaceId: l.activeWorkspaceId,
       layoutPresets: l.presets,
-      aiBoards: l.aiBoards ?? {},
+      aiBoards: l.aiBoards,
     });
   } finally {
     applyingRemote = false;

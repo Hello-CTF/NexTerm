@@ -96,10 +96,6 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-server: close log:", err)
 		}
 	}()
-	if os.Getenv("NEXTERM_MASTER_KEY") != "" {
-		fmt.Fprintln(os.Stderr, "nexterm-server: NEXTERM_MASTER_KEY is no longer supported; store the master key in a 0600 file and pass --master-key-file (or NEXTERM_MASTER_KEY_FILE) instead")
-		return 2
-	}
 	if invocation.Auth == core.AuthOff {
 		logger.Warn("access control is disabled via --auth=off: anyone who can reach the listen address can operate the server", "listen", invocation.Listen)
 	}

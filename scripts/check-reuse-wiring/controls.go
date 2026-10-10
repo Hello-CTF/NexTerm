@@ -139,18 +139,6 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"smoke desktop step re-addition is caught",
-		"native job builds and runs no smoke desktop binary",
-		func(ci, release map[string]interface{}, packText string) string {
-			steps := nativeSteps(ci)
-			nativeJob := asMap(jobsOf(ci)["native"])
-			nativeJob["steps"] = append([]interface{}{map[string]interface{}{
-				"name": "Build the smoke desktop binary and run the native smoke",
-				"if":   "matrix.kind == 'desktop'",
-				"run":  "node scripts/build.mjs desktop --release --smoke --os=${{ matrix.os }} --arch=${{ matrix.arch }}",
-			}}, steps...)
-			return packText
-		}},
 	{"frontend dist download removal is caught",
 		"native job downloads the verified frontend dist for every desktop build",
 		func(ci, release map[string]interface{}, packText string) string {
@@ -179,17 +167,6 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"xvfb reintroduction is caught",
-		"native job installs no virtual display for removed smoke runs",
-		func(ci, release map[string]interface{}, packText string) string {
-			for _, rawStep := range nativeSteps(ci) {
-				step := asMap(rawStep)
-				if strings.Contains(stepRun(step), "apt-get install") {
-					step["run"] = strings.Replace(stepRun(step), "libwebkitgtk-6.0-dev", "libwebkitgtk-6.0-dev xvfb", 1)
-				}
-			}
-			return packText
-		}},
 	{"production-tagged Go suite re-addition is caught",
 		"quality runs no production-tagged Go suite",
 		func(ci, release map[string]interface{}, packText string) string {
@@ -203,15 +180,6 @@ var negativeControls = []negativeControl{
 		func(ci, release map[string]interface{}, packText string) string {
 			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
 				map[string]interface{}{"name": "Build harness unit tests", "run": "node --test scripts/lib/*.test.mjs"})
-			return packText
-		}},
-	{"standalone windows job re-addition is caught",
-		"ci.yml drops the browser acceptance and standalone windows native jobs",
-		func(ci, release map[string]interface{}, packText string) string {
-			jobsOf(ci)["ssh-windows"] = map[string]interface{}{
-				"name": "Windows SSH native tests", "runs-on": "windows-latest",
-				"steps": []interface{}{map[string]interface{}{"uses": "actions/checkout@v7"}},
-			}
 			return packText
 		}},
 	{"minimumReleaseAge env bypass re-addition is caught",
@@ -243,7 +211,7 @@ var negativeControls = []negativeControl{
 			return strings.ReplaceAll(packText,
 				`(cd "$ROOT" && node scripts/build.mjs report "${report_args[@]}")`,
 				`(cd "$ROOT" && node scripts/build.mjs report "${report_args[@]}")`+"\n"+
-					`(cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT")`)
+					`(cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT")`)
 		}},
 	{"e2e staging if removal is caught",
 		"server stages the reused CI e2e report only on reuse-hit",

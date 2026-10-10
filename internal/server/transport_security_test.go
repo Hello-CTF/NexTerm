@@ -81,9 +81,11 @@ func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
 func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
 	exposed := exposedConfig(t)
 	exposed.Options.Auth = AuthLoopback
+	exposed.GatewayAuthKey = testGatewayKey
+	exposed.Accounts = newTestAccounts(t)
 	_, httpServer := newTestHTTP(t, exposed)
 
-	post := func(host string, token bool) int {
+	post := func(host string, gatewayKey bool) int {
 		t.Helper()
 		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 		if err != nil {
@@ -91,8 +93,8 @@ func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
 		}
 		request.Header.Set("Content-Type", "application/json")
 		request.Host = host
-		if token {
-			request.Header.Set(TokenHeader, "secret")
+		if gatewayKey {
+			request.Header.Set(GatewayAuthHeader, testGatewayKey)
 		}
 		response, err := httpServer.Client().Do(request)
 		if err != nil {
@@ -103,20 +105,22 @@ func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
 	}
 
 	if status := post("evil.com", false); status != http.StatusUnauthorized {
-		t.Fatalf("non-loopback listen tokenless = %d, want %d", status, http.StatusUnauthorized)
+		t.Fatalf("non-loopback listen anonymous = %d, want %d", status, http.StatusUnauthorized)
 	}
 	if status := post("evil.com", true); status != http.StatusOK {
-		t.Fatalf("non-loopback listen with token = %d, want %d", status, http.StatusOK)
+		t.Fatalf("non-loopback listen with gateway key = %d, want %d", status, http.StatusOK)
 	}
 
 	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
+	config.GatewayAuthKey = testGatewayKey
+	config.Accounts = newTestAccounts(t)
 	_, httpServer = newTestHTTP(t, config)
 	if status := post("evil.com", false); status != http.StatusUnauthorized {
-		t.Fatalf("auth=on tokenless with foreign Host = %d, want %d", status, http.StatusUnauthorized)
+		t.Fatalf("auth=on anonymous with foreign Host = %d, want %d", status, http.StatusUnauthorized)
 	}
 	if status := post("evil.com", true); status != http.StatusOK {
-		t.Fatalf("auth=on with token and foreign Host = %d, want %d", status, http.StatusOK)
+		t.Fatalf("auth=on with gateway key and foreign Host = %d, want %d", status, http.StatusOK)
 	}
 }
 
@@ -224,6 +228,7 @@ func TestTerminalHandshakeFailuresAreSingleShot(t *testing.T) {
 			config := testConfig(t, test.syncOnly)
 			if test.name == "unauthorized" {
 				config.Options.Listen = "0.0.0.0:0"
+				config.Accounts = newTestAccounts(t)
 			}
 			server, err := New(config)
 			if err != nil {

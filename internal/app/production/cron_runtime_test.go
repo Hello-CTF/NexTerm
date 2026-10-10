@@ -148,6 +148,7 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		initTestVault(t, ctx, database)
 		profileManager, err := profiles.NewManager(ctx, database)
 		if err != nil {
 			t.Fatal(err)

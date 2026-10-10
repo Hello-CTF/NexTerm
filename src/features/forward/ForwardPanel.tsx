@@ -275,10 +275,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       refresh();
     } catch (e) {
       if ((kind === "socks" || kind === "remote") && (e as { code?: string } | null)?.code === "needs_confirm") {
-        const detail = (e as { detail?: { listenHost?: unknown } } | null)?.detail;
-        const fallbackHost = kind === "remote" ? bindHost.trim() : listenHost;
-        const confirmedHost =
-          typeof detail?.listenHost === "string" && detail.listenHost ? detail.listenHost : fallbackHost;
+        const confirmedHost = (e as { detail: { listenHost: string } }).detail.listenHost;
         const remote = kind === "remote";
         const ok = await ask(
           remote

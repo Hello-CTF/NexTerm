@@ -28,23 +28,16 @@ func openSQLiteStore(t *testing.T, path string) *SQLStore {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contents, err := migrations.Files.ReadFile("0005_cron.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
-		_ = db.Close()
-		t.Fatalf("apply 0005_cron.sql: %v", err)
-	}
-	contents, err = migrations.Files.ReadFile("0010_cron_model_profile.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var column string
-	if err := db.QueryRowContext(context.Background(), `SELECT name FROM pragma_table_info('cron_job') WHERE name = 'model_profile_id'`).Scan(&column); errors.Is(err, sql.ErrNoRows) {
+	var table string
+	err = db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cron_job'`).Scan(&table)
+	if errors.Is(err, sql.ErrNoRows) {
+		contents, err := migrations.Files.ReadFile("0001_init.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
 			_ = db.Close()
-			t.Fatalf("apply 0010_cron_model_profile.sql: %v", err)
+			t.Fatalf("apply 0001_init.sql: %v", err)
 		}
 	} else if err != nil {
 		_ = db.Close()

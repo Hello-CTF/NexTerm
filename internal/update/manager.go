@@ -80,7 +80,7 @@ func (m *Manager) Check(ctx context.Context) Status {
 		status.UnavailableReason = reason
 		return status
 	}
-	if _, err := planFor(m.GOOS, m.GOARCH); err != nil {
+	if err := platformSupported(m.GOOS, m.GOARCH); err != nil {
 		return fail(err.Error())
 	}
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)

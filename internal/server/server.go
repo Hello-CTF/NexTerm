@@ -20,22 +20,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
-const (
-	TokenHeader       = "X-NexTerm-Sync-Token"
-	GatewayAuthHeader = syncservice.GatewayAuthHeader
-)
-
-// TokenVerifier 服务于 /rpc 与 /ws 的遗留静态令牌分支(留给 M125 删除);
-// v2 同步协议只认会话, 不再产生任何静态令牌。
-type TokenVerifier interface {
-	VerifyToken(context.Context, string) (bool, error)
-}
-
-type TokenVerifierFunc func(context.Context, string) (bool, error)
-
-func (f TokenVerifierFunc) VerifyToken(ctx context.Context, token string) (bool, error) {
-	return f(ctx, token)
-}
+const GatewayAuthHeader = syncservice.GatewayAuthHeader
 
 // SettingStore 是 setting 表的最小读写子集, 由装配层以 *store.Store 注入。
 type SettingStore interface {
@@ -60,7 +45,6 @@ type Config struct {
 	// PeerDispatcher 是同步对端命令面(资产包三命令), 只在 sync-only 部署挂载到 /sync/rpc 并计入健康。
 	PeerDispatcher *ipc.Dispatcher
 	Environment    ipc.Environment
-	Tokens         TokenVerifier
 	Accounts       *account.Accounts
 	SyncObjects    http.Handler
 	GatewayAuthKey string
@@ -87,7 +71,6 @@ type Server struct {
 	dispatcher      *ipc.Dispatcher
 	peerDispatcher  *ipc.Dispatcher
 	environment     ipc.Environment
-	tokens          TokenVerifier
 	accounts        *account.Accounts
 	accountThrottle accountThrottles
 	mfaTickets      *mfaTicketStore
@@ -189,11 +172,11 @@ func New(config Config) (*Server, error) {
 			}
 		}
 	}
-	if authRequired && config.Tokens == nil && config.Accounts == nil {
+	if authRequired && config.Accounts == nil {
 		if authMode == AuthOn {
-			return nil, fmt.Errorf("token verifier or account service is required when auth mode is %q", AuthOn)
+			return nil, fmt.Errorf("account service is required when auth mode is %q", AuthOn)
 		}
-		return nil, fmt.Errorf("token verifier or account service is required when listening on a non-loopback address")
+		return nil, fmt.Errorf("account service is required when listening on a non-loopback address")
 	}
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {
 		return nil, err
@@ -234,7 +217,7 @@ func New(config Config) (*Server, error) {
 
 	s := &Server{
 		options: config.Options, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
-		tokens: config.Tokens, accounts: config.Accounts,
+		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
 			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(), enroll: account.NewLoginThrottle(),
@@ -312,9 +295,9 @@ func (s *Server) routes(config Config) http.Handler {
 		blobs = NewBlobStore(s.options.DataDir, s.logger)
 	}
 	if blobs != nil {
-		// 存在任何无身份放行路径 (auth=off/回环监听/静态令牌/网关) 时属主概念不成立,
+		// 存在任何无身份放行路径 (auth=off/回环监听/网关) 时属主概念不成立,
 		// 暂存 blob 放开无属主条目; 仅当所有放行请求都带账号会话身份时保持属主判等。
-		blobs.openAccess = !(s.authRequired && s.accounts != nil && s.tokens == nil && s.gatewayAuthKey == "")
+		blobs.openAccess = !(s.authRequired && s.accounts != nil && s.gatewayAuthKey == "")
 		mux.Handle("POST /files/blob", s.requireAuth(http.HandlerFunc(blobs.Stage)))
 		mux.Handle("GET /files/blob", s.requireAuth(http.HandlerFunc(blobs.Download)))
 		mux.Handle("DELETE /files/blob", s.requireAuth(http.HandlerFunc(blobs.Delete)))

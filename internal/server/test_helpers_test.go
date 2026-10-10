@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
@@ -64,9 +65,6 @@ func testConfig(t *testing.T, syncOnly bool) Config {
 			Listen: "127.0.0.1:0", DataDir: t.TempDir(), SyncOnly: syncOnly,
 		},
 		Dispatcher: testDispatcher(t),
-		Tokens: TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
-			return token == "secret", nil
-		}),
 		SyncObjects: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true,"data":{"source":"test"}}`))
@@ -75,6 +73,16 @@ func testConfig(t *testing.T, syncOnly bool) Config {
 		Version:  "test-version",
 		Logger:   testLogger(),
 	}
+}
+
+func newTestAccounts(t *testing.T) *account.Accounts {
+	t.Helper()
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	return account.New(database.DB())
 }
 
 // newRealSyncService 装配一个真实的 v2 同步服务(内存库+已解锁凭据库), 供需要同步模块的集成测试使用。

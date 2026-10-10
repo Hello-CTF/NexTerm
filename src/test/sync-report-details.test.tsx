@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     collectAssets: vi.fn(),
     collectTombstones: vi.fn(),
     collectCredentials: vi.fn(),
+    kindOptInGet: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -55,6 +56,7 @@ vi.mock("../ipc/commands", () => ({
     collectAssets: mocks.collectAssets,
     collectTombstones: mocks.collectTombstones,
     collectCredentials: mocks.collectCredentials,
+    kindOptInGet: mocks.kindOptInGet,
   },
 }));
 vi.mock("../ui/dialogs", () => ({ ask: vi.fn() }));
@@ -135,6 +137,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false });
 });
 
 afterEach(() => {

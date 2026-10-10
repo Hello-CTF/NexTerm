@@ -37,7 +37,7 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-NexTerm-Client-Id, X-NexTerm-Sync-Token, X-NexTerm-CSRF")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-NexTerm-Client-Id, X-NexTerm-CSRF")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

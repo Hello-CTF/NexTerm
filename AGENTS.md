@@ -5,7 +5,7 @@
 ## 分支基线
 
 - `master` 是唯一工作基线与发布基线：新分支一律从 `master` 最新提交切出，完成后合回 `master`。Pages 部署随 `master` push 触发，属既有流程。
-- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master`、`main` 以及 `v*` tag push 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
+- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master` 以及 `v*` tag push 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
 - 版本号唯一来源是发布 tag：`wails.json`、`package.json`、`lazycat/package.yml` 恒为 `0.0.0` 占位，tag push 触发的 CI 从 ref 解析 `NEXTERM_RELEASE_VERSION` 烙进二进制与 dist manifest（master/PR 构建用占位版本）；release workflow 复用同 tag 的 CI run（`CI_REUSE_EXPECTED_REF` 锁定），本地/懒猫构建可经 `NEXTERM_RELEASE_VERSION` 或恰好落在 tag 上获得真实版本。
 - macOS 签名可选增强：仓库 variables 设 `NEXTERM_MACOS_SIGNING=true` 后，desktop job 自动导入 `NEXTERM_MACOS_P12_BASE64`/`NEXTERM_MACOS_P12_PASSWORD`(secret)并用 `NEXTERM_MACOS_SIGN_IDENTITY`(variable)签名（hardened runtime + timestamp）；再配 `NEXTERM_MACOS_NOTARY_KEY_BASE64`(secret)与 `NEXTERM_MACOS_NOTARY_KEY_ID`/`NEXTERM_MACOS_NOTARY_ISSUER`(variable)即自动公证+ stapler。未配置时保持 ad-hoc 分发；自签证书无法通过公证，公证必须 Developer ID。
 - 推送 `master` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。
@@ -67,12 +67,11 @@
 - 平台分支一律用文件级 `//go:build`（在文件第 1 行）；常见约束为 `windows`、`unix`、`darwin || linux`、`!windows`，文件名多用 `*_unix.go`、`*_windows.go`、`*_darwin.go` 后缀，但按约束语义命名即可，如 `winsize_signed.go`（`aix || solaris`）、`protector_unsupported.go`（`!windows && !darwin`）及多处 `darwin || linux` 测试均无平台后缀。
 - 非平台标签：`production`（内嵌桌面资源，需先备好 `cmd/nexterm-desktop/dist`）、`race`（竞态测试开关）；改动后必须跑对应 `-tags` 测试。
 
-## migrations（append-only）
+## migrations（breaking 版本可重写）
 
 - `migrations/NNNN_name.sql` 按版本号升序应用，经 `//go:embed` 打包进二进制。
-- `migrations/postgres/` 是根 `migrations/*.sql` 的 PostgreSQL 镜像：版本号与描述一一对应、同样 append-only、已发布文件同样不可改语义，仅方言不同（如 `BIGINT`/`BYTEA`、无 `PRAGMA`）。新 schema 变更必须在两处同步追加同版本号文件；`TestPostgresMigrationsMatchRootVersions` 守住版本与描述对齐。
-- 已发布迁移的 schema 语义与顺序不可改（同版本 Go 代码依赖其产物）；仅注释清理可改动已发布文件，checksum 随之改变。
-- 旧库兼容不做要求：`schema_migrations` 校验 SHA-256 不匹配即启动失败；新 schema 变更一律追加序号更大的新文件，新库迁移必须通过。
+- `migrations/postgres/` 是根 `migrations/*.sql` 的 PostgreSQL 镜像：版本号与描述一一对应，仅方言不同（如 `BIGINT`/`BYTEA`、无 `PRAGMA`）。schema 变更必须在两处同步修改同版本号文件；`TestPostgresMigrationsMatchRootVersions` 守住版本与描述对齐。
+- 下一版本是 breaking-change 全新版本：允许直接修改、合并重写已发布迁移文件，不保留旧库兼容；`schema_migrations` 校验 SHA-256 不匹配即启动失败，旧库作废属预期。新库迁移必须通过。
 
 ## PostgreSQL 真实测试
 
@@ -88,4 +87,4 @@
 - 实现与评审分离：改动由独立 agent 评审，作者不自审。
 - 实现前先 rebase 到 `master` 最新提交；最终集成前再 rebase 一次，最终集成只做一次。
 - 测试节奏与"分层测试节奏"一致：实现期只跑聚焦测试，最终集成后跑一次全量验证（`task check`、`task verify`）；不为每个小改动重复全仓套件，不重复跑已移除的 CI job。
-- 并行不绕过既有约定：CI 门禁（见"质量命令"）、bindings 生成物禁手改、migrations append-only 均不变；提交不得引入真实密钥或个人信息，密钥安全靠评审与按需扫描把关（无固定 CI 扫描 job）；`internal/ai/memory/redact_test.go` 的合成 Slack token 为已批准测试夹具，其值不得打印进文档或日志。
+- 并行不绕过既有约定：CI 门禁（见"质量命令"）与 bindings 生成物禁手改均不变；提交不得引入真实密钥或个人信息，密钥安全靠评审与按需扫描把关（无固定 CI 扫描 job）；`internal/ai/memory/redact_test.go` 的合成 Slack token 为已批准测试夹具，其值不得打印进文档或日志。

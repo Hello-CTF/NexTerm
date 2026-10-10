@@ -166,11 +166,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			if persisted.Content == "" {
 				continue
 			}
-			role := persisted.Role
-			if role == "" {
-				role = row.Role
-			}
-			switch role {
+			switch persisted.Role {
 			case "user":
 				messages = append(messages, schema.UserMessage(persisted.Content))
 			case "assistant":

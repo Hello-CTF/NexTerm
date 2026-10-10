@@ -30,7 +30,8 @@ func saveSceneProfile(t *testing.T, manager *profiles.Manager, key, name string)
 
 func TestClientForResolvesExplicitProfile(t *testing.T) {
 	ctx := context.Background()
-	manager, err := profiles.NewManager(ctx, openStore(t))
+	database, _ := openVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,8 @@ func TestClientForResolvesExplicitProfile(t *testing.T) {
 
 func TestClientForEmptyIDFallsBackToActive(t *testing.T) {
 	ctx := context.Background()
-	manager, err := profiles.NewManager(ctx, openStore(t))
+	database, _ := openVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}

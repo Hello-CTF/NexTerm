@@ -13,7 +13,6 @@ vi.hoisted(() => {
 
 import { deliverStaged, dropStaged, requestSaveTarget, stageFile } from "../ipc/webFiles";
 import { authApi, getCsrfToken, isMfaChallenge, setCsrfToken } from "../ipc/authApi";
-import { clearServerToken } from "../ipc/serverAuth";
 
 interface ObservedRequest {
   method: string;
@@ -171,7 +170,6 @@ beforeEach(() => {
   currentCsrf = "csrf-1";
   alwaysCsrfFail = false;
   blobPostForbidden = false;
-  clearServerToken();
   setCsrfToken(null);
   window.localStorage.setItem("nexterm.api", baseUrl);
 

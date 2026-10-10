@@ -275,18 +275,13 @@ func (o *objectStore) idList(ctx context.Context, userID string) (entries []IDEn
 	}
 	defer rows.Close()
 	entries = []IDEntry{}
-	legacy := []string{}
 	for rows.Next() {
 		var entry IDEntry
 		var blobHash []byte
 		if err := rows.Scan(&entry.ID, &entry.Seq, &blobHash); err != nil {
 			return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
-		if len(blobHash) == 0 {
-			legacy = append(legacy, entry.ID)
-		} else {
-			entry.BlobHash = hex.EncodeToString(blobHash)
-		}
+		entry.BlobHash = hex.EncodeToString(blobHash)
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -297,17 +292,6 @@ func (o *objectStore) idList(ctx context.Context, userID string) (entries []IDEn
 	}
 	if len(entries) > maxIDListEntries {
 		return nil, "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象数量超出清单上限")
-	}
-	for _, id := range legacy {
-		var blob []byte
-		if err := o.db.QueryRowContext(ctx, "SELECT blob FROM user_sync_object WHERE user_id = ? AND id = ?", userID, id).Scan(&blob); err != nil {
-			return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		for i := range entries {
-			if entries[i].ID == id {
-				entries[i].BlobHash = hashBlobHex(blob)
-			}
-		}
 	}
 	return entries, head, maxSeq, nil
 }

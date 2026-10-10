@@ -2,19 +2,10 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io/fs"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
-
-	"github.com/Hello-CTF/NexTerm/migrations"
 )
 
 func TestMsgListPreservesInsertionOrder(t *testing.T) {
@@ -123,96 +114,6 @@ func TestMsgInsertConcurrentAssignsUniqueSeq(t *testing.T) {
 	for i, seq := range seqs {
 		if seq != int64(i+1) {
 			t.Fatalf("seq[%d]=%d — seq must be contiguous from 1, got %v", i, seq, seqs)
-		}
-	}
-}
-
-func TestMigrationBackfillsMessageSeq(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(`CREATE TABLE schema_migrations (
-    version BIGINT PRIMARY KEY,
-    description TEXT NOT NULL,
-    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    checksum BLOB NOT NULL
-)`); err != nil {
-		t.Fatal(err)
-	}
-	applyLegacyMigrations(t, raw)
-	if _, err := raw.Exec(`INSERT INTO ai_conversation(id, title, scope_json, created_at, updated_at)
-VALUES('conv', 'legacy', '{}', 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"C", "A", "B"} {
-		if _, err := raw.Exec(`INSERT INTO ai_message(id, conversation_id, role, content_json, tokens_in, tokens_out, created_at)
-VALUES(?, 'conv', 'user', '{"role":"user","content":"`+id+`"}', NULL, NULL, 1000)`, id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := raw.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := Open(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.MsgList(context.Background(), "conv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 3 || rows[0].ID != "A" || rows[1].ID != "B" || rows[2].ID != "C" {
-		t.Fatalf("backfilled order wrong: %+v", rows)
-	}
-	if err := db.MsgInsert(context.Background(), "conv", "user", map[string]any{"role": "user", "content": "new"}, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	rows, err = db.MsgList(context.Background(), "conv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var last struct {
-		Content string `json:"content"`
-	}
-	if len(rows) != 4 || json.Unmarshal([]byte(rows[3].ContentJSON), &last) != nil || last.Content != "new" {
-		t.Fatalf("post-migration insert must land last: %+v", rows)
-	}
-}
-
-func applyLegacyMigrations(t *testing.T, raw *sql.DB) {
-	t.Helper()
-	entries, err := fs.ReadDir(migrations.Files, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := []string{}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") && entry.Name() < "0006_" {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		contents, err := migrations.Files.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := raw.Exec(string(contents)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-		rest := strings.SplitN(strings.TrimSuffix(name, ".sql"), "_", 2)[1]
-		version, err := strconv.ParseInt(strings.SplitN(name, "_", 2)[0], 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checksum := sha256.Sum256(contents)
-		if _, err := raw.Exec(`INSERT INTO schema_migrations(version, description, checksum) VALUES(?, ?, ?)`,
-			version, strings.ReplaceAll(rest, "_", " "), checksum[:]); err != nil {
-			t.Fatal(err)
 		}
 	}
 }

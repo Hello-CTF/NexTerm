@@ -80,7 +80,8 @@ func TestFutureStoreVersionFailsWithoutOverwrite(t *testing.T) {
 
 func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 	ctx := context.Background()
-	manager, err := profiles.NewManager(ctx, openStore(t))
+	database, _ := openVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 func TestLoadRepairsIDsOrderAndActive(t *testing.T) {
 	ctx := context.Background()
 	database := openStore(t)
-	raw := `{"profiles":[` +
+	raw := `{"version":1,"profiles":[` +
 		`{"id":"same","name":" A ","baseUrl":"https://a.test/","model":"a","temperature":9,"contextWindow":0},` +
 		`{"id":"same","model":"duplicate"},` +
 		`{"id":"","model":"new-id","stream":false}],"activeId":"missing"}`
