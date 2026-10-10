@@ -111,34 +111,26 @@ write_readme() {
 # NexTerm Linux Server $VERSION (linux/$ARCH)
 
 This is the only Linux server archive. It contains the stripped, static Go
-server, the real Vite frontend, both systemd units and both environment-file
-examples. Its version comes from the release tag (NEXTERM_RELEASE_VERSION).
+server, the real Vite frontend, systemd units and environment-file examples.
+Its version comes from the release tag (NEXTERM_RELEASE_VERSION).
 
-## Choose one runtime (do not enable both units)
+## Install
 
-- Full browser server: install nexterm-server.service and use nexterm.env.
-  It serves the browser UI with a built-in init/login page: on first start
-  with no account, the server prints a one-time init code to the console
-  (journalctl -u nexterm-server under systemd); open the UI and finish
-  superadmin setup. /rpc, /ws and /files/blob always require an account
-  session with --auth on. Public deployments still belong behind a
-  TLS-terminating reverse proxy.
-- Restricted runtime: install nexterm-onlyserver.service instead and use
-  onlyserver.env. The same binary runs with --sync-only and mounts only the
-  account, admin and sync routes (/auth/*, /admin/*, /sync/v2/*) plus
-  /healthz; there is no browser UI and /rpc returns 404. This is an optional
-  runtime in this full archive, not a separate onlyServer package. Public
-  deployments still require TLS.
+Install nexterm-server as /opt/nexterm/nexterm-server, then enable
+nexterm-server.service with nexterm.env. It serves the browser UI with a
+built-in init/login page: on first start with no account, the server prints a
+one-time init code to the console (journalctl -u nexterm-server under
+systemd); open the UI and finish superadmin setup. /rpc, /ws and /files/blob
+always require an account session with --auth on. Public deployments still
+belong behind a TLS-terminating reverse proxy.
 
-Install nexterm-server as /opt/nexterm/nexterm-server. The env examples point
-NEXTERM_MASTER_KEY_FILE at /etc/nexterm/master.key; create that root-key file
-owned by the nexterm service user with chmod 0600, keep it secret and back it
-up with /var/lib/nexterm.
+The env examples point NEXTERM_MASTER_KEY_FILE at /etc/nexterm/master.key;
+create that root-key file owned by the nexterm service user with chmod 0600,
+keep it secret and back it up with /var/lib/nexterm.
 
 ## Verify
 
-- Full: curl http://127.0.0.1:8080/healthz and check syncOnly=false.
-- Restricted: check syncOnly=true and commands=0; /rpc must return 404.
+- curl http://127.0.0.1:8080/healthz and check syncOnly=false.
 - Account sign-in: POST /auth/login with username and password returns a
   session cookie. Desktop clients sign in under Settings -> Account Sync with
   server address + username + password.

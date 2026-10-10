@@ -23,11 +23,11 @@
 
 | 用途 | 文件 |
 |---|---|
-| LinuxServer（自建机器 / 内网 VPS，含完整浏览器界面与可选 sync-only 模式） | `NexTerm-server_*_linux_amd64.tar.gz` / `NexTerm-server_*_linux_arm64.tar.gz` |
+| LinuxServer（自建机器 / 内网 VPS，含完整浏览器界面） | `NexTerm-server_*_linux_amd64.tar.gz` / `NexTerm-server_*_linux_arm64.tar.gz` |
 
-服务端每个架构只发布一个 full 包，里面有 Go 静态二进制、前端、`nexterm-server.service` 与 `nexterm-onlyserver.service` 两种 unit，以及对应的 env 示例。只做资产同步时，安装后一种 unit，让同一二进制以 `--sync-only` 运行；没有独立的 onlyServer 下载包。两个 unit 不要同时启用。部署步骤见 [README 的「服务端与设备接入」](https://github.com/Hello-CTF/NexTerm#服务端与设备接入)。
+服务端每个架构只发布一个 full 包，里面有 Go 静态二进制、前端、systemd unit 与 env 示例。部署步骤见 [README 的「服务端与设备接入」](https://github.com/Hello-CTF/NexTerm#服务端与设备接入)。
 
-> **访问控制默认开启（`--auth on`）**：完整版服务端的 `/rpc`、`/ws` 与 `/files/blob` 在任何监听地址都要求登录账号（`/healthz` 与页面静态资源保持公开），浏览器首次打开会进入初始化或登录页。`--sync-only` 模式只开放账号、超管与同步路由（`/auth/*`、`/admin/*`、`/sync/v2/*`，以及仅含对端同步三命令的 `/sync/rpc`）和 `/healthz`；其中 `/healthz` 无需登录即可访问，`/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 是匿名可用的公共端点，其余都要求登录会话（`/admin/*` 要求超管身份）。公网部署请只监听回环地址，前面配置带 TLS 的反向代理并用防火墙限制来源地址；`--auth off` 会关闭账号、管理与设备路由，任何能连到监听地址的人都能操作服务端，不能用于公网。使用默认 SQLite 后端时，备份数据目录即备份全部工作区数据与密文同步内容；`--db postgres` 部署的工作区与同步数据存放在 PostgreSQL 中，必须另行备份数据库。
+> **访问控制默认开启（`--auth on`）**：完整版服务端的 `/rpc`、`/ws` 与 `/files/blob` 在任何监听地址都要求登录账号（`/healthz` 与页面静态资源保持公开），浏览器首次打开会进入初始化或登录页。公网部署请只监听回环地址，前面配置带 TLS 的反向代理并用防火墙限制来源地址；`--auth off` 会关闭账号、管理与设备路由，任何能连到监听地址的人都能操作服务端，不能用于公网。使用默认 SQLite 后端时，备份数据目录即备份全部工作区数据与密文同步内容；`--db postgres` 部署的工作区与同步数据存放在 PostgreSQL 中，必须另行备份数据库。
 
 **懒猫微服**
 
