@@ -290,6 +290,11 @@ jobs:
       - name: Verify the iOS toolchain
         if: matrix.platform == 'ios'
         run: xcodebuild -version
+      - name: Install Linux Wails cgo prerequisites
+        if: matrix.platform == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Restore the pinned Wails CLI
         id: wails-cache
         uses: actions/cache@v6
