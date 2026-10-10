@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace 'com.nexterm.desktop'
+    namespace 'com.wails.app'
     compileSdk 35
 
     buildFeatures {
