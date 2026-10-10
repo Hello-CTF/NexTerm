@@ -6,7 +6,7 @@ import { sql as sqlLang } from "@codemirror/lang-sql";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
-import { dbApi, type QueryResult } from "../../ipc/commands";
+import { dbApi, type QueryResult, type TableDescribe } from "../../ipc/commands";
 import { useUi, type DbKind } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
@@ -42,43 +42,70 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
   const [tables, setTables] = useState<string[]>([]);
   const [tablesStatus, setTablesStatus] = useState<"loading" | "error" | "ready">("loading");
   const [tablesError, setTablesError] = useState<string | null>(null);
+  const [tableFilter, setTableFilter] = useState("");
+  const [tablesExpanded, setTablesExpanded] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [structure, setStructure] = useState<(TableDescribe & { table: string }) | null>(null);
   const [running, setRunning] = useState(false);
   const [browse, setBrowse] = useState<"tables" | "columns">("tables");
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const schemaRef = useRef("");
+  const schemasRequestRef = useRef(0);
+  const tablesRequestRef = useRef(0);
+  const contentRequestRef = useRef(0);
+  const runSeqRef = useRef(0);
 
   const SYSTEM_SCHEMAS = SQL_SYSTEM_SCHEMAS[dialect];
 
   const loadTables = async (next: string) => {
+    const request = ++tablesRequestRef.current;
+    const changed = schemaRef.current !== next;
+    schemaRef.current = next;
     setSchema(next);
+    if (changed) {
+      setActiveTable(null);
+      setStructure(null);
+      setTableFilter("");
+      setTablesExpanded(false);
+    }
     setTablesStatus("loading");
     setTablesError(null);
     try {
-      setTables(await dbApi.tables(connId, next));
+      const list = await dbApi.tables(connId, next);
+      if (request !== tablesRequestRef.current) return;
+      setTables(list);
       setTablesStatus("ready");
     } catch (e) {
+      if (request !== tablesRequestRef.current) return;
       setTablesStatus("error");
       setTablesError(describeError(e));
     }
   };
 
   const loadSchemas = async () => {
+    const request = ++schemasRequestRef.current;
+    const tableRequest = tablesRequestRef.current;
     setSchemasStatus("loading");
     setSchemasError(null);
     try {
       const list = await dbApi.schemas(connId);
+      if (request !== schemasRequestRef.current) return;
       setSchemas(list);
       setSchemasStatus("ready");
+      if (tableRequest !== tablesRequestRef.current) return;
       const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
       if (pick) {
         await loadTables(pick);
       } else {
+        schemaRef.current = "";
+        setSchema("");
         setTables([]);
         setTablesStatus("ready");
       }
     } catch (e) {
+      if (request !== schemasRequestRef.current) return;
       setSchemasStatus("error");
       setSchemasError(describeError(e));
     }
@@ -86,6 +113,13 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
 
   useEffect(() => {
     void loadSchemas();
+    return () => {
+      schemasRequestRef.current += 1;
+      tablesRequestRef.current += 1;
+      contentRequestRef.current += 1;
+      runSeqRef.current += 1;
+      setRunning(false);
+    };
   }, [connId]);
 
   useEffect(() => {
@@ -115,57 +149,55 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
     if (!view) return;
     const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
     const text = sel.trim() || view.state.doc.toString();
+    const request = ++contentRequestRef.current;
+    const runSeq = ++runSeqRef.current;
     setRunning(true);
+    setStructure(null);
     try {
-      setResult(await dbApi.query(connId, text));
+      const nextResult = await dbApi.query(connId, text);
+      if (contentRequestRef.current !== request) return;
+      setResult(nextResult);
+      if (!nextResult.error && schemaRef.current) await loadTables(schemaRef.current);
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (contentRequestRef.current === request) pushToast("error", describeError(e));
     } finally {
-      setRunning(false);
+      if (runSeq === runSeqRef.current) setRunning(false);
     }
   };
 
   const fillQuery = (t: string) => {
     const view = viewRef.current;
     if (!view) return;
-    const sql = `SELECT * FROM ${t} LIMIT 200;`;
+    const quote = dialect === "postgres" ? '"' : "`";
+    const table = [schema, t]
+      .map((part) => `${quote}${part.replaceAll(quote, quote + quote)}${quote}`)
+      .join(".");
+    const sql = `SELECT * FROM ${table} LIMIT 200;`;
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: sql } });
     view.focus();
   };
 
   const showColumns = async (t: string) => {
+    const request = ++contentRequestRef.current;
+    runSeqRef.current += 1;
+    setRunning(false);
     setActiveTable(t);
     try {
-      const { columns, indexes } = await dbApi.columns(connId, t, schema);
-      setResult({
-        columns: ["字段", "类型", "可空", "键", "默认值", "额外"],
-        rows: [
-          ...columns.map((c) => [
-            c.name,
-            c.type,
-            c.nullable ? "YES" : "NO",
-            c.key || "—",
-            c.default ?? "NULL",
-            c.extra || "—",
-          ]),
-          ...indexes.map((ix) => [
-            `↳ ${ix.name}`,
-            ix.unique ? "UNIQUE" : "INDEX",
-            "—",
-            `seq ${ix.seq}`,
-            "—",
-            ix.column,
-          ]),
-        ],
-        rowsAffected: 0,
-        durationMs: 8,
-        truncated: false,
-        error: null,
-      });
+      const description = await dbApi.columns(connId, t, schema);
+      if (contentRequestRef.current !== request) return;
+      setResult(null);
+      setStructure({ table: t, ...description });
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (contentRequestRef.current === request) pushToast("error", describeError(e));
     }
   };
+
+  const normalizedFilter = tableFilter.toLowerCase();
+  const filteredTables = normalizedFilter
+    ? tables.filter((t) => t.toLowerCase().includes(normalizedFilter))
+    : tables;
+  const visibleTables =
+    tablesExpanded || normalizedFilter ? filteredTables : filteredTables.slice(0, 60);
 
   return (
     <div className="nx-pane">
@@ -214,7 +246,13 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
       />
 
       <div className="min-h-[48px] flex-1 overflow-auto" role="status">
-        {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行。一次只执行一条语句，直接在远端库执行并立即生效</div>}
+        {structure ? (
+          <StructureView structure={structure} />
+        ) : result ? (
+          <ResultTable result={result} />
+        ) : (
+          <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行。一次只执行一条语句，直接在远端库执行并立即生效</div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1.5">
@@ -236,7 +274,29 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
             结构
           </button>
         </div>
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <input
+          className="nx-input nx-input-sm w-[120px] shrink-0"
+          value={tableFilter}
+          onChange={(e) => setTableFilter(e.target.value)}
+          placeholder="搜索全部表"
+          aria-label="搜索全部表"
+        />
+        <button
+          className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+          disabled={!schema || tablesStatus === "loading"}
+          onClick={() => void loadTables(schema)}
+          title="刷新表列表"
+        >
+          <IconRefresh size={11} />
+          刷新
+        </button>
+        <div
+          className={`flex min-w-0 flex-1 items-center gap-1 ${
+            tablesExpanded || normalizedFilter
+              ? "max-h-48 flex-wrap overflow-y-auto"
+              : "overflow-x-auto"
+          }`}
+        >
           {schemasStatus === "error" ? (
             <>
               <span className="nx-hint shrink-0 text-red-300">
@@ -269,7 +329,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
             </span>
           ) : (
             <>
-              {tables.slice(0, 60).map((t) => (
+              {visibleTables.map((t) => (
                 <button
                   key={t}
                   className={`nx-chip shrink-0 font-mono ${
@@ -281,11 +341,77 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
                   {t}
                 </button>
               ))}
-              {tables.length > 60 && <span className="nx-hint shrink-0">+{tables.length - 60}</span>}
+              {filteredTables.length === 0 && <span className="nx-hint">没有匹配的表</span>}
+              {!normalizedFilter && tables.length > 60 && (
+                <button
+                  className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                  onClick={() => setTablesExpanded((expanded) => !expanded)}
+                >
+                  {tablesExpanded ? "收起" : "展开全部"}
+                </button>
+              )}
             </>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function StructureView({ structure }: { structure: TableDescribe & { table: string } }) {
+  return (
+    <div className="min-w-max p-2">
+      <div className="nx-hint px-1 py-1 font-mono">{structure.table}</div>
+      <section aria-label="字段">
+        <h3 className="nx-hint px-1 py-1">字段</h3>
+        <table className="nx-table" aria-label="字段列表">
+          <thead>
+            <tr>
+              {["字段", "类型", "可空", "键", "默认值", "额外"].map((name) => (
+                <th key={name}>{name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {structure.columns.map((column) => (
+              <tr key={column.name}>
+                <td className="nx-mono">{column.name}</td>
+                <td className="nx-mono">{column.type}</td>
+                <td>{column.nullable ? "YES" : "NO"}</td>
+                <td>{column.key || "—"}</td>
+                <td className="nx-mono">{column.default ?? "NULL"}</td>
+                <td>{column.extra || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+      <section aria-label="索引">
+        <h3 className="nx-hint px-1 pb-1 pt-3">索引</h3>
+        {structure.indexes.length ? (
+          <table className="nx-table" aria-label="索引列表">
+            <thead>
+              <tr>
+                {["索引", "类型", "字段", "顺序"].map((name) => (
+                  <th key={name}>{name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {structure.indexes.map((index) => (
+                <tr key={`${index.name}:${index.column}:${index.seq}`}>
+                  <td className="nx-mono">{index.name}</td>
+                  <td>{index.unique ? "UNIQUE" : "INDEX"}</td>
+                  <td className="nx-mono">{index.column}</td>
+                  <td>{index.seq}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="nx-hint px-1">没有索引</div>
+        )}
+      </section>
     </div>
   );
 }
@@ -378,6 +504,7 @@ const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
 function RedisView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [pattern, setPattern] = useState("*");
+  const [committedPattern, setCommittedPattern] = useState("*");
   const [keys, setKeys] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
   const [scanStatus, setScanStatus] = useState<"loading" | "error" | "ready">("loading");
@@ -392,6 +519,9 @@ function RedisView({ connId }: { connId: string }) {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const consoleScrollRef = useRef<HTMLDivElement>(null);
   const consolePanelId = useId();
+  const scanRequestRef = useRef(0);
+  const activeScanRef = useRef<{ id: number; cursor: number; pattern: string } | null>(null);
+  const inspectRequestRef = useRef(0);
 
   useEffect(() => {
     const el = consoleScrollRef.current;
@@ -399,41 +529,62 @@ function RedisView({ connId }: { connId: string }) {
   }, [cmdOut]);
 
   const doScan = async (c: number) => {
+    const requestedPattern = c === 0 ? pattern : committedPattern;
+    const active = activeScanRef.current;
+    if (active && (c !== 0 || (active.cursor === 0 && active.pattern === requestedPattern))) {
+      return;
+    }
+    const request = { id: ++scanRequestRef.current, cursor: c, pattern: requestedPattern };
+    activeScanRef.current = request;
     setPageError(null);
     if (c === 0) {
       setScanStatus("loading");
       setScanError(null);
+      setCommittedPattern(pattern);
     }
     try {
-      const [next, ks] = await dbApi.redisScan(connId, c, pattern, 200);
+      const [next, ks] = await dbApi.redisScan(connId, c, requestedPattern, 200);
+      if (activeScanRef.current?.id !== request.id) return;
       setCursor(next);
-      setKeys((prev) => (c === 0 ? ks : [...prev, ...ks]));
+      setKeys((prev) => [...new Set(c === 0 ? ks : [...prev, ...ks])]);
       setScanStatus("ready");
     } catch (e) {
+      if (activeScanRef.current?.id !== request.id) return;
       if (c === 0) {
         setScanStatus("error");
         setScanError(describeError(e));
       } else {
         setPageError(describeError(e));
       }
+    } finally {
+      if (activeScanRef.current?.id === request.id) activeScanRef.current = null;
     }
   };
 
   useEffect(() => {
     void doScan(0);
+    return () => {
+      scanRequestRef.current += 1;
+      activeScanRef.current = null;
+      inspectRequestRef.current += 1;
+    };
   }, [connId]);
 
   const inspect = async (key: string) => {
+    const request = ++inspectRequestRef.current;
     setSelected(key);
     setView(null);
     setViewError(null);
     setViewPending(true);
     try {
-      setView(await dbApi.redisInspect(connId, key));
+      const next = await dbApi.redisInspect(connId, key);
+      if (request !== inspectRequestRef.current) return;
+      setView(next);
     } catch (e) {
+      if (request !== inspectRequestRef.current) return;
       setViewError(describeError(e));
     } finally {
-      setViewPending(false);
+      if (request === inspectRequestRef.current) setViewPending(false);
     }
   };
 

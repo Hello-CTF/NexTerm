@@ -39,6 +39,7 @@ import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUt
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
+import { validateEntryName } from "./fileOps";
 import { useCwdFollow } from "./cwdFollow";
 import { dropUploadFiles } from "./transferActions";
 import {
@@ -268,7 +269,12 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
   const mkDirIn = async (dir: string) => {
     const name = await promptText("新建文件夹名");
-    if (!name) return;
+    if (name === null) return;
+    const problem = validateEntryName(name);
+    if (problem) {
+      pushToast("error", `无法创建：${problem}`);
+      return;
+    }
     const p = joinPath(dir, name);
     try {
       await fsApi.mkdir(sessionId, p);
@@ -386,6 +392,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         kind: "item",
         label: "在下方编辑",
         icon: <IconEdit size={13} />,
+        hint: isEditableFile(entry.name) ? undefined : "非文本文件",
         disabled: !isEditableFile(entry.name),
         onSelect: () => openFileTabInSplit(sessionId, entry.path),
       });
@@ -393,7 +400,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         kind: "item",
         label: "查看日志",
         icon: <IconEye size={13} />,
-        hint: "只读分块",
+        hint: isEditableFile(entry.name) ? "只读分块" : "非文本文件",
         disabled: !isEditableFile(entry.name),
         onSelect: () => openLogTab(sessionId, entry.path),
       });
@@ -532,6 +539,21 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   };
 
   const selectedEntry = list.find((e) => e.path === selected);
+  const selectedFile = selectedEntry?.kind === "dir" ? undefined : selectedEntry;
+  const selectedEditableFile =
+    selectedFile && isEditableFile(selectedFile.name) ? selectedFile : undefined;
+  const downloadTitle = !selectedEntry
+    ? "请先选择要下载的文件"
+    : selectedEntry.kind === "dir"
+      ? "目录不能逐个下载，请使用打包下载"
+      : "下载选中的文件";
+  const logTitle = !selectedEntry
+    ? "请先选择要查看日志的文本文件"
+    : selectedEntry.kind === "dir"
+      ? "目录不能使用日志查看器"
+      : !selectedEditableFile
+        ? "非文本文件不能使用日志查看器"
+        : "用只读日志查看器打开选中文件（SFTP 分块读取，不整文件下载）";
 
   return (
     <div className="nx-pane">
@@ -604,18 +626,18 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          disabled={!selected}
-          onClick={() => selected && void downloadToLocal(selected)}
-          title="下载选中的文件"
+          disabled={!selectedFile}
+          onClick={() => selectedFile && void downloadToLocal(selectedFile.path)}
+          title={downloadTitle}
         >
           <IconDownload size={13} />
           下载
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          disabled={!selected || selectedEntry?.kind === "dir"}
-          onClick={() => selected && openLogTab(sessionId, selected)}
-          title="用只读日志查看器打开选中文件（SFTP 分块读取，不整文件下载）"
+          disabled={!selectedEditableFile}
+          onClick={() => selectedEditableFile && openLogTab(sessionId, selectedEditableFile.path)}
+          title={logTitle}
         >
           <IconEye size={13} />
           日志
@@ -631,8 +653,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-btn nx-btn-danger nx-btn-sm max-[560px]:hidden"
-          disabled={!selected}
-          onClick={() => selected && void removePath(selected, selectedEntry?.kind === "dir")}
+          disabled={!selectedEntry}
+          onClick={() =>
+            selectedEntry && void removePath(selectedEntry.path, selectedEntry.kind === "dir")
+          }
           title="删除选中项"
         >
           <IconTrash size={13} />
@@ -762,7 +786,13 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                     browserRowKeyDown(ev);
                   }}
                   onContextMenu={(ev) => openRowMenu(ev, e)}
-                  title={isDir ? e.path : `${e.path} · 双击或回车用内置编辑器打开`}
+                  title={
+                    isDir
+                      ? e.path
+                      : isEditableFile(e.name)
+                        ? `${e.path} · 双击或回车用内置编辑器打开`
+                        : `${e.path} · 非文本文件，不能在线编辑`
+                  }
                 >
                   <Icon size={14} className={`shrink-0 ${tone}`} />
                   <span className={`nx-row-name min-w-0 flex-auto truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>

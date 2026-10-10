@@ -245,6 +245,22 @@ describe("SyncBundleCard 导入", () => {
     expect(text()).toContain("已清除该引用");
   });
 
+  it("悬空凭据提示仅在本机也缺少同 ID 凭据时清除引用", async () => {
+    const dangling = {
+      ...BUNDLE,
+      assets: BUNDLE.assets.map((asset) => (asset.id === "a1" ? { ...asset, credId: "c-missing" } : asset)),
+    };
+    pickDesktopBundle("dangling.nxbm", JSON.stringify(dangling));
+    await mountCard();
+    openImport();
+    clickButton(mounted!.container, "选择资产包文件…");
+    await flushUntil(() => text().includes("确认导入"));
+
+    expect(text()).toContain("1 条资产引用的凭据不在包内");
+    expect(text()).toContain("若本机也没有同 ID 凭据，导入后引用将被清除");
+    expect(text()).not.toContain("导入后这些引用会被清除");
+  });
+
   it("强制覆盖较新条目：force 以 true 传递", async () => {
     pickDesktopBundle("bundle.nxbm", JSON.stringify(BUNDLE));
     mocks.importBundle.mockResolvedValue({

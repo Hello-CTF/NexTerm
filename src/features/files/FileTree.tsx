@@ -36,6 +36,7 @@ import {
   parentOf,
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
+import { validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
 import { dropUploadFiles } from "./transferActions";
@@ -246,6 +247,19 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
   const selectedEntry = selected ? findEntry(selected) : undefined;
 
+  const navigateRoot = (next: string) => {
+    const normalized = norm(next);
+    const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
+    setSelected(null);
+    setExpanded((prev) =>
+      prev.filter((path) => {
+        const candidate = norm(path);
+        return candidate === normalized || candidate.startsWith(prefix);
+      }),
+    );
+    setRoot(next);
+  };
+
   const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId] });
 
   const toggle = (path: string) =>
@@ -262,17 +276,21 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   };
 
   const targetDir = (): string => {
-    if (selected) {
-      const entry = findEntry(selected);
-      if (entry?.kind === "dir") return selected;
-      return parentOf(selected) ?? root;
+    if (selectedEntry) {
+      if (selectedEntry.kind === "dir") return selectedEntry.path;
+      return parentOf(selectedEntry.path) ?? root;
     }
     return root;
   };
 
   const newFile = async () => {
     const name = await promptText("新建文件名", "");
-    if (!name) return;
+    if (name === null) return;
+    const problem = validateEntryName(name);
+    if (problem) {
+      pushToast("error", `无法创建：${problem}`);
+      return;
+    }
     const path = joinPath(targetDir(), name);
     try {
       await fsApi.write(sessionId, path, "", false);
@@ -285,12 +303,18 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
   const newDir = async () => {
     const name = await promptText("新建文件夹名", "");
-    if (!name) return;
-    const path = joinPath(targetDir(), name);
+    if (name === null) return;
+    const problem = validateEntryName(name);
+    if (problem) {
+      pushToast("error", `无法创建：${problem}`);
+      return;
+    }
+    const dir = targetDir();
+    const path = joinPath(dir, name);
     try {
       await fsApi.mkdir(sessionId, path);
       refresh();
-      if (!expanded.includes(targetDir())) toggle(targetDir());
+      if (!expanded.includes(dir)) toggle(dir);
       pushToast("success", `已创建 ${path}`);
     } catch (e) {
       pushToast("error", `创建失败：${describeError(e)}`);
@@ -630,8 +654,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           className="nx-icon-btn nx-icon-btn-sm"
           title="下载选中项"
           aria-label="下载选中项"
-          disabled={!selected || selectedEntry?.kind === "dir"}
-          onClick={() => selected && void download(selected)}
+          disabled={!selectedEntry || selectedEntry.kind === "dir"}
+          onClick={() => selectedEntry && void download(selectedEntry.path)}
         >
           <IconDownload size={14} />
         </button>
@@ -639,8 +663,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           className="nx-icon-btn nx-icon-btn-sm is-danger"
           title="删除选中项"
           aria-label="删除选中项"
-          disabled={!selected}
-          onClick={() => selected && void remove(selected)}
+          disabled={!selectedEntry}
+          onClick={() => selectedEntry && void remove(selectedEntry.path)}
         >
           <IconTrash size={14} />
         </button>
@@ -652,7 +676,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           title={up ? `上级：${up}` : "已经在根目录"}
           aria-label={up ? `上级目录 ${up}` : "已经在根目录"}
           disabled={!up}
-          onClick={() => up && setRoot(up)}
+          onClick={() => up && navigateRoot(up)}
         >
           <IconArrowUp size={12} />
         </button>
@@ -692,7 +716,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                 <button
                   className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
                   aria-current={i === crumbs.length - 1 ? "location" : undefined}
-                  onClick={() => setRoot(c.path)}
+                  onClick={() => navigateRoot(c.path)}
                   title={c.path}
                 >
                   {c.label}
@@ -715,7 +739,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           aria-label={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
           disabled={!homeSupported || root === HOME}
           onClick={() => {
-            if (homeSupported) setRoot(HOME);
+            if (homeSupported) navigateRoot(HOME);
           }}
         >
           <IconHome size={12} />

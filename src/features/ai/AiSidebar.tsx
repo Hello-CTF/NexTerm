@@ -34,7 +34,7 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { fetchRunEventsAfter, findResumableRun, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
+import { fetchRunEventsAfter, findResumableRun, latestRunUsage, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
 import { findItemMatches, stepMatch } from "./conversationSearch";
 import { useVirtualWindow } from "./conversationVirtual";
 import {
@@ -81,9 +81,9 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权允许的终端写入或命令执行除外，其余改动与拿不准的操作都会被拒绝" },
-  { value: "read_write", label: "读写", hint: "只读直接做；改动先问你，选「本会话允许此类」后同类不再问（文件写入限同目录）" },
-  { value: "silent", label: "完全静默", hint: "改动直接执行不逐次问；拦截规则命中或拿不准的仍会问你" },
+  { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权仅放行普通需确认的终端写入或命令执行，其余改动与拿不准的操作都会被拒绝" },
+  { value: "read_write", label: "读写", hint: "只读直接做；普通需确认操作先问你，选「本轮允许此类」后本轮同类不再问（文件写入限同目录）；高危或无法判断仍逐次确认" },
+  { value: "silent", label: "完全静默", hint: "普通改动直接执行；高危或无法判断的仍逐次确认，禁止操作始终拒绝" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -96,8 +96,8 @@ const PLAN_MODE_HINT = "先出方案，批准后执行";
 
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" | "deny", string> = {
   allow: "已允许一次",
-  allow_session: "本会话已允许此类",
-  allow_persistent: "已永久允许（可在授权管理中撤销）",
+  allow_session: "本轮已允许此类",
+  allow_persistent: "已永久允许（可随时在授权管理中撤销）",
   deny: "已拒绝",
 };
 
@@ -105,10 +105,10 @@ const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", 
 
 function permanentScopeText(card: ConfirmItem): string {
   if (card.tool === "write_file" || card.tool === "edit_file") {
-    return `永久允许写入 ${card.rulePattern || "该路径"} 下的文件`;
+    return `永久允许写入 ${card.rulePattern || "该路径"} 下的普通文件`;
   }
-  if (card.tool === "send_keys") return "永久允许在该设备发送任意按键";
-  return "永久允许在该设备执行任意命令";
+  if (card.tool === "send_keys") return "永久允许该设备发送普通按键";
+  return "永久允许该设备执行普通命令";
 }
 
 function extractUrls(text: string): string[] {
@@ -543,6 +543,7 @@ function AiChatTab({
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
+  const [permError, setPermError] = useState<string | null>(null);
   const [permOpen, setPermOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
@@ -581,24 +582,31 @@ function AiChatTab({
     if (target !== undefined) virtual.revealIndex(target);
   };
   useEffect(() => {
-    setMatchCursor(searchMatches.length > 0 ? 0 : -1);
-  }, [searchMatches]);
+    const next = searchMatches.length > 0 ? 0 : -1;
+    setMatchCursor(next);
+    const target = next >= 0 ? searchMatches[next] : undefined;
+    if (target !== undefined) virtual.revealIndex(target);
+  }, [searchMatches, virtual.revealIndex]);
 
-  useEffect(() => {
-    void aiApi
-      .getPermission()
-      .then(setPerm)
-      .catch(() => undefined);
+  const loadPermission = useCallback(async (): Promise<AiPermissionConfig | null> => {
+    try {
+      const latest = await aiApi.getPermission();
+      setPerm(latest);
+      setPermError(null);
+      return latest;
+    } catch (e) {
+      setPermError(describeError(e));
+      return null;
+    }
   }, []);
 
   useEffect(() => {
-    if (permOpen) {
-      void aiApi
-        .getPermission()
-        .then(setPerm)
-        .catch(() => undefined);
-    }
-  }, [permOpen]);
+    void loadPermission();
+  }, [loadPermission]);
+
+  useEffect(() => {
+    if (permOpen) void loadPermission();
+  }, [permOpen, loadPermission]);
 
   useEffect(() => {
     if (!conversationId) setCronOpen(false);
@@ -616,10 +624,10 @@ function AiChatTab({
   };
 
   const switchMode = (mode: AiPermissionConfig["mode"]) => {
-    void aiApi
-      .getPermission()
-      .then((latest) => savePerm({ ...latest, mode }))
-      .catch(() => savePerm({ ...(perm as AiPermissionConfig), mode }));
+    void (async () => {
+      const latest = await loadPermission();
+      if (latest) await savePerm({ ...latest, mode });
+    })();
   };
 
   const refCandidates = useMemo<RefChip[]>(() => {
@@ -649,9 +657,9 @@ function AiChatTab({
     return out;
   }, [sessionId, workspaces]);
 
-  const composeMessage = (text: string): string => {
-    if (refs.length === 0) return text;
-    const list = refs.map((r) => `- ${r.label}（${r.detail}）`).join("\n");
+  const composeMessage = (text: string, refList: RefChip[]): string => {
+    if (refList.length === 0) return text;
+    const list = refList.map((r) => `- ${r.label}（${r.detail}）`).join("\n");
     return `[引用对象]\n${list}\n\n${text}`;
   };
 
@@ -797,6 +805,17 @@ function AiChatTab({
     if (conversationIdRef.current !== id) return;
     setConversationRuns(runs);
     if (runs.length === 0) return;
+    const eventCache = new Map<string, ReturnType<typeof fetchRunEventsAfter>>();
+    const loadEvents = (jobId: string) => {
+      const cached = eventCache.get(jobId);
+      if (cached) return cached;
+      const request = fetchRunEventsAfter(
+        (afterSeq, limit) => aiApi.runEvents(jobId, afterSeq, limit),
+        0,
+      );
+      eventCache.set(jobId, request);
+      return request;
+    };
     const replay = replayableRuns(runs);
     const generations = new Map<string, number>();
     for (const run of replay) {
@@ -804,10 +823,7 @@ function AiChatTab({
       generations.set(run.id, generation);
       stream.beginRun(generation, "chat");
       stream.bindJob(generation, run.id);
-      const { events, failed } = await fetchRunEventsAfter(
-        (afterSeq, limit) => aiApi.runEvents(run.id, afterSeq, limit),
-        0,
-      );
+      const { events, failed } = await loadEvents(run.id);
       if (conversationIdRef.current !== id) return;
       if (failed) continue;
       for (const event of events) {
@@ -815,6 +831,9 @@ function AiChatTab({
       }
       stream.flush();
     }
+    const usage = await latestRunUsage(runs, loadEvents);
+    if (conversationIdRef.current !== id) return;
+    if (usage) stream.restoreUsage(usage);
     const resumable = await findResumableRun(runs, async (jobId) => {
       try {
         return await aiApi.hitlSnapshot(jobId);
@@ -920,10 +939,21 @@ function AiChatTab({
     }
   };
 
-  const send = async (override?: { message?: string; planMode?: boolean }) => {
+  const requestSnapshotsRef = useRef(
+    new Map<number, { message: string; images: string[]; refs: RefChip[]; planMode: boolean }>(),
+  );
+  const send = async (override?: {
+    message?: string;
+    images?: string[];
+    refs?: RefChip[];
+    planMode?: boolean;
+  }) => {
     const message = (override?.message ?? input).trim();
+    const sentImages = override?.images ?? images;
+    const sentRefs = override?.refs ?? refs;
+    const usePlan = override?.planMode ?? planMode;
     if (
-      (!message && images.length === 0) ||
+      (!message && sentImages.length === 0) ||
       busyRef.current ||
       aiRunBlocksStart(activeRunRef.current)
     ) {
@@ -931,12 +961,16 @@ function AiChatTab({
     }
     if (permOpen) setPermOpen(false);
     const run = beginRun();
-    const usePlan = override?.planMode ?? planMode;
+    requestSnapshotsRef.current.set(run.generation, {
+      message,
+      images: [...sentImages],
+      refs: [...sentRefs],
+      planMode: usePlan,
+    });
     setBusy(true);
     setInput("");
     setRefs([]);
     setAtOpen(false);
-    const sentImages = images;
     setImages([]);
     stream.appendUser(run.generation, message, sentImages.length);
 
@@ -973,7 +1007,7 @@ function AiChatTab({
       const res = await aiApi.chat({
         conversationId,
         scope: { sessionId, tabId },
-        message: composeMessage(message),
+        message: composeMessage(message, sentRefs),
         images: sentImages.length ? sentImages : undefined,
         planMode: usePlan || undefined,
         channel,
@@ -1034,7 +1068,7 @@ function AiChatTab({
       return;
     }
     if (permOpen) setPermOpen(false);
-    const text = composeMessage(message);
+    const text = composeMessage(message, refs);
     setInput("");
     const itemId = stream.appendSteer(target.generation, message);
     try {
@@ -1046,13 +1080,13 @@ function AiChatTab({
     }
   };
 
-  const approvePlan = (plan: string) => {
+  const approvePlan = () => {
     setPlanMode(false);
-    void send({ message: `按上面的方案执行。\n\n方案原文：\n${plan}`, planMode: false });
+    void send({ message: "按上面的方案执行。", images: [], refs: [], planMode: false });
   };
   const approvePlanRef = useRef(approvePlan);
   approvePlanRef.current = approvePlan;
-  const handleApprovePlan = useCallback((plan: string) => approvePlanRef.current(plan), []);
+  const handleApprovePlan = useCallback(() => approvePlanRef.current(), []);
 
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
@@ -1070,7 +1104,16 @@ function AiChatTab({
       pushToast("info", "找不到这一轮的消息原文，请手动重新发送");
       return;
     }
-    void send({ message: source.text });
+    const snapshot = item.attempt === null ? undefined : requestSnapshotsRef.current.get(item.attempt);
+    if (snapshot) {
+      void send(snapshot);
+      return;
+    }
+    const jobId = item.attempt === null
+      ? undefined
+      : conv.attempts.find((attempt) => attempt.generation === item.attempt)?.jobId;
+    const planMode = conversationRuns.find((run) => run.id === jobId)?.planMode ?? false;
+    void send({ message: source.text, images: [], refs: [], planMode });
   };
   const retryRunRef = useRef(retryRun);
   retryRunRef.current = retryRun;
@@ -1670,7 +1713,7 @@ function AiChatTab({
         </div>
       )}
 
-      {permOpen && perm && (
+      {permOpen && (
         <div className="max-h-[55%] min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
             <IconShield size={12} />
@@ -1685,68 +1728,82 @@ function AiChatTab({
             </button>
           </div>
 
-          <div className="mb-2 flex flex-col gap-0.5">
-            {MODE_OPTIONS.map((m) => (
-              <button
-                key={m.value}
-                className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
-                  perm.mode === m.value ? "bg-blue-500/15" : ""
-                }`}
-                onClick={() => switchMode(m.value)}
-              >
-                <span className="nx-menu-label w-full">
-                  {perm.mode === m.value ? "● " : "○ "}
-                  {m.label}
-                </span>
-                <span className="nx-menu-hint w-full whitespace-normal font-sans">{m.hint}</span>
+          {permError ? (
+            <div className="px-2 py-3 text-center" role="alert">
+              <div className="nx-hint text-red-300">权限读取失败 · {permError}</div>
+              <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void loadPermission()}>
+                <IconRefresh size={11} />
+                重试
               </button>
-            ))}
-          </div>
+            </div>
+          ) : !perm ? (
+            <div className="nx-hint px-2 py-3 text-center text-[11px]">权限读取中…</div>
+          ) : (
+            <>
+              <div className="mb-2 flex flex-col gap-0.5">
+                {MODE_OPTIONS.map((m) => (
+                  <button
+                    key={m.value}
+                    className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
+                      perm.mode === m.value ? "bg-blue-500/15" : ""
+                    }`}
+                    onClick={() => switchMode(m.value)}
+                  >
+                    <span className="nx-menu-label w-full">
+                      {perm.mode === m.value ? "● " : "○ "}
+                      {m.label}
+                    </span>
+                    <span className="nx-menu-hint w-full whitespace-normal font-sans">{m.hint}</span>
+                  </button>
+                ))}
+              </div>
 
-          <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
-          <button
-            className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
-            title={PLAN_MODE_HINT}
-            onClick={() => setPlanMode((v) => !v)}
-          >
-            <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
-              <IconList size={12} />
-            </span>
-            <span className="nx-menu-label">
-              {planMode ? "● " : "○ "}
-              计划模式
-            </span>
-            <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
-          </button>
-          <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
-            {planMode ? `${PLAN_MODE_HINT}；期间只读` : "直接执行"}
-          </div>
+              <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
+              <button
+                className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
+                title={PLAN_MODE_HINT}
+                onClick={() => setPlanMode((v) => !v)}
+              >
+                <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
+                  <IconList size={12} />
+                </span>
+                <span className="nx-menu-label">
+                  {planMode ? "● " : "○ "}
+                  计划模式
+                </span>
+                <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
+              </button>
+              <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
+                {planMode ? `${PLAN_MODE_HINT}；期间只读` : "直接执行"}
+              </div>
 
-          <div className="mb-2 flex items-center gap-1.5">
-            <span className="shrink-0 text-neutral-500">
-              <IconShield size={12} />
-            </span>
-            <span className="text-[11.5px] text-neutral-300">拦截规则</span>
-            <span className="nx-count">
-              {perm.dangerRules.length > 0 ? `${perm.dangerRules.length} 条` : "未设置"}
-            </span>
-            <span className="nx-spacer" />
-            <button
-              className="nx-btn nx-btn-outline nx-btn-xs"
-              title="在设置中管理拦截规则"
-              onClick={() =>
-                useUi
-                  .getState()
-                  .addTab({ id: "settings", kind: "settings", title: "设置", closable: true })
-              }
-            >
-              去设置
-            </button>
-          </div>
+              <div className="mb-2 flex items-center gap-1.5">
+                <span className="shrink-0 text-neutral-500">
+                  <IconShield size={12} />
+                </span>
+                <span className="text-[11.5px] text-neutral-300">拦截规则</span>
+                <span className="nx-count">
+                  {perm.dangerRules.length > 0 ? `${perm.dangerRules.length} 条` : "未设置"}
+                </span>
+                <span className="nx-spacer" />
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs"
+                  title="在设置中管理拦截规则"
+                  onClick={() =>
+                    useUi
+                      .getState()
+                      .addTab({ id: "settings", kind: "settings", title: "设置", closable: true })
+                  }
+                >
+                  去设置
+                </button>
+              </div>
 
-          <div className="mt-2 border-t border-neutral-800/60 pt-1.5 text-[10px] leading-relaxed text-neutral-500">
-            格式化磁盘、清空系统目录、删库等不可逆操作一律直接拒绝，不弹确认。
-          </div>
+              <div className="mt-2 border-t border-neutral-800/60 pt-1.5 text-[10px] leading-relaxed text-neutral-500">
+                命中禁止规则的操作始终拒绝；高危或无法判断的操作按当前权限模式处理，长期授权只覆盖普通需确认操作。
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1794,6 +1851,9 @@ function AiChatTab({
           )}
           {conv.items.slice(virtual.range.start, virtual.range.end).map((item, i) => {
             const index = virtual.range.start + i;
+            const planApproved =
+              item.role === "plan" &&
+              conv.items.some((candidate, candidateIndex) => candidateIndex > index && candidate.role === "user" && candidate.text.trim() === "按上面的方案执行。");
             return (
               <div
                 key={item.id}
@@ -1805,6 +1865,7 @@ function AiChatTab({
                 <ChatBubble
                   item={item}
                   streaming={busy && index === conv.items.length - 1}
+                  planApproved={planApproved}
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
                   onEdit={handleEditResend}
@@ -1836,7 +1897,7 @@ function AiChatTab({
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本会话允许此类」，或在权限设置里调模式。按 Esc 默认拒绝。
+                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本轮允许此类」，或在权限设置里调模式。按 Esc 默认拒绝。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -1851,17 +1912,20 @@ function AiChatTab({
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("allow_session")}
                 >
-                  本会话允许此类
+                  本轮允许此类
                 </button>
                 {confirmCard.risk === "needs_confirm" && RULE_CAPABLE_TOOLS.has(confirmCard.tool) && (
-                  <button
-                    className="nx-btn nx-btn-outline nx-btn-xs"
-                    title={`${permanentScopeText(confirmCard)}；授权保存在本安装（服务器）上，可随时在授权管理中撤销`}
-                    disabled={submittingCardId === confirmCard.id}
-                    onClick={() => void confirm("allow_persistent")}
-                  >
-                    永久允许
-                  </button>
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    <button
+                      className="nx-btn nx-btn-outline nx-btn-xs"
+                      title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断仍按当前权限模式，禁止操作始终拒绝；可随时在授权管理中撤销`}
+                      disabled={submittingCardId === confirmCard.id}
+                      onClick={() => void confirm("allow_persistent")}
+                    >
+                      永久允许
+                    </button>
+                    <span className="text-[10px] text-neutral-500">{permanentScopeText(confirmCard)}</span>
+                  </span>
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
@@ -1870,17 +1934,21 @@ function AiChatTab({
                 >
                   拒绝
                 </button>
-                <button
-                  className="nx-btn nx-btn-outline nx-btn-xs"
-                  title="打开设置的拦截规则，并把这条命令预填成一条新规则"
-                  onClick={() => {
-                    const ui = useUi.getState();
-                    ui.setAiRulePrefill(ruleFromRendered(confirmCard.rendered));
-                    ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
-                  }}
-                >
-                  加为拦截规则
-                </button>
+                {interceptionRuleFromCard(confirmCard) && (
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    title="打开设置的拦截规则，并把当前操作预填成一条新规则"
+                    onClick={() => {
+                      const rule = interceptionRuleFromCard(confirmCard);
+                      if (!rule) return;
+                      const ui = useUi.getState();
+                      ui.setAiRulePrefill(rule);
+                      ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+                    }}
+                  >
+                    加为拦截规则
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -2178,7 +2246,13 @@ function AiChatTab({
             className={`nx-icon-btn nx-icon-btn-sm ${
               perm?.mode === "silent" ? "is-active" : ""
             } ${permOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-            title={`AI 权限与模式：${MODE_LABEL[perm?.mode ?? "read_write"]}（含计划模式，点击设置）`}
+            title={
+              permError
+                ? "AI 权限读取失败（点击查看并重试）"
+                : perm
+                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（含计划模式，点击设置）`
+                  : "AI 权限与模式：读取中（点击设置）"
+            }
             onClick={() => setPermOpen((v) => !v)}
           >
             <IconShield size={13} />
@@ -2302,25 +2376,30 @@ function toolLabel(tool: string): string {
   }
 }
 
-function ruleFromRendered(rendered: string): string {
-  const lines = rendered
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const picked = lines.find((l) => l.startsWith("$")) ?? lines[0] ?? "";
-  return picked.slice(0, 120);
+function interceptionRuleFromCard(card: ConfirmItem): string | null {
+  if (card.tool === "write_file" || card.tool === "edit_file") {
+    const path = card.preview?.path.trim();
+    return path ? path.slice(0, 120) : null;
+  }
+  if (card.tool === "exec_commands") {
+    const commands = (card.commands ?? []).map((command) => command.trim()).filter(Boolean);
+    return commands.length > 0 ? commands.join("\n").slice(0, 120) : null;
+  }
+  return null;
 }
 
 const ChatBubble = memo(function ChatBubble({
   item,
   streaming,
+  planApproved,
   onApprovePlan,
   onRetry,
   onEdit,
 }: {
   item: ChatItem;
   streaming: boolean;
-  onApprovePlan: (plan: string) => void;
+  planApproved: boolean;
+  onApprovePlan: () => void;
   onRetry: (item: ChatItem) => void;
   onEdit: (item: ChatItem) => void;
 }) {
@@ -2418,7 +2497,7 @@ const ChatBubble = memo(function ChatBubble({
   }
   if (item.role === "diff") return <DiffBubble item={item} />;
   if (item.role === "plan") {
-    return <PlanBubble item={item} onApprove={() => onApprovePlan(item.text)} />;
+    return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} />;
   }
   if (item.role === "tool") return <ToolBubble item={item} />;
   return null;
@@ -2572,9 +2651,11 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
 
 function PlanBubble({
   item,
+  approved,
   onApprove,
 }: {
   item: Extract<ChatItem, { role: "plan" }>;
+  approved: boolean;
   onApprove: () => void;
 }) {
   return (
@@ -2582,15 +2663,17 @@ function PlanBubble({
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
         <span className="font-medium text-[var(--nx-fg-on-tint)]">方案已提交</span>
-        <span className="text-neutral-500">还没有执行任何操作</span>
+        <span className="text-neutral-500">{approved ? "已批准" : "还没有执行任何操作"}</span>
       </div>
       <div className="max-h-72 overflow-y-auto">
         <Markdown text={item.text} className="text-neutral-300" />
       </div>
-      <button className="nx-btn nx-btn-outline nx-btn-xs mt-2" onClick={onApprove}>
-        <IconPlay size={11} />
-        批准，按这个方案执行
-      </button>
+      {!approved && (
+        <button className="nx-btn nx-btn-outline nx-btn-xs mt-2" onClick={onApprove}>
+          <IconPlay size={11} />
+          批准，按这个方案执行
+        </button>
+      )}
     </div>
   );
 }

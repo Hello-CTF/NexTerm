@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   discardStaged: vi.fn(),
   list: vi.fn(),
   read: vi.fn(),
+  readRange: vi.fn(),
+  write: vi.fn(),
   rename: vi.fn(),
   chmod: vi.fn(),
   checksum: vi.fn(),
@@ -59,6 +61,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     fsApi: {
       list: mocks.list,
       read: mocks.read,
+      readRange: mocks.readRange,
+      write: mocks.write,
       rename: mocks.rename,
       chmod: mocks.chmod,
       checksum: mocks.checksum,
@@ -298,6 +302,9 @@ beforeEach(() => {
   mocks.list.mockImplementation((_s: string, p: string) =>
     Promise.resolve(p === "~" ? entries.map((e) => ({ ...e })) : []),
   );
+  mocks.readRange.mockRejectedValue({ code: "unsupported", message: "unsupported" });
+  mocks.write.mockResolvedValue(undefined);
+  mocks.mkdir.mockResolvedValue(undefined);
   mocks.rename.mockResolvedValue(undefined);
   mocks.chmod.mockResolvedValue(undefined);
   mocks.checksum.mockResolvedValue("deadbeef");
@@ -605,6 +612,188 @@ describe("FileTree 入口与状态搬迁", () => {
     await flush();
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/sub", "~/sub2");
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2"));
+  });
+});
+
+describe("新建文件与文件夹的名称预检", () => {
+  const invalidNames = ["..", "a/b", "a\\b", " name ", "a\0b"];
+
+  for (const [label, rpc] of [["新建文件", "write"], ["新建文件夹", "mkdir"]] as const) {
+    it(`FileTree ${label}在 joinPath 前拒绝危险名称`, async () => {
+      mounted = mountTree();
+      await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+      const button = mounted.container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      )!;
+      for (const name of invalidNames) {
+        mocks.promptText.mockResolvedValueOnce(name);
+        click(button);
+        await flush();
+      }
+      expect(mocks[rpc]).not.toHaveBeenCalled();
+      expect(mocks.toast).toHaveBeenCalledTimes(invalidNames.length);
+    });
+  }
+
+  it("FileBrowser 新建文件夹拒绝危险名称", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    const button = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "新建",
+    )!;
+    for (const name of invalidNames) {
+      mocks.promptText.mockResolvedValueOnce(name);
+      click(button);
+      await flush();
+    }
+    expect(mocks.mkdir).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledTimes(invalidNames.length);
+  });
+
+  it("合法名称仍创建到当前目录", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.promptText.mockResolvedValue("ok.txt");
+    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/ok.txt", "", false));
+  });
+});
+
+describe("FileTree 导航后的选择与展开状态", () => {
+  beforeEach(() => {
+    mocks.list.mockImplementation((_s: string, path: string) => {
+      if (path === "~") {
+        return Promise.resolve([entry("sub", "dir"), entry("other", "dir")]);
+      }
+      if (path === "~/sub") {
+        return Promise.resolve([
+          entry("inner", "dir", { path: "~/sub/inner" }),
+          entry("a.txt", "file", { path: "~/sub/a.txt" }),
+        ]);
+      }
+      if (path === "~/sub/inner") {
+        return Promise.resolve([entry("deep.txt", "file", { path: "~/sub/inner/deep.txt" })]);
+      }
+      if (path === "~/other") {
+        return Promise.resolve([entry("other.txt", "file", { path: "~/other/other.txt" })]);
+      }
+      if (path === "/") {
+        return Promise.resolve([entry("root.txt", "file", { path: "/root.txt" })]);
+      }
+      return Promise.resolve([]);
+    });
+  });
+
+  async function enterSubdirectory(): Promise<void> {
+    act(() => {
+      rowByPath(mounted!.container, "~/sub").dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      );
+    });
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub/a.txt")).toBeTruthy());
+  }
+
+  it("上级导航清空失效选择并裁剪展开目录", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    click(rowByPath(mounted.container, "~/sub"));
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub/a.txt")).toBeTruthy());
+    click(rowByPath(mounted.container, "~/sub/a.txt"));
+    click(mounted.container.querySelector('button[aria-label^="上级目录"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "/root.txt")).toBeTruthy());
+
+    expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+    mocks.promptText.mockResolvedValue("fresh.txt");
+    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/fresh.txt", "", false));
+
+    click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    expect(rowByPath(mounted.container, "~/sub").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("Home 导航后，新建操作不会使用旧目录的选择", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    await enterSubdirectory();
+    click(rowByPath(mounted.container, "~/sub/a.txt"));
+    click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+
+    expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+    mocks.promptText.mockResolvedValue("fresh.txt");
+    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/fresh.txt", "", false));
+  });
+
+  it("面包屑导航后，新建操作不会使用旧目录的选择", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    await enterSubdirectory();
+    click(rowByPath(mounted.container, "~/sub/a.txt"));
+    click(mounted.container.querySelector('button.nx-path-crumb[title="~"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+
+    expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+    mocks.promptText.mockResolvedValue("fresh-dir");
+    click(mounted.container.querySelector('button[aria-label="新建文件夹"]')!);
+    await waitFor(() => expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/fresh-dir"));
+  });
+});
+
+describe("FileBrowser 选中项入口校验", () => {
+  beforeEach(async () => {
+    mocks.list.mockResolvedValue([
+      entry("a.txt", "file"),
+      entry("image.png", "file"),
+      entry("sub", "dir"),
+    ]);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+  });
+
+  function actionButton(label: string): HTMLButtonElement {
+    const button = [...mounted!.container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+    if (!button) throw new Error(`Action button not found: ${label}`);
+    return button as HTMLButtonElement;
+  }
+
+  it("目录与非文本文件的按钮、title 和编辑入口一致", () => {
+    click(rowByPath(mounted!.container, "~/sub"));
+    expect(actionButton("下载").disabled).toBe(true);
+    expect(actionButton("下载").title).toContain("目录");
+    expect(actionButton("日志").disabled).toBe(true);
+    expect(actionButton("日志").title).toContain("目录");
+
+    click(rowByPath(mounted!.container, "~/image.png"));
+    expect(actionButton("下载").disabled).toBe(false);
+    expect(actionButton("日志").disabled).toBe(true);
+    expect(actionButton("日志").title).toContain("非文本文件");
+    expect(rowByPath(mounted!.container, "~/image.png").title).toContain("不能在线编辑");
+    openRowMenu(mounted!.container, "~/image.png");
+    expect(menuItem(mounted!.container, "在下方编辑").disabled).toBe(true);
+    expect(menuItem(mounted!.container, "在下方编辑").textContent).toContain("非文本文件");
+
+    click(rowByPath(mounted!.container, "~/a.txt"));
+    expect(actionButton("下载").disabled).toBe(false);
+    expect(actionButton("日志").disabled).toBe(false);
+  });
+
+  it("列表刷新后失效选择不能触发下载或日志", async () => {
+    click(rowByPath(mounted!.container, "~/a.txt"));
+    expect(actionButton("下载").disabled).toBe(false);
+    mocks.list.mockResolvedValue([entry("sub", "dir")]);
+    click(mounted!.container.querySelector<HTMLButtonElement>('button[title="刷新"]')!);
+    await waitFor(() => expect(mounted!.container.textContent).not.toContain("a.txt"));
+
+    expect(actionButton("下载").disabled).toBe(true);
+    expect(actionButton("下载").title).toContain("请先选择");
+    expect(actionButton("日志").disabled).toBe(true);
+    expect(actionButton("日志").title).toContain("请先选择");
+    expect(mocks.pickSavePath).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(0);
   });
 });
 
@@ -1142,5 +1331,92 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     expect(modal.textContent).toContain("文件超过 5MB");
     await closeModal(modal, "取消");
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it("FileEditor 大文件预检：只读分块查看复用日志标签且不整读", async () => {
+    mocks.readRange.mockResolvedValue({
+      path: "~/big.log",
+      offset: 0,
+      size: 6 * 1024 * 1024,
+      contentBase64: "",
+      truncated: true,
+    });
+    mocks.askChoice.mockResolvedValue("view");
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            id: "ws",
+            kind: "session",
+            title: "w",
+            sessionId: SID,
+            panes: [{ id: "p", tabs: [], activeTabId: null }],
+            activePaneId: "p",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws",
+      });
+    });
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(
+      createElement(FileEditor, { sessionId: SID, path: "~/big.log", onClose }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/big.log", 0, 1);
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(
+      mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
+    ).toEqual([
+      "只读分块查看",
+      "仍编辑",
+    ]);
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs.find((tab) => tab.kind === "log")).toMatchObject({
+      sessionId: SID,
+      path: "~/big.log",
+    });
+  });
+
+  it("FileEditor 大文件预检：取消不整读", async () => {
+    mocks.readRange.mockResolvedValue({
+      path: "~/big.log",
+      offset: 0,
+      size: 6 * 1024 * 1024,
+      contentBase64: "",
+      truncated: true,
+    });
+    mocks.askChoice.mockResolvedValue(null);
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(
+      createElement(FileEditor, { sessionId: SID, path: "~/big.log", onClose }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(mocks.read).not.toHaveBeenCalled();
+  });
+
+  it("FileEditor 大文件预检：仍编辑只确认一次", async () => {
+    mocks.readRange.mockResolvedValue({
+      path: "~/big.log",
+      offset: 0,
+      size: 6 * 1024 * 1024,
+      contentBase64: "",
+      truncated: true,
+    });
+    mocks.read.mockResolvedValue({
+      path: "~/big.log",
+      size: 6 * 1024 * 1024,
+      contentBase64: "",
+    });
+    mocks.askChoice.mockResolvedValue("edit");
+    mocks.ask.mockResolvedValue(true);
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/big.log" }));
+
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    expect(mocks.read).toHaveBeenCalledOnce();
+    expect(mocks.ask).not.toHaveBeenCalled();
   });
 });

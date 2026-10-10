@@ -131,7 +131,9 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(text).toContain("对该安装的所有用户生效");
     expect(text).toContain("原本要逐次确认");
     expect(text).toContain("只读模式下也会放行");
-    expect(text).toContain("被拦截规则判为禁止的操作不在授权范围内");
+    expect(text).toContain("长期授权只覆盖普通需确认操作");
+    expect(text).toContain("高危或无法判断仍按当前权限模式处理");
+    expect(text).toContain("被拦截规则判为禁止的操作始终拒绝");
     for (const name of ["生产 Web", "数据库"]) {
       expect(rowFor(name).textContent).toContain("未授权");
     }
@@ -148,7 +150,9 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(message).toContain("生产 Web");
     expect(message).toContain("不是按用户隔离");
     expect(message).toContain("只读模式下也会放行");
-    expect(message).toContain("被拦截规则判为禁止的操作不在授权范围内，始终拒绝");
+    expect(message).toContain("长期授权只覆盖普通需确认操作");
+    expect(message).toContain("高危或无法判断仍按当前权限模式处理");
+    expect(message).toContain("被拦截规则判为禁止的操作始终拒绝");
     expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
     await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启"));

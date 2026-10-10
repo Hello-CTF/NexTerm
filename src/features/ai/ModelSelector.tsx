@@ -8,6 +8,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
   const profilesRevision = useUi((s) => s.modelProfilesRevision);
   const [view, setView] = useState<ModelProfilesView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -17,8 +18,10 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const refresh = async () => {
     try {
       setView(await modelApi.overview());
+      setLoadError(null);
     } catch (e) {
-      pushToast("error", `读取模型档案失败：${describeError(e)}`);
+      setView(null);
+      setLoadError(describeError(e));
     }
   };
 
@@ -85,7 +88,9 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
         ) : (
           <IconPlus size={11} />
         )}
-        <span className="min-w-0 truncate">{active?.name || "添加模型"}</span>
+        <span className="min-w-0 truncate">
+          {active?.name || (loadError ? "模型档案读取失败" : "添加模型")}
+        </span>
         <IconChevronUp size={10} className="shrink-0 opacity-60" />
       </button>
 
@@ -95,7 +100,14 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           style={{ width: dropdownWidth }}
         >
           <div className="nx-menu-title">选择模型档案</div>
-          {view && view.profiles.length > 0 ? (
+          {loadError ? (
+            <div className="px-2 py-2 text-center">
+              <div className="nx-hint text-red-300">模型档案读取失败 · {loadError}</div>
+              <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void refresh()}>
+                重试
+              </button>
+            </div>
+          ) : view && view.profiles.length > 0 ? (
             view.profiles.map((p) => (
               <button
                 key={p.id}

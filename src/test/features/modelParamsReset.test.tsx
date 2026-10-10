@@ -52,6 +52,12 @@ const SAVED: ModelProfile = {
   proxy: "http://127.0.0.1:7890",
   stream: false,
   fallbackModel: "fb-1",
+  reasoningEffort: "high",
+  requestTimeoutSeconds: 30,
+  idleTimeoutSeconds: 45,
+  maxTokens: 2048,
+  circuitFailureThreshold: 2,
+  circuitCooldownSeconds: 90,
 };
 
 let view: MountedView | null = null;
@@ -76,14 +82,7 @@ async function mountManager(profile: ModelProfile): Promise<void> {
 describe("resetModelParams / modelParamsAtDefaults", () => {
   it("只重置参数字段，保留 id、名称、地址、密钥与模型名", () => {
     const reset = resetModelParams(SAVED);
-    expect(reset).toEqual({
-      ...SAVED,
-      temperature: MODEL_PARAM_DEFAULTS.temperature,
-      contextWindow: MODEL_PARAM_DEFAULTS.contextWindow,
-      proxy: null,
-      stream: true,
-      fallbackModel: null,
-    });
+    expect(reset).toEqual({ ...SAVED, ...MODEL_PARAM_DEFAULTS });
     expect(reset.id).toBe("p1");
     expect(reset.apiKey).toBe("sk-secret-1");
     expect(reset.baseUrl).toBe("https://api.deepseek.com/v1");
@@ -126,6 +125,15 @@ describe("ModelManager 恢复默认参数", () => {
     expect(inputFor("上下文窗口").value).toBe("");
     expect(inputFor("代理").value).toBe("");
     expect(inputFor("回退模型").value).toBe("");
+    expect(inputFor("思考强度").value).toBe("");
+    expect(inputFor("最大输出").value).toBe("");
+    expect(inputFor("stream/block 总超时").value).toBe("");
+    expect(inputFor("stream/block 空闲超时").value).toBe("");
+    expect(inputFor("自动暂停阈值").value).toBe("");
+    expect(inputFor("自动暂停时长").value).toBe("");
+    expect(view!.container.textContent).toContain("端点默认");
+    expect(view!.container.textContent).toContain("stream/block 总超时");
+    expect(view!.container.textContent).toContain("stream/block 空闲超时");
     const stream = view!.container.querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(stream.checked).toBe(true);
 
@@ -149,14 +157,10 @@ describe("ModelManager 恢复默认参数", () => {
     await flush();
 
     expect(mocks.save).toHaveBeenCalledTimes(1);
-    const expected: Record<string, unknown> = {
-      ...SAVED,
-      proxy: null,
-      stream: true,
-      fallbackModel: null,
-    };
+    const expected: Record<string, unknown> = { ...SAVED, ...MODEL_PARAM_DEFAULTS };
     delete expected.temperature;
     delete expected.contextWindow;
+    delete expected.reasoningEffort;
     expect(mocks.save.mock.calls[0][0]).toEqual(expected);
   });
 

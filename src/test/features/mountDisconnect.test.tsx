@@ -20,6 +20,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: mocks.create,
       remove: mocks.remove,
     },
+    systemApi: { platform: vi.fn().mockResolvedValue("windows") },
     sessionApi: {},
   };
 });

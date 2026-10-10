@@ -1611,7 +1611,10 @@ export function AssetEditor({
                     <button
                       type="button"
                       className="nx-btn nx-btn-ghost nx-btn-sm"
-                      onClick={() => setIcon("")}
+                      onClick={() => {
+                        setIcon("");
+                        setDirty(true);
+                      }}
                     >
                       恢复默认
                     </button>
@@ -1635,6 +1638,7 @@ export function AssetEditor({
                             aria-label={`选择图标 ${name}`}
                             onClick={() => {
                               setIcon(name);
+                              setDirty(true);
                               setIconPickerOpen(false);
                             }}
                           >

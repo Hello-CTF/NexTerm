@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import {
   click,
+  deferred,
   flush,
   flushUntil,
   mount,
@@ -373,6 +374,138 @@ describe("TranscriptHistoryPanel", () => {
     const target = mounted.container.querySelector('[data-chunk-seq="1"]');
     expect(target).not.toBeNull();
     expect(target?.textContent).toContain("needle here");
+  });
+
+  it("旧记录列表响应不会覆盖手动刷新结果", async () => {
+    const first = deferred<ReturnType<typeof summary>[]>();
+    const second = deferred<ReturnType<typeof summary>[]>();
+    mocks.transcriptList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => mocks.transcriptList.mock.calls.length === 1);
+    const refresh = [...mounted.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "刷新",
+    );
+    click(refresh!);
+    await flushUntil(() => mocks.transcriptList.mock.calls.length === 2);
+
+    second.resolve([summary({ bytes: 2048 })]);
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("2.0 KB"));
+    first.resolve([summary({ bytes: 1024 })]);
+    await flush();
+
+    expect(mounted.container.textContent).toContain("2.0 KB");
+    expect(mounted.container.textContent).not.toContain("1.0 KB");
+  });
+
+  it("切换记录后，旧内容响应不会覆盖新记录", async () => {
+    const first = summary({ id: "first" });
+    const second = summary({ id: "second" });
+    const firstRead = deferred<ReturnType<typeof readResult>>();
+    const secondRead = deferred<ReturnType<typeof readResult>>();
+    mocks.transcriptList.mockResolvedValue([first, second]);
+    mocks.transcriptRead.mockImplementation((id: string) =>
+      id === first.id ? firstRead.promise : secondRead.promise,
+    );
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 2);
+    const rows = mounted.container.querySelectorAll("tbody tr");
+    click(rows[0]);
+    await flushUntil(() => mocks.transcriptRead.mock.calls.length === 1);
+    click(rows[1]);
+    await flushUntil(() => mocks.transcriptRead.mock.calls.length === 2);
+
+    secondRead.resolve(readResult([{ seq: 0, dataBase64: b64("new output") }]));
+    await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("new output"));
+    firstRead.resolve(readResult([{ seq: 0, dataBase64: b64("old output") }]));
+    await flush();
+
+    expect(mounted.container.querySelector("pre")?.textContent).toContain("new output");
+    expect(mounted.container.querySelector("pre")?.textContent).not.toContain("old output");
+  });
+
+  it("旧搜索响应不会覆盖新搜索", async () => {
+    const first = deferred<{ seq: number; ts: number; preview: string }[]>();
+    const second = deferred<{ seq: number; ts: number; preview: string }[]>();
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mocks.transcriptSearch
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flushUntil(() => mounted!.container.querySelector("pre") !== null);
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索终端记录"]',
+    )!;
+    const search = [...mounted.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "搜索",
+    )!;
+    setInputValue(input, "old");
+    click(search);
+    await flushUntil(() => mocks.transcriptSearch.mock.calls.length === 1);
+    setInputValue(input, "new");
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await flushUntil(() => mocks.transcriptSearch.mock.calls.length === 2);
+
+    second.resolve([{ seq: 0, ts: 1, preview: "new match" }]);
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("new match"));
+    first.resolve([{ seq: 0, ts: 1, preview: "old match" }]);
+    await flush();
+
+    expect(mounted.container.textContent).toContain("new match");
+    expect(mounted.container.textContent).not.toContain("old match");
+  });
+
+  it("刷新同时重读当前记录内容", async () => {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mocks.transcriptRead
+      .mockResolvedValueOnce(readResult([{ seq: 0, dataBase64: b64("old output") }]))
+      .mockResolvedValueOnce(readResult([{ seq: 0, dataBase64: b64("new output") }]));
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("old output"));
+
+    const refresh = [...mounted.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "刷新",
+    );
+    click(refresh!);
+    await flushUntil(() => (mounted!.container.querySelector("pre")?.textContent ?? "").includes("new output"));
+
+    expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
+    expect(mocks.transcriptRead).toHaveBeenLastCalledWith(summary().id, 0, 524288);
+  });
+
+  it("contentOmitted 仅展示元数据，同步状态说明完整", async () => {
+    mocks.transcriptList.mockResolvedValue([
+      summary({ contentOmitted: true, syncOptIn: true }),
+    ]);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flush();
+
+    expect(mocks.transcriptRead).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("仅保留元数据");
+    expect(mounted.container.textContent).not.toContain("这条记录没有任何输出");
+    expect(
+      mounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索终端记录"]')?.disabled,
+    ).toBe(true);
+    const sync = mounted.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="关闭这条记录的同步"]',
+    );
+    expect(sync?.textContent?.trim()).toBe("已开启同步");
+
+    const replay = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (button) => button.textContent === "回放",
+    );
+    click(replay!);
+    await flush();
+    expect(mocks.transcriptRead).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("仅保留元数据");
+    expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
   });
 });
 

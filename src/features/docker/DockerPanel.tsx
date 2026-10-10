@@ -47,7 +47,7 @@ const CONTAINER_ACTION_LABELS: Record<string, string> = {
   remove: "删除",
 };
 
-const REFRESH_INTERVAL_OPTIONS = [10_000, 30_000, 60_000];
+const REFRESH_INTERVAL_OPTIONS = [0, 10_000, 30_000, 60_000];
 const DEFAULT_REFRESH_INTERVAL_MS = 30_000;
 const REFRESH_INTERVAL_KEY = "nexterm.dockerRefreshMs.v1";
 
@@ -129,6 +129,23 @@ function imageRef(i: ImageSummary): string {
   return isUntaggedImage(i) ? i.id : `${i.repository}:${i.tag}`;
 }
 
+export function createLogLineDecoder() {
+  const decoder = new TextDecoder();
+  let tail = "";
+  return {
+    write(bytes: Uint8Array): string[] {
+      const lines = (tail + decoder.decode(bytes, { stream: true })).split("\n");
+      tail = lines.pop() ?? "";
+      return lines;
+    },
+    close(): string[] {
+      const rest = tail + decoder.decode();
+      tail = "";
+      return rest ? [rest] : [];
+    },
+  };
+}
+
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
@@ -150,23 +167,47 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     }
   };
 
+  const autoRefreshMs = visible && refreshMs > 0 ? refreshMs : false;
   const containers = useQuery({
     queryKey: ["docker-ps", sessionId],
     queryFn: () => dockerApi.ps(sessionId),
-    refetchInterval: visible ? refreshMs : false,
+    refetchInterval: tab === "containers" ? autoRefreshMs : false,
   });
   const images = useQuery({
     queryKey: ["docker-images", sessionId],
     queryFn: () => dockerApi.images(sessionId),
-    refetchInterval: visible ? refreshMs : false,
+    refetchInterval: tab === "images" ? autoRefreshMs : false,
   });
 
   const cRows = containers.data ?? [];
   const iRows = images.data ?? [];
 
+  const changeTab = (next: "containers" | "images") => {
+    if (next === tab) return;
+    setTab(next);
+    if (!visible) return;
+    void (next === "containers" ? containers.refetch() : images.refetch());
+  };
+
   useEffect(() => {
     setPicked(new Set());
   }, [tab]);
+
+  useEffect(() => {
+    const available =
+      tab === "containers"
+        ? containers.data
+          ? new Set(containers.data.map((c) => c.id))
+          : null
+        : images.data
+          ? new Set(images.data.map(imageKey))
+          : null;
+    if (!available) return;
+    setPicked((prev) => {
+      const next = new Set([...prev].filter((key) => available.has(key)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [tab, containers.data, images.data]);
 
   useEffect(() => {
     if (!attached) return;
@@ -428,12 +469,15 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     );
   }
 
-  if (insight) {
+  const insightContainer = insight
+    ? (cRows.find((c) => c.id === insight.id) ?? insight)
+    : null;
+  if (insightContainer) {
     return (
       <ContainerInsight
-        key={insight.id}
+        key={insightContainer.id}
         sessionId={sessionId}
-        container={insight}
+        container={insightContainer}
         visible={visible}
         onClose={() => setInsight(null)}
       />
@@ -454,7 +498,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         <div className="nx-segment">
           <button
             className={`nx-segment-item ${tab === "containers" ? "is-active" : ""}`}
-            onClick={() => setTab("containers")}
+            onClick={() => changeTab("containers")}
           >
             <IconBox size={12} />
             容器
@@ -462,7 +506,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           </button>
           <button
             className={`nx-segment-item ${tab === "images" ? "is-active" : ""}`}
-            onClick={() => setTab("images")}
+            onClick={() => changeTab("images")}
           >
             <IconList size={12} />
             镜像
@@ -499,10 +543,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         )}
         <button
           className="nx-btn nx-btn-ghost nx-btn-sm"
-          onClick={() => {
-            void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
-            void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
-          }}
+          onClick={() => void (tab === "containers" ? containers.refetch() : images.refetch())}
         >
           <IconRefresh size={13} />
           刷新
@@ -517,7 +558,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           >
             {REFRESH_INTERVAL_OPTIONS.map((ms) => (
               <option key={ms} value={ms}>
-                {ms / 1000} 秒
+                {ms === 0 ? "关闭" : `${ms / 1000} 秒`}
               </option>
             ))}
           </select>
@@ -638,7 +679,12 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                       <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
                         <IconList size={13} />
                       </button>
-                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="进入容器终端" onClick={() => openExec(c)}>
+                      <button
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
+                        title={c.state === "running" ? "进入容器终端" : "容器已停止，启动后可进入终端"}
+                        disabled={c.state !== "running"}
+                        onClick={() => openExec(c)}
+                      >
                         <IconTerminal size={13} />
                       </button>
                       <button
@@ -789,13 +835,16 @@ function LogStream({ sink }: { sink: LogAttach["sink"] }) {
   const lastHeightRef = useRef(0);
 
   useEffect(() => {
-    const decoder = new TextDecoder();
-    sink.onBytes = (bytes) => {
-      const text = decoder.decode(bytes);
-      setLines((prev) => [...prev.slice(-4000), ...text.split("\n")]);
+    const decoder = createLogLineDecoder();
+    const append = (next: string[]) => {
+      if (next.length) {
+        setLines((prev) => [...prev, ...next].slice(-4000));
+      }
     };
+    sink.onBytes = (bytes) => append(decoder.write(bytes));
     return () => {
       sink.onBytes = null;
+      append(decoder.close());
     };
   }, [sink]);
 

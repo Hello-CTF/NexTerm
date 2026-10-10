@@ -16,7 +16,6 @@ import {
   nextTabId,
   connectAsset,
   dbKindOf,
-  DB_KIND_LABEL,
   openCredentialsSidebar,
   requestCloseTab,
   requestCloseTabs,
@@ -58,7 +57,7 @@ import {
   type KeybindingActionId,
 } from "./keybindings";
 import { connectWithHostKeyConfirm } from "./hostKeys";
-import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
+import { assetApi, sessionApi, syncApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { TRANSPORT, WEB } from "../ipc/env";
 import {
@@ -582,7 +581,7 @@ function AppShell() {
       ? "同步：不可用"
       : syncLink.data === undefined
         ? "同步：…"
-        : syncLink.data?.url
+        : syncLink.data?.url && syncLink.data.username && syncLink.data.hasPassword
           ? "同步：已配置"
           : "同步：本地模式";
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
@@ -644,15 +643,16 @@ function AppShell() {
   }, [pushToast, setSessions]);
 
   const openFiles = useCallback(() => {
-    if (!activeSessionId) return needSession();
+    const sessionId = ws?.sessionId;
+    if (!sessionId) return needSession();
     useUi.getState().addTab({
-      id: nextTabId(`files-${activeSessionId}`),
+      id: nextTabId(`files-${sessionId}`),
       kind: "files",
       title: "文件",
-      sessionId: activeSessionId,
+      sessionId,
       closable: true,
     });
-  }, [activeSessionId, needSession]);
+  }, [ws?.sessionId, needSession]);
 
   const openMount = useCallback(() => {
     const unavailable = mountUnavailableReason() !== null;
@@ -689,27 +689,16 @@ function AppShell() {
 
   const openDatabase = useCallback(async () => {
     try {
-      const list = await assetApi.list();
-      const asset =
-        list.find((a) => a.kind === "mysql") ??
-        list.find((a) => a.kind === "postgres") ??
-        list.find((a) => a.kind === "redis");
-      if (!asset) {
+      const assets = (await assetApi.list()).filter((asset) => dbKindOf(asset.kind) !== null);
+      if (assets.length === 0) {
         pushToast("info", "还没有数据库资产，先在资产树里新建一个");
         return;
       }
-      const { connId } = await dbApi.connect(asset.id);
-      const dbKind = dbKindOf(asset.kind) ?? "mysql";
-      const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
-      useUi.getState().ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
-      useUi.getState().addTab({
-        id: `db-${connId}`,
-        kind: "db",
-        title: DB_KIND_LABEL[dbKind],
-        connId,
-        dbKind,
-        closable: true,
-      });
+      if (assets.length === 1) {
+        await connectAsset(assets[0]);
+        return;
+      }
+      setQuickConnectOpen(true);
     } catch (e) {
       pushToast("error", describeError(e));
     }
@@ -1201,7 +1190,7 @@ function AppShell() {
           {
             key: "db",
             label: "数据库",
-            hint: "打开数据库工作台：查询 MySQL / Redis 资产",
+            hint: "打开数据库工作台：查询 MySQL / PostgreSQL / Redis 资产",
             icon: IconDatabase,
             onClick: () => void openDatabase(),
           },
@@ -2036,12 +2025,12 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
   const bindings = useKeybindings();
-  const shortcuts: [string, string][] = [
-    [formatBinding(bindings.newTerminal), "本地终端"],
-    [formatBinding(bindings.quickConnect), "快速连接"],
-    [formatBinding(bindings.commandPalette), "命令面板"],
-    [formatBinding(bindings.toggleSidebar), "资产树"],
-    [formatBinding(bindings.toggleAiSidebar), "AI 侧栏"],
+  const shortcuts: [KeybindingActionId, string, string][] = [
+    ["newTerminal", formatBinding(bindings.newTerminal), "本地终端"],
+    ["quickConnect", formatBinding(bindings.quickConnect), "快速连接"],
+    ["commandPalette", formatBinding(bindings.commandPalette), "命令面板"],
+    ["toggleSidebar", formatBinding(bindings.toggleSidebar), "资产树"],
+    ["toggleAiSidebar", formatBinding(bindings.toggleAiSidebar), "AI 侧栏"],
   ];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">
@@ -2053,8 +2042,8 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {shortcuts.map(([k, label]) => (
-          <span key={k} className="nx-chip">
+        {shortcuts.map(([id, k, label]) => (
+          <span key={id} className="nx-chip">
             <span className="nx-kbd">{k}</span>
             {label}
           </span>
@@ -2077,14 +2066,16 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
           <IconTerminal size={14} />
           打开本地终端
         </button>
-        <button className="nx-btn nx-btn-outline" onClick={onPalette}>
-          <IconCommand size={14} />
-          命令面板
-        </button>
+        {onPalette && (
+          <button className="nx-btn nx-btn-outline" onClick={onPalette}>
+            <IconCommand size={14} />
+            命令面板
+          </button>
+        )}
       </div>
       <div className="nx-hint max-w-md text-center">
         左栏的「当前设备」双击即连（本机终端 + 文件树）；SSH / WinRM 资产开终端标签，
-        容器资产开容器面板，MySQL / Redis 资产开数据库工作台。
+        容器资产开容器面板，MySQL / PostgreSQL / Redis 资产开数据库工作台。
       </div>
     </div>
   );

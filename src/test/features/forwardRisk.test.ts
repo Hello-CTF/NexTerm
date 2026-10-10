@@ -50,6 +50,12 @@ async function mountForward(): Promise<MountedView> {
     createElement(QueryClientProvider, { client }, createElement(ForwardPanel, { sessionId: "s" })),
   );
   clickButton(mounted.container, "SOCKS5 代理");
+  await waitFor(() => {
+    const create = [...mounted.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "创建",
+    );
+    expect(create?.disabled).toBe(false);
+  });
   return mounted;
 }
 
@@ -120,7 +126,7 @@ describe("SOCKS exposure confirmation", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.any(String));
   });
 
-  it("uses the authoritative public address when env resolves after creation starts", async () => {
+  it("uses the authoritative public address after the env check succeeds", async () => {
     const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
     mocks.env.mockReturnValue(env.promise);
     mocks.createSocks
@@ -131,6 +137,7 @@ describe("SOCKS exposure confirmation", () => {
       })
       .mockResolvedValueOnce({ id: "f1", kind: "socks" });
     mocks.ask.mockResolvedValue(true);
+    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
     mounted = await mountForward();
     clickButton(mounted.container, "创建");
 
@@ -142,7 +149,6 @@ describe("SOCKS exposure confirmation", () => {
       "success",
       expect.stringMatching(/0\.0\.0\.0:1080/),
     );
-    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
   });
 });
 

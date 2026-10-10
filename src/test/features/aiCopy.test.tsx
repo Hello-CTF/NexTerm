@@ -151,8 +151,8 @@ describe("M134 AI copy", () => {
     click(view!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("设备长期授权允许的终端写入或命令执行除外");
-    expect(text).toContain("拦截规则命中或拿不准的仍会问你");
+    expect(text).toContain("设备长期授权仅放行普通需确认的终端写入或命令执行");
+    expect(text).toContain("高危或无法判断的仍逐次确认");
   });
 
   it("explains the model selector without BYOK jargon", async () => {
@@ -185,5 +185,28 @@ describe("M134 AI copy", () => {
       .getState()
       .items.find((i) => i.role === "tool" && i.name === "read_screen");
     expect(item).toMatchObject({ display: "读取屏幕" });
+  });
+
+  it("模型档案读取失败显示错误与重试，不伪装成空配置", async () => {
+    mocks.overview.mockRejectedValue(new Error("档案服务不可用"));
+    const selector = mount(createElement(ModelSelector, { onManage: () => undefined }));
+    await flush();
+    click(selector.container.querySelector("button.nx-chip")!);
+    await flush();
+
+    expect(selector.container.textContent).toContain("模型档案读取失败 · 档案服务不可用");
+    expect(selector.container.textContent).not.toContain("还没有模型档案");
+
+    mocks.overview.mockResolvedValue({
+      profiles: [{ id: "p1", name: "公司 DeepSeek", model: "deepseek-chat" }],
+      activeId: "p1",
+    });
+    const retry = [...selector.container.querySelectorAll("button")].find(
+      (button) => button.textContent === "重试",
+    );
+    click(retry!);
+    await flush();
+    expect(selector.container.textContent).toContain("公司 DeepSeek");
+    selector.unmount();
   });
 });

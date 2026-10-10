@@ -137,8 +137,9 @@ function sleep(ms: number): Promise<void> {
   return act(() => new Promise<void>((r) => setTimeout(r, ms)));
 }
 
-function mountPanel(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function mountPanel(
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+): MountedView {
   return mount(
     createElement(
       QueryClientProvider,
@@ -160,8 +161,10 @@ describe("Docker insight controls (M61)", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     document.body.replaceChildren();
+    window.localStorage.removeItem("nexterm.dockerRefreshMs.v1");
     useUi.setState({ pushToast: vi.fn() });
     mocks.reopenCbs.length = 0;
     mocks.ps.mockResolvedValue([containerA, containerB]);
@@ -173,6 +176,8 @@ describe("Docker insight controls (M61)", () => {
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
+    vi.useRealTimers();
+    window.localStorage.removeItem("nexterm.dockerRefreshMs.v1");
   });
 
   it("refresh interval select defaults to 30s and persists changes to localStorage", async () => {
@@ -188,7 +193,54 @@ describe("Docker insight controls (M61)", () => {
     setSelectValue(select, "10000");
     expect(select.value).toBe("10000");
     expect(window.localStorage.getItem("nexterm.dockerRefreshMs.v1")).toBe("10000");
-    window.localStorage.removeItem("nexterm.dockerRefreshMs.v1");
+
+    setSelectValue(select, "0");
+    expect(select.selectedOptions[0].textContent).toBe("关闭");
+    expect(window.localStorage.getItem("nexterm.dockerRefreshMs.v1")).toBe("0");
+
+    m.unmount();
+    mounted = mountPanel();
+    const persisted = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="自动刷新间隔"]',
+    )!;
+    expect(persisted.value).toBe("0");
+  });
+
+  it("auto refreshes only the current tab and keeps manual refresh available when disabled", async () => {
+    window.localStorage.setItem("nexterm.dockerRefreshMs.v1", "10000");
+    vi.useFakeTimers();
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(mocks.ps).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.images).toHaveBeenCalledTimes(1));
+    mocks.ps.mockClear();
+    mocks.images.mockClear();
+
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await waitFor(() => expect(mocks.ps).toHaveBeenCalledTimes(1));
+    expect(mocks.images).not.toHaveBeenCalled();
+
+    const imagesTab = [...m.container.querySelectorAll(".nx-segment-item")].find((button) =>
+      button.textContent?.includes("镜像"),
+    )!;
+    click(imagesTab);
+    await waitFor(() => expect(mocks.images).toHaveBeenCalledTimes(1));
+    expect(mocks.ps).toHaveBeenCalledTimes(1);
+
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await waitFor(() => expect(mocks.images).toHaveBeenCalledTimes(2));
+    expect(mocks.ps).toHaveBeenCalledTimes(1);
+
+    const select = m.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="自动刷新间隔"]',
+    )!;
+    setSelectValue(select, "0");
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(mocks.images).toHaveBeenCalledTimes(2);
+    expect(mocks.ps).toHaveBeenCalledTimes(1);
+
+    clickButton(m.container, "刷新");
+    await waitFor(() => expect(mocks.images).toHaveBeenCalledTimes(3));
+    expect(mocks.ps).toHaveBeenCalledTimes(1);
   });
 
   it("inspect renders loading, summary and keeps secrets out of the DOM entirely", async () => {
@@ -286,6 +338,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("当前");
     expect(mockedText()).not.toContain("intruder");
     expect(mockedText()).not.toContain("98.00%");
+    expect(mockedText().match(/100MiB \/ 2GiB/g)).toHaveLength(1);
   });
 
   it("stats empty state explains when the current container is stopped", async () => {
@@ -296,6 +349,57 @@ describe("Docker insight controls (M61)", () => {
 
     await waitFor(() => expect(mockedText()).toContain("当前容器已停止"));
     expect(mockedText()).toContain("只有运行中的容器才有统计");
+  });
+
+  it("disables terminal and files for stopped containers with startup hints", async () => {
+    const m = (mounted = mountPanel());
+    await waitFor(() =>
+      expect(m.container.querySelector('button[title="容器已停止，启动后可进入终端"]')).not.toBeNull(),
+    );
+    const runningTerminal = m.container.querySelector<HTMLButtonElement>(
+      'button[title="进入容器终端"]',
+    )!;
+    const stoppedTerminal = m.container.querySelector<HTMLButtonElement>(
+      'button[title="容器已停止，启动后可进入终端"]',
+    )!;
+    expect(runningTerminal.disabled).toBe(false);
+    expect(stoppedTerminal.disabled).toBe(true);
+
+    await openInsight(m, 1);
+    const files = [...m.container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "文件",
+    )!;
+    expect(files.disabled).toBe(true);
+    expect(files.title).toBe("容器已停止，启动后可浏览文件");
+    expect(mockedText()).toContain("启动容器后可浏览文件");
+    expect(mocks.listDir).not.toHaveBeenCalled();
+  });
+
+  it("derives insight status and file availability from the latest container list", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const m = (mounted = mountPanel(client));
+    await openInsight(m, 0);
+    const files = () =>
+      [...m.container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "文件",
+      )!;
+    expect(files().disabled).toBe(false);
+
+    act(() => {
+      client.setQueryData<ContainerSummary[]>(
+        ["docker-ps", "s1"],
+        [{ ...containerA, state: "exited", status: "Exited (0) just now" }],
+      );
+    });
+    await waitFor(() => expect(mockedText()).toContain("已停止"));
+    expect(files().disabled).toBe(true);
+    expect(mockedText()).toContain("启动容器后可浏览文件");
+
+    act(() => {
+      client.setQueryData<ContainerSummary[]>(["docker-ps", "s1"], [containerA]);
+    });
+    await waitFor(() => expect(files().disabled).toBe(false));
+    expect(mockedText()).not.toContain("启动容器后可浏览文件");
   });
 
   it("stats polling stops after leaving the stats tab", async () => {
@@ -325,7 +429,7 @@ describe("Docker insight controls (M61)", () => {
 
   it("files tab lists entries without dot-link noise and navigates directories", async () => {
     mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
-      if (path === "/") return Promise.resolve([".", "..", "app/", "etc/", "server.js", ".env"]);
+      if (path === "/") return Promise.resolve(["./", "../", "app/", "etc/", "server.js", ".env"]);
       if (path === "/etc") return Promise.resolve(["nginx/", "passwd"]);
       return Promise.resolve([]);
     });
@@ -372,6 +476,41 @@ describe("Docker insight controls (M61)", () => {
     click(passwdRow);
     await flush();
     expect(mocks.listDir).not.toHaveBeenCalledWith("s1", containerA.id, "/etc/passwd");
+  });
+
+  it("files tab uses explicit entry types instead of relying on name suffixes", async () => {
+    mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
+      if (path === "/") {
+        return Promise.resolve([
+          { name: "typed-dir", isDir: true },
+          { name: "literal/", isDir: false },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    const m = (mounted = mountPanel());
+    await openInsight(m, 0);
+    clickButton(m.container, "文件");
+    await waitFor(() => expect(mockedText()).toContain("typed-dir"));
+
+    const typedRow = [...m.container.querySelectorAll("tbody tr")].find((row) =>
+      row.textContent?.includes("typed-dir"),
+    )!;
+    const literalRow = [...m.container.querySelectorAll("tbody tr")].find((row) =>
+      row.textContent?.includes("literal/"),
+    )!;
+    expect(typedRow.textContent).toContain("目录");
+    expect(typedRow.className).toContain("cursor-pointer");
+    expect(literalRow.textContent).toContain("文件");
+    expect(literalRow.className).not.toContain("cursor-pointer");
+
+    click(literalRow);
+    await flush();
+    expect(mocks.listDir).toHaveBeenCalledTimes(1);
+    click(typedRow);
+    await waitFor(() =>
+      expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/typed-dir"),
+    );
   });
 
   it("files tab masks sensitive directory names in rows and breadcrumbs but navigates by raw value", async () => {
@@ -526,6 +665,25 @@ describe("Docker insight controls (M61)", () => {
 
     await waitFor(() => expect(mockedText()).toContain("容器列表加载失败"));
     expect(mockedText()).toContain("这台主机没有安装 Docker");
+  });
+
+  it("prunes picked containers and bulk counts after the list shrinks", async () => {
+    const m = (mounted = mountPanel());
+    await waitFor(() =>
+      expect(m.container.querySelectorAll('input[aria-label^="选择 "]').length).toBe(2),
+    );
+    click(m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]')!);
+    click(m.container.querySelector<HTMLInputElement>('input[aria-label="选择 worker"]')!);
+    await waitFor(() => expect(mockedText()).toContain("已选 2"));
+
+    mocks.ps.mockResolvedValue([containerA]);
+    clickButton(m.container, "刷新");
+    await waitFor(() =>
+      expect(m.container.querySelectorAll('input[aria-label^="选择 "]').length).toBe(1),
+    );
+    await waitFor(() => expect(mockedText()).toContain("已选 1"));
+    expect(mockedText()).not.toContain("已选 2");
+    expect(mockedText()).toContain("删除选中 (1)");
   });
 
   it("log follow surfaces an interrupted state with retry when re-attach fails after reconnect", async () => {
@@ -757,6 +915,28 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     expect(modal.textContent).toContain("仍可用来创建容器");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
+  });
+
+  it("prunes picked images and bulk counts after the list shrinks", async () => {
+    mocks.images.mockResolvedValue([imageA, imageUntagged]);
+    const m = (mounted = mountPanelWithDialogHost());
+    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    click(segmentItem(m.container, "镜像"));
+    await waitFor(() =>
+      expect(m.container.querySelectorAll('button[title="删除镜像"]').length).toBe(2),
+    );
+    click(m.container.querySelector<HTMLInputElement>('input[aria-label="选择 nginx:1.25"]')!);
+    click(m.container.querySelector<HTMLInputElement>('input[aria-label="选择 <none>:<none>"]')!);
+    await waitFor(() => expect(m.container.textContent).toContain("已选 2"));
+
+    mocks.images.mockResolvedValue([imageA]);
+    clickButton(m.container, "刷新");
+    await waitFor(() =>
+      expect(m.container.querySelectorAll('button[title="删除镜像"]').length).toBe(1),
+    );
+    await waitFor(() => expect(m.container.textContent).toContain("已选 1"));
+    expect(m.container.textContent).not.toContain("已选 2");
+    expect(m.container.textContent).toContain("删除选中 (1)");
   });
 
   it("stop asks for confirmation with consequences, cancel aborts", async () => {

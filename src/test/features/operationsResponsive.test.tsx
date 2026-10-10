@@ -206,7 +206,11 @@ describe("Enter 提交的 IME 守卫", () => {
 
   it("转发目标端口：组合中 Enter 不创建，普通 Enter 创建", async () => {
     mounted = mount(withQueryClient(createElement(ForwardPanel, { sessionId: "s" })));
-    await flushUntil(() => mocks.env.mock.calls.length > 0);
+    await flushUntil(() =>
+      [...mounted!.container.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "创建" && !button.disabled,
+      ),
+    );
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="目标端口"]');
     if (!input) throw new Error("target port input not found");
     keyDown(input, "Enter", { isComposing: true });

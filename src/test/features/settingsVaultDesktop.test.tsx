@@ -159,4 +159,13 @@ describe("桌面端凭据保护关闭路径", () => {
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
   });
+
+  it("桌面端密钥存储文案区分本机与同步上传条件", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后存在本机 sqlite"));
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("只有开启「同步 AI 模型档案」且凭据库已解锁");
+    expect(text).toContain("端到端加密同步");
+    expect(text).not.toContain("不会上传");
+  });
 });

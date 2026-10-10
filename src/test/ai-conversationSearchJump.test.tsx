@@ -352,4 +352,31 @@ describe("AiSidebar search jump", () => {
     expect(wrapperOf(view!, 0)).not.toBeNull();
     expect(wrapperOf(view!, 99)).toBeNull();
   });
+
+  it("输入查询后首个匹配立即 reveal，无需先点下一个", async () => {
+    const rows = Array.from({ length: 80 }, (_, i) =>
+      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    );
+    mocks.messages.mockResolvedValue(rows);
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => (view!.container.textContent ?? "").includes("词1 回答"));
+    const log = stubGeometry(view!);
+
+    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await flush();
+    setInputValue(
+      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
+      "词70",
+    );
+    await flush();
+    expect(log.scrollTop).toBe(70 * 88);
+
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(wrapperOf(view!, 70)).not.toBeNull();
+    expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+  });
 });

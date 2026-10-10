@@ -317,12 +317,17 @@ export function AuthCard() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="nx-btn nx-btn-outline nx-btn-sm"
-                onClick={() => {
-                  void navigator.clipboard
-                    ?.writeText(pendingRecoveryKey.formatted)
-                    .then(() => pushToast("success", "恢复密钥已复制"))
-                    .catch(() => pushToast("error", "复制失败,请手动选中复制"));
-                }}
+                onClick={() =>
+                  void (async () => {
+                    try {
+                      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+                      await navigator.clipboard.writeText(pendingRecoveryKey.formatted);
+                      pushToast("success", "恢复密钥已复制");
+                    } catch {
+                      pushToast("error", "复制失败,请手动选中复制");
+                    }
+                  })()
+                }
               >
                 <IconCopy size={12} />
                 复制
@@ -449,6 +454,7 @@ function TotpCard() {
   const [confirmCode, setConfirmCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
   const [disableCode, setDisableCode] = useState("");
   const [rebindOpen, setRebindOpen] = useState(false);
@@ -468,11 +474,16 @@ function TotpCard() {
     void load();
   }, [load]);
 
-  const copyText = (text: string, label: string) => {
-    void navigator.clipboard
-      ?.writeText(text)
-      .then(() => pushToast("success", `${label}已复制`))
-      .catch(() => pushToast("error", "复制失败,请手动选中复制"));
+  const copyText = async (text: string, label: string): Promise<boolean> => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(text);
+      pushToast("success", `${label}已复制`);
+      return true;
+    } catch {
+      pushToast("error", "复制失败,请手动选中复制");
+      return false;
+    }
   };
 
   const startSetup = async (reverifyCredential?: string) => {
@@ -592,20 +603,27 @@ function TotpCard() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              onClick={() => {
-                setCopied(true);
-                copyText(recoveryCodes.join("\n"), "恢复码");
-              }}
+              onClick={() =>
+                void (async () => {
+                  setCopied(false);
+                  setCopied(await copyText(recoveryCodes.join("\n"), "恢复码"));
+                  setConfirmed(true);
+                })()
+              }
             >
               <IconCopy size={12} />
               {copied ? "已复制" : "复制全部"}
             </button>
-            <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={!copied} onClick={() => setRecoveryCodes(null)}>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              disabled={!confirmed}
+              onClick={() => setRecoveryCodes(null)}
+            >
               <IconCheckCircle size={12} />
-              我已安全保存
+              {copied ? "我已安全保存" : "已手动保存"}
             </button>
           </div>
-          {!copied && <p className="nx-hint text-[11px]">先复制保存,再关闭本页</p>}
+          {!confirmed && <p className="nx-hint text-[11px]">先复制保存,再关闭本页</p>}
         </div>
       )}
 

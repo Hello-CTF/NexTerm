@@ -4,9 +4,9 @@ import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { indentWithTab, redo, undo } from "@codemirror/commands";
 import { openSearchPanel, search } from "@codemirror/search";
-import { ask } from "../../ui/dialogs";
+import { ask, askChoice } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
-import { useUi } from "../../app/store";
+import { openLogTab, useUi } from "../../app/store";
 import { modHint } from "../../app/platform";
 import { nxHighlight } from "../../ui/editorTheme";
 import {
@@ -100,9 +100,49 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fsApi.read(sessionId, path);
+        let probedSize: number | null = null;
+        try {
+          const probe = await fsApi.readRange(sessionId, path, 0, 1);
+          probedSize = probe.size;
+        } catch {
+          probedSize = null;
+        }
         if (cancelled) return;
-        if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))) {
+        let largeEditConfirmed = false;
+        if (probedSize !== null && probedSize > 5 * 1024 * 1024) {
+          const choice = await askChoice("文件超过 5MB，整文件编辑可能卡顿。请选择打开方式。", {
+            title: "大文件",
+            level: "info",
+            choices: [
+              {
+                key: "view",
+                label: "只读分块查看",
+                hint: "使用日志查看器按需读取，不加载整个文件",
+                primary: true,
+              },
+              { key: "edit", label: "仍编辑", hint: "读取整个文件并启用编辑与保存" },
+            ],
+          });
+          if (cancelled) return;
+          if (choice === "view") {
+            openLogTab(sessionId, path);
+            onClose?.();
+            return;
+          }
+          if (choice !== "edit") {
+            onClose?.();
+            return;
+          }
+          largeEditConfirmed = true;
+        }
+        const readMaxBytes = probedSize === null ? undefined : probedSize + 1024;
+        const res = await fsApi.read(sessionId, path, readMaxBytes);
+        if (cancelled) return;
+        if (
+          !largeEditConfirmed &&
+          res.size > 5 * 1024 * 1024 &&
+          !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))
+        ) {
           onClose?.();
           return;
         }

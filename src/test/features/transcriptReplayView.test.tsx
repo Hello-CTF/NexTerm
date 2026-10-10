@@ -88,6 +88,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("TranscriptReplayView", () => {
@@ -171,5 +172,44 @@ describe("TranscriptReplayView", () => {
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await flush();
     expect(mounted.container.textContent).toContain("加载回放数据失败");
+  });
+
+  it("播放按真实 elapsed 而不是固定 tick 推进", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const terminal = terminalMocks.instances[0];
+    const playButton = [...mounted.container.querySelectorAll("button")].find(
+      (candidate) => candidate.getAttribute("aria-label") === "播放回放",
+    );
+    act(() => {
+      playButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    now = 1100;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+
+    expect(writtenText(terminal)).toContain("world");
+    expect(mounted.container.querySelector("[data-testid='replay-clock']")?.textContent).toBe(
+      "00:01 / 00:01",
+    );
+  });
+
+  it("contentOmitted 不读取空内容，只展示元数据状态", async () => {
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" contentOmitted />);
+    await flush();
+
+    expect(mocks.transcriptRead).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("仅保留元数据");
+    expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
+    expect(
+      mounted.container.querySelector<HTMLButtonElement>('button[aria-label="播放回放"]')?.disabled,
+    ).toBe(true);
   });
 });

@@ -98,7 +98,7 @@ export function AccountCard() {
 
   const resetUser = async (target: AccountUser) => {
     const ok = await ask(
-      `重置用户「${target.username}」?\n\n其密码与数据密钥将被清除,全部会话立即失效;\n对方下次登录须设置新密码并重新同步数据。`,
+      `重置用户「${target.username}」?\n\n对方的数据密钥、全部会话和两步验证绑定将被清除;\n对方下次登录须设置新密码,云端密文需从仍持有数据的设备重新同步。`,
       { title: "重置用户", kind: "warning" },
     );
     if (!ok) return;
@@ -149,8 +149,8 @@ export function AccountCard() {
       </div>
 
       <p className="nx-hint mb-3">
-        管理员创建的用户用初始密码直接登录。禁用会立即踢下线;重置会清除对方的密码与数据密钥,
-        对方下次登录须设置新密码。管理员拿不到、也看不懂对方的任何加密内容。
+        管理员创建的用户用初始密码直接登录。禁用会立即踢下线;重置会清除对方的数据密钥、全部会话和两步验证绑定,
+        对方下次登录须设置新密码,云端密文需从仍持有数据的设备重新同步。管理员拿不到、也看不懂对方的任何加密内容。
       </p>
 
       {createOpen && (
@@ -227,22 +227,22 @@ export function AccountCard() {
                   {u.mfa_enabled ? "MFA 已开启" : "未绑 MFA"}
                 </span>
                 <span className="nx-hint shrink-0 text-[11px]">最近登录 {formatTime(u.last_login_at)}</span>
-                {!isSelf && u.state !== "disabled" && (
-                  <>
-                    <button
-                      className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                      onClick={() => void disableUser(u)}
-                    >
-                      禁用
-                    </button>
-                    <button
-                      className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                      title="清除密码与数据密钥,对方下次登录须设置新密码"
-                      onClick={() => void resetUser(u)}
-                    >
-                      重置
-                    </button>
-                  </>
+                {!isSelf && u.state === "active" && (
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                    onClick={() => void disableUser(u)}
+                  >
+                    禁用
+                  </button>
+                )}
+                {!isSelf && (
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                    title="清除数据密钥、全部会话和两步验证绑定,对方下次登录须设置新密码"
+                    onClick={() => void resetUser(u)}
+                  >
+                    重置
+                  </button>
                 )}
               </div>
             );

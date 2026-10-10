@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { forwardApi } from "../../ipc/commands";
+import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
@@ -18,8 +19,6 @@ import {
 type Kind = "local" | "socks" | "remote";
 
 const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080", remote: "18080" };
-
-const FALLBACK_LISTEN_HOST = "127.0.0.1";
 
 const LAZYCAT_UNAVAILABLE =
   "检测到懒猫微服，端口转发在此平台上不可用：平台暴露的端口是不带鉴权的裸 TCP，应用侧无法补上鉴权。需要把端口开放给外部时，请改用微服平台自带的转发功能或 SSH 隧道。";
@@ -48,11 +47,31 @@ function isLoopbackHost(host: string): boolean {
   );
 }
 
+function useForwardPanelVisible(sessionId?: string): boolean {
+  return useUi((s) => {
+    const exists = s.workspaces.some((w) =>
+      w.panes.some((p) => p.tabs.some((t) => t.kind === "forward" && t.sessionId === sessionId)),
+    );
+    if (!exists) return true;
+    const workspace =
+      s.workspaces.find((w) => w.id === s.activeWorkspaceId) ?? s.workspaces[s.workspaces.length - 1];
+    if (!workspace) return true;
+    return workspace.panes.some((p) => {
+      const active = p.tabs.find((t) => t.id === p.activeTabId) ?? p.tabs[p.tabs.length - 1];
+      return active?.kind === "forward" && active.sessionId === sessionId;
+    });
+  });
+}
+
 export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const sessions = useUi((s) => s.sessions);
+  const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
+  const localMachine = WEB ? "NexTerm 所在机器" : "本机";
+  const remoteTarget = WEB ? "NexTerm 所在机器" : "本地";
+  const remoteService = WEB ? "NexTerm 所在机器上的服务" : "本地服务";
   const [kind, setKind] = useState<Kind>("local");
   const [listenPort, setListenPort] = useState(DEFAULT_PORT.local);
   const [bindHost, setBindHost] = useState("127.0.0.1");
@@ -69,13 +88,14 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
     refetchOnWindowFocus: false,
   });
   const unavailable = env.data?.available === false;
-  const listenHost = env.data?.listenHost ?? FALLBACK_LISTEN_HOST;
-  const exposed = !listenHost.startsWith("127.");
+  const listenHost = env.data?.listenHost ?? "";
+  const exposed = listenHost ? !isLoopbackHost(listenHost) : false;
 
   const forwards = useQuery({
     queryKey: ["forwards"],
     queryFn: () => forwardApi.list(),
-    refetchInterval: 5000,
+    enabled: visible,
+    refetchInterval: visible ? 5000 : false,
   });
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["forwards"] });
@@ -206,6 +226,10 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       );
       return;
     }
+    if (!env.data) {
+      pushToast("info", env.isError ? "转发环境检查失败，请重试" : "正在检查转发环境，请稍候");
+      return;
+    }
     const portInvalid = !isValidPort(listenPort);
     const bindHostErr = kind === "remote" ? validateRequired("远端监听地址", bindHost) : null;
     const hostErr = kind === "socks" ? null : validateRequired("目标主机", targetHost);
@@ -232,7 +256,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
         await forwardApi.createRemote(sessionId, bindHost.trim(), port, targetHost.trim(), Number(targetPort.trim()));
         pushToast(
           "success",
-          `远程转发已就绪 → 远端 ${bindHost.trim()}:${port} → 本地 ${targetHost.trim()}:${targetPort.trim()}`,
+          `远程转发已就绪 → 远端 ${bindHost.trim()}:${port} → ${remoteTarget} ${targetHost.trim()}:${targetPort.trim()}`,
         );
       } else {
         await forwardApi.create(
@@ -245,7 +269,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           "success",
           exposed
             ? `转发已就绪 → ${listenHost}:${port}（对外可访问）`
-            : `转发已就绪 → ${listenHost}:${port}（仅本机可访问）`,
+            : `转发已就绪 → ${listenHost}:${port}（仅${localMachine}可访问）`,
         );
       }
       refresh();
@@ -258,7 +282,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
         const remote = kind === "remote";
         const ok = await ask(
           remote
-            ? `远端监听 ${confirmedHost}:${port} 会把本地服务 ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，能连上该地址的任何人都能访问这个本地服务。请确认你理解并愿意承担这个风险。`
+            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，能连上该地址的任何人都能访问这个${remoteService}。请确认你理解并愿意承担这个风险。`
             : `监听 ${confirmedHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n能连上这个端口的任何人都能借当前 SSH 会话访问远端网络。请确认你理解并愿意承担这个风险。`,
           { title: remote ? "确认远程转发风险" : "确认开放代理风险", kind: "warning" },
         );
@@ -266,7 +290,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           try {
             if (remote) {
               await forwardApi.createRemote(sessionId, bindHost.trim(), port, targetHost.trim(), Number(targetPort.trim()), true);
-              pushToast("success", `远程转发已就绪 → 远端 ${confirmedHost}:${port} → 本地 ${targetHost.trim()}:${targetPort.trim()}`);
+              pushToast("success", `远程转发已就绪 → 远端 ${confirmedHost}:${port} → ${remoteTarget} ${targetHost.trim()}:${targetPort.trim()}`);
             } else {
               await forwardApi.createSocks(sessionId, port, true);
               pushToast("success", `SOCKS5 代理已就绪 → ${confirmedHost}:${port}`);
@@ -302,6 +326,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const remoteCount = list.filter((f) => f.kind === "remote").length;
   const socksCount = list.length - localCount - remoteCount;
   const forwardsFailed = forwards.isError && !forwards.data;
+  const forwardsRefreshFailed = forwards.isError && forwards.data !== undefined;
+  const envFailed = env.isError && !env.data;
+  const envRefreshFailed = env.isError && env.data !== undefined;
 
   return (
     <div className="nx-pane">
@@ -323,6 +350,15 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
+        {forwardsRefreshFailed && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2 text-[11px] text-amber-300" role="status">
+            <span>转发列表刷新失败 · {describeError(forwards.error)}；已保留上次成功结果。</span>
+            <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void forwards.refetch()}>
+              <IconRefresh size={12} />
+              重试
+            </button>
+          </div>
+        )}
         <table className="nx-table">
           <thead>
             <tr>
@@ -363,7 +399,8 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
               list.map((f) => {
               const isSocks = f.kind === "socks";
               const isRemote = f.kind === "remote";
-              const label = `${f.listenHost ?? listenHost}:${f.listenPort}`;
+              const host = f.listenHost ?? listenHost;
+              const label = `${host || "未知"}:${f.listenPort}`;
               return (
                 <tr key={f.id}>
                   <td>
@@ -394,7 +431,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                       </span>
                     ) : (
                       <span>
-                        {isRemote && <span className="text-neutral-500">本地 </span>}
+                        {isRemote && <span className="text-neutral-500">{remoteTarget} </span>}
                         {f.targetHost}
                         <span className="text-neutral-600">:</span>
                         {f.targetPort}
@@ -430,6 +467,29 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           </div>
         ) : (
           <>
+            {env.isPending && (
+              <div className="mb-2 text-[11px] text-neutral-500" role="status">
+                转发环境检查中…
+              </div>
+            )}
+            {envFailed && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
+                <span>转发环境检查失败 · {describeError(env.error)}</span>
+                <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
+                  <IconRefresh size={12} />
+                  重试
+                </button>
+              </div>
+            )}
+            {envRefreshFailed && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
+                <span>转发环境刷新失败 · {describeError(env.error)}；已保留上次成功结果。</span>
+                <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
+                  <IconRefresh size={12} />
+                  重试
+                </button>
+              </div>
+            )}
             <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
               <button
                 className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}
@@ -456,12 +516,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                 {kind === "local"
                   ? exposed
                     ? "把远端某个固定端口映射到服务端（连 MySQL / Redis 用这个）"
-                    : "把远端某个固定端口映射到本机（连 MySQL / Redis 用这个）"
+                    : `把远端某个固定端口映射到${localMachine}（连 MySQL / Redis 用这个）`
                   : kind === "remote"
-                    ? "在远端机器上监听一个端口，把连入的流量转回本地服务（让远端访问你本机的服务）"
+                    ? `在远端机器上监听一个端口，把连入的流量转回${remoteService}（让远端访问${WEB ? remoteService : "你本机的服务"}）`
                     : exposed
                       ? "在服务端开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）"
-                      : "在本机开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）"}
+                      : `在${localMachine}开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）`}
               </span>
             </div>
 
@@ -529,7 +589,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                       onBlur={onTargetHostBlur}
                       placeholder={
                         kind === "remote"
-                          ? "本地服务主机（在本机解析，如 127.0.0.1）"
+                          ? WEB
+                            ? "服务主机（在 NexTerm 所在机器解析，如 127.0.0.1）"
+                            : "本地服务主机（在本机解析，如 127.0.0.1）"
                           : "目标主机（在远端机器上解析，如 172.17.0.5 / db.internal）"
                       }
                       aria-label="目标主机"
@@ -572,7 +634,8 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
               )}
               <button
                 className="nx-btn nx-btn-primary nx-btn-sm"
-                disabled={busy || !sessionId || localSession}
+                disabled={busy || !sessionId || localSession || !env.data}
+                title={!env.data ? "等待转发环境检查成功" : undefined}
                 onClick={() => void create()}
               >
                 {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
@@ -586,6 +649,8 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   当前工作区是内置的「当前设备」：出口必须是另一台机器的 SSH 连接。
                   要访问内网服务（数据库 / 后台面板），先新建一台 SSH 资产并连上，再来建转发。
                 </>
+              ) : sessionId && !env.data ? (
+                "转发环境检查成功后才会显示监听地址并允许创建。"
               ) : sessionId ? (
                 kind === "remote" ? (
                   <>
@@ -596,7 +661,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     （绑定在远端机器上
                     {isLoopbackHost(bindHost)
                       ? "，只有远端本机能连，不对远端网络暴露"
-                      : "，这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止"}
+                      : WEB
+                        ? "，这个端口对远端网络开放，能连上它的任何人都会到达 NexTerm 所在机器上的目标服务。请确认目标服务自身有鉴权，不需要时及时停止"
+                        : "，这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止"}
                     ）。远程转发绑定在当前 SSH 连接上，会话断开后需要重新创建。
                   </>
                 ) : (
@@ -607,7 +674,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   </span>
                   {exposed
                     ? "，这个端口对外可访问，能连上它的任何人都会到达目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"
-                    : "，只有本机能连，不对外暴露。"}
+                    : `，只有${localMachine}能连，不对外暴露。`}
                   {exposed && kind === "socks" && (
                     <>
                       <br />

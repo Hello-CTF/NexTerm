@@ -112,6 +112,12 @@ export const MODEL_PARAM_DEFAULTS = {
   proxy: null,
   stream: true,
   fallbackModel: null,
+  reasoningEffort: "",
+  requestTimeoutSeconds: null,
+  idleTimeoutSeconds: null,
+  maxTokens: null,
+  circuitFailureThreshold: null,
+  circuitCooldownSeconds: null,
 } as const;
 
 export function resetModelParams(profile: ModelProfile): ModelProfile {
@@ -124,7 +130,13 @@ export function modelParamsAtDefaults(profile: ModelProfile): boolean {
     profile.contextWindow === MODEL_PARAM_DEFAULTS.contextWindow &&
     (profile.proxy ?? null) === MODEL_PARAM_DEFAULTS.proxy &&
     profile.stream === MODEL_PARAM_DEFAULTS.stream &&
-    fallbackModelLabel(profile) === (MODEL_PARAM_DEFAULTS.fallbackModel ?? "")
+    fallbackModelLabel(profile) === (MODEL_PARAM_DEFAULTS.fallbackModel ?? "") &&
+    (profile.reasoningEffort ?? "") === MODEL_PARAM_DEFAULTS.reasoningEffort &&
+    (profile.requestTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.requestTimeoutSeconds &&
+    (profile.idleTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.idleTimeoutSeconds &&
+    (profile.maxTokens ?? null) === MODEL_PARAM_DEFAULTS.maxTokens &&
+    (profile.circuitFailureThreshold ?? null) === MODEL_PARAM_DEFAULTS.circuitFailureThreshold &&
+    (profile.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds
   );
 }
 

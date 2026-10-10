@@ -51,7 +51,7 @@ vi.mock("../../ipc/events", async (importOriginal) => {
   };
 });
 
-import { DockerPanel } from "../../features/docker/DockerPanel";
+import { createLogLineDecoder, DockerPanel } from "../../features/docker/DockerPanel";
 import type { ContainerSummary } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 
@@ -139,6 +139,37 @@ describe("docker log stream follow", () => {
     const log = await openLogView(mounted);
     expect(log.getAttribute("role")).toBe("log");
     expect(log.getAttribute("aria-label")).toBe("容器日志");
+  });
+
+  it("decodes Chinese across byte chunks and caches the unterminated tail", async () => {
+    const m = (mounted = mountPanel());
+    await openLogView(m);
+    const encoded = new TextEncoder().encode("中文第一行\n");
+
+    act(() => {
+      mocks.bytesCb?.(encoded.slice(0, 2));
+    });
+    expect(m.container.textContent).not.toContain("中文");
+    expect(m.container.textContent).not.toContain("�");
+
+    act(() => {
+      mocks.bytesCb?.(encoded.slice(2));
+    });
+    await waitFor(() => expect(m.container.textContent).toContain("中文第一行"));
+    expect(m.container.textContent).not.toContain("�");
+
+    emitLog("缓存");
+    expect(m.container.textContent).not.toContain("缓存");
+    emitLog("尾行\n");
+    expect(m.container.textContent).toContain("缓存尾行");
+  });
+
+  it("flushes the cached tail when the decoder closes", () => {
+    const decoder = createLogLineDecoder();
+    const encoded = new TextEncoder().encode("中文尾行");
+    expect(decoder.write(encoded.slice(0, 4))).toEqual([]);
+    expect(decoder.write(encoded.slice(4))).toEqual([]);
+    expect(decoder.close()).toEqual(["中文尾行"]);
   });
 
   it("follows new output while at the bottom", async () => {

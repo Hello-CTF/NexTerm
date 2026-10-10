@@ -111,4 +111,15 @@ describe("formatQuickConnectTarget", () => {
       "deploy@example.com:2222",
     );
   });
+
+  it("IPv6 主机统一加方括号并可解析往返", () => {
+    const withUsername = { host: "::1", port: 22, username: "root" };
+    const withoutUsername = { host: "2001:db8::10", port: 2222, username: null };
+
+    expect(formatQuickConnectTarget(withUsername)).toBe("root@[::1]");
+    expect(formatQuickConnectTarget(withoutUsername)).toBe("[2001:db8::10]:2222");
+    expect(formatQuickConnectTarget({ host: "::1", port: 22, username: null })).toBe("[::1]");
+    expect(parseQuickConnectTarget(formatQuickConnectTarget(withUsername))).toEqual(withUsername);
+    expect(parseQuickConnectTarget(formatQuickConnectTarget(withoutUsername))).toEqual(withoutUsername);
+  });
 });

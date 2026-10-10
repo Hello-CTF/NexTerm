@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     changePassword: vi.fn(),
     recoveryReset: vi.fn(),
     enroll: vi.fn(),
+    writeText: vi.fn(),
   };
 });
 
@@ -90,6 +91,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   resetStore();
+  mocks.writeText.mockResolvedValue(undefined);
+  Object.assign(navigator, { clipboard: { writeText: mocks.writeText } });
   mocks.status.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
   mocks.me.mockRejectedValue({ code: "forbidden", message: "会话无效或缺失", status: 401 });
   mocks.init.mockResolvedValue({ user: ADMIN, csrf_token: "csrf-1" });
@@ -150,7 +153,7 @@ describe("AuthGate 首次初始化", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制"));
     expect(copyBtn).toBeTruthy();
-    expect(mounted.container.textContent).toContain("我已安全保存");
+    expect(mounted.container.textContent).toContain("已手动保存");
   });
 
   it("两次密码不一致时不提交", async () => {
@@ -282,16 +285,40 @@ describe("AuthGate 恢复密钥全屏门", () => {
     const gate = mounted.container.querySelector(".fixed.inset-0");
     expect(gate).not.toBeNull();
 
-    // 复制前「我已安全保存」不可用
-    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("我已安全保存")) as HTMLButtonElement | undefined;
+    // 复制前「已手动保存」不可用
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement | undefined;
     expect(doneBtn?.disabled).toBe(true);
 
     // 复制后可用
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制")) as HTMLButtonElement | undefined;
     copyBtn?.click();
     await flush();
-    const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("我已安全保存")) as HTMLButtonElement | undefined;
+    const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement | undefined;
     expect(doneBtn2?.disabled).toBe(false);
+  });
+
+  it("恢复密钥复制失败时显示手动复制路径,用户确认后仍可进入", async () => {
+    const formatted = "X3QS-WQP4-PY4P-VVAY-PH7R-NDV2-CUAI-QUKU";
+    mocks.writeText.mockRejectedValue(new Error("denied"));
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: ADMIN,
+      dek: new Uint8Array(32).fill(9),
+      gate: "ready",
+      pendingRecoveryKey: { canonical: "X3QSWQP4PY4PVVAYPH7RNDV2CUAIQUKU", formatted },
+      error: null,
+    });
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+
+    clickButton(mounted.container, "复制");
+    await flushUntil(() => mounted!.container.textContent?.includes("复制失败,请手动选中恢复密钥复制"));
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement;
+    const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement;
+    expect(mocks.writeText).toHaveBeenCalledWith(formatted);
+    expect(doneBtn.disabled).toBe(false);
+    expect(copyBtn.textContent).not.toContain("已复制");
+    expect(mounted.container.textContent).toContain(formatted);
   });
 });
 
@@ -387,6 +414,11 @@ describe("AuthGate reset_required 强制改密", () => {
     clickButton(mounted.container, "登录");
 
     await flushUntil(() => mounted!.container.textContent?.includes("必须先设置新密码"));
+    const resetText = mounted.container.textContent ?? "";
+    expect(resetText).toContain("当前(临时)密码只用于本次验证");
+    expect(resetText).toContain("数据密钥、全部会话和两步验证绑定已被清除");
+    expect(resetText).toContain("云端密文需从仍持有数据的设备重新同步");
+    expect(resetText).not.toContain("旧密码与加密数据已被清除");
     const resetInputs = mounted.container.querySelectorAll("input");
     setInputValue(resetInputs[0], "temp-pw-123");
     setInputValue(resetInputs[1], "new-pw-123");

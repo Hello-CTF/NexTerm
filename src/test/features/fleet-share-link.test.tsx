@@ -297,6 +297,8 @@ describe("DeviceTerminalView 公开链接创建", () => {
     // 创建前即说明访问边界: 任何拿到链接的人无需账号可开, 只发给信任的人
     expect(bodyText()).toContain("无需 NexTerm 账号");
     expect(bodyText()).toContain("请只把链接发给你信任的人");
+    expect(bodyText()).toContain("链接仅在创建成功后显示一次，本页面不会保存");
+    expect(bodyText()).not.toContain("链接只能创建一次");
     click(createButton());
 
     await flushUntil(() => calls.some((c) => c.url === "/share/links"));
@@ -379,6 +381,24 @@ describe("DeviceTerminalView 公开链接创建", () => {
     await flush();
     expect(bodyText()).not.toContain(LINK_TOKEN);
     expect(webStorageText()).not.toContain(LINK_TOKEN);
+  });
+
+  it("clipboard 不可用时复制公开链接给出明确错误", async () => {
+    route();
+    await mountReadyTerminal();
+    openSharePanel();
+    click(createButton());
+    await flushUntil(() => bodyText().includes(LINK_TOKEN));
+
+    useUi.setState({ toasts: [] });
+    vi.stubGlobal("navigator", { clipboard: undefined });
+    const copy = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制链接");
+    expect(copy).toBeTruthy();
+    click(copy as HTMLButtonElement);
+
+    expect(useUi.getState().toasts).toEqual([
+      expect.objectContaining({ kind: "error", text: "复制失败: 剪贴板不可用, 请手动选中复制" }),
+    ]);
   });
 
   it("创建失败给显式错误, 不展示任何 URL", async () => {

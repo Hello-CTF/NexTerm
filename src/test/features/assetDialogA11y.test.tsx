@@ -273,6 +273,51 @@ describe("AssetEditor accessible overlay", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("asks before closing after only selecting an icon", async () => {
+    const onClose = mountEditor();
+    await flush();
+    clickButton(mounted!.container, "选择图标");
+    const choice = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label^="选择图标 "]');
+    if (!choice) throw new Error("Icon choice not found");
+    click(choice);
+
+    mocks.ask.mockResolvedValueOnce(false);
+    const modal = mounted!.container.querySelector<HTMLElement>(".nx-modal");
+    if (!modal) throw new Error("Editor dialog not found");
+    keyDown(modal, "Escape");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledExactlyOnceWith(
+      "放弃未保存的修改？",
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("asks before closing after only restoring the default icon", async () => {
+    const onClose = vi.fn();
+    mounted = mountWithClient(
+      createElement(AssetEditor, {
+        kind: "asset",
+        initial: { ...WEB, kind: "ssh" as const, options: { icon: "server" } },
+        onClose,
+        onSaved: vi.fn(),
+      }),
+    );
+    await flush();
+    clickButton(mounted!.container, "恢复默认");
+
+    mocks.ask.mockResolvedValueOnce(false);
+    const modal = mounted!.container.querySelector<HTMLElement>(".nx-modal");
+    if (!modal) throw new Error("Editor dialog not found");
+    keyDown(modal, "Escape");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledExactlyOnceWith(
+      "放弃未保存的修改？",
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 describe("资产表单字段可访问名称与分组 placeholder（M205 发现 12/13）", () => {

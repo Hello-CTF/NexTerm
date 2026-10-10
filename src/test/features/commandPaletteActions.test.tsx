@@ -245,6 +245,17 @@ describe("命令面板资产二级操作", () => {
     }
   });
 
+  it("数据库不提供默认打开第一个资产的通用入口，保留逐资产连接", async () => {
+    mocks.list.mockResolvedValue([
+      assetOf({ id: "db", name: "db-01", kind: "postgres", host: "10.0.0.9", port: 5432 }),
+    ]);
+    await mountPalette({ onClose: vi.fn() });
+
+    const options = [...mounted!.container.querySelectorAll('[role="option"]')];
+    expect(options.some((option) => option.textContent?.includes("打开数据库工作台"))).toBe(false);
+    expect(optionByText(mounted!.container, "连接 db-01")).toBeTruthy();
+  });
+
   it("编辑条目把资产交给现有编辑器流程", async () => {
     const onEditAsset = vi.fn();
     await mountPalette({ onClose: vi.fn(), onEditAsset });

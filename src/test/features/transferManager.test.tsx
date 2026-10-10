@@ -214,6 +214,10 @@ describe("统一传输队列面板（FileBrowser）", () => {
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
     expect(panel).not.toBeNull();
     expect(panel!.textContent).toContain("~/nginx-access.log");
+    expect(panel!.textContent).toContain(LOCAL_FILE);
+    expect((panel!.textContent ?? "").indexOf(LOCAL_FILE)).toBeLessThan(
+      (panel!.textContent ?? "").indexOf("~/nginx-access.log"),
+    );
     expect(panel!.textContent).toContain("进行中");
 
     resolveUpload(42_118);
@@ -263,7 +267,11 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await waitFor(() => expect(mocks.download).toHaveBeenCalledWith(SID, "~/a.txt", LOCAL_SAVE));
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
+    expect(panel!.textContent).toContain("~/a.txt");
     expect(panel!.textContent).toContain(LOCAL_SAVE);
+    expect((panel!.textContent ?? "").indexOf("~/a.txt")).toBeLessThan(
+      (panel!.textContent ?? "").indexOf(LOCAL_SAVE),
+    );
     expect(panel!.textContent).toContain("进行中");
 
     resolveDownload(10);

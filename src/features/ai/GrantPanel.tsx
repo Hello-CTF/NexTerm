@@ -16,7 +16,7 @@ import { IconClose, IconKey, IconLoader, IconPlus } from "../../ui/icons";
 
 const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] = [
   { value: "terminal_write", label: "终端写入", hint: "AI 替你输入：按键直接发进终端" },
-  { value: "session_exec", label: "命令执行", hint: "AI 直接在设备上运行命令；授权后不再逐次确认，被拦截规则判为禁止的仍会拒绝" },
+  { value: "session_exec", label: "命令执行", hint: "仅放行普通需确认的 AI 命令；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
 ];
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
@@ -27,8 +27,8 @@ const KIND_LABEL: Record<AiGrantKind, string> = {
 const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean; hint: string }[] = [
   { value: "write_file", label: "写入文件", needsPath: true, hint: "只允许写匹配路径下的文件，如 /var/log/**" },
   { value: "edit_file", label: "修改文件", needsPath: true, hint: "只允许修改匹配路径下的文件，如 /etc/nginx/**" },
-  { value: "exec_commands", label: "执行命令", needsPath: false, hint: "允许在该设备执行任意命令；被拦截规则判为禁止的仍会拒绝" },
-  { value: "send_keys", label: "发送按键", needsPath: false, hint: "允许向该设备终端发送任意按键；被拦截规则判为禁止的仍会拒绝" },
+  { value: "exec_commands", label: "执行命令", needsPath: false, hint: "仅放行普通需确认的 AI 命令；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
+  { value: "send_keys", label: "发送按键", needsPath: false, hint: "仅放行普通需确认的终端输入；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
 ];
 
 const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
@@ -120,7 +120,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时不再逐次确认，只读模式下也会放行。被拦截规则判为禁止的操作不在授权范围内，始终拒绝；其余未授权操作按当前权限模式处理（读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
+      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余未授权操作按当前权限模式处理（读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -174,7 +174,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       ? `${RULE_ACTION_LABEL[ruleAction]} ${pattern}`
       : `${RULE_ACTION_LABEL[ruleAction]}（该设备全部路径）`;
     const confirmed = await ask(
-      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n命中该规则的 AI 操作不再逐次确认，只读模式下也会放行。被拦截规则判为禁止的操作不在授权范围内，始终拒绝。规则保存在本安装（服务器）上，可随时在此撤销。`,
+      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n命中该规则的 AI 操作不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝。规则保存在本安装（服务器）上，可随时在此撤销。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -231,7 +231,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。被拦截规则判为禁止的操作不在授权范围内，始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
+        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
       </div>
 
       {loadError && (

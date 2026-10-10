@@ -4,7 +4,7 @@
 // device://status 上下线事件实时翻转在线状态。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -24,6 +24,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 
 import { DevicesView } from "../../features/fleet/DevicesView";
 import { useAuth } from "../../features/auth/store";
+import { useUi } from "../../app/store";
 
 const NOW = Date.now();
 
@@ -257,8 +258,8 @@ describe("设备管理视图 · 角色差异", () => {
 });
 
 describe("设备管理视图 · 设备列表与指标", () => {
-  it("在线设备显示心跳与当前接入地址, 指标展开展示 CPU/内存/磁盘/运行时长", async () => {
-    route(fleetHandler());
+  it("在线设备显示心跳与当前接入地址, 指标展开展示 CPU/内存/磁盘/运行时长并可刷新", async () => {
+    const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mount(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
@@ -274,6 +275,57 @@ describe("设备管理视图 · 设备列表与指标", () => {
     expect(card?.textContent).toContain("8.0 GiB / 16.0 GiB");
     expect(card?.textContent).toContain("100 GiB / 200 GiB");
     expect(card?.textContent).toContain("1 天 2 小时");
+
+    const refresh = card?.querySelector<HTMLButtonElement>('button[aria-label="刷新指标"]');
+    expect(refresh).not.toBeNull();
+    click(refresh as HTMLButtonElement);
+    await flushUntil(() => calls.filter((c) => c.url === "/fleet/devices/d-1/metrics").length === 2);
+  });
+
+  it("搜索与全部/在线/离线/已吊销过滤只筛选当前列表, 不发新请求", async () => {
+    const calls = route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const cardOf = (name: string) => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
+    const requestCount = calls.length;
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索设备"]');
+    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]');
+    expect(search).not.toBeNull();
+    expect(filter).not.toBeNull();
+
+    setInputValue(search as HTMLInputElement, "DB-02");
+    expect(cardOf("db-02")).toBeTruthy();
+    expect(cardOf("web-01")).toBeFalsy();
+    expect(cardOf("browser-01")).toBeFalsy();
+    expect(cardOf("old-laptop")).toBeFalsy();
+
+    setInputValue(search as HTMLInputElement, "");
+    setSelectValue(filter as HTMLSelectElement, "online");
+    expect(cardOf("web-01")).toBeTruthy();
+    expect(cardOf("db-02")).toBeFalsy();
+    expect(cardOf("browser-01")).toBeFalsy();
+    expect(cardOf("old-laptop")).toBeFalsy();
+
+    setSelectValue(filter as HTMLSelectElement, "offline");
+    expect(cardOf("db-02")).toBeTruthy();
+    expect(cardOf("browser-01")).toBeTruthy();
+    expect(cardOf("web-01")).toBeFalsy();
+    expect(cardOf("old-laptop")).toBeFalsy();
+
+    setSelectValue(filter as HTMLSelectElement, "revoked");
+    expect(cardOf("old-laptop")).toBeTruthy();
+    expect(cardOf("web-01")).toBeFalsy();
+    expect(cardOf("db-02")).toBeFalsy();
+    expect(cardOf("browser-01")).toBeFalsy();
+
+    setSelectValue(filter as HTMLSelectElement, "all");
+    expect(cardOf("web-01")).toBeTruthy();
+    expect(cardOf("db-02")).toBeTruthy();
+    expect(cardOf("browser-01")).toBeTruthy();
+    expect(cardOf("old-laptop")).toBeTruthy();
+    expect(calls).toHaveLength(requestCount);
   });
 
   it("离线设备显示离线徽章与离线自启动提示", async () => {
@@ -337,13 +389,11 @@ describe("设备管理视图 · 接入码签发", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只显示这一次");
     expect(text).toContain("单次使用");
-    // 面向新手的三步引导: enroll 兑换凭证 → install 装 per-user 服务 → 回本页确认在线
-    expect(text).toContain("第 1 步");
-    expect(text).toContain("把接入码兑换成设备凭证");
-    expect(text).toContain("第 2 步");
+    expect(text).toContain("高级说明: 多地址、手动接入与服务管理");
+    expect(text).toContain("执行完成后刷新");
     expect(text).toContain("随登录自动启动");
-    expect(text).toContain("第 3 步");
     expect(text).toContain("设备会出现在下方列表里并显示「在线」");
+    expect(text).not.toContain("第 1 步");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
       `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
@@ -357,10 +407,16 @@ describe("设备管理视图 · 接入码签发", () => {
 
     // enroll 与 install 使用同一数据目录; 目录为双引号单参数, 展开优先级
     // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (与文案的覆盖承诺一致)。
-    const commands = [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
-    const enrollDirs = commands
-      .filter((c) => c.includes("agent enroll"))
-      .map((c) => c.split("--data-dir ")[1]);
+    const commandElements = [...document.querySelectorAll("code")];
+    const commands = commandElements.map((c) => c.textContent ?? "");
+    const details = document.querySelector<HTMLDetailsElement>("details");
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    const enrollCommandElements = commandElements.filter((c) => c.textContent?.includes("agent enroll"));
+    expect(enrollCommandElements).toHaveLength(2);
+    expect(enrollCommandElements[0].closest("details")).toBeNull();
+    expect(enrollCommandElements[1].closest("details")).toBe(details);
+    const enrollDirs = enrollCommandElements.map((c) => (c.textContent ?? "").split("--data-dir ")[1]);
     const installDirs = commands
       .filter((c) => c.includes("agent install"))
       .map((c) => c.split("--data-dir ")[1]);
@@ -382,6 +438,84 @@ describe("设备管理视图 · 接入码签发", () => {
     await waitFor(() => {
       expect(document.body.textContent).not.toContain("fleet-code-1");
     });
+  });
+
+  it("clipboard 不可用时复制接入码与命令给出明确错误", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+
+    vi.stubGlobal("navigator", { clipboard: undefined });
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制接入码") as HTMLButtonElement);
+    const command = [...document.querySelectorAll("code")].find((c) => c.textContent?.includes("agent enroll"));
+    const copyCommand = command?.parentElement?.querySelector("button");
+    expect(copyCommand).toBeTruthy();
+    click(copyCommand as HTMLButtonElement);
+
+    expect(toast).toHaveBeenCalledTimes(2);
+    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败: 剪贴板不可用, 请手动选中复制");
+    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败: 剪贴板不可用, 请手动选中复制");
+  });
+
+  it("接入地址 loading/error/ready 控制签发与覆盖保存, 失败可重试", async () => {
+    const firstBaseUrls = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
+    let baseUrlCalls = 0;
+    let enrollCalls = 0;
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const u = String(url);
+      const method = init.method ?? "GET";
+      if (u === "/fleet/devices" && method === "GET") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }) };
+      }
+      if (u === "/fleet/base-urls" && method === "GET") {
+        baseUrlCalls += 1;
+        if (baseUrlCalls === 1) return firstBaseUrls.promise;
+        return { ok: true, status: 200, text: async () => JSON.stringify({ base_urls: BASE_URLS }) };
+      }
+      if (u === "/healthz" && method === "GET") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, version: "0.2.2" }) };
+      }
+      if (u === "/device/enroll-codes" && method === "POST") {
+        enrollCalls += 1;
+        return { ok: true, status: 200, text: async () => JSON.stringify({ code: "ready-code", expires_at: NOW + 900_000 }) };
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ error: { code: "not_found", message: u } }) };
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement;
+    expect(issueButton.disabled).toBe(true);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开编辑") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("接入地址读取中") ?? false);
+    expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存顺序与修改"))).toBe(false);
+
+    firstBaseUrls.reject(new Error("地址服务不可用"));
+    await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
+    expect(document.body.textContent).toContain("地址服务不可用");
+    expect(issueButton.disabled).toBe(true);
+    expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
+
+    const baseCard = document.querySelector("#fleet-base-urls");
+    const retry = [...(baseCard?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "重试");
+    expect(retry).toBeTruthy();
+    click(retry as HTMLButtonElement);
+    await flushUntil(() => baseUrlCalls === 2 && document.querySelector('input[aria-label="新接入地址"]') !== null);
+    expect(issueButton.disabled).toBe(false);
+    const save = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存顺序与修改"));
+    expect(save).toBeTruthy();
+
+    click(issueButton);
+    await flushUntil(() => enrollCalls === 1);
   });
 });
 
@@ -542,8 +676,8 @@ describe("设备管理视图 · 账号切换隔离", () => {
     seedUser(SUPERADMIN);
     mounted = mount(createElement(DevicesView));
 
+    await flushUntil(() => document.body.textContent?.includes("2 个地址") ?? false);
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
-    await flushUntil(() => openButton !== undefined);
     click(openButton as HTMLButtonElement);
     const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
     click(issueButton as HTMLButtonElement);

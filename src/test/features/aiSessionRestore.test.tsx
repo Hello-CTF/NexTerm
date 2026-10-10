@@ -427,4 +427,27 @@ describe("AiSidebar session restore", () => {
     await flush();
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "先补充一句");
   });
+
+  it("restores the latest usage from run events", async () => {
+    bindConversation("conv-1", "排查 502");
+    mocks.runs.mockResolvedValue([
+      runOf({ id: "job-new", status: "completed", createdAt: 2000 }),
+      runOf({ id: "job-old", status: "completed", createdAt: 1000 }),
+    ]);
+    mocks.runEvents.mockImplementation((jobId: string) =>
+      Promise.resolve(
+        jobId === "job-old"
+          ? [{ type: "usage", seq: 1, promptTokens: 4000, completionTokens: 800, cachedTokens: 2000, contextWindow: 10000 }]
+          : [],
+      ),
+    );
+    mountSidebar();
+    await flushUntil(() => {
+      const ring = view!.container.querySelector('span[role="img"]');
+      return ring?.getAttribute("aria-label")?.includes("上下文占用") === true;
+    });
+    expect(view!.container.querySelector('span[role="img"]')?.getAttribute("aria-label")).toBe(
+      "上下文占用 40%（4.0k / 10.0k），缓存命中 50%",
+    );
+  });
 });

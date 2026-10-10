@@ -65,6 +65,7 @@ function parsePort(raw: string): number | null {
 }
 
 export function formatQuickConnectTarget(target: QuickConnectTarget): string {
-  const base = target.username ? `${target.username}@${target.host}` : target.host;
+  const host = target.host.includes(":") ? `[${target.host}]` : target.host;
+  const base = target.username ? `${target.username}@${host}` : host;
   return target.port === DEFAULT_SSH_PORT ? base : `${base}:${target.port}`;
 }

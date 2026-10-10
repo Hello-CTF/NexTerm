@@ -36,6 +36,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     fsApi: { list: mocks.list, read: mocks.read, write: mocks.write },
     mountApi: { list: mocks.mountList, create: vi.fn(), remove: mocks.mountRemove },
+    systemApi: { platform: vi.fn().mockResolvedValue("windows") },
     terminalApi: { write: mocks.termWrite },
     sessionApi: {},
   };

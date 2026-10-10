@@ -103,12 +103,13 @@ export function runErrorStats(runs: AiRunDto[]): RunErrorStats {
     failures += safeCount(run.failures);
   }
   const total = finished.length;
+  const errors = retries + failures;
   return {
     runs: total,
     retries,
     failures,
-    retryRate: total > 0 ? Math.min(1, retries / total) : 0,
-    failureRate: total > 0 ? Math.min(1, failures / total) : 0,
+    retryRate: errors > 0 ? retries / errors : 0,
+    failureRate: errors > 0 ? failures / errors : 0,
   };
 }
 
@@ -284,7 +285,7 @@ function UsageDetails({
       <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          本会话 {errorStats.runs} 轮 · 重试 {errorStats.retries}（{percentText(errorStats.retryRate)}）
+          本会话 {errorStats.runs} 轮 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
           · 失败 {errorStats.failures}（{percentText(errorStats.failureRate)}）
         </span>
       ) : null}

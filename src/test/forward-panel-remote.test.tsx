@@ -139,7 +139,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(fieldError(bindHost)).toBeNull();
   });
 
-  it("合法输入提交：以绑定地址与本地目标调用 createRemote", async () => {
+  it("合法输入提交：以绑定地址与服务端目标调用 createRemote", async () => {
     mountForward();
     await flush();
     switchToRemote();
@@ -154,7 +154,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
-      "远程转发已就绪 → 远端 0.0.0.0:18080 → 本地 127.0.0.1:3306",
+      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在机器 127.0.0.1:3306",
     );
   });
 
@@ -181,7 +181,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(mocks.forwardCreateRemote).toHaveBeenLastCalledWith("s", "0.0.0.0", 18080, "127.0.0.1", 3306, true);
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
-      "远程转发已就绪 → 远端 0.0.0.0:18080 → 本地 127.0.0.1:3306",
+      "远程转发已就绪 → 远端 0.0.0.0:18080 → NexTerm 所在机器 127.0.0.1:3306",
     );
   });
 
@@ -203,7 +203,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     const row = mounted!.container.querySelector("tbody tr");
     expect(row?.textContent).toContain("远程转发");
     expect(row?.textContent).toContain("127.0.0.1:18080");
-    expect(row?.textContent).toContain("本地");
+    expect(row?.textContent).toContain("NexTerm 所在机器");
     expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
   });
 

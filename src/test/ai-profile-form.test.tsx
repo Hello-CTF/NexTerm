@@ -336,6 +336,28 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
     mocks.ask.mockResolvedValue(true);
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 0, openUntil: null });
+    mocks.preset.mockImplementation(async (id: string) => ({
+      ...demoProfile(),
+      id: "",
+      name: id,
+      baseUrl:
+        id === "zhipu"
+          ? "https://open.bigmodel.cn/api/paas/v4"
+          : id === "ollama"
+            ? "http://127.0.0.1:11434/v1"
+            : id === "moonshot"
+              ? "https://api.moonshot.cn/v1"
+              : "https://api.deepseek.com/v1",
+      model:
+        id === "zhipu"
+          ? "glm-4.7-flash"
+          : id === "ollama"
+            ? "qwen2.5:7b"
+            : id === "moonshot"
+              ? "kimi-k3"
+              : "deepseek-flash",
+      contextWindow: id === "zhipu" ? 200_000 : id === "ollama" ? 32_000 : 1_000_000,
+    }));
     useUi.setState({ pushToast: mocks.toast });
   });
 
@@ -355,7 +377,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(mocks.presets).not.toHaveBeenCalled();
   });
 
-  it("新档案点预设只填名称/地址/模型，温度与上下文窗口留空不传", async () => {
+  it("新档案点预设复用后端地址、模型与上下文窗口，温度留空不传", async () => {
     await mountManager(demoProfile());
 
     click(view!.container.querySelector('button[title="新增档案"]')!);
@@ -363,6 +385,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     clickButton(view!.container, "Zhipu");
     await flush();
 
+    expect(mocks.preset).toHaveBeenCalledWith("zhipu");
     expect(inputFor("展示名").value).toBe("zhipu");
     expect(inputFor("Base URL").value).toBe("https://open.bigmodel.cn/api/paas/v4");
     expect(inputFor("模型名").value).toBe("glm-4.7-flash");
@@ -371,9 +394,8 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     await flush();
     expect(inputFor("温度").value).toBe("");
     expect(inputFor("温度").placeholder).toBe("默认不传");
-    expect(inputFor("上下文窗口").value).toBe("");
+    expect(inputFor("上下文窗口").value).toBe("200000");
     expect(inputFor("上下文窗口").placeholder).toBe("默认不传");
-    expect(mocks.preset).not.toHaveBeenCalled();
 
     clickButton(view!.container, "保存");
     await flush();
@@ -382,7 +404,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(payload.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
     expect(payload.model).toBe("glm-4.7-flash");
     expect((payload as Record<string, unknown>).temperature).toBeUndefined();
-    expect((payload as Record<string, unknown>).contextWindow).toBeUndefined();
+    expect(payload.contextWindow).toBe(200_000);
   });
 
   it("编辑已有档案时预设不覆盖已填参数", async () => {
@@ -410,5 +432,40 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect((payload as Record<string, unknown>).temperature).toBeUndefined();
     expect((payload as Record<string, unknown>).contextWindow).toBeUndefined();
     expect(payload.model).toBe("deepseek-chat");
+  });
+
+  it("档案 revision 刷新不覆盖未保存草稿，干净后按新数据更新", async () => {
+    const profile = demoProfile();
+    await mountManager(profile);
+    const baseUrl = view!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="https://api.deepseek.com/v1"]',
+    )!;
+    setInputValue(baseUrl, "https://draft.example/v1");
+
+    mocks.overview.mockResolvedValue({
+      profiles: [{ ...profile, baseUrl: "https://external.example/v1" }],
+      activeId: profile.id,
+    });
+    act(() => useUi.getState().bumpModelProfilesRevision());
+    await flush();
+    expect(mocks.overview).toHaveBeenCalledTimes(2);
+    expect(baseUrl.value).toBe("https://draft.example/v1");
+
+  });
+
+  it("干净草稿会随档案 revision 更新", async () => {
+    const profile = demoProfile();
+    await mountManager(profile);
+    const baseUrl = view!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="https://api.deepseek.com/v1"]',
+    )!;
+    mocks.overview.mockResolvedValue({
+      profiles: [{ ...profile, baseUrl: "https://clean.example/v1" }],
+      activeId: profile.id,
+    });
+    act(() => useUi.getState().bumpModelProfilesRevision());
+    await flush();
+    expect(mocks.overview).toHaveBeenCalledTimes(2);
+    expect(baseUrl.value).toBe("https://clean.example/v1");
   });
 });

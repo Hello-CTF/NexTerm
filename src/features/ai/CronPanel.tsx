@@ -35,12 +35,12 @@ type ReplaceConflict = {
 };
 
 function jobStatus(job: CronJob): { label: string; cls: string } {
+  if (!job.enabled) return { label: "已停用", cls: "" };
   if (job.run.id) return { label: "执行中", cls: "nx-badge-blue" };
   if (job.circuitOpenUntil && Date.parse(job.circuitOpenUntil) > Date.now()) {
     return { label: "熔断中", cls: "nx-badge-amber" };
   }
   if (job.lastError) return { label: "上次失败", cls: "nx-badge-red" };
-  if (!job.enabled) return { label: "已停用", cls: "" };
   return { label: "等待执行", cls: "nx-badge-green" };
 }
 
@@ -49,6 +49,18 @@ function formatTime(rfc3339: string | undefined): string | null {
   const ms = Date.parse(rfc3339);
   if (Number.isNaN(ms)) return null;
   return new Date(ms).toLocaleString();
+}
+
+function nextRunText(job: CronJob): string | null {
+  if (!job.enabled) return null;
+  let latest: number | null = null;
+  for (const value of [job.nextRunAt, job.retryAt, job.circuitOpenUntil]) {
+    if (!value) continue;
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms)) continue;
+    if (latest === null || ms > latest) latest = ms;
+  }
+  return latest === null ? null : new Date(latest).toLocaleString();
 }
 
 export function CronPanel({
@@ -70,6 +82,7 @@ export function CronPanel({
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [draft, setDraft] = useState<RegisterDraft | null>(null);
+  const [draftBaseline, setDraftBaseline] = useState<RegisterDraft | null>(null);
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
@@ -163,34 +176,101 @@ export function CronPanel({
     return `未知档案（可能已删除）· ${id}`;
   };
 
-  const openRegister = () => {
-    setRegisterError(null);
-    setEditingJob(null);
-    setAdvancedOpen(false);
-    setDraft({
-      name: "",
-      prompt: "",
-      schedule: "",
-      timezone: "UTC",
-      timeoutSec: "",
-      modelProfileId: "",
+  const draftDirty =
+    !!draft &&
+    !!draftBaseline &&
+    (draft.name !== draftBaseline.name ||
+      draft.prompt !== draftBaseline.prompt ||
+      draft.schedule !== draftBaseline.schedule ||
+      draft.timezone !== draftBaseline.timezone ||
+      draft.timeoutSec !== draftBaseline.timeoutSec ||
+      draft.modelProfileId !== draftBaseline.modelProfileId);
+
+  const guardDraft = async (action: string): Promise<boolean> => {
+    if (!draftDirty) return true;
+    return ask(`当前修改还没保存，${action}会丢掉这些改动，继续？`, {
+      title: "放弃未保存的修改",
+      kind: "warning",
     });
-    setRegisterOpen(true);
+  };
+
+  const openRegister = () => {
+    const open = () => {
+      setRegisterError(null);
+      setEditingJob(null);
+      setAdvancedOpen(false);
+      const nextDraft = {
+        name: "",
+        prompt: "",
+        schedule: "",
+        timezone: "UTC",
+        timeoutSec: "",
+        modelProfileId: "",
+      };
+      setDraft(nextDraft);
+      setDraftBaseline({ ...nextDraft });
+      setRegisterOpen(true);
+    };
+    if (!draftDirty) {
+      open();
+      return;
+    }
+    void guardDraft("新建任务").then((ok) => {
+      if (ok) open();
+    });
   };
 
   const openEdit = (job: CronJob) => {
-    setRegisterError(null);
-    setEditingJob(job);
-    setAdvancedOpen((job.timezone.trim() || "UTC") !== "UTC" || job.timeout > 0);
-    setDraft({
-      name: job.name ?? "",
-      prompt: job.prompt,
-      schedule: job.schedule,
-      timezone: job.timezone,
-      timeoutSec: job.timeout > 0 ? String(Math.round(cronTimeoutMs(job) / 1000)) : "",
-      modelProfileId: job.modelProfileId ?? "",
+    const open = () => {
+      setRegisterError(null);
+      setEditingJob(job);
+      setAdvancedOpen((job.timezone.trim() || "UTC") !== "UTC" || job.timeout > 0);
+      const nextDraft = {
+        name: job.name ?? "",
+        prompt: job.prompt,
+        schedule: job.schedule,
+        timezone: job.timezone,
+        timeoutSec: job.timeout > 0 ? String(Math.round(cronTimeoutMs(job) / 1000)) : "",
+        modelProfileId: job.modelProfileId ?? "",
+      };
+      setDraft(nextDraft);
+      setDraftBaseline({ ...nextDraft });
+      setRegisterOpen(true);
+    };
+    if (!draftDirty) {
+      open();
+      return;
+    }
+    void guardDraft("切换编辑对象").then((ok) => {
+      if (ok) open();
     });
-    setRegisterOpen(true);
+  };
+
+  const closeRegister = () => {
+    const close = () => {
+      setRegisterOpen(false);
+      setDraft(null);
+      setDraftBaseline(null);
+      setEditingJob(null);
+      setRegisterError(null);
+    };
+    if (!draftDirty) {
+      close();
+      return;
+    }
+    void guardDraft("关闭编辑").then((ok) => {
+      if (ok) close();
+    });
+  };
+
+  const requestClose = () => {
+    if (!draftDirty) {
+      onClose();
+      return;
+    }
+    void guardDraft("关闭定时任务面板").then((ok) => {
+      if (ok) onClose();
+    });
   };
 
   const submitRegister = async () => {
@@ -353,7 +433,7 @@ export function CronPanel({
         >
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={onClose}>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={() => void requestClose()}>
           <IconClose size={11} />
         </button>
       </div>
@@ -482,12 +562,7 @@ export function CronPanel({
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
               disabled={registering}
-              onClick={() => {
-                setRegisterOpen(false);
-                setDraft(null);
-                setEditingJob(null);
-                setRegisterError(null);
-              }}
+              onClick={() => void closeRegister()}
             >
               取消
             </button>
@@ -508,7 +583,7 @@ export function CronPanel({
         </div>
       ) : (
         <div className="mb-2">
-          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={openRegister}>
+          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void openRegister()}>
             <IconPlus size={11} />
             注册定时任务
           </button>
@@ -566,7 +641,7 @@ export function CronPanel({
               const status = jobStatus(job);
               const key = `${job.sessionId}/${job.id}`;
               const busy = actionBusy === key;
-              const nextRun = formatTime(job.nextRunAt);
+              const nextRun = nextRunText(job);
               const lastRun = formatTime(job.lastRunAt);
               const jobProfileId = job.modelProfileId ?? "";
               const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
@@ -639,7 +714,7 @@ export function CronPanel({
                               ? "正在编辑"
                               : "编辑定时任务"
                       }
-                      onClick={() => openEdit(job)}
+                      onClick={() => void openEdit(job)}
                     >
                       <IconEdit size={11} />
                       编辑
@@ -678,7 +753,7 @@ export function CronPanel({
       )}
 
       <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-        启停只影响这一条任务；注销是唯一删除路径，需逐个确认。删除会话会一并删除它的定时任务。
+        启停只影响这一条任务；注销只删除当前这一条定时任务，需逐个确认。删除所属 AI 会话会级联删除该会话的全部定时任务。
       </p>
     </div>
   );

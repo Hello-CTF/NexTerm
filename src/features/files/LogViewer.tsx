@@ -78,17 +78,23 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
   const encTouchedRef = useRef(false);
   const offsetRef = useRef(offset);
   offsetRef.current = offset;
+  const requestGenerationRef = useRef(0);
   const assetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId ?? null);
 
   const load = useCallback(
     async (requested: number) => {
+      const generation = ++requestGenerationRef.current;
+      const requestedOffset = requested;
+      const encoding = encRef.current;
       setLoading(true);
       setError(null);
       try {
-        let res = await fsApi.readRange(sessionId, path, requested, CHUNK_SIZE);
+        let res = await fsApi.readRange(sessionId, path, requestedOffset, CHUNK_SIZE);
+        if (generation !== requestGenerationRef.current) return;
         if (res.size > 0 && res.offset >= res.size) {
           const last = Math.max(0, Math.floor((res.size - 1) / CHUNK_SIZE) * CHUNK_SIZE);
           res = await fsApi.readRange(sessionId, path, last, CHUNK_SIZE);
+          if (generation !== requestGenerationRef.current) return;
         }
         const bytes = bytesFromBase64(res.contentBase64);
         setChunk({
@@ -96,15 +102,16 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           size: res.size,
           bytes: bytes.length,
           truncated: res.truncated,
-          text: new TextDecoder(encRef.current).decode(bytes),
+          text: new TextDecoder(encoding).decode(bytes),
         });
         setOffset(res.offset);
       } catch (e) {
+        if (generation !== requestGenerationRef.current) return;
         const app = toAppError(e);
         setChunk(null);
         setError({ message: app.message, unsupported: app.code === "unsupported" });
       } finally {
-        setLoading(false);
+        if (generation === requestGenerationRef.current) setLoading(false);
       }
     },
     [sessionId, path],
@@ -112,6 +119,9 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
 
   useEffect(() => {
     void load(0);
+    return () => {
+      requestGenerationRef.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {

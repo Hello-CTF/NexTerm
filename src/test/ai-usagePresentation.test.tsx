@@ -89,6 +89,15 @@ describe("runErrorStats", () => {
     expect(stats.failureRate).toBe(0.5);
   });
 
+  it("uses retryable and non-retryable error composition for rates", () => {
+    const stats = runErrorStats([
+      run({ id: "a", retries: 2 }),
+      run({ id: "b", failures: 1 }),
+    ]);
+    expect(stats.retryRate).toBeCloseTo(2 / 3);
+    expect(stats.failureRate).toBeCloseTo(1 / 3);
+  });
+
   it("yields zero rates without finished runs", () => {
     const stats = runErrorStats([run({ id: "a", status: "running", finishedAt: undefined, retries: 2 })]);
     expect(stats).toEqual({ runs: 0, retries: 0, failures: 0, retryRate: 0, failureRate: 0 });
@@ -145,7 +154,7 @@ describe("UsageRing details", () => {
     const text = view.container.textContent ?? "";
     expect(text).toContain("用量明细");
     expect(text).toContain("本会话 2 轮");
-    expect(text).toContain("重试 1");
+    expect(text).toContain("可重试错误 1");
     expect(text).toContain("失败 1");
     expect(text).toContain("对话 4 次");
     expect(text).toContain("输入 400");

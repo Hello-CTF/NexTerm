@@ -178,11 +178,14 @@ describe("SettingsView 响应式结构", () => {
     expect(button?.className).toContain("shrink");
   });
 
-  it("AI 模型卡密钥存储文案与加密落地一致", async () => {
+  it("AI 模型卡密钥存储文案区分 Web 存储位置与同步条件", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("密钥加密后存在本机 sqlite，不会上传");
+    expect(text).toContain("密钥加密后存在NexTerm 服务端的 sqlite");
+    expect(text).toContain("只有开启「同步 AI 模型档案」且凭据库已解锁");
+    expect(text).toContain("端到端加密同步");
+    expect(text).not.toContain("不会上传");
     expect(text).not.toContain("明文存在本机 sqlite");
   });
 

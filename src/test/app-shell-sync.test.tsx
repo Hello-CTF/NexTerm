@@ -160,6 +160,19 @@ describe("状态栏同步状态", () => {
     expect(syncStatusText()).toBe("同步：已配置");
   });
 
+  it("url、username 或密码任一缺失时显示本地模式", async () => {
+    for (const patch of [{ url: "" }, { username: "" }, { hasPassword: false }]) {
+      mocks.syncLinkGet.mockResolvedValue({ ...SAVED_LINK, ...patch });
+      const view = mountApp();
+      mounted = view;
+      await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
+
+      expect(syncStatusText()).toBe("同步：本地模式");
+      view.unmount();
+      mounted = undefined;
+    }
+  });
+
   it("浏览器（服务端）模式显示服务端浏览器模式，不读取同步链接", async () => {
     envState.WEB = true;
     envState.TRANSPORT = "web";

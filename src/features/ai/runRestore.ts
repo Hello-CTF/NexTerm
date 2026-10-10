@@ -1,4 +1,6 @@
 import type { AiHitlSnapshotDto, AiRunDto, AiRunEventDto } from "../../ipc/types";
+import { safeTokenCount } from "./conversation";
+import type { AiUsage } from "./UsageRing";
 
 export interface ResumableRun {
   run: AiRunDto;
@@ -43,6 +45,30 @@ export async function fetchRunEventsAfter(
     if (page.length < pageSize) return { events, failed: false };
     if (cursor === pageStart) return { events, failed: true };
   }
+}
+
+export async function latestRunUsage(
+  runs: AiRunDto[],
+  loadEvents: (jobId: string) => Promise<RunEventsFetch>,
+): Promise<AiUsage | null> {
+  const ordered = runs
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  for (const run of ordered) {
+    const { events, failed } = await loadEvents(run.id);
+    if (failed) continue;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event.type !== "usage") continue;
+      return {
+        promptTokens: safeTokenCount(event.promptTokens),
+        completionTokens: safeTokenCount(event.completionTokens),
+        cachedTokens: safeTokenCount(event.cachedTokens),
+        contextWindow: safeTokenCount(event.contextWindow),
+      };
+    }
+  }
+  return null;
 }
 
 export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {

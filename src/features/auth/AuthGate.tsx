@@ -295,6 +295,7 @@ function MfaEnrollForm() {
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,6 +347,20 @@ function MfaEnrollForm() {
     }
   };
 
+  const copyRecoveryCodes = async () => {
+    setCopied(false);
+    setError(null);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(recoveryCodes?.join("\n") ?? "");
+      setCopied(true);
+      setConfirmed(true);
+    } catch {
+      setConfirmed(true);
+      setError("复制失败,请手动选中恢复码复制");
+    }
+  };
+
   if (recoveryCodes) {
     return (
       <div>
@@ -367,10 +382,7 @@ function MfaEnrollForm() {
             <button
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm"
-              onClick={() => {
-                setCopied(true);
-                void navigator.clipboard?.writeText(recoveryCodes.join("\n")).catch(() => undefined);
-              }}
+              onClick={() => void copyRecoveryCodes()}
             >
               <IconCopy size={12} />
               {copied ? "已复制" : "复制全部"}
@@ -378,11 +390,11 @@ function MfaEnrollForm() {
           </div>
         </div>
         {error && <GateError error={{ code: "internal", message: error }} />}
-        <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !copied} onClick={() => void finish()}>
+        <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !confirmed} onClick={() => void finish()}>
           <IconCheckCircle size={12} />
-          我已安全保存,进入应用
+          已手动保存,进入应用
         </button>
-        {!copied && <p className="nx-hint mt-2 text-center text-[11px]">先复制保存,再进入应用</p>}
+        {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">先复制保存,再进入应用</p>}
       </div>
     );
   }
@@ -547,8 +559,8 @@ function ResetRequiredForm() {
         <span className="nx-card-title">必须先设置新密码</span>
       </div>
       <p className="nx-hint">
-        管理员已重置这个账号。旧密码与加密数据已被清除;设置新密码后会签发新的数据密钥,
-        云端保存的加密内容需要从仍持有数据的设备重新同步。
+        管理员已重置这个账号。当前(临时)密码只用于本次验证;数据密钥、全部会话和两步验证绑定已被清除。
+        设置新密码后会签发新的数据密钥,云端密文需从仍持有数据的设备重新同步。
       </p>
       <Field label="当前(临时)密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
       <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
@@ -602,8 +614,8 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用恢复密钥重置</span>
       </div>
       <p className="nx-hint">
-        输入你保存的最新恢复密钥。重置后旧密码与全部会话立即失效。
-        注意:服务端旧数据密钥已被清除,云端正文需要从仍持有数据的设备重新同步。
+        输入你保存的最新恢复密钥。重置后旧密码失效,数据密钥、全部会话和两步验证绑定将被清除;
+        云端密文需从仍持有数据的设备重新同步。
       </p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
       <Field label="恢复密钥" value={recoveryKey} onChange={setRecoveryKey} mono placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autoComplete="off" />
@@ -724,11 +736,22 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
 function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone: () => void }) {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
-  const copy = () => {
-    // 点击即视为已复制(剪贴板尽力而为;失败也可手动选中已显示的密钥)
-    setCopied(true);
-    void navigator.clipboard?.writeText(issue.formatted).catch(() => undefined);
+  const copy = async () => {
+    setCopied(false);
+    setCopyError(null);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(issue.formatted);
+      setCopied(true);
+      setConfirmed(true);
+    } catch {
+      setRevealed(true);
+      setConfirmed(true);
+      setCopyError("复制失败,请手动选中恢复密钥复制");
+    }
   };
 
   return (
@@ -747,12 +770,18 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setRevealed((v) => !v)}>
             {revealed ? "隐藏" : "显示"}
           </button>
-          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={copy}>
+          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copy()}>
             <IconCopy size={12} />
             {copied ? "已复制" : "复制"}
           </button>
         </div>
       </div>
+      {copyError && (
+        <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2" role="alert">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span>{copyError}</span>
+        </div>
+      )}
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
@@ -760,11 +789,11 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
           恢复密钥只在重置时使用,同样需要保密。
         </div>
       </div>
-      <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={!copied} onClick={onDone}>
+      <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={!confirmed} onClick={onDone}>
         <IconCheckCircle size={12} />
-        我已安全保存
+        已手动保存
       </button>
-      {!copied && <p className="nx-hint mt-2 text-center text-[11px]">先复制密钥,再进入应用</p>}
+      {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">先复制密钥,再进入应用</p>}
     </div>
   );
 }

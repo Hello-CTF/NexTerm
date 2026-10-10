@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
@@ -177,7 +177,8 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(text).toContain("按 Esc 默认拒绝");
     const permanent = permanentButton();
     expect(permanent).not.toBeNull();
-    expect(permanent?.getAttribute("title")).toContain("永久允许在该设备执行任意命令");
+    expect(permanent?.getAttribute("title")).toContain("永久允许该设备执行普通命令");
+    expect(text).toContain("永久允许该设备执行普通命令");
     expect(permanent?.getAttribute("title")).toContain("可随时在授权管理中撤销");
   });
 
@@ -199,7 +200,7 @@ describe("AiSidebar 权限请求对话框", () => {
     ]);
     const permanent = permanentButton();
     expect(permanent).not.toBeNull();
-    expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的文件");
+    expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的普通文件");
   });
 
   it("危险操作不展示永久允许", async () => {
@@ -278,5 +279,168 @@ describe("AiSidebar 权限请求对话框", () => {
       decision: "deny",
     });
     await flushUntil(() => mounted?.container.textContent?.includes("已拒绝") === true);
+  });
+
+  it("计划只批准一次，批准消息不复述方案，历史恢复不再提供批准", async () => {
+    click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
+    const planToggle = [...mounted!.container.querySelectorAll("button")].find(
+      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+    );
+    click(planToggle!);
+    await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
+
+    clickButton(mounted!.container, "批准，按这个方案执行");
+    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    const approval = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
+    expect(approval.message).toBe("按上面的方案执行。");
+    expect(approval.message).not.toContain("步骤 A");
+    expect(approval.planMode).toBeUndefined();
+    expect(approval.images).toBeUndefined();
+    expect(mounted!.container.textContent).toContain("已批准");
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准，按这个方案执行")).toBe(false);
+
+    act(() => {
+      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "执行完成" });
+    });
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.messages.mockResolvedValue([
+      { id: "p1", role: "plan", content: { type: "planSubmitted", plan: "步骤 A" } },
+      { id: "u1", role: "user", content: { role: "user", content: "按上面的方案执行。" } },
+      { id: "a1", role: "assistant", content: { role: "assistant", content: "执行完成" } },
+    ]);
+    click(mounted!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(mounted!.container, "演示");
+    await flush();
+    expect(mounted!.container.textContent).toContain("已批准");
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准，按这个方案执行")).toBe(false);
+  });
+
+  it("重试复用原请求的图片、引用和计划模式", async () => {
+    useUi.setState({
+      sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+      aiRulePrefill: null,
+    });
+    mounted?.unmount();
+    mocks.channels.length = 0;
+    await show();
+    click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
+    const planToggle = [...mounted!.container.querySelectorAll("button")].find(
+      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+    );
+    click(planToggle!);
+
+    const textarea = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
+    const file = new File([new Uint8Array([1, 2, 3])], "retry.png", { type: "image/png" });
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.assign(paste, {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+        files: [],
+      },
+    });
+    act(() => textarea.dispatchEvent(paste));
+    await flushUntil(() => mounted!.container.querySelectorAll(".nx-attach").length === 1);
+
+    setInputValue(textarea, "@");
+    click(
+      [...mounted!.container.querySelectorAll("button")].find((button) =>
+        button.textContent?.includes("生产机"),
+      )!,
+    );
+    setInputValue(textarea, "重试快照");
+    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flushUntil(() => mocks.chat.mock.calls.length === 1);
+    act(() => {
+      mocks.channels[0].onEvent({ type: "error", message: "网络超时", retryable: true });
+    });
+    await flush();
+
+    clickButton(mounted!.container, "重试");
+    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    const retry = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
+    expect(retry.message).toBe("[引用对象]\n- 生产机（ssh 会话）\n\n重试快照");
+    expect(retry.images).toEqual([expect.stringContaining("data:image/png;base64")]);
+    expect(retry.planMode).toBe(true);
+  });
+
+  it("本轮允许此类同步决策与结果文案", async () => {
+    await sendAndEmit([
+      {
+        type: "confirmRequired",
+        id: "call-round",
+        tool: "exec_commands",
+        rendered: "$ ls",
+        risk: "needs_confirm",
+        commands: ["ls"],
+        confirmationNonce: "n-round",
+      },
+    ]);
+    clickButton(mounted!.container, "本轮允许此类");
+    await flushUntil(() => mocks.confirm.mock.calls.length > 0);
+    expect(mocks.confirm.mock.calls[0][0].decision).toBe("allow_session");
+    expect(mounted!.container.textContent).toContain("本轮已允许此类");
+    expect(mounted!.container.textContent).not.toContain("本会话允许此类");
+  });
+
+  it("命令拦截规则使用结构化 commands，文件规则使用 preview.path", async () => {
+    useUi.setState({ aiRulePrefill: null });
+    await sendAndEmit([
+      {
+        type: "confirmRequired",
+        id: "call-rule-command",
+        tool: "exec_commands",
+        rendered: "unexpected rendered",
+        risk: "needs_confirm",
+        commands: ["ls -l", "pwd"],
+        confirmationNonce: "n-rule-command",
+      },
+    ]);
+    clickButton(mounted!.container, "加为拦截规则");
+    expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
+
+    mounted?.unmount();
+    mocks.channels.length = 0;
+    await show();
+    useUi.setState({ aiRulePrefill: null });
+    await sendAndEmit([
+      {
+        type: "confirmRequired",
+        id: "call-rule-file",
+        tool: "write_file",
+        rendered: "unexpected rendered",
+        risk: "needs_confirm",
+        preview: { path: "/etc/nginx/nginx.conf", before: "a", after: "b", kind: "edit" },
+        confirmationNonce: "n-rule-file",
+      },
+    ]);
+    clickButton(mounted!.container, "加为拦截规则");
+    expect(useUi.getState().aiRulePrefill).toBe("/etc/nginx/nginx.conf");
+  });
+
+  it("不支持的对象不显示拦截规则按钮，权限读取失败显示错误与重试", async () => {
+    await sendAndEmit([
+      {
+        type: "confirmRequired",
+        id: "call-unsupported",
+        tool: "read_screen",
+        rendered: "read_screen",
+        confirmationNonce: "n-unsupported",
+      },
+    ]);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "加为拦截规则")).toBe(false);
+
+    mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
+    click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
+    await flush();
+    expect(mounted!.container.textContent).toContain("权限读取失败 · 权限服务不可用");
+    expect(mounted!.container.textContent).not.toContain("只读直接做");
+
+    mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+    clickButton(mounted!.container, "重试");
+    await flush();
+    expect(mounted!.container.textContent).toContain("只读直接做");
+    expect(mounted!.container.textContent).not.toContain("格式化磁盘");
   });
 });

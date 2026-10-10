@@ -342,8 +342,13 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
   const copyShareUrl = useCallback(() => {
     if (!shareCreated) return;
-    void navigator.clipboard
-      ?.writeText(shareCreated.url)
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      pushToast("error", "复制失败: 剪贴板不可用, 请手动选中复制");
+      return;
+    }
+    void clipboard
+      .writeText(shareCreated.url)
       .then(() => pushToast("success", "公开链接已复制"))
       .catch(() => pushToast("error", "复制失败, 请手动选中复制"));
   }, [pushToast, shareCreated]);
@@ -558,7 +563,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
               {shareError && <div className="text-[11.5px] break-words text-red-300">创建公开链接失败 · {shareError}</div>}
               <div className="text-[11px] leading-relaxed text-neutral-500">
                 公开链接绑定当前终端会话: 有效期内任何拿到链接的人无需 NexTerm 账号就能打开这个终端, 请只把链接发给你信任的人。
-                链接只能创建一次, 本页面不会保存链接; 创建后可随时在「设置 → 分享」吊销。
+                链接仅在创建成功后显示一次，本页面不会保存；创建后可随时在「设置 → 分享」吊销。
               </div>
             </div>
           )}

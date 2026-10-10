@@ -96,20 +96,17 @@ function modelDraftParamsAtDefaults(p: ModelDraft): boolean {
     (p.proxy ?? null) === MODEL_PARAM_DEFAULTS.proxy &&
     p.stream === MODEL_PARAM_DEFAULTS.stream &&
     (p.fallbackModel ?? null) === MODEL_PARAM_DEFAULTS.fallbackModel &&
-    (p.reasoningEffort ?? "") === ""
+    (p.reasoningEffort ?? "") === MODEL_PARAM_DEFAULTS.reasoningEffort &&
+    (p.requestTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.requestTimeoutSeconds &&
+    (p.idleTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.idleTimeoutSeconds &&
+    (p.maxTokens ?? null) === MODEL_PARAM_DEFAULTS.maxTokens &&
+    (p.circuitFailureThreshold ?? null) === MODEL_PARAM_DEFAULTS.circuitFailureThreshold &&
+    (p.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds
   );
 }
 
 function hasAdvancedModelParams(p: ModelDraft): boolean {
-  return (
-    !modelDraftParamsAtDefaults(p) ||
-    (p.requestTimeoutSeconds ?? null) !== null ||
-    (p.idleTimeoutSeconds ?? null) !== null ||
-    (p.maxTokens ?? null) !== null ||
-    (p.circuitFailureThreshold ?? null) !== null ||
-    (p.circuitCooldownSeconds ?? null) !== null ||
-    (p.reasoningEffort ?? "") !== ""
-  );
+  return !modelDraftParamsAtDefaults(p);
 }
 
 export function ModelManager({
@@ -122,6 +119,7 @@ export function ModelManager({
   listWidthClassName?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
+  const profilesRevision = useUi((s) => s.modelProfilesRevision);
 
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -137,6 +135,8 @@ export function ModelManager({
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
   const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft as ModelProfile));
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
   const fieldId = useId();
   const advancedPanelId = useId();
@@ -150,12 +150,13 @@ export function ModelManager({
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
-  const reload = async (keepId?: string) => {
+  const reload = useCallback(async (keepId?: string) => {
     try {
       const v = await modelApi.overview();
       setView(v);
       setLoadError(null);
       setDraft((prev) => {
+        if (dirtyRef.current) return prev;
         const target = selectModelProfileId(v, keepId ?? prev?.id);
         const found = v.profiles.find((p) => p.id === target);
         return found ? { ...found } : null;
@@ -163,11 +164,11 @@ export function ModelManager({
     } catch (e) {
       setLoadError(describeError(e));
     }
-  };
+  }, []);
 
   useEffect(() => {
     void reload();
-  }, []);
+  }, [profilesRevision, reload]);
 
   const patch = (p: Partial<ModelDraft>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
@@ -184,6 +185,11 @@ export function ModelManager({
             stream: MODEL_PARAM_DEFAULTS.stream,
             fallbackModel: null,
             reasoningEffort: "",
+            requestTimeoutSeconds: null,
+            idleTimeoutSeconds: null,
+            maxTokens: null,
+            circuitFailureThreshold: null,
+            circuitCooldownSeconds: null,
           }
         : prev,
     );
@@ -226,6 +232,10 @@ export function ModelManager({
         ...(reasoningEffort ? { reasoningEffort } : {}),
       } as ModelProfile;
       const saved = await modelApi.save(payload);
+      setDraft((current) => {
+        if (current && sameModelProfile(current as ModelProfile, draft as ModelProfile)) return { ...saved };
+        return current;
+      });
       useUi.getState().bumpModelProfilesRevision();
       setCircuitNonce((n) => n + 1);
       setView((prev) => {
@@ -240,7 +250,6 @@ export function ModelManager({
       });
       pushToast("info", `已保存模型档案「${saved.name}」`);
       setTestResult(null);
-      await reload(saved.id);
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
     } finally {
@@ -256,7 +265,6 @@ export function ModelManager({
     try {
       await modelApi.activate(target.id);
       useUi.getState().bumpModelProfilesRevision();
-      await reload(target.id);
       pushToast("info", `当前模型已切换为「${target.name}」`);
     } catch (e) {
       pushToast("error", `切换失败：${describeError(e)}`);
@@ -279,7 +287,6 @@ export function ModelManager({
       pushToast("info", "已删除");
       setModels([]);
       setModelsOpen(false);
-      await reload();
     } catch (e) {
       pushToast("error", `删除失败：${describeError(e)}`);
     } finally {
@@ -320,18 +327,24 @@ export function ModelManager({
     }
   };
 
-  const applyPreset = (id: string) => {
+  const applyPreset = async (id: string) => {
     const tpl = MODEL_PRESETS.find((p) => p.id === id);
     if (!tpl) return;
-    setDraft((prev) => {
-      const base = prev ?? blankProfile();
-      return {
-        ...base,
-        name: base.name.trim() ? base.name : tpl.id,
-        baseUrl: tpl.baseUrl,
-        model: tpl.model,
-      };
-    });
+    try {
+      const preset = await modelApi.preset(id);
+      setDraft((prev) => {
+        const base = prev ?? blankProfile();
+        return {
+          ...base,
+          name: base.name.trim() ? base.name : preset.name || tpl.id,
+          baseUrl: preset.baseUrl,
+          model: preset.model,
+          contextWindow: base.contextWindow ?? preset.contextWindow ?? null,
+        };
+      });
+    } catch (e) {
+      pushToast("error", `读取模型预设失败：${describeError(e)}`);
+    }
   };
 
   return (
@@ -414,7 +427,7 @@ export function ModelManager({
                   key={p.id}
                   className="nx-chip pointer-coarse:min-h-6"
                   title={`用 ${p.id} 的默认地址与模型填充表单`}
-                  onClick={() => applyPreset(p.id)}
+                  onClick={() => void applyPreset(p.id)}
                 >
                   <IconSparkles size={10} />
                   <span>{p.label}</span>
@@ -559,7 +572,7 @@ export function ModelManager({
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，用服务端默认。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，用端点默认。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
@@ -577,7 +590,7 @@ export function ModelManager({
                               patch({ contextWindow: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，按服务端默认 32K 估算。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，按端点默认 32K 估算。</div>
                         </Field>
                       </div>
                     </div>
@@ -614,13 +627,13 @@ export function ModelManager({
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        留空 = 默认不传（不限）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
+                        留空 = 不传，使用端点默认；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
                       </div>
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                        <Field label="stream/block 总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
                           <input
                             id={`${fieldId}-request-timeout`}
                             className="nx-input font-mono"
@@ -628,14 +641,15 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder="默认 300"
+                            placeholder="端点默认"
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
+                          <div className="nx-hint mt-1 text-[10.5px]">同时限制 stream 与 block 请求的总时长；留空使用端点默认。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="流空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                        <Field label="stream/block 空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
                           <input
                             id={`${fieldId}-idle-timeout`}
                             className="nx-input font-mono"
@@ -643,10 +657,11 @@ export function ModelManager({
                             min={0}
                             max={3600}
                             step={1}
-                            placeholder="默认 60"
+                            placeholder="端点默认"
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
+                          <div className="nx-hint mt-1 text-[10.5px]">限制 stream 与 block 响应的读取空闲时间；0 为关闭。</div>
                         </Field>
                       </div>
                     </div>
@@ -762,7 +777,7 @@ export function ModelManager({
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title="仅把温度、上下文窗口、代理、流式输出与回退模型恢复默认；名称、地址、密钥与模型名保持不变，点「保存」后才写入档案"
+              title="把全部高级参数恢复默认：温度、上下文窗口、思考强度、最大输出、stream/block 总超时与空闲超时、自动暂停阈值与时长、代理、流式输出和回退模型；名称、地址、密钥与模型名保持不变，点「保存」后才写入档案"
               disabled={busy || paramsAtDefaults}
               onClick={resetParams}
             >

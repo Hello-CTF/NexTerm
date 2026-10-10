@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   fsList: vi.fn(),
   mountList: vi.fn(),
   mountCreate: vi.fn(),
+  platform: vi.fn(),
   groupUpdate: vi.fn(),
   assetList: vi.fn(),
   assetSearch: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: mocks.mountCreate,
       remove: vi.fn(),
     },
+    systemApi: { platform: mocks.platform },
     terminalApi: { write: vi.fn() },
     sessionApi: { probe: vi.fn(), list: vi.fn().mockResolvedValue([]) },
     assetApi: {
@@ -196,6 +198,7 @@ beforeEach(() => {
     { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", createdAt: 1 },
   ]);
   mocks.mountCreate.mockResolvedValue(undefined);
+  mocks.platform.mockResolvedValue("windows");
   mocks.groupUpdate.mockResolvedValue(undefined);
   mocks.assetList.mockResolvedValue([]);
   mocks.assetSearch.mockResolvedValue([]);
@@ -404,21 +407,17 @@ describe("单行 Enter 提交表单的 IME 守卫", () => {
 });
 
 describe("MountPanel 窄屏结构", () => {
-  it("提示行可换行、挂载时间列带窄屏隐藏类", async () => {
+  it("提示行可换行，列名使用本地挂载点且不展示挂载时间", async () => {
     mounted = mountWithClient(createElement(MountPanel, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("断开"));
 
     const hintRow = mounted!.container.querySelector(".nx-code")?.closest("div");
     expect(hintRow?.className ?? "").toContain("flex-wrap");
 
-    const timeHeader = [...mounted!.container.querySelectorAll("th")].find(
-      (th) => th.textContent?.trim() === "挂载时间",
-    );
-    expect(timeHeader?.className ?? "").toContain("max-[560px]:hidden");
-    const timeCell = [...mounted!.container.querySelectorAll("td")].find((td) =>
-      td.textContent?.includes("1970"),
-    );
-    expect(timeCell?.className ?? "").toContain("max-[560px]:hidden");
+    const headers = [...mounted!.container.querySelectorAll("th")].map((th) => th.textContent?.trim());
+    expect(headers).toContain("本地挂载点");
+    expect(headers).not.toContain("挂载时间");
+    expect(mounted!.container.querySelector("tbody tr")?.querySelectorAll("td")).toHaveLength(3);
   });
 });
 

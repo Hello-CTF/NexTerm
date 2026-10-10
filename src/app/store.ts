@@ -1456,7 +1456,7 @@ export function findWritableTerminal(sessionId: string): string | null {
         ...p.tabs.filter((t) => t.id !== p.activeTabId),
       ];
       for (const t of ordered) {
-        if (t.kind === "terminal" && t.tabId) return t.tabId;
+        if (t.kind === "terminal" && t.tabId && !t.dead && !t.exited) return t.tabId;
       }
     }
   }

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   forwardCreateSocks: vi.fn(),
   mountList: vi.fn(),
   mountCreate: vi.fn(),
+  platform: vi.fn(),
   toast: vi.fn(),
 }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -30,6 +31,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: mocks.mountCreate,
       remove: vi.fn(),
     },
+    systemApi: { platform: mocks.platform },
     sessionApi: {},
   };
 });
@@ -46,7 +48,8 @@ beforeEach(() => {
   mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.mountList.mockResolvedValue([]);
-  useUi.setState({ pushToast: mocks.toast, sessions: [] });
+  mocks.platform.mockResolvedValue("windows");
+  useUi.setState({ pushToast: mocks.toast, sessions: [], workspaces: [], activeWorkspaceId: null });
 });
 afterEach(() => {
   mounted?.unmount();
@@ -54,17 +57,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function mountForward(): void {
+function mountForward(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mounted = mount(
     createElement(QueryClientProvider, { client }, createElement(ForwardPanel, { sessionId: "s" })),
   );
+  return client;
 }
 
-function mountMountPanel(): void {
+function mountMountPanel(sessionId: string | null = "s1"): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mounted = mount(
-    createElement(QueryClientProvider, { client }, createElement(MountPanel, { sessionId: "s1" })),
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(MountPanel, { sessionId: sessionId ?? undefined }),
+    ),
   );
 }
 
@@ -393,5 +401,251 @@ describe("MountPanel 凭据折叠可访问性", () => {
     await flush();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.textContent).not.toContain("已配置");
+  });
+});
+
+function actionButton(text: string): HTMLButtonElement {
+  const button = [...mounted!.container.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent?.trim() === text,
+  );
+  if (!button) throw new Error(`按钮未找到: ${text}`);
+  return button;
+}
+
+function credentialsToggle(): HTMLButtonElement {
+  const button = [...mounted!.container.querySelectorAll("button")].find((candidate) =>
+    candidate.textContent?.includes("使用其他凭据"),
+  );
+  if (!button) throw new Error("凭据折叠按钮未找到");
+  return button;
+}
+
+function selectWorkspaceTab(activeTabId: string): void {
+  useUi.setState({
+    activeWorkspaceId: "ws1",
+    workspaces: [
+      {
+        id: "ws1",
+        kind: "session",
+        title: "ws",
+        sessionId: "s1",
+        closable: true,
+        activePaneId: "p1",
+        splitRatio: 0.5,
+        panes: [
+          {
+            id: "p1",
+            activeTabId,
+            tabs: [
+              { id: "mount", kind: "mount", title: "挂载", sessionId: "s1", closable: true },
+              { id: "forward", kind: "forward", title: "转发", sessionId: "s", closable: true },
+              { id: "terminal", kind: "terminal", title: "终端", sessionId: "s1", closable: true },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+describe("MountPanel 平台默认值与连接约束", () => {
+  it("Windows 默认 Z:，Linux 留空并使用 /mnt/point 示例", async () => {
+    mountMountPanel();
+    await flush();
+    expect(inputBy('input[aria-label="本地挂载点"]').value).toBe("Z:");
+    expect(inputBy('input[aria-label="本地挂载点"]').placeholder).toBe("Z:");
+
+    mounted!.unmount();
+    mounted = undefined;
+    mocks.platform.mockResolvedValue("linux");
+    mountMountPanel();
+    await flush();
+    const localPoint = inputBy('input[aria-label="本地挂载点"]');
+    expect(localPoint.value).toBe("");
+    expect(localPoint.placeholder).toBe("/mnt/point");
+    expect(inputBy('input[aria-label="远端路径"]').placeholder).toBe("user@host:/data");
+    const headers = [...mounted!.container.querySelectorAll("th")].map((th) => th.textContent?.trim());
+    expect(headers).toContain("本地挂载点");
+    expect(headers).not.toContain("挂载时间");
+  });
+
+  it("无 sessionId 或本地会话时禁用挂载并提示先连接 SSH 资产", async () => {
+    mountMountPanel(null);
+    await flush();
+    expect(actionButton("挂载").disabled).toBe(true);
+    expect(mounted!.container.textContent).toContain("请先连接 SSH 资产");
+
+    mounted!.unmount();
+    mounted = undefined;
+    useUi.setState({
+      sessions: [
+        {
+          id: "s1",
+          assetId: null,
+          name: "当前设备",
+          kind: "local",
+          status: "connected",
+          tabs: [],
+          createdAt: 1,
+        },
+      ],
+    });
+    mountMountPanel();
+    await flush();
+    expect(actionButton("挂载").disabled).toBe(true);
+    expect(mounted!.container.textContent).toContain("请先连接 SSH 资产");
+  });
+
+  it("挂载成功清空本次凭据并收起，下一次请求不再携带", async () => {
+    mocks.mountCreate.mockResolvedValue({ id: "m1" });
+    mountMountPanel();
+    await flush();
+    const toggle = credentialsToggle();
+    click(toggle);
+    await flush();
+    setInputValue(inputBy('input[aria-label="挂载用户名（可选）"]'), "alice");
+    setInputValue(inputBy('input[aria-label="挂载密码（可选）"]'), "secret");
+    setInputValue(inputBy('input[aria-label="远端路径"]'), "user@host:/one");
+    clickButton(mounted!.container, "挂载");
+    await flush();
+
+    expect(mocks.mountCreate).toHaveBeenNthCalledWith(1, {
+      sessionId: "s1",
+      remotePath: "user@host:/one",
+      localPoint: "Z:",
+      username: "alice",
+      password: "secret",
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).not.toContain("已配置");
+
+    setInputValue(inputBy('input[aria-label="远端路径"]'), "user@host:/two");
+    clickButton(mounted!.container, "挂载");
+    await flush();
+    expect(mocks.mountCreate).toHaveBeenNthCalledWith(2, {
+      sessionId: "s1",
+      remotePath: "user@host:/two",
+      localPoint: "Z:",
+      username: undefined,
+      password: undefined,
+    });
+    click(toggle);
+    await flush();
+    expect(inputBy('input[aria-label="挂载用户名（可选）"]').value).toBe("");
+    expect(inputBy('input[aria-label="挂载密码（可选）"]').value).toBe("");
+  });
+
+  it("隐藏时停止轮询，重新可见立即补取", async () => {
+    selectWorkspaceTab("mount");
+    mountMountPanel();
+    await flush();
+    expect(mocks.mountList).toHaveBeenCalledTimes(1);
+    await advance(15000);
+    expect(mocks.mountList).toHaveBeenCalledTimes(2);
+
+    act(() => selectWorkspaceTab("terminal"));
+    await advance(30000);
+    expect(mocks.mountList).toHaveBeenCalledTimes(2);
+    act(() => selectWorkspaceTab("mount"));
+    await flush();
+    expect(mocks.mountList).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
+  it("环境查询 pending 时禁用创建且不默认监听 127.0.0.1", async () => {
+    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    mocks.forwardEnv.mockReturnValue(env.promise);
+    mountForward();
+    await flush();
+    expect(actionButton("创建").disabled).toBe(true);
+    expect(mounted!.container.textContent).toContain("转发环境检查中");
+    expect(mounted!.container.textContent).not.toContain("127.0.0.1:13306");
+
+    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    await flush();
+    expect(actionButton("创建").disabled).toBe(false);
+    expect(mounted!.container.textContent).toContain("0.0.0.0:13306");
+    expect(mocks.forwardCreate).not.toHaveBeenCalled();
+  });
+
+  it("环境查询失败时显示错误与重试，恢复前禁止创建", async () => {
+    mocks.forwardEnv
+      .mockRejectedValueOnce(new Error("环境探测失败"))
+      .mockResolvedValueOnce({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    mountForward();
+    await flush();
+    expect(actionButton("创建").disabled).toBe(true);
+    expect(mounted!.container.textContent).toContain("转发环境检查失败 · 环境探测失败");
+
+    clickButton(mounted!.container, "重试");
+    await flush();
+    expect(mocks.forwardEnv).toHaveBeenCalledTimes(2);
+    expect(actionButton("创建").disabled).toBe(false);
+    expect(mounted!.container.textContent).toContain("0.0.0.0:13306");
+  });
+
+  it("后续刷新失败保留旧列表并显示非阻塞提示", async () => {
+    mocks.forwardList
+      .mockResolvedValueOnce([
+        {
+          id: "f1",
+          sessionId: "s",
+          listenHost: "127.0.0.1",
+          listenPort: 13306,
+          targetHost: "10.0.0.8",
+          targetPort: 3306,
+          kind: "local",
+          createdAt: 1,
+        },
+      ])
+      .mockRejectedValueOnce(new Error("暂时离线"));
+    const client = mountForward();
+    await flush();
+    expect(mounted!.container.textContent).toContain("10.0.0.8");
+
+    clickButton(mounted!.container, "刷新");
+    await flush();
+    expect(mocks.forwardList).toHaveBeenCalledTimes(2);
+    expect(client.getQueryState(["forwards"])?.status).toBe("error");
+    expect(mounted!.container.textContent).toContain("10.0.0.8");
+    expect(mounted!.container.textContent).toContain("转发列表刷新失败 · 暂时离线");
+    expect(mounted!.container.textContent).toContain("已保留上次成功结果");
+    expect(actionButton("创建").disabled).toBe(false);
+  });
+
+  it("隐藏时停止轮询，重新可见立即补取", async () => {
+    selectWorkspaceTab("forward");
+    mountForward();
+    await flush();
+    expect(mocks.forwardList).toHaveBeenCalledTimes(1);
+    await advance(5000);
+    expect(mocks.forwardList).toHaveBeenCalledTimes(2);
+
+    act(() => selectWorkspaceTab("terminal"));
+    await advance(10000);
+    expect(mocks.forwardList).toHaveBeenCalledTimes(2);
+    act(() => selectWorkspaceTab("forward"));
+    await flush();
+    expect(mocks.forwardList).toHaveBeenCalledTimes(3);
+  });
+
+  it("Web 远程转发目标明确为 NexTerm 所在机器，静态转发提示一致", async () => {
+    mocks.forwardCreate.mockResolvedValue({ id: "f1", kind: "local" });
+    mountForward();
+    await flush();
+    clickButton(mounted!.container, "远程转发");
+    expect(mounted!.container.textContent).toContain("NexTerm 所在机器");
+    expect(mounted!.container.textContent).not.toContain("你本机");
+    expect(mounted!.container.textContent).not.toContain("本地服务");
+    expect(inputBy('input[aria-label="目标主机"]').placeholder).toContain("NexTerm 所在机器");
+
+    clickButton(mounted!.container, "静态转发");
+    clickButton(mounted!.container, "创建");
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "success",
+      "转发已就绪 → 127.0.0.1:13306（仅NexTerm 所在机器可访问）",
+    );
   });
 });

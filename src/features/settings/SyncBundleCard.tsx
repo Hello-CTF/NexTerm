@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { syncApi } from "../../ipc/commands";
 import type { ImportReport, SyncBundle, SyncDigest } from "../../ipc/types";
@@ -107,6 +107,8 @@ export function SyncBundleCard() {
   const [force, setForce] = useState(false);
   const [importing, setImporting] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
+  const digestRequestRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const exportPanelId = useId();
   const importPanelId = useId();
@@ -114,15 +116,26 @@ export function SyncBundleCard() {
   const [importOpen, setImportOpen] = useState(false);
 
   const refreshDigest = useCallback(() => {
+    const requestId = ++digestRequestRef.current;
     setDigestError(null);
     return syncApi
       .digest()
-      .then(setDigest)
-      .catch((e: unknown) => setDigestError(describeError(e)));
+      .then((result) => {
+        if (!mountedRef.current || digestRequestRef.current !== requestId) return;
+        setDigest(result);
+      })
+      .catch((e: unknown) => {
+        if (!mountedRef.current || digestRequestRef.current !== requestId) return;
+        setDigestError(describeError(e));
+      });
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     void refreshDigest();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [refreshDigest]);
 
   const exportable = useMemo(
@@ -541,7 +554,7 @@ export function SyncBundleCard() {
               <div className="nx-alert nx-alert-info flex items-start gap-2">
                 <IconInfo size={14} className="mt-0.5 shrink-0" />
                 <div>
-                  {preview.danglingCredAssets} 条资产引用的凭据不在包内，导入后这些引用会被清除，需要重新关联凭据。
+                  {preview.danglingCredAssets} 条资产引用的凭据不在包内；若本机也没有同 ID 凭据，导入后引用将被清除，需要重新关联凭据。
                 </div>
               </div>
             )}

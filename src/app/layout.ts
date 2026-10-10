@@ -46,6 +46,7 @@ export interface PersistedLayout {
 const PANE_KINDS = new Set<PaneKind>([
   "terminal",
   "files",
+  "log",
   "mount",
   "forward",
   "docker",

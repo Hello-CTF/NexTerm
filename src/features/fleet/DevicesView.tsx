@@ -48,10 +48,15 @@ function installCommand(): string {
 }
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
-  void navigator.clipboard
-    ?.writeText(text)
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  if (!clipboard || typeof clipboard.writeText !== "function") {
+    pushToast("error", "复制失败: 剪贴板不可用, 请手动选中复制");
+    return;
+  }
+  void clipboard
+    .writeText(text)
     .then(() => pushToast("success", `${what}已复制`))
-    .catch(() => pushToast("error", `复制失败, 请手动选中复制`));
+    .catch(() => pushToast("error", "复制失败, 请手动选中复制"));
 }
 
 function FleetUnsupported() {
@@ -107,24 +112,34 @@ function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean 
     load();
   }, [load]);
 
+  const refreshButton = (
+    <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" aria-label="刷新指标" onClick={load} disabled={loading}>
+      <IconRefresh size={11} className={loading ? "animate-spin" : ""} />
+      {error ? "重试" : "刷新"}
+    </button>
+  );
+
   if (loading && samples === null) {
-    return <div className="nx-hint py-1 text-[11.5px]">指标加载中…</div>;
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+        <span className="nx-hint py-1">指标加载中…</span>
+        {refreshButton}
+      </div>
+    );
   }
   if (error) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
         <span className="text-red-300">指标加载失败 · {error}</span>
-        <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={load} disabled={loading}>
-          <IconRefresh size={11} className={loading ? "animate-spin" : ""} />
-          重试
-        </button>
+        {refreshButton}
       </div>
     );
   }
   if (!samples || samples.length === 0) {
     return (
-      <div className="nx-hint py-1 text-[11.5px]">
-        {online ? "设备还没有上报指标 (默认每 60 秒一次)。" : "设备离线, 没有近期指标。"}
+      <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+        <span className="nx-hint py-1">{online ? "设备还没有上报指标 (默认每 60 秒一次)。" : "设备离线, 没有近期指标。"}</span>
+        {refreshButton}
       </div>
     );
   }
@@ -161,8 +176,12 @@ function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean 
           <div className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</div>
         </div>
       </div>
-      <div className="nx-hint text-[11px]">
-        近 24 小时共 {samples.length} 个采样点 · 最新 {formatTime(latest.ts)}
+      <div className="flex items-center gap-2">
+        <div className="nx-hint text-[11px]">
+          近 24 小时共 {samples.length} 个采样点 · 最新 {formatTime(latest.ts)}
+        </div>
+        <div className="nx-spacer" />
+        {refreshButton}
       </div>
     </div>
   );
@@ -374,7 +393,11 @@ export function DevicesView() {
   const user = useAuth((s) => s.user);
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
+  const [deviceQuery, setDeviceQuery] = useState("");
+  const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline" | "revoked">("all");
   const [baseUrls, setBaseUrls] = useState<FleetBaseURLEntry[]>([]);
+  const [baseUrlsStatus, setBaseUrlsStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [baseUrlsError, setBaseUrlsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -389,6 +412,7 @@ export function DevicesView() {
   // 超过心跳阈值后回落到心跳判定 (轮询兜底), 与既有展示语义一致。
   const [presence, setPresence] = useState<Record<string, { online: boolean; at: number }>>({});
   const loadSeq = useRef(0);
+  const baseUrlsSeq = useRef(0);
   const versionSeq = useRef(0);
   // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离签发在途的
   // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
@@ -403,10 +427,15 @@ export function DevicesView() {
   if (scopedUserId !== userId) {
     setScopedUserId(userId);
     loadSeq.current += 1;
+    baseUrlsSeq.current += 1;
     accountEpoch.current += 1;
     versionSeq.current += 1;
     setDevices(null);
+    setDeviceQuery("");
+    setDeviceFilter("all");
     setBaseUrls([]);
+    setBaseUrlsStatus("loading");
+    setBaseUrlsError(null);
     setError(null);
     setEnrollOpen(false);
     setIssued(null);
@@ -416,19 +445,31 @@ export function DevicesView() {
     setPresence({});
   }
 
+  const loadBaseUrls = useCallback(() => {
+    if (!WEB) return;
+    const seq = ++baseUrlsSeq.current;
+    setBaseUrlsStatus("loading");
+    setBaseUrlsError(null);
+    void fleetApi
+      .baseUrls()
+      .then((r) => {
+        if (seq !== baseUrlsSeq.current) return;
+        setBaseUrls(r.base_urls);
+        setBaseUrlsStatus("ready");
+      })
+      .catch((e: unknown) => {
+        if (seq !== baseUrlsSeq.current) return;
+        setBaseUrlsError(describeError(e));
+        setBaseUrlsStatus("error");
+      });
+  }, []);
+
   const load = useCallback(() => {
     if (!WEB) return;
     const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
-    void fleetApi
-      .baseUrls()
-      .then((r) => {
-        if (seq === loadSeq.current) setBaseUrls(r.base_urls);
-      })
-      .catch(() => {
-        // 接入地址读取失败不阻塞设备列表; 保存时仍会报错
-      });
+    loadBaseUrls();
     fleetApi
       .devices()
       .then((r) => {
@@ -440,7 +481,7 @@ export function DevicesView() {
       .finally(() => {
         if (seq === loadSeq.current) setLoading(false);
       });
-  }, []);
+  }, [loadBaseUrls]);
 
   useEffect(() => {
     if (!WEB || !user) return;
@@ -549,7 +590,7 @@ export function DevicesView() {
   }
 
   const issueEnrollCode = async () => {
-    if (!WEB || !user) return;
+    if (!WEB || !user || baseUrlsStatus !== "ready") return;
     const epoch = accountEpoch.current;
     setIssuing(true);
     try {
@@ -587,12 +628,31 @@ export function DevicesView() {
     </div>
   );
 
-  const enrollRows = issued ? baseUrls.map((entry) => copyCommandRow(entry.url, enrollCommand(entry.url, Boolean(entry.insecure), issued.code), "接入命令")) : null;
+  const enrollRows = issued
+    ? baseUrls.map((entry) => copyCommandRow(`enroll:${entry.url}`, enrollCommand(entry.url, Boolean(entry.insecure), issued.code), "接入命令"))
+    : null;
   const oneLineRows =
     issued && serverVersion
-      ? baseUrls.map((entry) => copyCommandRow(entry.url, oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion), "一键安装命令"))
+      ? baseUrls.map((entry) =>
+          copyCommandRow(
+            `one-line:${entry.url}`,
+            oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion),
+            "一键安装命令",
+          ),
+        )
       : null;
   const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
+  const normalizedDeviceQuery = deviceQuery.trim().toLowerCase();
+  const visibleDevices = devices?.filter((d) => {
+    const revoked = d.revoked_at !== 0;
+    if (deviceFilter === "revoked" && !revoked) return false;
+    if (deviceFilter === "online" && (revoked || !onlineOf(d))) return false;
+    if (deviceFilter === "offline" && (revoked || onlineOf(d))) return false;
+    if (!normalizedDeviceQuery) return true;
+    return [d.name, d.id, d.kind, d.owner?.username, d.agent?.platform, d.agent?.current_url]
+      .map((value) => value?.toLowerCase() ?? "")
+      .some((value) => value.includes(normalizedDeviceQuery));
+  });
 
   return (
     <div className="nx-pane">
@@ -621,6 +681,37 @@ export function DevicesView() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+        {devices !== null && devices.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              className="nx-input min-w-[180px] flex-1"
+              style={{ maxWidth: 360 }}
+              value={deviceQuery}
+              aria-label="搜索设备"
+              placeholder="搜索设备"
+              onChange={(e) => setDeviceQuery(e.target.value)}
+            />
+            <select
+              className="nx-select shrink-0"
+              style={{ width: 112 }}
+              value={deviceFilter}
+              aria-label="设备状态过滤"
+              onChange={(e) => setDeviceFilter(e.target.value as typeof deviceFilter)}
+            >
+              <option value="all">全部</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+              <option value="revoked">已吊销</option>
+            </select>
+            {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
+              <span className="nx-hint text-[11px]">
+                显示 {visibleDevices?.length ?? 0} / {devices.length} 台
+              </span>
+            )}
+          </div>
+        )}
+
         {enrollOpen && (
           <section className="nx-card">
             <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -630,10 +721,7 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  接入一台新设备分三步: 1) 在设备上用普通用户执行接入命令, 把接入码兑换成设备凭证并装好设备
-                  agent(后台服务); 2) 回到本页点「我已完成, 刷新」, 设备出现后显示「在线」; 3) 在设备卡片上点
-                  「终端」即可远程控制。先在这里签发一次性接入码, 接入命令在签发后给出。接入码单次使用,
-                  到期自动作废; 设备凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
+                  签发一次性接入码, 在设备上执行命令, 再回到本页刷新并打开终端。接入码单次使用, 到期自动作废。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
@@ -651,11 +739,16 @@ export function DevicesView() {
                   </select>
                   <button
                     className="nx-btn nx-btn-primary"
-                    disabled={issuing}
+                    disabled={issuing || baseUrlsStatus !== "ready"}
                     onClick={() => void issueEnrollCode()}
                   >
                     {issuing ? "签发中…" : "签发接入码"}
                   </button>
+                  {baseUrlsStatus !== "ready" && (
+                    <span className="nx-hint text-[11px]">
+                      {baseUrlsStatus === "loading" ? "接入地址读取中, 成功后才能签发。" : "接入地址读取失败, 请在下方重试后签发。"}
+                    </span>
+                  )}
                 </div>
               </>
             ) : (
@@ -686,66 +779,67 @@ export function DevicesView() {
                     <div className="flex flex-wrap items-center gap-2 text-[12px] text-amber-300">
                       {isAdmin ? (
                         <>
-                          <span>第 1 步 · 还没有配置接入地址, 设备无法接入, 也无法生成接入命令。</span>
-                          <button
-                            type="button"
-                            className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                            onClick={jumpToBaseUrls}
-                          >
+                          <span>还没有配置接入地址, 设备无法接入, 也无法生成接入命令。</span>
+                          <button type="button" className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={jumpToBaseUrls}>
                             去配置接入地址
                           </button>
                         </>
                       ) : (
-                        <span>第 1 步 · 管理员还没有配置接入地址, 请联系管理员配置后再接入。</span>
+                        <span>管理员还没有配置接入地址, 请联系管理员配置后再接入。</span>
                       )}
                     </div>
-                  ) : serverVersion ? (
+                  ) : (
                     <>
-                      <div className="text-[12px] text-neutral-200">
-                        第 1 步 · 在设备上用<b>普通用户</b>执行一键命令 (全新 Linux 机器, x86_64/aarch64, 无需已装二进制):
-                        自动下载校验 v{serverVersion} 发布包并装入 ~/.local/bin, 然后把设备 agent(后台服务)注册到本机、装成随登录自动启动。
-                      </div>
-                      {oneLineRows}
+                      {serverVersion ? (
+                        <>
+                          <div className="text-[12px] text-neutral-200">在设备上用<b>普通用户</b>执行一键接入命令:</div>
+                          {oneLineRows?.[0]}
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[12px] text-neutral-200">
+                            在设备上用<b>普通用户</b>依次执行两条命令: 第一条兑换设备凭证, 第二条安装后台服务。
+                          </div>
+                          {enrollRows?.[0]}
+                          {installRow}
+                        </>
+                      )}
                       <div className="text-[11.5px] text-neutral-400">
                         本页面不会替你安装, 也不会感知安装是否成功, 结果以设备上的输出为准。
                       </div>
-                      <div className="text-[12px] text-neutral-200">
-                        设备上已装 nexterm-server 时, 也可以分两条命令接入 (多个接入地址按顺序尝试, 第一个可达的即接入点):
-                      </div>
-                      {enrollRows}
-                      <div className="text-[12px] text-neutral-200">第二条, 把设备 agent 装成随登录自动启动的后台服务 (适配 systemd --user / launchd):</div>
-                      {installRow}
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-[12px] text-neutral-200">
-                        第 1 步 · 在设备上用<b>普通用户</b>依次执行两条命令 (Linux/macOS, 多个接入地址按顺序尝试, 第一个可达的即接入点):
-                        第一条把接入码兑换成设备凭证。
-                      </div>
-                      {enrollRows}
-                      <div className="text-[12px] text-neutral-200">第二条, 把设备 agent(后台服务)装成随登录自动启动 (适配 systemd --user / launchd):</div>
-                      {installRow}
-                      <div className="text-[11.5px] text-neutral-400">本页面不会替你安装, 结果以设备上的输出为准。</div>
+                      <details className="rounded border border-red-500/20 px-2 py-1.5">
+                        <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明: 多地址、手动接入与服务管理</summary>
+                        <div className="mt-2 flex flex-col gap-1.5">
+                          {baseUrls.length > 1 && (
+                            <>
+                              <div className="text-[11.5px] text-neutral-400">其他接入地址按配置顺序作为备用, 第一个可达的即接入点:</div>
+                              {serverVersion ? oneLineRows?.slice(1) : enrollRows?.slice(1)}
+                            </>
+                          )}
+                          {serverVersion && (
+                            <>
+                              <div className="text-[11.5px] text-neutral-400">
+                                设备已安装 nexterm-server 时, 也可手动执行 enroll 与 install:
+                              </div>
+                              {enrollRows}
+                              {installRow}
+                            </>
+                          )}
+                          <div className="text-[11.5px] text-neutral-400">
+                            agent install 会安装随登录自动启动的 per-user 后台服务 (systemd --user / launchd); 数据目录默认取用户数据目录, 可用 NEXTERM_DATA_DIR 统一覆盖 enroll 与 install。
+                          </div>
+                        </div>
+                      </details>
                     </>
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
-                    <span className="text-[12px] text-neutral-200">第 2 步 · 在设备上看到「注册成功」后, 点这里刷新:</span>
-                    <button
-                      type="button"
-                      className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
-                      disabled={loading}
-                      onClick={() => void load()}
-                    >
+                    <span className="text-[12px] text-neutral-200">
+                      执行完成后刷新, 设备会出现在下方列表里并显示「在线」; 然后在设备卡片上点「终端」。
+                    </span>
+                    <button type="button" className="nx-btn nx-btn-primary nx-btn-sm shrink-0" disabled={loading} onClick={() => void load()}>
                       <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
                       我已完成, 刷新
                     </button>
-                    <span className="nx-hint text-[11.5px]">设备会出现在下方列表里并显示「在线」。</span>
-                  </div>
-                  <div className="text-[12px] text-neutral-200">
-                    第 3 步 · 远程控制: 在设备卡片上点「终端」, 在这台设备上打开远程终端。设备 agent 会定期上报心跳与系统指标 (默认每 60 秒一次)。
-                  </div>
-                  <div className="text-[11.5px] text-neutral-400">
-                    此页面不会再次显示接入码; 数据目录默认取用户数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
                   </div>
                 </div>
               </div>
@@ -765,12 +859,13 @@ export function DevicesView() {
         )}
 
         {devices !== null && devices.length === 0 && !error && (
-          <div className="nx-hint py-2 text-center text-[12px]">
-            还没有设备接入: 点右上角「接入新设备」, 按面板里的三步完成接入。
-          </div>
+          <div className="nx-hint py-2 text-center text-[12px]">还没有设备接入: 点右上角「接入新设备」, 按面板提示完成接入。</div>
+        )}
+        {devices !== null && devices.length > 0 && visibleDevices?.length === 0 && (
+          <div className="nx-hint py-2 text-center text-[12px]">没有符合当前搜索或过滤条件的设备。</div>
         )}
 
-        {devices?.map((d) => (
+        {visibleDevices?.map((d) => (
           <DeviceCard
             key={d.id}
             device={d}
@@ -786,7 +881,18 @@ export function DevicesView() {
         ))}
 
         <div id="fleet-base-urls">
-          <BaseUrlsSection entries={baseUrls} isAdmin={Boolean(isAdmin)} onSaved={setBaseUrls} />
+          <BaseUrlsSection
+            entries={baseUrls}
+            isAdmin={Boolean(isAdmin)}
+            status={baseUrlsStatus}
+            loadError={baseUrlsError}
+            onRetry={loadBaseUrls}
+            onSaved={(entries) => {
+              setBaseUrls(entries);
+              setBaseUrlsStatus("ready");
+              setBaseUrlsError(null);
+            }}
+          />
         </div>
       </div>
 

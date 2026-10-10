@@ -24,6 +24,7 @@ import {
   type HitlReplayPlan,
 } from "./hitlReplay";
 import type { AiHitlEventDto, AiHitlSnapshotDto } from "../../ipc/types";
+import type { AiUsage } from "./UsageRing";
 
 export type StreamScheduler = (cb: () => void) => () => void;
 
@@ -64,6 +65,7 @@ export interface ConversationStream {
   pushEvent(generation: number, ev: Record<string, unknown>): ApplyResult;
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
+  restoreUsage(usage: AiUsage): void;
   reset(items?: ChatItem[]): void;
   truncateAfterItem(itemId: string): void;
   hydrateUserMessageIds(messages: { id?: string; role: string; content: unknown }[]): void;
@@ -332,6 +334,12 @@ export function createConversationStream(
           }
           publish();
         }
+      });
+    },
+    restoreUsage(usage) {
+      mutate(() => {
+        state = { ...state, usage };
+        publish();
       });
     },
     reset(items = []) {

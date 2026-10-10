@@ -45,6 +45,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: vi.fn(),
       remove: vi.fn(),
     },
+    systemApi: { platform: vi.fn().mockResolvedValue("windows") },
     assetApi: {
       auditQuery: mocks.auditQuery,
     },

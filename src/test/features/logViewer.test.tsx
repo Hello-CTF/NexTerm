@@ -5,6 +5,7 @@ import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
+  deferred,
   flush,
   flushUntil,
   mount,
@@ -320,6 +321,70 @@ describe("LogViewer", () => {
       'select[aria-label="日志编码"]',
     );
     expect(select?.value).toBe("gbk");
+  });
+
+  it("旧翻页响应不会覆盖新页面", async () => {
+    const previous = deferred<ReturnType<typeof rangeResult>>();
+    const latest = deferred<ReturnType<typeof rangeResult>>();
+    mocks.readRange.mockImplementation(
+      async (_s: string, _p: string, offset: number, maxBytes?: number) => {
+        if (offset === CHUNK) return previous.promise;
+        if (offset === CHUNK * 2) return latest.promise;
+        return rangeResult(offset, maxBytes ?? CHUNK);
+      },
+    );
+    mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
+    await waitForText(mounted, "line 0 ERROR boom");
+
+    click(toolbarButton(mounted.container, "下一页"));
+    await flushUntil(() => mocks.readRange.mock.calls.length === 2);
+    const pageInput = inputByLabel(mounted.container, "页码");
+    setInputValue(pageInput, "3");
+    pageInput.closest("form")?.requestSubmit();
+    await flushUntil(() => mocks.readRange.mock.calls.length === 3);
+
+    latest.resolve(rangeResult(CHUNK * 2, CHUNK));
+    await waitForSettled(mounted, CHUNK * 2);
+    previous.resolve(rangeResult(CHUNK, CHUNK));
+    await flush();
+
+    expect(mounted.container.textContent).toContain(`字节 ${(CHUNK * 2).toLocaleString()}–`);
+    expect(mounted.container.textContent).not.toContain(`字节 ${CHUNK.toLocaleString()}–`);
+  });
+
+  it("旧编码响应不会覆盖新响应，解码使用发起时的编码", async () => {
+    const stale = deferred<ReturnType<typeof gbkRangeResult>>();
+    const current = deferred<ReturnType<typeof gbkRangeResult>>();
+    let request = 0;
+    mocks.readRange.mockImplementation(async () => {
+      request += 1;
+      if (request === 1) return gbkRangeResult();
+      if (request === 2) return stale.promise;
+      return current.promise;
+    });
+    mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("�"));
+
+    click(toolbarButton(mounted.container, "重新读取当前分块（日志文件可能已增长）"));
+    await flushUntil(() => mocks.readRange.mock.calls.length === 2);
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="日志编码"]',
+    );
+    if (!select) throw new Error("encoding select not found");
+    setSelectValue(select, "gbk");
+    await flushUntil(() => mocks.readRange.mock.calls.length === 3);
+
+    current.resolve(gbkRangeResult());
+    await waitForText(mounted, "ERROR 中文");
+    stale.resolve({
+      ...gbkRangeResult(),
+      size: 5,
+      contentBase64: toBase64(new TextEncoder().encode("stale")),
+    });
+    await flush();
+
+    expect(mounted.container.textContent).toContain("ERROR 中文");
+    expect(mounted.container.textContent).not.toContain("stale");
   });
 });
 

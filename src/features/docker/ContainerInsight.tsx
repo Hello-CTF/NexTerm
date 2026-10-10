@@ -34,6 +34,7 @@ type InsightTab = "inspect" | "stats" | "files";
 
 export function ContainerInsight({ sessionId, container, visible, onClose }: InsightProps) {
   const [tab, setTab] = useState<InsightTab>("inspect");
+  const running = container.state === "running";
 
   return (
     <div className="nx-pane">
@@ -43,10 +44,11 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
           返回
         </button>
         <span className="nx-toolbar-title">{container.name}</span>
-        <span className={`nx-badge ${container.state === "running" ? "nx-badge-green" : "nx-badge-red"}`}>
+        <span className={`nx-badge ${running ? "nx-badge-green" : "nx-badge-red"}`}>
           <span className="nx-dot" />
-          {container.state === "running" ? "运行中" : container.state === "exited" ? "已停止" : container.state}
+          {running ? "运行中" : container.state === "exited" ? "已停止" : container.state}
         </span>
+        {!running && <span className="nx-hint">启动容器后可浏览文件</span>}
         <div className="nx-spacer" />
         <div className="nx-segment">
           <button
@@ -66,6 +68,8 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
           <button
             className={`nx-segment-item ${tab === "files" ? "is-active" : ""}`}
             onClick={() => setTab("files")}
+            disabled={!running}
+            title={running ? "浏览容器文件" : "容器已停止，启动后可浏览文件"}
           >
             <IconFolder size={12} />
             文件
@@ -78,11 +82,16 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
         <StatsView
           sessionId={sessionId}
           containerId={container.id}
-          containerRunning={container.state === "running"}
+          containerRunning={running}
           active={visible}
         />
       )}
-      {tab === "files" && <FilesView sessionId={sessionId} containerId={container.id} />}
+      {tab === "files" &&
+        (running ? (
+          <FilesView sessionId={sessionId} containerId={container.id} />
+        ) : (
+          <div className="nx-empty">容器已停止，启动后可浏览文件</div>
+        ))}
     </div>
   );
 }
@@ -302,7 +311,6 @@ function StatsView({
   const known = new Set((ps.data ?? []).map((c) => c.id));
   const parsed = parseStatsOutput(stats.data ?? "");
   const rows = ps.isSuccess ? parsed.filter((r) => known.has(r.id)) : parsed;
-  const current = rows.find((r) => r.id === containerId);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -369,22 +377,27 @@ function StatsView({
               })}
             </tbody>
           </table>
-          {current && (
-            <div className="nx-hint px-3 py-2">
-              当前容器 {current.name || containerId} · CPU {current.cpuPerc || "—"} · 内存{" "}
-              {current.memUsage || "—"}
-            </div>
-          )}
         </div>
       )}
     </div>
   );
 }
 
-function cleanEntries(entries: string[]): string[] {
+interface ContainerDirEntry {
+  name: string;
+  isDir: boolean;
+}
+
+function cleanEntries(entries: readonly (string | ContainerDirEntry)[]): ContainerDirEntry[] {
   return entries
-    .map((e) => e.trim())
-    .filter((e) => e !== "" && e !== "." && e !== "..");
+    .map((entry) => {
+      if (typeof entry !== "string") {
+        return { name: entry.name.trim(), isDir: entry.isDir };
+      }
+      const name = entry.trim();
+      return { name: name.replace(/\/+$/, ""), isDir: name.endsWith("/") };
+    })
+    .filter((entry) => entry.name !== "" && entry.name !== "." && entry.name !== "..");
 }
 
 function joinContainerPath(parent: string, name: string): string {
@@ -420,9 +433,9 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
   const up = parentOfContainerPath(path);
   const entries = cleanEntries(q.data ?? []);
   const sorted = [...entries].sort((a, b) => {
-    const da = a.endsWith("/") ? 0 : 1;
-    const db = b.endsWith("/") ? 0 : 1;
-    return da !== db ? da - db : a.localeCompare(b);
+    const da = a.isDir ? 0 : 1;
+    const db = b.isDir ? 0 : 1;
+    return da !== db ? da - db : a.name.localeCompare(b.name);
   });
 
   return (
@@ -480,14 +493,12 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
         ) : (
           <table className="nx-table nx-table-fixed">
             <tbody>
-              {sorted.map((entry) => {
-                const isDir = entry.endsWith("/");
-                const name = entry.replace(/\/+$/, "");
+              {sorted.map(({ name, isDir }) => {
                 const sensitive = isSensitiveFileName(name);
                 const display = sensitive ? redactFileName(name) : name;
                 return (
                   <tr
-                    key={entry}
+                    key={name}
                     className={isDir ? "cursor-pointer" : undefined}
                     title={
                       sensitive

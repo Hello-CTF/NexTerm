@@ -355,6 +355,9 @@ describe("分享卡片 · 列表与状态", () => {
     );
     expect(sessionSpan?.textContent).toContain("01J4Z8Y7…");
     expect(text).toContain("最近访问");
+    expect(text).toContain("通过设备 agent 在你的接入设备上新建终端");
+    expect(text).toContain("公开链接中继既有实时会话");
+    expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
   it("空列表给空态, 加载失败给错误与重试, 断网显示离线原因", async () => {
@@ -544,6 +547,28 @@ describe("分享卡片 · 吊销", () => {
     click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/share/links/l-1/revoke"));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("公开链接");
+  });
+
+  it("普通用户可吊销自己创建的公开链接,无需持有对应设备", async () => {
+    const ownedLink = { ...LINK_ACTIVE, id: "l-alice", owner_id: "u-alice", device_id: "d-1" };
+    const calls = route(shareHandler({
+      devices: { devices: [DAEMON_DEVICE_2] },
+      shares: { shares: [] },
+      links: { links: [ownedLink] },
+    }));
+    mocks.ask.mockResolvedValue(true);
+    seedUser(ALICE);
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
+
+    const card = shareCard();
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) =>
+      d.textContent?.includes("会话 01J4Z8Y7"),
+    );
+    const revoke = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销");
+    expect(revoke).toBeDefined();
+    click(revoke as HTMLButtonElement);
+    await flushUntil(() => calls.some((c) => c.url === "/share/links/l-alice/revoke"));
   });
 });
 

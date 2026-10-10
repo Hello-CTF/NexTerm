@@ -294,8 +294,8 @@ function ShareManagement() {
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享把你的一台接入设备交给另一个注册用户: 对方在有效期内通过设备 agent 新建终端, 全程不接触你的主机密码或私钥。
-        公开链接绑定一个实时会话, 有效期内持有链接的人都能打开; 链接只能在这里查看与吊销。
+        主机分享让另一个注册用户在有效期内通过设备 agent 在你的接入设备上新建终端。
+        公开链接中继既有实时会话, 持有链接的人访问的是同一会话, 不会为其新建终端; 链接只能在这里查看与吊销。
       </p>
 
       {createOpen && (
@@ -419,7 +419,7 @@ function ShareManagement() {
           {links.map((l) => {
             const state = shareState(l.expires_at, l.revoked_at, now);
             const perm = permissionBadge(l.permission);
-            const canRevoke = isAdmin || (devices?.some((d) => d.id === l.device_id) ?? false);
+            const canRevoke = isAdmin || l.owner_id === userId || (devices?.some((d) => d.id === l.device_id) ?? false);
             return (
               <div
                 key={l.id}
@@ -453,7 +453,7 @@ function ShareManagement() {
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
           列表由服务端按账号过滤: 普通用户看到自己授予/接收的分享与自建的公开链接, 超管看全部。吊销立即生效;
-          分享与链接都不接触主机密码或私钥, 对方通过设备 agent 新建终端。
+          主机分享与公开链接都不会把主机密码或私钥交给访问者。
         </div>
       </div>
     </section>

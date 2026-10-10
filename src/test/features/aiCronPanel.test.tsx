@@ -63,6 +63,8 @@ type TestJob = {
   updatedAt: string;
   revision: number;
   nextRunAt: string;
+  retryAt?: string;
+  circuitOpenUntil?: string;
   consecutiveFailures?: number;
   lastError?: string;
   lease: { owner?: string };
@@ -945,5 +947,80 @@ describe("CronPanel", () => {
     expect(select.className).toContain("min-w-0");
     expect(select.className).toContain("flex-1");
     expect(select.value).toBe("");
+  });
+
+  it("下次执行取计划、重试与熔断时间的最晚者，停用状态优先且不显示待执行", async () => {
+    const scheduled = job({
+      id: "j-scheduled",
+      sessionId: CONV_ID,
+      name: "最晚时间",
+      nextRunAt: "2030-01-01T02:00:00Z",
+      retryAt: "2031-02-03T04:00:00Z",
+      circuitOpenUntil: "2032-04-05T06:00:00Z",
+    });
+    mocks.list.mockResolvedValue([scheduled]);
+    mounted = mountPanel();
+    await flush();
+    expect(mounted.container.textContent).toContain(
+      `下次执行 ${new Date("2032-04-05T06:00:00Z").toLocaleString()}`,
+    );
+    expect(mounted.container.textContent).toContain("注销只删除当前这一条定时任务");
+    expect(mounted.container.textContent).toContain("删除所属 AI 会话会级联删除该会话的全部定时任务");
+
+    const disabled = job({
+      id: "j-disabled",
+      sessionId: CONV_ID,
+      name: "已停用任务",
+      enabled: false,
+      nextRunAt: "2030-01-01T02:00:00Z",
+      retryAt: "2031-02-03T04:00:00Z",
+      circuitOpenUntil: "2032-04-05T06:00:00Z",
+      run: { id: "running-1", scheduledFor: "", startedAt: "", deadline: "" },
+    });
+    mocks.list.mockResolvedValue([disabled]);
+    mounted = mountPanel();
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("已停用");
+    expect(text).toContain("没有待执行的时间点");
+    const badges = [...mounted.container.querySelectorAll(".nx-badge")].map((badge) => badge.textContent);
+    expect(badges).not.toContain("执行中");
+    expect(badges).not.toContain("熔断中");
+    expect(text).not.toContain("下次执行");
+  });
+
+  it("未保存编辑在切换对象、取消和关闭面板前均要求确认", async () => {
+    const other = job({ id: "j-other", sessionId: CONV_ID, name: "备用任务", prompt: "backup" });
+    mocks.list.mockResolvedValue([JOB_A, other]);
+    mocks.ask.mockResolvedValue(false);
+    mounted = mountPanel();
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    setInputValue(
+      mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
+      "dirty draft",
+    );
+    clickRowButton(mounted.container, "备用任务", "编辑");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')?.value).toBe("dirty draft");
+
+    click(mounted.container.querySelector('button[title="关闭"]')!);
+    await flush();
+    expect(mocks.onClose).not.toHaveBeenCalled();
+
+    clickButton(mounted.container, "取消");
+    await flush();
+    expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).not.toBeNull();
+
+    mocks.ask.mockResolvedValue(true);
+    clickRowButton(mounted.container, "备用任务", "编辑");
+    await flush();
+    expect(mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')?.value).toBe("backup");
+
+    click(mounted.container.querySelector('button[title="关闭"]')!);
+    await flush();
+    expect(mocks.onClose).toHaveBeenCalledTimes(1);
   });
 });

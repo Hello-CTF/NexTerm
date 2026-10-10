@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
 import { nextTabId, useUi } from "../../app/store";
 import { TRANSPORT } from "../../ipc/env";
@@ -44,17 +44,20 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<Record<string, "takeover" | "kill">>({});
+  const loadGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
+    const generation = ++loadGenerationRef.current;
     setLoading(true);
     try {
       const list = await terminalApi.listLive();
+      if (generation !== loadGenerationRef.current) return;
       setItems(list.filter((t) => t.sessionKind !== "local" && t.subscribers === 0 && !t.exited));
       setError(null);
     } catch (e) {
-      setError(describeError(e));
+      if (generation === loadGenerationRef.current) setError(describeError(e));
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) setLoading(false);
     }
   }, []);
 
@@ -62,7 +65,10 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
     if (!visible) return;
     void load();
     const timer = window.setInterval(() => void load(), POLL_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      loadGenerationRef.current += 1;
+    };
   }, [visible, load]);
 
   const takeOver = async (info: LiveTabInfo) => {

@@ -184,6 +184,12 @@ describe("设备管理 · 一键安装指令", () => {
       "curl -fsSL --insecure 'https://10.0.0.8:8443/install-device.sh' | sh -s -- " +
         "--server 'https://10.0.0.8:8443' --code 'fleet-code-1' --version '0.2.2' --insecure",
     );
+    const details = document.querySelector<HTMLDetailsElement>("details");
+    const oneLineElements = [...document.querySelectorAll("code")].filter((c) => c.textContent?.includes("install-device.sh"));
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    expect(oneLineElements[0].closest("details")).toBeNull();
+    expect(oneLineElements[1].closest("details")).toBe(details);
     // 既有命令 (已装二进制) 保留
     expect(commands.some((c) => c.includes("nexterm-server agent enroll"))).toBe(true);
     expect(commands.some((c) => c.includes("nexterm-server agent install"))).toBe(true);

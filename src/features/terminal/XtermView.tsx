@@ -65,7 +65,6 @@ export interface XtermViewProps {
   canResize?: boolean;
   remoteGrid?: { cols: number; rows: number; revision: number };
   visible?: boolean;
-  onClosed?: () => void;
   onAttach?: (kernelTabId: string) => void;
   onAttachFailed?: (code: string) => void;
   registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;

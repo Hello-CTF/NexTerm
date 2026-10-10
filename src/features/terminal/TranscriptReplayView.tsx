@@ -46,7 +46,13 @@ async function loadAllChunks(transcriptId: string): Promise<ReplayChunk[]> {
   return chunks;
 }
 
-export function TranscriptReplayView({ transcriptId }: { transcriptId: string }) {
+export function TranscriptReplayView({
+  transcriptId,
+  contentOmitted = false,
+}: {
+  transcriptId: string;
+  contentOmitted?: boolean;
+}) {
   const [chunks, setChunks] = useState<ReplayChunk[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -84,6 +90,10 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
     setPlaying(false);
     setPosition(0);
     positionRef.current = 0;
+    if (contentOmitted) {
+      setChunks([]);
+      return;
+    }
     void (async () => {
       try {
         const loaded = await loadAllChunks(transcriptId);
@@ -95,7 +105,7 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
     return () => {
       cancelled = true;
     };
-  }, [transcriptId]);
+  }, [transcriptId, contentOmitted]);
 
   useEffect(() => {
     if (!chunks) return;
@@ -111,11 +121,18 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
 
   useEffect(() => {
     if (!playing) return;
+    let previous = performance.now();
     const timer = window.setInterval(() => {
       const engine = engineRef.current;
       const terminal = terminalRef.current;
       if (!engine || !terminal) return;
-      const next = engine.playStep(terminalSink(terminal), positionRef.current + TICK_MS * speedRef.current);
+      const now = performance.now();
+      const elapsed = now - previous;
+      previous = now;
+      const next = engine.playStep(
+        terminalSink(terminal),
+        positionRef.current + elapsed * speedRef.current,
+      );
       positionRef.current = next;
       setPosition(next);
       if (next >= engine.durationMs()) {
@@ -205,7 +222,7 @@ export function TranscriptReplayView({ transcriptId }: { transcriptId: string })
         )}
         {chunks && chunks.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">
-            这条记录没有任何可回放的内容
+            {contentOmitted ? "仅保留元数据" : "这条记录没有任何可回放的内容"}
           </div>
         )}
       </div>

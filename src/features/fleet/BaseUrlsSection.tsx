@@ -6,16 +6,19 @@ import { useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetBaseURLEntry } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { IconArrowDown, IconArrowUp, IconChevronRight, IconGlobe, IconPlus, IconSave, IconTrash, IconXCircle } from "../../ui/icons";
+import { IconArrowDown, IconArrowUp, IconChevronRight, IconGlobe, IconPlus, IconRefresh, IconSave, IconTrash, IconXCircle } from "../../ui/icons";
 import { MAX_BASE_URLS, validateBaseURL } from "./baseUrlValidation";
 
 interface BaseUrlsSectionProps {
   entries: FleetBaseURLEntry[];
   isAdmin: boolean;
   onSaved: (entries: FleetBaseURLEntry[]) => void;
+  status?: "loading" | "error" | "ready";
+  loadError?: string | null;
+  onRetry?: () => void;
 }
 
-export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionProps) {
+export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", loadError = null, onRetry }: BaseUrlsSectionProps) {
   const { pushToast } = useUi();
   const [draft, setDraft] = useState<FleetBaseURLEntry[]>(entries);
   const [dirty, setDirty] = useState(false);
@@ -96,13 +99,23 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">接入地址</span>
         <span className="nx-hint min-w-0 flex-1 truncate">
-          {draft.length === 0
-            ? isAdmin
-              ? "未配置：新设备无法接入，展开以添加"
-              : "未配置：新设备无法接入，请联系超级管理员"
-            : `${draft.length} 个地址 · ${draft[0].url}${draft.length > 1 ? " 等" : ""} · 按顺序尝试，第一个可达的即当前接入点`}
+          {status === "loading"
+            ? "读取中…"
+            : status === "error"
+              ? "读取失败"
+              : draft.length === 0
+                ? isAdmin
+                  ? "未配置：新设备无法接入，展开以添加"
+                  : "未配置：新设备无法接入，请联系超级管理员"
+                : `${draft.length} 个地址 · ${draft[0].url}${draft.length > 1 ? " 等" : ""} · 按顺序尝试，第一个可达的即当前接入点`}
         </span>
-        {dirty && <span className="nx-badge nx-badge-amber shrink-0">有未保存的修改</span>}
+        {dirty && status === "ready" && <span className="nx-badge nx-badge-amber shrink-0">有未保存的修改</span>}
+        {status === "error" && (
+          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={onRetry}>
+            <IconRefresh size={11} />
+            重试
+          </button>
+        )}
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -114,7 +127,14 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
         </button>
       </div>
 
-      {open && (
+      {open && status === "loading" && <div className="nx-hint py-2 text-[12px]">接入地址读取中…</div>}
+      {open && status === "error" && (
+        <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">接入地址读取失败 · {loadError}</span>
+        </div>
+      )}
+      {open && status === "ready" && (
         <>
           <p className="nx-hint mb-3 mt-1">
             接入地址是设备用来连接这台 NexTerm 服务器的地址 (如 https://nexterm.example.com); 新设备接入时按此顺序拿到地址列表, 保存只影响之后接入的设备, 已接入设备仍使用注册时拿到的列表。
@@ -241,7 +261,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
                 <button
                   type="button"
                   className="nx-btn nx-btn-primary nx-btn-sm"
-                  disabled={!dirty || saving}
+                  disabled={status !== "ready" || !dirty || saving}
                   onClick={() => void save()}
                 >
                   <IconSave size={12} />

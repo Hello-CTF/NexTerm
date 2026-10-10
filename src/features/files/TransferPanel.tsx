@@ -7,7 +7,11 @@ import { cancelTransferTask, clearFinishedTransfers, useTransferStore } from "./
 
 function TransferRow({ task }: { task: TransferTask }) {
   const name = baseName(task.remotePath);
-  const pathText = task.direction === "upload" ? task.remotePath : describeTarget(task.localPath, name);
+  const localPath = describeTarget(task.localPath, name);
+  const pathText =
+    task.direction === "upload"
+      ? `${localPath} -> ${task.remotePath}`
+      : `${task.remotePath} -> ${localPath}`;
   const percent = progressPercent(task);
   const active = task.status === "queued" || task.status === "running";
   return (

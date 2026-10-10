@@ -184,6 +184,7 @@ describe("M119 AI responsive fixes", () => {
       id: "call-1",
       tool: "exec_commands",
       rendered: "$ rm -rf /tmp/x",
+      risk: "needs_confirm",
     });
     await flush();
 

@@ -351,7 +351,7 @@ export function SettingsView() {
           </div>
           <p className="nx-hint mb-3.5">
             可存多份模型档案（不同厂商 / 不同 Key），选中一份「设为当前」供 AI 使用。
-            密钥加密后存在本机 sqlite，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
+            密钥加密后存在{DESKTOP ? "本机" : "NexTerm 服务端的"} sqlite；只有开启「同步 AI 模型档案」且凭据库已解锁，推送时才会将密钥随档案端到端加密同步。模型可换成本地 Ollama / LM Studio / vLLM。
           </p>
 
           <ModelManager />
@@ -613,7 +613,7 @@ export function SettingsView() {
                 取消
               </button>
               <p className="nx-hint w-full text-[11px]">
-                保护密码只在本机使用，不会上传；留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。忘记后无法找回，已保存的凭据将永远无法解密。
+                保护密码只用于{DESKTOP ? "本机" : "NexTerm 服务端"}凭据库的加解密，不作为同步内容；账号同步推送的是经端到端加密的凭据，不是这个保护密码。留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。忘记后无法找回，已保存的凭据将永远无法解密。
               </p>
             </div>
           )}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findResumableRun,
+  latestRunUsage,
   pendingDeadline,
   replayableRuns,
   resumableCandidates,
@@ -164,6 +165,27 @@ describe("pendingDeadline", () => {
         pending: [{ expiresAt: "not-a-date" } as AiHitlSnapshotDto["pending"][number]],
       }),
     ).toBeNull();
+  });
+});
+
+describe("latestRunUsage", () => {
+  it("restores the most recent usage and skips newer runs without usage events", async () => {
+    const runs = [
+      runOf({ id: "new-no-usage", createdAt: 3000 }),
+      runOf({ id: "old-with-usage", createdAt: 2000 }),
+      runOf({ id: "older-with-usage", createdAt: 1000 }),
+    ];
+    const usage = await latestRunUsage(runs, async (jobId) => ({
+      events:
+        jobId === "old-with-usage"
+          ? [
+              { type: "usage", promptTokens: 100, completionTokens: 20, cachedTokens: 30, contextWindow: 1000 },
+              { type: "usage", promptTokens: 120, completionTokens: 25, cachedTokens: 40, contextWindow: 2000 },
+            ]
+          : [],
+      failed: false,
+    }));
+    expect(usage).toEqual({ promptTokens: 120, completionTokens: 25, cachedTokens: 40, contextWindow: 2000 });
   });
 });
 

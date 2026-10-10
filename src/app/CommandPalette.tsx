@@ -1,13 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUi, connectAsset, dbKindOf, DB_KIND_LABEL, nextTabId, openTerminalTab, requestKillTab } from "./store";
+import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import {
   choosePresetTargetAndApply,
   deleteLayoutPreset,
   saveLayoutPresetFromWorkspace,
 } from "./layoutPresets";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
-import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
+import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
@@ -22,7 +22,6 @@ import {
   IconClock,
   IconCommand,
   IconCopy,
-  IconDatabase,
   IconEdit,
   IconEye,
   IconEyeOff,
@@ -68,7 +67,7 @@ export function CommandPalette({
   onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const { sessions, setSessions, addTab, ensureWorkspace, pushToast, themeMode, setThemeMode, connectingAssetIds, layoutPresets } =
+  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode, connectingAssetIds, layoutPresets } =
     useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -150,37 +149,6 @@ export function CommandPalette({
             .catch((error) => pushToast("error", describeError(error)));
         },
       },
-      ...(assets.some((item) => dbKindOf(item.kind) !== null)
-        ? [{
-            id: "database",
-            label: "打开数据库工作台",
-            hint: "MySQL / PostgreSQL / Redis",
-            icon: IconDatabase,
-            run: () => {
-              const asset =
-                assets.find((item) => item.kind === "mysql") ??
-                assets.find((item) => item.kind === "postgres") ??
-                assets.find((item) => item.kind === "redis");
-              if (!asset) return;
-              void dbApi
-                .connect(asset.id)
-                .then(({ connId }) => {
-                  const dbKind = dbKindOf(asset.kind) ?? "mysql";
-                  const title = `${asset.name} · ${DB_KIND_LABEL[dbKind]}`;
-                  ensureWorkspace({ kind: "db", connId, dbKind, title, assetId: asset.id });
-                  addTab({
-                    id: `db-${connId}`,
-                    kind: "db",
-                    title: DB_KIND_LABEL[dbKind],
-                    connId,
-                    dbKind,
-                    closable: true,
-                  });
-                })
-                .catch((error) => pushToast("error", describeError(error)));
-            },
-          }]
-        : []),
       {
         id: "split-pane",
         label: "上下分屏 / 取消分屏",

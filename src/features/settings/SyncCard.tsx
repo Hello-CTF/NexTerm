@@ -837,13 +837,17 @@ function CompareConsole() {
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
   const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ head: string; seq: number }>(() => loadCursor(user.id));
-  const [busy, setBusy] = useState<null | "refresh" | "push" | "optin">(null);
+  const [refreshBusy, setRefreshBusy] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [optInBusy, setOptInBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pushInfo, setPushInfo] = useState<string | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   // opt-in 代次: 开关变更即递增, 旧代次的快照与进行中的 load/push/apply 一律作废,
   // 防止「已关闭同步仍推送/应用旧快照」(尤其删除墓碑删除远端副本)。
   const optInEpochRef = useRef(0);
+  const loadSeqRef = useRef(0);
   // 当前 local/remote 快照所属代次; 与 optInEpochRef 不一致时推送/应用保持禁用(reload 完成前)。
   const [snapshotEpoch, setSnapshotEpoch] = useState(-1);
 
@@ -876,10 +880,12 @@ function CompareConsole() {
 
   const load = useCallback(
     (optIn: SyncKindOptIn, epoch: number) => {
+      const seq = ++loadSeqRef.current;
+      setRefreshBusy(true);
       setError(null);
       return Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn)])
         .then(([l, r]) => {
-          if (epoch !== optInEpochRef.current) return; // 乱序/过期 load 的回写丢弃
+          if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
           setLocal(l.entities);
           setCollectWarnings(l.warnings);
           setRemote(r.objects);
@@ -890,8 +896,11 @@ function CompareConsole() {
           setCursor(next);
         })
         .catch((e: unknown) => {
-          if (epoch !== optInEpochRef.current) return;
+          if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
           setError(describeError(e));
+        })
+        .finally(() => {
+          if (seq === loadSeqRef.current) setRefreshBusy(false);
         });
     },
     [dek, user.id],
@@ -903,7 +912,7 @@ function CompareConsole() {
 
   const updateKindOptIn = async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
     optInEpochRef.current += 1; // 立即作废旧快照与进行中的 push/apply
-    setBusy("optin");
+    setOptInBusy(true);
     setError(null);
     try {
       const next = await syncApi.kindOptInSet(patch);
@@ -913,7 +922,7 @@ function CompareConsole() {
       // 开关未改成: 按当前 opt-in 重新加载, 恢复同代可用快照
       void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current);
     } finally {
-      setBusy(null);
+      setOptInBusy(false);
     }
   };
 
@@ -938,8 +947,8 @@ function CompareConsole() {
 
   const applyRemote = async () => {
     const startEpoch = optInEpochRef.current;
-    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
-    setBusy("push");
+    if (refreshBusy || applyBusy || pushBusy || optInBusy || snapshotEpoch !== startEpoch) return;
+    setApplyBusy(true);
     setError(null);
     setApplyInfo(null);
     try {
@@ -956,6 +965,7 @@ function CompareConsole() {
       for (let i = 0; i < objects.length; i += 256) {
         if (optInEpochRef.current !== startEpoch) return;
         const result = await syncApi.applyObjects(objects.slice(i, i + 256));
+        if (optInEpochRef.current !== startEpoch) return;
         applied += result.applied;
         identical += result.identical;
         skipped += result.skipped;
@@ -971,16 +981,16 @@ function CompareConsole() {
       pushToast("success", `已应用 ${applied} 个对象`);
       await load(kindOptIn ?? DEFAULT_KIND_OPT_IN, startEpoch);
     } catch (e) {
-      setError(describeError(e));
+      if (optInEpochRef.current === startEpoch) setError(describeError(e));
     } finally {
-      setBusy(null);
+      setApplyBusy(false);
     }
   };
 
   const push = async () => {
     const startEpoch = optInEpochRef.current;
-    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
-    setBusy("push");
+    if (refreshBusy || applyBusy || pushBusy || optInBusy || snapshotEpoch !== startEpoch) return;
+    setPushBusy(true);
     setError(null);
     setPushInfo(null);
     const optIn = kindOptIn ?? DEFAULT_KIND_OPT_IN;
@@ -1059,11 +1069,12 @@ function CompareConsole() {
       }
       setError(describeError(e));
     } finally {
-      setBusy(null);
+      setPushBusy(false);
     }
   };
 
   const pushCount = winners.length;
+  const actionBusy = refreshBusy || applyBusy || pushBusy || optInBusy;
   const sameCount = rows?.filter((r) => r.state === "same").length ?? 0;
   const detailsSummary = !rows
     ? "读取中…"
@@ -1080,25 +1091,25 @@ function CompareConsole() {
         <span className="nx-badge nx-badge-green">已解锁</span>
         <span className="nx-hint">云端 {remote?.length ?? "…"} 个对象</span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
-          <IconRefresh size={12} className={busy === "refresh" ? "animate-spin" : ""} />
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={actionBusy} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
+          <IconRefresh size={12} className={refreshBusy ? "animate-spin" : ""} />
           刷新对比
         </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || applySet.length === 0}
+          disabled={actionBusy || snapshotEpoch !== optInEpochRef.current || applySet.length === 0}
           onClick={() => void applyRemote()}
         >
-          {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-          {busy === "push" ? "应用中…" : `拉取并应用 (${applySet.length})`}
+          {applyBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
+          {applyBusy ? "应用中…" : `拉取并应用 (${applySet.length})`}
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || pushCount === 0}
+          disabled={actionBusy || snapshotEpoch !== optInEpochRef.current || pushCount === 0}
           onClick={() => void push()}
         >
-          {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-          {busy === "push" ? "推送中…" : `推送到云端 (${pushCount})`}
+          {pushBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
+          {pushBusy ? "推送中…" : `推送到云端 (${pushCount})`}
         </button>
       </div>
 
@@ -1135,7 +1146,7 @@ function CompareConsole() {
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 shrink-0"
                   checked={kindOptIn.knownHost}
-                  disabled={busy !== null}
+                  disabled={applyBusy || pushBusy || optInBusy}
                   onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
                 />
                 <span className="text-[12px] text-neutral-300">
@@ -1148,7 +1159,7 @@ function CompareConsole() {
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 shrink-0"
                   checked={kindOptIn.aiProfile}
-                  disabled={busy !== null}
+                  disabled={applyBusy || pushBusy || optInBusy}
                   onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
                 />
                 <span className="text-[12px] text-neutral-300">

@@ -478,3 +478,57 @@ describe("M165 R2 开关切换竞态", () => {
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
 });
+
+describe("CompareConsole 操作忙碌状态", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("拉取应用只显示 apply 忙碌,不误标成推送", async () => {
+    optInState = { knownHost: true, aiProfile: false };
+    const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
+    const applyGate = deferred<{ applied: number; identical: number; skipped: number; objects: [] }>();
+    mocks.applyObjects.mockReturnValue(applyGate.promise);
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("拉取并应用 (1)"));
+    clickButton(mounted!.container, "拉取并应用 (1)");
+    await flushUntil(() => button("应用中…") !== undefined);
+    expect(button("推送到云端 (0)")?.textContent).toBe("推送到云端 (0)");
+    expect(button("推送中…")).toBeUndefined();
+
+    applyGate.resolve({ applied: 1, identical: 0, skipped: 0, objects: [] });
+    await flushUntil(() => text().includes("已应用 1"));
+  });
+
+  it("刷新期间禁用旧快照的 apply/push,完成后恢复", async () => {
+    optInState = { knownHost: true, aiProfile: false };
+    const wire = await remoteFixtureWire("kh-2", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-2", seq: 1, blob_hash: "h2" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("拉取并应用 (1)") && text().includes("推送到云端 (1)"));
+    const refreshGate = deferred<void>();
+    mocks.collectKnownHosts.mockImplementationOnce(async () => {
+      await refreshGate.promise;
+      return { knownHosts: [KNOWN_HOST_DTO], hasMore: false };
+    });
+    clickButton(mounted!.container, "刷新对比");
+    await flushUntil(() => button("刷新对比")?.disabled === true);
+    expect(button("拉取并应用 (1)")?.disabled).toBe(true);
+    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+
+    refreshGate.resolve();
+    await flushUntil(() => button("刷新对比")?.disabled === false);
+    expect(button("拉取并应用 (1)")?.disabled).toBe(false);
+    expect(button("推送到云端 (1)")?.disabled).toBe(false);
+  });
+});

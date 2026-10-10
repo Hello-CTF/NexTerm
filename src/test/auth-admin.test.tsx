@@ -128,6 +128,25 @@ describe("AccountCard 超管用户管理", () => {
     expect(selfRow?.textContent).not.toContain("禁用");
   });
 
+  it("仅 active 用户显示禁用,其他状态的非本人用户仍保留重置", async () => {
+    const disabled = { ...ALICE, id: "u-disabled", username: "disabled", state: "disabled" as const };
+    const resetRequired = { ...ALICE, id: "u-reset", username: "reset", state: "reset_required" as const };
+    mocks.users.mockResolvedValue({ users: [SELF, ALICE, disabled, resetRequired] });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("reset"));
+
+    const actionLabels = (username: string) => {
+      const row = [...mounted!.container.querySelectorAll("div.border-b")].find((d) =>
+        d.querySelector(`span[title="${username}"]`),
+      );
+      return [...(row?.querySelectorAll("button") ?? [])].map((b) => b.textContent?.trim());
+    };
+    expect(actionLabels("root")).toEqual([]);
+    expect(actionLabels("alice")).toEqual(["禁用", "重置"]);
+    expect(actionLabels("disabled")).toEqual(["重置"]);
+    expect(actionLabels("reset")).toEqual(["重置"]);
+  });
+
   it("创建用户提交用户名与初始密码", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
@@ -170,7 +189,7 @@ describe("AccountCard 超管用户管理", () => {
     expect(mocks.disableUser).not.toHaveBeenCalled();
   });
 
-  it("重置用户先确认并提示清除密钥", async () => {
+  it("重置用户确认说明数据密钥,会话,MFA 绑定与云端密文恢复路径", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
@@ -181,6 +200,9 @@ describe("AccountCard 超管用户管理", () => {
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     const question = String(mocks.ask.mock.calls[0]?.[0]);
     expect(question).toContain("数据密钥");
+    expect(question).toContain("全部会话");
+    expect(question).toContain("两步验证绑定");
+    expect(question).toContain("云端密文需从仍持有数据的设备重新同步");
     await flushUntil(() => mocks.resetUser.mock.calls.length > 0);
     expect(mocks.resetUser).toHaveBeenCalledWith("u-alice");
   });

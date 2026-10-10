@@ -98,13 +98,19 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [listWidth, setListWidth] = useState(300);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
+  const hostsGenerationRef = useRef(0);
+  const sessionsGenerationRef = useRef(0);
+  const readerGenerationRef = useRef(0);
+  const searchGenerationRef = useRef(0);
 
   const loadHosts = useCallback(async () => {
+    const generation = ++hostsGenerationRef.current;
     try {
       const [assets, transcriptHosts] = await Promise.all([
         assetApi.list(),
         transcriptApi.hosts(),
       ]);
+      if (generation !== hostsGenerationRef.current) return;
       const merged: HostOption[] = [];
       const seen = new Set<string>();
       for (const asset of assets.filter((candidate) => TERMINAL_ASSET_KINDS.has(candidate.kind))) {
@@ -124,12 +130,18 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       setHosts(merged);
       setHostsError(null);
     } catch (error) {
-      setHostsError(describeError(error));
+      if (generation === hostsGenerationRef.current) setHostsError(describeError(error));
     }
   }, []);
 
   useEffect(() => {
     void loadHosts();
+    return () => {
+      hostsGenerationRef.current += 1;
+      sessionsGenerationRef.current += 1;
+      readerGenerationRef.current += 1;
+      searchGenerationRef.current += 1;
+    };
   }, [loadHosts]);
 
   useEffect(() => {
@@ -140,12 +152,14 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
 
   const loadSessions = useCallback(async () => {
     if (!assetId) return;
+    const generation = ++sessionsGenerationRef.current;
     try {
       const list = await transcriptApi.list(assetId);
+      if (generation !== sessionsGenerationRef.current) return;
       setSessions(Array.isArray(list) ? list : []);
       setSessionsError(null);
     } catch (error) {
-      setSessionsError(describeError(error));
+      if (generation === sessionsGenerationRef.current) setSessionsError(describeError(error));
     }
   }, [assetId]);
 
@@ -194,17 +208,52 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   }, []);
 
   const loadReader = useCallback(
-    async (id: string, afterSeq: number) => {
+    async (id: string, afterSeq: number, generation: number) => {
       const result = normalizeRead(await transcriptApi.read(id, afterSeq, PAGE_BYTES));
+      if (generation !== readerGenerationRef.current) return null;
       decodeChunks(result.chunks, result.done);
       setNextSeq(result.nextSeq);
       setDone(result.done);
+      return result;
     },
     [decodeChunks],
   );
 
+  const reloadReader = useCallback(
+    async (id: string) => {
+      const generation = ++readerGenerationRef.current;
+      searchGenerationRef.current += 1;
+      decoderRef.current = createTranscriptDecoder();
+      setReaderLoading(true);
+      setLoadingMore(false);
+      setReaderError(null);
+      setChunks([]);
+      setNextSeq(0);
+      setDone(false);
+      setMatches(null);
+      setSearching(false);
+      setSearchError(null);
+      try {
+        await loadReader(id, 0, generation);
+      } catch (error) {
+        if (generation === readerGenerationRef.current) {
+          setReaderError(describeError(error));
+        }
+      } finally {
+        if (generation === readerGenerationRef.current) setReaderLoading(false);
+      }
+    },
+    [loadReader],
+  );
+
   useEffect(() => {
+    searchGenerationRef.current += 1;
+    setSearching(false);
     if (!selectedId) {
+      readerGenerationRef.current += 1;
+      decoderRef.current = null;
+      setReaderLoading(false);
+      setLoadingMore(false);
       setChunks([]);
       setNextSeq(0);
       setDone(true);
@@ -212,89 +261,96 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       setMatches(null);
       setSearchError(null);
       setQuery("");
+    } else if (selected?.contentOmitted) {
+      readerGenerationRef.current += 1;
       decoderRef.current = null;
-      return;
+      setReaderLoading(false);
+      setLoadingMore(false);
+      setReaderError(null);
+      setChunks([]);
+      setNextSeq(0);
+      setDone(true);
+      setMatches(null);
+      setSearchError(null);
+    } else {
+      void reloadReader(selectedId);
     }
-    let cancelled = false;
-    decoderRef.current = createTranscriptDecoder();
-    setReaderLoading(true);
-    setReaderError(null);
-    setChunks([]);
-    setNextSeq(0);
-    setDone(false);
-    setMatches(null);
-    setSearchError(null);
-    void (async () => {
-      try {
-        const result = normalizeRead(await transcriptApi.read(selectedId, 0, PAGE_BYTES));
-        if (cancelled) return;
-        decodeChunks(result.chunks, result.done);
-        setNextSeq(result.nextSeq);
-        setDone(result.done);
-      } catch (error) {
-        if (!cancelled) setReaderError(describeError(error));
-      } finally {
-        if (!cancelled) setReaderLoading(false);
-      }
-    })();
     return () => {
-      cancelled = true;
+      readerGenerationRef.current += 1;
+      searchGenerationRef.current += 1;
     };
-  }, [selectedId, decodeChunks]);
+  }, [selectedId, selected?.contentOmitted, reloadReader]);
 
   const loadMore = async () => {
     if (!selectedId || loadingMore || done) return;
+    const generation = readerGenerationRef.current;
+    const id = selectedId;
     setLoadingMore(true);
     try {
-      await loadReader(selectedId, nextSeq);
+      await loadReader(id, nextSeq, generation);
     } catch (error) {
-      setReaderError(describeError(error));
+      if (generation === readerGenerationRef.current) {
+        setReaderError(describeError(error));
+      }
     } finally {
-      setLoadingMore(false);
+      if (generation === readerGenerationRef.current) setLoadingMore(false);
     }
   };
 
   const runSearch = async () => {
-    if (!selectedId) return;
+    if (!selectedId || selected?.contentOmitted) return;
+    const id = selectedId;
     const trimmed = query.trim();
+    const generation = ++searchGenerationRef.current;
     if (!trimmed) {
       setMatches(null);
+      setSearching(false);
       setSearchError(null);
       return;
     }
     setSearching(true);
     setSearchError(null);
     try {
-      const found = await transcriptApi.search(selectedId, trimmed);
+      const found = await transcriptApi.search(id, trimmed);
+      if (generation !== searchGenerationRef.current) return;
       setMatches(Array.isArray(found) ? found : []);
     } catch (error) {
+      if (generation !== searchGenerationRef.current) return;
       setMatches(null);
       setSearchError(describeError(error));
     } finally {
-      setSearching(false);
+      if (generation === searchGenerationRef.current) setSearching(false);
     }
   };
 
   const jumpToMatch = async (match: TranscriptMatch) => {
     if (!selectedId) return;
+    const id = selectedId;
+    const generation = readerGenerationRef.current;
     try {
       let cursor = nextSeq;
       let reachedDone = done;
       while (cursor <= match.seq && !reachedDone) {
-        const result = normalizeRead(await transcriptApi.read(selectedId, cursor, PAGE_BYTES));
-        decodeChunks(result.chunks, result.done);
+        const result = await loadReader(id, cursor, generation);
+        if (!result) return;
         cursor = result.nextSeq;
-        setNextSeq(result.nextSeq);
-        setDone(result.done);
         reachedDone = result.done;
       }
       window.requestAnimationFrame(() => {
+        if (generation !== readerGenerationRef.current) return;
         const target = readerRef.current?.querySelector(`[data-chunk-seq="${match.seq}"]`);
         target?.scrollIntoView({ block: "center" });
       });
     } catch (error) {
-      setReaderError(describeError(error));
+      if (generation === readerGenerationRef.current) {
+        setReaderError(describeError(error));
+      }
     }
+  };
+
+  const refresh = () => {
+    void loadSessions();
+    if (selectedId && !selected?.contentOmitted) void reloadReader(selectedId);
   };
 
   const removeTranscript = async (summary: TranscriptSummary) => {
@@ -339,6 +395,9 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
           onChange={(event) => {
+            sessionsGenerationRef.current += 1;
+            readerGenerationRef.current += 1;
+            searchGenerationRef.current += 1;
             setAssetId(event.target.value || null);
             setSelectedId(null);
             setSessions(null);
@@ -355,7 +414,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
         <button
           className="nx-btn nx-btn-ghost"
           disabled={!assetId}
-          onClick={() => void loadSessions()}
+          onClick={refresh}
         >
           <IconRefresh size={13} />
           刷新
@@ -410,6 +469,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                         {formatTranscriptDuration(summary.startedAt, summary.endedAt)} ·{" "}
                         {formatTranscriptBytes(summary.bytes)}
                         {summary.truncated && " · 已截断"}
+                        {summary.contentOmitted && " · 仅保留元数据"}
                         {summary.assetDeleted && " · 主机已删除"}
                       </div>
                     </td>
@@ -429,7 +489,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                               void toggleTranscriptSync(summary);
                             }}
                           >
-                            {summary.syncOptIn ? "已同步" : "同步"}
+                            {summary.syncOptIn ? "已开启同步" : "同步"}
                           </button>
                         ) : (
                           <button
@@ -525,7 +585,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                     placeholder="在选中的记录里搜索…"
                     aria-label="搜索终端记录"
                     value={query}
-                    disabled={!selected}
+                    disabled={!selected || selected.contentOmitted}
                     onChange={(event) => setQuery(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -537,7 +597,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                 </div>
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-sm"
-                  disabled={!selected || searching}
+                  disabled={!selected || selected.contentOmitted || searching}
                   onClick={() => void runSearch()}
                 >
                   {searching ? <IconRefresh size={12} className="animate-spin" /> : <IconSearch size={12} />}
@@ -569,7 +629,10 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           </div>
 
           {viewMode === "replay" && selected ? (
-            <TranscriptReplayView transcriptId={selected.id} />
+            <TranscriptReplayView
+              transcriptId={selected.id}
+              contentOmitted={selected.contentOmitted}
+            />
           ) : (
             <>
 
@@ -614,7 +677,12 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                 读取终端记录失败：{readerError}
               </div>
             )}
-            {selected && !readerLoading && !readerError && (
+            {selected?.contentOmitted && !readerLoading && !readerError && (
+              <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
+                仅保留元数据
+              </div>
+            )}
+            {selected && !selected.contentOmitted && !readerLoading && !readerError && (
               <pre className="font-mono whitespace-pre-wrap break-all text-[12px] leading-relaxed text-neutral-300">
                 {chunks.map((chunk) => (
                   <span key={chunk.seq} data-chunk-seq={chunk.seq}>

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -30,7 +30,7 @@ import {
   type Pane,
   type Workspace,
 } from "../../app/store";
-import { flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
 
 function liveTab(extra: Partial<LiveTabInfo> & { tabId: string }): LiveTabInfo {
@@ -105,6 +105,37 @@ describe("BackgroundSessions hides local terminals", () => {
     expect(view.container.textContent).not.toContain("有人看着");
     expect(view.container.textContent).not.toContain("已结束");
     view.unmount();
+  });
+
+  it("旧加载响应不会覆盖新一轮刷新", async () => {
+    vi.useFakeTimers();
+    const first = deferred<LiveTabInfo[]>();
+    const second = deferred<LiveTabInfo[]>();
+    mocks.listLive.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      expect(mocks.listLive).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(mocks.listLive).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        second.resolve([liveTab({ tabId: "new", sessionName: "新会话" })]);
+        await second.promise;
+      });
+      expect(view.container.textContent).toContain("新会话");
+
+      await act(async () => {
+        first.resolve([liveTab({ tabId: "old", sessionName: "旧会话" })]);
+        await first.promise;
+      });
+      expect(view.container.textContent).toContain("新会话");
+      expect(view.container.textContent).not.toContain("旧会话");
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 });
 
