@@ -271,6 +271,21 @@ func (c *shareConnCollector) expectOutput(t *testing.T, substr string, timeout t
 	t.Fatalf("output %q never contained %q", seen, substr)
 }
 
+// drain 在输入前消费完已经到达的输出, 避免把上一条命令的尾随字节误判成新输出。
+func (c *shareConnCollector) drain(t *testing.T, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		frame := c.next(time.Until(deadline))
+		if frame.err == errShareReadTimeout {
+			return
+		}
+		if frame.err != nil {
+			t.Fatalf("drain output: %v", frame.err)
+		}
+	}
+}
+
 // expectSilent 断言 duration 内没有任何二进制输出 (用于只读/收缩后输入被丢弃)。
 func (c *shareConnCollector) expectSilent(t *testing.T, duration time.Duration) {
 	t.Helper()
@@ -581,6 +596,7 @@ func TestSharePublicTerminalReadOnly(t *testing.T) {
 	}
 	collector.expectOutput(t, "READY-42", 10*time.Second)
 
+	collector.drain(t, 100*time.Millisecond)
 	// 只读: 输入被静默丢弃, 连接保持, 无任何输出。
 	collector.sendBinary(t, []byte("echo nope-42\n"))
 	collector.expectSilent(t, 1500*time.Millisecond)
