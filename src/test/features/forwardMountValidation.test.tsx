@@ -554,7 +554,7 @@ describe("MountPanel 平台默认值与连接约束", () => {
   });
 });
 
-describe("MountPanel 目标默认当前资产", () => {
+describe("MountPanel 默认目标为当前资产", () => {
   function useSshSession(): void {
     useUi.setState({
       sessions: [
@@ -579,7 +579,7 @@ describe("MountPanel 目标默认当前资产", () => {
     mocks.platform.mockResolvedValue("linux");
     mountMountPanel();
     await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "root@10.0.0.8:");
-    expect(mounted!.container.textContent).toContain("目标默认当前资产「生产机」");
+    expect(mounted!.container.textContent).toContain("默认目标为当前资产「生产机」");
 
     mounted!.unmount();
     mounted = undefined;

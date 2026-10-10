@@ -740,7 +740,7 @@ function finishDone(
 ): ConversationState {
   const generation = attempt.generation;
   const raw = (ev.answer as string) || "";
-  const answer = raw || "(无回答)";
+  const answer = raw || "（无回答）";
   const wasPlan = attempt.planPending;
   let next = patchAttempt(state, generation, { outcome: "done", planPending: false });
   next = closeInteractions({ ...next, status: null }, generation, "本轮已结束，无需再处理");

@@ -159,7 +159,7 @@ describe("UsageRing details", () => {
     expect(text).toContain("对话 4 次");
     expect(text).toContain("输入 400");
     expect(text).toContain("标题 8 次");
-    expect(text).toContain("单独计，不入对话总量");
+    expect(text).toContain("单独统计，不计入对话总量");
     expect(loadSummary).toHaveBeenCalledTimes(1);
 
     click(button!);

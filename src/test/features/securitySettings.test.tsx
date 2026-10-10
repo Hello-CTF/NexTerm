@@ -439,7 +439,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
 
-    clickButton(mounted.container, "推送到云端 (1)");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     // 推送前取服务端最新 head(此处 mock 为 head-9)作为 known_head,而不是空字符串
     expect(mocks.syncPush).toHaveBeenCalledWith(
@@ -480,7 +480,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
     // 按钮计数为 0(winner 集合为空),且不应触发推送
-    expect(mounted.container.textContent).toContain("推送到云端 (0)");
+    expect(mounted.container.textContent).toContain("推送到云端（0）");
     const pushBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("推送到云端")) as HTMLButtonElement | undefined;
     expect(pushBtn?.disabled).toBe(true);
   });
@@ -511,7 +511,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("aaa"));
     const expected = localHash > remoteHash ? 1 : 0;
-    expect(mounted.container.textContent).toContain(`推送到云端 (${expected})`);
+    expect(mounted.container.textContent).toContain(`推送到云端（${expected}）`);
   });
 
   it("真 409(他端已更新)时重新对账并以新 head 重试一次", async () => {
@@ -540,7 +540,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
-    clickButton(mounted.container, "推送到云端 (1)");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length >= 2);
     expect(mocks.syncPush).toHaveBeenNthCalledWith(1, "head-0", expect.any(Array));
     expect(mocks.syncPush).toHaveBeenNthCalledWith(2, "head-1", expect.any(Array));
@@ -572,7 +572,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
     // 云端较新,winner 为空,不应推送
-    expect(mounted.container.textContent).toContain("推送到云端 (0)");
+    expect(mounted.container.textContent).toContain("推送到云端（0）");
     const pushBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("推送到云端")) as HTMLButtonElement | undefined;
     expect(pushBtn?.disabled).toBe(true);
   });
@@ -600,7 +600,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
-    clickButton(mounted.container, "推送到云端 (1)");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     expect(mocks.syncPush).toHaveBeenCalledWith(
       "head-9",
@@ -632,7 +632,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
-    clickButton(mounted.container, "推送到云端 (1)");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     // 推送的 blob 解码后应含全部 3 个 chunk
     const pushed = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
@@ -668,8 +668,8 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     // 已一致,winner 与 applySet 均为空,不推送也不重复应用
-    expect(mounted.container.textContent).toContain("推送到云端 (0)");
-    expect(mounted.container.textContent).toContain("拉取并应用 (0)");
+    expect(mounted.container.textContent).toContain("推送到云端（0）");
+    expect(mounted.container.textContent).toContain("拉取并应用（0）");
     const applyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("拉取并应用")) as HTMLButtonElement | undefined;
     expect(applyBtn?.disabled).toBe(true);
   });
@@ -749,11 +749,11 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     await flushUntil(() => {
       const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "拉取并应用 (2)",
+        (b) => b.textContent?.trim() === "拉取并应用（2）",
       ) as HTMLButtonElement | undefined;
       return !!btn && !btn.disabled;
     });
-    clickButton(mounted.container, "拉取并应用 (2)");
+    clickButton(mounted.container, "拉取并应用（2）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith(
       expect.arrayContaining([
@@ -789,11 +789,11 @@ describe("SyncCard（Web 同步台）", () => {
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
     await flushUntil(() => {
       const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "拉取并应用 (1)",
+        (b) => b.textContent?.trim() === "拉取并应用（1）",
       ) as HTMLButtonElement | undefined;
       return !!btn && !btn.disabled;
     });
-    clickButton(mounted.container, "拉取并应用 (1)");
+    clickButton(mounted.container, "拉取并应用（1）");
     await flushUntil(() => mounted!.container.textContent?.includes("凭据库已锁定"));
     expect(mounted.container.textContent).toContain("跳过 1");
   });
@@ -872,7 +872,7 @@ describe("connectAsset 主机指纹确认", () => {
     await connectAsset(asset);
 
     const [question, options] = mocks.ask.mock.calls[0] as [string, Record<string, unknown>];
-    expect(question).toContain("主机密钥已变更 10.0.0.8:22");
+    expect(question).toContain("主机 10.0.0.8:22 的密钥已变更");
     expect(question).toContain("SHA256:oldfp");
     expect(question).toContain("SHA256:newfp");
     expect(options).toMatchObject({ title: "主机密钥变更警告", kind: "warning" });

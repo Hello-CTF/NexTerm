@@ -279,7 +279,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("这台服务器关闭了账号功能(--auth=off), 终端分享不可用");
+    expect(text).toContain("这台服务器关闭了账号功能（--auth=off），终端分享不可用");
     expect(text).not.toContain("登录后可以把你接入的设备分享给其他注册用户");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
@@ -341,9 +341,9 @@ describe("分享卡片 · 列表与状态", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("5 条主机分享");
     expect(text).toContain("3 条公开链接");
-    expect(text).toContain("授予给 alice");
-    expect(text).toContain("接收自 alice");
-    expect(text).toContain("alice 授予给 carol");
+    expect(text).toContain("分享给 alice");
+    expect(text).toContain("来自 alice");
+    expect(text).toContain("alice 分享给 carol");
     expect(text).toContain("只读");
     expect(text).toContain("读写");
     expect(text).toContain("有效");
@@ -355,8 +355,8 @@ describe("分享卡片 · 列表与状态", () => {
     );
     expect(sessionSpan?.textContent).toContain("01J4Z8Y7…");
     expect(text).toContain("最近访问");
-    expect(text).toContain("通过设备 agent 在你的接入设备上新建终端");
-    expect(text).toContain("公开链接中继既有实时会话");
+    expect(text).toContain("通过设备代理在你的接入设备上新建终端");
+    expect(text).toContain("公开链接用于访问已有的实时会话");
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
@@ -499,10 +499,10 @@ describe("分享卡片 · 吊销", () => {
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("授予给 alice") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("授予给 alice") && !d.textContent?.includes("已吊销"));
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
     const revokeButton = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销");
     click(revokeButton as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares/hs-1/revoke"));
@@ -512,7 +512,7 @@ describe("分享卡片 · 吊销", () => {
     await flushUntil(() => calls.filter((c) => c.url === "/share/host-shares" && c.method === "GET").length >= 2);
 
     // hs-4 已吊销: 行内不再有吊销按钮
-    const revokedRow = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("授予给 alice") && d.textContent?.includes("已吊销"));
+    const revokedRow = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && d.textContent?.includes("已吊销"));
     expect(revokedRow).toBeDefined();
     expect([...(revokedRow?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "吊销")).toBe(false);
   });
@@ -522,10 +522,10 @@ describe("分享卡片 · 吊销", () => {
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("授予给 alice") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("授予给 alice") && !d.textContent?.includes("已吊销"));
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
     click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
@@ -579,10 +579,10 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
     mocks.ask.mockReturnValue(dialog.promise);
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("授予给 alice") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("授予给 alice") && !d.textContent?.includes("已吊销"));
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
     click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
@@ -674,7 +674,7 @@ describe("分享卡片 · 账号切换隔离", () => {
     // 切换前旧账号的列表还在途中: 模拟 AuthGate 场景改登普通用户, 卡片不重挂载。
     switched = true;
     seedUser(ALICE);
-    await flushUntil(() => document.body.textContent?.includes("授予给 carol") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("分享给 carol") ?? false);
 
     // 旧账号的晚到响应此时才到达: 不得覆盖新账号列表。
     lateAdminShares.resolve({
@@ -684,8 +684,8 @@ describe("分享卡片 · 账号切换隔离", () => {
     });
     await flush();
     await flush();
-    expect(document.body.textContent).not.toContain("授予给 alice");
-    expect(document.body.textContent).toContain("授予给 carol");
+    expect(document.body.textContent).not.toContain("分享给 alice");
+    expect(document.body.textContent).toContain("分享给 carol");
   });
 
   it("创建在途时切换账号: 旧创建响应不写入, 新账号创建不被卡死", async () => {

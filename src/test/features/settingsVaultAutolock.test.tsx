@@ -123,7 +123,7 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
       clickButton(mounted.container, "保存");
       await flush();
       expect(mocks.setAutoLock).not.toHaveBeenCalled();
-      expect(mocks.toast).toHaveBeenCalledWith("error", "自动锁时长需为 0（禁用）至 1440 之间的整数分钟");
+      expect(mocks.toast).toHaveBeenCalledWith("error", "自动锁定时长须为 0 至 1440 的整数分钟，0 表示禁用");
       mocks.toast.mockClear();
     }
   });

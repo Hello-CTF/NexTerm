@@ -159,7 +159,7 @@ func TestPostgresQueryTimeoutShape(t *testing.T) {
 	}}
 	_, err := queryPostgres(context.Background(), newFakeSQLDB(t, state), "SELECT pg_sleep(10)", 0, 20*time.Millisecond)
 	var ipcErr *ipc.Error
-	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeTimeout || !strings.Contains(ipcErr.Message, "SQL 超时") {
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeTimeout || !strings.Contains(ipcErr.Message, "SQL 执行超时") {
 		t.Fatalf("wrong timeout error: %#v", err)
 	}
 }
@@ -259,7 +259,7 @@ func TestPostgresSchemaResolution(t *testing.T) {
 	}})}
 	_, err = postgresSchema(context.Background(), empty, "")
 	var ipcErr *ipc.Error
-	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeBadParam || !strings.Contains(ipcErr.Message, "未选择 schema") {
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeBadParam || !strings.Contains(ipcErr.Message, "请选择 schema") {
 		t.Fatalf("empty schema error=%#v", err)
 	}
 }

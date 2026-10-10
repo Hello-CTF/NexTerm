@@ -31,7 +31,7 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "toggleSplit", label: "上下分屏 / 取消分屏", defaultBinding: "Mod+\\" },
   { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Primary+f" },
-  { id: "reclaimTakeover", label: "AI 接管中一键夺回", defaultBinding: "Escape" },
+  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
   { id: "syncNow", label: "立即同步账号数据", defaultBinding: "Mod+Shift+s" },
 ];
 

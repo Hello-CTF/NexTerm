@@ -156,10 +156,10 @@ describe("SettingsView 响应式结构", () => {
       (b) => b.textContent?.trim() === "连通性测试",
     )!;
     expect(connToggle.getAttribute("aria-expanded")).toBe("false");
-    expect(aiModel.textContent).not.toContain("连通性测试（两步）");
+    expect(aiModel.textContent).not.toContain("测试当前模型连通性");
     click(connToggle);
     expect(connToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(aiModel.textContent).toContain("连通性测试（两步）");
+    expect(aiModel.textContent).toContain("测试当前模型连通性");
   });
 
   it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {
@@ -171,7 +171,7 @@ describe("SettingsView 响应式结构", () => {
     expect(title?.parentElement?.className).toContain("flex-wrap");
     clickButton(document.getElementById("settings-ai-model")!, "连通性测试");
     const button = [...mounted.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("连通性测试（两步）"),
+      b.textContent?.includes("测试当前模型连通性"),
     );
     expect(button?.className).toContain("whitespace-normal");
     expect(button?.className).toContain("h-auto");
@@ -182,8 +182,8 @@ describe("SettingsView 响应式结构", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("密钥加密后存在NexTerm 服务端的 sqlite");
-    expect(text).toContain("只有开启「同步 AI 模型档案」且凭据库已解锁");
+    expect(text).toContain("密钥加密后保存在当前运行环境的 SQLite 中");
+    expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
     expect(text).not.toContain("不会上传");
     expect(text).not.toContain("明文存在本机 sqlite");
@@ -193,7 +193,7 @@ describe("SettingsView 响应式结构", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     clickButton(mounted.container, "连通性测试");
-    clickButton(mounted.container, "连通性测试（两步）· 当前模型");
+    clickButton(mounted.container, "测试当前模型连通性");
     await flush();
     const okAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>
       el.textContent?.includes("测试结果"),
@@ -207,7 +207,7 @@ describe("SettingsView 响应式结构", () => {
       modelsError: "boom",
       chatError: "bang",
     });
-    clickButton(mounted.container, "连通性测试（两步）· 当前模型");
+    clickButton(mounted.container, "测试当前模型连通性");
     await flush();
     const failAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>
       el.textContent?.includes("测试结果"),

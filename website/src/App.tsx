@@ -10,19 +10,19 @@ const views = [
   {
     name: "shell",
     title: "Shell 工作区",
-    text: "终端、命令块和后台会话集中在同一视图，不用在多个窗口之间切换。",
+    text: "命令块展示命令、输出和耗时，后台会话可随时接管。",
     alt: "NexTerm 的 Shell 终端与命令块界面",
   },
   {
     name: "ai",
     title: "AI 助手",
-    text: "围绕当前主机提问和排障，执行命令、修改文件前都能检查具体操作。",
+    text: "针对当前主机排障，执行前可检查命令和文件改动。",
     alt: "NexTerm 的 AI 助手对话与命令确认界面",
   },
   {
     name: "files",
     title: "远程文件",
-    text: "在文件树和编辑器之间直接处理远端文件，上传下载无需另开工具。",
+    text: "直接浏览、编辑和传输远程文件。",
     alt: "NexTerm 的 SFTP 文件树与远程编辑界面",
   },
   {
@@ -91,11 +91,11 @@ function App() {
         <section className="hero">
           <div className="hero-glow" aria-hidden="true" />
           <div className="container hero-inner">
-            <h1>让服务器管理更顺手</h1>
+            <h1>开源的服务器管理工作台</h1>
             <p className="hero-copy">
-              NexTerm 支持终端、文件、Docker、数据库和 AI 助手。
+              用 NexTerm 执行命令、编辑远程文件，让 AI 协助排障。
               <br />
-              安装在桌面，或部署到自己的服务器后用浏览器访问。
+              既可安装桌面版，也可自行部署后用浏览器访问。
             </p>
             <div className="hero-actions">
               <a className="button button-primary" href={releases} target="_blank" rel="noreferrer">
@@ -126,7 +126,6 @@ function App() {
         <section className="section section-muted" id="showcase">
           <div className="container">
             <div className="section-heading">
-              <span className="eyebrow">界面</span>
               <h2>产品界面</h2>
             </div>
             <div className="showcase-grid">

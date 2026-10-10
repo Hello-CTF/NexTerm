@@ -128,7 +128,7 @@ describe("CronPanel masked key presentation", () => {
   it("档案选择器把脱敏密钥如实标注为已保存，而非不可用", async () => {
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
-    clickButton(mounted.container, "注册定时任务");
+    clickButton(mounted.container, "新建定时任务");
     const select = mounted.container.querySelector<HTMLSelectElement>(
       'select[aria-label="模型档案"]',
     )!;

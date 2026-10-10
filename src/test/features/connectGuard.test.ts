@@ -259,17 +259,17 @@ describe("connectAsset 资产工作区去重", () => {
 describe("connectAsset 连接前解锁凭据库", () => {
   const lockedAsset = { id: "asset-9", name: "locked-01", kind: "ssh", credId: "cred-1" };
 
-  it("主密码错误时当场报错并中止连接，不当作解锁成功继续", async () => {
+  it("保护密码错误时当场报错并中止连接，不当作解锁成功继续", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mocks.promptText.mockResolvedValue("wrong-password");
-    mocks.vaultUnlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.vaultUnlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
 
     const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: false, canceled: true });
     expect(mocks.vaultUnlock).toHaveBeenCalledWith("wrong-password");
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
     expect(mocks.dbConnect).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误");
   });
 
   it("解锁成功后继续发起连接", async () => {

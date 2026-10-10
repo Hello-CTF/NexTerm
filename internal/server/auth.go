@@ -9,7 +9,7 @@ import (
 )
 
 // mfaEnrollLockedMessage 是 mfa_required 锁定会话的统一拒绝文案。
-const mfaEnrollLockedMessage = "管理员已要求启用两步验证: 完成 TOTP 绑定前,该账号只能使用绑定相关功能"
+const mfaEnrollLockedMessage = "管理员已要求启用两步验证：完成 TOTP 绑定前，该账号只能使用绑定相关功能"
 
 // mfaEnrollmentLockedFor 判定指定会话身份是否被 mfa_required 策略锁定(未绑定)。
 // reset_required 会话由改密流程单独约束, 两者不叠加(先改密再绑定)。

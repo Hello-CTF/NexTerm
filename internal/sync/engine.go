@@ -129,7 +129,7 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 		}
 		report.Conflicts++
 	}
-	return report, ipc.NewError(ipc.CodeForbidden, "同步冲突重试次数过多, 请稍后重试")
+	return report, ipc.NewError(ipc.CodeForbidden, "同步冲突次数过多，请稍后重试")
 }
 
 func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remoteSession, error) {
@@ -209,7 +209,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		if err := e.saveCursor(ctx, userID, cursor); err != nil {
 			return false, err
 		}
-		return false, ipc.NewError(ipc.CodeDisconnected, "同步对账未完成(部分对象未返回), 请稍后重试")
+		return false, ipc.NewError(ipc.CodeDisconnected, "同步数据不完整（部分对象未返回），请稍后重试")
 	}
 	objects, err := e.collectLocalObjects(ctx, report, optIn)
 	if err != nil {
@@ -259,7 +259,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report, optIn); err != nil {
 		return false, err
 	} else if !completed {
-		report.warnf("收尾拉取未能在有界页数内完成, 剩余对象留待下一轮")
+		report.warnf("收尾拉取超过页数上限，剩余对象将在下一轮同步")
 	}
 	if err := e.saveCursor(ctx, userID, cursor); err != nil {
 		return false, err

@@ -209,7 +209,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("old-01"));
-    clickButton(mounted.container, "推送到云端 (4)");
+    clickButton(mounted.container, "推送到云端（4）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
 
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
@@ -247,7 +247,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(mocks.collectAssets).toHaveBeenCalledTimes(2);
     expect(mocks.collectAssets).toHaveBeenNthCalledWith(1, true, undefined, 512);
     expect(mocks.collectAssets).toHaveBeenNthCalledWith(2, true, "a1", 512);
-    clickButton(mounted.container, "推送到云端 (2)");
+    clickButton(mounted.container, "推送到云端（2）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id).sort()).toEqual(["a1", "a2"]);
@@ -265,12 +265,12 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
 
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("凭据库未解锁"));
-    expect(text()).toContain("凭据「锁定凭据」凭据库未解锁,未进入本次对比与推送");
-    expect(text()).toContain("凭据「不可用凭据」凭据库不可用,未进入本次对比与推送");
-    expect(text()).toContain("凭据「解密失败凭据」解密失败,未进入本次对比与推送");
+    expect(text()).toContain("凭据「锁定凭据」凭据库未解锁，未进入本次对比与推送");
+    expect(text()).toContain("凭据「不可用凭据」凭据库不可用，未进入本次对比与推送");
+    expect(text()).toContain("凭据「解密失败凭据」解密失败，未进入本次对比与推送");
     // 推送集合为空,不发起 push
-    expect(text()).toContain("推送到云端 (0)");
-    expect(button("推送到云端 (0)")?.disabled).toBe(true);
+    expect(text()).toContain("推送到云端（0）");
+    expect(button("推送到云端（0）")?.disabled).toBe(true);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 });
@@ -294,9 +294,9 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("已一致"));
-    expect(text()).toContain("拉取并应用 (0)");
-    expect(button("拉取并应用 (0)")?.disabled).toBe(true);
-    expect(text()).toContain("推送到云端 (0)");
+    expect(text()).toContain("拉取并应用（0）");
+    expect(button("拉取并应用（0）")?.disabled).toBe(true);
+    expect(text()).toContain("推送到云端（0）");
     expect(mocks.applyObjects).not.toHaveBeenCalled();
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -323,18 +323,18 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("云端已删"));
-    clickButton(mounted.container, "拉取并应用 (1)");
+    clickButton(mounted.container, "拉取并应用（1）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith([
       { id: "g-del", kind: "tombstone", payload: { targetKind: "group", deletedAt: 500 } },
     ]);
     // 应用后本机留下同内容墓碑,与云端一致:两个集合都归零,不再发起任何写
     await flushUntil(() => text().includes("已应用 1"));
-    await flushUntil(() => button("拉取并应用 (0)") !== undefined);
+    await flushUntil(() => button("拉取并应用（0）") !== undefined);
     expect(text()).toContain("已一致");
-    expect(text()).toContain("推送到云端 (0)");
-    expect(button("拉取并应用 (0)")?.disabled).toBe(true);
-    expect(button("推送到云端 (0)")?.disabled).toBe(true);
+    expect(text()).toContain("推送到云端（0）");
+    expect(button("拉取并应用（0）")?.disabled).toBe(true);
+    expect(button("推送到云端（0）")?.disabled).toBe(true);
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -362,7 +362,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("云端已删"));
-    clickButton(mounted.container, "拉取并应用 (1)");
+    clickButton(mounted.container, "拉取并应用（1）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];
     expect(objects[0].id).toBe("a-del");
@@ -370,9 +370,9 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(objects[0].payload.deletedAt).toBe(150);
     // 应用后本机软删资产与远端逐字节一致:第二轮 apply/push 均为空
     await flushUntil(() => text().includes("已应用 1"));
-    await flushUntil(() => button("拉取并应用 (0)") !== undefined);
+    await flushUntil(() => button("拉取并应用（0）") !== undefined);
     expect(text()).toContain("已一致");
-    expect(text()).toContain("推送到云端 (0)");
+    expect(text()).toContain("推送到云端（0）");
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -403,7 +403,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("生产 <口令> & more"));
-    clickButton(mounted.container, "拉取并应用 (1)");
+    clickButton(mounted.container, "拉取并应用（1）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith([
       {
@@ -413,9 +413,9 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
       },
     ]);
     await flushUntil(() => text().includes("已应用 1"));
-    await flushUntil(() => button("拉取并应用 (0)") !== undefined);
+    await flushUntil(() => button("拉取并应用（0）") !== undefined);
     expect(text()).toContain("已一致");
-    expect(text()).toContain("推送到云端 (0)");
+    expect(text()).toContain("推送到云端（0）");
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -446,9 +446,9 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
     // 本机省略版不得覆盖云端完整版:不进推送集合,进应用集合
-    expect(text()).toContain("推送到云端 (0)");
-    expect(text()).toContain("拉取并应用 (1)");
-    clickButton(mounted.container, "拉取并应用 (1)");
+    expect(text()).toContain("推送到云端（0）");
+    expect(text()).toContain("拉取并应用（1）");
+    clickButton(mounted.container, "拉取并应用（1）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];
     expect(objects[0].id).toBe("t1");
@@ -475,9 +475,9 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
-    expect(text()).toContain("拉取并应用 (0)");
-    expect(text()).toContain("推送到云端 (1)");
-    clickButton(mounted.container, "推送到云端 (1)");
+    expect(text()).toContain("拉取并应用（0）");
+    expect(text()).toContain("推送到云端（1）");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["t1"]);
@@ -507,9 +507,9 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     await flushUntil(() => text().includes("web-01 的会话记录"));
     // 本机 endedAt 更大 → 本机较新,推送;远端不进入应用集合
     expect(text()).toContain("本机较新");
-    expect(text()).toContain("拉取并应用 (0)");
-    expect(text()).toContain("推送到云端 (1)");
-    clickButton(mounted.container, "推送到云端 (1)");
+    expect(text()).toContain("拉取并应用（0）");
+    expect(text()).toContain("推送到云端（1）");
+    clickButton(mounted.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
     // 推送明文与 Go fixture(transcriptEnded10)逐字节一致
@@ -520,7 +520,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     // 等推送流程(含推送后重载)完全结束:推送按钮恢复可点
     await flushUntil(() => text().includes("已推送 1"));
     await flushUntil(() => {
-      const b = button("推送到云端 (1)");
+      const b = button("推送到云端（1）");
       return b !== undefined && !b.disabled;
     });
 
@@ -530,8 +530,8 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });
     clickButton(mounted.container, "刷新对比");
     await flushUntil(() => text().includes("已一致"));
-    expect(text()).toContain("推送到云端 (0)");
-    expect(text()).toContain("拉取并应用 (0)");
+    expect(text()).toContain("推送到云端（0）");
+    expect(text()).toContain("拉取并应用（0）");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });

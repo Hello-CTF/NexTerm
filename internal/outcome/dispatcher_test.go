@@ -325,7 +325,7 @@ func TestDispatcherAmbiguousTransportErrorIsUnknownAndNeverRetried(t *testing.T)
 		t.Fatalf("output = %+v", output)
 	}
 	record := d.record(t, "job-1", "call-1")
-	if record.Outcome != outcome.OutcomeUnknown || !strings.Contains(record.Result.Error, "不明确") {
+	if record.Outcome != outcome.OutcomeUnknown || !strings.Contains(record.Result.Error, "无法确定执行结果") {
 		t.Fatalf("record = %+v", record)
 	}
 

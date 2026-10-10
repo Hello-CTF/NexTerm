@@ -194,8 +194,8 @@ describe("设备管理 · 一键安装指令", () => {
     expect(commands.some((c) => c.includes("nexterm-server agent enroll"))).toBe(true);
     expect(commands.some((c) => c.includes("nexterm-server agent install"))).toBe(true);
     // 绝不声称安装成功
-    expect(document.body.textContent).toContain("不会替你安装");
-    expect(document.body.textContent).toContain("不会感知安装是否成功");
+    expect(document.body.textContent).toContain("不会执行安装");
+    expect(document.body.textContent).toContain("无法确认安装结果");
   });
 
   it("接入地址含 shell 元字符时一行安装指令同样单引号安全", async () => {

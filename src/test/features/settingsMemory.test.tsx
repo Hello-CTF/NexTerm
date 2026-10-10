@@ -148,10 +148,10 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    click(inputByLabel(mounted.container, "注入到 AI 运行"));
+    click(inputByLabel(mounted.container, "在 AI 运行时注入记忆"));
     await flush();
     expect(mocks.setSettings).toHaveBeenCalledWith(SCOPE, 3, { injectionEnabled: true });
-    expect((inputByLabel(mounted.container, "注入到 AI 运行") as HTMLInputElement).checked).toBe(true);
+    expect((inputByLabel(mounted.container, "在 AI 运行时注入记忆") as HTMLInputElement).checked).toBe(true);
   });
 
   it("reloads and says so when the settings toggle hits a version conflict", async () => {
@@ -416,9 +416,9 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("记忆按属主隔离存储，与 AI 运行使用的是同一份");
+    expect(text).toContain("记忆按属主隔离存储，并与 AI 运行共用");
     expect(text).not.toContain("记忆按属主隔离。");
     expect(text).not.toContain("开启了的运行");
-    expect(text).toContain("开启后每次 AI 运行会把选中的记忆作为一条临时系统消息注入模型输入");
+    expect(text).toContain("开启后，每次 AI 运行都会将选中的记忆作为临时系统消息加入模型输入");
   });
 });

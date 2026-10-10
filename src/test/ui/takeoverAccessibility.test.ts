@@ -71,13 +71,13 @@ describe("takeover accessibility and overlay priority", () => {
   it("announces the reclaim key by default and omits it when unbound", async () => {
     mounted = mount(createElement(TakeoverBanner));
     const status = () => mounted?.container.querySelector('[role="status"]');
-    expect(status()?.textContent).toContain("按 Esc 可立即夺回控制权");
+    expect(status()?.textContent).toContain("按 Esc 可收回控制权");
     expect(status()?.textContent).not.toContain("未绑定");
 
     act(() => setKeybinding("reclaimTakeover", null));
     expect(status()?.textContent).not.toContain("未绑定");
     expect(status()?.textContent).not.toContain("按 ");
-    expect(status()?.textContent).toContain("可立即夺回控制权");
+    expect(status()?.textContent).toContain("可收回控制权");
     const reclaimButton = [...(mounted.container.querySelectorAll("button") ?? [])].find(
       (b) => b.getAttribute("aria-keyshortcuts") !== null,
     );
@@ -101,7 +101,7 @@ describe("takeover accessibility and overlay priority", () => {
     expect(mocks.takeoverExit).toHaveBeenCalledExactlyOnceWith(
       "terminal-1",
       "ownership-token",
-      "用户按 Esc 夺回",
+      "用户按 Esc 收回控制权",
     );
     await flush();
     expect(useUi.getState().takeover).toBeNull();

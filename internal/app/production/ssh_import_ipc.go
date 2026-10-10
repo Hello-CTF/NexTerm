@@ -349,11 +349,11 @@ func (p *sshImportPlanner) guardServerImportPath(path string) error {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return ipc.NewError(ipc.CodeUnsupported, "服务端装配下无法定位当前用户 home 目录")
+		return ipc.NewError(ipc.CodeUnsupported, "服务端模式下无法定位当前用户主目录")
 	}
 	rel, err := filepath.Rel(filepath.Join(home, ".ssh"), path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("服务端装配下只能导入当前用户 .ssh 目录内的路径: %s", path))
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("服务端模式下只能导入当前用户 .ssh 目录内的路径：%s", path))
 	}
 	return nil
 }
@@ -368,7 +368,7 @@ func blockUnmappableJumps(preview *sshconfig.ImportPreview) {
 			continue
 		}
 		host.Action = sshconfig.PlanBlockedJump
-		host.Warnings = append(host.Warnings, "多跳 ProxyJump 暂不支持自动映射；该主机已阻止导入，请拆分单跳后重试或导入后手工配置跳板")
+		host.Warnings = append(host.Warnings, "多跳 ProxyJump 暂不支持自动映射；该主机未导入，请拆分为单跳后重试，或手动添加主机并配置跳板")
 	}
 }
 
@@ -578,7 +578,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 				break
 			}
 			if overwrittenCredIDs[id] {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("凭据 %q 已在本次导入中被覆盖，跳过重复的覆盖（其材料以首次覆盖为准）", name))
+				result.Warnings = append(result.Warnings, fmt.Sprintf("凭据 %q 已在本次导入中覆盖，重复项已跳过（以首次覆盖为准）", name))
 				result.Skipped++
 				outcome.Action = "skipped"
 				break
@@ -710,11 +710,11 @@ func (p *sshImportPlanner) hostAuth(plan *sshImportPlan, item *sshconfig.HostPre
 			}
 		}
 		if item.KeyName != "" || item.AuthMethod == "key" {
-			warnings = append(warnings, fmt.Sprintf("主机 %q 引用的密钥未入库（被跳过、无法解析或与同名凭据指纹不同），保持未绑定", item.Alias))
+			warnings = append(warnings, fmt.Sprintf("主机 %q 引用的密钥未导入（已跳过、无法解析或指纹不同），未绑定凭据", item.Alias))
 			return "key", "", "", warnings
 		}
 		if item.AuthMethod == "password" {
-			warnings = append(warnings, fmt.Sprintf("主机 %q 使用密码认证，密码不会导入，请手动绑定凭据", item.Alias))
+			warnings = append(warnings, fmt.Sprintf("主机 %q 使用密码认证，请手动绑定凭据", item.Alias))
 			return "password", "", "", warnings
 		}
 		return "agent", "", "", nil

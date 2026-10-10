@@ -187,7 +187,7 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
     clickButton(mounted.container, "复制全部");
     await flush();
     mocks.me.mockResolvedValue({ user: BOUND_USER, csrf_token: "csrf-2", mfa_required: true });
-    clickButton(mounted.container, "已手动保存,进入应用");
+    clickButton(mounted.container, "已保存，进入应用");
     await flushUntil(() => useAuth.getState().gate === "ready");
     expect(useAuth.getState().mfaEnrollmentPassword).toBeNull();
   });
@@ -203,8 +203,8 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
 
     mocks.writeText.mockRejectedValue(new Error("denied"));
     clickButton(mounted.container, "复制全部");
-    await flushUntil(() => mounted!.container.textContent?.includes("复制失败,请手动选中恢复码复制"));
-    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存,进入应用")) as HTMLButtonElement;
+    await flushUntil(() => mounted!.container.textContent?.includes("复制失败，请手动复制恢复码"));
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement;
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制全部")) as HTMLButtonElement;
     expect(doneBtn.disabled).toBe(false);
     expect(copyBtn.textContent).not.toContain("已复制");
@@ -277,14 +277,14 @@ describe("TotpCard 换绑", () => {
     await flushUntil(() => mounted!.container.querySelector('input[placeholder="输入 6 位动态码完成绑定"]') !== null);
     setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="输入 6 位动态码完成绑定"]')!, "123456");
     clickButton(mounted.container, "确认绑定");
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复码(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复码仅显示一次"));
 
     mocks.writeText.mockRejectedValue(new Error("denied"));
     clickButton(mounted.container, "复制全部");
     await flushUntil(() => mocks.toast.mock.calls.some((call) => call[0] === "error"));
     const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "已手动保存") as HTMLButtonElement;
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制全部")) as HTMLButtonElement;
-    expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败,请手动选中复制");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败，请手动复制");
     expect(doneBtn.disabled).toBe(false);
     expect(copyBtn.textContent).not.toContain("已复制");
     expect(mounted.container.textContent).toContain("AAAA-BBBB-CCCC-DDDD");
@@ -304,7 +304,7 @@ describe("TotpCard 换绑", () => {
     mocks.totpStatus.mockResolvedValue({ enabled: true, pending: false, mfa_required: false, recovery_codes_left: 8 });
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已开启"));
-    expect(mounted.container.textContent).toContain("两步验证配置不随同步走,换设备后需要重新绑定");
+    expect(mounted.container.textContent).toContain("两步验证配置不会同步，换设备后需重新绑定");
   });
 });
 

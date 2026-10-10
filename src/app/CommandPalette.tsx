@@ -168,8 +168,8 @@ export function CommandPalette({
       },
       {
         id: "wide-files",
-        label: "打开宽幅文件浏览器",
-        hint: "含体积 / 修改时间列",
+        label: "打开文件浏览器",
+        hint: "显示文件大小和修改时间列",
         icon: IconFolderOpen,
         run: () => onOpenFiles?.(),
       },
@@ -220,7 +220,7 @@ export function CommandPalette({
         ? [{
             id: "devices",
             label: "打开设备管理",
-            hint: "装了 agent 的设备",
+            hint: "已安装 agent 的设备",
             icon: IconMonitor,
             run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
           }]

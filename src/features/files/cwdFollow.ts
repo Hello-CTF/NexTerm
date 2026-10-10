@@ -182,7 +182,7 @@ export function useCwdFollow(
       .catch((e: unknown) => {
         if (cancelled || notifiedFailures.has(sessionId)) return;
         notifiedFailures.add(sessionId);
-        pushToast("info", `无法跟随终端目录到 ${next}：${describeError(e)}`);
+        pushToast("info", `无法跟随终端切换到 ${next}：${describeError(e)}`);
       });
     return () => {
       cancelled = true;

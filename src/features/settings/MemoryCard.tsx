@@ -206,7 +206,7 @@ export function MemoryCard() {
       if (conflict) {
         setFormError(
           `这条记忆已被其他地方修改（版本 ${conflict.expected} → ${conflict.actual}）。` +
-            "已重新读取列表；请基于最新内容再改，避免把别人的修改盖掉。",
+            "列表已刷新，请基于最新内容重新编辑，避免覆盖他人的修改。",
         );
         await reload();
       } else {
@@ -219,7 +219,7 @@ export function MemoryCard() {
 
   const remove = async (entry: MemoryIndexEntry, topic: string) => {
     const ok = await ask(
-      `删除这条记忆？\n主题：${topic}\n\n删除后 AI 将不再记得它，且不可恢复。`,
+      `删除这条记忆？\n主题：${topic}\n\n删除后，AI 将不再使用这条记忆，且无法恢复。`,
       { title: "删除记忆", kind: "warning" },
     );
     if (!ok) return;
@@ -267,16 +267,15 @@ export function MemoryCard() {
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
         <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] text-neutral-200">注入到 AI 运行</div>
+            <div className="text-[12.5px] text-neutral-200">在 AI 运行时注入记忆</div>
             <p className="nx-hint mt-0.5">
-              开启后每次 AI 运行会把选中的记忆作为一条临时系统消息注入模型输入；
-              不写会话历史，下一轮重新注入。
+              开启后，每次 AI 运行都会将选中的记忆作为临时系统消息加入模型输入，不写入会话历史。
             </p>
           </div>
           <input
             type="checkbox"
             className="mt-0.5 h-4 w-4 shrink-0"
-            aria-label="注入到 AI 运行"
+            aria-label="在 AI 运行时注入记忆"
             disabled={!settings || settingsBusy}
             checked={settings?.injectionEnabled ?? false}
             onChange={(e) => void toggleSetting("injectionEnabled", e.target.checked)}
@@ -286,7 +285,7 @@ export function MemoryCard() {
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">允许模型使用记忆工具</div>
             <p className="nx-hint mt-0.5">
-              开启后模型可以自己保存 / 查找 / 遗忘记忆；计划模式与子代理不可用。
+              开启后，模型可保存、查找和删除记忆；计划模式与子代理不可用。
             </p>
           </div>
           <input
@@ -374,8 +373,7 @@ export function MemoryCard() {
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            不要写入密码、token、api_key 等密钥：默认策略会整篇拒绝；选替换则值会变成
-            [REDACTED] 后保存。已被脱敏的条目会带「已脱敏」标记。
+            请勿写入密码、token、api_key 等密钥：默认策略会拒绝保存整条记忆；替换策略会将密钥值替换为 [REDACTED] 后保存。已脱敏的条目会带「已脱敏」标记。
           </p>
           {formError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">
@@ -404,7 +402,7 @@ export function MemoryCard() {
           </div>
         )
       ) : topics.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有记忆。新建后，AI 运行会注入这里的内容。</div>
+        <div className="nx-hint py-2 text-[12px]">还没有记忆。新建后，可在 AI 运行时使用。</div>
       ) : (
         <div className="flex flex-col gap-2">
           {topics.map((t) => (
@@ -488,7 +486,7 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆按属主隔离存储，与 AI 运行使用的是同一份；其它属主读不到也改不到这里的内容。
+        记忆按属主隔离存储，并与 AI 运行共用；其他属主无法读取或修改。
       </p>
     </section>
   );

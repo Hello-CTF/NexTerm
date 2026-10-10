@@ -174,7 +174,7 @@ func querySQL(ctx context.Context, database *sql.DB, statement string, limit uin
 		return result, nil
 	}
 	if errors.Is(queryContext.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return result, ipc.WrapError(ipc.CodeTimeout, fmt.Sprintf("操作超时: SQL 超时（%s）", formatDuration(timeout)), err)
+		return result, ipc.WrapError(ipc.CodeTimeout, fmt.Sprintf("SQL 执行超时（%s）", formatDuration(timeout)), err)
 	}
 	if errors.Is(queryContext.Err(), context.Canceled) {
 		return result, internalError("SQL 执行已取消", queryContext.Err())

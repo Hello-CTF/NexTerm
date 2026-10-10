@@ -450,7 +450,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
             <table className="nx-table">
               <thead>
                 <tr>
-                  <th>会话记录</th>
+                  <th>终端记录</th>
                   <th style={{ width: 132 }} />
                 </tr>
               </thead>
@@ -480,8 +480,8 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
                             title={
                               summary.syncOptIn
-                                ? "这条记录已开启同步（经账号同步到你的其他设备），点击关闭"
-                                : "经账号把这条记录同步到你的其他设备（端到端加密）"
+                                ? "此记录已通过账号同步到其他设备，点击关闭同步"
+                                : "通过账号将此记录同步到其他设备（端到端加密）"
                             }
                             aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}
                             onClick={(event) => {
@@ -606,7 +606,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
               </>
             ) : (
               <span className="flex-1 text-[11px] text-neutral-500">
-                回放模式：按录制时间轴重放终端输出，输入不会在回放中显示
+                按录制时间轴回放终端输出，期间不可输入
               </span>
             )}
             <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label="记录视图">
@@ -663,7 +663,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           <div ref={readerRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
             {!selected && !readerLoading && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                选择左侧的一条会话记录查看输出
+                选择左侧的终端记录查看输出
               </div>
             )}
             {readerLoading && (

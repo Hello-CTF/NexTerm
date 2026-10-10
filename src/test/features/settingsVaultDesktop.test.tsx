@@ -162,9 +162,9 @@ describe("桌面端凭据保护关闭路径", () => {
 
   it("桌面端密钥存储文案区分本机与同步上传条件", async () => {
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后存在本机 sqlite"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前运行环境的 SQLite 中"));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("只有开启「同步 AI 模型档案」且凭据库已解锁");
+    expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
     expect(text).not.toContain("不会上传");
   });

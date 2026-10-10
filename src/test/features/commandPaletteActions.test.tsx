@@ -211,7 +211,7 @@ describe("命令面板片段条目", () => {
     click(optionByText(mounted!.container, "插入片段 多行重启"));
     await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("回车/换行"),
+      expect.stringContaining("回车或换行"),
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.write).not.toHaveBeenCalled();

@@ -127,17 +127,17 @@ describe("ModelManager 恢复默认参数", () => {
     expect(inputFor("回退模型").value).toBe("");
     expect(inputFor("思考强度").value).toBe("");
     expect(inputFor("最大输出").value).toBe("");
-    expect(inputFor("stream/block 总超时").value).toBe("");
-    expect(inputFor("stream/block 空闲超时").value).toBe("");
+    expect(inputFor("请求总超时").value).toBe("");
+    expect(inputFor("响应空闲超时").value).toBe("");
     expect(inputFor("自动暂停阈值").value).toBe("");
     expect(inputFor("自动暂停时长").value).toBe("");
     expect(view!.container.textContent).toContain("端点默认");
-    expect(view!.container.textContent).toContain("stream/block 总超时");
-    expect(view!.container.textContent).toContain("stream/block 空闲超时");
+    expect(view!.container.textContent).toContain("请求总超时");
+    expect(view!.container.textContent).toContain("响应空闲超时");
     const stream = view!.container.querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(stream.checked).toBe(true);
 
-    expect(inputFor("展示名").value).toBe("公司 DeepSeek");
+    expect(inputFor("显示名称").value).toBe("公司 DeepSeek");
     expect(inputFor("Base URL").value).toBe("https://api.deepseek.com/v1");
     expect(inputFor("API Key").value).toBe("sk-secret-1");
     expect(inputFor("模型名").value).toBe("deepseek-chat");

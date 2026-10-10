@@ -328,7 +328,7 @@ export function TerminalPane({
         const now = Date.now();
         if (opts?.fromCommand || now - observerHintAt.current > 4000) {
           observerHintAt.current = now;
-          pushToast("info", "终端正由其他设备操作，点「接管控制」可接手");
+          pushToast("info", "终端正由其他设备操作，点击「接管控制」可取得控制权");
         }
       };
       if (isObserver) {
@@ -360,7 +360,7 @@ export function TerminalPane({
             broadcastSkipAt.current = now;
             pushToast(
               "info",
-              `广播：${outcome.sent} 个终端已发送，跳过 ${outcome.skipped.length} 个（${describeBroadcastSkips(outcome.skipped)}）`,
+              `广播：已发送到 ${outcome.sent} 个终端，跳过 ${outcome.skipped.length} 个（${describeBroadcastSkips(outcome.skipped)}）`,
             );
           }
         }
@@ -419,8 +419,8 @@ export function TerminalPane({
         pushToast(
           "info",
           scope === "pane"
-            ? "当前分屏里没有至少 2 个可广播的终端"
-            : "这个工作区里没有至少 2 个可广播的终端",
+            ? "当前分屏的可广播终端不足 2 个"
+            : "当前工作区的可广播终端不足 2 个",
         );
         return;
       }
@@ -615,7 +615,7 @@ export function TerminalPane({
       setAttachDead(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
-      pushToast("info", resumeId ? "已重新连接，正在接回原来的终端" : "已重新连接，正在打开一个新的终端");
+      pushToast("info", resumeId ? "已重新连接，正在恢复原终端" : "已重新连接，正在打开新终端");
     } catch (e) {
       pushToast("error", `重新连接失败：${describeError(e)}`);
     } finally {
@@ -632,7 +632,7 @@ export function TerminalPane({
       await terminalApi.switchEncoding(kernelTabId, v);
       encodingTouchedRef.current = true;
       setEncoding(v);
-      pushToast("info", `编码已切换为 ${v}（对之后的输出生效，已显示的内容不变）`);
+      pushToast("info", `编码已切换为 ${v}（仅影响后续输出）`);
     } catch (e) {
       pushToast("error", `编码切换失败：${describeError(e)}`);
     }
@@ -711,7 +711,7 @@ export function TerminalPane({
     async (files: File[]) => {
       if (!kernelTabId) return;
       if (isObserver) {
-        pushToast("info", "终端正由其他设备操作，点「接管控制」可接手");
+        pushToast("info", "终端正由其他设备操作，点击「接管控制」可取得控制权");
         return;
       }
       setImagePaste({
@@ -911,7 +911,7 @@ export function TerminalPane({
         kind: "item",
         label: "粘贴选中文本",
         icon: <IconEdit size={13} />,
-        hint: "不动剪贴板",
+        hint: "不修改剪贴板",
         disabled: !hasSel || !kernelTabId,
         onSelect: () => void pasteSelectionBack(),
       },
@@ -1243,7 +1243,7 @@ export function TerminalPane({
               {control.exited ? (
                 <>
                   <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                    进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
+                    只能查看最后的终端输出。请新建终端继续操作
                   </span>
                   <button
                     ref={exitedCloseBtnRef}
@@ -1319,7 +1319,7 @@ export function TerminalPane({
                 这个终端已失效
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                它所属的连接在服务端已经不在了（服务端重启，或连接已被回收）。如果这个终端仍在后台运行，重新连接会接回它并回放之前的输出；否则会在这个标签里打开一个新的终端。已经产生的输出也可在「终端历史」中查看。
+                所属连接已在服务端删除。重新连接将恢复原终端并回放输出；若原终端已结束，则在当前标签中打开新终端。历史输出可在「终端历史」中查看
               </span>
               <div className="flex items-center gap-2">
                 <button

@@ -80,7 +80,7 @@ func (c *remoteClient) login(ctx context.Context, username, password string) err
 	}
 	var session accountSessionView
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "远端登录响应形状不合法", err)
+		return ipc.WrapError(ipc.CodeInternal, "远端登录响应结构无效", err)
 	}
 	cookie := ""
 	for _, candidate := range response.Cookies() {
@@ -239,7 +239,7 @@ func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return 0, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据形状不合法", err)
+			return 0, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据结构无效", err)
 		}
 	}
 	return response.StatusCode, nil, nil

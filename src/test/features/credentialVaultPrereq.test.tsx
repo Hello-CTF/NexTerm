@@ -488,13 +488,13 @@ describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
   it("解锁失败当场报错并中止保存，表单数据保留", async () => {
     await mountLockedEditor(vi.fn());
     mocks.promptText.mockResolvedValue("wrong-password");
-    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
 
     setInputValue(passwordInput(), "s3cret");
     clickButton(assetEditorModal()!, "保存");
 
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误");
     expect(mocks.setCredential).not.toHaveBeenCalled();
     expect(mocks.assetUpdate).not.toHaveBeenCalled();
     await flush();
@@ -579,11 +579,11 @@ describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
   it("解锁失败不创建凭据，已填内容保留", async () => {
     mountLockedModal(vi.fn());
     mocks.promptText.mockResolvedValue("wrong-password");
-    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
 
     clickButton(mounted!.container, "保存");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误");
     expect(mocks.setCredential).not.toHaveBeenCalled();
     await flush();
     expect(mounted!.container.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe(

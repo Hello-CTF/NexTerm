@@ -251,7 +251,7 @@ describe("DbPanel 文案", () => {
   it("SQL 运行术语统一为「运行」", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("mydb"));
-    expect(text()).toContain("点右上角「运行」");
+    expect(text()).toContain("输入 SQL");
     const run = mounted.container.querySelector<HTMLButtonElement>(
       'button[title="运行整段 SQL，或只运行选中部分（一次只执行一条语句）"]',
     );
@@ -263,16 +263,16 @@ describe("DbPanel 文案", () => {
     expect(text()).not.toContain("执行成功");
   });
 
-  it("Redis 命令台说明与真实行为一致，不引用内部章节号", async () => {
+  it("Redis 控制台说明与真实行为一致，不引用内部章节号", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => text().includes("命令台"));
+    await flushUntil(() => text().includes("控制台"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("命令台"),
+      b.textContent?.includes("控制台"),
     );
-    if (!bar) throw new Error("命令台折叠条未找到");
+    if (!bar) throw new Error("控制台折叠条未找到");
     click(bar);
-    await flushUntil(() => text().includes("命令台 · FLUSHALL"));
-    expect(text()).toContain("命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行");
+    await flushUntil(() => text().includes("控制台 · 危险命令执行前需要确认"));
+    expect(text()).toContain("控制台 · 危险命令执行前需要确认，其余命令直接执行");
     expect(text()).not.toContain("§");
     expect(text()).not.toContain("M3");
   });
@@ -328,7 +328,7 @@ describe("AuditView 文案", () => {
     ]);
     mounted = mount(createElement(AuditView));
     await flushUntil(() => text().includes("✓ 0"));
-    expect(text()).toContain("会话命令、AI 动作、文件写操作与设备上下线都会落库，逐条标注来源；有退出码的记录会一并展示。");
+    expect(text()).toContain("会话命令、AI 操作、文件写入和设备上下线都会记录并标注来源；退出码和耗时随记录显示。");
     expect(text()).not.toContain("齐全");
     expect(text()).not.toContain("可导出");
     expect(text()).not.toContain("§");

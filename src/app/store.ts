@@ -1178,7 +1178,7 @@ async function reclaimTerminals(
     pushToast("info", `${detachedOk} 个终端已转入后台，可在「后台会话」接管`);
   }
   if (blockedOk) {
-    pushToast("info", `${blockedOk} 个不支持后台的终端已结束`);
+    pushToast("info", `${blockedOk} 个不支持转入后台的终端进程已结束`);
   }
   return true;
 }

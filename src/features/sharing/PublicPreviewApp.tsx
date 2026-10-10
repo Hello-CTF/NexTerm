@@ -21,8 +21,8 @@ interface ErrorCopy {
 }
 
 const CONNECT_FAILED_COPY: ErrorCopy = {
-  title: "无法连接到预览",
-  detail: "链接无效、已过期或已被吊销，也可能是网络不通。请核对链接完整后重试。",
+  title: "无法连接预览终端",
+  detail: "链接可能无效、已过期或已吊销，也可能是网络异常。请核对链接是否完整后重试。",
   retryable: true,
 };
 
@@ -35,7 +35,7 @@ function errorCopy(failure: PreviewFailure): ErrorCopy {
     case "not_found":
       return { title: "预览链接无效", detail: "请核对链接是否完整，或向分享者确认预览状态。", retryable: false };
     case "ended":
-      return { title: "分享已结束", detail: "会话已被分享者关闭或退出。", retryable: false };
+      return { title: "预览已结束", detail: "会话已被分享者关闭或退出。", retryable: false };
     default:
       return {
         title: failure.message || "预览暂时不可用",
@@ -176,7 +176,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
               )}
               {phase.kind === "ended" && (
                 <>
-                  <p className="text-base font-medium text-neutral-100">分享已结束</p>
+                  <p className="text-base font-medium text-neutral-100">预览已结束</p>
                   <p className="mt-2 text-sm text-neutral-400">会话已被分享者关闭或退出。如需继续查看，请让分享者重新发起预览。</p>
                 </>
               )}

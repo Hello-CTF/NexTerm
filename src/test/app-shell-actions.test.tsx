@@ -80,7 +80,7 @@ vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetE
 vi.mock("../app/CommandPalette", () => ({
   CommandPalette: (props: { onOpenFiles?: () => void }) => (
     <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
-      打开宽幅文件浏览器
+      打开文件浏览器
     </button>
   ),
 }));

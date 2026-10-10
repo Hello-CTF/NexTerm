@@ -457,7 +457,7 @@ describe("conversation terminal reconciliation", () => {
     expect(texts(streamed.items, "assistant")).toEqual(["已经流出的正文"]);
     expect(roles(streamed.items)).toEqual(["assistant", "outcome"]);
     const empty = doneWith(null, "");
-    expect(texts(empty.items, "assistant")).toEqual(["(无回答)"]);
+    expect(texts(empty.items, "assistant")).toEqual(["（无回答）"]);
   });
 
   it("replaces the final segment even when reasoning trails it, without touching earlier items", () => {

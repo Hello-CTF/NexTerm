@@ -268,7 +268,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   };
 
   const mkDirIn = async (dir: string) => {
-    const name = await promptText("新建文件夹名");
+    const name = await promptText("新建目录名");
     if (name === null) return;
     const problem = validateEntryName(name);
     if (problem) {
@@ -333,7 +333,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const cdTerminalTo = (dir: string) => {
     const kernelTabId = findWritableTerminal(sessionId);
     if (!kernelTabId) {
-      pushToast("info", "当前工作区还没有终端，已改为新开一个");
+      pushToast("info", "当前工作区没有可用终端，已新建一个");
       openTerminalAt(dir);
       return;
     }
@@ -369,7 +369,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       items.push(
         {
           kind: "item",
-          label: "打包下载当前文件夹",
+          label: "打包下载当前目录",
           icon: <IconArchive size={13} />,
           hint: "tar.gz",
           onSelect: () => void packDownload(entry.path),
@@ -382,7 +382,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         },
         {
           kind: "item",
-          label: "新建子文件夹",
+          label: "新建子目录",
           icon: <IconFolderPlus size={13} />,
           onSelect: () => void mkDirIn(entry.path),
         },
@@ -483,7 +483,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       { kind: "group", label: "当前目录" },
       {
         kind: "item",
-        label: "打包下载当前文件夹",
+        label: "打包下载当前目录",
         icon: <IconArchive size={13} />,
         hint: sessionGone ? "会话已删除" : "tar.gz",
         disabled: sessionGone,
@@ -499,7 +499,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       },
       {
         kind: "item",
-        label: "新建文件夹",
+        label: "新建目录",
         icon: <IconFolderPlus size={13} />,
         hint: sessionGone ? "会话已删除" : undefined,
         disabled: sessionGone,
@@ -545,7 +545,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const downloadTitle = !selectedEntry
     ? "请先选择要下载的文件"
     : selectedEntry.kind === "dir"
-      ? "目录不能逐个下载，请使用打包下载"
+      ? "目录不能直接下载，请使用打包下载"
       : "下载选中的文件";
   const logTitle = !selectedEntry
     ? "请先选择要查看日志的文本文件"
@@ -646,7 +646,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void mkDirIn(path)}
           disabled={sessionGone}
-          title={sessionGone ? goneHint : "新建文件夹"}
+          title={sessionGone ? goneHint : "新建目录"}
         >
           <IconFolder size={13} />
           新建
@@ -664,7 +664,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-icon-btn"
-          title="更多操作（打包下载 / 上传 / 新建文件夹 / 刷新）"
+          title="更多操作（打包下载 / 上传 / 新建目录 / 刷新）"
           aria-label="更多操作"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -790,7 +790,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                     isDir
                       ? e.path
                       : isEditableFile(e.name)
-                        ? `${e.path} · 双击或回车用内置编辑器打开`
+                        ? `${e.path} · 双击或按回车使用内置编辑器打开`
                         : `${e.path} · 非文本文件，不能在线编辑`
                   }
                 >

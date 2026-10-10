@@ -331,7 +331,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
       skipped: 0,
       warnings: [],
     });
-    clickButton(mounted.container, "一键导入全部可新增项 (1)");
+    clickButton(mounted.container, "导入全部可新增项（1）");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
     expect(mocks.apply).toHaveBeenCalledWith({

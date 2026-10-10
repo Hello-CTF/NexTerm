@@ -49,7 +49,7 @@ export function findSibling(
 
 export const CHECKSUM_ALGOS: { key: string; label: string; hint: string }[] = [
   { key: "sha256", label: "SHA-256", hint: "默认；更长、更安全" },
-  { key: "md5", label: "MD5", hint: "仅用于与旧系统对账" },
+  { key: "md5", label: "MD5", hint: "仅用于匹配旧系统的校验值" },
 ];
 
 export const DEFAULT_CHECKSUM_ALGO = "sha256";

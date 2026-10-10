@@ -26,7 +26,7 @@ func Guarded(ctx context.Context, name string, run func() (Output, error)) (outp
 }
 
 func panicOutput(name string, recovered any) Output {
-	return Output{Text: fmt.Sprintf("工具 %s 执行崩溃: %s", name, safePanicText(recovered)), ExitCode: 1, Panic: true}
+	return Output{Text: fmt.Sprintf("工具 %s 执行时崩溃：%s", name, safePanicText(recovered)), ExitCode: 1, Panic: true}
 }
 
 func safePanicText(recovered any) string {

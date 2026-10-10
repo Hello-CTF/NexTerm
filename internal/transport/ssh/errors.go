@@ -113,7 +113,7 @@ func userGuidanceForKind(kind ErrorKind) string {
 	case ErrorKindAuth:
 		return "认证失败，请检查用户名、密码、私钥或 SSH agent 配置"
 	case ErrorKindHostKeyPending:
-		return "主机指纹待确认，请核对指纹后确认信任该主机"
+		return "请核对主机指纹后确认是否信任该主机"
 	case ErrorKindHostKeyChanged:
 		return "主机指纹与已记录的不一致，请与服务器管理员核对后再确认替换"
 	case ErrorKindProxy:

@@ -16,7 +16,7 @@ import { IconClose, IconKey, IconLoader, IconPlus } from "../../ui/icons";
 
 const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] = [
   { value: "terminal_write", label: "终端写入", hint: "AI 替你输入：按键直接发进终端" },
-  { value: "session_exec", label: "命令执行", hint: "仅放行普通需确认的 AI 命令；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
+  { value: "session_exec", label: "命令执行", hint: "仅放行需确认的普通 AI 命令；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
 ];
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
@@ -27,8 +27,8 @@ const KIND_LABEL: Record<AiGrantKind, string> = {
 const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean; hint: string }[] = [
   { value: "write_file", label: "写入文件", needsPath: true, hint: "只允许写匹配路径下的文件，如 /var/log/**" },
   { value: "edit_file", label: "修改文件", needsPath: true, hint: "只允许修改匹配路径下的文件，如 /etc/nginx/**" },
-  { value: "exec_commands", label: "执行命令", needsPath: false, hint: "仅放行普通需确认的 AI 命令；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
-  { value: "send_keys", label: "发送按键", needsPath: false, hint: "仅放行普通需确认的终端输入；高危或无法判断仍按当前权限模式，禁止操作始终拒绝" },
+  { value: "exec_commands", label: "执行命令", needsPath: false, hint: "仅放行需确认的普通 AI 命令；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
+  { value: "send_keys", label: "发送按键", needsPath: false, hint: "仅放行需确认的普通终端输入；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝" },
 ];
 
 const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
@@ -60,7 +60,7 @@ const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
 
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action] ?? rule.action;
-  return rule.path ? `${action} ${rule.path}` : `${action}（全部路径）`;
+  return rule.path ? `${action} ${rule.path}` : action;
 }
 
 function ruleExpiryText(rule: AiGrantRule, now: number): string {
@@ -123,7 +123,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余未授权操作按当前权限模式处理（读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
+      `为「${asset.name}」开启设备长期授权？\n\n开启后，该设备上的${scope}无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。授权对当前 NexTerm 实例的所有用户生效。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -142,7 +142,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const revoke = async (asset: Asset) => {
     const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `撤销「${asset.name}」的设备授权？\n\n撤销后，AI 在该设备上的${scope || "终端写入、命令执行"}不再享受长期授权，按当前权限模式处理：读写模式下恢复逐次确认，完全静默模式下直接执行不逐次问，只读与无人值守模式下会被拒绝。授权记录会从本安装（服务器）上删除。`,
+      `撤销「${asset.name}」的设备授权？\n\n撤销后，该设备上的${scope || "终端写入、命令执行"}将按当前权限模式处理，授权记录会从当前 NexTerm 实例删除。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -169,15 +169,15 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (!device || ruleBusy) return;
     const pattern = rulePath.trim();
     if (actionNeedsPath && pattern === "") {
-      pushToast("error", "文件写入规则必须填写路径范围，例如 /var/log/**");
+      pushToast("error", `请填写${RULE_ACTION_LABEL[ruleAction]}规则的路径范围，例如 /var/log/**`);
       return;
     }
     const expiry = RULE_EXPIRY_OPTIONS.find((o) => o.value === ruleExpiry) ?? RULE_EXPIRY_OPTIONS[0];
     const scope = actionNeedsPath
       ? `${RULE_ACTION_LABEL[ruleAction]} ${pattern}`
-      : `${RULE_ACTION_LABEL[ruleAction]}（该设备全部路径）`;
+      : RULE_ACTION_LABEL[ruleAction];
     const confirmed = await ask(
-      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n命中该规则的 AI 操作不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝。规则保存在本安装（服务器）上，可随时在此撤销。`,
+      `为「${device.name}」添加授权规则？\n\n范围：${scope}\n有效期：${expiry.label}\n\n匹配规则的普通 AI 操作无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。规则保存在当前 NexTerm 实例，可随时撤销。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -203,7 +203,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const revokeRule = async (rule: AiGrantRule) => {
     const device = assets?.find((a) => a.id === rule.deviceId);
     const confirmed = await ask(
-      `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后相关操作恢复按当前权限模式处理，规则记录会从本安装（服务器）上删除。`,
+      `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后，相关操作将按当前权限模式处理，规则记录会从当前 NexTerm 实例删除。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -235,7 +235,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。数据库资产（MySQL/PostgreSQL/Redis）不适用设备授权，不在此列出。
+        设备长期授权默认关闭。开启后，普通终端写入和命令执行无需逐次确认，只读模式下也会放行；高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝。授权对当前 NexTerm 实例的所有用户生效，请仅用于可信设备。数据库资产不支持设备授权。
       </div>
 
       {loadError && (
@@ -331,8 +331,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        授权规则按「设备 + 动作 + 路径范围」精确放行，比整设备授权更细：例如只允许写 /var/log/**
-        下的文件。规则可设有效期，到期自动失效；永久规则也会明确标注，可随时在此撤销。
+        授权规则按设备、动作和路径范围放行，例如仅允许写入 /var/log/** 下的文件。规则可设有效期，到期自动失效，也可随时撤销。
       </div>
 
       {rules.map((rule) => (

@@ -12,7 +12,7 @@ function alreadyEnded(message: string): boolean {
   return message.includes("接管令牌已过期") || message.includes("接管任务不存在或已结束");
 }
 
-export async function stealBack(reason = "用户夺回控制权") {
+export async function stealBack(reason = "用户收回控制权") {
   const { takeover, setTakeover, pushToast } = useUi.getState();
   if (!takeover || stealBackInFlight === takeover) return;
   stealBackInFlight = takeover;
@@ -22,15 +22,15 @@ export async function stealBack(reason = "用户夺回控制权") {
     }
     await aiApi.takeoverExit(takeover.tabId, takeover.token, reason);
     if (useUi.getState().takeover === takeover) setTakeover(null);
-    pushToast("info", "已夺回终端控制权，AI 已停止");
+    pushToast("info", "已收回终端控制权，AI 已停止");
   } catch (e) {
     const message = describeError(e);
     if (alreadyEnded(message)) {
       if (useUi.getState().takeover === takeover) setTakeover(null);
-      pushToast("info", "接管已结束，终端已在你手中");
+      pushToast("info", "接管已结束，终端控制权已恢复。");
       return;
     }
-    pushToast("error", `夺回失败，AI 可能仍在操作终端：${message}`);
+    pushToast("error", `收回控制权失败，AI 可能仍在操作终端：${message}`);
   } finally {
     if (stealBackInFlight === takeover) stealBackInFlight = null;
   }
@@ -78,7 +78,7 @@ export function TakeoverBanner() {
       if (!matchKeybinding(event, "reclaimTakeover")) return;
       event.preventDefault();
       event.stopPropagation();
-      void stealBack(`用户按 ${formatBinding(getKeybinding("reclaimTakeover"))} 夺回`);
+      void stealBack(`用户按 ${formatBinding(getKeybinding("reclaimTakeover"))} 收回控制权`);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -115,7 +115,7 @@ export function TakeoverBanner() {
     >
       <span className="nx-sr-only" role="status" aria-atomic="true">
         AI 正在操作此终端，{mode}。
-        {bindings.reclaimTakeover ? `按 ${reclaimLabel} 可立即夺回控制权。` : "可立即夺回控制权。"}
+        {bindings.reclaimTakeover ? `按 ${reclaimLabel} 可收回控制权。` : "可收回控制权。"}
       </span>
       <span className="flex items-center gap-1.5 font-semibold text-red-100">
         <IconAlert size={14} className="text-red-300" />
@@ -137,25 +137,25 @@ export function TakeoverBanner() {
       </span>
       <span
         className="shrink-0 text-red-300/70"
-        title="夺回会停止 AI 并退出接管；终端内按任意键只是暂停，可恢复"
+        title="收回控制权将停止 AI 并退出接管；在终端内按任意键仅暂停接管，之后可恢复。"
       >
         {bindings.reclaimTakeover ? (
           <>
-            按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 随时夺回
+            按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 收回控制权
           </>
         ) : (
-          "可随时夺回"
+          "可收回控制权"
         )}
       </span>
       <button
         type="button"
         className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0"
         aria-keyshortcuts={formatBindingAria(bindings.reclaimTakeover) ?? undefined}
-        title="停止 AI 并退出接管（终端内按任意键只是暂停，可恢复）"
+        title="收回控制权将停止 AI 并退出接管；在终端内按任意键仅暂停接管，之后可恢复。"
         onClick={() => void stealBack()}
       >
         <IconGamepad size={12} />
-        立即夺回
+        收回控制权
       </button>
     </div>
   );

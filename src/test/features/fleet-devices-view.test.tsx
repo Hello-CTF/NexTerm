@@ -252,7 +252,7 @@ describe("设备管理视图 · 角色差异", () => {
     mounted = mount(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
 
-    expect(document.body.textContent).toContain("这台服务器关闭了账号功能,设备管理不可用。");
+    expect(document.body.textContent).toContain("这台服务器关闭了账号功能，设备管理不可用。");
     expect(document.body.textContent).not.toContain("登录入口在");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
@@ -338,7 +338,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
     expect(card?.textContent).toContain("离线");
-    expect(card?.textContent).toContain("设备离线: 修改只会保存为期望状态, 上线后生效");
+    expect(card?.textContent).toContain("设备离线：修改只会保存为期望状态，上线后生效");
     expect(card?.textContent).toContain("未运行");
   });
 
@@ -349,7 +349,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     await flushUntil(() => document.body.textContent?.includes("browser-01") ?? false);
 
     const browserCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("browser-01"));
-    expect(browserCard?.textContent).toContain("没有运行状态与指标");
+    expect(browserCard?.textContent).toContain("没有运行状态和指标");
     expect([...(browserCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
 
     const revokedCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"));
@@ -361,7 +361,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     route(fleetHandler({ devices: { devices: [] } }));
     seedUser(SUPERADMIN);
     mounted = mount(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("还没有设备接入") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("还没有接入设备") ?? false);
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
@@ -389,13 +389,13 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(enrollCall?.body).toEqual({ ttl_ms: 900_000 });
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("只显示这一次");
-    expect(text).toContain("单次使用");
-    expect(text).toContain("高级说明: 多地址、手动接入与服务管理");
-    expect(text).toContain("执行完成后刷新");
-    expect(text).toContain("随登录自动启动");
-    expect(text).toContain("首台直接「在线」");
-    expect(text).toContain("之后接入的设备为「待审批」");
+    expect(text).toContain("仅显示一次");
+    expect(text).toContain("只能使用一次");
+    expect(text).toContain("高级说明：多地址、手动接入与服务管理");
+    expect(text).toContain("执行完成后刷新列表");
+    expect(text).toContain("随用户登录自动启动");
+    expect(text).toContain("首台设备会直接上线");
+    expect(text).toContain("后续设备需管理员批准");
     expect(text).not.toContain("第 1 步");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
@@ -405,7 +405,7 @@ describe("设备管理视图 · 接入码签发", () => {
       `nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
     );
     expect(text).toContain(`nexterm-server agent install --data-dir ${dataDir}`);
-    expect(text).toContain("不会替你安装");
+    expect(text).toContain("不会执行安装");
     expect(text).not.toContain("/var/lib");
 
     // enroll 与 install 使用同一数据目录; 目录为双引号单参数, 展开优先级
@@ -462,8 +462,8 @@ describe("设备管理视图 · 接入码签发", () => {
     click(copyCommand as HTMLButtonElement);
 
     expect(toast).toHaveBeenCalledTimes(2);
-    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败: 剪贴板不可用, 请手动选中复制");
-    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败: 剪贴板不可用, 请手动选中复制");
+    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败：剪贴板不可用，请手动复制");
+    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败：剪贴板不可用，请手动复制");
   });
 
   it("接入地址 loading/error/ready 控制签发与覆盖保存, 失败可重试", async () => {
@@ -500,7 +500,7 @@ describe("设备管理视图 · 接入码签发", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开编辑") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("接入地址读取中") ?? false);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存顺序与修改"))).toBe(false);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存修改"))).toBe(false);
 
     firstBaseUrls.reject(new Error("地址服务不可用"));
     await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
@@ -514,7 +514,7 @@ describe("设备管理视图 · 接入码签发", () => {
     click(retry as HTMLButtonElement);
     await flushUntil(() => baseUrlCalls === 2 && document.querySelector('input[aria-label="新接入地址"]') !== null);
     expect(issueButton.disabled).toBe(false);
-    const save = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存顺序与修改"));
+    const save = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     expect(save).toBeTruthy();
 
     click(issueButton);
@@ -795,7 +795,7 @@ describe("设备管理视图 · 待审批", () => {
     expect(document.body.textContent).toContain("1 台设备待审批");
     const card = pendingCard();
     expect(card?.textContent).toContain("待审批");
-    expect(card?.textContent).toContain("等待管理员批准: 批准前设备不会上线, 也不会同步任何数据。");
+    expect(card?.textContent).toContain("等待管理员批准：批准前设备不会上线，也不会同步任何数据。");
     expect(card?.textContent).not.toContain("在线");
     expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
     expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "终端")).toBe(false);

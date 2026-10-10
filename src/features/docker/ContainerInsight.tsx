@@ -127,7 +127,7 @@ function RedactHint() {
   return (
     <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
-      敏感值已遮蔽 · 按名称和连接串内嵌凭据自动识别
+      已根据变量名和连接字符串中的凭据自动遮蔽敏感值
     </span>
   );
 }
@@ -166,7 +166,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         <Field label="ID" value={containerId} mono />
       </div>
 
-      <Section title={`环境变量 (${vm.env.length})`}>
+      <Section title={`环境变量（${vm.env.length}）`}>
         {vm.env.length === 0 ? (
           <span className="nx-hint">没有环境变量</span>
         ) : (
@@ -193,7 +193,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title={`标签 (${vm.labels.length})`}>
+      <Section title={`标签（${vm.labels.length}）`}>
         {vm.labels.length === 0 ? (
           <span className="nx-hint">没有标签</span>
         ) : (
@@ -220,7 +220,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title={`挂载 (${vm.mounts.length})`}>
+      <Section title={`挂载（${vm.mounts.length}）`}>
         {vm.mounts.length === 0 ? (
           <span className="nx-hint">没有挂载</span>
         ) : (
@@ -255,7 +255,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title="完整配置（已脱敏）">
+      <Section title="完整配置（已遮蔽）">
         <pre className="nx-pre m-3 whitespace-pre-wrap break-all">{vm.json}</pre>
       </Section>
     </div>
@@ -316,7 +316,7 @@ function StatsView({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <span className="nx-hint">
-          每 3 秒自动刷新 · 切走即停 · 共 {rows.length} 个运行中容器
+          每 3 秒自动刷新 · 离开此页后停止 · 共 {rows.length} 个运行中容器
         </span>
         {!containerRunning && <span className="nx-badge nx-badge-amber">当前容器已停止</span>}
         <div className="nx-spacer" />
@@ -505,7 +505,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                         ? "已遮蔽"
                         : isDir
                           ? redactContainerPath(joinContainerPath(path, name))
-                          : `${redactContainerPath(joinContainerPath(path, name))}（文件，仅列出目录，不读取内容）`
+                          : `${redactContainerPath(joinContainerPath(path, name))}（仅列出目录内容，不读取文件）`
                     }
                     onClick={isDir ? () => setPath(joinContainerPath(path, name)) : undefined}
                   >
@@ -534,7 +534,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-1.5">
-        <span className="nx-hint">仅列出容器内目录，不读取文件内容</span>
+        <span className="nx-hint">仅列出容器目录内容，不读取文件</span>
       </div>
     </div>
   );

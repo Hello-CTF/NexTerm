@@ -309,7 +309,7 @@ function UsageDetails({
           ) : null}
           <span className="block text-neutral-500">
             标题 {scenes.title.runs} 次 · 输入 {formatTokens(scenes.title.tokensIn)} · 输出{" "}
-            {formatTokens(scenes.title.tokensOut)}（单独计，不入对话总量）
+            {formatTokens(scenes.title.tokensOut)}（单独统计，不计入对话总量）
           </span>
         </>
       ) : null}

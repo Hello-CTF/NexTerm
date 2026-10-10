@@ -126,14 +126,13 @@ describe("GrantPanel 设备长期授权管理", () => {
   it("默认全部关闭，并说明授权是安装级而非按用户隔离", async () => {
     await mountPanel();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("默认全部关闭");
-    expect(text).toContain("不是按用户隔离");
-    expect(text).toContain("对该安装的所有用户生效");
-    expect(text).toContain("原本要逐次确认");
+    expect(text).toContain("默认关闭");
+    expect(text).toContain("授权对当前 NexTerm 实例的所有用户生效");
+    expect(text).toContain("普通终端写入和命令执行无需逐次确认");
     expect(text).toContain("只读模式下也会放行");
-    expect(text).toContain("长期授权只覆盖普通需确认操作");
-    expect(text).toContain("高危或无法判断仍按当前权限模式处理");
-    expect(text).toContain("被拦截规则判为禁止的操作始终拒绝");
+    expect(text).toContain("高危或无法判断的操作仍按当前权限模式处理");
+    expect(text).toContain("禁止操作始终拒绝");
+    expect(text).toContain("请仅用于可信设备");
     for (const name of ["生产 Web"]) {
       expect(rowFor(name).textContent).toContain("未授权");
     }
@@ -145,7 +144,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     await mountPanel();
     expect(() => rowFor("数据库")).toThrow();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("数据库资产（MySQL/PostgreSQL/Redis）不适用设备授权");
+    expect(text).toContain("数据库资产不支持设备授权");
     expect(text).not.toContain("已授权：");
     clickButton(view!.container, "添加规则");
     await flush();
@@ -163,11 +162,11 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.ask).toHaveBeenCalledOnce();
     const message = mocks.ask.mock.calls[0][0] as string;
     expect(message).toContain("生产 Web");
-    expect(message).toContain("不是按用户隔离");
+    expect(message).toContain("授权对当前 NexTerm 实例的所有用户生效");
     expect(message).toContain("只读模式下也会放行");
-    expect(message).toContain("长期授权只覆盖普通需确认操作");
-    expect(message).toContain("高危或无法判断仍按当前权限模式处理");
-    expect(message).toContain("被拦截规则判为禁止的操作始终拒绝");
+    expect(message).toContain("无需逐次确认");
+    expect(message).toContain("高危或无法判断的操作仍按当前权限模式处理");
+    expect(message).toContain("禁止操作始终拒绝");
     expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
     await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启"));
@@ -201,9 +200,8 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.ask).toHaveBeenCalledOnce();
     const message = mocks.ask.mock.calls[0][0] as string;
     expect(message).toContain("生产 Web");
-    expect(message).toContain("读写模式下恢复逐次确认");
-    expect(message).toContain("完全静默模式下直接执行不逐次问");
-    expect(message).toContain("只读与无人值守模式下会被拒绝");
+    expect(message).toContain("将按当前权限模式处理");
+    expect(message).toContain("授权记录会从当前 NexTerm 实例删除");
     expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-1");
     await flushUntil(() => rowFor("生产 Web").textContent?.includes("未授权") === true);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("按当前权限模式处理"));
@@ -268,7 +266,7 @@ describe("GrantPanel 授权规则", () => {
     expect(permanent.textContent).toContain("永久");
     const expiring = ruleRow("执行命令");
     expect(expiring.textContent).toContain("数据库");
-    expect(expiring.textContent).toContain("全部路径");
+    expect(expiring.textContent).not.toContain("全部路径");
     expect(expiring.textContent).toContain("过期");
   });
 

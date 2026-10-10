@@ -145,7 +145,7 @@ export function CommandBlockPanel({
                   <pre className="max-h-64 overflow-auto border-t border-neutral-800/40 bg-term px-2.5 py-1.5 font-mono text-[10.5px] leading-snug whitespace-pre-wrap text-neutral-400">
                     {shown || "（无输出）"}
                     {lines.length > PREVIEW_LINES
-                      ? `\n… 还有 ${lines.length - PREVIEW_LINES} 行（复制可取全文）`
+                      ? `\n… 还有 ${lines.length - PREVIEW_LINES} 行（复制可获取完整内容）`
                       : ""}
                   </pre>
                 )}

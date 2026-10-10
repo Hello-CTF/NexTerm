@@ -299,8 +299,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <div className="min-w-0 flex-1">
             {error.unsupported ? (
               <div className="break-words">
-                当前连接的后端不支持远程日志查看：日志查看器需要 SSH/SFTP 的分块读取能力，
-                WinRM 与本地后端暂不支持。可以改用内置编辑器打开，或下载到本机查看。
+                当前连接不支持远程日志查看，请使用内置编辑器或下载到本机查看
               </div>
             ) : (
               <>
@@ -357,7 +356,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <span className="text-neutral-700">|</span>
           <span>
             分块 {page} / {pages}（每页 {formatSize(CHUNK_SIZE)}，行号为分块内序号
-            {chunk.offset > 0 ? "，首行可能从半行开始" : ""}
+            {chunk.offset > 0 ? "，首行可能不完整" : ""}
             {chunk.truncated ? "，末行延续到下一页" : ""}）
           </span>
           <div className="nx-spacer" />

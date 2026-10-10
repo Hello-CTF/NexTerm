@@ -64,10 +64,10 @@ function gateDevice(row: FleetDevice | null): DeviceGate {
     return { ok: false, phase: { kind: "failed", message: "设备不存在或无权访问", canRestart: false } };
   }
   if (row.revoked_at !== 0) {
-    return { ok: false, phase: { kind: "failed", message: "设备已吊销, 无法打开终端", canRestart: false } };
+    return { ok: false, phase: { kind: "failed", message: "设备已吊销，无法打开终端", canRestart: false } };
   }
   if (row.state === "pending") {
-    return { ok: false, phase: { kind: "failed", message: "设备待审批: 管理员批准后才能打开终端", canRestart: false } };
+    return { ok: false, phase: { kind: "failed", message: "设备待审批：管理员批准后才能打开终端", canRestart: false } };
   }
   if (!row.agent.terminal_enabled) {
     return { ok: false, phase: { kind: "failed", message: "设备已关闭终端访问", canRestart: false } };
@@ -83,13 +83,13 @@ function describeSessionError(error: unknown): { message: string; canRestart: bo
   if (error instanceof DeviceTerminalError) {
     switch (error.code) {
       case "version_mismatch":
-        return { message: "设备端终端协议版本不兼容, 请升级设备上的 NexTerm", canRestart: false };
+        return { message: "设备端终端协议版本不兼容，请升级设备上的 NexTerm", canRestart: false };
       case "state_mismatch":
-        return { message: "设备端终端状态已变化, 请重试", canRestart: true };
+        return { message: "设备端终端状态已变化，请重试", canRestart: true };
       case "not_found":
         return { message: "会话在设备上已不存在", canRestart: true };
       case "identity":
-        return { message: "会话已被替换, 无法恢复", canRestart: true };
+        return { message: "会话已被替换，无法恢复", canRestart: true };
       case "exited":
         return { message: "会话已结束", canRestart: true };
       default:
@@ -172,7 +172,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
         row = await loadDevice();
       } catch (e) {
         if (stale()) return;
-        setPhase({ kind: "failed", message: `加载设备信息失败: ${describeError(e)}`, canRestart: true });
+        setPhase({ kind: "failed", message: `加载设备信息失败：${describeError(e)}`, canRestart: true });
         return;
       }
       if (row) setDevice(row);
@@ -291,7 +291,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     const row = deviceRef.current;
     if (!session || !row?.agent?.state_digest) return;
     const name = row.name;
-    const ok = await ask(`结束设备「${name}」上的这个终端会话?\n\n设备端的 shell 进程会被终止, 未保存的工作会丢失。`, {
+    const ok = await ask(`结束设备「${name}」上的这个终端会话？\n\n设备端的 shell 进程会被终止，未保存的工作会丢失。`, {
       title: "结束终端会话",
       kind: "warning",
     });
@@ -307,7 +307,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       bridgeRef.current = null;
       setPhase({ kind: "exited", detail: "已手动结束" });
     } catch (e) {
-      pushToast("error", `结束终端失败: ${describeError(e)}`);
+      pushToast("error", `结束终端失败：${describeError(e)}`);
     }
   }, [deviceId, pushToast]);
 
@@ -347,13 +347,13 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     if (!shareCreated) return;
     const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
     if (!clipboard || typeof clipboard.writeText !== "function") {
-      pushToast("error", "复制失败: 剪贴板不可用, 请手动选中复制");
+      pushToast("error", "复制失败：剪贴板不可用，请手动复制");
       return;
     }
     void clipboard
       .writeText(shareCreated.url)
       .then(() => pushToast("success", "公开链接已复制"))
-      .catch(() => pushToast("error", "复制失败, 请手动选中复制"));
+      .catch(() => pushToast("error", "复制失败，请手动复制"));
   }, [pushToast, shareCreated]);
 
   // 会话离开 ready (exit/断开/失败) 后分享面板关闭并清除一次性 URL; 在途创建
@@ -506,8 +506,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
           {shareCreated ? (
             <div className="flex flex-col gap-1.5">
               <div className="text-[11.5px] text-neutral-300">
-                公开链接已创建 ({shareCreated.permission === "read_write" ? "读写" : "只读"}, 有效期至{" "}
-                {formatTime(shareCreated.expiresAt)})。链接<b>只显示这一次</b>, 关闭面板后本页面不再展示。
+                公开链接已创建（{shareCreated.permission === "read_write" ? "读写" : "只读"}，有效期至{" "}
+                {formatTime(shareCreated.expiresAt)}）。链接仅显示一次，关闭面板后不再展示。
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{shareCreated.url}</code>
@@ -523,8 +523,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
                 </button>
               </div>
               <div className="text-[11px] leading-relaxed text-neutral-500">
-                有效期内任何拿到链接的人无需账号都能打开这个终端会话{shareCreated.permission === "read_write" ? "并输入" : " (不能输入)"}
-                ; 可在「设置 → 分享」的公开链接列表中随时吊销。链接不接触主机密码或私钥。
+                有效期内，获得链接的人无需账号即可打开此终端会话；可在「设置 → 分享」中随时吊销。链接不会暴露主机密码或私钥。
               </div>
             </div>
           ) : (
@@ -552,7 +551,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
                   />
                   允许读写
                 </label>
-                <span className="nx-hint text-[11px]">默认只读; 勾选后持有链接的人才可以在终端里输入</span>
+                <span className="nx-hint text-[11px]">默认只读；勾选后，持有链接的人即可在终端中输入</span>
                 <div className="nx-spacer" />
                 <button
                   type="button"
@@ -565,8 +564,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
               </div>
               {shareError && <div className="text-[11.5px] break-words text-red-300">创建公开链接失败 · {shareError}</div>}
               <div className="text-[11px] leading-relaxed text-neutral-500">
-                公开链接绑定当前终端会话: 有效期内任何拿到链接的人无需 NexTerm 账号就能打开这个终端, 请只把链接发给你信任的人。
-                链接仅在创建成功后显示一次，本页面不会保存；创建后可随时在「设置 → 分享」吊销。
+                公开链接绑定当前终端会话：有效期内，获得链接的人无需 NexTerm 账号即可打开，请仅分享给可信对象。链接仅在创建成功后显示一次，本页面不会保存；可在「设置 → 分享」中随时吊销。
               </div>
             </div>
           )}
@@ -580,7 +578,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
             <div className="flex w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/85 px-6 py-6 text-center">
               <div className="text-[13px] font-semibold text-neutral-100">连接已断开</div>
               <div className="text-[11.5px] leading-relaxed text-neutral-400">{phase.message}</div>
-              <div className="text-[11px] text-neutral-500">设备端会话仍在运行, 重新连接后可恢复全部输出。</div>
+              <div className="text-[11px] text-neutral-500">设备端会话仍在运行，重新连接后可恢复全部输出。</div>
               <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void resume()}>
                 <IconRefresh size={12} />
                 重新连接

@@ -254,7 +254,7 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 		return Fail(fmt.Errorf("执行结果记录失败: %w", err))
 	case record.State != outcome.ExecutionFinished || record.Audit.State == outcome.AuditPending:
 
-		return Fail(fmt.Errorf("执行已发生但结果未能记录: %w", err))
+		return Fail(fmt.Errorf("操作已执行，但结果记录失败：%w", err))
 	case record.Audit.State == outcome.AuditFailed:
 		branch.Text += "\n[结果审计写入失败: " + record.Audit.Error + "]"
 		return branch
@@ -270,7 +270,7 @@ func completionFromOutput(output Output) (outcome.Completion, error) {
 		return outcome.Completion{}, errors.New(output.Text)
 	}
 	if output.Truncated || strings.Contains(output.Text, execFailureMarker) {
-		return outcome.Completion{}, errors.New("执行输出被截断或传输失败，外部结果不明确")
+		return outcome.Completion{}, errors.New("工具输出被截断或传输失败，无法确定执行结果")
 	}
 	if output.ExitUnknown {
 		return outcome.Completion{Outcome: outcome.OutcomeUnknown}, nil
@@ -283,7 +283,7 @@ func completionFromOutput(output Output) (outcome.Completion, error) {
 }
 
 func replayOutput(record outcome.Record) Output {
-	text := fmt.Sprintf("调用已执行过，返回账本记录的结果（outcome=%s）", record.Outcome)
+	text := fmt.Sprintf("调用已执行过，返回已记录的结果（outcome=%s）", record.Outcome)
 	switch record.Outcome {
 	case outcome.OutcomeAccepted:
 		return Output{OK: true, Text: text}

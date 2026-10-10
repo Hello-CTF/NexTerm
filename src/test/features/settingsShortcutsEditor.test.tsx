@@ -248,6 +248,6 @@ describe("shortcuts editor", () => {
   });
 
   it("mentions the fixed SQL run shortcut", () => {
-    expect(mounted?.container.textContent).toContain("SQL 编辑器内运行固定为 Ctrl+Enter");
+    expect(mounted?.container.textContent).toContain("SQL 编辑器中的运行快捷键固定为 Ctrl+Enter");
   });
 });

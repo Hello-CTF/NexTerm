@@ -58,7 +58,7 @@ func (s *Service) Capability() *string {
 		return &reason
 	}
 	if s.goos != "windows" && s.goos != "linux" {
-		reason := "磁盘挂载仅支持 Windows 和 Linux；macOS 保持显式不可用"
+		reason := "当前操作系统不支持磁盘挂载"
 		return &reason
 	}
 	return nil
@@ -291,7 +291,7 @@ func validateCreate(platform string, args CreateArgs) error {
 			return errors.New("Windows 挂载路径不能以选项前缀开头")
 		}
 		if !validWindowsDrive(args.LocalPoint) {
-			return errors.New("Windows 挂载点必须是明确的驱动器号（如 Z:），不能使用通配符")
+			return errors.New("Windows 挂载点必须指定驱动器号（如 Z:），不能使用通配符")
 		}
 	case "linux":
 		if strings.HasPrefix(args.RemotePath, "-") || strings.HasPrefix(args.LocalPoint, "-") {
@@ -325,7 +325,7 @@ func validateRemove(platform string, args RemoveArgs) error {
 		return errors.New("卸载路径不能以选项前缀开头")
 	}
 	if platform == "windows" && !validWindowsDrive(args.LocalPoint) {
-		return errors.New("Windows 卸载点必须是明确的驱动器号（如 Z:），不能使用通配符")
+		return errors.New("Windows 卸载点必须指定驱动器号（如 Z:），不能使用通配符")
 	}
 	return nil
 }

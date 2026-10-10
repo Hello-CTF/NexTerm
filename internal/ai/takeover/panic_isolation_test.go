@@ -27,7 +27,7 @@ func panicSnapshotOnCall(h *harness, target int64) {
 
 func requireSafePanicText(t *testing.T, text string) {
 	t.Helper()
-	if !strings.Contains(text, "执行崩溃") {
+	if !strings.Contains(text, "执行时崩溃") {
 		t.Errorf("missing crash diagnostics: %q", text)
 	}
 	if strings.Contains(text, "hunter2") || !strings.Contains(text, "<redacted>") {

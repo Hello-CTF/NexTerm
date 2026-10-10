@@ -118,7 +118,7 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{UnavailableReason: "server 模式不支持桌面应用内安装"}, nil
 	}
 	if !m.installing.CompareAndSwap(false, true) {
-		return Result{}, fmt.Errorf("正在安装更新, 请稍候")
+		return Result{}, fmt.Errorf("正在安装更新，请稍候")
 	}
 	defer m.installing.Store(false)
 	status := m.Check(ctx)

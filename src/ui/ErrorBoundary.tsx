@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         className="flex h-full flex-col items-center justify-center gap-3 bg-neutral-900 px-6 text-center"
       >
         <div className="text-[13px] font-semibold text-neutral-100">
-          {this.props.title ?? "这个面板出了点问题"}
+          {this.props.title ?? "面板发生错误"}
         </div>
         <div className="max-w-md text-xs leading-relaxed text-neutral-500">
           {describeError(error)}

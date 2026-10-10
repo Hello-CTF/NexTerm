@@ -120,7 +120,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
                 hint: "使用日志查看器按需读取，不加载整个文件",
                 primary: true,
               },
-              { key: "edit", label: "仍编辑", hint: "读取整个文件并启用编辑与保存" },
+              { key: "edit", label: "编辑整个文件", hint: "读取整个文件并启用编辑与保存" },
             ],
           });
           if (cancelled) return;
@@ -202,7 +202,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     try {
       if (meta && meta.encoding !== "utf-8") {
         const ok = await ask(
-          `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，用别的工具按原编码打开可能乱码。继续？`,
+          `文件按原编码解码，保存后将转换为 UTF-8，使用原编码打开可能出现乱码。继续？`,
           { title: "编码会改变", kind: "warning" },
         );
         if (!ok) return;
@@ -254,7 +254,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       const next = eol === "LF" ? src.replace(/\r?\n/g, "\r\n") : src.replace(/\r\n/g, "\n");
       v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: next } });
       setEol(eol === "LF" ? "CRLF" : "LF");
-      pushToast("info", `换行符已转为 ${eol === "LF" ? "CRLF" : "LF"}，记得保存`);
+      pushToast("info", `换行符已转换为 ${eol === "LF" ? "CRLF" : "LF"}，尚未保存`);
     });
   };
 
@@ -362,7 +362,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         <label
           className="nx-btn nx-btn-ghost nx-btn-xs relative font-mono"
           title={`解码方式：${ENC_LABEL[enc]}${
-            meta && enc === "auto" ? `（实测 ${meta.encoding.toUpperCase()}）` : ""
+            meta && enc === "auto" ? `（检测为 ${meta.encoding.toUpperCase()}）` : ""
           }`}
         >
           {enc === "auto" && meta ? meta.encoding.toUpperCase() : ENC_LABEL[enc]}

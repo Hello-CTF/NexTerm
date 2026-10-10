@@ -229,7 +229,7 @@ func ValidateAuthOffBounds(ctx context.Context, accounts *account.Accounts) erro
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("--auth=off 拒绝启动: 数据库已存在 %d 个用户账号; 请改用 --auth=on 或清理账号数据", count)
+		return fmt.Errorf("--auth=off 拒绝启动：数据库已存在 %d 个用户账号；请改用 --auth=on 或清理账号数据", count)
 	}
 	return nil
 }

@@ -43,7 +43,7 @@ export function BroadcastStrip(props: {
     >
       <IconZap size={13} className="shrink-0" />
       <span className="min-w-0 truncate">
-        广播输入中：在此终端的输入将同时发送到 {writable} 个终端
+        广播已开启：此终端的输入将同时发送到 {writable} 个终端
         {writable < broadcast.targetIds.length
           ? `（${broadcast.targetIds.length - writable} 个目标当前不可写，发送时自动跳过）`
           : ""}
@@ -170,7 +170,7 @@ export function BroadcastPickerModal(props: {
           <p className="nx-hint mb-3 flex items-start gap-1.5">
             <IconAlert size={13} className="mt-0.5 shrink-0 text-amber-300" />
             <span>
-              开启后，在任一选中终端里的输入会同时发送到全部选中终端。已失效、已退出与非交互终端不会被发送。
+              开启后，在任一选中终端里的输入会同时发送到全部选中终端。已失效、已退出和非交互终端会自动跳过
             </span>
           </p>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">

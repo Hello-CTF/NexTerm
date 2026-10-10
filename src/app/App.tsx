@@ -514,7 +514,7 @@ const ACCOUNT_QUERY_KEYS = [
 
 export default function App() {
   return (
-    <ErrorBoundary title="应用界面出了点问题">
+    <ErrorBoundary title="应用界面发生错误">
       <AppShell />
     </ErrorBoundary>
   );
@@ -775,14 +775,14 @@ function AppShell() {
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
     if (s) {
       if (isSessionReconnectPending(s.id)) {
-        pushToast("info", "正在重连，连上后会自动新建终端");
+        pushToast("info", "正在重连，连接成功后自动新建终端");
         return;
       }
       if (isSessionAlive(s.status)) {
         void openTerminalTab(s);
         return;
       }
-      pushToast("info", "正在重连，连上后自动新建终端…");
+      pushToast("info", "正在重连，连接成功后自动新建终端");
       try {
         const fresh = await reconnectSessionAndWait(s);
         if (!fresh) {
@@ -914,18 +914,18 @@ function AppShell() {
   const runSyncNow = useCallback(async () => {
     const { pushToast: toast } = useUi.getState();
     if (WEB) {
-      toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
+      toast("info", "浏览器模式下，请在「设置 → 账号同步」中同步。");
       return;
     }
     const link = syncLink.data;
     if (!link || link.url === "" || link.username === "" || !link.hasPassword) {
-      toast("info", "同步还没配置：先到「设置 → 账号同步」里登录");
+      toast("info", "尚未配置同步，请先在「设置 → 账号同步」中登录。");
       return;
     }
     try {
       const r = await syncApi.syncNow();
       const moved = r.applied + r.pushed;
-      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
+      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "本地与服务端数据已一致");
       void queryClient.invalidateQueries();
     } catch (e) {
       toast("error", `同步失败：${describeError(e)}`);
@@ -1178,7 +1178,7 @@ function AppShell() {
     {
       key: "background",
       label: "后台会话",
-      hint: "查看已转入后台的终端进程，随时接管回标签页",
+      hint: "查看已转入后台的终端进程，并将其恢复到标签页",
       icon: IconActivity,
       onClick: openBackground,
     },
@@ -1227,7 +1227,7 @@ function AppShell() {
 
   const railBottom = [
     ...(WEB
-      ? [{ key: "devices", label: "设备管理", hint: "打开设备管理：查看装了 agent 的设备，远程打开设备终端", icon: IconMonitor, onClick: openDevices }]
+      ? [{ key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装 agent 的设备并远程打开终端", icon: IconMonitor, onClick: openDevices }]
       : []),
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: openAudit },
     { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: openSettings },
@@ -1676,14 +1676,14 @@ function PaneGroup({
     const closableRight = pane.tabs.slice(tabIndex + 1).filter((candidate) => candidate.closable);
     items.push({
       kind: "item",
-      label: "关闭左边全部",
+      label: "关闭左侧全部标签",
       icon: <IconClose size={12} />,
       disabled: closableLeft.length === 0,
       onSelect: () => void requestCloseTabs(closableLeft.map((candidate) => candidate.id)),
     });
     items.push({
       kind: "item",
-      label: "关闭右边全部",
+      label: "关闭右侧全部标签",
       icon: <IconClose size={12} />,
       disabled: closableRight.length === 0,
       onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
@@ -2039,7 +2039,7 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
           <IconPlus size={14} />
           新建终端
         </button>
-        <div className="nx-hint">左栏文件树里双击文件，可以直接开编辑器标签</div>
+        <div className="nx-hint">在左栏文件树中双击文件，可打开编辑器标签。</div>
       </div>
     </div>
   );
@@ -2097,8 +2097,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         )}
       </div>
       <div className="nx-hint max-w-md text-center">
-        左栏的「当前设备」双击即连（本机终端 + 文件树）；SSH / WinRM 资产开终端标签，
-        容器资产开容器面板，MySQL / PostgreSQL / Redis 资产开数据库工作台。
+        双击左栏「当前设备」可打开本机终端和文件树；SSH / WinRM 资产打开终端标签，容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );

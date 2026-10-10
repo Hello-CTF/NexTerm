@@ -93,7 +93,7 @@ func verifyChecksumFile(path, assetName string, sums map[string]string) error {
 		return fmt.Errorf("计算 %s 摘要失败: %w", assetName, err)
 	}
 	if actual != expected {
-		return fmt.Errorf("%s 的 SHA256 校验失败: 期望 %s, 实际 %s", assetName, expected, actual)
+		return fmt.Errorf("%s 的 SHA256 校验失败：期望 %s，实际 %s", assetName, expected, actual)
 	}
 	return nil
 }

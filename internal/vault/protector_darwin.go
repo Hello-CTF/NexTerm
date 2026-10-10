@@ -35,7 +35,7 @@ func systemProtect(data []byte) ([]byte, error) {
 
 func systemUnprotect(envelope []byte) ([]byte, error) {
 	if !bytes.Equal(envelope, keychainMarker) {
-		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: 信封不是 Go 钥匙串托管标记")
+		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误：钥匙串数据格式无效")
 	}
 	cmd := exec.Command("/usr/bin/security", "find-generic-password", "-a", keychainAccount, "-s", keychainService, "-w")
 	output, err := cmd.Output()

@@ -195,16 +195,16 @@ describe("解锁与空引用文案", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已解锁");
   });
 
-  it("解锁失败当场说明主密码错误", async () => {
+  it("解锁失败当场说明保护密码错误", async () => {
     mocks.status.mockResolvedValue({ initialized: true, unlocked: false, mode: "master" });
-    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
     mocks.promptText.mockResolvedValue("wrong");
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("凭据库已锁定"));
 
     clickButton(mounted!.container, "解锁");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误"),
     );
   });
 

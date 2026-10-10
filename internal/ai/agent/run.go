@@ -341,7 +341,7 @@ func (r *Runner) initializeEino(current *job) error {
 func (r *Runner) modelFor(current *job) (model.BaseChatModel, uint64, error) {
 	if current.args.ModelProfileID != "" {
 		if r.config.ModelForProfile == nil {
-			return nil, 0, errors.New("按档案选择 AI 模型未配置")
+			return nil, 0, errors.New("AI 模型档案选择功能未配置")
 		}
 		return r.config.ModelForProfile(current.ctx, current.args.ModelProfileID)
 	}
@@ -764,7 +764,7 @@ func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Mess
 		compacted = true
 	}
 	if estimatedMessages(messages) > limit {
-		return nil, compacted, fmt.Errorf("当前输入与系统上下文超过模型预算（%d > %d 字节），请缩短输入或提高 contextWindow", estimatedMessages(messages), limit)
+		return nil, compacted, fmt.Errorf("当前输入与系统上下文超过模型上下文上限（%d > %d 字节），请缩短输入或增大 contextWindow", estimatedMessages(messages), limit)
 	}
 	return messages, compacted, nil
 }

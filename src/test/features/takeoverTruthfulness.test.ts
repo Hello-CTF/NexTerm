@@ -40,7 +40,7 @@ describe("takeover steal-back truthfulness", () => {
   it("clears the banner only after successful exit", async () => {
     useUi.getState().setTakeover(takeover());
     await stealBack();
-    expect(mocks.exit).toHaveBeenCalledWith("tab", "token", "用户夺回控制权");
+    expect(mocks.exit).toHaveBeenCalledWith("tab", "token", "用户收回控制权");
     expect(useUi.getState().takeover).toBeNull();
   });
 

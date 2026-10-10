@@ -20,8 +20,8 @@ interface ErrorCopy {
 }
 
 const CONNECT_FAILED_COPY: ErrorCopy = {
-  title: "无法连接到分享",
-  detail: "链接无效、已过期或已被吊销，也可能是网络不通。请核对链接完整后重试。",
+  title: "无法连接分享终端",
+  detail: "链接可能无效、已过期或已吊销，也可能是网络异常。请核对链接是否完整后重试。",
   retryable: true,
 };
 
@@ -32,7 +32,7 @@ function errorCopy(failure: PublicShareFailure): ErrorCopy {
     case "not_found":
       return { title: "分享链接无效或已吊销", detail: "请核对链接是否完整，或向分享者确认分享状态。", retryable: false };
     case "disconnected":
-      return { title: "设备当前离线", detail: "被分享的设备代理不在线，恢复后可重新连接。", retryable: true };
+      return { title: "设备当前离线", detail: "设备代理恢复在线后，可重新连接。", retryable: true };
     case "read_only":
       return { title: "此分享为只读", detail: failure.message || "输入已被禁用，仅可查看输出。", retryable: false };
     case "forbidden":

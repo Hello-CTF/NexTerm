@@ -113,7 +113,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
       await navigator.clipboard.writeText(url);
       setCopyHint("链接已复制");
     } catch {
-      setCopyHint("复制失败，请手动选择复制");
+      setCopyHint("复制失败，请手动复制链接");
     }
     copyHintTimerRef.current = window.setTimeout(() => {
       copyHintTimerRef.current = null;
@@ -135,7 +135,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
-            为「{sessionName || "当前终端"}」创建公开只读预览链接：获得链接的人无需登录即可看到当前屏幕与后续输出，不能输入。
+            为「{sessionName || "当前终端"}」创建只读预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出，不能输入。
           </p>
           <div className="mt-2 flex items-center gap-2">
             <select

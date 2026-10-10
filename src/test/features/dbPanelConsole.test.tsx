@@ -99,9 +99,9 @@ function cmdInput(): HTMLInputElement {
 
 async function expandConsole(): Promise<void> {
   const bar = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) =>
-    b.textContent?.includes("命令台"),
+    b.textContent?.includes("控制台"),
   );
-  if (!bar) throw new Error("命令台折叠条未找到");
+  if (!bar) throw new Error("控制台折叠条未找到");
   click(bar);
   await flushUntil(
     () => mounted?.container.querySelector('input[aria-label="Redis 命令"]') !== null,
@@ -129,12 +129,12 @@ async function selectKey(key: string): Promise<void> {
   click(row);
   await flushUntil(() =>
     [...mounted!.container.querySelectorAll("button")].some(
-      (b) => b.textContent?.trim() === "改过期时间",
+      (b) => b.textContent?.trim() === "修改过期时间",
     ),
   );
 }
 
-describe("DbPanel Redis 命令台可访问性", () => {
+describe("DbPanel Redis 控制台可访问性", () => {
   it("命令输入有可访问名，输出通过 status 区域播报", async () => {
     mountRedis();
     await expandConsole();
@@ -145,27 +145,24 @@ describe("DbPanel Redis 命令台可访问性", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("提示文案如实枚举需确认的命令，并声明引号限制", async () => {
+  it("提示文案说明危险命令确认规则与引号限制", async () => {
     mountRedis();
     await expandConsole();
     const text = mounted!.container.textContent ?? "";
-    expect(text).toContain("FLUSHALL");
-    expect(text).toContain("DEL");
-    expect(text).toContain("EVAL");
-    expect(text).toContain("执行前会要求确认");
-    expect(text).toContain("其余命令立即执行");
+    expect(text).toContain("危险命令执行前需要确认");
+    expect(text).toContain("其余命令直接执行");
     expect(text).toContain("不支持引号");
     expect(text).not.toContain("没有确认步骤");
   });
 });
 
-describe("DbPanel Redis 命令台折叠", () => {
+describe("DbPanel Redis 控制台折叠", () => {
   it("默认折叠成一行条，展开可执行，收起后回到一行条并保留输出预览", async () => {
     mountRedis();
-    await flushUntil(() => mounted!.container.textContent?.includes("命令台") === true);
+    await flushUntil(() => mounted!.container.textContent?.includes("控制台") === true);
     expect(mounted!.container.querySelector('input[aria-label="Redis 命令"]')).toBeNull();
     const bar = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("命令台"),
+      b.textContent?.includes("控制台"),
     );
     expect(bar?.getAttribute("aria-expanded")).toBe("false");
 
@@ -179,18 +176,18 @@ describe("DbPanel Redis 命令台折叠", () => {
       () => mounted!.container.querySelector('input[aria-label="Redis 命令"]') === null,
     );
     const collapsedBar = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("命令台"),
+      b.textContent?.includes("控制台"),
     );
     expect(collapsedBar?.textContent).toContain("OK");
   });
 
-  it("折叠条与收起按钮通过 aria-controls 关联命令台区域", async () => {
+  it("折叠条与收起按钮通过 aria-controls 关联控制台区域", async () => {
     mountRedis();
-    await flushUntil(() => mounted!.container.textContent?.includes("命令台") === true);
+    await flushUntil(() => mounted!.container.textContent?.includes("控制台") === true);
     const bar = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("命令台"),
+      b.textContent?.includes("控制台"),
     );
-    if (!bar) throw new Error("命令台折叠条未找到");
+    if (!bar) throw new Error("控制台折叠条未找到");
     const panelId = bar.getAttribute("aria-controls");
     expect(panelId).toBeTruthy();
     expect(bar.getAttribute("aria-expanded")).toBe("false");
@@ -207,14 +204,14 @@ describe("DbPanel Redis 命令台折叠", () => {
     clickButton(mounted!.container, "收起");
     await flushUntil(() => mounted!.container.querySelector(".nx-redis-console") === null);
     const collapsedBar = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("命令台"),
+      b.textContent?.includes("控制台"),
     );
     expect(collapsedBar?.getAttribute("aria-expanded")).toBe("false");
     expect(collapsedBar?.getAttribute("aria-controls")).toBe(panelId);
   });
 });
 
-describe("DbPanel Redis 命令台危险命令门禁", () => {
+describe("DbPanel Redis 控制台危险命令门禁", () => {
   it("FLUSHALL 先弹警告确认；取消则不执行", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     mountRedis();
@@ -266,11 +263,11 @@ describe("DbPanel Redis 命令台危险命令门禁", () => {
   });
 });
 
-describe("DbPanel Redis 改过期时间", () => {
+describe("DbPanel Redis 修改过期时间", () => {
   it("非整数输入直接报错，不调用后端", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("abc");
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.redisSetTtl).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
@@ -279,7 +276,7 @@ describe("DbPanel Redis 改过期时间", () => {
   it("小数输入同样拒绝", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("1.5");
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.redisSetTtl).not.toHaveBeenCalled();
   });
@@ -287,7 +284,7 @@ describe("DbPanel Redis 改过期时间", () => {
   it.each(["-2", "-42"])("%s 等 -1 以外的负数会被拒绝，不调用后端", async (input) => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce(input);
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.redisSetTtl).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
@@ -296,7 +293,7 @@ describe("DbPanel Redis 改过期时间", () => {
   it("-1 照常提交（永不过期）", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("-1");
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.redisSetTtl.mock.calls.length > 0);
     expect(mocks.redisSetTtl).toHaveBeenCalledWith("c1", "k1", -1);
     await flushUntil(() => mocks.toast.mock.calls.some((c) => c[0] === "success"));
@@ -306,7 +303,7 @@ describe("DbPanel Redis 改过期时间", () => {
   it("输入 0 时提示会立即删除该键，确认后照常提交", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("0");
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.redisSetTtl.mock.calls.length > 0);
     expect(mocks.promptText).toHaveBeenCalledWith(
       expect.stringContaining("填 0 会立即删除该键"),
@@ -321,7 +318,7 @@ describe("DbPanel Redis 改过期时间", () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("120");
     mocks.redisSetTtl.mockRejectedValueOnce(new Error("NOAUTH 未授权"));
-    clickButton(mounted!.container, "改过期时间");
+    clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("error", "NOAUTH 未授权");
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
@@ -347,7 +344,7 @@ describe("DbPanel MySQL 可访问性", () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it("运行按钮与空态如实声明单语句限制与立即生效边界", async () => {
+  it("运行按钮与空态如实声明单语句限制", async () => {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
@@ -355,7 +352,7 @@ describe("DbPanel MySQL 可访问性", () => {
     );
     expect(run?.title).toContain("一次只执行一条语句");
     const text = mounted!.container.textContent ?? "";
-    expect(text).toContain("直接在远端库执行并立即生效");
+    expect(text).toContain("按 Ctrl+Enter 运行");
     expect(text).toContain("一次只执行一条语句");
   });
 });

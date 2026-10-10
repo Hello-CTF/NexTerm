@@ -87,8 +87,7 @@ export function ImportReportView({
       )}
       {data.skippedNewer > 0 && (
         <p className="nx-hint mt-2 text-[11px]">
-          冲突按最后修改时间裁决,请保持各设备时钟准确(系统默认的自动对时即可);
-          时钟不准时「较新」判定可能不符合预期。要覆盖较新的一份,导入时勾选「强制覆盖较新的本机条目」。
+          冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。要覆盖较新版本，请在导入时勾选「强制覆盖较新的本机条目」。
         </p>
       )}
       {data.warnings.length > 0 && (

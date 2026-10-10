@@ -295,7 +295,7 @@ describe("触屏 More 按钮复用同一业务菜单", () => {
     );
     const blankLabels = menuLabels(mounted!.container);
     expect(blankLabels.some((l) => l.includes("上传到当前目录"))).toBe(true);
-    expect(blankLabels.some((l) => l.includes("新建文件夹"))).toBe(true);
+    expect(blankLabels.some((l) => l.includes("新建目录"))).toBe(true);
     expect(blankLabels.some((l) => l.includes("刷新"))).toBe(true);
   });
 

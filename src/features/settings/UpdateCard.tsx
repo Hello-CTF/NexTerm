@@ -75,7 +75,7 @@ export function UpdateCard() {
       {verdict === "check-failed" && (
         <div className="nx-alert nx-alert-danger mb-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">检查失败:{failReason}</span>
+          <span className="min-w-0 flex-1 break-words">检查失败：{failReason}</span>
         </div>
       )}
 
@@ -133,7 +133,7 @@ export function UpdateCard() {
       {install.error && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">安装失败:{install.error}</span>
+          <span className="min-w-0 flex-1 break-words">安装失败：{install.error}</span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -149,7 +149,7 @@ export function UpdateCard() {
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
             已安装 v{installedVersion}，重启应用后生效。
-            {restartError && <span className="mt-0.5 block text-red-300">重启失败:{restartError}</span>}
+            {restartError && <span className="mt-0.5 block text-red-300">重启失败：{restartError}</span>}
           </span>
           {DESKTOP && (
             <button

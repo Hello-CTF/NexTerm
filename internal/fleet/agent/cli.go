@@ -147,7 +147,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 		config.DeviceID, config.Name, len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	fmt.Fprintf(stdout, "配置已写入 %s (0600)\n", store.Path())
 	if response.State == "pending" {
-		fmt.Fprintln(stdout, "设备待审批: 管理员在「设置 → 设备」批准前不会上线, 也不同步任何数据; agent 运行后会自动等待, 无需重新接入")
+		fmt.Fprintln(stdout, "设备待审批：管理员批准前不会上线或同步数据；agent 运行后会自动等待，无需重新接入")
 	}
 	return ExitOK
 }
@@ -169,7 +169,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	}
 	unlock, err := acquireLock(filepath.Join(dir, "fleet", "agent.lock"))
 	if errors.Is(err, errLockBusy) {
-		fmt.Fprintln(stdout, "另一个 agent 实例正在运行, 退出")
+		fmt.Fprintln(stdout, "另一个 agent 实例正在运行，本实例已退出")
 		return ExitOK
 	}
 	if err != nil {
@@ -205,7 +205,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	case err == nil:
 		return ExitOK
 	case errors.Is(err, ErrRevoked):
-		fmt.Fprintln(stderr, "agent: 设备已被吊销, 停止运行; 请重新 enroll 接入新设备")
+		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
 		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 请升级本程序")

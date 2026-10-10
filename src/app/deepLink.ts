@@ -43,11 +43,11 @@ export function copyAssetDeepLink(assetId: string): void {
   const { pushToast } = useUi.getState();
   const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
   if (!clipboard || typeof clipboard.writeText !== "function") {
-    pushToast("error", "复制失败: 剪贴板不可用");
+    pushToast("error", "复制失败：剪贴板不可用");
     return;
   }
   void clipboard
     .writeText(assetDeepLink(assetId))
     .then(() => pushToast("success", "链接已复制"))
-    .catch(() => pushToast("error", "复制失败, 请重试"));
+    .catch(() => pushToast("error", "复制失败，请重试"));
 }

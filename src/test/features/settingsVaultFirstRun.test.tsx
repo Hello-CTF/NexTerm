@@ -112,13 +112,12 @@ afterEach(() => {
 });
 
 describe("SettingsView 凭据保护首次初始化引导", () => {
-  it("未初始化时显示「未初始化」并说明初始化前无法保存凭据", async () => {
+  it("未初始化时说明启用前无法保存凭据", async () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("未初始化");
 
     const text = vaultCard()?.textContent ?? "";
-    expect(text).toContain("打开这个开关并设置保护密码即可完成初始化");
-    expect(text).toContain("初始化前无法保存任何密码或私钥");
+    expect(text).toContain("尚未初始化：启用保护后才能保存密码或私钥");
     expect(text).not.toContain("无需密码");
   });
 
@@ -128,7 +127,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
 
     protectionToggle()!.click();
     await flushUntil(() => passwordInput() !== null);
-    expect(vaultCard()?.textContent).toContain("忘记后无法找回");
+    expect(vaultCard()?.textContent).toContain("忘记密码后，已保存的凭据将无法恢复");
 
     setInputValue(passwordInput()!, "first-run-password");
     const enableButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
@@ -172,7 +171,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
 
     protectionToggle()!.click();
     await flushUntil(() => passwordInput() !== null);
-    expect(vaultCard()?.textContent).toContain("留空则不设置密码");
+    expect(vaultCard()?.textContent).toContain("留空则不设密码");
 
     const enableButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
       (b) => b.textContent === "启用保护",

@@ -171,7 +171,7 @@ export function TranscriptReplayView({
           className="nx-btn nx-btn-ghost nx-btn-sm"
           disabled={!chunks || loadError !== null || duration <= 0}
           onClick={togglePlay}
-          aria-label={playing ? "暂停回放" : "播放回放"}
+          aria-label={playing ? "暂停回放" : "开始回放"}
         >
           {playing ? null : <IconPlay size={12} />}
           {playing ? "暂停" : "播放"}

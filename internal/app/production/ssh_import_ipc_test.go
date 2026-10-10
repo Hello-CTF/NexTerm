@@ -690,7 +690,7 @@ func TestSSHImportTermiusConflictKeySkippedUnbinds(t *testing.T) {
 	if result.AssetsCreated != 1 || result.Skipped != 1 {
 		t.Fatalf("apply result = %+v", result)
 	}
-	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "保持未绑定") {
+	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "未绑定凭据") {
 		t.Fatalf("apply warnings = %+v", result.Warnings)
 	}
 
@@ -877,7 +877,7 @@ func TestSSHImportTermiusSecondSameNameKeyReferenced(t *testing.T) {
 	if result.AssetsCreated != 2 || result.CredentialsCreated != 1 {
 		t.Fatalf("apply result = %+v", result)
 	}
-	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "保持未绑定") {
+	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "未绑定凭据") {
 		t.Fatalf("skipped k2 must leave host-2 unbound with warning: %+v", result.Warnings)
 	}
 
@@ -958,10 +958,10 @@ func TestSSHImportDuplicateOverwriteSameCredential(t *testing.T) {
 		t.Fatalf("apply result = %+v", result)
 	}
 	joined := strings.Join(result.Warnings, " ")
-	if !strings.Contains(joined, "已在本次导入中被覆盖") {
+	if !strings.Contains(joined, "已在本次导入中覆盖") {
 		t.Fatalf("duplicate overwrite must warn: %+v", result.Warnings)
 	}
-	if !strings.Contains(joined, "保持未绑定") {
+	if !strings.Contains(joined, "未绑定凭据") {
 		t.Fatalf("host-2 must stay unbound with warning: %+v", result.Warnings)
 	}
 
@@ -1036,7 +1036,7 @@ func TestSSHImportOverwriteInvalidatesSkipDuplicate(t *testing.T) {
 	if result.CredentialsUpdated != 1 || result.AssetsCreated != 2 {
 		t.Fatalf("apply result = %+v", result)
 	}
-	if !strings.Contains(strings.Join(result.Warnings, " "), "保持未绑定") {
+	if !strings.Contains(strings.Join(result.Warnings, " "), "未绑定凭据") {
 		t.Fatalf("host-2 must stay unbound after its fingerprint mapping was invalidated: %+v", result.Warnings)
 	}
 

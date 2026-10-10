@@ -115,7 +115,7 @@ function DesktopLinkCard() {
       setDraft((d) => ({ ...d, password: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
-      pushToast("success", "登录信息已保存 · 同步配置完成,点「立即同步」开始传输数据");
+      pushToast("success", "登录信息已保存，同步配置完成");
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -133,7 +133,7 @@ function DesktopLinkCard() {
       void qc.invalidateQueries();
       await load();
       const moved = r.applied + r.pushed;
-      pushToast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成:应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
+      pushToast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "本机与云端已一致");
     } catch (e) {
       setError(describeError(e));
       await load();
@@ -159,8 +159,7 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        输入服务端地址、账号和密码,登录一次即完成同步配置;数据只在你点「立即同步」时加密传输,
-        登录本身不上传也不下载。数据在你的设备上加密,服务端只存密文;不登录账号也完全可以继续本地使用。
+        登录仅保存同步配置，不上传或下载数据。点击「立即同步」时，数据在本机加密后传输，服务端只保存密文；不登录也能继续本地使用。
       </p>
 
       {loadError && (
@@ -209,7 +208,7 @@ function DesktopLinkCard() {
             id="sync-pass"
             type="password"
             className="nx-input min-w-0 flex-1"
-            placeholder={link?.hasPassword ? "留空 = 不修改已保存的密码" : "账号密码(用于解锁数据密钥)"}
+            placeholder={link?.hasPassword ? "留空则不修改已保存的密码" : "账号密码（用于解锁数据密钥）"}
             value={draft.password}
             autoComplete="new-password"
             onChange={(e) => updateDraft({ password: e.target.value })}
@@ -241,7 +240,7 @@ function DesktopLinkCard() {
                 />
                 <span className="text-[12px] text-neutral-300">
                   跳过证书校验
-                  <span className="nx-hint block">勾选后不再验证服务端身份,可能被中间人冒充;只有自签证书的内网/自建地址才需要勾。</span>
+                  <span className="nx-hint block">勾选后不再验证服务端身份，可能被中间人冒充；仅在自签名证书的内网或自建服务中使用。</span>
                 </span>
               </label>
             </div>
@@ -266,7 +265,7 @@ function DesktopLinkCard() {
           {busy === "sync" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
           {busy === "sync" ? "同步中…" : "立即同步"}
         </button>
-        {status?.lastError && <span className="nx-hint text-amber-300">上次失败:{status.lastError}</span>}
+        {status?.lastError && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
       </div>
 
       {error && (
@@ -281,8 +280,7 @@ function DesktopLinkCard() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录(终端录像)默认不同步;要同步某一条,到「终端历史」里对那条单独打开同步开关。
-          同步是端到端加密的,服务端看不到资产名、主机、用户名和内容。
+          会话记录（终端录像）默认不同步；如需同步，请在「终端历史」中为对应记录开启同步。同步采用端到端加密，服务端无法查看资产名、主机、用户名和内容。
         </div>
       </div>
     </section>
@@ -486,7 +484,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
   }
   for (const c of credentials) {
     if (c.secretState !== "revealed" || c.secret === undefined) {
-      warnings.push(`凭据「${c.name}」${credentialStateLabel(c.secretState)},未进入本次对比与推送`);
+      warnings.push(`凭据「${c.name}」${credentialStateLabel(c.secretState)}，未进入本次对比与推送`);
       continue;
     }
     byId.set(c.id, await localEntity(c.id, "credential", c.name, c.updatedAt, null, credentialPayload(c)));
@@ -502,7 +500,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
   }
   for (const p of aiProfiles) {
     if (p.apiKeySet && (p.apiKeyState !== "revealed" || p.apiKey === undefined)) {
-      warnings.push(`AI 档案「${p.name}」${credentialStateLabel(p.apiKeyState)},未进入本次对比与推送`);
+      warnings.push(`AI 模型档案「${p.name}」${credentialStateLabel(p.apiKeyState)}，未进入本次对比与推送`);
       continue;
     }
     byId.set(p.id, await localEntity(p.id, "ai_profile", p.name, p.updatedAt, null, aiProfilePayload(p)));
@@ -730,13 +728,13 @@ function rowLabel(r: Row): { text: string; tone: string; hint: string } {
     case "local-only":
       return { text: "仅本机", tone: "", hint: "云端还没有这条。推送会新建。" };
     case "remote-only":
-      return { text: "仅云端", tone: "", hint: "本机还没有这条。其他设备推送的。" };
+      return { text: "仅云端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
-      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机这份更新,推送会覆盖云端。" };
+      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机版本较新，推送会覆盖云端。" };
     case "remote-newer":
-      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端这份更新。" };
+      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端版本较新，拉取并应用会覆盖本机。" };
     case "local-deleted":
       return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
     case "remote-deleted":
@@ -752,7 +750,7 @@ const KIND_LABELS: Record<string, string> = {
   tombstone: "删除标记",
   transcript: "会话记录",
   known_host: "已知主机",
-  ai_profile: "AI 档案",
+  ai_profile: "AI 模型档案",
 };
 
 function WebSyncConsole() {
@@ -794,7 +792,7 @@ function UnlockDEKCard() {
         <span className="nx-card-title">解锁数据密钥</span>
       </div>
       <p className="nx-hint mb-3">
-        同步内容用你的账号密码加密。输入密码在本机解锁数据密钥(约需几秒,密钥不会离开本机)。
+        输入账号密码在本机解锁数据密钥（约需几秒），密钥不会离开本机。
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -975,7 +973,7 @@ function CompareConsole() {
       // 警告(如凭据库未解锁)并入结果展示,不随 load() 清除
       setApplyInfo(
         `已应用 ${applied} · 一致 ${identical} · 跳过 ${skipped}` +
-          (warnings.length > 0 ? ` · 警告:${warnings.join("; ")}` : ""),
+          (warnings.length > 0 ? ` · 警告：${warnings.join("；")}` : ""),
       );
       pushToast("success", `已应用 ${applied} 个对象`);
       await load(kindOptIn ?? DEFAULT_KIND_OPT_IN, startEpoch);
@@ -1038,7 +1036,7 @@ function CompareConsole() {
       const next = { head: resp.head, seq: resp.max_seq };
       saveCursor(user.id, next);
       setCursor(next);
-      setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
+      setPushInfo(`已推送 ${resp.applied} 个对象（跳过 ${resp.skipped}）`);
       pushToast("success", `已推送 ${resp.applied} 个对象`);
       await load(optIn, startEpoch);
     } catch (e) {
@@ -1057,7 +1055,7 @@ function CompareConsole() {
           const next = { head: resp.head, seq: resp.max_seq };
           saveCursor(user.id, next);
           setCursor(next);
-          setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
+          setPushInfo(`已推送 ${resp.applied} 个对象（跳过 ${resp.skipped}）`);
           pushToast("success", `已推送 ${resp.applied} 个对象`);
           await load(optIn, startEpoch);
           return;
@@ -1100,7 +1098,7 @@ function CompareConsole() {
           onClick={() => void applyRemote()}
         >
           {applyBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-          {applyBusy ? "应用中…" : `拉取并应用 (${applySet.length})`}
+          {applyBusy ? "应用中…" : `拉取并应用（${applySet.length}）`}
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -1108,13 +1106,12 @@ function CompareConsole() {
           onClick={() => void push()}
         >
           {pushBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-          {pushBusy ? "推送中…" : `推送到云端 (${pushCount})`}
+          {pushBusy ? "推送中…" : `推送到云端（${pushCount}）`}
         </button>
       </div>
 
       <p className="nx-hint mb-3">
-        本机数据与云端密文副本的对比(在本机解密后比较,服务端看不到内容)。
-        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(删除会随删除标记同步)。
+        对比本机数据与云端密文副本（在本机解密后比较，服务端无法查看内容）。推送会将本机较新的内容加密后上传到云端；拉取并应用会将云端较新的内容合并到本机，删除会随删除标记同步。
       </p>
 
       {kindOptIn && (
@@ -1135,7 +1132,7 @@ function CompareConsole() {
               同步内容开关
             </button>
             <span className="nx-hint text-[11px]">
-              已知主机 {kindOptIn.knownHost ? "已开启" : "关"} · AI 档案 {kindOptIn.aiProfile ? "已开启" : "关"}
+              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"}
             </span>
           </div>
           {optInOpen && (
@@ -1149,8 +1146,8 @@ function CompareConsole() {
                   onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
                 />
                 <span className="text-[12px] text-neutral-300">
-                  同步已知主机(主机信任)
-                  <span className="nx-hint block">默认关闭。开启后,已接受的主机密钥会端到端加密同步;本地删除会随同步删除云端副本。</span>
+                  同步已知主机（主机信任）
+                  <span className="nx-hint block">默认关闭。开启后，已接受的主机密钥会端到端加密同步；本地删除会同步删除云端副本。</span>
                 </span>
               </label>
               <label className="flex items-start gap-2">
@@ -1163,7 +1160,7 @@ function CompareConsole() {
                 />
                 <span className="text-[12px] text-neutral-300">
                   同步 AI 模型档案
-                  <span className="nx-hint block">默认关闭。开启后,档案设置会端到端加密同步;API 密钥只在凭据库已解锁时随档案同步。</span>
+                  <span className="nx-hint block">默认关闭。开启后，模型档案会端到端加密同步；API 密钥仅在凭据库解锁时随档案同步。</span>
                 </span>
               </label>
             </div>
@@ -1244,7 +1241,7 @@ function CompareConsole() {
                 })}
               </div>
             )}
-            {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读本机与云端数据…</div>}
+            {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读取本机与云端数据…</div>}
           </div>
         )}
       </div>
@@ -1252,10 +1249,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录(终端录像)默认不同步;要同步某一条,到「终端历史」里对那条单独打开同步开关。
-          已知主机与 AI 模型档案同样默认不同步,需要时在上方单独开启;关闭开关不会删除云端已有副本。
-          冲突按最后修改时间裁决,请保持各设备时钟准确(系统默认的自动对时即可);
-          时钟不准时「较新」判定可能不符合预期。
+          会话记录（终端录像）、已知主机和 AI 模型档案默认不同步，可在对应位置单独开启；关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>

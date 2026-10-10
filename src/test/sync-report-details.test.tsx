@@ -261,7 +261,7 @@ describe("SyncCard 对照区时钟提示", () => {
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("请保持各设备时钟准确");
-    expect(text).toContain("时钟不准时「较新」判定可能不符合预期");
+    expect(text).toContain("否则「较新」判定可能不符合预期");
     useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
   });
 });

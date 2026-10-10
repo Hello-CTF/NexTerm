@@ -241,17 +241,17 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
+		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	if err := file.Close(); err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
+		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	if err := b.writeOwnerMeta(dir, r); err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "文件预留失败，请稍后重试", http.StatusInternalServerError)
+		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name})

@@ -386,7 +386,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     await flush();
 
     expect(mocks.preset).toHaveBeenCalledWith("zhipu");
-    expect(inputFor("展示名").value).toBe("zhipu");
+    expect(inputFor("显示名称").value).toBe("zhipu");
     expect(inputFor("Base URL").value).toBe("https://open.bigmodel.cn/api/paas/v4");
     expect(inputFor("模型名").value).toBe("glm-4.7-flash");
 
@@ -413,7 +413,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     clickButton(view!.container, "Moonshot");
     await flush();
 
-    expect(inputFor("展示名").value).toBe("DeepSeek 主力");
+    expect(inputFor("显示名称").value).toBe("DeepSeek 主力");
     expect(inputFor("Base URL").value).toBe("https://api.moonshot.cn/v1");
     expect(inputFor("模型名").value).toBe("kimi-k3");
     expect(inputFor("温度").value).toBe("0.7");

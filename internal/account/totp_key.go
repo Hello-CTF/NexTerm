@@ -49,7 +49,7 @@ func writeTOTPKeyFile(path string, key []byte) error {
 
 func (a *Accounts) totpKey() ([]byte, error) {
 	if a.totpKeyPath == "" {
-		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: TOTP 存储密钥未配置(缺少库外密钥文件)")
+		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误：TOTP 存储密钥未配置（缺少密钥文件）")
 	}
 	totpKeyMu.Lock()
 	defer totpKeyMu.Unlock()

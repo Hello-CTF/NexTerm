@@ -48,8 +48,8 @@ export function KnownHostsCard() {
 
   const revoke = async (host: KnownHostDto) => {
     const ok = await ask(
-      `撤销对 ${host.host}:${host.port} 的信任？\n指纹（${host.keyType}）：${host.fingerprint}\n\n撤销后下次连接这台机器会重新弹出指纹确认。`,
-      { title: "撤销已知主机", kind: "warning" },
+      `撤销对 ${host.host}:${host.port} 的信任？\n指纹（${host.keyType}）：${host.fingerprint}\n\n撤销后，下次连接该主机时将重新确认指纹。`,
+      { title: "撤销主机信任", kind: "warning" },
     );
     if (!ok) return;
     setRevokingId(host.id);
@@ -106,8 +106,7 @@ export function KnownHostsCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        首次连接一台 SSH 服务器、指纹确认通过后就会记在这里。删除一条 = 撤销对它的信任：
-        下次连接会重新弹出指纹确认（服务器重装或更换主机密钥后，删掉旧条目重新确认即可）。
+        首次连接 SSH 服务器并确认指纹后，会记录在这里。删除条目即撤销信任，下次连接会重新确认指纹；服务器重装或更换主机密钥后，请删除旧条目并重新确认。
       </p>
 
       {hosts === null ? (

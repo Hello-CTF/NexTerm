@@ -440,7 +440,7 @@ export function ModelManager({
         <div className="min-w-0 flex-1">
           {draft ? (
             <div className="flex flex-col gap-2.5">
-              <Field label="展示名" htmlFor={`${fieldId}-name`}>
+              <Field label="显示名称" htmlFor={`${fieldId}-name`}>
                 <input
                   id={`${fieldId}-name`}
                   className="nx-input"
@@ -504,7 +504,7 @@ export function ModelManager({
                   </button>
                   {modelsOpen && models.length > 0 && (
                     <div className="absolute top-full right-0 z-10 mt-1 max-h-52 w-[min(280px,calc(100vw-64px))] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg">
-                      <div className="nx-menu-title">点一个填入模型名</div>
+                      <div className="nx-menu-title">选择一项填入模型名</div>
                       {models.map((m) => (
                         <button
                           key={m}
@@ -552,13 +552,13 @@ export function ModelManager({
                         onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        不改这里就保留原设置；清空后保存 = 明确移除回退。
+                        不修改则保留原设置；清空后保存将移除回退模型。
                       </div>
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="温度 (0–2)" htmlFor={`${fieldId}-temperature`}>
+                        <Field label="温度（0–2）" htmlFor={`${fieldId}-temperature`}>
                           <input
                             id={`${fieldId}-temperature`}
                             className="nx-input font-mono"
@@ -572,11 +572,11 @@ export function ModelManager({
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，用端点默认。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，使用端点默认值。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="上下文窗口 (tokens)" htmlFor={`${fieldId}-context`}>
+                        <Field label="上下文窗口（tokens）" htmlFor={`${fieldId}-context`}>
                           <input
                             id={`${fieldId}-context`}
                             className="nx-input font-mono"
@@ -590,12 +590,12 @@ export function ModelManager({
                               patch({ contextWindow: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空 = 不传，按端点默认 32K 估算。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，按默认值 32K 估算。</div>
                         </Field>
                       </div>
                     </div>
 
-                    <Field label="思考强度（thinking effort）" htmlFor={`${fieldId}-reasoning-effort`}>
+                    <Field label="思考强度（reasoning effort）" htmlFor={`${fieldId}-reasoning-effort`}>
                       <input
                         id={`${fieldId}-reasoning-effort`}
                         className="nx-input font-mono"
@@ -610,7 +610,7 @@ export function ModelManager({
                         ))}
                       </datalist>
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        只影响支持 reasoning effort 的 OpenAI 兼容端点；默认不传，也可直接填服务商支持的自定义值。
+                        仅影响支持 reasoning effort 的 OpenAI 兼容端点；留空则不传，也可填写服务商支持的自定义值。
                       </div>
                     </Field>
 
@@ -627,13 +627,13 @@ export function ModelManager({
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        留空 = 不传，使用端点默认；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
+                        留空则不传，使用端点默认值；填写后，最大输出以上下文窗口的一半为限，且不超过 {MAX_TOKENS_HARD_LIMIT}。
                       </div>
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="stream/block 总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                        <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
                           <input
                             id={`${fieldId}-request-timeout`}
                             className="nx-input font-mono"
@@ -645,11 +645,11 @@ export function ModelManager({
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">同时限制 stream 与 block 请求的总时长；留空使用端点默认。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">同时限制流式与非流式请求的总时长；留空使用端点默认值。</div>
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="stream/block 空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                        <Field label="响应空闲超时（秒，0 为关闭）" htmlFor={`${fieldId}-idle-timeout`}>
                           <input
                             id={`${fieldId}-idle-timeout`}
                             className="nx-input font-mono"
@@ -661,7 +661,7 @@ export function ModelManager({
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">限制 stream 与 block 响应的读取空闲时间；0 为关闭。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">限制流式与非流式响应的读取空闲时间；0 表示关闭。</div>
                         </Field>
                       </div>
                     </div>
@@ -724,21 +724,21 @@ export function ModelManager({
                         checked={draft.stream}
                         onChange={(e) => patch({ stream: e.target.checked })}
                       />
-                      流式输出（关闭后整块返回，部分自建端点更稳）
+                      流式输出（关闭后一次性返回完整内容）
                     </label>
                   </div>
                 )}
               </div>
 
               <div className="nx-hint mt-0.5">
-                API Key 加密后保存在本机，只在发起请求时发向你配置的模型端点，不会上传到 NexTerm 的服务器。
+                API Key 加密后保存在本机，仅在发起请求时发送到你配置的模型端点，不会上传到 NexTerm 服务器。
               </div>
             </div>
           ) : (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center">
               <IconKey size={20} className="text-[var(--nx-fg-tertiary)]" />
               <div className="nx-hint max-w-[280px]">
-                左侧选一份档案来编辑，或点 + 新增一份。也可以先用预设快速填充。
+                从左侧选择档案进行编辑，或点击 + 新增；也可使用预设填充。
               </div>
               <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void newProfile()}>
                 <IconPlus size={12} />
@@ -777,7 +777,7 @@ export function ModelManager({
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title="把全部高级参数恢复默认：温度、上下文窗口、思考强度、最大输出、stream/block 总超时与空闲超时、自动暂停阈值与时长、代理、流式输出和回退模型；名称、地址、密钥与模型名保持不变，点「保存」后才写入档案"
+              title="将全部高级参数恢复默认，名称、地址、密钥和模型名保持不变；点击「保存」后生效。"
               disabled={busy || paramsAtDefaults}
               onClick={resetParams}
             >

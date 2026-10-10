@@ -296,7 +296,7 @@ func (s *Service) requireDaemon(ctx context.Context, deviceID string) error {
 	err := s.db.QueryRowContext(ctx, "SELECT terminal_enabled, last_seen_at FROM device_agent WHERE device_id = ?", deviceID).
 		Scan(&terminalEnabled, &lastSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ipc.NewError(ipc.CodeForbidden, "设备未接入守护代理")
+		return ipc.NewError(ipc.CodeForbidden, "设备未接入代理")
 	}
 	if err != nil {
 		return dbError(err)

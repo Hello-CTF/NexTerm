@@ -42,7 +42,7 @@ ON CONFLICT(key) DO NOTHING`, initCodeSettingKey, string(encoded), a.now()); err
 		return "", dbError(err)
 	}
 	if existing != string(encoded) {
-		return "", ipc.NewError(ipc.CodeForbidden, "初始化码已生成，请使用服务器控制台输出的码")
+		return "", ipc.NewError(ipc.CodeForbidden, "初始化码已生成，请查看服务器控制台")
 	}
 	return code, nil
 }

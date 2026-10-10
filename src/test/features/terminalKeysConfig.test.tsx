@@ -214,7 +214,7 @@ describe("TerminalKeysBar configuration", () => {
     toggleCheckbox(dialog()!, '在按键条中显示「向上翻页」');
     toggleCheckbox(dialog()!, '在按键条中显示「向下翻页」');
     expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
-    click([...dialog()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "重置默认")!);
+    click([...dialog()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "恢复默认")!);
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(barLabels().slice(2)).toEqual([
       "Esc",

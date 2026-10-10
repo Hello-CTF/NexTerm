@@ -172,7 +172,7 @@ func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string,
 		return "", nil
 	}
 	if e.vault == nil {
-		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")
+		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用，无法读取 AI 模型档案密钥")
 	}
 	return e.vault.DecryptSecret(ctx, stored)
 }

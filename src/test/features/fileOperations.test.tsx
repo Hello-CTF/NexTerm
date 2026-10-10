@@ -403,7 +403,7 @@ describe("重命名（FileBrowser）", () => {
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("旧「b.txt」的内容将丢失"),
+      expect.stringContaining("继续将替换原有内容，且无法恢复"),
       expect.anything(),
     );
     expect(mocks.rename).not.toHaveBeenCalled();
@@ -618,7 +618,7 @@ describe("FileTree 入口与状态搬迁", () => {
 describe("新建文件与文件夹的名称预检", () => {
   const invalidNames = ["..", "a/b", "a\\b", " name ", "a\0b"];
 
-  for (const [label, rpc] of [["新建文件", "write"], ["新建文件夹", "mkdir"]] as const) {
+  for (const [label, rpc] of [["新建文件", "write"], ["新建目录", "mkdir"]] as const) {
     it(`FileTree ${label}在 joinPath 前拒绝危险名称`, async () => {
       mounted = mountTree();
       await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
@@ -635,7 +635,7 @@ describe("新建文件与文件夹的名称预检", () => {
     });
   }
 
-  it("FileBrowser 新建文件夹拒绝危险名称", async () => {
+  it("FileBrowser 新建目录拒绝危险名称", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     const button = [...mounted.container.querySelectorAll("button")].find(
@@ -736,7 +736,7 @@ describe("FileTree 导航后的选择与展开状态", () => {
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh-dir");
-    click(mounted.container.querySelector('button[aria-label="新建文件夹"]')!);
+    click(mounted.container.querySelector('button[aria-label="新建目录"]')!);
     await waitFor(() => expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/fresh-dir"));
   });
 });
@@ -1371,7 +1371,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
       mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
     ).toEqual([
       "只读分块查看",
-      "仍编辑",
+      "编辑整个文件",
     ]);
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.find((tab) => tab.kind === "log")).toMatchObject({
@@ -1398,7 +1398,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     expect(mocks.read).not.toHaveBeenCalled();
   });
 
-  it("FileEditor 大文件预检：仍编辑只确认一次", async () => {
+  it("FileEditor 大文件预检：编辑整个文件只确认一次", async () => {
     mocks.readRange.mockResolvedValue({
       path: "~/big.log",
       offset: 0,

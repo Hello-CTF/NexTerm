@@ -320,7 +320,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 			return
 		}
 		if isDevicePending(err) {
-			r.logger.Info("设备待审批: 等待管理员批准, 批准前不同步数据")
+			r.logger.Info("设备待审批：管理员批准前不同步数据")
 			return
 		}
 		r.logger.Warn("agent sync failed", "url", client.BaseURL(), "error", err)
@@ -340,7 +340,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 				return
 			}
 			if isDevicePending(err) {
-				r.logger.Info("设备待审批: 等待管理员批准, 批准前不同步数据")
+				r.logger.Info("设备待审批：管理员批准前不同步数据")
 				return
 			}
 			r.logger.Warn("agent sync retry failed", "url", selected.BaseURL(), "error", err)

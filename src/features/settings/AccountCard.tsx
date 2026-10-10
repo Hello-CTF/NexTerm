@@ -68,7 +68,7 @@ export function AccountCard() {
     setCreateBusy(true);
     try {
       await adminApi.createUser(username.trim(), password, displayName.trim());
-      pushToast("success", `已创建用户「${username.trim()}」,把初始密码告知对方即可登录`);
+      pushToast("success", `已创建用户「${username.trim()}」，请将初始密码告知对方`);
       setUsername("");
       setDisplayName("");
       setPassword("");
@@ -83,7 +83,7 @@ export function AccountCard() {
 
   const disableUser = async (target: AccountUser) => {
     const ok = await ask(
-      `禁用用户「${target.username}」?\n\n禁用后其全部会话立即失效,且无法再登录(可随后重置)。`,
+      `禁用用户「${target.username}」？\n\n禁用后其所有会话立即失效，且无法再登录（可随后重置）。`,
       { title: "禁用用户", kind: "warning" },
     );
     if (!ok) return;
@@ -98,7 +98,7 @@ export function AccountCard() {
 
   const resetUser = async (target: AccountUser) => {
     const ok = await ask(
-      `重置用户「${target.username}」?\n\n对方的数据密钥、全部会话和两步验证绑定将被清除;\n对方下次登录须设置新密码,云端密文需从仍持有数据的设备重新同步。`,
+      `重置用户「${target.username}」？\n\n对方的数据密钥、所有会话和两步验证绑定将被清除；\n对方下次登录须设置新密码，云端密文需从仍持有数据的设备重新同步。`,
       { title: "重置用户", kind: "warning" },
     );
     if (!ok) return;
@@ -136,7 +136,7 @@ export function AccountCard() {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">用户管理</span>
-        <span className="nx-badge nx-badge-blue">超管</span>
+        <span className="nx-badge nx-badge-blue">超级管理员</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void load()}>
           <IconRefresh size={12} />
@@ -149,8 +149,7 @@ export function AccountCard() {
       </div>
 
       <p className="nx-hint mb-3">
-        管理员创建的用户用初始密码直接登录。禁用会立即踢下线;重置会清除对方的数据密钥、全部会话和两步验证绑定,
-        对方下次登录须设置新密码,云端密文需从仍持有数据的设备重新同步。管理员拿不到、也看不懂对方的任何加密内容。
+        管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步云端密文。管理员无法获取或解密用户数据。
       </p>
 
       {createOpen && (
@@ -165,7 +164,7 @@ export function AccountCard() {
             />
             <input
               className="nx-input min-w-0 flex-1"
-              placeholder="显示名(可选)"
+              placeholder="显示名（可选）"
               value={displayName}
               autoComplete="off"
               onChange={(e) => setDisplayName(e.target.value)}
@@ -175,7 +174,7 @@ export function AccountCard() {
             <input
               className="nx-input min-w-0 flex-1 font-mono"
               type="password"
-              placeholder="初始密码(至少 8 位)"
+              placeholder="初始密码（至少 8 位）"
               value={password}
               autoComplete="new-password"
               onChange={(e) => setPassword(e.target.value)}
@@ -219,12 +218,12 @@ export function AccountCard() {
               >
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={u.username}>
                   {u.username}
-                  {isSelf && <span className="nx-hint ml-1.5">(我)</span>}
+                  {isSelf && <span className="nx-hint ml-1.5">（我）</span>}
                 </span>
-                {u.role === "superadmin" && <span className="nx-badge shrink-0 nx-badge-blue">超管</span>}
+                {u.role === "superadmin" && <span className="nx-badge shrink-0 nx-badge-blue">超级管理员</span>}
                 <span className={`nx-badge shrink-0 ${st.tone}`}>{st.text}</span>
                 <span className={`nx-badge shrink-0 ${u.mfa_enabled ? "nx-badge-green" : "nx-badge-amber"}`}>
-                  {u.mfa_enabled ? "MFA 已开启" : "未绑 MFA"}
+                  {u.mfa_enabled ? "MFA 已开启" : "MFA 未绑定"}
                 </span>
                 <span className="nx-hint shrink-0 text-[11px]">最近登录 {formatTime(u.last_login_at)}</span>
                 {!isSelf && u.state === "active" && (
@@ -238,7 +237,7 @@ export function AccountCard() {
                 {!isSelf && (
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-                    title="清除数据密钥、全部会话和两步验证绑定,对方下次登录须设置新密码"
+                    title="清除数据密钥、所有会话和两步验证绑定，对方下次登录须设置新密码"
                     onClick={() => void resetUser(u)}
                   >
                     重置
@@ -259,7 +258,7 @@ export function AccountCard() {
             checked={registrationDraft}
             onChange={(e) => setRegistrationDraft(e.target.checked)}
           />
-          <span className="text-[12.5px] text-neutral-200">要求两步验证 (MFA)</span>
+          <span className="text-[12.5px] text-neutral-200">要求两步验证（MFA）</span>
           <input
             type="checkbox"
             className="h-4 w-4"
@@ -276,13 +275,13 @@ export function AccountCard() {
         </div>
         <p className="nx-hint mt-1.5">
           {registrationDraft
-            ? "任何知道这台服务器地址的人都能注册普通用户账号;建议只在受信网络内临时开放。"
-            : "默认关闭。新用户只能由管理员在上面手动添加。"}
+            ? "任何知道这台服务器地址的人都能注册普通用户账号；建议仅在可信网络中临时开放。"
+            : "默认关闭。新用户只能由管理员手动添加。"}
         </p>
         <p className="nx-hint mt-1.5">
           {mfaDraft
-            ? "强制启用两步验证:未绑定 TOTP 的账号登录后只能进入绑定页,完成绑定前无法使用其他任何功能(含管理面);已绑定的账号登录时必须输入动态码。开启前请确认所有用户都能完成绑定。"
-            : "默认不强制。用户可在自己的账号卡里自愿开启 TOTP 两步验证。"}
+            ? "强制启用两步验证：未绑定 TOTP 的账号登录后只能进入绑定页，完成前无法使用其他功能（包括管理功能）；已绑定的账号登录时必须输入动态码。开启前请确认所有用户都能完成绑定。"
+            : "默认不强制。用户可在账号设置中开启 TOTP 两步验证。"}
         </p>
       </div>
 
@@ -290,7 +289,7 @@ export function AccountCard() {
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          安全默认:注册默认关闭;管理员任何接口都拿不到用户的数据密钥明文。
+          注册默认关闭；管理员无法通过任何接口获取用户的数据密钥明文。
         </div>
       </div>
     </section>

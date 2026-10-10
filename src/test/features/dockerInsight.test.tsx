@@ -263,7 +263,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    expect(mockedText()).toContain("敏感值已遮蔽 · 按名称和连接串内嵌凭据自动识别");
+    expect(mockedText()).toContain("已根据变量名和连接字符串中的凭据自动遮蔽敏感值");
     expect(mockedText()).not.toContain("显示敏感值");
 
     const rowOf = (needle: string) =>
@@ -280,7 +280,7 @@ describe("Docker insight controls (M61)", () => {
     clickButton(m.container, "统计");
     await waitFor(() => expect(mockedText()).toContain("每 3 秒自动刷新"));
     clickButton(m.container, "文件");
-    await waitFor(() => expect(mockedText()).toContain("仅列出容器内目录"));
+    await waitFor(() => expect(mockedText()).toContain("仅列出容器目录内容，不读取文件"));
     clickButton(m.container, "详情");
     await waitFor(() => expect(mockedText()).toContain("环境变量"));
     expect(mockedText()).not.toContain("hunter2secret");
@@ -409,7 +409,7 @@ describe("Docker insight controls (M61)", () => {
     await waitFor(() => expect(mocks.stats).toHaveBeenCalledTimes(1));
 
     clickButton(m.container, "文件");
-    await waitFor(() => expect(mockedText()).toContain("仅列出容器内目录"));
+    await waitFor(() => expect(mockedText()).toContain("仅列出容器目录内容，不读取文件"));
     const callsAfterLeave = mocks.stats.mock.calls.length;
     await sleep(3600);
     expect(mocks.stats.mock.calls.length).toBe(callsAfterLeave);
@@ -587,7 +587,7 @@ describe("Docker insight controls (M61)", () => {
     if (!serverRow) throw new Error("server.js row not found");
     expect(serverRow.className).not.toContain("cursor-pointer");
     expect(serverRow.getAttribute("title")).toBe(
-      `/${REDACTED_MARK}/app/server.js（文件，仅列出目录，不读取内容）`,
+      `/${REDACTED_MARK}/app/server.js（仅列出目录内容，不读取文件）`,
     );
     click(serverRow);
     await flush();
@@ -656,7 +656,7 @@ describe("Docker insight controls (M61)", () => {
 
     await waitFor(() => expect(mockedText()).toContain("容器状态加载失败"));
     expect(mockedText()).not.toContain("容器状态加载中");
-    expect(mockedText()).toContain("连不上这台主机的 Docker 守护进程");
+    expect(mockedText()).toContain("无法连接这台主机上的 Docker 守护进程，请确认 Docker 已安装并运行");
   });
 
   it("missing docker binary maps to an actionable not-installed hint", async () => {
@@ -683,7 +683,7 @@ describe("Docker insight controls (M61)", () => {
     );
     await waitFor(() => expect(mockedText()).toContain("已选 1"));
     expect(mockedText()).not.toContain("已选 2");
-    expect(mockedText()).toContain("删除选中 (1)");
+    expect(mockedText()).toContain("删除选中（1）");
   });
 
   it("log follow surfaces an interrupted state with retry when re-attach fails after reconnect", async () => {
@@ -849,7 +849,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除镜像 nginx:1.25");
-    expect(modal.textContent).toContain("仍可用来创建容器");
+    expect(modal.textContent).toContain("镜像本体也会被删除");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
 
@@ -871,7 +871,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除镜像 sha256:bbb222");
     expect(modal.textContent).toContain("镜像本体");
-    expect(modal.textContent).toContain("不能再用它创建容器");
+    expect(modal.textContent).toContain("之后无法再用它创建容器");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
 
@@ -891,8 +891,8 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.textContent).toContain("删除镜像 nginx:1.25");
     expect(modal.textContent).toContain("最后一个标签");
-    expect(modal.textContent).toContain("镜像本体会一并删除");
-    expect(modal.textContent).toContain("仍可用来创建容器");
+    expect(modal.textContent).toContain("将删除此镜像标签");
+    expect(modal.textContent).toContain("镜像本体也会被删除");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
   });
@@ -908,11 +908,11 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     click(pickA);
     await waitFor(() => expect(m.container.textContent).toContain("已选 1"));
 
-    clickButton(m.container, "删除选中 (1)");
+    clickButton(m.container, "删除选中（1）");
     const modal = await openModal();
     expect(modal.textContent).toContain("删除选中的 1 个镜像");
     expect(modal.textContent).toContain("最后一个标签");
-    expect(modal.textContent).toContain("仍可用来创建容器");
+    expect(modal.textContent).toContain("镜像本体也会被删除");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
   });
@@ -936,7 +936,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     );
     await waitFor(() => expect(m.container.textContent).toContain("已选 1"));
     expect(m.container.textContent).not.toContain("已选 2");
-    expect(m.container.textContent).toContain("删除选中 (1)");
+    expect(m.container.textContent).toContain("删除选中（1）");
   });
 
   it("stop asks for confirmation with consequences, cancel aborts", async () => {
@@ -982,7 +982,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     click(pickB);
     await waitFor(() => expect(m.container.textContent).toContain("已选 2"));
 
-    clickButton(m.container, "删除选中 (2)");
+    clickButton(m.container, "删除选中（2）");
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除选中的 2 个容器");
@@ -990,7 +990,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 
-    clickButton(m.container, "删除选中 (2)");
+    clickButton(m.container, "删除选中（2）");
     const modal2 = await openModal();
     await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.action).toHaveBeenCalledTimes(2));
@@ -1012,15 +1012,15 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     click(pickU);
     await waitFor(() => expect(m.container.textContent).toContain("已选 2"));
 
-    clickButton(m.container, "删除选中 (2)");
+    clickButton(m.container, "删除选中（2）");
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除选中的 2 个镜像");
     expect(modal.textContent).toContain("镜像本体");
     expect(modal.textContent).toContain("最后一个标签");
-    expect(modal.textContent).toContain("镜像本体会一并删除");
-    expect(modal.textContent).toContain("不能再用它创建容器");
-    expect(modal.textContent).toContain("仍可用来创建容器");
+    expect(modal.textContent).toContain("无标签镜像的本体将被删除");
+    expect(modal.textContent).toContain("其余镜像只删除对应标签");
+    expect(modal.textContent).toContain("镜像本体也会被删除");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
   });

@@ -3,7 +3,7 @@ import { describeError } from "../../ui/errorText";
 const DOCKER_UNAVAILABLE_HINTS: { pattern: RegExp; hint: string }[] = [
   {
     pattern: /Cannot connect to the Docker daemon|error during connect|Is the docker daemon running/i,
-    hint: "连不上这台主机的 Docker 守护进程，请确认 Docker 已安装并正在运行",
+    hint: "无法连接这台主机上的 Docker 守护进程，请确认 Docker 已安装并运行",
   },
   {
     pattern: /command not found|executable file not found|exit status 127/i,

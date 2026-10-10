@@ -124,18 +124,18 @@ describe("MemoryCard 窄屏结构", () => {
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => {
       const input = mounted!.container.querySelector<HTMLInputElement>(
-        'input[aria-label="注入到 AI 运行"]',
+        'input[aria-label="在 AI 运行时注入记忆"]',
       );
       return !!input && !input.disabled;
     });
-    for (const name of ["注入到 AI 运行", "允许模型使用记忆工具"]) {
+    for (const name of ["在 AI 运行时注入记忆", "允许模型使用记忆工具"]) {
       const input = mounted.container.querySelector<HTMLInputElement>(
         `input[aria-label="${name}"]`,
       );
       expect(input?.closest("label")).toBeTruthy();
     }
     const label = mounted.container
-      .querySelector('input[aria-label="注入到 AI 运行"]')!
+      .querySelector('input[aria-label="在 AI 运行时注入记忆"]')!
       .closest("label")!;
     click(label);
     await flushUntil(() => mocks.memorySetSettings.mock.calls.length > 0);

@@ -416,7 +416,7 @@ describe("AiSidebar session restore", () => {
     });
     await flush();
     expect(mocks.steer).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("还在启动"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("正在启动"));
     expect((view!.container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("先补充一句");
 
     resolveChat({ jobId: "job-1", conversationId: "conv-1" });

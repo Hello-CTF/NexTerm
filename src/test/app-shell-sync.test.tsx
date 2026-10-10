@@ -330,7 +330,7 @@ describe("账号同步卡（桌面端）", () => {
     await flushUntil(() => document.querySelector("#sync-url") !== null);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("到「终端历史」里对那条单独打开同步开关");
+    expect(text).toContain("如需同步，请在「终端历史」中为对应记录开启同步");
     expect(text).not.toContain("到「会话记录」里");
   });
 });
@@ -368,7 +368,7 @@ describe("全局 syncNow 快捷键(Mod+Shift+S)", () => {
 
     expect(mocks.syncNow).not.toHaveBeenCalled();
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text === "同步还没配置：先到「设置 → 账号同步」里登录")).toBe(true);
+    expect(toasts.some((t) => t.text === "尚未配置同步，请先在「设置 → 账号同步」中登录。")).toBe(true);
   });
 
   it("已配置同步时快捷键触发 syncNow", async () => {

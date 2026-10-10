@@ -150,10 +150,10 @@ describe("AuthGate 首次初始化", () => {
     );
 
     // 恢复密钥只显示一次,复制后才能进入
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制"));
     expect(copyBtn).toBeTruthy();
-    expect(mounted.container.textContent).toContain("已手动保存");
+    expect(mounted.container.textContent).toContain("已保存，进入应用");
   });
 
   it("两次密码不一致时不提交", async () => {
@@ -201,7 +201,7 @@ describe("AuthGate loopback 免登录", () => {
     // 设置页账号卡的「初始化账号」入口
     useAuth.setState({ gate: "setup" });
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
-    clickButton(mounted.container, "暂不初始化,匿名使用");
+    clickButton(mounted.container, "暂不初始化，匿名使用");
     await flushUntil(() => useAuth.getState().gate === "ready");
     expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
   });
@@ -232,7 +232,7 @@ describe("AuthGate loopback 免登录", () => {
     await flushUntil(() => mocks.init.mock.calls.length > 0);
     await flushUntil(() => useAuth.getState().status?.initialized === true);
     expect(useAuth.getState().gate).toBe("ready");
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
   });
 });
 
@@ -262,7 +262,7 @@ describe("AuthGate auth=off", () => {
 
     useAuth.setState({ gate: "setup" });
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
-    clickButton(mounted.container, "账号功能已关闭,返回应用");
+    clickButton(mounted.container, "账号功能已关闭，返回应用");
     await flushUntil(() => useAuth.getState().gate === "ready");
     expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
   });
@@ -279,21 +279,21 @@ describe("AuthGate 恢复密钥全屏门", () => {
       error: null,
     });
     mounted = mountGate();
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
 
     // 全屏门容器(fixed inset-0)存在,底层应用被遮挡
     const gate = mounted.container.querySelector(".fixed.inset-0");
     expect(gate).not.toBeNull();
 
     // 复制前「已手动保存」不可用
-    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement | undefined;
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement | undefined;
     expect(doneBtn?.disabled).toBe(true);
 
     // 复制后可用
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制")) as HTMLButtonElement | undefined;
     copyBtn?.click();
     await flush();
-    const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement | undefined;
+    const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement | undefined;
     expect(doneBtn2?.disabled).toBe(false);
   });
 
@@ -309,11 +309,11 @@ describe("AuthGate 恢复密钥全屏门", () => {
       error: null,
     });
     mounted = mountGate();
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
 
     clickButton(mounted.container, "复制");
-    await flushUntil(() => mounted!.container.textContent?.includes("复制失败,请手动选中恢复密钥复制"));
-    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已手动保存")) as HTMLButtonElement;
+    await flushUntil(() => mounted!.container.textContent?.includes("复制失败，请手动复制恢复密钥"));
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement;
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement;
     expect(mocks.writeText).toHaveBeenCalledWith(formatted);
     expect(doneBtn.disabled).toBe(false);
@@ -361,7 +361,7 @@ describe("AuthGate 登录", () => {
       }),
     );
     // 上传成功后进入恢复密钥一次性展示
-    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
     expect(useAuth.getState().gate).toBe("ready");
   });
 
@@ -415,8 +415,8 @@ describe("AuthGate reset_required 强制改密", () => {
 
     await flushUntil(() => mounted!.container.textContent?.includes("必须先设置新密码"));
     const resetText = mounted.container.textContent ?? "";
-    expect(resetText).toContain("当前(临时)密码只用于本次验证");
-    expect(resetText).toContain("数据密钥、全部会话和两步验证绑定已被清除");
+    expect(resetText).toContain("当前临时密码仅用于本次验证");
+    expect(resetText).toContain("数据密钥、所有会话和两步验证绑定已清除");
     expect(resetText).toContain("云端密文需从仍持有数据的设备重新同步");
     expect(resetText).not.toContain("旧密码与加密数据已被清除");
     const resetInputs = mounted.container.querySelectorAll("input");
@@ -498,7 +498,7 @@ describe("AuthGate 用配对码添加设备", () => {
     setInputValue(loginInputs[0], "root");
     setInputValue(loginInputs[1], "pw-123456");
     await flush();
-    clickButton(mounted!.container, "登录并完成添加");
+    clickButton(mounted!.container, "登录");
 
     await flushUntil(() => mocks.login.mock.calls.length > 0);
     expect(mocks.login).toHaveBeenCalledWith("root", "pw-123456", "d-enrolled-1");
@@ -550,7 +550,7 @@ describe("AuthGate 用配对码添加设备", () => {
     setInputValue(loginInputs[0], "root");
     setInputValue(loginInputs[1], "wrong-pw");
     await flush();
-    clickButton(mounted!.container, "登录并完成添加");
+    clickButton(mounted!.container, "登录");
     await flushUntil(() => mounted!.container.textContent?.includes("用户名或密码错误"));
     expect(useAuth.getState().user).toBeNull();
 
@@ -558,7 +558,7 @@ describe("AuthGate 用配对码添加设备", () => {
     const retryInputs = mounted!.container.querySelectorAll("input");
     setInputValue(retryInputs[1], "pw-123456");
     await flush();
-    clickButton(mounted!.container, "登录并完成添加");
+    clickButton(mounted!.container, "登录");
     await flushUntil(() => useAuth.getState().gate === "ready");
     expect(mocks.login).toHaveBeenLastCalledWith("root", "pw-123456", "d-enrolled-1");
   });
@@ -579,9 +579,9 @@ describe("AuthGate 恢复密钥重置", () => {
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
 
-    clickButton(mounted.container, "忘记密码?用恢复密钥重置");
+    clickButton(mounted.container, "使用恢复密钥重置密码");
     await flushUntil(() => mounted!.container.textContent?.includes("用恢复密钥重置"));
-    expect(mounted.container.textContent).toContain("输入你保存的最新恢复密钥");
+    expect(mounted.container.textContent).toContain("重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效");
 
     const inputs = mounted.container.querySelectorAll("input");
     setInputValue(inputs[0], "root");

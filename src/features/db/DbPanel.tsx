@@ -132,7 +132,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
           sqlLang(),
           nxHighlight,
           EditorView.contentAttributes.of({ "aria-label": "SQL 编辑器" }),
-          placeholder("在这里写 SQL，然后点右上角「运行」（一次只执行一条语句）"),
+          placeholder("输入 SQL"),
         ],
       }),
       parent: hostRef.current,
@@ -251,7 +251,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
         ) : result ? (
           <ResultTable result={result} />
         ) : (
-          <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行。一次只执行一条语句，直接在远端库执行并立即生效</div>
+          <div className="nx-empty">按 Ctrl+Enter 运行，一次只执行一条语句</div>
         )}
       </div>
 
@@ -260,7 +260,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
           <button
             className={`nx-segment-item ${browse === "tables" ? "is-active" : ""}`}
             onClick={() => setBrowse("tables")}
-            title="点表名把 SELECT 填进编辑器"
+            title="点击表名，将 SELECT 查询填入编辑器"
           >
             <IconTable size={12} />
             表
@@ -268,7 +268,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
           <button
             className={`nx-segment-item ${browse === "columns" ? "is-active" : ""}`}
             onClick={() => setBrowse("columns")}
-            title="点表名查看字段结构"
+            title="点击表名查看字段结构"
           >
             <IconList size={12} />
             结构
@@ -325,7 +325,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
             </>
           ) : tables.length === 0 ? (
             <span className="nx-hint">
-              {dialect === "postgres" ? "这个 schema 里没有表或视图" : "这个库里没有表"}
+              {dialect === "postgres" ? "此 schema 中没有表或视图" : "此数据库中没有表"}
             </span>
           ) : (
             <>
@@ -489,16 +489,16 @@ async function copyAsCsv(result: QueryResult) {
 }
 
 const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
-  FLUSHALL: "该操作会删除 Redis 里的所有键，立即生效且不可恢复。",
-  FLUSHDB: "该操作会删除当前数据库的所有键，立即生效且不可恢复。",
-  SHUTDOWN: "该操作会停止 Redis 服务，正在使用它的应用会立即断连。",
-  DEL: "该操作会立即删除指定的键，不可恢复。",
-  UNLINK: "该操作会立即删除指定的键（异步版 DEL），不可恢复。",
-  CONFIG: "CONFIG SET 会立即改动服务器配置，可能导致服务异常；CONFIG REWRITE 会把改动写入配置文件。",
-  DEBUG: "DEBUG 用于服务器内部排障，DEBUG SEGFAULT 会直接让 Redis 进程崩溃。",
-  EVAL: "EVAL 会立即执行任意 Lua 脚本，脚本可以读写、删除任意数据。",
-  EVALSHA: "EVALSHA 会立即执行已缓存的 Lua 脚本，脚本可以读写、删除任意数据。",
-  FCALL: "FCALL 会立即调用已加载的函数，函数可以读写、删除任意数据。",
+  FLUSHALL: "删除 Redis 中的所有键，且无法恢复",
+  FLUSHDB: "删除当前数据库中的所有键，且无法恢复",
+  SHUTDOWN: "停止 Redis 服务，并断开所有客户端",
+  DEL: "删除指定的键，且无法恢复",
+  UNLINK: "异步删除指定的键，且无法恢复",
+  CONFIG: "CONFIG SET 会修改服务器配置，可能导致服务异常；CONFIG REWRITE 会将修改写入配置文件",
+  DEBUG: "DEBUG 用于服务器内部排障，DEBUG SEGFAULT 会导致 Redis 进程崩溃",
+  EVAL: "EVAL 会执行任意 Lua 脚本，可读取、修改或删除任意数据",
+  EVALSHA: "EVALSHA 会执行已缓存的 Lua 脚本，可读取、修改或删除任意数据",
+  FCALL: "FCALL 会调用已加载的函数，可读取、修改或删除任意数据",
 };
 
 function RedisView({ connId }: { connId: string }) {
@@ -715,7 +715,7 @@ function RedisView({ connId }: { connId: string }) {
                 <div className="nx-spacer" />
                 <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
                   <IconSettings size={13} />
-                  改过期时间
+                  修改过期时间
                 </button>
               </div>
               <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
@@ -757,7 +757,7 @@ function RedisView({ connId }: { connId: string }) {
           <div id={consolePanelId} className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
             <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
               <div className="mb-1.5 text-[11px] text-neutral-500">
-                <div>命令台 · FLUSHALL / FLUSHDB / DEL / UNLINK 会删除数据，SHUTDOWN 会停止服务，CONFIG / DEBUG / EVAL / EVALSHA / FCALL 可改动服务或执行任意脚本；这些命令执行前会要求确认，其余命令立即执行</div>
+                <div>控制台 · 危险命令执行前需要确认，其余命令直接执行</div>
                 <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
               </div>
               {cmdOut && (
@@ -799,7 +799,7 @@ function RedisView({ connId }: { connId: string }) {
             onClick={() => setConsoleOpen(true)}
           >
             <IconTerminal size={12} className="shrink-0 text-neutral-500" />
-            <span className="shrink-0 text-[11.5px] text-neutral-300">命令台</span>
+            <span className="shrink-0 text-[11.5px] text-neutral-300">控制台</span>
             <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-500">
               {cmdOut.trim()
                 ? cmdOut.trim().split("\n").slice(-1)[0]

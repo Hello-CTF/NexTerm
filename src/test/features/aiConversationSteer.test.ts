@@ -214,7 +214,7 @@ describe("AiSidebar mid-run steering", () => {
     mocks.steer.mockRejectedValueOnce(new Error("AI 任务不存在或已结束"));
     await steer(view!, "其实别跑");
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "其实别跑");
-    expect(textOf(view!)).toContain("未送达（AI 没看到）");
+    expect(textOf(view!)).toContain("未送达");
     expect(textareaOf(view!).value).toBe("其实别跑");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("补充指令未送达"));
   });
@@ -250,7 +250,7 @@ describe("AiSidebar mid-run steering", () => {
 
     emit({ type: "done", answer: "查完了" });
     await flush();
-    expect(textOf(view!)).toContain("未送达（AI 没看到）");
+    expect(textOf(view!)).toContain("未送达");
 
     await steer(view!, "下一个问题");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
@@ -262,10 +262,10 @@ describe("AiSidebar mid-run steering", () => {
     await steer(view!, "补充一句");
     expect(textOf(view!)).toContain("等待送达");
 
-    click(view!.container.querySelector('button[title^="停止这一轮"]')!);
+    click(view!.container.querySelector('button[title^="停止当前任务"]')!);
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
-    expect(textOf(view!)).toContain("未送达（AI 没看到）");
+    expect(textOf(view!)).toContain("未送达");
   });
 
   it("Enter with an empty input while busy is a no-op", async () => {

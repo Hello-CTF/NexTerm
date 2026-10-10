@@ -6,7 +6,7 @@ const ERROR_CODE_LABELS: Record<string, string> = {
   db_migrate: "数据库迁移错误",
   crypto: "加密错误",
   decrypt: "凭据解密失败",
-  bad_master_password: "主密码错误",
+  bad_master_password: "保护密码错误",
   vault_locked: "凭据库已锁定",
   vault_not_init: "凭据库尚未初始化",
   vault_already_init: "凭据库已初始化",

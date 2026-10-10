@@ -195,7 +195,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
 
     expect(mocks.sessionReconnect).toHaveBeenCalledTimes(1);
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text === "正在重连，连上后会自动新建终端")).toBe(true);
+    expect(toasts.some((t) => t.text === "正在重连，连接成功后自动新建终端")).toBe(true);
   });
 
   it("重连等待中会话已 connected 时再点不会重复打开终端", async () => {

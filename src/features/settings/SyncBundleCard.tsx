@@ -294,8 +294,7 @@ export function SyncBundleCard() {
         <span className="nx-card-title">资产包（文件导入 / 导出）</span>
       </div>
       <p className="nx-hint mb-3.5">
-        把资产打包成一个 .nxbm 文件带走，或从文件恢复到本机。资产包走文件，不经过任何服务器，
-        与上方「账号同步」的推送 / 拉取互不影响。
+        将资产导出为 .nxbm 文件，或从文件导入本机。资产包仅通过文件传输，不经过服务器，与上方「账号同步」的推送和拉取互不影响。
       </p>
 
       {digestError && (
@@ -394,7 +393,7 @@ export function SyncBundleCard() {
           <span className="text-[12px] text-neutral-300">
             导出凭据（密码 / 私钥会写进文件）
             <span className="nx-hint block">
-              不勾时，资产里只保留凭据引用，拿到文件的人看不到任何秘密，但导入后需要重新关联凭据。
+              未勾选时，资产仅保留凭据引用；导入后需重新关联凭据。
             </span>
           </span>
         </label>
@@ -403,8 +402,7 @@ export function SyncBundleCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconShield size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>这个文件将包含可还原的凭据明文</b>：任何拿到这个文件的人都能登上对应的服务器。
-              请只在可信设备之间传递，用毕及时删除；私钥文件会一并内联进资产包。
+              <b>这个文件将包含可还原的凭据明文</b>：任何拿到文件的人都能登录对应服务器。请仅在可信设备之间传递，用后及时删除；私钥文件也会内联到资产包中。
             </div>
           </div>
         )}
@@ -412,8 +410,7 @@ export function SyncBundleCard() {
         {canEncryptBundle && (
           <div className="flex flex-col gap-2">
             <p className="nx-hint text-[12px]">
-              导出走 <code>.nxbm</code> 容器；可设口令加密，口令可留空，留空则任何人都能直接读取。
-              口令无法找回，丢失后将无法导入，请妥善保管。
+              导出为 <code>.nxbm</code> 容器。口令可选；留空时不加密，任何拿到文件的人都能读取。口令丢失后无法导入，请妥善保管。
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password">
@@ -457,9 +454,7 @@ export function SyncBundleCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconShield size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>未设置口令</b>：导出的 .nxbm 任何人都能直接读取其中的资产
-              （主机、账号{withCreds ? "与可还原的凭据明文" : ""}）。
-              请只在可信设备之间传递，用毕及时删除。
+              <b>未设置口令</b>：任何人都能直接读取导出的 .nxbm 文件，其中包括主机、账号和凭据内容。请仅在可信设备之间传递，用后及时删除。
             </div>
           </div>
         )}
@@ -471,7 +466,7 @@ export function SyncBundleCard() {
             onClick={() => void doExport()}
           >
             {exporting ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-            {exporting ? "导出中…" : "导出资产包 (.nxbm)"}
+            {exporting ? "导出中…" : "导出资产包（.nxbm）"}
           </button>
         </div>
 
@@ -515,8 +510,8 @@ export function SyncBundleCard() {
         </div>
         <p className="nx-hint mb-2 text-[12px]">
           {canEncryptBundle
-            ? "只支持 .nxbm 资产包；设了口令的包导入时需要输入口令。"
-            : "支持未加密的 .nxbm 资产包；口令加密的包请在桌面版 NexTerm 中导入。"}
+            ? "仅支持 .nxbm 资产包；加密资产包需输入口令后导入。"
+            : "仅支持未加密的 .nxbm 资产包；加密资产包请使用桌面版 NexTerm 导入。"}
         </p>
 
         {importError && (
@@ -578,7 +573,7 @@ export function SyncBundleCard() {
               <span className="text-[12px] text-neutral-300">
                 强制覆盖较新的本机条目
                 <span className="nx-hint block">
-                  不勾时，本机版本较新的资产会被跳过，不会被包里的旧版本覆盖。
+                  未勾选时，本机较新的资产会被跳过，不会被包内旧版本覆盖。
                 </span>
               </span>
             </label>

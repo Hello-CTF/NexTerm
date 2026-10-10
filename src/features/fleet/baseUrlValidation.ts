@@ -37,23 +37,23 @@ export function validateBaseURL(raw: string, insecure: boolean): BaseURLValidati
   const trimmed = raw.trim();
   if (!trimmed) return { url: "", error: "接入地址不能为空" };
   if (trimmed.length > MAX_BASE_URL_LENGTH) {
-    return { url: "", error: `接入地址长度需在 1-${MAX_BASE_URL_LENGTH} 之间` };
+    return { url: "", error: "接入地址不能超过 2048 个字符" };
   }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    return { url: "", error: "接入地址 URL 不合法" };
+    return { url: "", error: "接入地址格式无效" };
   }
   const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
   if ((scheme !== "http" && scheme !== "https") || !parsed.hostname) {
-    return { url: "", error: "接入地址必须显式使用 http:// 或 https://, 并包含主机名" };
+    return { url: "", error: "接入地址必须以 http:// 或 https:// 开头，并包含主机名" };
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     return { url: "", error: "接入地址不能包含用户信息、查询参数或片段" };
   }
   if (scheme === "http" && !insecure && !isLocalOrPrivate(parsed.hostname)) {
-    return { url: "", error: "公网地址必须使用 HTTPS; 设备凭证不能通过明文 HTTP 传输" };
+    return { url: "", error: "公网地址必须使用 HTTPS；设备凭证不能通过明文 HTTP 传输" };
   }
   // JS URL 会把空 path 归一化成 "/", 这里按 Go 的语义手动拼回去尾斜杠的结果。
   const path = parsed.pathname.replace(/\/+$/, "");

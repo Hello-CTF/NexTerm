@@ -179,7 +179,7 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 	}
 	text, cut := prefixBytes(builder.String(), memoryRecallMaxBytes)
 	if redactions > 0 {
-		text += fmt.Sprintf("\n[%d 条内容含已脱敏的疑似密钥]", redactions)
+		text += fmt.Sprintf("\n[%d 条内容包含疑似密钥，已脱敏]", redactions)
 	}
 	if cut {
 		text += "\n[输出已截断]"
@@ -191,7 +191,7 @@ func memoryForgetOutput(ctx context.Context, store *memory.Store, scope memory.S
 	if err := store.Delete(ctx, scope, input.ID, input.ExpectedVersion); err != nil {
 		var conflict *memory.VersionConflictError
 		if errors.As(err, &conflict) {
-			return tools.Fail(fmt.Errorf("记忆 %s 版本冲突（期望 %d，实际 %d），请重新列出后再删", conflict.ID, conflict.Expected, conflict.Actual))
+			return tools.Fail(fmt.Errorf("记忆 %s 版本冲突（期望 %d，实际 %d），请刷新后重试", conflict.ID, conflict.Expected, conflict.Actual))
 		}
 		if errors.Is(err, memory.ErrNotFound) {
 			return tools.Fail(fmt.Errorf("记忆 %s 不存在", input.ID))

@@ -200,7 +200,7 @@ describe("AiSidebar 权限请求对话框", () => {
     ]);
     const permanent = permanentButton();
     expect(permanent).not.toBeNull();
-    expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的普通文件");
+    expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的文件");
   });
 
   it("危险操作不展示永久允许", async () => {
@@ -284,12 +284,12 @@ describe("AiSidebar 权限请求对话框", () => {
   it("计划只批准一次，批准消息不复述方案，历史恢复不再提供批准", async () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     const planToggle = [...mounted!.container.querySelectorAll("button")].find(
-      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+      (button) => button.getAttribute("title") === "先生成方案，批准后执行",
     );
     click(planToggle!);
     await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
 
-    clickButton(mounted!.container, "批准，按这个方案执行");
+    clickButton(mounted!.container, "批准并执行方案");
     await flushUntil(() => mocks.chat.mock.calls.length === 2);
     const approval = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
     expect(approval.message).toBe("按上面的方案执行。");
@@ -297,7 +297,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(approval.planMode).toBeUndefined();
     expect(approval.images).toBeUndefined();
     expect(mounted!.container.textContent).toContain("已批准");
-    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准，按这个方案执行")).toBe(false);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准并执行方案")).toBe(false);
 
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "done", answer: "执行完成" });
@@ -314,7 +314,7 @@ describe("AiSidebar 权限请求对话框", () => {
     clickButton(mounted!.container, "演示");
     await flush();
     expect(mounted!.container.textContent).toContain("已批准");
-    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准，按这个方案执行")).toBe(false);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准并执行方案")).toBe(false);
   });
 
   it("重试复用原请求的图片、引用和计划模式", async () => {
@@ -327,7 +327,7 @@ describe("AiSidebar 权限请求对话框", () => {
     await show();
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     const planToggle = [...mounted!.container.querySelectorAll("button")].find(
-      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+      (button) => button.getAttribute("title") === "先生成方案，批准后执行",
     );
     click(planToggle!);
 
@@ -368,12 +368,12 @@ describe("AiSidebar 权限请求对话框", () => {
   it("已批准执行的计划不允许通过重试再次执行，新计划仍可单独批准", async () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     const planToggle = [...mounted!.container.querySelectorAll("button")].find(
-      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+      (button) => button.getAttribute("title") === "先生成方案，批准后执行",
     );
     click(planToggle!);
     await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
 
-    clickButton(mounted!.container, "批准，按这个方案执行");
+    clickButton(mounted!.container, "批准并执行方案");
     await flushUntil(() => mocks.chat.mock.calls.length === 2);
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "error", message: "执行中断", retryable: true });
@@ -387,7 +387,7 @@ describe("AiSidebar 权限请求对话框", () => {
 
     click(mounted!.container.querySelector('button[title^="AI 权限与模式"]')!);
     const planToggleAgain = [...mounted!.container.querySelectorAll("button")].find(
-      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+      (button) => button.getAttribute("title") === "先生成方案，批准后执行",
     );
     click(planToggleAgain!);
     const input = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
@@ -399,7 +399,7 @@ describe("AiSidebar 权限请求对话框", () => {
       mocks.channels.at(-1)!.onEvent({ type: "done", answer: "步骤 B" });
     });
     await flush();
-    clickButton(mounted!.container, "批准，按这个方案执行");
+    clickButton(mounted!.container, "批准并执行方案");
     await flushUntil(() => mocks.chat.mock.calls.length === 4);
     const second = mocks.chat.mock.calls[3][0] as Record<string, unknown>;
     expect(second.message).toBe("按上面的方案执行。");
@@ -529,12 +529,12 @@ describe("AiSidebar 权限请求对话框", () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     expect(mounted!.container.textContent).toContain("权限读取失败 · 权限服务不可用");
-    expect(mounted!.container.textContent).not.toContain("只读直接做");
+    expect(mounted!.container.textContent).not.toContain("只读操作直接执行");
 
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     clickButton(mounted!.container, "重试");
     await flush();
-    expect(mounted!.container.textContent).toContain("只读直接做");
+    expect(mounted!.container.textContent).toContain("只读操作直接执行");
     expect(mounted!.container.textContent).not.toContain("格式化磁盘");
   });
 });

@@ -56,17 +56,13 @@ async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction):
   if (risk === "execute") {
     const n = s.body.match(/[\r\n]/g)?.length ?? 0;
     return ask(
-      `片段「${s.name}」包含 ${n} 处回车/换行：${label}时每一处都会立即提交执行（相当于替你按回车）。\n仍要${label}吗？`,
+      `片段「${s.name}」包含 ${n} 处回车或换行，${label}时会逐行提交执行。仍要${label}吗？`,
       { kind: "warning" },
     );
   }
   if (risk === "control") {
-    const behavior =
-      action === "insert"
-        ? "插入只写入输入行、不会替你按回车，但"
-        : "执行会在写入后追加一次回车提交命令，且";
     return ask(
-      `片段「${s.name}」包含终端控制字符（Tab 补全 / DEL / Ctrl-C / Ctrl-D / ESC 序列等）：\n${behavior} Tab 补全钩子本身就是 shell 代码（不需要回车就会运行），其他控制字符也可能触发 readline/终端绑定动作、中断前台进程或改变终端状态。\n仍要${label}吗？`,
+      `片段「${s.name}」包含终端控制字符，可能执行 shell 代码、中断前台进程或改变终端状态。仍要${label}吗？`,
       { kind: "warning" },
     );
   }
@@ -99,15 +95,15 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
       "success",
       action === "insert"
         ? risk === "none"
-          ? `已插入「${s.name}」 · 未执行，确认后回车运行`
+          ? `已插入「${s.name}」，按回车执行`
           : risk === "execute"
-            ? `已插入「${s.name}」 · 已按原样写入，其中回车/换行处已逐行执行`
-            : `已插入「${s.name}」 · 已按原样写入，控制字符可能已改变终端状态`
+            ? `已插入「${s.name}」 · 回车或换行处已逐行执行`
+            : `已插入「${s.name}」 · 控制字符可能已改变终端状态`
         : risk === "none"
-          ? `已执行「${s.name}」 · 已写入输入行并回车提交`
+          ? `已执行「${s.name}」`
           : risk === "execute"
-            ? `已执行「${s.name}」 · 已按原样写入，回车/换行处已逐行执行`
-            : `已执行「${s.name}」 · 已按原样写入并回车提交，控制字符可能已改变终端状态`,
+            ? `已执行「${s.name}」 · 回车或换行处已逐行执行`
+            : `已执行「${s.name}」 · 控制字符可能已改变终端状态`,
     );
     return true;
   } catch (e) {

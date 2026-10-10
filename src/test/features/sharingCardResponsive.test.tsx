@@ -160,8 +160,8 @@ describe("ShareCard 窄屏行结构 (M233)", () => {
       }
     }
 
-    const hostRow = rows.find((r) => (r.textContent || "").includes("授予给"))!;
-    const direction = leafSpans(hostRow).find((s) => /授予给|接收自/.test(s.textContent || ""))!;
+    const hostRow = rows.find((r) => (r.textContent || "").includes("分享给"))!;
+    const direction = leafSpans(hostRow).find((s) => /分享给|来自/.test(s.textContent || ""))!;
     expect(direction.className).toContain("min-w-0");
     expect(direction.className).toContain("break-words");
     expect(direction.className).not.toContain("shrink-0");

@@ -84,18 +84,18 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权仅放行普通需确认的终端写入或命令执行，其余改动与拿不准的操作都会被拒绝" },
-  { value: "read_write", label: "读写", hint: "只读直接做；普通需确认操作先问你，选「本轮允许此类」后本轮同类不再问（文件写入限同目录）；高危或无法判断仍逐次确认" },
-  { value: "silent", label: "完全静默", hint: "普通改动直接执行；高危或无法判断的仍逐次确认，禁止操作始终拒绝" },
+  { value: "read_only", label: "只读", hint: "仅允许查看；设备长期授权仅放行普通终端写入或命令执行，其余修改及无法判断的操作均拒绝" },
+  { value: "read_write", label: "读写", hint: "只读操作直接执行；普通操作先确认，选择「本轮允许此类」后，本轮同类操作不再确认（文件写入限同目录）；高危或无法判断的操作仍逐次确认" },
+  { value: "silent", label: "自动执行", hint: "普通改动直接执行；高危或无法判断的操作仍逐次确认，禁止操作始终拒绝" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
   read_only: "只读",
   read_write: "读写",
-  silent: "完全静默",
+  silent: "自动执行",
 };
 
-const PLAN_MODE_HINT = "先出方案，批准后执行";
+const PLAN_MODE_HINT = "先生成方案，批准后执行";
 
 const PLAN_EXECUTE_MESSAGE = "按上面的方案执行。";
 
@@ -119,7 +119,8 @@ const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", 
 
 function permanentScopeText(card: ConfirmItem): string {
   if (card.tool === "write_file" || card.tool === "edit_file") {
-    return `永久允许写入 ${card.rulePattern || "该路径"} 下的普通文件`;
+    const action = card.tool === "write_file" ? "写入" : "修改";
+    return `永久允许${action} ${card.rulePattern || "该路径"} 下的文件`;
   }
   if (card.tool === "send_keys") return "永久允许该设备发送普通按键";
   return "永久允许该设备执行普通命令";
@@ -262,7 +263,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             className="nx-badge nx-badge-red"
             title={
               bindings.reclaimTakeover
-                ? `终端接管进行中：按 ${reclaimKeyLabel} 随时夺回`
+                ? `终端接管进行中：按 ${reclaimKeyLabel} 收回控制权`
                 : "终端接管进行中"
             }
           >
@@ -325,13 +326,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                       { kind: "item", label: "关闭", onSelect: () => requestCloseTab(t) },
                       {
                         kind: "item",
-                        label: "关闭左边全部",
+                        label: "关闭左侧全部标签",
                         disabled: tabIndex <= 0,
                         onSelect: () => closeTabsInOrder(tabs.slice(0, tabIndex)),
                       },
                       {
                         kind: "item",
-                        label: "关闭右边全部",
+                        label: "关闭右侧全部标签",
                         disabled: tabIndex < 0 || tabIndex >= tabs.length - 1,
                         onSelect: () => closeTabsInOrder(tabs.slice(tabIndex + 1)),
                       },
@@ -1106,11 +1107,11 @@ function AiChatTab({
     if (!message) return;
     const run = activeRunRef.current;
     if (!run || run.settled) {
-      pushToast("info", "这一轮已结束，补充指令没有送出，可直接作为新消息发送");
+      pushToast("info", "当前任务已结束，请将补充指令作为新消息发送。");
       return;
     }
     if (run.spawnPending) {
-      pushToast("info", "这一轮还在启动，稍等一下再补充指令");
+      pushToast("info", "当前任务正在启动，请稍后重试。");
       return;
     }
     if (images.length > 0) {
@@ -1138,7 +1139,7 @@ function AiChatTab({
 
   const approvePlan = () => {
     if (latestPlanApproved(conv.items)) {
-      pushToast("info", "该计划已执行，不会重复执行；需要调整请让 AI 重新出方案");
+      pushToast("info", "该计划已执行，不会重复执行；需要调整时请让 AI 重新生成方案");
       return;
     }
     setPlanMode(false);
@@ -1165,7 +1166,7 @@ function AiChatTab({
       return;
     }
     if (source.text.trim() === PLAN_EXECUTE_MESSAGE) {
-      pushToast("info", "该计划已执行，不能通过重试再次执行；需要调整请让 AI 重新出方案");
+      pushToast("info", "该计划已执行，不能通过重试再次执行；需要调整时请让 AI 重新生成方案");
       return;
     }
     const snapshot = item.attempt === null ? undefined : requestSnapshotsRef.current.get(item.attempt);
@@ -1203,7 +1204,7 @@ function AiChatTab({
     const conversationId = conversationIdRef.current;
     if (!edit || !text || editSubmittingRef.current) return;
     if (!conversationId) {
-      pushToast("error", "编辑重发需要先打开一个会话");
+      pushToast("error", "编辑并重新发送需要先打开一个会话");
       return;
     }
     editSubmittingRef.current = true;
@@ -1213,7 +1214,7 @@ function AiChatTab({
     } catch (e) {
       editSubmittingRef.current = false;
       setEditSubmitting(false);
-      pushToast("error", `编辑重发失败：${describeError(e)}`);
+      pushToast("error", `编辑并重新发送失败：${describeError(e)}`);
       return;
     }
     try {
@@ -1241,7 +1242,7 @@ function AiChatTab({
     const card = confirmCard;
     const id = run?.jobId;
     if (!run || !id || !card) {
-      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      pushToast("info", "当前任务正在启动，请稍后重试。");
       return;
     }
     if (submittingCardId) return;
@@ -1275,11 +1276,11 @@ function AiChatTab({
     const id = run?.jobId;
     const text = option ?? questionInput;
     if (!run || !id || !card) {
-      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      pushToast("info", "当前任务正在启动，请稍后重试。");
       return;
     }
     if (!text.trim()) {
-      pushToast("info", "请先输入回答，或选择一个问题选项");
+      pushToast("info", "请输入回答或选择选项。");
       return;
     }
     if (submittingCardId) return;
@@ -1311,7 +1312,7 @@ function AiChatTab({
     const run = activeRunRef.current;
     const id = run?.jobId;
     if (!run || !id) {
-      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      pushToast("info", "当前任务正在启动，请稍后重试。");
       return;
     }
     try {
@@ -1446,7 +1447,7 @@ function AiChatTab({
       }
     } catch {
     }
-    const ok = await ask(`删除会话「${c.title || "(未命名会话)"}」？消息记录一并清除，不可恢复。`, {
+    const ok = await ask(`删除会话「${c.title || "（未命名会话）"}」？消息记录一并清除，不可恢复。`, {
       kind: "warning",
     });
     if (!ok) return;
@@ -1530,7 +1531,7 @@ function AiChatTab({
       return;
     }
     const instruction = await promptText(
-      "终端接管：要 AI 去做什么？（例如：安装 nginx 并启动）",
+      "终端接管任务（例如：安装并启动 nginx）",
       "",
       { multiLine: true },
     );
@@ -1539,8 +1540,8 @@ function AiChatTab({
       title: "终端接管（实验性功能）",
       level: "warning",
       choices: [
-        { key: "allow", label: "允许", hint: "AI 可以替你敲命令", primary: true },
-        { key: "readonly", label: "只读", hint: "AI 只能看，不能敲" },
+        { key: "allow", label: "允许", hint: "AI 可以执行命令", primary: true },
+        { key: "readonly", label: "只读", hint: "AI 只能查看，不能执行命令" },
         { key: "abort", label: "退出", hint: "不启动接管", danger: true },
       ],
     });
@@ -1610,8 +1611,8 @@ function AiChatTab({
       pushToast(
         "info",
         bindings.reclaimTakeover
-          ? `接管已启动：顶部横幅可随时夺回，${reclaimKeyLabel} 亦可`
-          : "接管已启动：顶部横幅可随时夺回",
+          ? `接管已启动，可通过顶部横幅或 ${reclaimKeyLabel} 收回控制权。`
+          : "接管已启动，可通过顶部横幅收回控制权。",
       );
     } catch (e) {
       if (ownershipToken) {
@@ -1747,10 +1748,10 @@ function AiChatTab({
               <div key={c.id} className="flex items-center gap-0.5">
                 <button
                   className="nx-menu-item flex-1"
-                  title={c.title || "(未命名会话)"}
+                  title={c.title || "（未命名会话）"}
                   onClick={() => void openConversation(c.id, c.title)}
                 >
-                  <span className="nx-menu-label">{c.title || "(未命名会话)"}</span>
+                  <span className="nx-menu-label">{c.title || "（未命名会话）"}</span>
                   <span className="nx-menu-hint">
                     {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : ""}
                   </span>
@@ -1765,8 +1766,8 @@ function AiChatTab({
                 )}
                 <button
                   className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                  title={`删除「${c.title || "(未命名会话)"}」`}
-                  aria-label={`删除会话「${c.title || "(未命名会话)"}」`}
+                  title={`删除「${c.title || "（未命名会话）"}」`}
+                  aria-label={`删除会话「${c.title || "（未命名会话）"}」`}
                   onClick={() => void deleteConversation(c)}
                 >
                   <IconTrash size={12} />
@@ -1856,7 +1857,7 @@ function AiChatTab({
                   {planMode ? "● " : "○ "}
                   计划模式
                 </span>
-                <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
+                <span className="nx-menu-hint">{planMode ? "已开启" : "已关闭"}</span>
               </button>
               <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
                 {planMode ? `${PLAN_MODE_HINT}；期间只读` : "直接执行"}
@@ -1982,7 +1983,7 @@ function AiChatTab({
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                想更严：把它加为拦截规则，命中后每次先确认；想少弹：选「本轮允许此类」，或在权限设置里调模式。按 Esc 默认拒绝。
+                如需更严格控制，可添加拦截规则；如需减少确认，可选择「本轮允许此类」或调整权限模式。按 Esc 默认拒绝。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -2003,7 +2004,7 @@ function AiChatTab({
                   <span className="inline-flex flex-wrap items-center gap-1">
                     <button
                       className="nx-btn nx-btn-outline nx-btn-xs"
-                      title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断仍按当前权限模式，禁止操作始终拒绝；可随时在授权管理中撤销`}
+                      title={`${permanentScopeText(confirmCard)}；仅覆盖普通需确认操作，高危或无法判断的操作仍按当前权限模式处理，禁止操作始终拒绝；可随时在授权管理中撤销`}
                       disabled={submittingCardId === confirmCard.id}
                       onClick={() => void confirm("allow_persistent")}
                     >
@@ -2022,7 +2023,7 @@ function AiChatTab({
                 {interceptionRuleFromCard(confirmCard) && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
-                    title="打开设置的拦截规则，并把当前操作预填成一条新规则"
+                    title="打开设置中的拦截规则，并预填当前操作"
                     onClick={() => {
                       const rule = interceptionRuleFromCard(confirmCard);
                       if (!rule) return;
@@ -2149,14 +2150,14 @@ function AiChatTab({
           <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">
             <IconEdit size={10} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              {editSubmitting ? "正在替换并重新发送…" : "编辑重发：这条消息之后的消息与运行会被删除"}
+              {editSubmitting ? "正在编辑并重新发送…" : "编辑并重新发送将删除此消息后的消息和运行记录"}
             </span>
             <button
               className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
               disabled={!input.trim() || editSubmitting}
               onClick={() => void submitEditResend()}
             >
-              替换并重新发送
+              编辑并重新发送
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -2354,7 +2355,7 @@ function AiChatTab({
             title={
               tabId
                 ? bindings.reclaimTakeover
-                  ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 夺回`
+                  ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 收回控制权`
                   : "终端接管（实验性功能）：AI 直接接手当前终端"
                 : "终端接管需要先打开一个终端标签"
             }
@@ -2366,7 +2367,7 @@ function AiChatTab({
           {busy ? (
             <button
               className="nx-send-btn nx-send-btn-stop"
-              title="停止这一轮（AI 会停在当前位置，已跑完的结果保留）"
+              title="停止当前任务（保留已完成的输出）"
               onClick={() => void stop()}
             >
               <IconStopSquare />
@@ -2374,7 +2375,7 @@ function AiChatTab({
           ) : (
             <button
               className="nx-send-btn"
-              title={editing ? "替换并重新发送" : "发送 (Enter)"}
+              title={editing ? "编辑并重新发送" : "发送 (Enter)"}
               disabled={(!input.trim() && images.length === 0) || editSubmitting}
               onClick={() => (editing ? void submitEditResend() : void send())}
             >
@@ -2515,7 +2516,7 @@ const ChatBubble = memo(function ChatBubble({
               ? "补充指令 · 等待送达…"
               : item.steer === "delivered"
                 ? "补充指令 · 已送达"
-                : "补充指令 · 未送达（AI 没看到）"}
+                : "补充指令 · 未送达"}
           </div>
         ) : null}
       </div>
@@ -2756,7 +2757,7 @@ function PlanBubble({
       {!approved && (
         <button className="nx-btn nx-btn-outline nx-btn-xs mt-2" onClick={onApprove}>
           <IconPlay size={11} />
-          批准，按这个方案执行
+          批准并执行方案
         </button>
       )}
     </div>
@@ -2857,7 +2858,7 @@ function DiffLines({ before, after }: { before: string; after: string }) {
   if (!hasVisibleChange(lines)) {
     return (
       <div className="text-neutral-500">
-        {before === after ? "（内容没有变化）" : "（差异在文件末尾的换行）"}
+        {before === after ? "（内容没有变化）" : "（仅文件末尾换行不同）"}
       </div>
     );
   }

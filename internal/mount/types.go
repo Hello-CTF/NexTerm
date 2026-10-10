@@ -7,7 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-const MacOSUnavailableReason = "磁盘挂载在 macOS 上暂不可用：依赖 macFUSE（系统扩展）+ sshfs，尚未完成适配"
+const MacOSUnavailableReason = "磁盘挂载暂不支持 macOS"
 
 type Entry struct {
 	ID         string  `json:"id"`

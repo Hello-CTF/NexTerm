@@ -264,7 +264,7 @@ ON CONFLICT(user_id) DO UPDATE SET pending_secret_envelope = excluded.pending_se
 // verifyTOTPRebind 校验换绑重验凭据: 当前动态码/恢复码优先, 其次登录密码。
 func (a *Accounts) verifyTOTPRebind(ctx context.Context, userID, reverify string) error {
 	if reverify == "" {
-		return ipc.NewError(ipc.CodeForbidden, "已开启两步验证: 换绑前需要当前动态码、恢复码或登录密码")
+		return ipc.NewError(ipc.CodeForbidden, "已开启两步验证：更换绑定前需验证当前动态码、恢复码或登录密码")
 	}
 	if valid, err := a.VerifyTOTPLoginCode(ctx, userID, reverify); err != nil {
 		return err
@@ -311,7 +311,7 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	var current []byte
 	err = tx.QueryRowContext(ctx, "SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !bytes.Equal(current, pending)) {
-		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误: 绑定已确认或已失效,请重新开始")
+		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -322,7 +322,7 @@ WHERE user_id = ? AND pending_secret_envelope = ?`, pending, now, userID, pendin
 		return nil, dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误: 绑定已确认或已失效,请重新开始")
+		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp_recovery_code WHERE user_id = ?", userID); err != nil {
 		return nil, dbError(err)

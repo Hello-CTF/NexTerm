@@ -301,7 +301,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   };
 
   const newDir = async () => {
-    const name = await promptText("新建文件夹名", "");
+    const name = await promptText("新建目录名", "");
     if (name === null) return;
     const problem = validateEntryName(name);
     if (problem) {
@@ -429,7 +429,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const cdTerminalTo = (dir: string) => {
     const kernelTabId = findWritableTerminal(sessionId);
     if (!kernelTabId) {
-      pushToast("info", "当前工作区还没有终端，已改为新开一个");
+      pushToast("info", "当前工作区没有可用终端，已新建一个");
       openTerminalAt(dir);
       return;
     }
@@ -482,7 +482,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     if (isDir) {
       items.push({
         kind: "item",
-        label: "打包下载当前文件夹",
+        label: "打包下载当前目录",
         icon: <IconArchive size={13} />,
         hint: "tar.gz",
         onSelect: () => void packDownload(entry.path),
@@ -597,8 +597,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "新建文件夹"}
-          aria-label="新建文件夹"
+          title={sessionGone ? goneHint : "新建目录"}
+          aria-label="新建目录"
           disabled={sessionGone}
           onClick={() => void newDir()}
         >
@@ -929,11 +929,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           </div>
         )}
         {!loading && rows.length === 0 && dirErrors.size === 0 && (
-          <div className="nx-hint px-2 py-6 text-center">
-            这个目录是空的
-            <br />
-            单击目录名可展开，双击可进入
-          </div>
+          <div className="nx-hint px-2 py-6 text-center">这个目录是空的</div>
         )}
       </div>
 

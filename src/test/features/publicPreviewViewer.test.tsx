@@ -243,14 +243,14 @@ describe("PublicPreviewApp", () => {
     await goLive();
     lastSocket().emitText({ type: "error", code: "ended", message: "分享已结束" });
     await flush();
-    expect(view.container.textContent).toContain("分享已结束");
+    expect(view.container.textContent).toContain("预览已结束");
   });
 
   it("treats a close before ready as a failed connect with retry", async () => {
     const view = await mountViewer();
     lastSocket().emitClose(1006, "", false);
     await flush();
-    expect(view.container.textContent).toContain("无法连接到预览");
+    expect(view.container.textContent).toContain("无法连接预览终端");
     clickButton(view.container, "重新连接");
     await flush();
     expect(FakeWebSocket.instances).toHaveLength(2);

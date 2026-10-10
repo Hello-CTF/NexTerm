@@ -84,8 +84,8 @@ describe("validateBaseURL 对齐服务端规则", () => {
     expect(validateBaseURL("https://a.example.com?x=1", false).error).toContain("查询参数");
     expect(validateBaseURL("https://a.example.com#frag", false).error).toContain("片段");
     expect(validateBaseURL("   ", false).error).toContain("不能为空");
-    expect(validateBaseURL(`https://a.example.com/${"x".repeat(2100)}`, false).error).toContain("长度");
-    expect(validateBaseURL("not a url", false).error).toContain("不合法");
+    expect(validateBaseURL(`https://a.example.com/${"x".repeat(2100)}`, false).error).toContain("不能超过 2048 个字符");
+    expect(validateBaseURL("not a url", false).error).toContain("格式无效");
   });
 });
 
@@ -112,7 +112,7 @@ describe("BaseUrlsSection 超管编辑", () => {
     click(downButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("有未保存的修改") ?? false);
 
-    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存顺序与修改"));
+    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     click(saveButton as HTMLButtonElement);
     await flushUntil(() => saved !== null);
 
@@ -167,7 +167,7 @@ describe("BaseUrlsSection 超管编辑", () => {
 
     const removeButton = document.querySelector<HTMLButtonElement>('button[aria-label="删除 https://a.example.com"]');
     click(removeButton as HTMLButtonElement);
-    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存顺序与修改"));
+    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     await flushUntil(() => !(saveButton as HTMLButtonElement).disabled);
     click(saveButton as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.method === "PUT"));
@@ -259,7 +259,7 @@ describe("BaseUrlsSection 保存竞态 (R1-5)", () => {
 
     const downButton = document.querySelector<HTMLButtonElement>('button[aria-label="下移 https://a.example.com"]');
     click(downButton as HTMLButtonElement);
-    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存顺序与修改"));
+    const saveButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     await flushUntil(() => !(saveButton as HTMLButtonElement).disabled);
     click(saveButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("保存中") ?? false);

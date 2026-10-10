@@ -268,7 +268,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         <span className="nx-md-pre-lang">{lang || "text"}</span>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="复制这段"
+          title="复制代码"
           onClick={() => {
             void navigator.clipboard.writeText(code).then(
               () => pushToast("success", "已复制到剪贴板"),

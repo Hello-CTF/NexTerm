@@ -381,7 +381,7 @@ describe("broadcast enable flow", () => {
     await flush();
     expect(harness.ask).not.toHaveBeenCalled();
     expect(useUi.getState().broadcast).toBeNull();
-    expect(toastTexts().some((t) => t.includes("没有至少 2 个可广播的终端"))).toBe(true);
+    expect(toastTexts().some((t) => t.includes("可广播终端不足 2 个"))).toBe(true);
   });
 
   it("opens the picker, quick-selects all terminals and applies them", async () => {

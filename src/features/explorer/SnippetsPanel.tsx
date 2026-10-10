@@ -179,7 +179,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           })}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <span className="nx-hint mr-auto">插入 = 写入输入行不执行；执行 = 写入后回车提交；回车/换行或控制字符会先确认</span>
+          <span className="nx-hint mr-auto">插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。</span>
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -321,7 +321,7 @@ function SnippetEditor({
               aria-describedby={hintId}
             />
             <div id={hintId} className="nx-hint mt-1.5">
-              ↳ 插入只写入输入行、不自动执行；执行会写入并回车提交。含回车/换行或控制字符的片段会先确认一次。
+              ↳ 插入仅写入输入行，不自动执行；执行会在写入后回车提交；包含回车、换行或控制字符时需先确认。
             </div>
           </div>
           {error && (

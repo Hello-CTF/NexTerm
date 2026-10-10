@@ -246,7 +246,7 @@ describe("FileTree 会话已删除", () => {
     expect(mounted.container.textContent).not.toContain("请刷新后重试");
     expect(button("重新连接这台主机")).toBeDefined();
     expect(button("重试")).toBeUndefined();
-    for (const ariaLabel of ["新建文件", "新建文件夹", "刷新文件列表", "上传到当前目录"]) {
+    for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
       const btn = toolbarButton(ariaLabel);
       expect(btn?.disabled, ariaLabel).toBe(true);
       expect(btn?.title, ariaLabel).toBe(GONE_HINT);
@@ -286,7 +286,7 @@ describe("FileTree 会话已删除", () => {
     clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机密钥已变更 127.0.0.1:22");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
     await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);
@@ -335,7 +335,7 @@ describe("FileTree 瞬时文件错误", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("连接被对端重置"));
     expect(button("重试")).toBeDefined();
     expect(button("重新连接这台主机")).toBeUndefined();
-    for (const ariaLabel of ["新建文件", "新建文件夹", "刷新文件列表", "上传到当前目录"]) {
+    for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
       expect(toolbarButton(ariaLabel)?.disabled, ariaLabel).toBe(false);
     }
 

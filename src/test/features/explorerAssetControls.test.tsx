@@ -502,7 +502,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
   });
 
   it("密码路径：未使用的凭据，提示不预设已有多个资产共用", async () => {
@@ -512,7 +512,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
@@ -529,7 +529,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("部署密钥"), "k1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
   });
 });
 
@@ -661,7 +661,7 @@ describe("snippets panel", () => {
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("回车/换行"),
+      expect.stringContaining("回车或换行"),
       expect.objectContaining({ kind: "warning" }),
     );
     const [tabId, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];

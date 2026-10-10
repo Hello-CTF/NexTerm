@@ -184,7 +184,7 @@ func terminalErrorMessage(err error) string {
 	}
 	switch provider.ClassifyError(err) {
 	case provider.ErrorClassRateLimit:
-		return "AI 服务请求过于频繁已被限流，请稍后重试"
+		return "AI 服务请求过于频繁，请稍后重试"
 	case provider.ErrorClassServer:
 		return "AI 服务暂时不可用（服务端错误），请稍后重试"
 	case provider.ErrorClassClient:

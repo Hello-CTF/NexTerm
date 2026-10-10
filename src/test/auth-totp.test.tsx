@@ -162,7 +162,7 @@ describe("AuthGate TOTP 挑战表单", () => {
     mounted = mount(createElement(AuthGate));
     await flushUntil(() => mounted!.container.textContent?.includes("两步验证"));
 
-    clickButton(mounted.container, "返回重新登录");
+    clickButton(mounted.container, "返回登录");
     await flush();
     expect(useAuth.getState().pendingMfa).toBeNull();
     await flushUntil(() => mounted!.container.querySelectorAll("input").length >= 2);

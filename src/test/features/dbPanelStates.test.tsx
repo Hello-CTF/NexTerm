@@ -102,15 +102,15 @@ describe("DbPanel MySQL 状态", () => {
     mocks.schemas.mockRejectedValue(new Error("连接已断开"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("数据库列表加载失败 · 连接已断开"));
-    expect(text()).not.toContain("这个库里没有表");
+    expect(text()).not.toContain("此数据库中没有表");
   });
 
-  it("重试后恢复，真空库才显示「这个库里没有表」", async () => {
+  it("重试后恢复，真空库才显示「此数据库中没有表」", async () => {
     mocks.schemas.mockRejectedValueOnce(new Error("连接已断开"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("数据库列表加载失败"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("这个库里没有表"));
+    await flushUntil(() => text().includes("此数据库中没有表"));
     expect(mocks.schemas).toHaveBeenCalledTimes(2);
   });
 
@@ -118,9 +118,9 @@ describe("DbPanel MySQL 状态", () => {
     mocks.tables.mockRejectedValueOnce(new Error("权限不足"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("表列表加载失败 · 权限不足"));
-    expect(text()).not.toContain("这个库里没有表");
+    expect(text()).not.toContain("此数据库中没有表");
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("这个库里没有表"));
+    await flushUntil(() => text().includes("此数据库中没有表"));
   });
 
   it("表列表成功后渲染表名 chips", async () => {
@@ -156,7 +156,7 @@ describe("DbPanel PostgreSQL 状态", () => {
     mocks.schemas.mockResolvedValue(["public"]);
     mocks.tables.mockResolvedValue([]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
-    await flushUntil(() => text().includes("这个 schema 里没有表或视图"));
+    await flushUntil(() => text().includes("此 schema 中没有表或视图"));
   });
 });
 

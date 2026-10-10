@@ -199,7 +199,7 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 	case profile.APIKey == MaskedAPIKey:
 		return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 	case m.protector == nil:
-		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")
+		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用，无法读取 AI 模型档案密钥")
 	default:
 		plaintext, err := m.protector.DecryptSecret(context.Background(), profile.APIKey)
 		if err != nil {

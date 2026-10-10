@@ -143,7 +143,7 @@ describe("M134 AI copy", () => {
     expect(allow).not.toBeNull();
     const alert = allow!.closest(".nx-alert");
     expect(alert).not.toBeNull();
-    expect(alert!.textContent).toContain("把它加为拦截规则");
+    expect(alert!.textContent).toContain("可添加拦截规则");
     expect(alert!.textContent).not.toContain("自定义危险操作");
   });
 
@@ -151,8 +151,8 @@ describe("M134 AI copy", () => {
     click(view!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("设备长期授权仅放行普通需确认的终端写入或命令执行");
-    expect(text).toContain("高危或无法判断的仍逐次确认");
+    expect(text).toContain("设备长期授权仅放行普通终端写入或命令执行");
+    expect(text).toContain("高危或无法判断的操作仍逐次确认");
   });
 
   it("explains the model selector without BYOK jargon", async () => {
@@ -171,7 +171,7 @@ describe("M134 AI copy", () => {
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 加密后保存在本机，只在发起请求时发向你配置的模型端点，不会上传到 NexTerm 的服务器。");
+    expect(text).toContain("API Key 加密后保存在本机，仅在发起请求时发送到你配置的模型端点，不会上传到 NexTerm 服务器。");
     expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();

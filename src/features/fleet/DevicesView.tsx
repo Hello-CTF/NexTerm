@@ -50,13 +50,13 @@ function installCommand(): string {
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
   const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
   if (!clipboard || typeof clipboard.writeText !== "function") {
-    pushToast("error", "复制失败: 剪贴板不可用, 请手动选中复制");
+    pushToast("error", "复制失败：剪贴板不可用，请手动复制");
     return;
   }
   void clipboard
     .writeText(text)
     .then(() => pushToast("success", `${what}已复制`))
-    .catch(() => pushToast("error", "复制失败, 请手动选中复制"));
+    .catch(() => pushToast("error", "复制失败，请手动复制"));
 }
 
 function FleetUnsupported() {
@@ -76,7 +76,7 @@ function FleetUnsupported() {
               桌面端暂无设备管理
             </div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
-              桌面端是本地优先模式, 没有账号体系; 设备管理仅在浏览器模式连接服务器并登录后可用。
+              桌面端是本地优先模式，没有账号体系；设备管理仅在浏览器模式连接服务器并登录后可用。
             </div>
           </div>
         </div>
@@ -138,7 +138,7 @@ function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean 
   if (!samples || samples.length === 0) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="nx-hint py-1">{online ? "设备还没有上报指标 (默认每 60 秒一次)。" : "设备离线, 没有近期指标。"}</span>
+        <span className="nx-hint py-1">{online ? "设备还没有上报指标（默认每 60 秒一次）。" : "设备离线，没有近期指标。"}</span>
         {refreshButton}
       </div>
     );
@@ -208,7 +208,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
   const heartbeatOnline = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
 
   const revoke = async () => {
-    const ok = await ask(`吊销设备「${device.name}」?\n\n吊销后设备凭证立即失效、控制通道断开, 且不可恢复。`, {
+    const ok = await ask(`吊销设备「${device.name}」？\n\n吊销后设备凭证立即失效、控制通道断开，且不可恢复。`, {
       title: "吊销设备",
       kind: "warning",
     });
@@ -229,7 +229,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     setBusy(true);
     try {
       await fleetApi.approve(device.id);
-      pushToast("success", `已批准「${device.name}」, 设备上线后即可使用`);
+      pushToast("success", `已批准「${device.name}」，设备上线后可用`);
       onPatch(device.id, { state: "active" });
     } catch (e) {
       pushToast("error", describeError(e));
@@ -239,7 +239,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
   };
 
   const reject = async () => {
-    const ok = await ask(`拒绝设备「${device.name}」的接入?\n\n拒绝后该设备立即被删除、凭证失效, 需要新接入码才能重新接入。`, {
+    const ok = await ask(`拒绝设备「${device.name}」的接入？\n\n拒绝后该设备立即被删除、凭证失效，需要新接入码才能重新接入。`, {
       title: "拒绝接入",
       kind: "warning",
     });
@@ -261,7 +261,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     const desired = !agent.desired_autostart;
     if (!online) {
       const ok = await ask(
-        `设备「${device.name}」当前离线。\n\n这次修改只保存为期望状态, 不会立即生效; 设备下次连接服务器后才会实际应用。`,
+        `设备「${device.name}」当前离线。\n\n此次修改仅保存为期望状态，设备下次连接服务器后生效。`,
         { title: "设备离线", kind: "info" },
       );
       if (!ok) return;
@@ -270,7 +270,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     try {
       const r = await fleetApi.setAutostart(device.id, desired);
       onPatch(device.id, { agent: { ...agent, desired_autostart: r.desired_autostart } });
-      pushToast("success", `已把「${device.name}」的期望自启动设为${r.desired_autostart ? "开启" : "关闭"}`);
+      pushToast("success", `已将「${device.name}」的期望自启动设为${r.desired_autostart ? "开启" : "关闭"}`);
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -295,7 +295,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
         {revoked ? (
           <span className="nx-badge nx-badge-red shrink-0">已吊销</span>
         ) : pending ? (
-          <span className="nx-badge nx-badge-amber shrink-0" title="管理员批准前设备不会上线, 也不同步数据">
+          <span className="nx-badge nx-badge-amber shrink-0" title="管理员批准前设备不会上线，也不同步数据">
             待审批
           </span>
         ) : agent ? (
@@ -328,7 +328,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
               disabled={busy}
-              title="拒绝并删除该待审批设备, 凭证立即失效"
+              title="拒绝并删除该待审批设备，凭证立即失效"
               onClick={() => void reject()}
             >
               <IconXCircle size={11} />
@@ -341,7 +341,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
             disabled={!online}
-            title={online ? "在这台设备上打开远程终端" : "设备离线, 无法打开终端"}
+            title={online ? "在这台设备上打开远程终端" : "设备离线，无法打开终端"}
             onClick={() => openDeviceTerminalTab(device)}
           >
             <IconTerminal size={11} />
@@ -363,7 +363,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
             disabled={busy}
-            title="吊销后设备凭证立即失效, 不可恢复"
+            title="吊销后设备凭证立即失效，不可恢复"
             onClick={() => void revoke()}
           >
             <IconTrash size={11} />
@@ -380,7 +380,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
 
       {pending && (
         <div className="mt-2 border-t border-neutral-800/60 pt-2 text-[12px] text-amber-300">
-          等待管理员批准: 批准前设备不会上线, 也不会同步任何数据。
+          等待管理员批准：批准前设备不会上线，也不会同步任何数据。
         </div>
       )}
 
@@ -406,7 +406,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
           </div>
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-neutral-300">
-            <label className="flex items-center gap-1.5" title="期望自启动: 服务端保存的期望状态, 设备 agent 下次连接时对齐">
+            <label className="flex items-center gap-1.5" title="期望自启动：服务端保存的目标状态，设备代理下次连接时应用">
               <input
                 type="checkbox"
                 checked={agent.desired_autostart}
@@ -430,11 +430,11 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
             </span>
             {serviceState?.last_error && (
               <span className="min-w-0 break-all text-red-300" title={serviceState.last_error}>
-                服务错误: {serviceState.last_error}
+                服务错误：{serviceState.last_error}
               </span>
             )}
             {!online && !revoked && (
-              <span className="nx-hint text-[11px]">设备离线: 修改只会保存为期望状态, 上线后生效</span>
+              <span className="nx-hint text-[11px]">设备离线：修改只会保存为期望状态，上线后生效</span>
             )}
           </div>
 
@@ -448,7 +448,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
 
       {!agent && !revoked && (
         <div className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-          该设备没有安装设备 agent, 没有运行状态与指标。
+          该设备未安装设备代理，没有运行状态和指标。
         </div>
       )}
     </section>
@@ -646,7 +646,7 @@ export function DevicesView() {
             </div>
             <div>
               <div className="text-[13px] text-neutral-300">
-                {authOff ? "这台服务器关闭了账号功能,设备管理不可用。" : "登录后才能查看与管理接入的设备。"}
+                {authOff ? "这台服务器关闭了账号功能，设备管理不可用。" : "登录后才能查看与管理接入的设备。"}
               </div>
               {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">登录入口在「设置 → 账号同步」里的「账号」卡。</div>}
             </div>
@@ -789,7 +789,7 @@ export function DevicesView() {
         {isAdmin && pendingCount > 0 && deviceFilter !== "pending" && (
           <div className="nx-alert nx-alert-info flex flex-wrap items-center gap-2">
             <IconInfo size={13} className="shrink-0" />
-            <span className="min-w-0 flex-1">{pendingCount} 台设备待审批: 批准后才能上线并同步数据。</span>
+            <span className="min-w-0 flex-1">{pendingCount} 台设备待审批：批准后才能上线并同步数据。</span>
             <button type="button" className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={() => setDeviceFilter("pending")}>
               查看待审批
             </button>
@@ -805,7 +805,7 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  签发一次性接入码, 在设备上执行命令, 再回到本页刷新并打开终端。接入码单次使用, 到期自动作废。
+                  签发一次性接入码，并在设备上执行接入命令。接入码只能使用一次，到期自动作废。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
@@ -830,7 +830,7 @@ export function DevicesView() {
                   </button>
                   {baseUrlsStatus !== "ready" && (
                     <span className="nx-hint text-[11px]">
-                      {baseUrlsStatus === "loading" ? "接入地址读取中, 成功后才能签发。" : "接入地址读取失败, 请在下方重试后签发。"}
+                      {baseUrlsStatus === "loading" ? "接入地址读取中，成功后才能签发。" : "接入地址读取失败，请在下方重试后签发。"}
                     </span>
                   )}
                 </div>
@@ -840,8 +840,7 @@ export function DevicesView() {
                 <div className="flex items-start gap-2">
                   <IconInfo size={14} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    接入码 <b>只显示这一次</b>, 单次使用, 有效期至 {formatTime(issued.expiresAt)}。
-                    它经服务器中转兑换成设备凭证; 凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
+                    接入码<b>仅显示一次</b>，只能使用一次，有效期至 {formatTime(issued.expiresAt)}。接入码经服务器兑换为设备凭证；凭证仅保存在设备本地，本页面不再显示。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -863,54 +862,54 @@ export function DevicesView() {
                     <div className="flex flex-wrap items-center gap-2 text-[12px] text-amber-300">
                       {isAdmin ? (
                         <>
-                          <span>还没有配置接入地址, 设备无法接入, 也无法生成接入命令。</span>
+                          <span>还没有配置接入地址，设备无法接入，也无法生成接入命令。</span>
                           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={jumpToBaseUrls}>
                             去配置接入地址
                           </button>
                         </>
                       ) : (
-                        <span>管理员还没有配置接入地址, 请联系管理员配置后再接入。</span>
+                        <span>管理员还没有配置接入地址，请联系管理员配置后再接入。</span>
                       )}
                     </div>
                   ) : (
                     <>
                       {serverVersion ? (
                         <>
-                          <div className="text-[12px] text-neutral-200">在设备上用<b>普通用户</b>执行一键接入命令:</div>
+                          <div className="text-[12px] text-neutral-200">在设备上用<b>普通用户</b>执行一键接入命令：</div>
                           {oneLineRows?.[0]}
                         </>
                       ) : (
                         <>
                           <div className="text-[12px] text-neutral-200">
-                            在设备上用<b>普通用户</b>依次执行两条命令: 第一条兑换设备凭证, 第二条安装后台服务。
+                            在设备上用<b>普通用户</b>依次执行两条命令：第一条兑换设备凭证，第二条安装后台服务。
                           </div>
                           {enrollRows?.[0]}
                           {installRow}
                         </>
                       )}
                       <div className="text-[11.5px] text-neutral-400">
-                        本页面不会替你安装, 也不会感知安装是否成功, 结果以设备上的输出为准。
+                        本页面不会执行安装，也无法确认安装结果；请以设备上的输出为准。
                       </div>
                       <details className="rounded border border-red-500/20 px-2 py-1.5">
-                        <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明: 多地址、手动接入与服务管理</summary>
+                        <summary className="cursor-pointer text-[11.5px] text-neutral-300">高级说明：多地址、手动接入与服务管理</summary>
                         <div className="mt-2 flex flex-col gap-1.5">
                           {baseUrls.length > 1 && (
                             <>
-                              <div className="text-[11.5px] text-neutral-400">其他接入地址按配置顺序作为备用, 第一个可达的即接入点:</div>
+                              <div className="text-[11.5px] text-neutral-400">其他接入地址按配置顺序作为备用，第一个可达的即接入点：</div>
                               {serverVersion ? oneLineRows?.slice(1) : enrollRows?.slice(1)}
                             </>
                           )}
                           {serverVersion && (
                             <>
                               <div className="text-[11.5px] text-neutral-400">
-                                设备已安装 nexterm-server 时, 也可手动执行 enroll 与 install:
+                                设备已安装 nexterm-server 时，也可手动执行 enroll 与 install：
                               </div>
                               {enrollRows}
                               {installRow}
                             </>
                           )}
                           <div className="text-[11.5px] text-neutral-400">
-                            agent install 会安装随登录自动启动的 per-user 后台服务 (systemd --user / launchd); 数据目录默认取用户数据目录, 可用 NEXTERM_DATA_DIR 统一覆盖 enroll 与 install。
+                            agent install 会安装随用户登录自动启动的后台服务（systemd --user / launchd）；数据目录默认使用用户数据目录，可通过 NEXTERM_DATA_DIR 同时覆盖 enroll 和 install。
                           </div>
                         </div>
                       </details>
@@ -918,11 +917,11 @@ export function DevicesView() {
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
                     <span className="text-[12px] text-neutral-200">
-                      执行完成后刷新, 设备会出现在下方列表里: 首台直接「在线」; 之后接入的设备为「待审批」, 管理员批准上线后再点设备卡片上的「终端」。
+                      执行完成后刷新列表：首台设备会直接上线；后续设备需管理员批准，再从设备卡片打开「终端」。
                     </span>
                     <button type="button" className="nx-btn nx-btn-primary nx-btn-sm shrink-0" disabled={loading} onClick={() => void load()}>
                       <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
-                      我已完成, 刷新
+                      刷新设备列表
                     </button>
                   </div>
                 </div>
@@ -943,7 +942,7 @@ export function DevicesView() {
         )}
 
         {devices !== null && devices.length === 0 && !error && (
-          <div className="nx-hint py-2 text-center text-[12px]">还没有设备接入: 点右上角「接入新设备」, 按面板提示完成接入。</div>
+          <div className="nx-hint py-2 text-center text-[12px]">还没有接入设备，请选择右上角「接入新设备」并按提示操作。</div>
         )}
         {devices !== null && devices.length > 0 && visibleDevices?.length === 0 && (
           <div className="nx-hint py-2 text-center text-[12px]">没有符合当前搜索或过滤条件的设备。</div>
@@ -984,7 +983,7 @@ export function DevicesView() {
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          设备列表由服务端按角色过滤: 普通用户只看自己的设备, 超级管理员看全部。
+          设备列表由服务端按角色过滤：普通用户只看自己的设备，超级管理员看全部。
         </span>
       </div>
     </div>

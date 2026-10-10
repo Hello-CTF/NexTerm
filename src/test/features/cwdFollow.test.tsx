@@ -224,7 +224,7 @@ describe("FileTree 跟随终端目录", () => {
     await flush();
 
     emitControl({ tabId: "k1", version: 1, cwd: "/bad/one" });
-    await waitFor(() => expect(toastTexts().join("\n")).toContain("无法跟随终端目录到 /bad/one"));
+    await waitFor(() => expect(toastTexts().join("\n")).toContain("无法跟随终端切换到 /bad/one"));
     expect(toastTexts()).toHaveLength(1);
     expect(mounted!.container.textContent).not.toContain("bad");
 

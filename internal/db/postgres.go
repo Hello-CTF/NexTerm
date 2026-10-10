@@ -183,7 +183,7 @@ func postgresSchema(ctx context.Context, connection *postgresConnection, schema 
 		return "", internalError("读取当前 PostgreSQL schema", err)
 	}
 	if !current.Valid || current.String == "" {
-		return "", badParam(errors.New("未选择 schema，请提供 schema"))
+		return "", badParam(errors.New("请选择 schema"))
 	}
 	return current.String, nil
 }

@@ -17,9 +17,9 @@ const POLL_MS = 5000;
 
 function persistenceFootnote(): string {
   if (TRANSPORT === "web") {
-    return "这里的终端进程都跑在服务端：关掉本页面、换一台设备打开，它们都还在。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
+    return "终端进程在服务端运行，关闭页面或更换设备后仍会保留。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
   }
-  return "SSH 持久终端由本机后台服务保持，其他已分离终端随本应用退出而结束。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
+  return "SSH 持久终端由本机后台服务保持运行，其他已分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
 }
 
 function runningCopy(count: number): string {
@@ -87,7 +87,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
         closable: true,
       });
       setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
-      pushToast("info", `已接回「${session?.name ?? info.sessionName}」的终端`);
+      pushToast("info", `已接管「${session?.name ?? info.sessionName}」的终端`);
     } catch (e) {
       pushToast("error", `接管失败：${describeError(e)}`);
     } finally {
@@ -101,7 +101,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
 
   const kill = async (info: LiveTabInfo) => {
     const ok = await ask(
-      `结束「${info.sessionName}」的这个后台终端？\n\n正在里面跑的进程会被终止，无法恢复。`,
+      `结束「${info.sessionName}」的后台终端？\n\n其中的进程将终止，且无法恢复`,
       { title: "结束进程", kind: "warning" },
     );
     if (!ok) return;
@@ -189,7 +189,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                       <button
                         className="nx-btn nx-btn-primary nx-btn-xs"
                         disabled={rowBusy}
-                        title="在界面上接回这个终端（会回放已有的输出，不新开 shell）"
+                        title="接管此终端（回放已有输出，不新建 shell）"
                         onClick={() => void takeOver(t)}
                       >
                         {action === "takeover" ? (
@@ -229,7 +229,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={4} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的 SSH 终端标签不会结束里面的进程：它会留在这里继续运行，随时可以点「接管」接回。
+                    关闭运行中的 SSH 终端标签不会终止进程，之后可在此接管
                   </div>
                 </td>
               </tr>

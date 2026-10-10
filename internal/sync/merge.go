@@ -866,7 +866,7 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 				incarnation = &local
 			}
 			if err := e.knownHostTombstoneLoser(ctx, payload, incarnation, conflict.AddedAt); err != nil {
-				report.warnf("已知主机败者 %s 的删除墓碑记录失败: %v", payload.ID, err)
+				report.warnf("已知主机冲突项 %s 的删除墓碑记录失败：%v", payload.ID, err)
 				return false, false
 			}
 			return false, false
@@ -896,17 +896,17 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 	if exists && conflict && (local.Host != payload.Host || local.Port != payload.Port || local.KeyType != payload.KeyType) {
 		newID, err := e.knownHostReincarnationID(&local)
 		if err != nil {
-			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
 			return false, false
 		}
 		tx, err := e.store.DB().BeginTx(ctx, nil)
 		if err != nil {
-			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
 			return false, false
 		}
 		defer func() { _ = tx.Rollback() }()
 		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", newID, local.ID); err != nil {
-			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
 			return false, false
 		}
 		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}

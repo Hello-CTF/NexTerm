@@ -37,7 +37,7 @@ export class CryptoError extends Error {
 
 function requireSubtle(): SubtleCrypto {
   if (typeof crypto === "undefined" || !crypto.subtle) {
-    throw new CryptoError("crypto", "当前环境不支持 WebCrypto(需要 HTTPS 或 localhost)");
+    throw new CryptoError("crypto", "当前环境不支持 Web Crypto（需要 HTTPS 或 localhost）");
   }
   return crypto.subtle;
 }
@@ -83,7 +83,7 @@ export async function aesGcmSeal(key: Uint8Array, plaintext: Uint8Array, aad: Ui
 
 export async function aesGcmOpen(key: Uint8Array, blob: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
   if (blob.length <= NONCE_LENGTH) {
-    throw new CryptoError("decrypt", "凭据解密失败: 信封长度不合法");
+    throw new CryptoError("decrypt", "解密失败：加密数据格式无效");
   }
   const subtle = requireSubtle();
   const cryptoKey = await importAesKey(key, "decrypt");
@@ -117,7 +117,7 @@ export function parseKdfParams(raw: string): KdfParams {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new CryptoError("bad_param", "参数错误: KDF 参数不是合法 JSON");
+    throw new CryptoError("bad_param", "参数错误：密钥派生参数格式无效");
   }
   const params = parsed as Partial<KdfParams>;
   if (
@@ -126,14 +126,14 @@ export function parseKdfParams(raw: string): KdfParams {
     params.m < KDF_LIMITS.minMemoryKiB || params.m > KDF_LIMITS.maxMemoryKiB ||
     params.p === 0 || params.p > KDF_LIMITS.maxThreads
   ) {
-    throw new CryptoError("bad_param", "参数错误: KDF 参数越界");
+    throw new CryptoError("bad_param", "参数错误：密钥派生参数超出允许范围");
   }
   return { t: params.t, m: params.m, p: params.p };
 }
 
 async function deriveUserKEK(password: string, salt: Uint8Array, params: KdfParams): Promise<Uint8Array> {
   if (salt.length < 16) {
-    throw new CryptoError("crypto", "加密错误: salt 过短");
+    throw new CryptoError("crypto", "加密失败：盐值长度不足");
   }
   return argon2idKey(utf8Bytes(password), salt, params.t, params.m, params.p, DEK_LENGTH);
 }
@@ -154,7 +154,7 @@ export function generateDEK(): Uint8Array {
 
 export async function wrapDEKWithPassword(password: string, dek: Uint8Array): Promise<{ envelope: Uint8Array; salt: Uint8Array; params: string }> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密错误: DEK 长度不合法");
+    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
   }
   const salt = randomBytes(16);
   const kek = await deriveUserKEK(password, salt, KDF_DEFAULTS);
@@ -166,11 +166,11 @@ export async function unwrapDEKWithPassword(password: string, envelope: Uint8Arr
   const params = parseKdfParams(paramsRaw);
   const kek = await deriveUserKEK(password, salt, params);
   if (envelope.length !== NONCE_LENGTH + DEK_LENGTH + TAG_LENGTH) {
-    throw new CryptoError("decrypt", "凭据解密失败: DEK 信封长度不合法");
+    throw new CryptoError("decrypt", "解密失败：数据密钥格式无效");
   }
   const dek = await aesGcmOpen(kek, envelope, utf8Bytes(userDEKAAD));
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("decrypt", "凭据解密失败: DEK 长度不合法");
+    throw new CryptoError("decrypt", "解密失败：数据密钥长度无效");
   }
   return dek;
 }
@@ -191,7 +191,7 @@ function recoveryKeyMaterial(canonical: string): Uint8Array {
 
 export async function wrapDEKWithRecovery(canonicalRecoveryKey: string, dek: Uint8Array): Promise<Uint8Array> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密错误: DEK 长度不合法");
+    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
   }
   const kek = recoveryKeyMaterial(canonicalRecoveryKey);
   return aesGcmSeal(kek, dek, utf8Bytes(userDEKRecoveryAAD));
@@ -199,12 +199,12 @@ export async function wrapDEKWithRecovery(canonicalRecoveryKey: string, dek: Uin
 
 export async function unwrapDEKWithRecovery(canonicalRecoveryKey: string, envelope: Uint8Array): Promise<Uint8Array> {
   if (envelope.length !== NONCE_LENGTH + DEK_LENGTH + TAG_LENGTH) {
-    throw new CryptoError("decrypt", "凭据解密失败: 恢复信封长度不合法");
+    throw new CryptoError("decrypt", "解密失败：恢复数据格式无效");
   }
   const kek = recoveryKeyMaterial(canonicalRecoveryKey);
   const dek = await aesGcmOpen(kek, envelope, utf8Bytes(userDEKRecoveryAAD));
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("decrypt", "凭据解密失败: DEK 长度不合法");
+    throw new CryptoError("decrypt", "解密失败：数据密钥长度无效");
   }
   return dek;
 }
@@ -276,7 +276,7 @@ function objectAAD(id: string, kind: string): Uint8Array {
 
 export async function sealSyncObject(dek: Uint8Array, plaintext: Uint8Array, id: string, kind: SyncObjectKind): Promise<Uint8Array> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密错误: DEK 长度不合法");
+    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
   }
   return aesGcmSeal(dek, plaintext, objectAAD(id, kind));
 }

@@ -367,7 +367,7 @@ export function AssetTree() {
         kind: "item",
         label: "复制链接",
         icon: <IconGlobe size={13} />,
-        hint: "nexterm:// 链接, 可拉起客户端",
+        hint: "nexterm:// 链接，可打开 NexTerm 客户端",
         onSelect: () => copyAssetDeepLink(asset.id),
       },
       isHidden(asset.id)
@@ -400,8 +400,8 @@ export function AssetTree() {
         {hiddenIds.length > 0 && (
           <button
             className={`nx-icon-btn nx-icon-btn-sm ${showHidden ? "is-active" : ""}`}
-            title={showHidden ? "隐藏已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`}
-            aria-label={showHidden ? "隐藏已隐藏的资产" : "显示已隐藏的资产"}
+            title={showHidden ? "收起已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`}
+            aria-label={showHidden ? "收起已隐藏的资产" : "显示已隐藏的资产"}
             onClick={() => setShowHidden(!showHidden)}
           >
             {showHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
@@ -1873,7 +1873,7 @@ export function AssetEditor({
                   className="nx-input font-mono text-[12px]"
                   value={shell}
                   onChange={(e) => setShell(e.target.value)}
-                  placeholder="留空用系统默认（$SHELL / pwsh）"
+                  placeholder="留空使用系统默认（$SHELL / pwsh）"
                 />
               </div>
               <div className="nx-form-row">
@@ -1882,7 +1882,7 @@ export function AssetEditor({
                   className="nx-input font-mono text-[12px]"
                   value={cwd}
                   onChange={(e) => setCwd(e.target.value)}
-                  placeholder="留空用家目录"
+                  placeholder="留空使用用户主目录"
                 />
               </div>
               <div className="nx-hint mb-3">
@@ -2031,7 +2031,7 @@ export function AssetEditor({
                       <div className="nx-hint mt-1.5">
                         {webFiles
                           ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
-                          : "↳ 只保存路径，私钥内容不进入凭据库，与系统 ssh 共用同一份文件。文件移动或删除后会连不上，改这里的路径即可。"}
+                          : "↳ 仅保存路径并与系统 ssh 共用私钥文件，私钥内容不存入凭据库；文件移动或删除后，请更新此路径。"}
                       </div>
                     </>
                   ) : (
@@ -2125,7 +2125,7 @@ export function AssetEditor({
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。</div>
+                            <div className="nx-hint mt-1.5">↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。</div>
                           )}
                         </>
                       )}
@@ -2143,14 +2143,14 @@ export function AssetEditor({
                       onChange={(e) => setPassphrase(e.target.value)}
                       placeholder={
                         keyOrigin === "vault" && vaultMode === "existing"
-                          ? "口令跟着所选凭据，改它请去凭据库"
-                          : "没有就留空"
+                          ? "口令随所选凭据管理，请在凭据库中修改"
+                          : "无口令时留空"
                       }
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 选填。私钥本身带口令才需要填，连接时自动使用。
+                      ↳ 私钥设有口令时填写，连接时自动使用。
                       {keyOrigin === "ref" && !passphrase
-                        ? " 留空时只引用本地文件，凭据库不存内容。"
+                        ? " 留空时仅引用本地文件，不保存私钥内容。"
                         : ""}
                     </div>
                   </div>
@@ -2199,7 +2199,7 @@ export function AssetEditor({
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。</div>
+                    <div className="nx-hint mt-1">↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。</div>
                   ) : null}
                 </div>
               )}
@@ -2237,7 +2237,7 @@ export function AssetEditor({
                           ))}
                         </select>
                         <div className="nx-hint mt-1.5">
-                          ↳ 先登录跳板机，再从它连到本资产；跳板机和本资产各自验证凭据。
+                          ↳ 先登录跳板机，再连接目标资产；两者分别验证凭据。
                         </div>
                       </div>
 
@@ -2250,7 +2250,7 @@ export function AssetEditor({
                           placeholder="nc %h %p"
                         />
                         <div className="nx-hint mt-1.5">
-                          ↳ 选填。用外部命令建立连接，%h 是主机、%p 是端口、%% 是字面 %。
+                          ↳ 选填。使用外部命令建立连接；%h 为主机，%p 为端口，%% 为百分号。
                         </div>
                       </div>
 
@@ -2275,7 +2275,7 @@ export function AssetEditor({
                             className="nx-input font-mono text-[12px] mt-1.5"
                             value={agentSocket}
                             onChange={(e) => setAgentSocket(e.target.value)}
-                            placeholder="留空用 $SSH_AUTH_SOCK"
+                            placeholder="留空使用 $SSH_AUTH_SOCK"
                           />
                         )}
                       </div>
@@ -2338,8 +2338,7 @@ export function AssetEditor({
                             placeholder={"每行一个 KEY=VALUE\n例如：\nLANG=en_US.UTF-8"}
                           />
                           <div className="nx-hint mt-1.5">
-                            ↳ 选填。连接时通过 SSH 环境变量请求下发到新终端；需服务端 sshd 配置 AcceptEnv
-                            才生效，被服务端拒绝时不影响连接。
+                            ↳ 选填。连接时通过 SSH 请求设置这些环境变量；需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。
                           </div>
                         </div>
                       </div>

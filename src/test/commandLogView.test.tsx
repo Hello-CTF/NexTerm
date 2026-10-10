@@ -153,7 +153,7 @@ describe("AuditView 命令视图", () => {
     expect(body).toContain("✓ 0");
     expect(body).toContain("✗ 1");
     expect(body).toContain("—");
-    expect(body).toContain("只覆盖启用了 OSC 133 shell 集成的会话");
+    expect(body).toContain("仅覆盖启用 OSC 133 shell 集成的会话");
     expect(body).toContain("共 3 条");
   });
 
@@ -191,7 +191,7 @@ describe("AuditView 命令视图", () => {
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
     clickButton(mounted.container, "命令");
     await flushUntil(() => text(mounted!.container).includes("暂无记录"));
-    expect(text(mounted.container)).toContain("只有在支持 OSC 133 shell 集成的 shell 里执行的命令才会被记录");
+    expect(text(mounted.container)).toContain("仅记录启用了 OSC 133 集成的 shell 中执行的命令");
     expect(text(mounted.container)).toContain("命令文本取自执行时的屏幕行");
 
     mocks.commandQuery.mockRejectedValue(new Error("网络中断"));

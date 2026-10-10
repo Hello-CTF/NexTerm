@@ -45,7 +45,7 @@ func TestR1IndeterminateWriteIsReconciledOnceWithoutRetry(t *testing.T) {
 }
 
 func TestR1WriteDescriptionsDiscloseBothSemantics(t *testing.T) {
-	if !strings.Contains(einoDescriptions["write_file"], "no-clobber") || !strings.Contains(einoDescriptions["write_file"], "非事务覆盖") {
+	if !strings.Contains(einoDescriptions["write_file"], "以原子方式创建新文件") || !strings.Contains(einoDescriptions["write_file"], "覆盖现有文件需用户授权") {
 		t.Fatalf("write_file description = %q", einoDescriptions["write_file"])
 	}
 	if !strings.Contains(einoDescriptions["edit_file"], "非事务覆盖") {

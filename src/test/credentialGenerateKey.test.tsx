@@ -153,7 +153,7 @@ describe("生成密钥对对话框", () => {
   it("解锁失败当场报错，不生成且表单保留", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, mode: "master", unlocked: false });
     mocks.promptText.mockResolvedValue("wrong-password");
-    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
     mounted = mountModal();
     const nameInput = mounted.container.querySelector<HTMLInputElement>(
       'input[placeholder="例如：github-deploy"]',
@@ -162,7 +162,7 @@ describe("生成密钥对对话框", () => {
     clickButton(mounted.container, "生成并入库");
 
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误"),
     );
     expect(mocks.generateKey).not.toHaveBeenCalled();
     await flush();

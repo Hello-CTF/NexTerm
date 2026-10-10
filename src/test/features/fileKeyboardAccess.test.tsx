@@ -347,7 +347,7 @@ describe("useFileOps 对话框文案（纯文本）", () => {
     expect(notice).toBeTruthy();
     const message = String(notice![0]);
     expect(message).not.toContain("**");
-    expect(message).toContain("指向目标");
+    expect(message).toContain("修改链接目标的权限");
     expect(message).toContain("~/a.txt");
     expect(notice![1]).toEqual(expect.objectContaining({ kind: "warning" }));
   });
@@ -367,7 +367,7 @@ describe("useFileOps 对话框文案（纯文本）", () => {
     const message = String(confirm![0]);
     expect(message).not.toContain("⚠");
     expect(message).toContain("~/a.txt");
-    expect(message).toContain("新权限移除了所有者的读取或写入");
+    expect(message).toContain("新权限会移除所有者的读取或写入权限");
     expect(confirm![1]).toEqual(expect.objectContaining({ kind: "warning" }));
   });
 });

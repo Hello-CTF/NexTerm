@@ -19,7 +19,7 @@ func TestR3DeletedExistingUsesAtomicCreate(t *testing.T) {
 	}
 	delete(files.files, "/a")
 	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s"}, write, preparation)
-	if !result.OK || !strings.Contains(result.Text, "已创建") || !strings.Contains(result.Text, "原子 no-clobber") {
+	if !result.OK || !strings.Contains(result.Text, "已创建") || !strings.Contains(result.Text, "原子写入") {
 		t.Fatalf("deleted-existing create result = %+v", result)
 	}
 	if _, ok := files.files["/a.nexterm-bak"]; ok {

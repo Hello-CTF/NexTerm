@@ -204,7 +204,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
-    expect(text).toContain("主机密钥已变更 10.0.0.8:22");
+    expect(text).toContain("主机 10.0.0.8:22 的密钥已变更");
     expect(text).toContain("SHA256:oldfp");
     expect(text).toContain("SHA256:newfp");
 
@@ -295,7 +295,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     await waitFor(() => expect(dialog()).not.toBeNull());
 
     const text = dialog()?.textContent ?? "";
-    expect(text).toContain("主机密钥已变更 jump.example:22");
+    expect(text).toContain("主机 jump.example:22 的密钥已变更");
     expect(text).toContain("SHA256:jumpold");
     expect(text).toContain("SHA256:jumpnew");
 

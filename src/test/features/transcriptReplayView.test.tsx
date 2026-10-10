@@ -113,7 +113,7 @@ describe("TranscriptReplayView", () => {
     });
     const terminal = terminalMocks.instances[0];
     const playButton = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.getAttribute("aria-label") === "播放回放",
+      (candidate) => candidate.getAttribute("aria-label") === "开始回放",
     );
     expect(playButton).toBeDefined();
 
@@ -148,7 +148,7 @@ describe("TranscriptReplayView", () => {
     });
     const terminal = terminalMocks.instances[0];
     const playButton = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.getAttribute("aria-label") === "播放回放",
+      (candidate) => candidate.getAttribute("aria-label") === "开始回放",
     );
     act(() => {
       playButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -184,7 +184,7 @@ describe("TranscriptReplayView", () => {
     });
     const terminal = terminalMocks.instances[0];
     const playButton = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.getAttribute("aria-label") === "播放回放",
+      (candidate) => candidate.getAttribute("aria-label") === "开始回放",
     );
     act(() => {
       playButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -209,7 +209,7 @@ describe("TranscriptReplayView", () => {
     expect(mounted.container.textContent).toContain("仅保留元数据");
     expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
     expect(
-      mounted.container.querySelector<HTMLButtonElement>('button[aria-label="播放回放"]')?.disabled,
+      mounted.container.querySelector<HTMLButtonElement>('button[aria-label="开始回放"]')?.disabled,
     ).toBe(true);
   });
 });

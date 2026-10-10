@@ -116,7 +116,7 @@ describe("SyncBundleCard 网页版资产包", () => {
 
     const row = [...mounted!.container.querySelectorAll("label")].find((l) => l.textContent?.includes("web-01"))!;
     click(row.querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    clickButton(mounted!.container, "导出资产包（.nxbm）");
     await flushUntil(() => text().includes("已导出"));
 
     expect(mocks.saveBundleBytes).toHaveBeenCalledOnce();

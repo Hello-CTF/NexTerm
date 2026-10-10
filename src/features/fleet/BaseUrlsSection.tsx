@@ -107,7 +107,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                 ? isAdmin
                   ? "未配置：新设备无法接入，展开以添加"
                   : "未配置：新设备无法接入，请联系超级管理员"
-                : `${draft.length} 个地址 · ${draft[0].url}${draft.length > 1 ? " 等" : ""} · 按顺序尝试，第一个可达的即当前接入点`}
+                : `${draft.length} 个地址 · ${draft[0].url}${draft.length > 1 ? " 等" : ""} · 按顺序尝试，以第一个可达地址为当前接入点`}
         </span>
         {dirty && status === "ready" && <span className="nx-badge nx-badge-amber shrink-0">有未保存的修改</span>}
         {status === "error" && (
@@ -137,13 +137,13 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       {open && status === "ready" && (
         <>
           <p className="nx-hint mb-3 mt-1">
-            接入地址是设备用来连接这台 NexTerm 服务器的地址 (如 https://nexterm.example.com); 新设备接入时按此顺序拿到地址列表, 保存只影响之后接入的设备, 已接入设备仍使用注册时拿到的列表。
+            接入地址用于设备连接此 NexTerm 服务器（如 https://nexterm.example.com）。新设备按列表顺序获取地址；保存仅影响之后接入的设备，已接入设备仍使用原列表。
             {!isAdmin && " 仅超级管理员可修改。"}
           </p>
 
           {draft.length === 0 && (
             <div className="nx-hint py-1 text-[12px]">
-              {isAdmin ? "还没有配置接入地址: 新设备无法接入。请在下方添加设备能访问到的服务器地址。" : "还没有配置接入地址: 新设备无法接入, 请联系超级管理员配置。"}
+              {isAdmin ? "还没有配置接入地址：新设备无法接入。请在下方添加设备能访问到的服务器地址。" : "还没有配置接入地址：新设备无法接入，请联系超级管理员配置。"}
             </div>
           )}
 
@@ -159,7 +159,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                     {entry.url}
                   </code>
                   {entry.insecure && (
-                    <span className="nx-badge nx-badge-amber shrink-0" title="允许明文 HTTP 或跳过 TLS 校验, 仅限内网/自签名环境">
+                    <span className="nx-badge nx-badge-amber shrink-0" title="允许明文 HTTP 或跳过 TLS 校验，仅限内网或自签名证书环境">
                       不安全传输
                     </span>
                   )}
@@ -233,7 +233,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                       setInputError(null);
                     }}
                   />
-                  允许明文 HTTP / 跳过 TLS 校验
+                  允许明文 HTTP 或跳过 TLS 校验
                 </label>
                 <button
                   type="button"
@@ -265,13 +265,9 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                   onClick={() => void save()}
                 >
                   <IconSave size={12} />
-                  {saving ? "保存中…" : "保存顺序与修改"}
+                  {saving ? "保存中…" : "保存修改"}
                 </button>
-                {saving ? (
-                  <span className="nx-hint text-[11px]">保存中, 编辑已锁定…</span>
-                ) : (
-                  dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>
-                )}
+                {!saving && dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>}
               </div>
             </div>
           )}

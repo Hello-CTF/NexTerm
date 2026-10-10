@@ -17,13 +17,13 @@ func TestProductionStartupCommandRejectedForNonSSHAssets(t *testing.T) {
 		`{"args":{"kind":"winrm","name":"winrm-startup","host":"127.0.0.1","port":5985,"username":"test","options":{"startupCommand":"echo hi"}}}`)
 	var winrmAsset assetDTO
 	requireStoreTestResponse(t, winrmResponse, &winrmAsset)
-	requireConnectorConnectError(t, production, winrmAsset.ID, "启动命令仅支持 SSH 资产")
+	requireConnectorConnectError(t, production, winrmAsset.ID, "仅 SSH 资产支持启动命令")
 
 	localResponse := dispatchHostKeyTest(t, production, "asset_create",
 		`{"args":{"kind":"local","name":"local-startup","options":{"startupCommand":"echo hi"}}}`)
 	var localAsset assetDTO
 	requireStoreTestResponse(t, localResponse, &localAsset)
-	requireConnectorConnectError(t, production, localAsset.ID, "启动命令仅支持 SSH 资产")
+	requireConnectorConnectError(t, production, localAsset.ID, "仅 SSH 资产支持启动命令")
 
 	sshID := createConnectorTestAsset(t, production, "ssh-startup", "127.0.0.1", server.port(), "password", credID,
 		`{"startupCommand":"echo hi","autoAcceptUnknownHost":true}`)

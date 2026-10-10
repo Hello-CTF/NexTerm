@@ -271,10 +271,10 @@ describe("ModelManager timeouts and connectivity testing", () => {
   }
 
   it("shows saved timeout values and saves edits", async () => {
-    expect(inputByLabel("stream/block 总超时").value).toBe("300");
-    expect(inputByLabel("stream/block 空闲超时").value).toBe("60");
-    setInputValue(inputByLabel("stream/block 总超时"), "30");
-    setInputValue(inputByLabel("stream/block 空闲超时"), "0");
+    expect(inputByLabel("请求总超时").value).toBe("300");
+    expect(inputByLabel("响应空闲超时").value).toBe("60");
+    setInputValue(inputByLabel("请求总超时"), "30");
+    setInputValue(inputByLabel("响应空闲超时"), "0");
     expect(view3!.container.textContent).toContain("有未保存的修改");
     clickButton(view3!.container, "保存");
     await flush();
@@ -308,7 +308,7 @@ describe("ModelManager timeouts and connectivity testing", () => {
 
   it("disables the test button for unsaved or dirty drafts", async () => {
     expect(testButton().disabled).toBe(false);
-    setInputValue(inputByLabel("stream/block 总超时"), "30");
+    setInputValue(inputByLabel("请求总超时"), "30");
     expect(testButton().disabled).toBe(true);
     click(view3!.container.querySelector('button[title="新增档案"]')!);
     await flush();

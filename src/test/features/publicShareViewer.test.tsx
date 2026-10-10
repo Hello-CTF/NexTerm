@@ -263,8 +263,8 @@ describe("PublicShareApp", () => {
     const view = await mountViewer();
     lastSocket().emitClose(1006, "", false);
     await flush();
-    expect(view.container.textContent).toContain("无法连接到分享");
-    expect(view.container.textContent).toContain("链接无效、已过期或已被吊销");
+    expect(view.container.textContent).toContain("无法连接分享终端");
+    expect(view.container.textContent).toContain("链接可能无效、已过期或已吊销");
     clickButton(view.container, "重新连接");
     await flush();
     expect(FakeWebSocket.instances).toHaveLength(2);

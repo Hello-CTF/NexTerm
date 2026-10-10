@@ -224,7 +224,7 @@ describe("FileTree row actions", () => {
     openRowMore(rowByName(mounted!.container, "logs"));
     await flush();
     const labels = menuLabels();
-    expect(labels).toContain("打包下载当前文件夹");
+    expect(labels).toContain("打包下载当前目录");
     expect(labels).toContain("删除");
     expect(labels).not.toContain("下载当前文件");
     expect(labels).not.toContain("校验值…");

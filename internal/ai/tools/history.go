@@ -78,7 +78,7 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 	text, truncated := capText(text)
 	prefix := fmt.Sprintf("[本机 %s shell 历史，最新 %d 条]\n", shell, len(entries))
 	if r.remoteAsset(ctx, scope) {
-		prefix = "[注意] 当前会话是远端资产；以下为 NexTerm 所在本机的 shell 历史，不是远端机器的历史。\n" + prefix
+		prefix = "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n" + prefix
 	}
 	return Output{OK: true, Text: prefix + text, Truncated: truncated}
 }

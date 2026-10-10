@@ -263,7 +263,7 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 			}
 			secret, err := s.vault.DecryptCredentialString(ctx, credRow)
 			if err != nil {
-				bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("凭据 %s 解密失败, 本次导出跳过该凭据: %v", credID, err))
+				bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("凭据 %s 解密失败，导出时已跳过：%v", credID, err))
 				continue
 			}
 			bundle.Creds = append(bundle.Creds, SyncBundleCredential{
@@ -419,7 +419,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			continue
 		}
 		if blockedCredIDs[id] {
-			warnf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", id)
+			warnf("凭据 %s 关联的资产版本较新或导入被拒，本机凭据保持不变", id)
 			continue
 		}
 		name := strings.TrimSpace(payload.Name)

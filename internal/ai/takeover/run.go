@@ -277,7 +277,7 @@ func (m *Manager) consume(iterCtx context.Context, state *runState, iterator *ad
 		}
 		if event.Err != nil {
 			if errors.Is(event.Err, adk.ErrExceedMaxIterations) {
-				return runResult{answer: fmt.Sprintf("已达到最大 %d 步接管上限", state.args.MaxSteps), reason: "达到最大步骤", steps: state.args.MaxSteps}
+				return runResult{answer: fmt.Sprintf("已达到 %d 步接管上限", state.args.MaxSteps), reason: "达到最大步骤", steps: state.args.MaxSteps}
 			}
 			return runResult{err: event.Err}
 		}
@@ -640,7 +640,7 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input to
 		if recorded.State == execStateDone {
 			return recorded.Output, nil
 		}
-		return tools.Fail(errors.New("相同调用已执行过但结果未知，为避免重复写入未再次发送；请读取屏幕确认终端状态")), nil
+		return tools.Fail(errors.New("该调用已执行但结果未知，未重复发送；请读取屏幕确认终端状态")), nil
 	}
 	records[callID] = execRecord{State: execStateAttempt}
 	if err := e.manager.saveExecRecords(ctx, e.state.id, records); err != nil {
@@ -651,7 +651,7 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input to
 	}
 	records[callID] = execRecord{State: execStateDone, Output: tools.OK("已发送")}
 	if err := e.manager.saveExecRecords(ctx, e.state.id, records); err != nil {
-		return tools.Fail(fmt.Errorf("写入已发生但结果记录失败，请读取屏幕确认: %w", err)), nil
+		return tools.Fail(fmt.Errorf("已写入终端，但结果记录失败，请读取屏幕确认：%w", err)), nil
 	}
 	e.auditWrite(ctx, callID, input, len(encoded), false)
 	return tools.OK("已发送"), nil

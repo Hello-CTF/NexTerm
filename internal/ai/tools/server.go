@@ -394,7 +394,7 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	next := start + uint64(len(data))
 	header := fmt.Sprintf("新输出（序号 %d → %d，最新 %d）", start, next, latest)
 	if start > sinceSeq {
-		header += "；锚点已过期，从最早保留输出开始"
+		header += "；锚点已过期，改为读取最早保留的输出"
 	}
 	more := next < latest
 	if more {
@@ -524,7 +524,7 @@ func (r *Registry) waitBusyClear(ctx, waitContext context.Context, tabID string,
 			return r.commandFinishOutput(ctx, tabID, state, busySeq, "发送时已有命令在运行，该命令已结束")
 		}
 		if grace.Err() != nil {
-			return r.commandFinishOutput(ctx, tabID, state, busySeq, "发送时已有命令在运行，仍在运行（本次按键已送入该程序）")
+			return r.commandFinishOutput(ctx, tabID, state, busySeq, "发送前已有命令在运行，该命令仍在运行（本次按键已送入该程序）")
 		}
 		select {
 		case <-grace.Done():

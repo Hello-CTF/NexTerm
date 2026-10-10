@@ -275,7 +275,7 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.sessionId).toBe("s2");
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
     expect(storeTab()?.tabId).toBe("kernel-1");
-    expect(toastTexts()).toContain("正在接回原来的终端");
+    expect(toastTexts()).toContain("正在恢复原终端");
   });
 
   it("falls back to a fresh terminal when the resumed id is still not found", async () => {
@@ -299,7 +299,7 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.dead).toBe(false);
     expect(storeTab()?.tabId).toBeUndefined();
     await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
-    expect(toastTexts()).toContain("正在打开一个新的终端");
+    expect(toastTexts()).toContain("正在打开新终端");
   });
 
   it("never auto-trusts a changed host key during reconnect", async () => {
@@ -392,7 +392,7 @@ describe("terminal dead-tab context menu reconnect", () => {
     await clickMenuItem("重新连接这台主机");
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机密钥已变更 127.0.0.1:22");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
     await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);

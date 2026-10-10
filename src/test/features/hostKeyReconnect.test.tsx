@@ -248,7 +248,7 @@ describe("TerminalPane 失效终端重连（reconnectNow）主机指纹确认", 
     await waitFor(() => expect(toastTexts()).toContain("已重新连接"));
 
     const [question] = mocks.ask.mock.calls[0] as [string];
-    expect(question).toContain("主机密钥已变更 10.0.0.8:22");
+    expect(question).toContain("主机 10.0.0.8:22 的密钥已变更");
     expect(question).toContain("SHA256:oldfp");
     expect(question).toContain("SHA256:newfp");
     expect(mocks.knownHostAccept).toHaveBeenCalledWith(
@@ -311,7 +311,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
-    expect(question).toContain("主机密钥已变更 10.0.0.8:22");
+    expect(question).toContain("主机 10.0.0.8:22 的密钥已变更");
     expect(question).toContain("SHA256:oldfp");
     expect(question).toContain("SHA256:newfp");
     expect(mocks.knownHostAccept).toHaveBeenCalledWith(
@@ -384,7 +384,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
 
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
-    expect(question).toContain("主机密钥已变更 jump.example:22");
+    expect(question).toContain("主机 jump.example:22 的密钥已变更");
     expect(question).toContain("SHA256:jumpold");
     expect(question).toContain("SHA256:jumpnew");
     expect(mocks.knownHostAccept).toHaveBeenCalledWith(

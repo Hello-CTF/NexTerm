@@ -269,8 +269,8 @@ describe("LogViewer", () => {
       message: "transport capability unsupported",
     });
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
-    await waitForText(mounted, "当前连接的后端不支持远程日志查看");
-    expect(mounted!.container.textContent).toContain("WinRM 与本地后端暂不支持");
+    await waitForText(mounted, "当前连接不支持远程日志查看");
+    expect(mounted!.container.textContent).toContain("请使用内置编辑器或下载到本机查看");
   });
 
   it("offers retry on ordinary failures", async () => {

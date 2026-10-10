@@ -226,11 +226,11 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="nx-toolbar">
         <IconDrive size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">磁盘挂载</span>
-        <span className="nx-hint">列表 = 本机真实状态，15s 自动刷新</span>
+        <span className="nx-hint">显示本机实际挂载状态，每 15 秒自动刷新</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
           <IconRefresh size={13} />
-          强制重扫
+          重新扫描
         </button>
       </div>
 
@@ -293,7 +293,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
-          新建挂载{asset.data?.name ? ` · 目标默认当前资产「${asset.data.name}」` : ""} · Windows 用{' '}
+          新建挂载{asset.data?.name ? ` · 默认目标为当前资产「${asset.data.name}」` : ""} · Windows 用{' '}
           <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>；Linux 用{' '}
           <span className="nx-code">user@host:/path</span> →{' '}
           <span className="nx-code">/mnt/point</span>（需 sshfs）
@@ -390,8 +390,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
           ) : (
             <>
-              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名密码只对本次挂载生效、不落盘，不填时
-              Linux 走本机密钥 / agent，Windows 用当前登录凭据。
+              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 agent，Windows 使用当前登录凭据
             </>
           )}
         </div>

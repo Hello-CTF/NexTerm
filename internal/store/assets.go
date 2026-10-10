@@ -215,7 +215,7 @@ func (s *Store) AssetUpsertTx(ctx context.Context, tx *sql.Tx, row AssetRow) (bo
 
 func assetUpsert(ctx context.Context, exec assetExecer, row AssetRow) (bool, error) {
 	if row.ID == BuiltinLocalAssetID {
-		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（本机在每台设备上都是各自身份）"))
+		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（各设备身份相互独立）"))
 	}
 	if err := EnsureID(row.ID); err != nil {
 		return false, err

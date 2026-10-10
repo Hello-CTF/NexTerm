@@ -165,11 +165,11 @@ func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOn
 	case syncOnly:
 		detail = "onlyServer 模式：仅提供账号登录与同步端点；能连接此端口且持有账号会话的人可以同步资产库（端到端加密）。请使用防火墙限制对端地址。"
 	case mode == AuthPlatform:
-		detail = "平台托管访问控制（--auth=platform）：只有携带 NEXTERM_GATEWAY_AUTH 对应请求头（由前置网关注入）的请求被放行，其余一律拒绝；首个通过网关到达的请求会成为平台所有者账号，初始化码在此模式下不参与。请确保该监听端口只对前置网关可达。"
+		detail = "平台托管访问控制（--auth=platform）：只有携带 NEXTERM_GATEWAY_AUTH 对应请求头（由前置网关注入）的请求被放行，其余一律拒绝；首个通过网关访问的用户将成为平台所有者，此模式不使用初始化码。请确保该监听端口只对前置网关可达。"
 	case mode == AuthOff:
 		detail = "完整版访问控制已关闭（--auth=off）：/rpc、/ws 与 /files/blob 不要求任何会话，任何能连接此端口的人都能操作服务器；账号与管理员路由保持关闭。请立即用防火墙限制来源地址，或改用 --auth=on。"
 	default:
-		detail = "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求账号会话（浏览器登录后使用），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
+		detail = "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求账号会话（浏览器登录后使用），/healthz 与页面静态资源保持公开。公网部署仍建议使用 TLS 反向代理并用防火墙限制来源地址。"
 	}
 	if logger != nil {
 		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "auth", mode, "risk", detail)

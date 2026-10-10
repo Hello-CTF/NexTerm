@@ -407,7 +407,7 @@ func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identit
 		ttl = account.EnrollCodeTTL
 	}
 	if ttl < minEnrollCodeTTL || ttl > maxEnrollCodeTTL {
-		return "", 0, ipc.BadParam(fmt.Errorf("接入码有效期需在 %s-%s 之间", minEnrollCodeTTL, maxEnrollCodeTTL))
+		return "", 0, ipc.BadParam(fmt.Errorf("设备注册码有效期需在 %s-%s 之间", minEnrollCodeTTL, maxEnrollCodeTTL))
 	}
 	code, err := randomSecret(enrollCodeBytes)
 	if err != nil {
@@ -451,7 +451,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?
 RETURNING user_id`, now, hashSecret(code), now).Scan(&ownerID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成后再试")
+		return nil, ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
 	}
 	if err != nil {
 		return nil, dbError(err)

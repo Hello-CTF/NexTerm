@@ -28,9 +28,9 @@ export function hostKeyQuestion(detail: HostKeyDetail | undefined): string {
       .map((known) => known.fingerprint)
       .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
       .join("、");
-    return `主机密钥已变更 ${detail.host}:${detail.port}\n原指纹(SHA256)：${previous}\n新指纹(SHA256)：${detail.fingerprint}\n主机密钥类型：${detail.keyType}\n信任新指纹并继续？新指纹会替换已记录的旧指纹。如非预期变更，请取消并核实服务器，否则可能连到冒充的主机。`;
+    return `主机 ${detail.host}:${detail.port} 的密钥已变更\n原指纹（SHA256）：${previous}\n新指纹（SHA256）：${detail.fingerprint}\n主机密钥类型：${detail.keyType}\n信任新指纹并继续？新指纹将替换已记录的旧指纹。如果此次变更不符合预期，请取消并核实服务器，否则可能连接到冒充的主机。`;
   }
-  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹(SHA256)：${detail?.fingerprint}\n信任并继续？指纹会记入已知主机列表，之后连接自动核对；核对不上会再次拦下。`;
+  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹（SHA256）：${detail?.fingerprint}\n信任并继续？指纹将保存到已知主机列表，后续连接会自动核对；核对失败时将再次阻止连接。`;
 }
 
 const inflightConfirms = new Map<string, Promise<boolean>>();

@@ -339,7 +339,7 @@ export function AuditView() {
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  暂无记录：连接主机、执行命令或让 AI 动手之后，这里会逐条记下来。
+                  暂无记录：连接主机、执行命令或运行 AI 操作后，记录会显示在这里。
                 </td>
               </tr>
             ) : null}
@@ -381,7 +381,7 @@ export function AuditView() {
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>会话命令、AI 动作、文件写操作与设备上下线都会落库，逐条标注来源；有退出码的记录会一并展示。</span>
+        <span>会话命令、AI 操作、文件写入和设备上下线都会记录并标注来源；退出码和耗时随记录显示。</span>
       </div>
     </div>
   );

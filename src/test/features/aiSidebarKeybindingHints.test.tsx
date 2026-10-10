@@ -186,10 +186,10 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
         },
       });
     });
-    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Esc 随时夺回");
+    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Esc 收回控制权");
 
     act(() => setKeybinding("reclaimTakeover", "Ctrl+Shift+r"));
-    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Ctrl+Shift+R 随时夺回");
+    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Ctrl+Shift+R 收回控制权");
 
     act(() => setKeybinding("reclaimTakeover", null));
     expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中");
@@ -200,14 +200,14 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
       b.getAttribute("title")?.startsWith("终端接管（实验性功能）"),
     );
     expect(launch?.getAttribute("title")).toBe(
-      "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Esc 夺回",
+      "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Esc 收回控制权",
     );
     act(() => setKeybinding("reclaimTakeover", "Ctrl+Shift+r"));
     const rebound = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) =>
       b.getAttribute("title")?.startsWith("终端接管（实验性功能）"),
     );
     expect(rebound?.getAttribute("title")).toBe(
-      "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Ctrl+Shift+R 夺回",
+      "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Ctrl+Shift+R 收回控制权",
     );
   });
 });

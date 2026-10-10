@@ -349,7 +349,7 @@ func TestMemoryRecallReRedactsPersistedSecrets(t *testing.T) {
 	if strings.Contains(output.Text, secret) {
 		t.Fatalf("recall leaked a persisted secret: %q", output.Text)
 	}
-	if !strings.Contains(output.Text, "[REDACTED]") || !strings.Contains(output.Text, "[已脱敏]") || !strings.Contains(output.Text, "1 条内容含已脱敏") {
+	if !strings.Contains(output.Text, "[REDACTED]") || !strings.Contains(output.Text, "[已脱敏]") || !strings.Contains(output.Text, "1 条内容包含疑似密钥，已脱敏") {
 		t.Fatalf("recall redaction metadata = %q", output.Text)
 	}
 	listed := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{})

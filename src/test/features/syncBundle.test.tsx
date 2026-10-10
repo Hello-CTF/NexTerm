@@ -138,7 +138,7 @@ describe("SyncBundleCard 导出", () => {
     });
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    clickButton(mounted!.container, "导出资产包（.nxbm）");
     await flushUntil(() => text().includes("已导出"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], false);
     expect(mocks.writeBundleFile).toHaveBeenCalledOnce();
@@ -165,7 +165,7 @@ describe("SyncBundleCard 导出", () => {
     click(credsToggle.querySelector('input[type="checkbox"]')!);
     await flushUntil(() => text().includes("可还原的凭据明文"));
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    clickButton(mounted!.container, "导出资产包（.nxbm）");
     await flushUntil(() => text().includes("已导出"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], true);
     expect(text()).toContain("凭据 1");
@@ -176,7 +176,7 @@ describe("SyncBundleCard 导出", () => {
     mocks.exportAssets.mockRejectedValue(new Error("凭据库已锁定"));
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出资产包 (.nxbm)");
+    clickButton(mounted!.container, "导出资产包（.nxbm）");
     await flushUntil(() => text().includes("凭据库已锁定"));
     expect(text()).not.toContain("已导出（.nxbm 容器）");
   });
@@ -350,13 +350,13 @@ describe("SyncBundleCard 导入", () => {
 describe("SyncBundleCard 分区引用", () => {
   it("说明引用上方「账号同步」分区,不再叫「资产同步」", async () => {
     await mountCard();
-    expect(text()).toContain("与上方「账号同步」的推送 / 拉取互不影响");
+    expect(text()).toContain("与上方「账号同步」的推送和拉取互不影响");
     expect(text()).not.toContain("「资产同步」");
   });
 
   it("默认只显示说明与导出/导入按钮,点击再展开对应区域", async () => {
     mounted = withClient(createElement(SyncBundleCard));
-    await flushUntil(() => text().includes("与上方「账号同步」的推送 / 拉取互不影响"));
+    await flushUntil(() => text().includes("与上方「账号同步」的推送和拉取互不影响"));
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
     expect(
       [...mounted!.container.querySelectorAll("button")].some(

@@ -229,7 +229,7 @@ func (s *Service) requireFleetSession(next http.Handler) http.Handler {
 			return
 		}
 		if locked {
-			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeMFAEnrollmentRequired, "管理员已要求启用两步验证: 完成 TOTP 绑定前,该账号只能使用绑定相关功能")))
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeMFAEnrollmentRequired, "管理员已要求启用两步验证：完成 TOTP 绑定前，该账号只能使用绑定相关功能")))
 			return
 		}
 		next.ServeHTTP(w, r)

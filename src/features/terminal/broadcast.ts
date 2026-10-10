@@ -83,7 +83,7 @@ export function localRemoteMix(candidates: BroadcastCandidate[]): LocalRemoteMix
 export function broadcastRiskMessage(count: number, mix: LocalRemoteMix): string {
   const base = [
     `命令广播会把你在广播终端里的每一次输入（含回车、粘贴与控制键）同时发送到 ${count} 个终端。`,
-    "在多台主机同时执行同一条命令可能造成数据损坏或服务中断，请确认目标无误后再开启。",
+    "在多台主机上同时执行同一条命令可能造成数据损坏或服务中断，请确认目标后再开启",
   ];
   if (mix.mixed) {
     base.push(

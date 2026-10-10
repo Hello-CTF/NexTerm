@@ -206,7 +206,7 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
         </div>
         <div className="nx-modal-footer">
           <button type="button" className="nx-btn nx-btn-ghost" onClick={resetKeys}>
-            重置默认
+            恢复默认
           </button>
           <button
             ref={doneButtonRef}

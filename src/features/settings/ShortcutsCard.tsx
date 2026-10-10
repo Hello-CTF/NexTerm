@@ -100,7 +100,7 @@ export function ShortcutsCard() {
         <span className="nx-kbd shrink-0">{formatBinding(bindings[action.id])}</span>
         <span className="min-w-0 flex-1 truncate">{action.label}</span>
         {peers && (
-          <span className="nx-badge nx-badge-amber shrink-0" title={`与${peers}的快捷键重叠`}>
+          <span className="nx-badge nx-badge-amber shrink-0" title={`与${peers}的快捷键冲突`}>
             冲突
           </span>
         )}
@@ -140,8 +140,7 @@ export function ShortcutsCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        点「编辑」后按下新的组合键完成改绑；捕获时 Esc 取消、Backspace
-        清除绑定。浏览器保留的组合键（如 Ctrl+T 新开浏览器标签）在网页版里无法拦截。
+        点击修改按钮后按下新组合键；按 Esc 取消，按 Backspace 或 Delete 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}
@@ -156,7 +155,7 @@ export function ShortcutsCard() {
                 `${conflict.actions[0].label}（${formatBinding(conflict.bindings[0])}）与 ${conflict.actions[1].label}（${formatBinding(conflict.bindings[1])}）重叠`,
             )
             .join("；")}
-          。同时按下时排在前面的动作生效。
+          。使用相同快捷键时，排在前面的动作生效。
         </p>
       )}
       <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
@@ -196,7 +195,7 @@ export function ShortcutsCard() {
         )}
       </div>
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        SQL 编辑器内运行固定为 Ctrl+Enter，不在此列。
+        SQL 编辑器中的运行快捷键固定为 Ctrl+Enter，不在此列。
       </p>
     </section>
   );

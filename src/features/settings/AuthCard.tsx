@@ -77,7 +77,7 @@ export function AuthCard() {
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      pushToast("success", "密码已修改,其他设备上的会话已退出");
+      pushToast("success", "密码已修改，其他设备上的会话已退出");
     } catch (err) {
       setPwdError(describeError(err));
     } finally {
@@ -86,7 +86,7 @@ export function AuthCard() {
   };
 
   const revokeDevice = async (device: AccountDevice) => {
-    const ok = await ask(`吊销设备「${device.name}」?\n\n吊销后该设备立即退出登录,不可恢复。`, {
+    const ok = await ask(`吊销设备「${device.name}」？\n\n吊销后该设备立即退出登录，不可恢复。`, {
       title: "吊销设备",
       kind: "warning",
     });
@@ -123,7 +123,7 @@ export function AuthCard() {
           </div>
           <p className="nx-hint mb-3">
             本实例部署在懒猫平台上，账号随平台登录自动建立，这里没有需要填写的初始化码或密码。
-            看到这段文字通常意味着没有经过平台入口访问 —— 请改用平台的访问地址重新打开。
+            若看到此提示，请改用平台访问地址重新打开。
           </p>
         </section>
       );
@@ -137,7 +137,7 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            这台服务器关闭了账号功能(--auth=off),不提供登录、注册与账号同步;其他本地功能不受影响。
+            这台服务器关闭了账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。
           </p>
         </section>
       );
@@ -151,8 +151,8 @@ export function AuthCard() {
             <span className="nx-card-title">账号</span>
           </div>
           <p className="nx-hint mb-3">
-            这台服务器还没有任何账号{status.auth === "loopback" ? ",当前允许匿名使用" : ""}。
-            初始化后创建超级管理员,资产、分组、片段会端到端加密同步到你的账号,在其他设备上可用;
+            这台服务器还没有任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
+            初始化后创建超级管理员，资产、分组、片段会端到端加密同步到你的账号，在其他设备上可用；
             也可以继续匿名本地使用。
           </p>
           <button
@@ -173,8 +173,7 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录只建立连接并完成配置;下方「账号同步」台会读取云端副本进行对比,但不会自动推送或应用,
-          推送到云端 / 拉取并应用由你手动触发。不登录也能继续本地使用。
+          下方「账号同步」区域会读取云端副本进行对比，不会自动推送或应用，需手动触发。不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -220,7 +219,7 @@ export function AuthCard() {
               className="nx-btn nx-btn-outline nx-btn-sm"
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("退出当前账号?\n\n本机浏览器会话立即失效。", { title: "退出登录" });
+                  const ok = await ask("退出当前账号？\n\n本机浏览器会话立即失效。", { title: "退出登录" });
                   if (!ok) return;
                   await logout();
                   void qc.invalidateQueries();
@@ -233,7 +232,7 @@ export function AuthCard() {
               className="nx-btn nx-btn-ghost nx-btn-sm"
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("退出所有设备上的会话?\n\n包括这台浏览器,退出后需重新登录。", {
+                  const ok = await ask("退出所有设备上的会话？\n\n包括这台浏览器，退出后需重新登录。", {
                     title: "退出全部会话",
                     kind: "warning",
                   });
@@ -261,8 +260,7 @@ export function AuthCard() {
             <span className="nx-card-title">修改密码</span>
           </div>
           <p className="nx-hint mb-3">
-            修改密码会用新密码重新加密数据密钥,云端已保存的加密内容不受影响。修改成功后会签发
-            新的恢复密钥(旧的立即作废),并退出其他设备上的会话。
+            修改密码会用新密码重新加密数据密钥，云端已保存的加密内容不受影响。修改成功后会签发新的恢复密钥（旧的立即作废），并退出其他设备上的会话。
           </p>
           <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
             <input
@@ -276,7 +274,7 @@ export function AuthCard() {
             <input
               className="nx-input max-w-[280px]"
               type="password"
-              placeholder="新密码(至少 8 位)"
+              placeholder="新密码（至少 8 位）"
               value={newPassword}
               autoComplete="new-password"
               onChange={(e) => setNewPassword(e.target.value)}
@@ -310,7 +308,7 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconShield size={15} className="text-amber-300" />
-            <span className="nx-card-title">新的恢复密钥(只显示这一次)</span>
+            <span className="nx-card-title">新的恢复密钥（仅显示一次）</span>
           </div>
           <div className="nx-alert nx-alert-danger flex flex-col gap-2">
             <code className="nx-code break-all font-mono text-[12.5px]">{pendingRecoveryKey.formatted}</code>
@@ -324,7 +322,7 @@ export function AuthCard() {
                       await navigator.clipboard.writeText(pendingRecoveryKey.formatted);
                       pushToast("success", "恢复密钥已复制");
                     } catch {
-                      pushToast("error", "复制失败,请手动选中复制");
+                      pushToast("error", "复制失败，请手动复制");
                     }
                   })()
                 }
@@ -355,7 +353,7 @@ export function AuthCard() {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          已登录的设备可以随时吊销,吊销后该设备立即退出登录。
+          已登录的设备可以随时吊销，吊销后该设备立即退出登录。
         </p>
 
         {enrollCode && (
@@ -363,8 +361,7 @@ export function AuthCard() {
             <div className="flex items-start gap-2">
               <IconInfo size={14} className="mt-0.5 shrink-0" />
               <div>
-                配对码 <b>15 分钟内有效</b>,只显示这一次。在新设备的登录页点「用配对码添加设备」输入它,
-                即可把账号添加到那台设备:
+                配对码 <b>15 分钟内有效</b>，仅显示一次。在新设备登录页选择「用配对码添加设备」，输入配对码完成添加。
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -375,7 +372,7 @@ export function AuthCard() {
                   void navigator.clipboard
                     ?.writeText(enrollCode.code)
                     .then(() => pushToast("success", "配对码已复制"))
-                    .catch(() => pushToast("error", "复制失败,请手动选中复制"));
+                    .catch(() => pushToast("error", "复制失败，请手动复制"));
                 }}
               >
                 <IconCopy size={12} />
@@ -437,7 +434,7 @@ export function AuthCard() {
 
         <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          会话有效期 12 小时(滑动续期),最长 7 天;改密、吊销设备或管理员重置会使会话立即失效。
+          会话有效期 12 小时（滑动续期），最长 7 天；修改密码、吊销设备或管理员重置会使会话立即失效。
         </p>
       </section>
     </>
@@ -481,7 +478,7 @@ function TotpCard() {
       pushToast("success", `${label}已复制`);
       return true;
     } catch {
-      pushToast("error", "复制失败,请手动选中复制");
+      pushToast("error", "复制失败，请手动复制");
       return false;
     }
   };
@@ -554,7 +551,7 @@ function TotpCard() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">两步验证 (TOTP)</span>
+        <span className="nx-card-title">两步验证（TOTP）</span>
         {status?.enabled && <span className="nx-badge nx-badge-green">已开启</span>}
         <div className="nx-spacer" />
         {status && !loadError && (
@@ -565,7 +562,7 @@ function TotpCard() {
         )}
       </div>
 
-      <p className="nx-hint mb-3">两步验证配置不随同步走,换设备后需要重新绑定。</p>
+      <p className="nx-hint mb-3">两步验证配置不会同步，换设备后需重新绑定。</p>
 
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
@@ -582,8 +579,7 @@ function TotpCard() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            管理员已要求所有账号启用两步验证。完成绑定前,这个账号只能使用绑定相关功能;
-            绑定完成后一切恢复正常。
+            管理员已要求所有账号启用两步验证，完成绑定前只能使用绑定功能。
           </div>
         </div>
       )}
@@ -593,8 +589,7 @@ function TotpCard() {
           <div className="flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
             <div>
-              恢复码(只显示这一次)。手机丢失时,可用任意一枚恢复码代替动态码登录;
-              每枚只能用一次。服务端只保存它们的散列,关闭后<b>无法再次查看</b>。
+              恢复码仅显示一次。手机丢失时，可用任一恢复码代替动态码登录，每个只能使用一次。服务端只保存散列，关闭后无法再次查看。
             </div>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -625,15 +620,14 @@ function TotpCard() {
               {copied ? "我已安全保存" : "已手动保存"}
             </button>
           </div>
-          {!confirmed && <p className="nx-hint text-[11px]">先复制保存,再关闭本页</p>}
+          {!confirmed && <p className="nx-hint text-[11px]">请先复制或手动保存恢复码，再关闭此面板</p>}
         </div>
       )}
 
       {!recoveryCodes && setup && (
         <div>
           <p className="nx-hint mb-3">
-            用认证器 App(如 Google Authenticator、1Password 等)扫描或录入以下密钥绑定。
-            otpauth 链接可整体复制到支持 URI 导入的认证器;也可以把链接自行编码成二维码扫描。
+            用认证器 App（如 Google Authenticator、1Password）导入绑定链接，或手动输入密钥。
           </p>
           <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -682,7 +676,7 @@ function TotpCard() {
           {status.enabled ? (
             <div className="flex flex-col gap-2">
               <p className="nx-hint">
-                登录时在密码后需要输入认证器中的 6 位动态码。剩余恢复码 <b>{status.recovery_codes_left}</b> 枚。
+                登录时除密码外，还需输入认证器中的 6 位动态码。剩余恢复码 <b>{status.recovery_codes_left}</b> 个。
               </p>
               {disableOpen ? (
                 <form onSubmit={(e) => void submitDisable(e)} className="flex flex-col gap-2">
@@ -759,8 +753,7 @@ function TotpCard() {
           ) : (
             <div>
               <p className="nx-hint mb-2">
-                开启后,登录时除密码外还需输入认证器 App 中的 6 位动态码;即使密码泄漏,账号也多一道防线。
-                服务端以加密形式保存密钥,恢复码只保存散列。
+                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号也多一层保护。服务端加密保存密钥，只保存恢复码散列。
               </p>
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void startSetup()}>
                 {busy ? "生成中…" : status.pending ? "继续绑定" : "开启两步验证"}

@@ -119,7 +119,7 @@ export async function localPathsFromDataTransfer(dt: DataTransfer): Promise<stri
     .map((f) => (f as File & { path?: string }).path)
     .filter((p): p is string => typeof p === "string" && p.length > 0);
   if (paths.length === 0) {
-    pushToast("info", "当前平台无法从拖拽读取本地文件路径，请改用上传按钮选择文件");
+    pushToast("info", "当前平台无法读取拖拽文件的路径，请改用上传按钮选择文件");
     return null;
   }
   return paths;

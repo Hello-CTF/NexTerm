@@ -207,17 +207,17 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     expect(composerOf(view!).value).toBe("第一问");
-    expect(text()).toContain("编辑重发：这条消息之后的消息与运行会被删除");
+    expect(text()).toContain("编辑并重新发送将删除此消息后的消息和运行记录");
 
     setInputValue(composerOf(view!), "第一问（改）");
-    clickButton(view!.container, "替换并重新发送");
+    clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
 
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m1");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "conv-1", message: "第一问（改）" }),
     );
-    expect(text()).not.toContain("编辑重发：这条消息之后的消息与运行会被删除");
+    expect(text()).not.toContain("编辑并重新发送将删除此消息后的消息和运行记录");
   });
 
   it("旧消息截断后的 UI：锚点原文保留，其后的回答/工具/后续消息全部移除", async () => {
@@ -228,7 +228,7 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     setInputValue(composerOf(view!), "第一问（改）");
-    clickButton(view!.container, "替换并重新发送");
+    clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
     await flush();
 
@@ -300,7 +300,7 @@ describe("AiSidebar edit and resend", () => {
     await flush();
     expect(composerOf(view!).value).toBe("第一问");
     setInputValue(composerOf(view!), "第一问（改）");
-    clickButton(view!.container, "替换并重新发送");
+    clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
 
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m1");
@@ -322,17 +322,17 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     setInputValue(composerOf(view!), "第一问（改）");
-    clickButton(view!.container, "替换并重新发送");
+    clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
 
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("编辑重发失败"),
+      expect.stringContaining("编辑并重新发送失败"),
     );
     expect(mocks.chat).not.toHaveBeenCalled();
     expect(text()).toContain("第一答");
     expect(text()).toContain("输出摘要");
-    expect(text()).toContain("编辑重发：这条消息之后的消息与运行会被删除");
+    expect(text()).toContain("编辑并重新发送将删除此消息后的消息和运行记录");
     expect(composerOf(view!).value).toBe("第一问（改）");
   });
 
@@ -347,9 +347,9 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     setInputValue(composerOf(view!), "第一问（改）");
-    const submitButton = clickButton(view!.container, "替换并重新发送");
+    const submitButton = clickButton(view!.container, "编辑并重新发送");
     expect(submitButton.disabled).toBe(true);
-    expect(text()).toContain("正在替换并重新发送…");
+    expect(text()).toContain("正在编辑并重新发送…");
 
     act(() => {
       composerOf(view!).dispatchEvent(
@@ -368,7 +368,7 @@ describe("AiSidebar edit and resend", () => {
     chatGate.resolve({ jobId: "job-9", conversationId: "conv-1" });
     await flush();
     expect(mocks.dispose).not.toHaveBeenCalledWith(newRunChannel);
-    expect(text()).not.toContain("正在替换并重新发送…");
+    expect(text()).not.toContain("正在编辑并重新发送…");
   });
 
   it("新发送完成的消息无需 remount 即可编辑：chat 后通过 messages IPC 补齐 messageId", async () => {
@@ -392,7 +392,7 @@ describe("AiSidebar edit and resend", () => {
     await flush();
     expect(composerOf(view!).value).toBe("第三问");
     setInputValue(composerOf(view!), "第三问（改）");
-    clickButton(view!.container, "替换并重新发送");
+    clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.editResend.mock.calls.length > 0);
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m-100");
   });
@@ -408,7 +408,7 @@ describe("AiSidebar edit and resend", () => {
 
     expect(mocks.editResend).not.toHaveBeenCalled();
     expect(mocks.chat).not.toHaveBeenCalled();
-    expect(text()).not.toContain("编辑重发：这条消息之后的消息与运行会被删除");
+    expect(text()).not.toContain("编辑并重新发送将删除此消息后的消息和运行记录");
     expect(composerOf(view!).value).toBe("第一问");
   });
 });

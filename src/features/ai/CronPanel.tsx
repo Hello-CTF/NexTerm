@@ -38,7 +38,7 @@ function jobStatus(job: CronJob): { label: string; cls: string } {
   if (!job.enabled) return { label: "已停用", cls: "" };
   if (job.run.id) return { label: "执行中", cls: "nx-badge-blue" };
   if (job.circuitOpenUntil && Date.parse(job.circuitOpenUntil) > Date.now()) {
-    return { label: "熔断中", cls: "nx-badge-amber" };
+    return { label: "已暂停", cls: "nx-badge-amber" };
   }
   if (job.lastError) return { label: "上次失败", cls: "nx-badge-red" };
   return { label: "等待执行", cls: "nx-badge-green" };
@@ -164,11 +164,11 @@ export function CronPanel({
     !!editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`;
   const profilesState = profilesError ? "error" : profilesView ? "ready" : "loading";
   const followActiveLabel = () => {
-    if (profilesState === "error") return "跟随当前激活档案（读取失败，状态未知）";
-    if (profilesState === "loading") return "跟随当前激活档案（读取中…）";
+    if (profilesState === "error") return "跟随当前档案（读取失败，状态未知）";
+    if (profilesState === "loading") return "跟随当前档案（读取中…）";
     return activeProfile
-      ? `跟随当前激活档案「${activeProfile.name}」`
-      : "跟随当前激活档案（当前未设置）";
+      ? `跟随当前档案「${activeProfile.name}」`
+      : "跟随当前档案（当前未设置）";
   };
   const unresolvedProfileLabel = (id: string) => {
     if (profilesState === "error") return `已存档案（读取失败，状态未知）· ${id}`;
@@ -311,7 +311,7 @@ export function CronPanel({
           ...(timeoutSec !== null ? { timeoutMs: Math.round(timeoutSec * 1000) } : {}),
           ...(modelProfileId ? { modelProfileId } : {}),
         });
-        pushToast("success", "定时任务已注册");
+        pushToast("success", "定时任务已创建");
         setRegisterOpen(false);
         setDraft(null);
         await reload();
@@ -333,7 +333,7 @@ export function CronPanel({
         try {
           await cronApi.unregister(created.sessionId, created.id);
           setRegisterError(
-            `保存失败：旧任务注销未成功（${describeError(e)}）。已清理重建的新任务，旧任务保持原样，可重试保存。`,
+            `保存失败：旧任务删除未成功（${describeError(e)}）。已清理重建的新任务，旧任务保持原样，可重试保存。`,
           );
         } catch (rollbackError) {
           applyReplaceConflict({
@@ -399,18 +399,18 @@ export function CronPanel({
   const unregister = async (job: CronJob) => {
     const display = job.name?.trim() || job.prompt.slice(0, 40);
     const ok = await ask(
-      `注销定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n注销后到点不再执行，且不可恢复。`,
-      { title: "注销定时任务", kind: "warning" },
+      `删除定时任务「${display}」？\n表达式：${job.schedule}（${job.timezone}）\n\n删除后不再执行，且无法恢复。`,
+      { title: "删除定时任务", kind: "warning" },
     );
     if (!ok) return;
     const key = `${job.sessionId}/${job.id}`;
     setActionBusy(key);
     try {
       await cronApi.unregister(job.sessionId, job.id);
-      pushToast("success", "定时任务已注销");
+      pushToast("success", "定时任务已删除");
       await reload();
     } catch (e) {
-      pushToast("error", `注销失败：${describeError(e)}`);
+      pushToast("error", `删除失败：${describeError(e)}`);
     } finally {
       if (aliveRef.current) setActionBusy(null);
     }
@@ -438,14 +438,13 @@ export function CronPanel({
         </button>
       </div>
       <p className="nx-hint mb-2 text-[11px]">
-        到点以当前会话为上下文发起无人值守执行。需要人工确认或被禁止的操作会被明确拒绝，
-        原因记在该任务的「上次错误」里。
+        到达设定时间后，AI 将基于当前会话自动执行任务。需要人工确认或被禁止的操作会被拒绝，原因记录在「上次错误」中。
       </p>
 
       {registerOpen && draft ? (
         <div className="mb-2 flex flex-col gap-2 border-b border-neutral-800/60 pb-2">
           <div className="text-[12px] font-semibold text-neutral-200">
-            {editingJob ? "编辑定时任务" : "注册定时任务"}
+            {editingJob ? "编辑定时任务" : "新建定时任务"}
           </div>
           <input
             className="nx-input nx-input-sm"
@@ -456,7 +455,7 @@ export function CronPanel({
           />
           <textarea
             className="nx-input min-h-[60px] font-mono text-[12px]"
-            placeholder="到点要执行的任务内容（提示词）"
+            placeholder="任务内容（提示词）"
             aria-label="任务提示词"
             value={draft.prompt}
             onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
@@ -487,7 +486,7 @@ export function CronPanel({
           </div>
           {profilesError && (
             <div className="nx-hint text-[11px] text-red-300" role="alert">
-              模型档案读取失败：{profilesError}（档案列表可能不完整；「跟随当前激活档案」不受影响）
+              模型档案读取失败：{profilesError}（档案列表可能不完整；「跟随当前档案」不受影响）
             </div>
           )}
           {editingJob &&
@@ -497,7 +496,7 @@ export function CronPanel({
               <div className="nx-hint text-[11px] text-amber-300">
                 {profilesState === "error"
                   ? "该任务保存的模型档案状态未知（读取失败）；请刷新重试，或改选其它档案。"
-                  : "该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前激活档案」。"}
+                  : "该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前档案」。"}
               </div>
             )}
           <div className="flex flex-wrap items-center gap-2">
@@ -554,10 +553,10 @@ export function CronPanel({
               {registering
                 ? editingJob
                   ? "保存中…"
-                  : "注册中…"
+                  : "创建中…"
                 : editingJob
                   ? "保存"
-                  : "注册"}
+                  : "创建"}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -568,10 +567,9 @@ export function CronPanel({
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            表达式为 5 段 cron（分 时 日 月 周），时区缺省 UTC；超时缺省 60 秒。
-            重新启用时从当前时刻起算下一次执行，不补跑停用期间的点。
+            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后，从当前时间计算下次执行时间，不补执行停用期间的任务。
             {editingJob
-              ? " 保存会以这些值重新创建任务：任务标识与执行历史不保留，下次执行从当前时刻起算。"
+              ? " 保存将重新创建任务，任务标识和执行历史不会保留，下次执行从当前时间起算。"
               : ""}
           </p>
           {registerError && (
@@ -585,7 +583,7 @@ export function CronPanel({
         <div className="mb-2">
           <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void openRegister()}>
             <IconPlus size={11} />
-            注册定时任务
+            新建定时任务
           </button>
         </div>
       )}
@@ -599,7 +597,7 @@ export function CronPanel({
           <div className="min-w-0 flex-1">
             <div className="break-words">
               编辑「{replaceConflict.label}」未完成：旧任务保留，重建的新任务（已停用）也未能自动清理（
-              {replaceConflict.error}）。两条任务不会同时执行，但请手动注销其中一条。
+              {replaceConflict.error}）。两条任务不会同时执行，但请手动删除其中一条。
             </div>
             <div className="mt-1 break-words font-mono text-[11px]">
               旧 {replaceConflict.oldKey} · 新 {replaceConflict.newKey}
@@ -680,11 +678,11 @@ export function CronPanel({
                           档案 {jobProfileId}
                         </span>
                       ) : (
-                        <>跟随激活档案{activeProfile ? `「${activeProfile.name}」` : ""}</>
+                        <>跟随当前档案{activeProfile ? `「${activeProfile.name}」` : ""}</>
                       )}
                     </div>
                     <div className="nx-hint text-[11px]">
-                      {nextRun ? `下次执行 ${nextRun}` : "没有待执行的时间点"}
+                      {nextRun ? `下次执行 ${nextRun}` : "暂无待执行时间"}
                       {lastRun ? ` · 上次执行 ${lastRun}` : ""}
                     </div>
                     {job.lastError && (
@@ -737,12 +735,12 @@ export function CronPanel({
                       title={
                         editingThis && registerOpen
                           ? "编辑中，请先保存或取消编辑"
-                          : `注销定时任务 ${job.name?.trim() || job.id}`
+                          : `删除定时任务 ${job.name?.trim() || job.id}`
                       }
                       onClick={() => void unregister(job)}
                     >
                       <IconTrash size={11} />
-                      注销
+                      删除
                     </button>
                   </div>
                 </div>
@@ -753,7 +751,7 @@ export function CronPanel({
       )}
 
       <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-        启停只影响这一条任务；注销只删除当前这一条定时任务，需逐个确认。删除所属 AI 会话会级联删除该会话的全部定时任务。
+        启停和删除仅影响当前任务；删除所属 AI 会话时，其全部定时任务也会删除。
       </p>
     </div>
   );

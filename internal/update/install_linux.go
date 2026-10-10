@@ -53,7 +53,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		closeErr := output.Close()
 		if copyErr != nil {
 			_ = os.Remove(staged)
-			return fmt.Errorf("写出新可执行文件失败: %w", copyErr)
+			return fmt.Errorf("写入新可执行文件失败：%w", copyErr)
 		}
 		if closeErr != nil {
 			_ = os.Remove(staged)

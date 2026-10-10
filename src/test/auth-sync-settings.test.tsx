@@ -269,8 +269,8 @@ describe("M165 opt-in 默认关", () => {
     expect(mocks.collectAIProfiles).not.toHaveBeenCalled();
     expect(optInCheckbox(0).checked).toBe(false);
     expect(optInCheckbox(1).checked).toBe(false);
-    expect(text()).toContain("拉取并应用 (0)");
-    expect(button("拉取并应用 (0)")?.disabled).toBe(true);
+    expect(text()).toContain("拉取并应用（0）");
+    expect(button("拉取并应用（0）")?.disabled).toBe(true);
     expect(text()).not.toContain("10.0.0.9:22");
     expect(text()).not.toContain("生产 <档案> & more");
   });
@@ -288,9 +288,9 @@ describe("M165 known_host 同步", () => {
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: true });
     expect(text()).toContain("已知主机");
     expect(text()).toContain("仅本机");
-    expect(text()).toContain("推送到云端 (1)");
+    expect(text()).toContain("推送到云端（1）");
 
-    clickButton(mounted!.container, "推送到云端 (1)");
+    clickButton(mounted!.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-1"]);
@@ -305,8 +305,8 @@ describe("M165 known_host 同步", () => {
     await flushUntil(() => text().includes("已推送 1"));
     clickButton(mounted!.container, "刷新对比");
     await flushUntil(() => text().includes("已一致"));
-    expect(text()).toContain("推送到云端 (0)");
-    expect(text()).toContain("拉取并应用 (0)");
+    expect(text()).toContain("推送到云端（0）");
+    expect(text()).toContain("拉取并应用（0）");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
@@ -324,13 +324,13 @@ describe("M165 known_host 同步", () => {
     openDetails();
     // 默认关: known_host 墓碑不进入推送集合, 也不出现在对比行
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
-    expect(text()).toContain("推送到云端 (0)");
+    expect(text()).toContain("推送到云端（0）");
     expect(text()).not.toContain("kh-del");
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
     optInCheckbox(0).click();
-    await flushUntil(() => text().includes("推送到云端 (1)"));
-    clickButton(mounted!.container, "推送到云端 (1)");
+    await flushUntil(() => text().includes("推送到云端（1）"));
+    clickButton(mounted!.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-del"]);
@@ -352,12 +352,12 @@ describe("M165 AI 档案同步", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("AI 档案「locked-profile」凭据库未解锁,未进入本次对比与推送"));
+    await flushUntil(() => text().includes("AI 模型档案「locked-profile」凭据库未解锁，未进入本次对比与推送"));
     expect(optInCheckbox(1).checked).toBe(true);
     expect(mocks.collectAIProfiles).toHaveBeenCalledWith(true, undefined, 512);
-    expect(text()).toContain("推送到云端 (1)");
+    expect(text()).toContain("推送到云端（1）");
 
-    clickButton(mounted!.container, "推送到云端 (1)");
+    clickButton(mounted!.container, "推送到云端（1）");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["p-1"]);
@@ -376,10 +376,10 @@ describe("M165 AI 档案同步", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("生产 <档案> & more"));
-    expect(text()).toContain("AI 档案");
+    expect(text()).toContain("AI 模型档案");
     expect(text()).toContain("仅云端");
-    expect(text()).toContain("拉取并应用 (1)");
-    clickButton(mounted!.container, "拉取并应用 (1)");
+    expect(text()).toContain("拉取并应用（1）");
+    clickButton(mounted!.container, "拉取并应用（1）");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];
     expect(objects[0].id).toBe("p-1");
@@ -412,7 +412,7 @@ describe("M165 R2 开关切换竞态", () => {
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("推送到云端 (1)"));
+    await flushUntil(() => text().includes("推送到云端（1）"));
 
     // 关闭开关: set 挂起期间推送已禁用; set 返回后 reload 完成前仍禁用(旧快照已作废)
     const reloadGate = deferred<void>();
@@ -422,13 +422,13 @@ describe("M165 R2 开关切换竞态", () => {
     });
     optInCheckbox(0).click();
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
-    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+    expect(button("推送到云端（1）")?.disabled).toBe(true);
     setGate.resolve();
     // reload 已开始(collectTombstones 第二次调用)但未完成: 旧快照仍是 (1), 按钮必须保持禁用
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
-    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+    expect(button("推送到云端（1）")?.disabled).toBe(true);
     reloadGate.resolve();
-    await flushUntil(() => text().includes("推送到云端 (0)"));
+    await flushUntil(() => text().includes("推送到云端（0）"));
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
@@ -448,7 +448,7 @@ describe("M165 R2 开关切换竞态", () => {
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     // 慢 load 此刻才完成: 回写必须被代次检查丢弃, 禁用种类不得出现在对比行
     slowLoad.resolve();
-    await flushUntil(() => text().includes("推送到云端 (0)"));
+    await flushUntil(() => text().includes("推送到云端（0）"));
     expect(text()).not.toContain("10.0.0.9:22");
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -461,7 +461,7 @@ describe("M165 R2 开关切换竞态", () => {
     mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用 (1)"));
+    await flushUntil(() => text().includes("拉取并应用（1）"));
 
     const reloadGate = deferred<void>();
     mocks.collectTombstones.mockImplementationOnce(async () => {
@@ -472,9 +472,9 @@ describe("M165 R2 开关切换竞态", () => {
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
     // reload 已开始但未完成: 旧 applySet 仍是 (1), 按钮必须保持禁用
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
-    expect(button("拉取并应用 (1)")?.disabled).toBe(true);
+    expect(button("拉取并应用（1）")?.disabled).toBe(true);
     reloadGate.resolve();
-    await flushUntil(() => text().includes("拉取并应用 (0)"));
+    await flushUntil(() => text().includes("拉取并应用（0）"));
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
 });
@@ -498,10 +498,10 @@ describe("CompareConsole 操作忙碌状态", () => {
     mocks.applyObjects.mockReturnValue(applyGate.promise);
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用 (1)"));
-    clickButton(mounted!.container, "拉取并应用 (1)");
+    await flushUntil(() => text().includes("拉取并应用（1）"));
+    clickButton(mounted!.container, "拉取并应用（1）");
     await flushUntil(() => button("应用中…") !== undefined);
-    expect(button("推送到云端 (0)")?.textContent).toBe("推送到云端 (0)");
+    expect(button("推送到云端（0）")?.textContent).toBe("推送到云端（0）");
     expect(button("推送中…")).toBeUndefined();
 
     applyGate.resolve({ applied: 1, identical: 0, skipped: 0, objects: [] });
@@ -515,7 +515,7 @@ describe("CompareConsole 操作忙碌状态", () => {
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用 (1)") && text().includes("推送到云端 (1)"));
+    await flushUntil(() => text().includes("拉取并应用（1）") && text().includes("推送到云端（1）"));
     const refreshGate = deferred<void>();
     mocks.collectKnownHosts.mockImplementationOnce(async () => {
       await refreshGate.promise;
@@ -523,12 +523,12 @@ describe("CompareConsole 操作忙碌状态", () => {
     });
     clickButton(mounted!.container, "刷新对比");
     await flushUntil(() => button("刷新对比")?.disabled === true);
-    expect(button("拉取并应用 (1)")?.disabled).toBe(true);
-    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+    expect(button("拉取并应用（1）")?.disabled).toBe(true);
+    expect(button("推送到云端（1）")?.disabled).toBe(true);
 
     refreshGate.resolve();
     await flushUntil(() => button("刷新对比")?.disabled === false);
-    expect(button("拉取并应用 (1)")?.disabled).toBe(false);
-    expect(button("推送到云端 (1)")?.disabled).toBe(false);
+    expect(button("拉取并应用（1）")?.disabled).toBe(false);
+    expect(button("推送到云端（1）")?.disabled).toBe(false);
   });
 });

@@ -296,7 +296,7 @@ describe("DeviceTerminalView 公开链接创建", () => {
     expect(bodyText()).toContain("默认只读");
     // 创建前即说明访问边界: 任何拿到链接的人无需账号可开, 只发给信任的人
     expect(bodyText()).toContain("无需 NexTerm 账号");
-    expect(bodyText()).toContain("请只把链接发给你信任的人");
+    expect(bodyText()).toContain("请仅分享给可信对象");
     expect(bodyText()).toContain("链接仅在创建成功后显示一次，本页面不会保存");
     expect(bodyText()).not.toContain("链接只能创建一次");
     click(createButton());
@@ -311,7 +311,7 @@ describe("DeviceTerminalView 公开链接创建", () => {
     // 一次性 URL 只在创建响应展示, 带复制与吊销指引
     await flushUntil(() => bodyText().includes(LINK_TOKEN));
     expect(bodyText()).toContain(`${window.location.origin}/share/public/${LINK_TOKEN}`);
-    expect(bodyText()).toContain("只显示这一次");
+    expect(bodyText()).toContain("仅显示一次");
     expect(bodyText()).toContain("无需账号");
     expect(bodyText()).toContain("设置 → 分享");
     expect(bodyText()).toContain("吊销");
@@ -397,7 +397,7 @@ describe("DeviceTerminalView 公开链接创建", () => {
     click(copy as HTMLButtonElement);
 
     expect(useUi.getState().toasts).toEqual([
-      expect.objectContaining({ kind: "error", text: "复制失败: 剪贴板不可用, 请手动选中复制" }),
+      expect.objectContaining({ kind: "error", text: "复制失败：剪贴板不可用，请手动复制" }),
     ]);
   });
 

@@ -73,7 +73,7 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 		row.Sort = *patch.Sort
 	}
 	if row.ParentID != nil && *row.ParentID == id {
-		return AssetGroupRow{}, badParam(errString("父级不能是自己"))
+		return AssetGroupRow{}, badParam(errString("分组不能将自身设为父级"))
 	}
 	if row.ParentID != nil {
 		cursor := *row.ParentID
@@ -90,7 +90,7 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 				break
 			}
 			if *parent == id {
-				return AssetGroupRow{}, badParam(errString("不允许把分组移动到自己的后代下"))
+				return AssetGroupRow{}, badParam(errString("不允许将分组移动到其后代分组下"))
 			}
 			cursor = *parent
 		}

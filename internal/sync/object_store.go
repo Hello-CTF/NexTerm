@@ -192,7 +192,7 @@ ON CONFLICT(user_id) DO UPDATE SET head_hash = excluded.head_hash`, userID, curr
 // nextSeq/cursorDone 仅由游标对象计算: 补拉 ID 的 seq 不得推进游标或伪造游标完成状态。
 func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, ids []string, maxBytes int64) (objects []WireObjectSeq, head string, maxSeq, nextSeq int64, cursorDone bool, returnErr error) {
 	if len(ids) > maxPullIDLookup {
-		return nil, "", 0, 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 补拉数量超过 %d", maxPullIDLookup))
+		return nil, "", 0, 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 拉取的对象数超过 %d", maxPullIDLookup))
 	}
 	if maxBytes <= 0 || maxBytes > maxPullWireBytes {
 		maxBytes = maxPullWireBytes

@@ -24,7 +24,7 @@ func NewSpawnTool(manager *Manager, scope Scope, factories ...ObserverFactory) (
 	if err != nil {
 		return nil, err
 	}
-	return utils.InferTool(SpawnToolName, "运行一个有界隔离子任务：只能使用调用方配置的工具范围；嵌套 spawn 会被拒绝，也不能请求用户交互。可选 modelProfileId 指定已保存的模型档案，缺省用当前活动档案。", func(ctx context.Context, input SpawnInput) (string, error) {
+	return utils.InferTool(SpawnToolName, "运行隔离子任务：仅可使用调用方配置的工具；不支持嵌套 spawn 或用户交互。可通过 modelProfileId 指定模型档案，默认使用当前启用的档案。", func(ctx context.Context, input SpawnInput) (string, error) {
 		request := Request{Task: input.Task, Persona: input.Persona, Scope: &normalized, ModelProfileID: input.ModelProfileID}
 		if len(factories) > 0 && factories[0] != nil {
 			request.Observer = factories[0](ctx)

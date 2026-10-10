@@ -204,14 +204,14 @@ describe("AiSidebar 标签右键菜单", () => {
 
     openTabMenu(view!, 0);
     expect(menuItem(view!, "关闭").disabled).toBe(false);
-    expect(menuItem(view!, "关闭左边全部").disabled).toBe(true);
-    expect(menuItem(view!, "关闭右边全部").disabled).toBe(false);
+    expect(menuItem(view!, "关闭左侧全部标签").disabled).toBe(true);
+    expect(menuItem(view!, "关闭右侧全部标签").disabled).toBe(false);
 
     click(menuItem(view!, "关闭"));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 1);
   });
 
-  it("关闭左边全部只关对应标签", async () => {
+  it("关闭左侧全部标签只关对应标签", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -221,7 +221,7 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(ids).toHaveLength(3);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左边全部"));
+    click(menuItem(view!, "关闭左侧全部标签"));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 2);
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id)).toEqual([
       ids[1],
@@ -229,7 +229,7 @@ describe("AiSidebar 标签右键菜单", () => {
     ]);
   });
 
-  it("关闭右边全部只关对应标签", async () => {
+  it("关闭右侧全部标签只关对应标签", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -238,7 +238,7 @@ describe("AiSidebar 标签右键菜单", () => {
     const ids = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭右边全部"));
+    click(menuItem(view!, "关闭右侧全部标签"));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 2);
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id)).toEqual([
       ids[0],
@@ -254,7 +254,7 @@ describe("AiSidebar 标签右键菜单", () => {
     await flush();
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左边全部"));
+    click(menuItem(view!, "关闭左侧全部标签"));
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("关闭将停止它"),
@@ -273,7 +273,7 @@ describe("AiSidebar 标签右键菜单", () => {
     mocks.ask.mockResolvedValue(false);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左边全部"));
+    click(menuItem(view!, "关闭左侧全部标签"));
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(2);

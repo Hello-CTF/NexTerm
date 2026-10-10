@@ -23,7 +23,7 @@ var (
 	errPauseEscalated  = errors.New("接管暂停超时升级")
 )
 
-const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 - 按 Esc 或任意键暂停]\x1b[0m\r\n"
+const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 - 按任意键暂停]\x1b[0m\r\n"
 
 type Dependencies struct {
 	Model                  agent.ModelFactory

@@ -342,7 +342,7 @@ describe("FileBrowser 会话已删除", () => {
     act(() => more!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     const items = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-    for (const label of ["打包下载当前文件夹", "上传到当前目录", "新建文件夹", "刷新"]) {
+    for (const label of ["打包下载当前目录", "上传到当前目录", "新建目录", "刷新"]) {
       const item = items.find((b) => b.textContent?.includes(label));
       expect(item?.disabled, label).toBe(true);
       expect(item?.textContent, label).toContain("会话已删除");
@@ -366,7 +366,7 @@ describe("FileBrowser 会话已删除", () => {
     clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机密钥已变更 127.0.0.1:22");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
     await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
     expect(mocks.connect).toHaveBeenCalledTimes(1);

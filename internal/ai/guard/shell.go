@@ -128,13 +128,13 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 
 		ruling := Allow()
 		c.classifyArithmExpr(cmd.X, &ruling)
-		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
+		result = Worst(result, ruling, Indeterminate("算术命令无法安全分析"))
 	case *syntax.LetClause:
 		ruling := Allow()
 		for _, expr := range cmd.Exprs {
 			c.classifyArithmExpr(expr, &ruling)
 		}
-		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
+		result = Worst(result, ruling, Indeterminate("算术命令无法安全分析"))
 	case *syntax.TestClause:
 
 		result = Worst(result, c.classifyTestExpr(cmd.X))
@@ -196,9 +196,9 @@ func (c *classifier) classifyForClause(clause *syntax.ForClause, pipeIn pipeInpu
 		c.classifyArithmExpr(loop.Init, &ruling)
 		c.classifyArithmExpr(loop.Cond, &ruling)
 		c.classifyArithmExpr(loop.Post, &ruling)
-		result = Worst(result, ruling, Indeterminate("C 风格循环无法证明有界"))
+		result = Worst(result, ruling, Indeterminate("C 风格循环无法安全分析"))
 	default:
-		result = Worst(result, Indeterminate("C 风格循环无法证明有界"))
+		result = Worst(result, Indeterminate("C 风格循环无法安全分析"))
 	}
 	return result
 }
@@ -508,7 +508,7 @@ func (c *classifier) classifyRedirect(r *syntax.Redirect) (Ruling, bool, string,
 
 func (c *classifier) classifyHeredoc(r *syntax.Redirect) (Ruling, bool, string, *pipeInput) {
 	if r.N != nil && r.N.Value != "" && r.N.Value != "0" {
-		return Indeterminate("非常规文件描述符重定向无法证明有界"), false, "", nil
+		return Indeterminate("非常规文件描述符重定向无法安全分析"), false, "", nil
 	}
 	if r.Hdoc == nil {
 		return Indeterminate("here-document 内容缺失"), false, "", nil
@@ -523,7 +523,7 @@ func (c *classifier) classifyHeredoc(r *syntax.Redirect) (Ruling, bool, string, 
 
 func (c *classifier) redirectTarget(r *syntax.Redirect) (string, Ruling) {
 	if r.N != nil && r.N.Value != "" && !isNumeric(r.N.Value) {
-		return "", Indeterminate("非常规文件描述符重定向无法证明有界")
+		return "", Indeterminate("非常规文件描述符重定向无法安全分析")
 	}
 	result := Allow()
 	target, ok := c.literalWord(r.Word, &result)
@@ -690,12 +690,12 @@ func (c *classifier) classifyAssign(assign *syntax.Assign) Ruling {
 				c.literalWord(elem.Value, &ruling)
 			}
 		}
-		return Worst(ruling, Indeterminate("数组或下标赋值无法证明有界"))
+		return Worst(ruling, Indeterminate("数组或下标赋值无法安全分析"))
 	}
 	result := Allow()
 	if assign.Value != nil {
 		if _, ok := c.literalWord(assign.Value, &result); !ok {
-			result = Worst(Indeterminate("赋值包含动态替换，无法证明有界"), result)
+			result = Worst(Indeterminate("赋值包含动态替换，无法安全分析"), result)
 		}
 	}
 	if assign.Name != nil && dangerousEnvAssignments[assign.Name.Value] {
@@ -908,7 +908,7 @@ func (c *classifier) classifyEnv(args []string, stdin pipeInput) Ruling {
 				if !attached {
 					index++
 					if index >= len(args) {
-						return Indeterminate("env 字符串拆句缺少内容")
+						return Indeterminate("env 字符串拆分结果为空")
 					}
 					value = args[index]
 				}
@@ -936,7 +936,7 @@ func (c *classifier) classifyEnv(args []string, stdin pipeInput) Ruling {
 					if payload == "" {
 						index++
 						if index >= len(args) {
-							return Indeterminate("env 字符串拆句缺少内容")
+							return Indeterminate("env 字符串拆分结果为空")
 						}
 						payload = args[index]
 					}
@@ -970,7 +970,7 @@ func (c *classifier) classifyEnvSplitString(payload string, rest []string) Rulin
 	for _, extra := range rest {
 		payload += " " + quoteShellToken(extra)
 	}
-	return Worst(Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), c.classifyText(payload))
+	return Worst(Confirm(KindUnknown, "env 拆分并执行字符串需要确认"), c.classifyText(payload))
 }
 
 func isAssignment(value string) bool {
@@ -1137,7 +1137,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return Allow()
 	}
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
-		return Indeterminate("管道输入进入无法识别的命令，无法证明有界")
+		return Indeterminate("管道输入进入无法识别的命令，无法安全分析")
 	}
 	return Confirm(KindUnknown, "未列入只读白名单的命令")
 }
@@ -1674,7 +1674,7 @@ func classifyMake(args []string) Ruling {
 	}
 	if file != "" {
 		if sawTouch {
-			return Confirm(KindWriteFS, "make -t 触摸文件代替执行配方")
+			return Confirm(KindWriteFS, "make -t 仅更新文件时间戳，不执行配方")
 		}
 		return Confirm(KindUnknown, "执行 Makefile 配方")
 	}
@@ -1900,7 +1900,7 @@ func (c *classifier) classifyDocker(args []string, stdin pipeInput) Ruling {
 		if containsAny(rest, "--no-stream") {
 			return Allow()
 		}
-		return Confirm(KindUnknown, "持续 Docker 统计需要确认")
+		return Confirm(KindUnknown, "持续读取 Docker 统计信息需要确认")
 	case "exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if commandIndex, ok := dockerExecCommandIndex(rest); !ok {

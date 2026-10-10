@@ -179,7 +179,7 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 	r.state(jobID).rememberRead(change.key, versionOf([]byte(change.after)))
 	var result Output
 	if change.create {
-		result = OK(fmt.Sprintf("已创建 %s（%d 字节，原子 no-clobber）", change.path, len(change.after)))
+		result = OK(fmt.Sprintf("已创建 %s（%d 字节，原子写入）", change.path, len(change.after)))
 	} else if call.Name == "edit_file" {
 		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, change.replacements))
 	} else {

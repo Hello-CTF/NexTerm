@@ -148,7 +148,7 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 	if s.closed {
 		s.mu.Unlock()
 		_ = connection.Close()
-		return ConnectResult{}, ipc.NewError(ipc.CodeDisconnected, "连接已断开，请停止操作并提示用户重新连接。(数据库服务已关闭)")
+		return ConnectResult{}, ipc.NewError(ipc.CodeDisconnected, "连接已断开：数据库服务已关闭，请重新连接")
 	}
 	s.conns[id] = connection
 	s.mu.Unlock()
@@ -334,7 +334,7 @@ func badParam(err error) *ipc.Error {
 }
 
 func notFound(id string) *ipc.Error {
-	return ipc.NewError(ipc.CodeNotFound, "未找到: 数据库连接 "+id)
+	return ipc.NewError(ipc.CodeNotFound, "未找到数据库连接 "+id)
 }
 
 func internalError(action string, err error) *ipc.Error {

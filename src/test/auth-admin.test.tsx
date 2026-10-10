@@ -121,9 +121,9 @@ describe("AccountCard 超管用户管理", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("root");
     expect(text).toContain("alice");
-    expect(text).toContain("(我)");
+    expect(text).toContain("（我）");
     const selfRow = [...mounted.container.querySelectorAll("div.border-b")].find((d) =>
-      d.textContent?.includes("(我)"),
+      d.textContent?.includes("（我）"),
     );
     expect(selfRow?.textContent).not.toContain("禁用");
   });
@@ -154,7 +154,7 @@ describe("AccountCard 超管用户管理", () => {
     await flushUntil(() => mounted!.container.querySelector('input[placeholder="用户名"]') !== null);
 
     setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="用户名"]')!, "bob");
-    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="初始密码(至少 8 位)"]')!, "bob-pw-123");
+    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[placeholder="初始密码（至少 8 位）"]')!, "bob-pw-123");
     await flush();
     clickButton(mounted.container, "创建");
     await flushUntil(() => mocks.createUser.mock.calls.length > 0);
@@ -166,7 +166,7 @@ describe("AccountCard 超管用户管理", () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
-      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("(我)"),
+      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const disableBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "禁用")!;
     disableBtn.click();
@@ -181,7 +181,7 @@ describe("AccountCard 超管用户管理", () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
-      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("(我)"),
+      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const disableBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "禁用")!;
     disableBtn.click();
@@ -193,14 +193,14 @@ describe("AccountCard 超管用户管理", () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
-      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("(我)"),
+      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
     )!;
     const resetBtn = [...aliceRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "重置")!;
     resetBtn.click();
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     const question = String(mocks.ask.mock.calls[0]?.[0]);
     expect(question).toContain("数据密钥");
-    expect(question).toContain("全部会话");
+    expect(question).toContain("所有会话");
     expect(question).toContain("两步验证绑定");
     expect(question).toContain("云端密文需从仍持有数据的设备重新同步");
     await flushUntil(() => mocks.resetUser.mock.calls.length > 0);

@@ -128,7 +128,7 @@ export function useFileOps(sessionId: string) {
       const conflict = findSibling(siblings, name);
       if (conflict) {
         const go = await ask(
-          `「${name}」已存在（${conflict.kind === "dir" ? "目录" : "文件"}）。继续会用重命名后的项替换它：旧「${name}」的内容将丢失；能否覆盖由后端决定，部分后端（如 SFTP）会拒绝。\n\n替换「${name}」？`,
+          `「${name}」已存在。继续将替换原有内容，且无法恢复。\n\n替换「${name}」？`,
           { title: "覆盖确认", kind: "warning" },
         );
         if (!go || !alive(seq)) return;
@@ -151,7 +151,7 @@ export function useFileOps(sessionId: string) {
     try {
       if (entry.kind === "symlink") {
         const go = await ask(
-          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。chmod 会跟随链接，改的是链接指向目标的权限。\n\n继续？`,
+          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。chmod 会跟随链接，修改链接目标的权限。\n\n继续？`,
           { title: "权限", kind: "warning" },
         );
         if (!go || !alive(seq)) return;
@@ -174,7 +174,7 @@ export function useFileOps(sessionId: string) {
       const confirmText = `把 ${entry.path} 的权限从 ${
         curMode !== null ? formatMode(curMode) : (entry.mode || "未知")
       } 改为 ${formatMode(next)}？${
-        danger ? "\n\n新权限移除了所有者的读取或写入，之后可能无法再打开或保存它。" : ""
+        danger ? "\n\n新权限会移除所有者的读取或写入权限，之后可能无法再打开或保存它" : ""
       }`;
       const go = await ask(confirmText, { title: "权限", kind: danger ? "warning" : "info" });
       if (!go || !alive(seq)) return;

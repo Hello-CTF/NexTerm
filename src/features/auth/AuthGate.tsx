@@ -159,8 +159,8 @@ function SetupForm() {
         <span className="nx-card-title">初始化 NexTerm</span>
       </div>
       <p className="nx-hint">
-        这台服务器还没有任何账号。输入服务器控制台打印的一次性初始化码,创建超级管理员。
-        初始化码只使用一次;用完即焚,服务器不再接受第二次初始化。
+        这台服务器还没有任何账号。输入服务器控制台打印的一次性初始化码，创建超级管理员。
+        初始化码只能使用一次，成功后即失效。
       </p>
       <Field label="初始化码" value={code} onChange={setCode} mono placeholder="控制台输出的初始化码" autoComplete="off" />
       <Field label="用户名" value={username} onChange={setUsername} placeholder="超级管理员用户名" autoComplete="username" />
@@ -177,7 +177,7 @@ function SetupForm() {
           className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
           onClick={() => useAuth.setState({ gate: "ready" })}
         >
-          暂不初始化,匿名使用
+          暂不初始化，匿名使用
         </button>
       )}
       {status?.auth === "off" && (
@@ -186,7 +186,7 @@ function SetupForm() {
           className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
           onClick={() => useAuth.setState({ gate: "ready" })}
         >
-          账号功能已关闭,返回应用
+          账号功能已关闭，返回应用
         </button>
       )}
     </form>
@@ -224,11 +224,11 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
       <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-        {busy ? "登录中…(正在解锁加密数据)" : "登录"}
+        {busy ? "正在登录并解锁数据…" : "登录"}
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12px]">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("recovery")}>
-          忘记密码?用恢复密钥重置
+          使用恢复密钥重置密码
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("enroll")}>
           用配对码添加设备
@@ -271,8 +271,7 @@ function TotpChallengeForm() {
         <span className="nx-card-title">两步验证</span>
       </div>
       <p className="nx-hint">
-        这个账号已开启 TOTP 两步验证。输入认证器 App 中的 6 位动态码;
-        手机丢失时也可以输入一枚未使用的恢复码。
+        此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；手机丢失时，也可输入未使用的恢复码。
       </p>
       <Field label="动态码 / 恢复码" value={code} onChange={setCode} mono placeholder="6 位数字或恢复码" autoComplete="one-time-code" />
       <GateError error={error} />
@@ -280,7 +279,7 @@ function TotpChallengeForm() {
         {busy ? "验证中…" : "验证并登录"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={cancelMfa}>
-        返回重新登录
+        返回登录
       </button>
     </form>
   );
@@ -357,7 +356,7 @@ function MfaEnrollForm() {
       setConfirmed(true);
     } catch {
       setConfirmed(true);
-      setError("复制失败,请手动选中恢复码复制");
+      setError("复制失败，请手动复制恢复码");
     }
   };
 
@@ -369,8 +368,7 @@ function MfaEnrollForm() {
           <span className="nx-card-title">保存恢复码</span>
         </div>
         <p className="nx-hint">
-          两步验证已开启。恢复码是手机丢失时登录账号的唯一凭证(每枚只能用一次),
-          服务端只保存散列,关闭后<b>无法再次查看</b>。请复制并保存在安全的地方。
+          恢复码可在无法使用认证器时代替动态码，每个只能使用一次。服务端只保存散列，关闭后无法再次查看，请妥善保存。
         </p>
         <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -392,9 +390,9 @@ function MfaEnrollForm() {
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !confirmed} onClick={() => void finish()}>
           <IconCheckCircle size={12} />
-          已手动保存,进入应用
+          已保存，进入应用
         </button>
-        {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">先复制保存,再进入应用</p>}
+        {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">请先复制或手动保存恢复码</p>}
       </div>
     );
   }
@@ -406,7 +404,7 @@ function MfaEnrollForm() {
           <IconShield size={15} className="text-amber-300" />
           <span className="nx-card-title">必须启用两步验证</span>
         </div>
-        <p className="nx-hint">管理员已要求所有账号启用 TOTP 两步验证,完成绑定前无法使用其他功能。</p>
+        <p className="nx-hint">管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。</p>
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy} onClick={() => void startSetup()}>
           {busy ? "生成中…" : "重试"}
@@ -425,8 +423,8 @@ function MfaEnrollForm() {
         <span className="nx-card-title">必须启用两步验证</span>
       </div>
       <p className="nx-hint">
-        管理员已要求所有账号启用 TOTP 两步验证,完成绑定前无法使用其他功能。
-        用认证器 App(如 Google Authenticator、1Password 等)扫描或录入以下密钥绑定。
+        管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。
+        用认证器 App（如 Google Authenticator、1Password）导入绑定链接，或手动输入密钥。
       </p>
       <div className="nx-alert nx-alert-info mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -503,9 +501,9 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
         <IconKey size={15} className="text-neutral-400" />
         <span className="nx-card-title">注册</span>
       </div>
-      <p className="nx-hint">这台服务器已由管理员开放注册(注册默认关闭)。注册即可创建普通用户账号。</p>
+      <p className="nx-hint">管理员已开放注册，可创建普通用户账号。</p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
-      <Field label="显示名(可选)" value={displayName} onChange={setDisplayName} />
+      <Field label="显示名（可选）" value={displayName} onChange={setDisplayName} />
       <Field label="密码" value={password} onChange={setPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
       <Field label="确认密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
@@ -559,10 +557,9 @@ function ResetRequiredForm() {
         <span className="nx-card-title">必须先设置新密码</span>
       </div>
       <p className="nx-hint">
-        管理员已重置这个账号。当前(临时)密码只用于本次验证;数据密钥、全部会话和两步验证绑定已被清除。
-        设置新密码后会签发新的数据密钥,云端密文需从仍持有数据的设备重新同步。
+        当前临时密码仅用于本次验证；数据密钥、所有会话和两步验证绑定已清除。设置新密码后会签发新的数据密钥，云端密文需从仍持有数据的设备重新同步。
       </p>
-      <Field label="当前(临时)密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
+      <Field label="当前临时密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
       <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
       <Field label="确认新密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
@@ -614,8 +611,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用恢复密钥重置</span>
       </div>
       <p className="nx-hint">
-        输入你保存的最新恢复密钥。重置后旧密码失效,数据密钥、全部会话和两步验证绑定将被清除;
-        云端密文需从仍持有数据的设备重新同步。
+        重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效；请从仍持有数据的设备重新同步云端密文。
       </p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
       <Field label="恢复密钥" value={recoveryKey} onChange={setRecoveryKey} mono placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autoComplete="off" />
@@ -693,14 +689,13 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
           <span className="nx-card-title">设备已登记</span>
         </div>
         <p className="nx-hint">
-          设备「{device.name}」已添加到你的账号。输入账号密码完成登录,这台设备的会话将绑定到该设备,
-          之后可在「设置 → 账号同步」的「账号」卡「登录设备」里查看或吊销。
+          设备「{device.name}」已添加到账号。请输入账号密码完成登录；之后可在「设置 → 账号同步 → 账号 → 登录设备」中查看或吊销。
         </p>
         <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
         <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
         <GateError error={error} />
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-          {busy ? "登录中…(正在解锁加密数据)" : "登录并完成添加"}
+          {busy ? "正在登录并解锁数据…" : "登录"}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
           返回登录
@@ -716,8 +711,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用配对码添加设备</span>
       </div>
       <p className="nx-hint">
-        在另一台已登录设备的「设置 → 账号同步」→「账号」卡里点「添加设备」,生成一次性配对码(15 分钟内有效)。
-        在这里输入配对码,把账号添加到这台设备。
+        在另一台已登录设备的「设置 → 账号同步 → 账号」中选择「添加设备」，生成一次性配对码（15 分钟内有效），然后在此输入配对码完成添加。
       </p>
       <Field label="配对码" value={code} onChange={setCode} mono placeholder="另一台设备上显示的配对码" autoComplete="off" />
       <Field label="设备名" value={deviceName} onChange={setDeviceName} placeholder="这台浏览器" autoComplete="off" />
@@ -750,7 +744,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
     } catch {
       setRevealed(true);
       setConfirmed(true);
-      setCopyError("复制失败,请手动选中恢复密钥复制");
+      setCopyError("复制失败，请手动复制恢复密钥");
     }
   };
 
@@ -758,11 +752,10 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
     <div>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-amber-300" />
-        <span className="nx-card-title">恢复密钥(只显示这一次)</span>
+        <span className="nx-card-title">恢复密钥（仅显示一次）</span>
       </div>
       <p className="nx-hint">
-        这是找回账号的唯一凭证。服务端只保存它的散列,关闭后<b>无法再次查看</b>。
-        请立即复制并保存在安全的地方(密码管理器或离线介质)。
+        这是找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
       </p>
       <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
         <code className="nx-code break-all font-mono text-[13px]">{revealed ? issue.formatted : "•".repeat(39)}</code>
@@ -785,15 +778,14 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          恢复密钥用于在忘记密码时重置账号。它和数据密钥是两回事:日常解密靠密码,
-          恢复密钥只在重置时使用,同样需要保密。
+          恢复密钥仅用于忘记密码时重置账号；日常解密使用密码。两者都需要保密。
         </div>
       </div>
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={!confirmed} onClick={onDone}>
         <IconCheckCircle size={12} />
-        已手动保存
+        已保存，进入应用
       </button>
-      {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">先复制密钥,再进入应用</p>}
+      {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">请先复制或手动保存恢复密钥</p>}
     </div>
   );
 }

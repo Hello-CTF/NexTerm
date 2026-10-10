@@ -11,7 +11,7 @@ import (
 
 func TestToolResultPanicMarkerPropagates(t *testing.T) {
 	crashTool, err := utils.InferTool("crash_tool", "always crashes", func(context.Context, testArgs) (string, error) {
-		return `{"ok":false,"text":"工具 crash_tool 执行崩溃: 后端不可用","exitCode":1,"panic":true}`, nil
+		return `{"ok":false,"text":"工具 crash_tool 执行时崩溃：后端不可用","exitCode":1,"panic":true}`, nil
 	})
 	if err != nil {
 		t.Fatal(err)

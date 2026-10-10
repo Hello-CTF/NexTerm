@@ -120,7 +120,7 @@ describe("panel-level error boundary", () => {
     expect(panel).not.toBeNull();
     const alert = panel?.querySelector<HTMLElement>('[role="alert"]');
     expect(alert).not.toBeNull();
-    expect(alert?.textContent).toContain("这个面板出了点问题");
+    expect(alert?.textContent).toContain("面板发生错误");
     expect(alert?.textContent).toContain("settings exploded");
 
     const tablist = mounted.container.querySelector('[role="tablist"][aria-label="标签页"]');
@@ -134,7 +134,7 @@ describe("panel-level error boundary", () => {
       expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(1),
     );
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t2");
-    expect(mounted.container.textContent).not.toContain("这个面板出了点问题");
+    expect(mounted.container.textContent).not.toContain("面板发生错误");
     expect(mounted.container.querySelector('[role="tablist"]')).not.toBeNull();
   });
 });
@@ -147,7 +147,7 @@ describe("shell-level error boundary", () => {
 
     const alert = mounted.container.querySelector<HTMLElement>('[role="alert"]');
     expect(alert).not.toBeNull();
-    expect(alert?.textContent).toContain("应用界面出了点问题");
+    expect(alert?.textContent).toContain("应用界面发生错误");
     expect(alert?.textContent).toContain("asset tree exploded");
 
     const buttons = [...(alert?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
@@ -156,7 +156,7 @@ describe("shell-level error boundary", () => {
     click(buttons[0]);
     await flush();
     expect(mounted.container.querySelector('[role="alert"]')?.textContent).toContain(
-      "应用界面出了点问题",
+      "应用界面发生错误",
     );
   });
 });

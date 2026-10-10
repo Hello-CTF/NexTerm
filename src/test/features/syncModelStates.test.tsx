@@ -351,7 +351,7 @@ describe("ModelManager 状态", () => {
     click(mounted!.container.querySelector('button[title="新增档案"]')!);
     await flush();
     const nameLabel = [...mounted!.container.querySelectorAll("label")].find(
-      (l) => l.textContent?.trim() === "展示名",
+      (l) => l.textContent?.trim() === "显示名称",
     );
     const nameInput = mounted!.container.querySelector<HTMLInputElement>(
       `input[id="${nameLabel!.htmlFor}"]`,
@@ -418,7 +418,7 @@ describe("ModelPanel 弹层键盘行为", () => {
     act(() => newBtn!.click());
     await flush();
     const nameInput = [...mounted!.container.querySelectorAll("label")].find((l) =>
-      l.textContent?.trim() === "展示名",
+      l.textContent?.trim() === "显示名称",
     );
     const input = mounted!.container.querySelector<HTMLInputElement>(
       `input[id="${nameInput!.htmlFor}"]`,

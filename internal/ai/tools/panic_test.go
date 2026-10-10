@@ -86,7 +86,7 @@ func TestPanicDiagnosticsCapNonErrorValues(t *testing.T) {
 		t.Fatalf("non-error panic value lost: %q", output.Text)
 	}
 	long := panicOutput("read_file", strings.Repeat("长", panicDiagnosticMaxRunes*2))
-	if got := len([]rune(long.Text)); got > len([]rune("工具 read_file 执行崩溃: "))+panicDiagnosticMaxRunes+1 {
+	if got := len([]rune(long.Text)); got > len([]rune("工具 read_file 执行时崩溃："))+panicDiagnosticMaxRunes+1 {
 		t.Fatalf("panic diagnostic not capped: %d runes", got)
 	}
 	empty := panicOutput("read_file", nil)

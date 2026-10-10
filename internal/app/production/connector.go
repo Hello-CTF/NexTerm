@@ -85,7 +85,7 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		}
 	}
 	if strings.TrimSpace(options.StartupCommand) != "" && asset.Kind != session.KindSSH && asset.Kind != session.KindDocker {
-		return nil, ipc.BadParam(fmt.Errorf("启动命令仅支持 SSH 资产，%s 资产不执行启动命令", asset.Kind))
+		return nil, ipc.BadParam(fmt.Errorf("仅 SSH 资产支持启动命令，当前资产类型为 %s", asset.Kind))
 	}
 	switch asset.Kind {
 	case session.KindLocal:

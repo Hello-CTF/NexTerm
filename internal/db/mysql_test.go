@@ -94,7 +94,7 @@ func TestMySQLQueryTimeoutShape(t *testing.T) {
 	}}
 	_, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), "SELECT SLEEP(10)", 0, 20*time.Millisecond)
 	var ipcErr *ipc.Error
-	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeTimeout || !strings.Contains(ipcErr.Message, "SQL 超时") {
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeTimeout || !strings.Contains(ipcErr.Message, "SQL 执行超时") {
 		t.Fatalf("wrong timeout error: %#v", err)
 	}
 }

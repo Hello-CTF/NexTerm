@@ -329,7 +329,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={7} className="nx-table-empty">
-                  暂无记录：只有在支持 OSC 133 shell 集成的 shell 里执行的命令才会被记录。
+                  暂无记录：仅记录启用了 OSC 133 集成的 shell 中执行的命令。
                 </td>
               </tr>
             ) : null}
@@ -372,7 +372,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
-          只覆盖启用了 OSC 133 shell 集成的会话（本地注入或远端自带）；命令文本取自执行时的屏幕行，可能包含提示符；纯输出与其他来源不落库。
+          仅覆盖启用 OSC 133 shell 集成的会话（本地注入或远端支持）；命令文本取自执行时的屏幕行，可能包含提示符。纯输出和其他来源不会记录。
         </span>
       </div>
     </div>

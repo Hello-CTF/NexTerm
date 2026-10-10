@@ -384,7 +384,7 @@ describe("AiSidebar conversation stream UX", () => {
     await send("长任务");
     emit({ type: "delta", text: "已流出的部分" });
     act(runFrames);
-    click(view!.container.querySelector('button[title^="停止这一轮"]')!);
+    click(view!.container.querySelector('button[title^="停止当前任务"]')!);
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(textOf(view!)).toContain("已停止本轮");

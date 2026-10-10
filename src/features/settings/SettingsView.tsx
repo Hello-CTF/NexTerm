@@ -160,7 +160,7 @@ export function SettingsView() {
     const trimmed = autoLockDraft.trim();
     const minutes = Number(trimmed);
     if (trimmed === "" || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
-      pushToast("error", "自动锁时长需为 0（禁用）至 1440 之间的整数分钟");
+      pushToast("error", "自动锁定时长须为 0 至 1440 的整数分钟，0 表示禁用");
       return;
     }
     void vaultApi
@@ -367,7 +367,7 @@ export function SettingsView() {
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
                   ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。只在可信的主机与网络环境下保持开启。"
-                  : "默认关闭。远程主机每次请求写剪贴板时都会先询问你，可选择允许本次、本会话允许或拒绝。"}
+                  : "默认关闭。远程主机每次请求写剪贴板时都会先询问你，可选择允许本次、允许本会话或拒绝。"}
               </p>
             </div>
             <input
@@ -386,8 +386,7 @@ export function SettingsView() {
             <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
           </div>
           <p className="nx-hint mb-3.5">
-            可存多份模型档案（不同厂商 / 不同 Key），选中一份「设为当前」供 AI 使用。
-            密钥加密后存在{DESKTOP ? "本机" : "NexTerm 服务端的"} sqlite；只有开启「同步 AI 模型档案」且凭据库已解锁，推送时才会将密钥随档案端到端加密同步。模型可换成本地 Ollama / LM Studio / vLLM。
+            可保存多份模型档案，并将其中一份设为当前。密钥加密后保存在当前运行环境的 SQLite 中；启用「同步 AI 模型档案」并解锁凭据库后，密钥才会随档案端到端加密同步。支持本地 Ollama、LM Studio 和 vLLM。
           </p>
 
           <ModelManager />
@@ -420,11 +419,10 @@ export function SettingsView() {
                     ) : (
                       <IconZap size={13} className="shrink-0" />
                     )}
-                    {testing ? "测试中…" : "连通性测试（两步）· 当前模型"}
+                    {testing ? "测试中…" : "测试当前模型连通性"}
                   </button>
                   <span className="nx-hint">
-                    只能测当前模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
-                    要验证草稿的连接参数，请用上方的「刷新模型列表」。
+                    只能测试已生效的当前模型；未保存的草稿请用上方的「刷新模型列表」验证。
                   </span>
                 </div>
 
@@ -553,7 +551,7 @@ export function SettingsView() {
           </button>
 
           <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-            不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
+            不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝。
           </p>
         </section>
 
@@ -582,7 +580,7 @@ export function SettingsView() {
                 {vaultPasswordProtected
                   ? "开启：每次启动需输入密码后方可使用凭据。"
                   : vault?.mode === "not_init"
-                    ? "尚未初始化：打开这个开关并设置保护密码即可完成初始化；初始化前无法保存任何密码或私钥。"
+                    ? "尚未初始化：启用保护后才能保存密码或私钥。"
                     : vault?.mode === "master"
                       ? "关闭：未设置保护密码，凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密。"
                       : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
@@ -649,7 +647,7 @@ export function SettingsView() {
                 取消
               </button>
               <p className="nx-hint w-full text-[11px]">
-                保护密码只用于{DESKTOP ? "本机" : "NexTerm 服务端"}凭据库的加解密，不作为同步内容；账号同步推送的是经端到端加密的凭据，不是这个保护密码。留空则不设置密码，凭据仍可正常保存与使用，但任何拿到数据目录的人都能解密。忘记后无法找回，已保存的凭据将永远无法解密。
+                保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何拿到数据目录的人都能解密；忘记密码后，已保存的凭据将无法恢复。
               </p>
             </div>
           )}

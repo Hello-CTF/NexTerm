@@ -146,7 +146,7 @@ describe("stealBack 对已结束的接管保持诚实", () => {
     mocks.exit.mockRejectedValue(new Error("接管令牌已过期"));
     await stealBack();
     expect(useUi.getState().takeover).toBeNull();
-    expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端已在你手中");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端控制权已恢复。");
   });
 
   it("任务不存在时同样按已结束处理", async () => {
@@ -154,7 +154,7 @@ describe("stealBack 对已结束的接管保持诚实", () => {
     mocks.exit.mockRejectedValue(new Error("接管任务不存在或已结束"));
     await stealBack();
     expect(useUi.getState().takeover).toBeNull();
-    expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端已在你手中");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端控制权已恢复。");
   });
 
   it("其他失败仍然保留横幅并报错", async () => {

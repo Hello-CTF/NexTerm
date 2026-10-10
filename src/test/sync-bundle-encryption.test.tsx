@@ -112,7 +112,7 @@ function exportRow(name: string): HTMLElement {
 
 function exportButton(): HTMLButtonElement {
   const btn = [...mounted!.container.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === "导出资产包 (.nxbm)",
+    (b) => b.textContent?.trim() === "导出资产包（.nxbm）",
   ) as HTMLButtonElement | undefined;
   if (!btn) throw new Error("export button not found");
   return btn;
@@ -224,7 +224,7 @@ describe("SyncBundleCard 加密导入", () => {
     await mountCard();
     openImport();
     await flushUntil(() => text().includes("选择资产包文件"));
-    expect(text()).toContain("只支持 .nxbm 资产包");
+    expect(text()).toContain("仅支持 .nxbm 资产包");
     expect(text()).not.toContain(".json");
   });
 });

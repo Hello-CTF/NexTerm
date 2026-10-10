@@ -42,7 +42,7 @@ describe("ErrorBoundary", () => {
 
     const alert = mounted.container.querySelector<HTMLElement>('[role="alert"]');
     expect(alert).not.toBeNull();
-    expect(alert?.textContent).toContain("这个面板出了点问题");
+    expect(alert?.textContent).toContain("面板发生错误");
     expect(alert?.textContent).toContain("boom");
 
     const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="alert"] button')];

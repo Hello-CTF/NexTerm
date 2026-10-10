@@ -85,7 +85,7 @@ describe("M152 AI markdown code highlight", () => {
     view = mount(createElement(Markdown, { text: "```someunknown\nplain text\n```" }));
     const pre = view!.container.querySelector(".nx-md-pre")!;
     expect(pre.querySelector(".nx-md-pre-lang")!.textContent).toBe("someunknown");
-    expect(pre.querySelector("button[title='复制这段']")).not.toBeNull();
+    expect(pre.querySelector("button[title='复制代码']")).not.toBeNull();
     expect(pre.querySelector(".nx-md-pre-body")!.textContent).toBe("plain text");
     await flush();
     expect(pre.querySelector("[class*='nx-tok-']")).toBeNull();
@@ -95,7 +95,7 @@ describe("M152 AI markdown code highlight", () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     view = mount(createElement(Markdown, { text: "```js\nconst a = 1\n```" }));
-    const button = view!.container.querySelector<HTMLButtonElement>("button[title='复制这段']")!;
+    const button = view!.container.querySelector<HTMLButtonElement>("button[title='复制代码']")!;
     click(button);
     await flushUntil(() => writeText.mock.calls.length > 0);
     expect(writeText).toHaveBeenCalledWith("const a = 1");

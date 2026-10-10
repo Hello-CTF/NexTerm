@@ -91,7 +91,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		v.mode = ModeMaster
 	case mode == "":
 	default:
-		slog.Warn("凭据库模式无法识别，本次按未初始化处理")
+		slog.Warn("凭据库模式无法识别，按未初始化处理")
 	}
 	if raw, err := readSetting(ctx, db, settingAutolock); err != nil {
 		v.noteLoadError(settingAutolock, err)
@@ -117,14 +117,14 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 	if v.mode == ModeMaster && v.passwordless {
 		v.mu.Lock()
 		if err := v.unlockMasterLocked(ctx, ""); err != nil {
-			slog.Warn("无密码凭据库自动解锁失败，本次按锁定处理", "error", err)
+			slog.Warn("无密码凭据库自动解锁失败，按锁定处理", "error", err)
 		}
 		v.mu.Unlock()
 	}
 	if v.mode == ModeDPAPI {
 		v.mu.Lock()
 		if err := v.unlockDPAPILocked(ctx); err != nil {
-			slog.Warn("凭据库自动解锁失败，本次按未初始化处理", "error", err)
+			slog.Warn("凭据库自动解锁失败，按未初始化处理", "error", err)
 			v.mode = ModeNotInit
 			v.clearKeysLocked()
 		}
@@ -153,7 +153,7 @@ func (v *Vault) noteLoadError(key string, err error) {
 
 func (v *Vault) guardLoadError() error {
 	if v.loadErr != nil {
-		return ipc.NewError(ipc.CodeCrypto, "加密错误: 凭据库设置读取失败，状态未知；为避免旧密文永久不可解密，已拒绝初始化，请先检查数据库")
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：读取凭据库设置失败，已拒绝初始化；请检查数据库")
 	}
 	return nil
 }
@@ -226,7 +226,7 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 		return err
 	}
 	if hasSecrets {
-		return ipc.NewError(ipc.CodeCrypto, "加密错误: 库内仍有密文，重新初始化会替换密钥并使其永远无法解密，已拒绝")
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：库内仍有密文，已拒绝重新初始化，以免替换密钥后无法解密")
 	}
 	salt := make([]byte, 16)
 	randomBytes(salt)
@@ -337,7 +337,7 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 			return err
 		}
 		if hasSecrets {
-			return ipc.NewError(ipc.CodeCrypto, "加密错误: 凭据库的密钥信封已丢失，但库内仍有密文；重建密钥会让它们永远无法解密，已拒绝")
+			return ipc.NewError(ipc.CodeCrypto, "加密错误：密钥信封已丢失且库内仍有密文，已拒绝重建密钥")
 		}
 		dek = generateKey()
 		protected, err := v.protector.Protect(dek.bytes[:])
@@ -384,7 +384,7 @@ func (v *Vault) UnlockMaster(ctx context.Context, password string) error {
 
 func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 	if v.mode == ModeNotInit {
-		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无需解锁；请先在\"设置 → 凭据保护\"中完成初始化")
+		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在\"设置 → 凭据保护\"中完成初始化")
 	}
 	if v.mode != ModeMaster {
 		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")

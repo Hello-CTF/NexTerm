@@ -278,7 +278,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       </span>
                     </label>
                     <span className="nx-hint mt-1.5 block">
-                      需要从系统钥匙串取解密密钥，目前仅 macOS 可用；私钥与密码正文不会出现在预览里。
+                      需要从系统钥匙串读取解密密钥，目前仅支持 macOS；私钥与密码内容不会显示在预览中。
                     </span>
                   </div>
                 )}
@@ -291,7 +291,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   {phase === "loading" ? "正在读取并生成预览…" : "正在导入…"}
                 </div>
                 <div className="nx-hint mt-1">
-                  {phase === "loading" ? "仅本次读取，完成后立即展示结果" : "写入资产库与凭据库"}
+                  {phase === "loading" ? "仅读取一次，完成后显示预览" : "写入资产库与凭据库"}
                 </div>
               </div>
             )}
@@ -327,7 +327,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
                 <div className="nx-hint mt-3">
-                  已写入审计日志；可在资产树与凭据列表里查看新条目。
+                  可在资产树与凭据列表中查看新条目。
                 </div>
               </div>
             )}
@@ -355,7 +355,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             )}
             {phase === "preview" && importableCount > 0 && (
               <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
-                一键导入全部可新增项 ({importableCount})
+                导入全部可新增项（{importableCount}）
               </button>
             )}
             {phase === "preview" && (
@@ -481,7 +481,7 @@ function StrategySelect({
       onChange={(e) => onAction(e.target.value as SshImportItemAction)}
     >
       <option value="skip">跳过</option>
-      <option value="overwrite">覆盖同名资产</option>
+      <option value="overwrite">覆盖同名项</option>
     </select>
   );
 }
