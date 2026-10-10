@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
-import { mountApi, systemApi } from "../../ipc/commands";
+import { assetApi, mountApi, systemApi } from "../../ipc/commands";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
@@ -65,7 +65,9 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const { pushToast } = useUi();
   const sessions = useUi((s) => s.sessions);
   const visible = useMountPanelVisible(sessionId);
-  const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
+  const session = sessions.find((s) => s.id === sessionId);
+  const localSession = session?.kind === "local";
+  const assetId = session?.assetId ?? null;
   const platform = useQuery({
     queryKey: ["system-platform"],
     queryFn: () => systemApi.platform(),
@@ -73,9 +75,25 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     refetchOnWindowFocus: false,
   });
   const windows = platform.data === "windows";
+  const asset = useQuery({
+    queryKey: ["asset", assetId],
+    queryFn: () => assetApi.get(assetId as string),
+    enabled: assetId !== null,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  const assetPrefill = (() => {
+    const host = asset.data?.host?.trim() ?? "";
+    if (!host) return "";
+    if (windows) return `\\\\${host}\\`;
+    const bracketed = host.includes(":") ? `[${host}]` : host;
+    const username = asset.data?.username?.trim();
+    return `${username ? `${username}@` : ""}${bracketed}:`;
+  })();
   const [localPoint, setLocalPoint] = useState("");
   const localPointEdited = useRef(false);
   const [remotePath, setRemotePath] = useState("");
+  const remotePathEdited = useRef(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [credsOpen, setCredsOpen] = useState(false);
@@ -97,6 +115,10 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (!localPointEdited.current) setLocalPoint(windows ? "Z:" : "");
   }, [windows]);
+
+  useEffect(() => {
+    if (!remotePathEdited.current) setRemotePath(assetPrefill);
+  }, [assetPrefill]);
 
   useEffect(
     () => () => {
@@ -123,6 +145,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     setLocalPointError(validateRequired("挂载点", localPointValueRef.current));
   };
   const onRemotePathChange = (value: string) => {
+    remotePathEdited.current = true;
     setRemotePath(value);
     if (remotePathTimer.current !== null) window.clearTimeout(remotePathTimer.current);
     remotePathTimer.current = window.setTimeout(() => {
@@ -171,7 +194,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
         password: password || undefined,
       });
       pushToast("success", `已挂载 ${localPoint}`);
-      setRemotePath("");
+      remotePathEdited.current = false;
+      setRemotePath(assetPrefill);
       setUsername("");
       setPassword("");
       setCredsOpen(false);
@@ -269,8 +293,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
-          新建挂载 · Windows 用 <span className="nx-code">\\host\share</span> →{' '}
-          <span className="nx-code">Z:</span>；Linux 用{' '}
+          新建挂载{asset.data?.name ? ` · 目标默认当前资产「${asset.data.name}」` : ""} · Windows 用{' '}
+          <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>；Linux 用{' '}
           <span className="nx-code">user@host:/path</span> →{' '}
           <span className="nx-code">/mnt/point</span>（需 sshfs）
         </div>
@@ -365,7 +389,10 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
           ) : localSession ? (
             "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
           ) : (
-            <>凭据默认复用资产里保存的那份；这里填的只对本次挂载生效，不落盘。</>
+            <>
+              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名密码只对本次挂载生效、不落盘，不填时
+              Linux 走本机密钥 / agent，Windows 用当前登录凭据。
+            </>
           )}
         </div>
       </div>

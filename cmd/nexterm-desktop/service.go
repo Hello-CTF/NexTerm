@@ -13,6 +13,7 @@ import (
 type Service struct {
 	app     *core.Application
 	streams *desktopStreamFactory
+	links   deepLinkRelay
 }
 
 func (s *Service) ServiceName() string {
@@ -35,4 +36,8 @@ func (s *Service) Call(ctx context.Context, request ipc.Request) ipc.Response {
 		clientID = "desktop"
 	}
 	return s.app.Dispatcher.Dispatch(ctx, request, s.app.Environment(clientID))
+}
+
+func (s *Service) ConsumeDeepLinks() []string {
+	return s.links.consume()
 }

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   update: vi.fn(),
   groupList: vi.fn(),
+  groupCreate: vi.fn(),
   groupUpdate: vi.fn(),
   groupDelete: vi.fn(),
   snippetList: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       update: mocks.update,
       delete: mocks.assetDelete,
       groupList: mocks.groupList,
+      groupCreate: mocks.groupCreate,
       groupUpdate: mocks.groupUpdate,
       groupDelete: mocks.groupDelete,
       snippetList: mocks.snippetList,
@@ -81,6 +83,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { AssetTree, AssetEditor } from "../../features/explorer/AssetTree";
+import { useGroupCollapse } from "../../features/explorer/groupCollapse";
 import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
 import { useUi } from "../../app/store";
 import { dialogLevelForKind } from "../../app/App";
@@ -150,6 +153,8 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.resetAllMocks();
   document.body.replaceChildren();
+  localStorage.clear();
+  useGroupCollapse.setState({ collapsedIds: [] });
   mocks.list.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.listCredentials.mockResolvedValue([]);
@@ -288,6 +293,98 @@ describe("asset group controls", () => {
     });
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ id: "a1", groupId: null }));
     expect(mocks.toast).toHaveBeenCalledWith("info", "已移出分组");
+  });
+
+  const ASSET_IN_GROUP = {
+    id: "a1",
+    groupId: "g1",
+    kind: "ssh",
+    name: "web-1",
+    host: "10.0.0.8",
+    port: 22,
+    username: "root",
+    authKind: "password",
+    keyPath: null,
+    credId: null,
+    options: {},
+    tags: "",
+    note: "",
+    sort: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    deletedAt: null,
+    builtin: false,
+  };
+
+  function groupToggle(container: ParentNode): HTMLButtonElement {
+    const toggle = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("生产"),
+    );
+    if (!toggle) throw new Error("Group row toggle not found");
+    return toggle;
+  }
+
+  it("keeps a group collapsed across remounts", async () => {
+    mocks.list.mockResolvedValue([{ ...ASSET_IN_GROUP }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    click(groupToggle(mounted!.container));
+    await flush();
+    expect(mounted!.container.textContent).not.toContain("web-1");
+    expect(JSON.parse(localStorage.getItem("nexterm.collapsedAssetGroups.v1") ?? "null")).toEqual(["g1"]);
+
+    mounted.unmount();
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+    expect(mounted!.container.textContent).not.toContain("web-1");
+
+    click(groupToggle(mounted!.container));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+  });
+
+  it("creates a group from the tree background context menu", async () => {
+    mocks.groupCreate.mockResolvedValue({ ...GROUP, id: "g2", name: "测试" });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+
+    const tree = mounted!.container.querySelector("[role='tree']");
+    if (!tree) throw new Error("Tree not found");
+    act(() => {
+      tree.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    });
+    await flush();
+    const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>("[role='menuitem']")].find(
+      (b) => b.textContent?.includes("新建分组"),
+    );
+    if (!item) throw new Error("Menu item not found: 新建分组");
+    click(item);
+    await flush();
+
+    const modal = mounted!.container.querySelector(".nx-modal");
+    if (!modal) throw new Error("Group editor modal not found");
+    const input = modal.querySelector<HTMLInputElement>("input.nx-input");
+    if (!input) throw new Error("Group name input not found");
+    setInputValue(input, "测试");
+    clickButton(mounted!.container, "保存");
+    await waitFor(() => expect(mocks.groupCreate).toHaveBeenCalledWith("测试"));
+  });
+
+  it("opens the group menu on right-click", async () => {
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+
+    const row = [...mounted!.container.querySelectorAll("[role='treeitem']")].find((el) =>
+      el.textContent?.includes("生产"),
+    );
+    if (!row) throw new Error("Group treeitem not found");
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    });
+    await flush();
+    const labels = [...mounted!.container.querySelectorAll("[role='menuitem']")].map((b) => b.textContent ?? "");
+    expect(labels.some((t) => t.includes("重命名分组"))).toBe(true);
+    expect(labels.some((t) => t.includes("删除分组"))).toBe(true);
   });
 });
 

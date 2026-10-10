@@ -308,6 +308,23 @@ func (s *Service) Remove(id string) error {
 	return nil
 }
 
+func (s *Service) CloseSession(sessionID string) {
+	s.mu.Lock()
+	forwards := make([]*forwarder, 0, len(s.forwards))
+	for id, f := range s.forwards {
+		if f.sessionID == sessionID {
+			forwards = append(forwards, f)
+			delete(s.forwards, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, f := range forwards {
+		if err := f.stopAndWait(); err != nil {
+			s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", f.id, err))
+		}
+	}
+}
+
 func (s *Service) Close() error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()

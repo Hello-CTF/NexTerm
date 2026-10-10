@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -123,22 +124,46 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_get_permission", func(context.Context, *ipc.Call, struct{}) (guard.Config, error) {
-				if r.config.Permissions == nil {
-					return guard.Config{}, errors.New("权限设置未配置")
-				}
-				return r.config.Permissions.Get(), nil
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, "ai_set_permission", func(ctx context.Context, _ *ipc.Call, args struct {
-				Config *guard.Config `json:"config"`
+			return ipc.Register(dispatcher, "ai_get_permission", func(ctx context.Context, _ *ipc.Call, args struct {
+				Scope tools.Scope `json:"scope"`
 			}) (guard.Config, error) {
 				if r.config.Permissions == nil {
 					return guard.Config{}, errors.New("权限设置未配置")
 				}
+				config := r.config.Permissions.Get()
+				return r.config.Permissions.WithDeviceMode(config, tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_set_permission", func(ctx context.Context, _ *ipc.Call, args struct {
+				Config       *guard.Config `json:"config"`
+				Scope        tools.Scope   `json:"scope"`
+				FollowGlobal bool          `json:"followGlobal,omitempty"`
+			}) (guard.Config, error) {
+				if r.config.Permissions == nil {
+					return guard.Config{}, errors.New("权限设置未配置")
+				}
+				deviceID := tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)
+				if args.FollowGlobal {
+					if deviceID == "" {
+						return guard.Config{}, errors.New("无法确定设备身份，不能清除设备模式")
+					}
+					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, ""); err != nil {
+						return guard.Config{}, err
+					}
+					return r.config.Permissions.Get(), nil
+				}
 				if args.Config == nil {
 					return guard.Config{}, errors.New("缺少 config")
+				}
+				if deviceID != "" {
+					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, args.Config.Mode); err != nil {
+						return guard.Config{}, err
+					}
+					return r.config.Permissions.WithDeviceMode(r.config.Permissions.Get(), deviceID), nil
+				}
+				if args.Scope.SessionID != "" || args.Scope.TabID != "" {
+					return guard.Config{}, errors.New("无法确定设备身份, 权限未保存; 请重新连接后再试")
 				}
 				if err := r.config.Permissions.Set(ctx, *args.Config); err != nil {
 					return guard.Config{}, err

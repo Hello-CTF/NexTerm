@@ -49,6 +49,7 @@ describe("Wails events 与 channels", () => {
       "docker://stats",
       "ai://event",
       "app://error",
+      "app://deep-link",
       "device://status",
     ]);
     expect(layoutSource).toContain('"layout://changed"');

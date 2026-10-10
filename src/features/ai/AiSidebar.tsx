@@ -75,9 +75,12 @@ import {
 
 interface RefChip {
   id: string;
-  kind: "asset" | "tab";
+  kind: "asset" | "tab" | "file";
   label: string;
   detail: string;
+  refId: string;
+  path?: string;
+  sessionId?: string;
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
@@ -93,6 +96,17 @@ const MODE_LABEL: Record<AiPermissionMode, string> = {
 };
 
 const PLAN_MODE_HINT = "先出方案，批准后执行";
+
+const PLAN_EXECUTE_MESSAGE = "按上面的方案执行。";
+
+function latestPlanApproved(items: ChatItem[]): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.role === "plan") return false;
+    if (item.role === "user" && item.text.trim() === PLAN_EXECUTE_MESSAGE) return true;
+  }
+  return false;
+}
 
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" | "deny", string> = {
   allow: "已允许一次",
@@ -582,17 +596,26 @@ function AiChatTab({
     if (target !== undefined) virtual.revealIndex(target);
   }, [searchMatches, virtual.revealIndex]);
 
+  const permScope = sessionId ? { sessionId, tabId } : undefined;
+  const [permDeviceOverride, setPermDeviceOverride] = useState(false);
   const loadPermission = useCallback(async (): Promise<AiPermissionConfig | null> => {
     try {
-      const latest = await aiApi.getPermission();
-      setPerm(latest);
+      const scope = sessionId ? { sessionId, tabId } : undefined;
+      const effective = await aiApi.getPermission(scope);
+      if (scope) {
+        const global = await aiApi.getPermission();
+        setPermDeviceOverride(global.mode !== effective.mode);
+      } else {
+        setPermDeviceOverride(false);
+      }
+      setPerm(effective);
       setPermError(null);
-      return latest;
+      return effective;
     } catch (e) {
       setPermError(describeError(e));
       return null;
     }
-  }, []);
+  }, [sessionId, tabId]);
 
   useEffect(() => {
     void loadPermission();
@@ -610,7 +633,8 @@ function AiChatTab({
     const prev = perm;
     setPerm(next);
     try {
-      await aiApi.setPermission(next);
+      await aiApi.setPermission(next, permScope);
+      if (permScope) setPermDeviceOverride(true);
     } catch (e) {
       setPerm(prev);
       pushToast("error", `保存权限失败：${describeError(e)}`);
@@ -624,6 +648,21 @@ function AiChatTab({
     })();
   };
 
+  const followGlobalMode = () => {
+    void (async () => {
+      if (!permScope) return;
+      const prev = perm;
+      try {
+        await aiApi.setPermission(prev ?? { mode: "read_write", dangerRules: [] }, permScope, true);
+        setPermDeviceOverride(false);
+        await loadPermission();
+      } catch (e) {
+        setPerm(prev);
+        pushToast("error", `保存权限失败：${describeError(e)}`);
+      }
+    })();
+  };
+
   const refCandidates = useMemo<RefChip[]>(() => {
     const out: RefChip[] = [];
     const sess = useUi.getState().sessions.find((s) => s.id === sessionId);
@@ -633,18 +672,33 @@ function AiChatTab({
         kind: "asset",
         label: sess.name,
         detail: `${sess.kind} 会话`,
+        refId: sess.id,
       });
     }
     for (const w of workspaces) {
       for (const p of w.panes) {
         for (const t of p.tabs) {
-          if (t.kind !== "terminal") continue;
-          out.push({
-            id: `tab:${t.id}`,
-            kind: "tab",
-            label: t.title,
-            detail: `${w.title} 的终端`,
-          });
+          if (t.kind === "terminal" && t.tabId) {
+            out.push({
+              id: `tab:${t.id}`,
+              kind: "tab",
+              label: t.title,
+              detail: `${w.title} 的终端`,
+              refId: t.tabId,
+            });
+            continue;
+          }
+          if ((t.kind === "files" || t.kind === "log") && t.path && t.sessionId) {
+            out.push({
+              id: `file:${t.id}`,
+              kind: "file",
+              label: t.title,
+              detail: t.path,
+              refId: t.id,
+              path: t.path,
+              sessionId: t.sessionId,
+            });
+          }
         }
       }
     }
@@ -998,11 +1052,19 @@ function AiChatTab({
     runChannelRef.current = { channel, dispose, generation: run.generation };
 
     try {
+      const payloadRefs = sentRefs.map((r) => ({
+        kind: r.kind,
+        id: r.refId,
+        label: r.label,
+        path: r.path,
+        sessionId: r.sessionId,
+      }));
       const res = await aiApi.chat({
         conversationId,
         scope: { sessionId, tabId },
         message: composeMessage(message, sentRefs),
         images: sentImages.length ? sentImages : undefined,
+        refs: payloadRefs.length ? payloadRefs : undefined,
         planMode: usePlan || undefined,
         channel,
       });
@@ -1075,8 +1137,12 @@ function AiChatTab({
   };
 
   const approvePlan = () => {
+    if (latestPlanApproved(conv.items)) {
+      pushToast("info", "该计划已执行，不会重复执行；需要调整请让 AI 重新出方案");
+      return;
+    }
     setPlanMode(false);
-    void send({ message: "按上面的方案执行。", images: [], refs: [], planMode: false });
+    void send({ message: PLAN_EXECUTE_MESSAGE, images: [], refs: [], planMode: false });
   };
   const approvePlanRef = useRef(approvePlan);
   approvePlanRef.current = approvePlan;
@@ -1096,6 +1162,10 @@ function AiChatTab({
       );
     if (!source) {
       pushToast("info", "找不到这一轮的消息原文，请手动重新发送");
+      return;
+    }
+    if (source.text.trim() === PLAN_EXECUTE_MESSAGE) {
+      pushToast("info", "该计划已执行，不能通过重试再次执行；需要调整请让 AI 重新出方案");
       return;
     }
     const snapshot = item.attempt === null ? undefined : requestSnapshotsRef.current.get(item.attempt);
@@ -1750,6 +1820,27 @@ function AiChatTab({
                     <span className="nx-menu-hint w-full whitespace-normal font-sans">{m.hint}</span>
                   </button>
                 ))}
+                {permScope && (
+                  <button
+                    className={`nx-menu-item w-full flex-col items-start gap-0.5 ${
+                      permDeviceOverride ? "" : "bg-blue-500/15"
+                    }`}
+                    onClick={followGlobalMode}
+                  >
+                    <span className="nx-menu-label w-full">
+                      {permDeviceOverride ? "○ " : "● "}
+                      跟随全局默认
+                    </span>
+                    <span className="nx-menu-hint w-full whitespace-normal font-sans">
+                      清除该设备的专属模式，改用全局默认模式
+                    </span>
+                  </button>
+                )}
+              </div>
+              <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
+                {permScope
+                  ? "模式只对当前设备生效，换设备后按该设备自己的模式或全局默认处理。"
+                  : "模式是全局默认，对所有设备生效；在会话或终端标签里打开可为单台设备单独设置。"}
               </div>
 
               <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
@@ -1847,7 +1938,7 @@ function AiChatTab({
             const index = virtual.range.start + i;
             const planApproved =
               item.role === "plan" &&
-              conv.items.some((candidate, candidateIndex) => candidateIndex > index && candidate.role === "user" && candidate.text.trim() === "按上面的方案执行。");
+              conv.items.some((candidate, candidateIndex) => candidateIndex > index && candidate.role === "user" && candidate.text.trim() === PLAN_EXECUTE_MESSAGE);
             return (
               <div
                 key={item.id}
@@ -2244,7 +2335,7 @@ function AiChatTab({
               permError
                 ? "AI 权限读取失败（点击查看并重试）"
                 : perm
-                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（含计划模式，点击设置）`
+                  ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "当前设备" : "全局默认"}，含计划模式，点击设置）`
                   : "AI 权限与模式：读取中（点击设置）"
             }
             onClick={() => setPermOpen((v) => !v)}

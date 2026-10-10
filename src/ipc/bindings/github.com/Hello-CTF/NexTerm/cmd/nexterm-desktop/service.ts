@@ -12,3 +12,7 @@ import * as ipc$0 from "../../internal/ipc/models.js";
 export function Call(request: ipc$0.Request): $CancellablePromise<ipc$0.Response> {
     return $Call.ByID(2349242617, request);
 }
+
+export function ConsumeDeepLinks(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3490772380);
+}

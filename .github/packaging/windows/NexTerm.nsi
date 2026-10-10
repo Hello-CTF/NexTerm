@@ -63,6 +63,10 @@ Section "NexTerm" SEC01
   CreateDirectory "$SMPROGRAMS\NexTerm"
   CreateShortcut "$SMPROGRAMS\NexTerm\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
   CreateShortcut "$DESKTOP\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
+  WriteRegStr HKCU "Software\Classes\nexterm" "" "URL:NexTerm protocol"
+  WriteRegStr HKCU "Software\Classes\nexterm" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\nexterm\DefaultIcon" "" "$INSTDIR\${NEXTERM_EXE_NAME},0"
+  WriteRegStr HKCU "Software\Classes\nexterm\shell\open\command" "" '"$INSTDIR\${NEXTERM_EXE_NAME}" "%1"'
 
   SetRegView 64
   ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
@@ -89,4 +93,5 @@ Section "Uninstall"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm"
   DeleteRegKey HKCU "Software\NexTerm"
+  DeleteRegKey HKCU "Software\Classes\nexterm"
 SectionEnd

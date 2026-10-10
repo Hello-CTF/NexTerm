@@ -52,8 +52,11 @@ const ASSET_KIND_LABEL: Record<string, string> = {
   local: "本地终端",
   docker: "Docker",
   mysql: "MySQL",
+  postgres: "PostgreSQL",
   redis: "Redis",
 };
+
+const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
 
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action] ?? rule.action;
@@ -217,6 +220,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   };
 
   const assetName = (deviceId: string) => assets?.find((a) => a.id === deviceId)?.name ?? deviceId;
+  const grantAssets = assets?.filter((a) => !DB_ASSET_KINDS.has(a.kind)) ?? null;
   const now = Date.now();
 
   return (
@@ -231,7 +235,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
+        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认，只读模式下也会放行。长期授权只覆盖普通需确认操作，高危或无法判断仍按当前权限模式处理；被拦截规则判为禁止的操作始终拒绝；其余操作按当前权限模式处理：读写模式逐次确认，完全静默模式直接执行，只读与无人值守模式拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。数据库资产（MySQL/PostgreSQL/Redis）不适用设备授权，不在此列出。
       </div>
 
       {loadError && (
@@ -256,7 +260,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {assets?.map((asset) => {
+      {grantAssets?.map((asset) => {
         const grant = grants[asset.id];
         const pending = busy[asset.id] === true;
         return (
@@ -312,8 +316,12 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         );
       })}
 
-      {!loadError && assets !== null && assets.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">暂无资产，添加资产后可在此管理授权。</div>
+      {!loadError && grantAssets !== null && grantAssets.length === 0 && (
+        <div className="py-1 text-[11px] text-neutral-500">
+          {assets !== null && assets.length > 0
+            ? "数据库资产不支持 AI 授权，可授权的资产为空。"
+            : "暂无资产，添加资产后可在此管理授权。"}
+        </div>
       )}
 
       <div className="mb-1.5 mt-2 flex items-center gap-1.5 border-t border-neutral-800/60 pt-2 text-[11.5px] font-medium text-neutral-200">
@@ -347,7 +355,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
         </div>
       ))}
 
-      {assets !== null && assets.length > 0 && !readOnly && (
+      {assets !== null && grantAssets !== null && grantAssets.length > 0 && !readOnly && (
         <div className="mt-2">
           <button
             type="button"
@@ -369,7 +377,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                   onChange={(event) => setRuleDevice(event.target.value)}
                 >
                   <option value="">选择设备</option>
-                  {assets.map((asset) => (
+                  {grantAssets?.map((asset) => (
                     <option key={asset.id} value={asset.id}>
                       {asset.name}
                     </option>

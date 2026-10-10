@@ -98,9 +98,18 @@ type ChatArgs struct {
 	Message        string      `json:"message"`
 	Selection      string      `json:"selection,omitempty"`
 	Images         []string    `json:"images,omitempty"`
+	Refs           []RefArg    `json:"refs,omitempty"`
 	PlanMode       bool        `json:"planMode,omitempty"`
 	Source         string      `json:"-"`
 	ModelProfileID string      `json:"-"`
+}
+
+type RefArg struct {
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	SessionID string `json:"sessionId,omitempty"`
+	Path      string `json:"path,omitempty"`
 }
 
 type StartResponse struct {

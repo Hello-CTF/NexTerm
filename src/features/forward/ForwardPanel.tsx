@@ -672,6 +672,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   {exposed
                     ? "，这个端口对外可访问，能连上它的任何人都会到达目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"
                     : `，只有${localMachine}能连，不对外暴露。`}
+                  会话断开后转发自动停止。
                   {exposed && kind === "socks" && (
                     <>
                       <br />

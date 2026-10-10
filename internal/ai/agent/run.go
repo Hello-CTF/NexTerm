@@ -231,6 +231,9 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	permission = permission.Normalized()
+	if r.config.Permissions != nil {
+		permission = r.config.Permissions.WithDeviceMode(permission, tools.ResolveGrantDeviceID(current.ctx, r.config.Tools, current.args.Scope))
+	}
 	chatModel, contextWindow, err := r.modelFor(current)
 	if err != nil {
 		return err
@@ -251,6 +254,12 @@ func (r *Runner) initializeEino(current *job) error {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
 		if bundle.Volatile != "" {
 			messages = append(messages, schema.UserMessage("[环境上下文]\n"+bundle.Volatile))
+		}
+		if len(current.args.Refs) > 0 {
+			rendered := r.config.Context.RenderRefs(current.ctx, refSpecs(current.args.Refs), r.refFileReader())
+			if rendered != "" {
+				messages = append(messages, schema.UserMessage("[引用内容]\n"+rendered))
+			}
 		}
 	}
 	messages = append(messages, userMessage(current.args))

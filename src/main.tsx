@@ -6,6 +6,9 @@ import "./styles.css";
 import { listenEvent, EVENTS, EventVersionGate, type AppErrorEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
+import { WEB } from "./ipc/env";
+import { consumeDeepLinks } from "./ipc/wails";
+import { openDeepLink } from "./app/deepLink";
 import { useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
@@ -60,6 +63,13 @@ function wireDesktopShell(): void {
   void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
     useUi.getState().pushToast("error", p.message);
   });
+
+  if (!WEB) {
+    void listenEvent<string>(EVENTS.deepLink, (url) => void openDeepLink(url));
+    void consumeDeepLinks().then((urls) => {
+      for (const url of urls) void openDeepLink(url);
+    });
+  }
 
   onEventsResync(() => {
     void useUi.getState().resyncSessions();

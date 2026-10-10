@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
@@ -13,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	wailsevents "github.com/wailsapp/wails/v3/pkg/events"
 )
 
 func main() {
@@ -23,6 +25,7 @@ func run(args []string) int {
 	if len(args) > 0 && args[0] == supervisor.HelperCommand {
 		return supervisor.RunHelperCLI(args[1:])
 	}
+	args, launchLink := extractDeepLink(args)
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
@@ -87,7 +90,7 @@ func run(args []string) int {
 		Desktop:         true,
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
-			if err := update.StartDetached(target, os.Args[1:]); err != nil {
+			if err := update.StartDetached(target, args); err != nil {
 				return err
 			}
 			wailsApp.Quit()
@@ -99,6 +102,7 @@ func run(args []string) int {
 		return showStartupError(paths, err, logger.Logger)
 	}
 	service := &Service{app: production.Application, streams: streams}
+	var window *application.WebviewWindow
 	wailsApp = application.New(application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",
@@ -116,8 +120,34 @@ func run(args []string) int {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.nexterm.desktop",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if window != nil {
+					window.Restore()
+					window.Focus()
+				}
+				if url := findDeepLink(data.Args); url != "" {
+					service.links.deliver(url)
+				}
+			},
+		},
 	})
-	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	service.links.onEmit(func(url string) {
+		wailsApp.Event.Emit(deepLinkEvent, url)
+	})
+	wailsApp.Event.OnApplicationEvent(wailsevents.Common.ApplicationLaunchedWithUrl, func(event *application.ApplicationEvent) {
+		url := event.Context().URL()
+		if !strings.HasPrefix(url, deepLinkScheme) {
+			return
+		}
+		if window != nil {
+			window.Restore()
+			window.Focus()
+		}
+		service.links.deliver(url)
+	})
+	window = wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "NexTerm",
 		URL:       "/",
 		Width:     1480,
@@ -127,6 +157,9 @@ func run(args []string) int {
 		Frameless: true,
 	})
 	streams.SetWindow(window)
+	if launchLink != "" {
+		service.links.deliver(launchLink)
+	}
 	window.Show()
 	if err := wailsApp.Run(); err != nil {
 		logger.Error("desktop stopped", "error", err)

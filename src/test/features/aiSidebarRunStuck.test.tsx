@@ -319,11 +319,51 @@ describe("AiSidebar 忙状态滞留修复", () => {
     await flush();
     expect(mocks.setPermission).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "read_only" }),
+      { sessionId: "s1", tabId: "t1" },
     );
     expect(textOf(view!)).toContain("AI 权限");
 
     await send(view!, "问题");
     expect(textOf(view!)).not.toContain("AI 权限");
     expect(mocks.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("权限面板按当前设备设置模式，可清除设备覆盖跟随全局默认", async () => {
+    await flush();
+    mocks.getPermission.mockImplementation((scope?: unknown) =>
+      Promise.resolve(
+        scope ? { mode: "silent", dangerRules: [] } : { mode: "read_write", dangerRules: [] },
+      ),
+    );
+    const shield = view!.container.querySelector<HTMLButtonElement>(
+      'button[title^="AI 权限与模式"]',
+    )!;
+    click(shield);
+    await flush();
+
+    expect(textOf(view!)).toContain("模式只对当前设备生效");
+    expect(textOf(view!)).toContain("○ 跟随全局默认");
+
+    const readonlyOption = [...view!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("只读"),
+    )!;
+    click(readonlyOption);
+    await flush();
+    expect(mocks.setPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "read_only" }),
+      { sessionId: "s1", tabId: "t1" },
+    );
+
+    mocks.setPermission.mockClear();
+    const follow = [...view!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("跟随全局默认"),
+    )!;
+    click(follow);
+    await flush();
+    expect(mocks.setPermission).toHaveBeenCalledWith(
+      expect.anything(),
+      { sessionId: "s1", tabId: "t1" },
+      true,
+    );
   });
 });

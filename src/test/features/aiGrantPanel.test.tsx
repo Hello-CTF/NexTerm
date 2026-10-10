@@ -134,11 +134,26 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(text).toContain("长期授权只覆盖普通需确认操作");
     expect(text).toContain("高危或无法判断仍按当前权限模式处理");
     expect(text).toContain("被拦截规则判为禁止的操作始终拒绝");
-    for (const name of ["生产 Web", "数据库"]) {
+    for (const name of ["生产 Web"]) {
       expect(rowFor(name).textContent).toContain("未授权");
     }
     expect(view!.container.querySelectorAll("button").length).toBeGreaterThan(0);
     expect(text).not.toContain("已授权：");
+  });
+
+  it("数据库资产不显示授权入口，规则设备下拉同样排除", async () => {
+    await mountPanel();
+    expect(() => rowFor("数据库")).toThrow();
+    const text = view!.container.textContent ?? "";
+    expect(text).toContain("数据库资产（MySQL/PostgreSQL/Redis）不适用设备授权");
+    expect(text).not.toContain("已授权：");
+    clickButton(view!.container, "添加规则");
+    await flush();
+    const options = [...view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!.options].map(
+      (o) => o.textContent,
+    );
+    expect(options).toContain("生产 Web");
+    expect(options).not.toContain("数据库");
   });
 
   it("开启授权前弹出显式确认，确认后按所选种类调用授权", async () => {

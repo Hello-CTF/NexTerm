@@ -17,21 +17,21 @@ type SessionAssetTerminal interface {
 	SessionAssetID(context.Context, string) (string, error)
 }
 
-// grantDeviceID resolves the server-side asset identity of the execution
-// scope: the scope session itself, or the session owning the scope tab.
-// Missing server support or resolution failures resolve to empty, which
+// ResolveGrantDeviceID resolves the server-side asset identity of an
+// execution scope: the scope session itself, or the session owning the scope
+// tab. Missing server support or resolution failures resolve to empty, which
 // disables the device-grant branch and falls back to the global mode.
-func (e *Execution) grantDeviceID(ctx context.Context) string {
-	if e.Registry == nil {
+func ResolveGrantDeviceID(ctx context.Context, registry *Registry, scope Scope) string {
+	if registry == nil {
 		return ""
 	}
-	terminal, ok := e.Registry.deps.Terminal.(SessionAssetTerminal)
+	terminal, ok := registry.deps.Terminal.(SessionAssetTerminal)
 	if !ok {
 		return ""
 	}
-	sessionID := e.Scope.SessionID
-	if sessionID == "" && e.Scope.TabID != "" && e.Registry.deps.TabSession != nil {
-		sessionID = e.Registry.deps.TabSession(e.Scope.TabID)
+	sessionID := scope.SessionID
+	if sessionID == "" && scope.TabID != "" && registry.deps.TabSession != nil {
+		sessionID = registry.deps.TabSession(scope.TabID)
 	}
 	if sessionID == "" {
 		return ""
@@ -41,6 +41,10 @@ func (e *Execution) grantDeviceID(ctx context.Context) string {
 		return ""
 	}
 	return assetID
+}
+
+func (e *Execution) grantDeviceID(ctx context.Context) string {
+	return ResolveGrantDeviceID(ctx, e.Registry, e.Scope)
 }
 
 // resourceForCall 提取调用授权所需的动作与主路径：文件写入类动作带路径，其余动作仅按名匹配。

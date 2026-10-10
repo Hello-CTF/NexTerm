@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, click, deferred, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { clickButton, click, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   mountList: vi.fn(),
   mountCreate: vi.fn(),
   platform: vi.fn(),
+  assetGet: vi.fn(),
   toast: vi.fn(),
 }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -31,6 +32,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       create: mocks.mountCreate,
       remove: vi.fn(),
     },
+    assetApi: { get: mocks.assetGet },
     systemApi: { platform: mocks.platform },
     sessionApi: {},
   };
@@ -549,6 +551,83 @@ describe("MountPanel 平台默认值与连接约束", () => {
     act(() => selectWorkspaceTab("mount"));
     await flush();
     expect(mocks.mountList).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("MountPanel 目标默认当前资产", () => {
+  function useSshSession(): void {
+    useUi.setState({
+      sessions: [
+        { id: "s1", assetId: "a1", name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+  }
+
+  function mockAsset(host: string, username: string | null): void {
+    mocks.assetGet.mockResolvedValue({
+      id: "a1",
+      kind: "ssh",
+      name: "生产机",
+      host,
+      username,
+    });
+  }
+
+  it("Linux 预填 user@host: 并标明目标资产，Windows 预填 \\\\host\\", async () => {
+    useSshSession();
+    mockAsset("10.0.0.8", "root");
+    mocks.platform.mockResolvedValue("linux");
+    mountMountPanel();
+    await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "root@10.0.0.8:");
+    expect(mounted!.container.textContent).toContain("目标默认当前资产「生产机」");
+
+    mounted!.unmount();
+    mounted = undefined;
+    mocks.platform.mockResolvedValue("windows");
+    mountMountPanel();
+    await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "\\\\10.0.0.8\\");
+  });
+
+  it("IPv6 主机预填加括号，无用户名时不带 user@", async () => {
+    useSshSession();
+    mockAsset("2001:db8::1", null);
+    mocks.platform.mockResolvedValue("linux");
+    mountMountPanel();
+    await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "[2001:db8::1]:");
+  });
+
+  it("用户编辑后资产解析完成不覆盖输入", async () => {
+    useSshSession();
+    mockAsset("10.0.0.8", "root");
+    mocks.platform.mockResolvedValue("linux");
+    mountMountPanel();
+    await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "root@10.0.0.8:");
+    const remotePath = inputBy('input[aria-label="远端路径"]');
+    setInputValue(remotePath, "other:/x");
+    await advance(1000);
+    expect(remotePath.value).toBe("other:/x");
+  });
+
+  it("挂载成功后重新预填当前资产", async () => {
+    useSshSession();
+    mockAsset("10.0.0.8", "root");
+    mocks.platform.mockResolvedValue("linux");
+    mocks.mountCreate.mockResolvedValue({ id: "m1" });
+    mountMountPanel();
+    await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "root@10.0.0.8:");
+    const remotePath = inputBy('input[aria-label="远端路径"]');
+    setInputValue(inputBy('input[aria-label="本地挂载点"]'), "/mnt/data");
+    setInputValue(remotePath, "root@10.0.0.8:/data");
+    clickButton(mounted!.container, "挂载");
+    await flush();
+    expect(mocks.mountCreate).toHaveBeenCalledWith({
+      sessionId: "s1",
+      remotePath: "root@10.0.0.8:/data",
+      localPoint: "/mnt/data",
+      username: undefined,
+      password: undefined,
+    });
+    expect(remotePath.value).toBe("root@10.0.0.8:");
   });
 });
 

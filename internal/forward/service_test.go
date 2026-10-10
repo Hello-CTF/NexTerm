@@ -146,6 +146,49 @@ func TestCloseCancelsAllForwards(t *testing.T) {
 	}
 }
 
+func TestCloseSessionStopsOnlyThatSession(t *testing.T) {
+	dialer := &recordingDialer{upstream: startEchoServer(t)}
+	service := newLoopbackService(t, &switchProvider{dialer: dialer})
+	mine, err := service.CreateLocal(t.Context(), CreateLocalArgs{SessionID: "session-1", TargetHost: "host", TargetPort: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := service.CreateLocal(t.Context(), CreateLocalArgs{SessionID: "session-2", TargetHost: "host", TargetPort: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialForward(t, mine)
+	assertEcho(t, conn, "before-close-session")
+	readResult := make(chan error, 1)
+	go func() {
+		var one [1]byte
+		_, err := conn.Read(one[:])
+		readResult <- err
+	}()
+	service.CloseSession("session-1")
+	select {
+	case err := <-readResult:
+		if err == nil {
+			t.Fatal("established connection survived CloseSession")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseSession did not cancel the established connection")
+	}
+	if _, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(mine.ListenPort))), 100*time.Millisecond); err == nil {
+		t.Fatal("listener still accepts after CloseSession")
+	}
+	remaining := service.List()
+	if len(remaining) != 1 || remaining[0].ID != other.ID {
+		t.Fatalf("List after CloseSession = %+v", remaining)
+	}
+	assertEcho(t, dialForward(t, other), "other-session-alive")
+	service.CloseSession("session-1")
+	service.CloseSession("session-unknown")
+	if got := len(service.List()); got != 1 {
+		t.Fatalf("List after idempotent CloseSession = %d", got)
+	}
+}
+
 func TestExposedSOCKSRequiresExplicitRiskAcknowledgement(t *testing.T) {
 	provider := &switchProvider{dialer: &recordingDialer{upstream: startEchoServer(t)}}
 	service := NewService(Config{Provider: provider, Policy: Policy{}})

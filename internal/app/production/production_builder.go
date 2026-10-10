@@ -116,6 +116,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		sshConnector = defaultConnector
 	}
 	dockerService := config.Docker
+	var forwardService *forward.Service
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
 		Database: database, Logger: config.Config.Logger,
@@ -136,10 +137,15 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Commands:          commandLogSink{database: database, logger: config.Config.Logger},
 		Logger:            config.Config.Logger,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
-			if dockerService != nil && event.Topic == session.TopicSessionStatus {
+			if event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
-					if err := dockerService.CloseSession(status.SessionID); err != nil {
-						config.Config.Logger.Warn("close docker session on status change failed", "session", status.SessionID, "error", err)
+					if dockerService != nil {
+						if err := dockerService.CloseSession(status.SessionID); err != nil {
+							config.Config.Logger.Warn("close docker session on status change failed", "session", status.SessionID, "error", err)
+						}
+					}
+					if forwardService != nil && status.Status != session.StatusReconnecting {
+						forwardService.CloseSession(status.SessionID)
 					}
 				}
 			}
@@ -157,13 +163,14 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if err != nil {
 		return nil, err
 	}
+	forwardService = forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}})
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Tasks:    taskManager,
 		Database: db.NewService(db.NewStoreAssetResolver(database, credentialVault)),
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
-		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
+		Forward:  forwardService,
 		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		desktop:     config.Desktop,
 		stagedBlobs: config.StagedBlobs,

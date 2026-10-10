@@ -365,6 +365,100 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(retry.planMode).toBe(true);
   });
 
+  it("已批准执行的计划不允许通过重试再次执行，新计划仍可单独批准", async () => {
+    click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
+    const planToggle = [...mounted!.container.querySelectorAll("button")].find(
+      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+    );
+    click(planToggle!);
+    await sendAndEmit([{ type: "planSubmitted" }, { type: "done", answer: "步骤 A" }]);
+
+    clickButton(mounted!.container, "批准，按这个方案执行");
+    await flushUntil(() => mocks.chat.mock.calls.length === 2);
+    act(() => {
+      mocks.channels.at(-1)!.onEvent({ type: "error", message: "执行中断", retryable: true });
+    });
+    await flush();
+
+    clickButton(mounted!.container, "重试");
+    await flush();
+    expect(mocks.chat.mock.calls.length).toBe(2);
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("该计划已执行"));
+
+    click(mounted!.container.querySelector('button[title^="AI 权限与模式"]')!);
+    const planToggleAgain = [...mounted!.container.querySelectorAll("button")].find(
+      (button) => button.getAttribute("title") === "先出方案，批准后执行",
+    );
+    click(planToggleAgain!);
+    const input = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
+    setInputValue(input, "继续");
+    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flushUntil(() => mocks.channels.length === 3);
+    act(() => {
+      mocks.channels.at(-1)!.onEvent({ type: "planSubmitted" });
+      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "步骤 B" });
+    });
+    await flush();
+    clickButton(mounted!.container, "批准，按这个方案执行");
+    await flushUntil(() => mocks.chat.mock.calls.length === 4);
+    const second = mocks.chat.mock.calls[3][0] as Record<string, unknown>;
+    expect(second.message).toBe("按上面的方案执行。");
+  });
+
+  it("@ 引用的终端与文件随消息上送后端可解析的对象", async () => {
+    useUi.setState({
+      sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
+      workspaces: [
+        {
+          id: "w1",
+          kind: "session",
+          title: "生产",
+          sessionId: "s1",
+          panes: [
+            {
+              id: "p1",
+              activeTabId: "ui-t2",
+              tabs: [
+                { id: "ui-t2", kind: "terminal", title: "构建机", tabId: "term-2", closable: true },
+                { id: "f1", kind: "files", title: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1", closable: true },
+              ],
+            },
+          ],
+          activePaneId: "p1",
+          splitRatio: 1,
+          closable: true,
+        },
+      ],
+    });
+    mounted?.unmount();
+    await show();
+
+    const textarea = () => mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
+    setInputValue(textarea(), "@");
+    click(
+      [...mounted!.container.querySelectorAll("button")].find((button) =>
+        button.textContent?.includes("构建机"),
+      )!,
+    );
+    setInputValue(textarea(), "@");
+    click(
+      [...mounted!.container.querySelectorAll("button")].find((button) =>
+        button.textContent?.includes("nginx.conf"),
+      )!,
+    );
+    setInputValue(textarea(), "看下这两个");
+    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flushUntil(() => mocks.chat.mock.calls.length === 1);
+
+    const call = mocks.chat.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.refs).toEqual([
+      { kind: "tab", id: "term-2", label: "构建机", path: undefined, sessionId: undefined },
+      { kind: "file", id: "f1", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
+    ]);
+    expect(call.message).toContain("[引用对象]");
+    expect(call.message).toContain("构建机");
+  });
+
   it("本轮允许此类同步决策与结果文案", async () => {
     await sendAndEmit([
       {

@@ -48,6 +48,12 @@ export async function listenWailsEvent<T>(
   return Events.On(event, (message) => handler(message.data as T));
 }
 
+export async function consumeDeepLinks(): Promise<string[]> {
+  const { Call } = await runtime();
+  const links = (await Call.ByName("main.Service.ConsumeDeepLinks")) as string[] | null;
+  return links ?? [];
+}
+
 export class WailsChannel {
   readonly id: string;
   onmessage: (message: unknown) => void = () => {};

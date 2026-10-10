@@ -196,7 +196,7 @@ describe("asset row actions on fine pointers", () => {
     if (!more) throw new Error("more button not found");
     click(more);
     await flush();
-    expect(menuLabels()).toEqual(["克隆", "复制 SSH 命令", "隐藏"]);
+    expect(menuLabels()).toEqual(["克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
   });
 });
 
@@ -222,7 +222,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
     await waitFor(() => expect(document.activeElement?.textContent).toContain("连接"));
   });
 
@@ -272,7 +272,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "本机终端"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制链接", "隐藏"]);
   });
 
   it("closes the menu with Escape", async () => {
@@ -303,7 +303,7 @@ describe("asset row actions on coarse pointers", () => {
       );
     });
     await flush();
-    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "编辑", "删除", "克隆", "复制 SSH 命令", "复制链接", "隐藏"]);
   });
 
   it("collapses group row actions into an overflow menu as well", async () => {

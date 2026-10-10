@@ -616,6 +616,7 @@ export const aiApi = {
       message: string;
       selection?: string;
       images?: string[];
+      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string }[];
       planMode?: boolean;
       channel: unknown;
     },
@@ -623,9 +624,14 @@ export const aiApi = {
     const { channel, ...body } = args;
     return call<{ jobId: string; conversationId: string }>("ai_chat", { args: body, channel });
   },
-  getPermission: () => call<AiPermissionConfig>("ai_get_permission"),
-  setPermission: (config: AiPermissionConfig) =>
-    call<void>("ai_set_permission", { config }),
+  getPermission: (scope?: Record<string, unknown>) =>
+    call<AiPermissionConfig>("ai_get_permission", scope ? { scope } : {}),
+  setPermission: (config: AiPermissionConfig, scope?: Record<string, unknown>, followGlobal?: boolean) =>
+    call<void>("ai_set_permission", {
+      config,
+      ...(scope ? { scope } : {}),
+      ...(followGlobal ? { followGlobal: true } : {}),
+    }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   steer: (jobId: string, message: string) => call<void>("ai_steer", { jobId, message }),
   editResend: (conversationId: string, messageId: string) =>

@@ -29,6 +29,7 @@ export const EVENTS = {
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
   appError: "app://error",
+  deepLink: "app://deep-link",
   deviceStatus: "device://status",
 } as const;
 

@@ -5,6 +5,7 @@ import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../
 import { WEB } from "../../ipc/env";
 import { browserFilesAvailable } from "../../ipc/webFiles";
 import { connectAsset, connectQuickTarget, useUi } from "../../app/store";
+import { copyAssetDeepLink } from "../../app/deepLink";
 import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
@@ -15,6 +16,7 @@ import { cloneAsset } from "./assetClone";
 import { useAssetVisibility } from "./assetVisibility";
 import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
+import { useGroupCollapse } from "./groupCollapse";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -28,6 +30,7 @@ import {
   IconEye,
   IconEyeOff,
   IconFolder,
+  IconGlobe,
   IconLoader,
   IconPlay,
   IconPlug,
@@ -160,6 +163,7 @@ export function AssetTree() {
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
+  const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
   const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
 
   const assets = useQuery({
@@ -359,6 +363,13 @@ export function AssetTree() {
       },
       ...(copySsh ? [copySsh] : []),
       ...(connectAs ? [connectAs] : []),
+      {
+        kind: "item",
+        label: "复制链接",
+        icon: <IconGlobe size={13} />,
+        hint: "nexterm:// 链接, 可拉起客户端",
+        onSelect: () => copyAssetDeepLink(asset.id),
+      },
       isHidden(asset.id)
         ? {
             kind: "item",
@@ -450,6 +461,11 @@ export function AssetTree() {
         onDrop={(e) => {
           const id = e.dataTransfer.getData(DRAG_ASSET);
           if (id) void moveAsset(id, null);
+        }}
+        onContextMenu={(e) => {
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          setTreeMenu({ x: e.clientX, y: e.clientY });
         }}
       >
         {assets.isPending ? (
@@ -584,6 +600,25 @@ export function AssetTree() {
             : null
         }
         onClose={() => setRowMenu(null)}
+      />
+      <ContextMenu
+        state={
+          treeMenu
+            ? {
+                x: treeMenu.x,
+                y: treeMenu.y,
+                items: [
+                  {
+                    kind: "item",
+                    label: "新建分组",
+                    icon: <IconFolder size={13} />,
+                    onSelect: () => setEditing("group"),
+                  },
+                ],
+              }
+            : null
+        }
+        onClose={() => setTreeMenu(null)}
       />
     </div>
   );
@@ -791,7 +826,9 @@ function GroupNode({
   onRetryAssetDelete: (a: Asset) => void;
   onDismissAssetError: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const collapsed = useGroupCollapse((s) => s.collapsedIds.includes(group.id));
+  const toggleCollapsed = useGroupCollapse((s) => s.toggle);
+  const open = !collapsed;
   const [over, setOver] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const coarse = useCoarsePointer();
@@ -808,24 +845,29 @@ function GroupNode({
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          setOpen((v) => !v);
+          toggleCollapsed(group.id);
           return;
         }
         if (e.key === "ArrowRight") {
           if (!open) {
             e.preventDefault();
-            setOpen(true);
+            toggleCollapsed(group.id);
           }
           return;
         }
         if (e.key === "ArrowLeft") {
           if (open) {
             e.preventDefault();
-            setOpen(false);
+            toggleCollapsed(group.id);
           }
           return;
         }
         treeRowKeyDown(e);
+      }}
+      onContextMenu={(e) => {
+        if (e.target instanceof Element && e.target.closest("[role='treeitem']") !== e.currentTarget) return;
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
       }}
       onDragOver={(e) => {
         if (isAssetDrag(e)) {
@@ -848,7 +890,7 @@ function GroupNode({
       <div className="nx-row nx-row-reserve-actions w-full text-neutral-400">
         <button
           className="flex min-w-0 flex-auto items-center gap-1 text-left"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => toggleCollapsed(group.id)}
         >
           {open ? (
             <IconChevronDown size={12} className="shrink-0" />
