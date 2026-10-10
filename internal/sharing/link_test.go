@@ -205,6 +205,19 @@ func TestLinkRevocationStopsAccess(t *testing.T) {
 	}
 }
 
+func TestLinkCreatorCanRevoke(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLinkInputRevalidation(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")

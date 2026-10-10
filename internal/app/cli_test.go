@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -99,5 +100,46 @@ func TestParseCLIDatabaseBackend(t *testing.T) {
 		return ""
 	}); err == nil {
 		t.Fatal("invalid NEXTERM_DB was accepted")
+	}
+}
+
+func TestParseCLIAuthMode(t *testing.T) {
+	invocation, err := ParseCLI([]string{"--auth=loopback", "--require-vault"}, CommandServe, nil)
+	if err != nil || invocation.Auth != AuthLoopback || !invocation.RequireVault {
+		t.Fatalf("auth flags = %+v, %v", invocation, err)
+	}
+	invocation, err = ParseCLI(nil, CommandServe, func(key string) string {
+		if key == "NEXTERM_AUTH" {
+			return AuthOff
+		}
+		return ""
+	})
+	if err != nil || invocation.Auth != AuthOff {
+		t.Fatalf("auth environment = %+v, %v", invocation, err)
+	}
+	if _, err := ParseCLI([]string{"--auth=bogus"}, CommandServe, nil); err == nil {
+		t.Fatal("invalid --auth value was accepted")
+	}
+	if _, err := ParseCLI(nil, CommandServe, func(key string) string {
+		if key == "NEXTERM_AUTH" {
+			return "bogus"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("invalid NEXTERM_AUTH was accepted")
+	}
+}
+
+func TestUsageIncludesSharedServerFlags(t *testing.T) {
+	usage := Usage("nexterm-server", CommandServe)
+	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing %q: %q", want, usage)
+		}
+	}
+	for _, unwanted := range []string{"rotate-token", "--master-key "} {
+		if strings.Contains(usage, unwanted) {
+			t.Fatalf("usage contains removed option %q: %q", unwanted, usage)
+		}
 	}
 }

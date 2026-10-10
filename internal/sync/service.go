@@ -56,6 +56,8 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 func (s *Service) Start(ctx context.Context) error { return nil }
 
 func (s *Service) Shutdown(context.Context) error {
+	s.engine.opMu.Lock()
+	defer s.engine.opMu.Unlock()
 	s.engine.sessionMu.Lock()
 	defer s.engine.sessionMu.Unlock()
 	if s.engine.session != nil {

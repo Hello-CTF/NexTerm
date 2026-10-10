@@ -4,19 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
-	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 const DefaultListen = "0.0.0.0:8080"
-
-type Command = core.Command
-
-const CommandServe = core.CommandServe
 
 const (
 	AuthOn       = core.AuthOn
@@ -33,51 +27,6 @@ type Options struct {
 	SyncOnly       bool
 	Auth           string
 	AllowedOrigins []string
-}
-
-type Invocation struct {
-	Command core.Command
-	Options Options
-	Help    bool
-	Version bool
-}
-
-func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
-	parsed, err := core.ParseCLI(args, core.CommandServe, getenv)
-	if err != nil {
-		return Invocation{}, err
-	}
-	if parsed.Command == core.CommandDesktop {
-		return Invocation{}, fmt.Errorf("desktop command is not available in nexterm-server")
-	}
-
-	dataDir := parsed.DataDir
-	if dataDir == "" && !parsed.Help && !parsed.Version {
-		paths, err := platform.ServerPaths("")
-		if err != nil {
-			return Invocation{}, err
-		}
-		dataDir = paths.DataDir
-	}
-	webRoot := parsed.WebRoot
-	if webRoot == "" && !parsed.SyncOnly && !parsed.Help && !parsed.Version {
-		webRoot = ProbeWebRoot()
-	}
-	masterKey := ""
-	if !parsed.Help && !parsed.Version {
-		masterKey, err = ResolveMasterKey(parsed.MasterKeyFile)
-		if err != nil {
-			return Invocation{}, err
-		}
-	}
-	return Invocation{
-		Command: parsed.Command,
-		Options: Options{
-			Listen: parsed.Listen, DataDir: dataDir, WebRoot: webRoot,
-			MasterKey: masterKey, SyncOnly: parsed.SyncOnly, Auth: parsed.Auth,
-		},
-		Help: parsed.Help, Version: parsed.Version,
-	}, nil
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {
@@ -118,47 +67,6 @@ func ResolveDBPassword(passwordFile string) (string, error) {
 		return "", fmt.Errorf("database password file %s is empty", passwordFile)
 	}
 	return password, nil
-}
-
-func Usage(program string) string {
-	return fmt.Sprintf(`Usage:
-  %s [flags] [serve]
-
-Commands:
-  serve         Run the HTTP server (default)
-
-Flags:
-  --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
-  --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
-  --web-root PATH     Web assets directory (env NEXTERM_WEB_ROOT)
-  --master-key-file PATH  Read the vault master key from a file (env NEXTERM_MASTER_KEY_FILE)
-  --auth MODE         Access control: on, loopback, or off (env NEXTERM_AUTH, default on)
-                      on = account sessions; loopback = no auth on a loopback listener;
-                      off = local shared workspace only: account/admin/device routes stay
-                      closed (no implicit superadmin) and startup refuses if any user exists
-  --db BACKEND        Database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
-                      postgres runs the embedded migrations/postgres schema and, in this first
-                      version, supports a single writer instance only
-  --db-dsn DSN        Postgres connection string (env NEXTERM_DB_DSN), e.g.
-                      postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt;
-                      requires --db=postgres; the password may come from --db-password-file instead
-  --db-password-file PATH  Read the postgres password from a 0600 file
-                      (env NEXTERM_DB_PASSWORD_FILE); rejected when the DSN already has a password
-  --db-max-open-conns N  Postgres pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
-  --require-vault     Fail startup unless the credential vault unlocks
-  --sync-only         Restrict the server to sync routes
-  --version           Print the version
-  -h, --help          Print this help
-`, program)
-}
-
-func ProbeWebRoot() string {
-	for _, candidate := range []string{"/app/dist", "dist", "../dist"} {
-		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && info.Mode().IsRegular() {
-			return candidate
-		}
-	}
-	return "/app/dist"
 }
 
 type Vault interface {

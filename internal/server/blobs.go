@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -42,6 +43,7 @@ type BlobStore struct {
 	sweepEvery     time.Duration
 	maxBytes       int64
 	persistQuota   int64
+	persistMu      sync.Mutex
 	diskMaxPercent float64
 	diskUsage      func(string) (float64, error)
 	newID          func() string
@@ -158,6 +160,8 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	root := b.stageRoot()
 	if persist {
+		b.persistMu.Lock()
+		defer b.persistMu.Unlock()
 		root = b.keepRoot()
 		if err := b.checkPersistQuota(r.ContentLength); err != nil {
 			if errors.Is(err, errBlobPersistQuota) {
@@ -200,6 +204,17 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
 		return
+	}
+	if persist {
+		if err := b.checkPersistQuotaAfterWrite(written); err != nil {
+			_ = os.RemoveAll(dir)
+			if errors.Is(err, errBlobPersistQuota) {
+				http.Error(w, errBlobPersistQuota.Error(), http.StatusInsufficientStorage)
+				return
+			}
+			http.Error(w, "持久化存储用量获取失败，请稍后重试", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := b.writeOwnerMeta(dir, r); err != nil {
 		_ = os.RemoveAll(dir)
@@ -395,6 +410,18 @@ func (b *BlobStore) checkPersistQuota(incoming int64) error {
 	}
 	quota := b.persistQuotaBytes()
 	if usage >= quota || incoming > 0 && usage+incoming > quota {
+		return errBlobPersistQuota
+	}
+	return nil
+}
+
+func (b *BlobStore) checkPersistQuotaAfterWrite(written int64) error {
+	usage, err := b.persistUsage()
+	if err != nil {
+		return err
+	}
+	quota := b.persistQuotaBytes()
+	if written > quota || usage > quota {
 		return errBlobPersistQuota
 	}
 	return nil

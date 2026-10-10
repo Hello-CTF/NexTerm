@@ -1,6 +1,7 @@
 package account
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -307,8 +308,16 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 		return nil, dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE user_totp SET secret_envelope = pending_secret_envelope, pending_secret_envelope = NULL, updated_at = ?
-WHERE user_id = ? AND pending_secret_envelope IS NOT NULL`, now, userID)
+	var current []byte
+	err = tx.QueryRowContext(ctx, "SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !bytes.Equal(current, pending)) {
+		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误: 绑定已确认或已失效,请重新开始")
+	}
+	if err != nil {
+		return nil, dbError(err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE user_totp SET secret_envelope = ?, pending_secret_envelope = NULL, updated_at = ?
+WHERE user_id = ? AND pending_secret_envelope = ?`, pending, now, userID, pending)
 	if err != nil {
 		return nil, dbError(err)
 	}

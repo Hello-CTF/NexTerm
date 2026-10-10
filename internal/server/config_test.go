@@ -64,73 +64,6 @@ func (s *fakeTokenStore) VerifyToken(_ context.Context, presented string) (bool,
 	return presented != "" && presented == s.token, nil
 }
 
-func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
-	environment := map[string]string{
-		"NEXTERM_LISTEN":   "127.0.0.1:9000",
-		"NEXTERM_DATA_DIR": "/env/data",
-		"NEXTERM_WEB_ROOT": "/env/web",
-	}
-	getenv := func(name string) string { return environment[name] }
-	invocation, err := ParseCLI([]string{"serve", "--data-dir", "/flag/data", "--sync-only=false"}, getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if invocation.Command != core.CommandServe || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.SyncOnly {
-		t.Fatalf("invocation = %+v", invocation)
-	}
-	if invocation.Options.Auth != AuthOn {
-		t.Fatalf("default auth mode = %q, want %q", invocation.Options.Auth, AuthOn)
-	}
-	invocation, err = ParseCLI([]string{"--auth=loopback"}, getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if invocation.Options.Auth != AuthLoopback {
-		t.Fatalf("auth flag = %+v", invocation)
-	}
-	coreInvocation, err := core.ParseCLI([]string{"--auth=loopback", "--require-vault"}, core.CommandServe, getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if coreInvocation.Auth != core.AuthLoopback || !coreInvocation.RequireVault {
-		t.Fatalf("core auth flags = %+v", coreInvocation)
-	}
-	invocation, err = ParseCLI(nil, func(string) string { return "" })
-	if err != nil || invocation.Command != core.CommandServe || invocation.Options.Listen != DefaultListen || invocation.Options.DataDir == "" || invocation.Options.WebRoot == "" {
-		t.Fatalf("bare invocation = %+v, %v", invocation, err)
-	}
-	if invocation.Options.Auth != AuthOn {
-		t.Fatalf("bare auth mode = %q, want %q", invocation.Options.Auth, AuthOn)
-	}
-	if _, err := ParseCLI([]string{"--auth=bogus"}, getenv); err == nil {
-		t.Fatal("invalid --auth value was accepted")
-	}
-	if _, err := ParseCLI(nil, func(name string) string {
-		if name == "NEXTERM_AUTH" {
-			return "bogus"
-		}
-		return ""
-	}); err == nil {
-		t.Fatal("invalid NEXTERM_AUTH was accepted")
-	}
-	invocation, err = ParseCLI(nil, func(name string) string {
-		if name == "NEXTERM_AUTH" {
-			return AuthOff
-		}
-		return ""
-	})
-	if err != nil || invocation.Options.Auth != AuthOff {
-		t.Fatalf("NEXTERM_AUTH = %+v, %v", invocation, err)
-	}
-	if _, err := ParseCLI([]string{"desktop"}, getenv); err == nil {
-		t.Fatal("server accepted desktop command")
-	}
-	usage := Usage("nexterm-server")
-	if strings.Contains(usage, "desktop") || strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY_FILE") || strings.Contains(usage, "--master-key ") {
-		t.Fatalf("server usage = %q", usage)
-	}
-}
-
 func TestResolveMasterKey(t *testing.T) {
 	key, err := ResolveMasterKey("")
 	if err != nil || key != "" {
@@ -154,15 +87,13 @@ func TestResolveMasterKey(t *testing.T) {
 	if _, err := ResolveMasterKey(filepath.Join(t.TempDir(), "missing.key")); err == nil {
 		t.Fatal("missing master key file was accepted")
 	}
-	invocation, err := ParseCLI([]string{"--master-key-file", keyFile, "--data-dir", t.TempDir()}, func(string) string { return "" })
+	invocation, err := core.ParseCLI([]string{"--master-key-file", keyFile, "--data-dir", t.TempDir()}, core.CommandServe, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invocation.Options.MasterKey != "file-secret" {
-		t.Fatalf("ParseCLI master key = %q", invocation.Options.MasterKey)
-	}
-	if _, err := ParseCLI([]string{"--master-key=flag-secret", "--data-dir", t.TempDir()}, func(string) string { return "" }); err == nil {
-		t.Fatal("ParseCLI accepted the removed --master-key flag")
+	key, err = ResolveMasterKey(invocation.MasterKeyFile)
+	if err != nil || key != "file-secret" {
+		t.Fatalf("parsed master key = %q, %v", key, err)
 	}
 }
 

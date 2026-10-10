@@ -25,12 +25,15 @@ const mfaEnrollLockedMessage = "管理员已要求启用两步验证: 完成 TOT
 // mfaEnrollmentLockedFor 判定指定会话身份是否被 mfa_required 策略锁定(未绑定)。
 // reset_required 会话由改密流程单独约束, 两者不叠加(先改密再绑定)。
 // 网关与遗留静态令牌分支无账号会话身份, 不适用该策略。
-func (s *Server) mfaEnrollmentLockedFor(r *http.Request, identity *account.Identity) bool {
+func (s *Server) mfaEnrollmentLockedFor(r *http.Request, identity *account.Identity) (bool, error) {
 	if identity == nil || identity.MFAEnabled || identity.State == account.StateResetRequired {
-		return false
+		return false, nil
 	}
 	required, err := s.accounts.MFARequired(r.Context())
-	return err == nil && required
+	if err != nil {
+		return false, err
+	}
+	return required, nil
 }
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
@@ -62,7 +65,12 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
 						return
 					}
-					if s.mfaEnrollmentLockedFor(r, identity) {
+					locked, err := s.mfaEnrollmentLockedFor(r, identity)
+					if err != nil {
+						writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
+						return
+					}
+					if locked {
 						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
 						return
 					}
@@ -142,7 +150,12 @@ func (s *Server) admitWebSocket(w http.ResponseWriter, r *http.Request) (*accoun
 		http.Error(w, sessionReloginMessage, http.StatusUnauthorized)
 		return nil, false
 	}
-	if s.mfaEnrollmentLockedFor(r, identity) {
+	locked, err := s.mfaEnrollmentLockedFor(r, identity)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return nil, false
+	}
+	if locked {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
 		return nil, false
 	}

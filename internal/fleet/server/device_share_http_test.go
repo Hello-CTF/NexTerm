@@ -5,10 +5,12 @@ package fleetserver
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/coder/websocket"
 )
 
@@ -160,6 +162,27 @@ func TestSharePublicDeviceTerminalReadWrite(t *testing.T) {
 		t.Fatalf("input audit rows = %v", inputs)
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+	device.waitSessionMissing(t, ready.SessionID)
+}
+
+func TestShareTerminalReadyFailureReclaimsCreatedSession(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "readyfail-owner")
+	device := startShareTestAgent(t, f, owner, "readyfail-box")
+	client, server := wsPair(t)
+	_ = client.CloseNow()
+	_ = server.CloseNow()
+	grant := &sharing.Grant{
+		DeviceID: device.deviceID, Permission: sharing.PermissionReadWrite,
+		ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+	}
+	viewer := &shareTerminalWS{conn: server}
+	request := httptest.NewRequest(http.MethodGet, "/share/devices/"+device.deviceID+"/terminal", nil)
+	sessionID := f.service.serveShareTerminalWithViewer(request, viewer, grant, sharing.NewGate(grant))
+	if sessionID == "" {
+		t.Fatal("ready failure did not create a guest session")
+	}
+	device.waitSessionMissing(t, sessionID)
 }
 
 func TestSharePublicDeviceTerminalReadOnlyAndShrink(t *testing.T) {
@@ -211,7 +234,7 @@ func TestSharePublicDeviceTerminalRevokeStopsStream(t *testing.T) {
 
 	conn := dialShareViewer(t, f, "/share/public/device/"+token, nil)
 	collector := watchShareConn(conn)
-	collector.expectReady(t, "read_write")
+	ready := collector.expectReady(t, "read_write")
 
 	if call := f.call(t, "POST", "/share/device-links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
@@ -221,6 +244,7 @@ func TestSharePublicDeviceTerminalRevokeStopsStream(t *testing.T) {
 		t.Fatalf("error frame = %+v", errorFrame)
 	}
 	collector.expectClosed(t, 5*time.Second)
+	device.waitSessionMissing(t, ready.SessionID)
 
 	if status := dialShareViewerStatus(t, f, "/share/public/device/"+token); status != http.StatusForbidden {
 		t.Fatalf("resolve after revoke: HTTP %d", status)

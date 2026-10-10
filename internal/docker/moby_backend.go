@@ -172,7 +172,7 @@ func (b *MobyBackend) OpenExec(ctx context.Context, options ExecOptions) (ExecSe
 func (b *MobyBackend) ListDir(ctx context.Context, id, directory string) ([]string, error) {
 	result, err := execWithSession(ctx, b, ExecOptions{
 		Container: id,
-		Cmd:       []string{"ls", "-1a", "--", directory},
+		Cmd:       []string{"ls", "-1apL", "--", directory},
 		TTY:       false,
 	})
 	if err != nil {

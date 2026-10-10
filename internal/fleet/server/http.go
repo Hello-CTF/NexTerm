@@ -216,7 +216,12 @@ func (s *Service) requireFleetSession(next http.Handler) http.Handler {
 			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置")))
 			return
 		}
-		if s.mfaEnrollLocked(r) {
+		locked, err := s.mfaEnrollLocked(r)
+		if err != nil {
+			writeFleetFailure(w, err)
+			return
+		}
+		if locked {
 			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeMFAEnrollmentRequired, "管理员已要求启用两步验证: 完成 TOTP 绑定前,该账号只能使用绑定相关功能")))
 			return
 		}
@@ -235,13 +240,16 @@ var mfaEnrollAllowedPaths = map[string]bool{
 	"/auth/logout-all":   true,
 }
 
-func (s *Service) mfaEnrollLocked(r *http.Request) bool {
+func (s *Service) mfaEnrollLocked(r *http.Request) (bool, error) {
 	identity := identityFrom(r)
 	if identity == nil || identity.MFAEnabled || identity.State == account.StateResetRequired || mfaEnrollAllowedPaths[r.URL.Path] {
-		return false
+		return false, nil
 	}
 	required, err := s.accounts.MFARequired(r.Context())
-	return err == nil && required
+	if err != nil {
+		return false, err
+	}
+	return required, nil
 }
 
 func (s *Service) requireFleetCSRF(next http.Handler) http.Handler {

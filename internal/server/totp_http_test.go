@@ -432,3 +432,70 @@ func TestAccountHTTPTOTPVerifyThrottle(t *testing.T) {
 		t.Fatalf("disable throttle status=%d body=%v", call.status, call.body)
 	}
 }
+
+func TestAccountHTTPMFARequiredDatabaseErrorFailClosed(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.createUser(t, "bob", "password-b1")
+	session := fixture.login(t, "bob", "password-b1")
+	if _, err := fixture.db.Exec("DROP TABLE setting"); err != nil {
+		t.Fatal(err)
+	}
+
+	status := func(method, path, payload string) int {
+		t.Helper()
+		request, err := http.NewRequest(method, fixture.http.URL+path, strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.AddCookie(session.cookie)
+		request.Header.Set(csrfHeaderName, session.csrf)
+		if payload != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response, err := fixture.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	if got := status(http.MethodPost, "/rpc", `{"cmd":"app_info","args":{}}`); got != http.StatusInternalServerError {
+		t.Fatalf("rpc status = %d, want 500", got)
+	}
+	if got := status(http.MethodGet, "/ws/events", ""); got != http.StatusInternalServerError {
+		t.Fatalf("websocket status = %d, want 500", got)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/devices", nil, session, "", nil); call.status != http.StatusInternalServerError {
+		t.Fatalf("account status = %d body=%v, want 500", call.status, call.body)
+	}
+}
+
+func TestMFATicketStoreAbsoluteTTLAndCapacitySweep(t *testing.T) {
+	now := time.Unix(1000, 0)
+	tickets := newMFATicketStore()
+	tickets.now = func() time.Time { return now }
+	ticket, expiresAt := tickets.issue("user", "device")
+	now = expiresAt
+	if entry, ok := tickets.get(ticket); !ok || entry.deviceID != "device" {
+		t.Fatalf("ticket at absolute expiry = %+v, %v", entry, ok)
+	}
+	now = expiresAt.Add(time.Nanosecond)
+	if _, ok := tickets.get(ticket); ok {
+		t.Fatal("ticket survived past its absolute TTL")
+	}
+
+	for index := 0; index < 4097; index++ {
+		id := fmt.Sprintf("%d", index)
+		expires := now.Add(time.Hour)
+		if index == 0 {
+			expires = now.Add(-time.Second)
+		}
+		tickets.entries[id] = &mfaTicket{userID: id, expiresAt: expires}
+	}
+	if _, _ = tickets.issue("new-user", "new-device"); len(tickets.entries) != 4097 {
+		t.Fatalf("capacity sweep left %d entries", len(tickets.entries))
+	}
+	if _, ok := tickets.entries["0"]; ok {
+		t.Fatal("capacity issue did not remove expired entry")
+	}
+}

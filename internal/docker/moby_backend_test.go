@@ -23,8 +23,9 @@ import (
 )
 
 type fakeDaemon struct {
-	mu       sync.Mutex
-	requests []string
+	mu           sync.Mutex
+	requests     []string
+	execCommands [][]string
 }
 
 func (d *fakeDaemon) record(request *http.Request) {
@@ -60,6 +61,14 @@ func (d *fakeDaemon) ServeHTTP(writer http.ResponseWriter, request *http.Request
 	case strings.HasPrefix(path, "/images/") && request.Method == http.MethodDelete:
 		_, _ = io.WriteString(writer, `[]`)
 	case path == "/containers/c1/exec" && request.Method == http.MethodPost:
+		var options struct{ Cmd []string }
+		if err := json.NewDecoder(request.Body).Decode(&options); err != nil {
+			http.Error(writer, "invalid exec create", http.StatusBadRequest)
+			return
+		}
+		d.mu.Lock()
+		d.execCommands = append(d.execCommands, options.Cmd)
+		d.mu.Unlock()
 		writeTestJSON(writer, map[string]string{"Id": "e1"})
 	case path == "/exec/e1/start" && request.Method == http.MethodPost:
 		hijackTestExec(writer, request)
@@ -101,7 +110,7 @@ func hijackTestExec(writer http.ResponseWriter, request *http.Request) {
 	}
 	_, _ = fmt.Fprintf(connection, "HTTP/1.1 101 UPGRADED\r\nContent-Type: %s\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n", contentType)
 	if !options.Tty {
-		payload := []byte(".\n..\n.env\nhello world.txt\nsub\n链接\n")
+		payload := []byte("./\n../\n.env\nhello world.txt\nsub/\n链接/\n")
 		header := make([]byte, 8)
 		header[0] = byte(stdcopy.Stdout)
 		binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
@@ -169,12 +178,16 @@ func TestMobyBackendReadsImagesInspectStatsAndFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{".", "..", ".env", "hello world.txt", "sub", "链接"}
+	want := []string{"./", "../", ".env", "hello world.txt", "sub/", "链接/"}
 	if !reflect.DeepEqual(entries, want) {
 		t.Fatalf("entries = %#v, want %#v", entries, want)
 	}
 	daemon.mu.Lock()
 	defer daemon.mu.Unlock()
+	wantCommand := []string{"ls", "-1apL", "--", "/var/lib/data"}
+	if len(daemon.execCommands) != 1 || !reflect.DeepEqual(daemon.execCommands[0], wantCommand) {
+		t.Fatalf("exec commands = %#v, want %#v", daemon.execCommands, wantCommand)
+	}
 	for _, request := range daemon.requests {
 		if strings.Contains(request, "/archive") {
 			t.Fatalf("ListDir downloaded a recursive archive: %s", request)

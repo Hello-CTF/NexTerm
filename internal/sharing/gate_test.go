@@ -414,3 +414,44 @@ func TestGateRevalidateTTLConcurrentAccess(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestGateRefreshSerializationPreventsStaleOverwrite(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).UnixMilli()
+	stale := testGrant(PermissionReadWrite, expiresAt)
+	current := testGrant(PermissionRead, expiresAt)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	gate := NewGate(testGrant(PermissionReadWrite, expiresAt), WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
+		if calls.Add(1) == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return stale, nil
+		}
+		return current, nil
+	}))
+	defer func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+	}()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- gate.Check(context.Background()) }()
+	<-firstStarted
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- gate.CheckFresh(context.Background()) }()
+	time.Sleep(50 * time.Millisecond)
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	if permission := gate.Grant().Permission; permission != PermissionRead {
+		t.Fatalf("stale refresh overwrote current grant: permission = %q", permission)
+	}
+}

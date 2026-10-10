@@ -483,46 +483,56 @@ func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, gra
 	}
 	conn.SetReadLimit(maxShareViewerMessage)
 	viewer := &shareTerminalWS{conn: conn}
+	s.serveShareTerminalWithViewer(r, viewer, grant, gate)
+}
 
+func (s *Service) serveShareTerminalWithViewer(r *http.Request, viewer *shareTerminalWS, grant *sharing.Grant, gate *sharing.Gate) string {
 	client, err := s.dialShareSupervisor(grant.DeviceID)
 	if err != nil {
 		s.failShareTerminal(viewer, err)
-		return
+		return ""
 	}
-	sessionID, stream, err := s.openShareStream(r, client, grant)
+	sessionID, stream, cleanup, err := s.openShareStream(r, client, grant)
 	if err != nil {
 		s.failShareTerminal(viewer, err)
-		return
+		return ""
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 	if err := viewer.writeJSON(r.Context(), shareReadyFrame{
 		Type: "ready", SessionID: sessionID, Permission: string(grant.Permission), ExpiresAt: grant.ExpiresAt,
 	}); err != nil {
 		_ = stream.Close()
-		_ = conn.Close(websocket.StatusInternalError, "ready failed")
-		return
+		_ = viewer.conn.Close(websocket.StatusInternalError, "ready failed")
+		return sessionID
 	}
 	s.pumpShareTerminal(viewer, stream, gate)
+	return sessionID
 }
 
-func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, grant *sharing.Grant) (string, *supervisor.Stream, error) {
+func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, grant *sharing.Grant) (string, *supervisor.Stream, func(), error) {
 	if grant.SessionID != "" {
 		stream, err := client.Attach(r.Context(), grant.SessionID, nil)
-		return grant.SessionID, stream, err
+		return grant.SessionID, stream, nil, err
 	}
 	info, err := client.Create(r.Context(), supervisor.CreateOptions{})
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	expect := &supervisor.Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
-	stream, err := client.Attach(r.Context(), info.ID, expect)
-	if err != nil {
-		// attach 失败时回收刚创建的会话, 不在宿主上留下孤儿终端。
+	cleanup := func() {
 		killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = client.Kill(killCtx, info.ID, expect)
-		return "", nil, err
 	}
-	return info.ID, stream, nil
+	stream, err := client.Attach(r.Context(), info.ID, expect)
+	if err != nil {
+		// attach 失败时回收刚创建的会话, 不在宿主上留下孤儿终端。
+		cleanup()
+		return "", nil, nil, err
+	}
+	return info.ID, stream, cleanup, nil
 }
 
 // pumpShareTerminal 双向泵送直到任一侧结束或授权失效: 输出 Gate.PipeOutput

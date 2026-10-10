@@ -51,6 +51,23 @@ func TestCommandBackendListDoesNotTruncate(t *testing.T) {
 	}
 }
 
+func TestCommandBackendListDirPreservesDirectoryTypes(t *testing.T) {
+	runner := &recordingRunner{result: CommandResult{Stdout: "./\n../\napp/\nhello world.txt\n链接/\n"}}
+	backend := NewCommandBackend(runner, nil, ShellPOSIX)
+	entries, err := backend.ListDir(t.Context(), "c1", "/var/lib/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"./", "../", "app/", "hello world.txt", "链接/"}
+	if strings.Join(entries, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("entries = %#v, want %#v", entries, want)
+	}
+	command := "docker 'exec' 'c1' 'sh' '-c' 'ls -1apL -- \"$1\"' 'sh' '/var/lib/data'"
+	if len(runner.commands) != 1 || runner.commands[0] != command {
+		t.Fatalf("commands = %q, want %q", runner.commands, command)
+	}
+}
+
 func TestCommandBackendQuotesArgumentsAndPreservesCustomCommand(t *testing.T) {
 	runner := &recordingRunner{}
 	opener := &recordingOpener{stream: &fakeCommandStream{}}

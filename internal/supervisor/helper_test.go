@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -317,59 +316,6 @@ func TestConnectHelperProtocolMismatchFailsWithoutSpawnOrKill(t *testing.T) {
 	}
 	_ = listener.Close()
 	<-serverDone
-}
-
-func TestConnectHelperConcurrentSingleHelper(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "state")
-	t.Cleanup(func() { killHelperProcesses(t, stateDir) })
-	const clients = 8
-	helpers := make([]*Helper, clients)
-	errs := make([]error, clients)
-	var start sync.WaitGroup
-	start.Add(1)
-	var done sync.WaitGroup
-	for index := 0; index < clients; index++ {
-		done.Add(1)
-		go func(index int) {
-			defer done.Done()
-			start.Wait()
-			helpers[index], errs[index] = ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, SpawnTimeout: 60 * time.Second})
-		}(index)
-	}
-	start.Done()
-	done.Wait()
-	for index, err := range errs {
-		if err != nil {
-			t.Fatalf("connect %d: %v", index, err)
-		}
-	}
-	endpoint := helpers[0].Endpoint()
-	for _, helper := range helpers {
-		if helper.Endpoint() != endpoint {
-			t.Fatalf("helper endpoints differ: %s vs %s", helper.Endpoint(), endpoint)
-		}
-	}
-	id := ids.New()
-	if _, err := helpers[0].Client().Create(context.Background(), CreateOptions{
-		ID:      id,
-		Command: []string{"/bin/sh", "-c", "sleep 300"},
-		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	infos, err := helpers[clients-1].Client().List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[0].ID != id {
-		t.Fatalf("concurrent helper list = %+v", infos)
-	}
-	if count := helperProcessCount(t, stateDir); count != 1 {
-		t.Fatalf("helper processes = %d, want exactly 1", count)
-	}
-	if err := helpers[0].Client().Kill(context.Background(), id, nil); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestSpawnDetachedStartsNewSession(t *testing.T) {

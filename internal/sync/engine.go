@@ -49,6 +49,7 @@ type Engine struct {
 	vault  *vault.Vault
 	logger *slog.Logger
 
+	opMu      sync.Mutex
 	sessionMu sync.Mutex
 	session   *remoteSession
 }
@@ -107,6 +108,8 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 
 // Sync 执行一轮完整同步: 对账 → 拉取合并 → 推送本地变更。冲突(其他设备先推或回滚)自动重试。
 func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, error) {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
 	report := SyncReport{}
 	for attempt := 0; attempt < maxSyncAttempts; attempt++ {
 		session, err := e.ensureSession(ctx, config)

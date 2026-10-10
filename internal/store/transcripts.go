@@ -572,23 +572,13 @@ WHERE sync_opt_in=1 AND ended_at IS NOT NULL ORDER BY started_at, id`)
 	return result, rows.Err()
 }
 
-// TranscriptReplaceContent 用拉取到的完整内容替换仅元数据副本(或重写内容), 并清除 content_omitted 标记。
+// TranscriptReplaceContent 仅用拉取到的完整内容补全 content_omitted=1 的元数据副本; 完整记录拒绝且不得修改。
 func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID string, bytes, chunks int64, truncated bool, content []TranscriptChunkRow) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript_chunk WHERE transcript_id=?", transcriptID); err != nil {
-		return dbError(err)
-	}
-	for _, chunk := range content {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?)`,
-			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
-			return dbError(err)
-		}
-	}
 	result, err := tx.ExecContext(ctx, `UPDATE transcript SET bytes=?, chunks=?, truncated=?, content_omitted=0
 WHERE id=? AND content_omitted=1`, bytes, chunks, boolInt(truncated), transcriptID)
 	if err != nil {
@@ -600,6 +590,16 @@ WHERE id=? AND content_omitted=1`, bytes, chunks, boolInt(truncated), transcript
 	}
 	if affected == 0 {
 		return notFound("会话记录")
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript_chunk WHERE transcript_id=?", transcriptID); err != nil {
+		return dbError(err)
+	}
+	for _, chunk := range content {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
+(transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?)`,
+			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
+			return dbError(err)
+		}
 	}
 	return tx.Commit()
 }

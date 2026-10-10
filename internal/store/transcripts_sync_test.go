@@ -225,3 +225,29 @@ func TestTranscriptInsertSyncedAndReplaceContent(t *testing.T) {
 		t.Fatal("unended transcript must be rejected")
 	}
 }
+
+func TestTranscriptReplaceContentRejectsCompleteRecord(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	ended := ids.NowMS() - 1000
+	row := TranscriptRow{
+		ID: ids.New(), SessionID: ids.New(), AssetID: "asset-9", AssetName: "db-01", AssetKind: "ssh",
+		StartedAt: ended - 500, EndedAt: &ended, Bytes: 11, Chunks: 1,
+	}
+	original := []TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: ended - 400, Data: []byte("hello world")}}
+	if err := db.TranscriptInsertSynced(ctx, row, original); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: ended - 300, Data: []byte("replaced")}}
+	if err := db.TranscriptReplaceContent(ctx, row.ID, 8, 1, true, replacement); err == nil {
+		t.Fatal("complete transcript content was replaced")
+	}
+	got, err := db.TranscriptGet(ctx, row.ID)
+	if err != nil || got.ContentOmitted || got.Bytes != 11 || got.Chunks != 1 || got.Truncated {
+		t.Fatalf("complete record changed after rejected replace: %+v, err=%v", got, err)
+	}
+	chunks, err := db.TranscriptChunks(ctx, row.ID, 0, 1<<20)
+	if err != nil || len(chunks) != 1 || string(chunks[0].Data) != "hello world" {
+		t.Fatalf("complete record chunks changed after rejected replace: %+v, err=%v", chunks, err)
+	}
+}

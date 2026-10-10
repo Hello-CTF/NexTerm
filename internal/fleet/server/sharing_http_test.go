@@ -138,6 +138,42 @@ func (a *shareTestAgent) createSession(t *testing.T, command ...string) string {
 	return info.ID
 }
 
+func (a *shareTestAgent) sessionExists(id string) (bool, error) {
+	infos, err := supervisor.NewClient(a.socketPath, a.stateDir).List(context.Background())
+	if err != nil {
+		return false, err
+	}
+	for _, info := range infos {
+		if info.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (a *shareTestAgent) waitSessionMissing(t *testing.T, id string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		exists, err := a.sessionExists(id)
+		if err == nil && !exists {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s was not reclaimed: exists=%v err=%v", id, exists, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (a *shareTestAgent) requireSession(t *testing.T, id string) {
+	t.Helper()
+	exists, err := a.sessionExists(id)
+	if err != nil || !exists {
+		t.Fatalf("existing session %s was killed: exists=%v err=%v", id, exists, err)
+	}
+}
+
 // shareConnCollector 持续读 viewer WS (阻塞读, 不用超时读 — 超时读会毒化
 // coder/websocket 连接), 把消息分到 data/text 通道, 关闭/错误进 errCh。
 type shareConnCollector struct {
@@ -585,6 +621,8 @@ func TestSharePublicTerminalReadWriteAndInputAudit(t *testing.T) {
 		t.Fatalf("input audit rows = %v", inputs)
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(100 * time.Millisecond)
+	device.requireSession(t, sessionID)
 }
 
 func TestSharePublicTerminalRevokeStopsStream(t *testing.T) {

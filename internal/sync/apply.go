@@ -56,6 +56,8 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 }
 
 func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequest) (ApplyObjectsResult, error) {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
 	if len(request.Objects) > maxApplyObjectsPerCall {
 		return ApplyObjectsResult{}, ipc.NewError(ipc.CodeBadParam,
 			fmt.Sprintf("单次应用对象数超过上限 %d", maxApplyObjectsPerCall))

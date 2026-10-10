@@ -27,6 +27,7 @@ type RecheckFunc func(ctx context.Context, grant *Grant) (*Grant, error)
 // WithRevalidateTTL 把重查收敛为短 TTL 缓存), 授权失效后双向立即停止,
 // 失效或取消期间读到的块一律丢弃。阻塞的 Read 由集成层在取消时关闭 source 唤醒。
 type Gate struct {
+	refreshMu  sync.Mutex
 	mu         sync.Mutex
 	grant      *Grant
 	now        func() int64
@@ -128,6 +129,8 @@ func (g *Gate) CheckFresh(ctx context.Context) error {
 }
 
 func (g *Gate) check(ctx context.Context, refresh func(ctx context.Context, grant *Grant) (*Grant, error)) error {
+	g.refreshMu.Lock()
+	defer g.refreshMu.Unlock()
 	grant := g.Grant()
 	if grant == nil {
 		return errors.New("sharing: nil grant")
@@ -180,6 +183,19 @@ func (g *Gate) PipeInput(ctx context.Context, dst io.Writer, src io.Reader) erro
 	return g.pipe(ctx, dst, src, true)
 }
 
+func (g *Gate) refreshInput(ctx context.Context) error {
+	g.refreshMu.Lock()
+	defer g.refreshMu.Unlock()
+	refreshed, err := g.cachedRefresh(ctx, g.Grant(), g.inputCheck, &g.inputCache)
+	if err != nil {
+		return err
+	}
+	if refreshed != nil {
+		g.setGrant(refreshed)
+	}
+	return nil
+}
+
 func (g *Gate) pipe(ctx context.Context, dst io.Writer, src io.Reader, write bool) error {
 	buffer := make([]byte, 32*1024)
 	for {
@@ -198,12 +214,8 @@ func (g *Gate) pipe(ctx context.Context, dst io.Writer, src io.Reader, write boo
 		}
 		if count > 0 {
 			if write && g.inputCheck != nil {
-				refreshed, err := g.cachedRefresh(ctx, g.Grant(), g.inputCheck, &g.inputCache)
-				if err != nil {
+				if err := g.refreshInput(ctx); err != nil {
 					return err
-				}
-				if refreshed != nil {
-					g.setGrant(refreshed)
 				}
 			} else {
 				if err := g.Check(ctx); err != nil {

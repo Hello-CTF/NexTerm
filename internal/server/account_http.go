@@ -206,25 +206,33 @@ type accountSessionView struct {
 	MFARequired bool `json:"mfa_required"`
 }
 
+func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sessionID string) (accountSessionView, error) {
+	view := newAccountUserView(user)
+	enabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		return accountSessionView{}, err
+	}
+	required, err := s.accounts.MFARequired(r.Context())
+	if err != nil {
+		return accountSessionView{}, err
+	}
+	view.MFAEnabled = enabled
+	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
+}
+
 func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string) {
 	token, session, err := s.accounts.IssueSession(r.Context(), user.ID, deviceID)
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	view := newAccountUserView(user)
-	view.MFAEnabled, err = s.accounts.TOTPEnabled(r.Context(), user.ID)
-	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	required, err := s.accounts.MFARequired(r.Context())
+	view, err := s.newAccountSessionView(r, user, session.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
 	setSessionCookie(w, r, token)
-	writeAccountJSON(w, http.StatusOK, accountSessionView{User: view, CSRFToken: accountCSRFToken(session.ID), MFARequired: required})
+	writeAccountJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
@@ -275,9 +283,12 @@ func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 	if token, ok := sessionCookie(r); ok {
 		if identity, err := s.accounts.ValidateSession(r.Context(), token); err == nil {
 			if user, err := s.accounts.GetUser(r.Context(), identity.UserID); err == nil {
-				writeAccountJSON(w, http.StatusOK, accountSessionView{
-					User: newAccountUserView(user), CSRFToken: accountCSRFToken(identity.SessionID),
-				})
+				view, err := s.newAccountSessionView(r, user, identity.SessionID)
+				if err != nil {
+					writeAccountFailure(w, err)
+					return
+				}
+				writeAccountJSON(w, http.StatusOK, view)
 				return
 			}
 		}
@@ -320,7 +331,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mfaEnabled {
-		ticket, expiresAt := s.mfaTickets.issue(user.ID, user.Username, request.DeviceID)
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID)
 		if ticket == "" {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
@@ -444,18 +455,12 @@ func (s *Server) serveAccountMe(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	view := newAccountUserView(user)
-	view.MFAEnabled, err = s.accounts.TOTPEnabled(r.Context(), user.ID)
+	view, err := s.newAccountSessionView(r, user, identity.SessionID)
 	if err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	required, err := s.accounts.MFARequired(r.Context())
-	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	writeAccountJSON(w, http.StatusOK, accountSessionView{User: view, CSRFToken: accountCSRFToken(identity.SessionID), MFARequired: required})
+	writeAccountJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -279,5 +280,54 @@ func TestTOTPEnabledMap(t *testing.T) {
 	}
 	if !enabled[bound.ID] || enabled[plain.ID] {
 		t.Fatalf("unexpected enabled map: %v", enabled)
+	}
+}
+
+func TestConfirmTOTPSetupRejectsReplacedPending(t *testing.T) {
+	a, now := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "race", "", "password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSecret, _, err := a.BeginTOTPSetup(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	baseNow := a.now
+	defer func() { a.now = baseNow }()
+	var nowCalls atomic.Int32
+	confirming := make(chan struct{})
+	resume := make(chan struct{})
+	a.now = func() int64 {
+		if nowCalls.Add(1) == 2 {
+			close(confirming)
+			<-resume
+		}
+		return baseNow()
+	}
+	confirmed := make(chan error, 1)
+	go func() {
+		_, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, originalSecret, *now/1000))
+		confirmed <- err
+	}()
+	<-confirming
+	replacementSecret, _, replacementErr := a.BeginTOTPSetup(ctx, user.ID, "")
+	close(resume)
+	if replacementErr != nil {
+		t.Fatal(replacementErr)
+	}
+	if err := <-confirmed; err == nil {
+		t.Fatal("stale pending confirmation succeeded after replacement")
+	}
+
+	enabled, pending, _, err := a.TOTPStatus(ctx, user.ID)
+	if err != nil || enabled || !pending {
+		t.Fatalf("replacement status = enabled:%v pending:%v err:%v", enabled, pending, err)
+	}
+	a.now = baseNow
+	if _, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, replacementSecret, *now/1000)); err != nil {
+		t.Fatalf("replacement setup could not be confirmed: %v", err)
 	}
 }

@@ -11,17 +11,14 @@ import (
 )
 
 const (
-	mfaTicketBytes   = 32
-	mfaTicketTTL     = 5 * time.Minute
-	mfaTicketMaxIdle = time.Hour
+	mfaTicketBytes = 32
+	mfaTicketTTL   = 5 * time.Minute
 )
 
 type mfaTicket struct {
 	userID    string
-	username  string
 	deviceID  string
 	expiresAt time.Time
-	lastSeen  time.Time
 }
 
 // mfaTicketStore 保存「密码已通过、待第二因子」的一次性票据(仅内存)。
@@ -36,7 +33,7 @@ func newMFATicketStore() *mfaTicketStore {
 	return &mfaTicketStore{entries: make(map[string]*mfaTicket), now: time.Now}
 }
 
-func (s *mfaTicketStore) issue(userID, username, deviceID string) (string, time.Time) {
+func (s *mfaTicketStore) issue(userID, deviceID string) (string, time.Time) {
 	raw := make([]byte, mfaTicketBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", time.Time{}
@@ -48,7 +45,7 @@ func (s *mfaTicketStore) issue(userID, username, deviceID string) (string, time.
 	if len(s.entries) > 4096 {
 		s.sweepLocked(now)
 	}
-	s.entries[ticket] = &mfaTicket{userID: userID, username: username, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL), lastSeen: now}
+	s.entries[ticket] = &mfaTicket{userID: userID, deviceID: deviceID, expiresAt: now.Add(mfaTicketTTL)}
 	return ticket, now.Add(mfaTicketTTL)
 }
 
@@ -61,7 +58,6 @@ func (s *mfaTicketStore) get(ticket string) (*mfaTicket, bool) {
 		delete(s.entries, ticket)
 		return nil, false
 	}
-	entry.lastSeen = now
 	copied := *entry
 	return &copied, true
 }
@@ -74,7 +70,7 @@ func (s *mfaTicketStore) delete(ticket string) {
 
 func (s *mfaTicketStore) sweepLocked(now time.Time) {
 	for ticket, entry := range s.entries {
-		if now.After(entry.expiresAt) || now.Sub(entry.lastSeen) > mfaTicketMaxIdle {
+		if now.After(entry.expiresAt) {
 			delete(s.entries, ticket)
 		}
 	}

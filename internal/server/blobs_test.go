@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,6 +287,71 @@ func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
 	}
 	if _, err := os.Stat(temporaryFile); !os.IsNotExist(err) {
 		t.Fatalf("staged file still exists: %v", err)
+	}
+}
+
+func TestBlobPersistQuotaRechecksUnknownLength(t *testing.T) {
+	store := NewBlobStore(t.TempDir(), testLogger())
+	store.persistQuota = 8
+	store.diskUsage = func(string) (float64, error) { return 0, nil }
+	request := httptest.NewRequest(http.MethodPost, "/files/blob?name=overflow.bin&persist=1", bytes.NewReader(make([]byte, 9)))
+	request.ContentLength = -1
+	response := httptest.NewRecorder()
+	store.Stage(response, request)
+	if response.Code != http.StatusInsufficientStorage {
+		t.Fatalf("unknown-length quota status = %d, want %d", response.Code, http.StatusInsufficientStorage)
+	}
+	entries, err := os.ReadDir(store.keepRoot())
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("overflow upload was not removed: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestBlobPersistQuotaSerializesConcurrentUnknownLengthUploads(t *testing.T) {
+	store := NewBlobStore(t.TempDir(), testLogger())
+	store.persistQuota = 32
+	store.diskUsage = func(string) (float64, error) { return 0, nil }
+	const workers = 8
+	start := make(chan struct{})
+	statuses := make(chan int, workers)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			request := httptest.NewRequest(http.MethodPost, "/files/blob?name=worker.bin&persist=1", bytes.NewReader(make([]byte, 16)))
+			request.ContentLength = -1
+			response := httptest.NewRecorder()
+			store.Stage(response, request)
+			statuses <- response.Code
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(statuses)
+
+	succeeded, rejected := 0, 0
+	for status := range statuses {
+		switch status {
+		case http.StatusOK:
+			succeeded++
+		case http.StatusInsufficientStorage:
+			rejected++
+		default:
+			t.Fatalf("unexpected concurrent upload status = %d", status)
+		}
+	}
+	if succeeded != 2 || rejected != workers-2 {
+		t.Fatalf("concurrent quota outcomes = success:%d rejected:%d", succeeded, rejected)
+	}
+	usage, err := store.persistUsage()
+	if err != nil || usage > store.persistQuotaBytes() {
+		t.Fatalf("concurrent quota usage = %d, err=%v", usage, err)
+	}
+	entries, err := os.ReadDir(store.keepRoot())
+	if err != nil || len(entries) != succeeded {
+		t.Fatalf("persistent entries = %d, want %d (err=%v)", len(entries), succeeded, err)
 	}
 }
 

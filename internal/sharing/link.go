@@ -179,7 +179,11 @@ func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, li
 	if err != nil {
 		return dbError(err)
 	}
-	_, outcome, reason, decision := s.authorizeDevice(ctx, identity, link.DeviceID)
+	outcome, reason := "allow", ""
+	var decision error
+	if link.OwnerID != identity.UserID {
+		_, outcome, reason, decision = s.authorizeDevice(ctx, identity, link.DeviceID)
+	}
 	auditErr := s.audit(ctx, auditKindLinkRevoke, auditPayload{
 		Action: "revoke", ShareID: link.ID, DeviceID: link.DeviceID, SessionID: link.SessionID,
 		OwnerID: link.OwnerID, Requester: identity.UserID, Outcome: outcome, Reason: reason,

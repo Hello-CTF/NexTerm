@@ -157,8 +157,11 @@ var mfaEnrollAllowedPaths = map[string]bool{
 }
 
 // mfaEnrollLocked 落实 mfa_required 强制语义: 未绑定会话除绑定所需路由外一律 403。
-func (s *Server) mfaEnrollLocked(r *http.Request) bool {
-	return !mfaEnrollAllowedPaths[r.URL.Path] && s.mfaEnrollmentLockedFor(r, accountIdentityFrom(r.Context()))
+func (s *Server) mfaEnrollLocked(r *http.Request) (bool, error) {
+	if mfaEnrollAllowedPaths[r.URL.Path] {
+		return false, nil
+	}
+	return s.mfaEnrollmentLockedFor(r, accountIdentityFrom(r.Context()))
 }
 
 // requireAccountSession 要求已通过 accountGuard 解析出会话身份。
@@ -174,7 +177,12 @@ func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
 			return
 		}
-		if s.mfaEnrollLocked(r) {
+		locked, err := s.mfaEnrollLocked(r)
+		if err != nil {
+			writeAccountFailure(w, err)
+			return
+		}
+		if locked {
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
 			return
 		}

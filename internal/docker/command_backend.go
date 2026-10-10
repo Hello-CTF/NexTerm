@@ -280,7 +280,7 @@ func (b *CommandBackend) OpenRawExec(ctx context.Context, command string, width,
 }
 
 func (b *CommandBackend) ListDir(ctx context.Context, id, directory string) ([]string, error) {
-	output, err := b.run(ctx, []string{"exec", id, "sh", "-c", `ls -1a -- "$1"`, "sh", directory})
+	output, err := b.run(ctx, []string{"exec", id, "sh", "-c", `ls -1apL -- "$1"`, "sh", directory})
 	if err != nil {
 		return nil, err
 	}

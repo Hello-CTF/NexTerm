@@ -421,3 +421,16 @@ func TestFleetHTTPDeviceListStateDigest(t *testing.T) {
 		t.Fatalf("agent view state_digest=%v", agent)
 	}
 }
+
+func TestFleetHTTPMFARequiredDatabaseErrorFailClosed(t *testing.T) {
+	fixture := newHTTPFixture(t, false)
+	alice := fixture.createUser(t, "alice")
+	session := fixture.session(t, alice)
+	if _, err := fixture.service.db.Exec("DROP TABLE setting"); err != nil {
+		t.Fatal(err)
+	}
+	call := fixture.call(t, http.MethodGet, "/fleet/devices", nil, session, "")
+	if call.status != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%v, want 500", call.status, call.body)
+	}
+}

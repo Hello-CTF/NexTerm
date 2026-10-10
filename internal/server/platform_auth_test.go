@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -24,7 +26,7 @@ func newPlatformFixture(t *testing.T) *accountFixture {
 	config.Options.Auth = AuthPlatform
 	config.Options.Listen = "0.0.0.0:8080"
 	config.GatewayAuthKey = testGatewayKey
-	accounts := account.New(database.DB())
+	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{
@@ -64,6 +66,18 @@ func TestPlatformSessionEstablishesOwner(t *testing.T) {
 		t.Fatalf("所有者角色 = %q, want %q", role, account.RoleSuperadmin)
 	}
 
+	ownerID, _ := session.user["id"].(string)
+	secret, _, err := fixture.accounts.BeginTOTPSetup(context.Background(), ownerID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.accounts.ConfirmTOTPSetup(context.Background(), ownerID, testTOTPCode(t, secret, time.Now().Unix())); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.accounts.SetMFARequired(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+
 	again := fixture.call(t, http.MethodPost, "/auth/platform-session", nil, session, "", gateway)
 	if again.status != http.StatusOK {
 		t.Fatalf("复用平台会话 = %d body=%v", again.status, again.body)
@@ -72,6 +86,9 @@ func TestPlatformSessionEstablishesOwner(t *testing.T) {
 	if id, _ := reused["id"].(string); id != session.user["id"] {
 		t.Fatalf("平台所有者被重复创建: %v != %v", reused["id"], session.user["id"])
 	}
+	if again.body["mfa_required"] != true || reused["mfa_enabled"] != true {
+		t.Fatalf("复用会话 MFA 字段 = %v, %v", again.body["mfa_required"], reused["mfa_enabled"])
+	}
 	if count, err := fixture.accounts.CountUsers(context.Background()); err != nil || count != 1 {
 		t.Fatalf("账号数 = %d err=%v, want 1", count, err)
 	}
@@ -79,6 +96,10 @@ func TestPlatformSessionEstablishesOwner(t *testing.T) {
 	me := fixture.call(t, http.MethodGet, "/auth/me", nil, session, "", gateway)
 	if me.status != http.StatusOK {
 		t.Fatalf("/auth/me = %d body=%v", me.status, me.body)
+	}
+	meUser, _ := me.body["user"].(map[string]any)
+	if me.body["mfa_required"] != again.body["mfa_required"] || meUser["mfa_enabled"] != reused["mfa_enabled"] {
+		t.Fatalf("复用会话与 /auth/me MFA 字段不一致: %v, %v", again.body, me.body)
 	}
 
 	init := fixture.call(t, http.MethodPost, "/auth/init", map[string]any{"code": "whatever"}, nil, "", gateway)
