@@ -279,6 +279,7 @@ CREATE TABLE user_device (
   user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   name         TEXT NOT NULL,
   kind         TEXT NOT NULL DEFAULT 'desktop',
+  state        TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('pending','active')),
   created_at   INTEGER NOT NULL,
   last_seen_at INTEGER,
   revoked_at   INTEGER
@@ -412,6 +413,18 @@ CREATE TABLE share_link (
 );
 CREATE INDEX idx_share_link_owner ON share_link(owner_id);
 CREATE INDEX idx_share_link_device ON share_link(device_id);
+
+CREATE TABLE share_preview_link (
+  id               TEXT PRIMARY KEY,
+  owner_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  session_id       TEXT NOT NULL,
+  token_hash       TEXT NOT NULL UNIQUE,
+  created_at       INTEGER NOT NULL,
+  expires_at       INTEGER NOT NULL,
+  revoked_at       INTEGER,
+  last_accessed_at INTEGER
+);
+CREATE INDEX idx_share_preview_link_owner ON share_preview_link(owner_id);
 
 CREATE TABLE host_share (
   id           TEXT PRIMARY KEY,

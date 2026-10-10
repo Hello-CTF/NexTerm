@@ -25,6 +25,7 @@ type fakeFleetServer struct {
 	currentURLReports []currentURLRequest
 	syncResponse      SyncResponse
 	syncForbidden     bool
+	syncPending       bool
 	wsControl         func(conn *websocket.Conn, hello HelloMessage)
 }
 
@@ -68,12 +69,19 @@ func newFakeFleetServer(t *testing.T) *fakeFleetServer {
 		fake.mu.Lock()
 		fake.syncRequests = append(fake.syncRequests, request)
 		forbidden := fake.syncForbidden
+		pending := fake.syncPending
 		response := fake.syncResponse
 		fake.mu.Unlock()
 		if forbidden {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"设备已吊销"}}`))
+			return
+		}
+		if pending {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusLocked)
+			w.Write([]byte(`{"ok":false,"error":{"code":"device_pending","message":"设备待审批"}}`))
 			return
 		}
 		_ = json.NewEncoder(w).Encode(response)
@@ -126,6 +134,12 @@ func (f *fakeFleetServer) forbidSync() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.syncForbidden = true
+}
+
+func (f *fakeFleetServer) setSyncPending(pending bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncPending = pending
 }
 
 func (f *fakeFleetServer) setWSControl(control func(conn *websocket.Conn, hello HelloMessage)) {
@@ -401,6 +415,39 @@ func TestRuntimeStopsOnSyncRevocation(t *testing.T) {
 	err := agentRuntime.Run(ctx)
 	if err != ErrRevoked {
 		t.Fatalf("Run = %v, want ErrRevoked", err)
+	}
+}
+
+func TestRuntimeWaitsWhileDevicePending(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setSyncPending(true)
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	agentRuntime := newTestRuntime(t, dataDir, entries, &fakeManager{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+
+	// 待审批不是吊销: agent 持续重试且绝不退出。
+	waitFor(t, 15*time.Second, "pending sync attempts", func() bool { return len(server.syncs()) > 0 })
+	select {
+	case err := <-done:
+		t.Fatalf("Run stopped while device pending: %v", err)
+	default:
+	}
+
+	// 批准后下一轮 sync 即应用服务端期望配置, 无需重新接入。
+	server.setSyncResponse(SyncResponse{DesiredAutostart: true, MetricsIntervalMS: 30000, TerminalEnabled: true})
+	server.setSyncPending(false)
+	waitFor(t, 15*time.Second, "sync applies desired config after approval", func() bool {
+		return agentRuntime.desiredSnapshot().MetricsIntervalMS == 30000
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want clean stop", err)
 	}
 }
 

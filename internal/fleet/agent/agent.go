@@ -16,6 +16,12 @@
 // Failures use the ipc.Response failure shape {"ok":false,"error":{"code","message"}}.
 // Control channel messages are text JSON envelopes; bridge connections carry
 // raw supervisor protocol bytes as binary frames after the hello.
+//
+// Approval state machine: a device enrolled while its account already has
+// devices stays pending until an admin approves it. Pending devices get
+// CodeDevicePending (HTTP 423) on sync/current-url and a device_pending error
+// frame on the control channel; the agent keeps waiting and retrying. Only
+// 403/forbidden means revocation and stops the agent.
 package agent
 
 import "errors"
@@ -32,6 +38,10 @@ const (
 	PathSync       = "/agent/sync"
 	PathCurrentURL = "/agent/current-url"
 	PathDeviceWS   = "/ws/device"
+
+	// CodeDevicePending 是服务端对待审批设备的专属错误码: 凭证有效但管理员
+	// 尚未批准, agent 必须继续等待重试, 不能视同吊销停止 (合同里 403=forbidden 才是吊销)。
+	CodeDevicePending = "device_pending"
 
 	healthServiceName = "nexterm-server"
 

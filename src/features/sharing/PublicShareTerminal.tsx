@@ -9,6 +9,7 @@ import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
 
 export interface PublicShareTerminalHandle {
   write: (bytes: Uint8Array) => void;
+  reset: () => void;
   focus: () => void;
 }
 
@@ -73,6 +74,7 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
 
     onHandleRef.current?.({
       write: (bytes) => term.write(bytes),
+      reset: () => term.reset(),
       focus: () => term.focus(),
     });
 

@@ -123,6 +123,7 @@ type EnrollRequest struct {
 type EnrollResponse struct {
 	DeviceID          string         `json:"device_id"`
 	Secret            string         `json:"secret"`
+	State             string         `json:"state"`
 	BaseURLs          []BaseURLEntry `json:"base_urls"`
 	MetricsIntervalMS int64          `json:"metrics_interval_ms"`
 	DesiredAutostart  bool           `json:"desired_autostart"`

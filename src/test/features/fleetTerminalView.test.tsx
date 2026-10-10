@@ -334,6 +334,13 @@ describe("DeviceTerminalView 打开与输出", () => {
     expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
+  it("设备待审批时给出待审批态, 不发任何桥接", async () => {
+    routeDevices([{ ...DEVICE, state: "pending" as const }]);
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("设备待审批"));
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
   it("设备代理未上报摘要 (离线) 时显式失败", async () => {
     routeDevices([{ ...DEVICE, agent: { ...DEVICE.agent, state_digest: undefined } }]);
     mounted = await mountTerminal();

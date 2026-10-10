@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/coder/websocket"
 )
 
@@ -60,6 +61,15 @@ func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.AuthenticateAgent(r.Context(), hello.DeviceID, hello.Secret); err != nil {
+		// 待审批不是凭证错误: 回 device_pending, agent 按合同等待重试而不是视同吊销停止。
+		var ipcErr *ipc.Error
+		if errors.As(err, &ipcErr) && ipcErr.Code == ipc.CodeDevicePending {
+			_ = writeControlJSON(r.Context(), conn, controlMessage{
+				Type: "error", Code: string(ipc.CodeDevicePending), Message: ipcErr.Message,
+			})
+			_ = conn.Close(websocket.StatusPolicyViolation, "device pending")
+			return
+		}
 		_ = writeControlJSON(r.Context(), conn, controlMessage{
 			Type: "error", Code: "forbidden", Message: "设备凭证无效",
 		})

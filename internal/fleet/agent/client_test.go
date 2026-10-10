@@ -300,3 +300,25 @@ func TestSyncMapsServerFailureShape(t *testing.T) {
 		t.Fatal("isForbidden must recognize the mapped failure")
 	}
 }
+
+func TestSyncMapsDevicePendingFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusLocked)
+		w.Write([]byte(`{"ok":false,"error":{"code":"device_pending","message":"设备待审批: 管理员批准后才会上线并同步数据"}}`))
+	}))
+	defer server.Close()
+	client, err := NewEndpointClient(BaseURLEntry{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = client.Sync(ctx, SyncRequest{DeviceID: "d", Secret: "s"})
+	if !isDevicePending(err) {
+		t.Fatalf("Sync error = %v, want device_pending", err)
+	}
+	if isForbidden(err) {
+		t.Fatalf("device_pending must not be treated as revocation: %v", err)
+	}
+}

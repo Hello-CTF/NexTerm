@@ -319,6 +319,10 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 			r.revoke()
 			return
 		}
+		if isDevicePending(err) {
+			r.logger.Info("设备待审批: 等待管理员批准, 批准前不同步数据")
+			return
+		}
 		r.logger.Warn("agent sync failed", "url", client.BaseURL(), "error", err)
 		r.prober.ReportFailure(client)
 		selected, selectErr := r.prober.Select(ctx)
@@ -333,6 +337,10 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 		if err != nil {
 			if isForbidden(err) {
 				r.revoke()
+				return
+			}
+			if isDevicePending(err) {
+				r.logger.Info("设备待审批: 等待管理员批准, 批准前不同步数据")
 				return
 			}
 			r.logger.Warn("agent sync retry failed", "url", selected.BaseURL(), "error", err)
@@ -383,6 +391,9 @@ func (r *Runtime) notifyCurrentURL(ctx context.Context, client *EndpointClient) 
 	if err := client.ReportCurrentURL(reportCtx, r.deviceID, r.secret, base, reason); err != nil {
 		if isForbidden(err) {
 			r.revoke()
+			return
+		}
+		if isDevicePending(err) {
 			return
 		}
 		r.logger.Warn("failover report failed", "url", base, "error", err)
@@ -455,8 +466,12 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 				r.fatal(ErrProtocolMismatch)
 				return
 			}
-			r.logger.Warn("control channel dial failed", "url", client.BaseURL(), "error", err)
-			r.prober.ReportFailure(client)
+			if isDevicePending(err) {
+				r.logger.Info("设备待审批: 等待管理员批准", "url", client.BaseURL())
+			} else {
+				r.logger.Warn("control channel dial failed", "url", client.BaseURL(), "error", err)
+				r.prober.ReportFailure(client)
+			}
 			if !sleepContext(ctx, backoff) {
 				return
 			}

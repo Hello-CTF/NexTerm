@@ -1,5 +1,5 @@
-// syncv2-helper 为 scripts/e2e-sync-local.py 提供 v2 同步协议的真实密码学原语,
-// 使 Python 验收脚本无需第三方依赖即可完成账号 DEK 信封与对象信封的加解密。
+// syncv2-helper 为 scripts/e2e-harness 提供 v2 同步协议的真实密码学原语,
+// 使验收 harness 以独立二进制完成账号 DEK 信封与对象信封的加解密。
 package main
 
 import (

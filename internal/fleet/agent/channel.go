@@ -264,3 +264,8 @@ func isForbidden(err error) bool {
 	var serverError *ServerError
 	return errors.As(err, &serverError) && (serverError.forbidden() || serverError.Code == "forbidden")
 }
+
+func isDevicePending(err error) bool {
+	var serverError *ServerError
+	return errors.As(err, &serverError) && serverError.Code == CodeDevicePending
+}

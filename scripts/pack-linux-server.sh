@@ -24,7 +24,7 @@ while [ $# -gt 0 ]; do
 Usage: scripts/pack-linux-server.sh [options]
 
 Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
-scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains
+scripts/build.mjs owns compilation/versioning; scripts/e2e-harness retains
 --sync-only acceptance.
 
 Options:

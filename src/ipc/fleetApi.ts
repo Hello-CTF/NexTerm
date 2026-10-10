@@ -34,6 +34,8 @@ export interface FleetDevice {
   id: string;
   name: string;
   kind: string;
+  // 审批状态机: pending=待审批 (批准前不上线不同步), active=已激活; 服务端始终下发。
+  state?: "pending" | "active";
   created_at: number;
   last_seen_at: number;
   revoked_at: number;
@@ -72,6 +74,12 @@ export const fleetApi = {
 
   revoke: (id: string) =>
     request<{ ok: boolean }>("POST", `/fleet/devices/${encodeURIComponent(id)}/revoke`, {}, { csrf: true }),
+
+  approve: (id: string) =>
+    request<{ ok: boolean }>("POST", `/fleet/devices/${encodeURIComponent(id)}/approve`, {}, { csrf: true }),
+
+  reject: (id: string) =>
+    request<{ ok: boolean }>("POST", `/fleet/devices/${encodeURIComponent(id)}/reject`, {}, { csrf: true }),
 
   setAutostart: (id: string, desired: boolean) =>
     request<{ ok: boolean; desired_autostart: boolean }>(

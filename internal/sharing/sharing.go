@@ -7,22 +7,31 @@
 // link opens a fresh terminal through the host agent at any time while the
 // link is valid, instead of attaching to one existing session. Registered-
 // user host shares let a recipient open new terminals through the host agent
-// at any time while the share is valid. All kinds bind owner, device,
-// permission and expiry, and none ever reads or returns stored host
-// passwords, private keys or sync payloads: the package touches no
-// credential, asset or sync table, and only SHA-256 token hashes are stored.
+// at any time while the share is valid. Preview links are the read-only
+// counterpart for server-hosted terminal tabs: an anonymous visitor watches
+// the current screen and live output of one tab in the server's session
+// manager, with no input direction in the contract at all; they share the
+// same token-hash storage, expiry and revocation semantics as public share
+// links. All kinds bind owner, permission and expiry, and none ever reads or
+// returns stored host passwords, private keys or sync payloads: the package
+// touches no credential, asset or sync table, and only SHA-256 token hashes
+// are stored.
 //
 // Grants are snapshots, not authority: data paths must be built through
 // NewLinkGate / NewHostGate, whose per-chunk rechecks revalidate current
 // rows (including device ownership and revocation) and swap the refreshed
 // Grant into every subsequent decision, so permission shrink and
 // revocation stop input immediately and stop output once no valid row
-// remains.
+// remains. Preview grants carry no input direction, so the preview data
+// path revalidates on a fixed interval with RevalidatePreview instead of
+// per-chunk: revocation and expiry terminate the stream within that
+// interval regardless of traffic.
 //
 // Server-side HTTP mounting and fleet route integration are a separate
 // slice; this package is verified with explicit fakes. Relay-capable hosts
 // are not modeled yet, so both share kinds currently require a
-// daemon-equipped device (a device_agent row).
+// daemon-equipped device (a device_agent row); preview links instead bind
+// tabs hosted by the server's own session manager.
 package sharing
 
 import (

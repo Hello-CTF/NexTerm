@@ -57,7 +57,7 @@ type DeviceGate =
   | { ok: true; row: FleetDevice; digest: string }
   | { ok: false; phase: Phase };
 
-// gateDevice 是 open 与 resume 共用的设备状态复核: 吊销/策略关闭/摘要缺失
+// gateDevice 是 open 与 resume 共用的设备状态复核: 吊销/待审批/策略关闭/摘要缺失
 // (离线) 都给出显式状态, 不落入 generic 断线。
 function gateDevice(row: FleetDevice | null): DeviceGate {
   if (!row || !row.agent) {
@@ -65,6 +65,9 @@ function gateDevice(row: FleetDevice | null): DeviceGate {
   }
   if (row.revoked_at !== 0) {
     return { ok: false, phase: { kind: "failed", message: "设备已吊销, 无法打开终端", canRestart: false } };
+  }
+  if (row.state === "pending") {
+    return { ok: false, phase: { kind: "failed", message: "设备待审批: 管理员批准后才能打开终端", canRestart: false } };
   }
   if (!row.agent.terminal_enabled) {
     return { ok: false, phase: { kind: "failed", message: "设备已关闭终端访问", canRestart: false } };

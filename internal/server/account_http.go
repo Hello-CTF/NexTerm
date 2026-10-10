@@ -160,6 +160,12 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	adminCSRF("POST /admin/users/{id}/reset", s.serveAdminUserReset)
 	adminCSRF("PUT /admin/settings", s.serveAdminSettingsPut)
 
+	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
+		session("GET /share/previews", s.servePreviewLinkList)
+		sessionCSRF("POST /share/previews", s.servePreviewLinkCreate)
+		sessionCSRF("POST /share/previews/{id}/revoke", s.servePreviewLinkRevoke)
+	}
+
 	s.mountPreferenceRoutes(mux)
 }
 

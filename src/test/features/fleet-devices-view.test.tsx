@@ -158,6 +158,8 @@ function fleetHandler(overrides?: {
       return { payload: overrides?.enrollCode ?? { code: "fleet-code-1", expires_at: NOW + 900_000 } };
     }
     if (/\/revoke$/.test(url) && method === "POST") return { payload: { ok: true } };
+    if (/\/approve$/.test(url) && method === "POST") return { payload: { ok: true } };
+    if (/\/reject$/.test(url) && method === "POST") return { payload: { ok: true } };
     if (/\/autostart$/.test(url) && method === "POST") {
       const desired = Boolean((body as { desired?: boolean } | undefined)?.desired);
       return { payload: { ok: true, desired_autostart: desired } };
@@ -392,7 +394,8 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(text).toContain("高级说明: 多地址、手动接入与服务管理");
     expect(text).toContain("执行完成后刷新");
     expect(text).toContain("随登录自动启动");
-    expect(text).toContain("设备会出现在下方列表里并显示「在线」");
+    expect(text).toContain("首台直接「在线」");
+    expect(text).toContain("之后接入的设备为「待审批」");
     expect(text).not.toContain("第 1 步");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
@@ -757,6 +760,115 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
     expect(document.body.textContent).not.toContain("old-admin-code");
+  });
+});
+
+describe("设备管理视图 · 待审批", () => {
+  const PENDING_DEVICE = {
+    id: "d-5",
+    name: "gpu-03",
+    kind: "agent",
+    state: "pending" as const,
+    created_at: NOW - 600_000,
+    last_seen_at: 0,
+    revoked_at: 0,
+    owner: { id: "u-2", username: "bob" },
+    agent: {
+      platform: "linux",
+      app_version: "0.2.2",
+      desired_autostart: true,
+      terminal_enabled: true,
+      current_url: "",
+      service_state: {},
+      last_seen_at: 0,
+    },
+  };
+  const devicesWithPending = { devices: [AGENT_DEVICE, PENDING_DEVICE] };
+  const pendingCard = () => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("gpu-03"));
+
+  it("超管看到待审批徽章/横幅/提示, 批准后徽章消失并发出 approve 请求", async () => {
+    const calls = route(fleetHandler({ devices: devicesWithPending }));
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
+
+    expect(document.body.textContent).toContain("1 台设备待审批");
+    const card = pendingCard();
+    expect(card?.textContent).toContain("待审批");
+    expect(card?.textContent).toContain("等待管理员批准: 批准前设备不会上线, 也不会同步任何数据。");
+    expect(card?.textContent).not.toContain("在线");
+    expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
+    expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "终端")).toBe(false);
+
+    const approveButton = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "批准");
+    expect(approveButton).toBeTruthy();
+    click(approveButton as HTMLButtonElement);
+    await flushUntil(() => !(pendingCard()?.textContent ?? "").includes("待审批"));
+
+    expect(calls.some((c) => c.url === "/fleet/devices/d-5/approve" && c.method === "POST")).toBe(true);
+    expect(document.body.textContent).not.toContain("台设备待审批");
+    expect([...(pendingCard()?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "批准")).toBe(false);
+  });
+
+  it("普通用户看到待审批徽章与提示, 但没有批准/拒绝按钮与横幅", async () => {
+    route(fleetHandler({ devices: devicesWithPending }));
+    seedUser(PLAIN_USER);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
+
+    expect(document.body.textContent).not.toContain("台设备待审批:");
+    const card = pendingCard();
+    expect(card?.textContent).toContain("待审批");
+    expect(card?.textContent).toContain("等待管理员批准");
+    expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "批准")).toBe(false);
+    expect([...(card?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "拒绝")).toBe(false);
+  });
+
+  it("「查看待审批」一键过滤, 只显示待审批设备", async () => {
+    route(fleetHandler({ devices: devicesWithPending }));
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("1 台设备待审批") ?? false);
+
+    const jump = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "查看待审批");
+    click(jump as HTMLButtonElement);
+    await flush();
+    expect(pendingCard()).toBeTruthy();
+    expect([...document.querySelectorAll(".nx-card")].some((c) => c.textContent?.includes("web-01"))).toBe(false);
+    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]');
+    expect(filter?.value).toBe("pending");
+  });
+
+  it("拒绝需确认, 确认后发出 reject 请求且卡片从列表移除", async () => {
+    const calls = route(fleetHandler({ devices: devicesWithPending }));
+    mocks.ask.mockResolvedValue(true);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
+
+    const rejectButton = [...(pendingCard()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "拒绝");
+    click(rejectButton as HTMLButtonElement);
+    await flushUntil(() => !pendingCard());
+
+    expect(calls.some((c) => c.url === "/fleet/devices/d-5/reject" && c.method === "POST")).toBe(true);
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("需要新接入码才能重新接入");
+    expect(document.body.textContent).not.toContain("台设备待审批");
+  });
+
+  it("拒绝确认被取消时不发请求", async () => {
+    const calls = route(fleetHandler({ devices: devicesWithPending }));
+    mocks.ask.mockResolvedValue(false);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
+
+    const rejectButton = [...(pendingCard()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "拒绝");
+    click(rejectButton as HTMLButtonElement);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+
+    expect(calls.some((c) => c.url.includes("/reject"))).toBe(false);
+    expect(pendingCard()).toBeTruthy();
   });
 });
 

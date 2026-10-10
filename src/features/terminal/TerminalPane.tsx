@@ -15,11 +15,12 @@ import {
   quickBroadcastIds,
 } from "./broadcast";
 import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
+import { PreviewShareMenu } from "../sharing/PreviewShareMenu";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi, fsApi, assetApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
-import { clientId } from "../../ipc/env";
+import { clientId, WEB } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
@@ -1047,6 +1048,7 @@ export function TerminalPane({
         )}
         <Cwd cwd={cwd} />
         {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
+        {WEB && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         <div className="nx-spacer" />
 
         <button

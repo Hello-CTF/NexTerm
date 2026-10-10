@@ -114,6 +114,21 @@ func TestChannelHandshakeConfigAndRevoke(t *testing.T) {
 	}
 }
 
+func TestChannelDevicePendingIsNotRevocation(t *testing.T) {
+	fake := newWSFake(t, func(conn *websocket.Conn, hello HelloMessage) error {
+		return writeServerMessage(conn, serverMessage{Type: "error", Code: CodeDevicePending, Message: "设备待审批"})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), false, time.Hour, 5*time.Second)
+	if !isDevicePending(err) {
+		t.Fatalf("DialChannel = %v, want device_pending ServerError", err)
+	}
+	if isForbidden(err) {
+		t.Fatalf("device_pending must not be treated as revocation: %v", err)
+	}
+}
+
 func TestChannelVersionMismatchIsFatal(t *testing.T) {
 	fake := newWSFake(t, func(conn *websocket.Conn, hello HelloMessage) error {
 		return writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "protocol 2 required"})

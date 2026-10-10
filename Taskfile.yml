@@ -115,7 +115,7 @@ tasks:
   sync:e2e:
     summary: Exercise Go-only two-instance sync and sync-only HTTP boundaries
     cmds:
-      - python3 scripts/e2e-sync-local.py
+      - go run ./scripts/e2e-harness sync
 
   verify:
     summary: Run quality gates, then a reproducible host desktop production build consuming the verified dist

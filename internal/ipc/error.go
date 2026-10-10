@@ -25,6 +25,8 @@ const (
 	CodeBadMasterPass    Code = "bad_master_password"
 	CodeDecrypt          Code = "decrypt"
 	CodeForbidden        Code = "forbidden"
+	// CodeDevicePending 表示设备已接入但仍在待审批状态: 凭证有效, 批准前不同步数据。
+	CodeDevicePending Code = "device_pending"
 	// CodeMFAEnrollmentRequired 表示 mfa_required 策略下未绑定会话被限制在绑定相关路由。
 	CodeMFAEnrollmentRequired Code = "mfa_enrollment_required"
 	CodeNotController         Code = "not_controller"

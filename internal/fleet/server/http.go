@@ -75,6 +75,9 @@ func writeFleetFailure(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case ipc.CodeForbidden:
 		status = http.StatusForbidden
+	case ipc.CodeDevicePending:
+		// agent 合同里 403 一律视同吊销停止; 待审批必须可区分且可恢复, 用 423。
+		status = http.StatusLocked
 	case ipc.CodeNotFound:
 		status = http.StatusNotFound
 	case ipc.CodeDisconnected:
@@ -100,6 +103,8 @@ var fleetRoutePatterns = []string{
 	"POST /device/enroll-codes",
 	"GET /fleet/devices",
 	"POST /fleet/devices/{id}/revoke",
+	"POST /fleet/devices/{id}/approve",
+	"POST /fleet/devices/{id}/reject",
 	"POST /fleet/devices/{id}/autostart",
 	"GET /fleet/devices/{id}/metrics",
 	"GET /fleet/devices/{id}/bridge",
@@ -154,6 +159,8 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 
 	session("GET /fleet/devices", s.serveDeviceList)
 	sessionCSRF("POST /fleet/devices/{id}/revoke", s.serveDeviceRevoke)
+	adminCSRF("POST /fleet/devices/{id}/approve", s.serveDeviceApprove)
+	adminCSRF("POST /fleet/devices/{id}/reject", s.serveDeviceReject)
 	sessionCSRF("POST /fleet/devices/{id}/autostart", s.serveDeviceAutostart)
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
 	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
@@ -309,6 +316,7 @@ type deviceEnrollRequest struct {
 type deviceEnrollView struct {
 	DeviceID          string         `json:"device_id"`
 	Secret            string         `json:"secret"`
+	State             string         `json:"state"`
 	BaseURLs          []BaseURLEntry `json:"base_urls"`
 	MetricsIntervalMS int64          `json:"metrics_interval_ms"`
 	DesiredAutostart  bool           `json:"desired_autostart"`
@@ -336,6 +344,7 @@ func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 	writeFleetJSON(w, http.StatusOK, deviceEnrollView{
 		DeviceID:          result.DeviceID,
 		Secret:            result.Secret,
+		State:             result.State,
 		BaseURLs:          result.BaseURLs,
 		MetricsIntervalMS: result.MetricsIntervalMS,
 		DesiredAutostart:  result.DesiredAutostart,
@@ -361,6 +370,7 @@ type deviceView struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
 	Kind       string     `json:"kind"`
+	State      string     `json:"state"`
 	CreatedAt  int64      `json:"created_at"`
 	LastSeenAt int64      `json:"last_seen_at"`
 	RevokedAt  int64      `json:"revoked_at"`
@@ -370,7 +380,7 @@ type deviceView struct {
 
 func newDeviceView(device *Device) deviceView {
 	view := deviceView{
-		ID: device.ID, Name: device.Name, Kind: device.Kind,
+		ID: device.ID, Name: device.Name, Kind: device.Kind, State: device.State,
 		CreatedAt: device.CreatedAt, LastSeenAt: device.LastSeenAt, RevokedAt: device.RevokedAt,
 		Owner: device.Owner,
 	}
@@ -405,6 +415,22 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) serveDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 	if err := s.RevokeDevice(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Service) serveDeviceApprove(w http.ResponseWriter, r *http.Request) {
+	if err := s.ApproveDevice(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Service) serveDeviceReject(w http.ResponseWriter, r *http.Request) {
+	if err := s.RejectDevice(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
 		writeFleetFailure(w, err)
 		return
 	}

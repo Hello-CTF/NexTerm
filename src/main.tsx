@@ -14,6 +14,7 @@ import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { PublicShareApp } from "./features/sharing/PublicShareApp";
+import { PublicPreviewApp } from "./features/sharing/PublicPreviewApp";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -23,6 +24,17 @@ const eventVersions = new EventVersionGate();
 
 function publicShareTokenFromPath(pathname: string): string | null {
   const match = /^\/share\/public\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const token = decodeURIComponent(match[1]);
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function publicPreviewTokenFromPath(pathname: string): string | null {
+  const match = /^\/share\/preview\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
   try {
     const token = decodeURIComponent(match[1]);
@@ -108,8 +120,13 @@ async function bootstrapApp(): Promise<void> {
 const publicShareToken =
   typeof window === "undefined" ? null : publicShareTokenFromPath(window.location.pathname);
 
+const publicPreviewToken =
+  typeof window === "undefined" ? null : publicPreviewTokenFromPath(window.location.pathname);
+
 if (publicShareToken) {
   mount(<PublicShareApp token={publicShareToken} />);
+} else if (publicPreviewToken) {
+  mount(<PublicPreviewApp token={publicPreviewToken} />);
 } else {
   void bootstrapApp();
 }

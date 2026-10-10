@@ -194,13 +194,15 @@ interface DeviceCardProps {
   isAdmin: boolean;
   onPatch: (id: string, patch: Partial<FleetDevice>) => void;
   onRevoked: (id: string) => void;
+  onRejected: (id: string) => void;
 }
 
-function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
+function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onRejected }: DeviceCardProps) {
   const { pushToast } = useUi();
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const revoked = device.revoked_at !== 0;
+  const pending = !revoked && device.state === "pending";
   const agent = device.agent;
   // 心跳判定的在线用于徽章提示文案: 事件驱动的在线以控制通道为准。
   const heartbeatOnline = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
@@ -216,6 +218,37 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
       await fleetApi.revoke(device.id);
       pushToast("success", `已吊销「${device.name}」`);
       onRevoked(device.id);
+    } catch (e) {
+      pushToast("error", describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async () => {
+    setBusy(true);
+    try {
+      await fleetApi.approve(device.id);
+      pushToast("success", `已批准「${device.name}」, 设备上线后即可使用`);
+      onPatch(device.id, { state: "active" });
+    } catch (e) {
+      pushToast("error", describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reject = async () => {
+    const ok = await ask(`拒绝设备「${device.name}」的接入?\n\n拒绝后该设备立即被删除、凭证失效, 需要新接入码才能重新接入。`, {
+      title: "拒绝接入",
+      kind: "warning",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await fleetApi.reject(device.id);
+      pushToast("success", `已拒绝并删除「${device.name}」`);
+      onRejected(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -261,6 +294,10 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
         <span className="nx-badge shrink-0">{device.kind}</span>
         {revoked ? (
           <span className="nx-badge nx-badge-red shrink-0">已吊销</span>
+        ) : pending ? (
+          <span className="nx-badge nx-badge-amber shrink-0" title="管理员批准前设备不会上线, 也不同步数据">
+            待审批
+          </span>
         ) : agent ? (
           <span
             className={`nx-badge shrink-0 ${online ? "nx-badge-green" : ""}`}
@@ -275,7 +312,31 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
           </span>
         )}
         <div className="nx-spacer" />
-        {!revoked && agent?.terminal_enabled && (
+        {pending && isAdmin && (
+          <>
+            <button
+              type="button"
+              className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+              disabled={busy}
+              title="批准后设备才能上线并同步数据"
+              onClick={() => void approve()}
+            >
+              <IconCheckCircle size={11} />
+              批准
+            </button>
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+              disabled={busy}
+              title="拒绝并删除该待审批设备, 凭证立即失效"
+              onClick={() => void reject()}
+            >
+              <IconXCircle size={11} />
+              拒绝
+            </button>
+          </>
+        )}
+        {!revoked && !pending && agent?.terminal_enabled && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -287,7 +348,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
             终端
           </button>
         )}
-        {!revoked && agent && (
+        {!revoked && !pending && agent && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -317,6 +378,12 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
         {revoked && <span className="text-red-300">吊销于 {formatTime(device.revoked_at)}</span>}
       </div>
 
+      {pending && (
+        <div className="mt-2 border-t border-neutral-800/60 pt-2 text-[12px] text-amber-300">
+          等待管理员批准: 批准前设备不会上线, 也不会同步任何数据。
+        </div>
+      )}
+
       {agent && (
         <div className="mt-2 flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] text-neutral-300">
@@ -343,7 +410,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
               <input
                 type="checkbox"
                 checked={agent.desired_autostart}
-                disabled={busy || revoked}
+                disabled={busy || revoked || pending}
                 onChange={() => void toggleAutostart()}
               />
               期望自启动
@@ -394,7 +461,7 @@ export function DevicesView() {
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [deviceQuery, setDeviceQuery] = useState("");
-  const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline" | "revoked">("all");
+  const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline" | "revoked" | "pending">("all");
   const [baseUrls, setBaseUrls] = useState<FleetBaseURLEntry[]>([]);
   const [baseUrlsStatus, setBaseUrlsStatus] = useState<"loading" | "error" | "ready">("loading");
   const [baseUrlsError, setBaseUrlsError] = useState<string | null>(null);
@@ -609,6 +676,10 @@ export function DevicesView() {
     setDevices((prev) => (prev === null ? prev : prev.map((d) => (d.id === id ? { ...d, ...patch } : d))));
   };
 
+  const removeDevice = (id: string) => {
+    setDevices((prev) => (prev === null ? prev : prev.filter((d) => d.id !== id)));
+  };
+
   const jumpToBaseUrls = () => {
     document.getElementById("fleet-base-urls")?.scrollIntoView({ behavior: "smooth", block: "start" });
     document.querySelector<HTMLInputElement>('input[aria-label="新接入地址"]')?.focus({ preventScroll: true });
@@ -643,9 +714,11 @@ export function DevicesView() {
       : null;
   const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
   const normalizedDeviceQuery = deviceQuery.trim().toLowerCase();
+  const pendingCount = devices?.filter((d) => d.state === "pending" && d.revoked_at === 0).length ?? 0;
   const visibleDevices = devices?.filter((d) => {
     const revoked = d.revoked_at !== 0;
     if (deviceFilter === "revoked" && !revoked) return false;
+    if (deviceFilter === "pending" && (revoked || d.state !== "pending")) return false;
     if (deviceFilter === "online" && (revoked || !onlineOf(d))) return false;
     if (deviceFilter === "offline" && (revoked || onlineOf(d))) return false;
     if (!normalizedDeviceQuery) return true;
@@ -702,6 +775,7 @@ export function DevicesView() {
               <option value="all">全部</option>
               <option value="online">在线</option>
               <option value="offline">离线</option>
+              <option value="pending">待审批</option>
               <option value="revoked">已吊销</option>
             </select>
             {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
@@ -709,6 +783,16 @@ export function DevicesView() {
                 显示 {visibleDevices?.length ?? 0} / {devices.length} 台
               </span>
             )}
+          </div>
+        )}
+
+        {isAdmin && pendingCount > 0 && deviceFilter !== "pending" && (
+          <div className="nx-alert nx-alert-info flex flex-wrap items-center gap-2">
+            <IconInfo size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1">{pendingCount} 台设备待审批: 批准后才能上线并同步数据。</span>
+            <button type="button" className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={() => setDeviceFilter("pending")}>
+              查看待审批
+            </button>
           </div>
         )}
 
@@ -834,7 +918,7 @@ export function DevicesView() {
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-red-500/20 pt-2">
                     <span className="text-[12px] text-neutral-200">
-                      执行完成后刷新, 设备会出现在下方列表里并显示「在线」; 然后在设备卡片上点「终端」。
+                      执行完成后刷新, 设备会出现在下方列表里: 首台直接「在线」; 之后接入的设备为「待审批」, 管理员批准上线后再点设备卡片上的「终端」。
                     </span>
                     <button type="button" className="nx-btn nx-btn-primary nx-btn-sm shrink-0" disabled={loading} onClick={() => void load()}>
                       <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
@@ -877,6 +961,7 @@ export function DevicesView() {
               patchDevice(id, { revoked_at: Date.now() });
               void load();
             }}
+            onRejected={removeDevice}
           />
         ))}
 

@@ -254,7 +254,7 @@ jobs:
           cp -R reused-native/e2e-sync/. target/e2e-sync/
       - name: Exercise the packaged server before archiving
         if: needs.ci-source.outputs.reused != 'true'
-        run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
+        run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports

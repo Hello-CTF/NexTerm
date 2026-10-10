@@ -45,7 +45,7 @@ vi.mock("../../ipc/events", () => ({
   },
 }));
 
-vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
 vi.mock("../../ui/dialogs", () => ({
   describeTarget: () => "",

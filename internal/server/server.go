@@ -15,6 +15,7 @@ import (
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -59,11 +60,15 @@ type Config struct {
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
-	DB             DBHealthSource
-	Version        string
-	MaxRPCBytes    int64
-	Logger         *slog.Logger
-	WebSocket      WebSocketConfig
+	// Previews 与 Spectator 一起启用只读远程预览 (公开围观链接): 管理端点
+	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。
+	Previews    *sharing.Service
+	Spectator   PreviewSpectator
+	DB          DBHealthSource
+	Version     string
+	MaxRPCBytes int64
+	Logger      *slog.Logger
+	WebSocket   WebSocketConfig
 }
 
 type Server struct {
@@ -91,7 +96,12 @@ type Server struct {
 	preferences     *account.Preferences
 	audit           AuditFunc
 	fleet           *fleetserver.Service
-	db              DBHealthSource
+	previews        *sharing.Service
+	spectator       PreviewSpectator
+	previewResolve  *account.LoginThrottle
+	// previewRevalidateInterval 是预览连接的授权复查间隔, 测试可调小。
+	previewRevalidateInterval time.Duration
+	db                        DBHealthSource
 
 	readGate func()
 }
@@ -229,7 +239,10 @@ func New(config Config) (*Server, error) {
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
 		audit: config.AuditFunc, fleet: config.Fleet,
-		db: config.DB,
+		previews: config.Previews, spectator: config.Spectator,
+		previewResolve:            account.NewLoginThrottle(),
+		previewRevalidateInterval: defaultPreviewRevalidateInterval,
+		db:                        config.DB,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
@@ -282,6 +295,11 @@ func (s *Server) routes(config Config) http.Handler {
 		// 既有 SPA/index, 不另造 shell。
 		s.fleet.SetSharePublicPage(staticHandler)
 		s.fleet.Mount(mux)
+	}
+	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
+		// 只读远程预览的公开数据面: 普通 GET 与公开分享页同一静态入口,
+		// WS upgrade 才走 token 把关。
+		mux.HandleFunc("GET /share/preview/{token}", s.serveSharePreview(staticHandler))
 	}
 
 	rpcHandler := ipc.NewRPCHandler(s.dispatcher, s.environment)

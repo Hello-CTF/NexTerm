@@ -19,6 +19,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/server"
+	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -188,12 +189,22 @@ func run(args []string) int {
 		}
 	}
 	var fleetService *fleetserver.Service
+	var previewService *sharing.Service
 	if application.Services.Store != nil && accounts != nil && !invocation.SyncOnly {
 		fleetService, err = fleetserver.New(fleetserver.Config{
 			DB:       application.Services.Store.DB(),
+			Backend:  application.Services.Store.Backend(),
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
 			Events:   broker,
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
+		previewService, err = sharing.New(sharing.Config{
+			DB:       application.Services.Store.DB(),
+			Accounts: accounts,
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -238,6 +249,8 @@ func run(args []string) int {
 		Vault:          application.Services.Vault,
 		Retention:      serverRetentionConfig(application.Services.Retention),
 		Fleet:          fleetService,
+		Previews:       previewService,
+		Spectator:      application.Services.Sessions,
 		DB:             healthDB,
 		Settings:       settings,
 		AuditFunc:      audit,
