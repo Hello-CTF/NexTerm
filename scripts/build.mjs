@@ -37,6 +37,7 @@ const HELP_TEXT = `#!/usr/bin/env node
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WAILS_VERSION = "v3.0.0-beta.27";
+const RSRC_VERSION = "v0.10.2";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const KNOWN_OPTIONS = new Set([
@@ -276,6 +277,15 @@ function ldflags(kind, goos) {
   return flags.join(" ");
 }
 
+function stageWindowsResource(goarch) {
+  const icon = path.join(ROOT, "public/brand/icon.ico");
+  if (!fs.existsSync(icon)) die("Windows icon.ico asset is missing");
+  const syso = path.join(ROOT, "cmd/nexterm-desktop", `rsrc_windows_${goarch}.syso`);
+  fs.rmSync(syso, { force: true });
+  run("go", ["run", `github.com/akavel/rsrc@${RSRC_VERSION}`, "-arch", goarch, "-ico", icon, "-o", syso]);
+  return syso;
+}
+
 function defaultBinaryPath(kind, goos, goarch) {
   const suffix = goos === "windows" ? ".exe" : "";
   return path.join(ROOT, "target/go-build", `nexterm-${kind}-${goos}-${goarch}${suffix}`);
@@ -364,6 +374,7 @@ function buildBinary(kind) {
     fs.cpSync(path.join(ROOT, "dist"), embeddedRoot, { recursive: true });
     if (treeHashOrDie(path.join(ROOT, "dist")) !== treeHashOrDie(embeddedRoot)) die("staged desktop embed assets differ from dist");
   }
+  const windowsResource = kind === "desktop" && goos === "windows" && !packageOnly ? stageWindowsResource(goarch) : null;
   try {
     if (packageOnly) {
       validateBinaryForPackaging(outputPath, kind, goos, goarch);
@@ -381,6 +392,7 @@ function buildBinary(kind) {
     }
   } finally {
     if (kind === "desktop" && release) fs.rmSync(embeddedRoot, { recursive: true, force: true });
+    if (windowsResource) fs.rmSync(windowsResource, { force: true });
   }
   if (!fs.existsSync(outputPath)) die(`Go linker did not produce ${outputPath}`);
   if (goos !== "windows") fs.chmodSync(outputPath, 0o755);
@@ -433,7 +445,12 @@ function inspectBinary(file) {
     if (data.toString("ascii", offset, offset + 4) !== "PE\0\0") throw new Error("invalid PE header");
     const machine = data.readUInt16LE(offset + 4);
     const architecture = { 0x8664: "amd64", 0xaa64: "arm64" }[machine];
-    return { format: "pe", architecture, static: null };
+    const optionalOffset = offset + 24;
+    const magic = data.readUInt16LE(optionalOffset);
+    const directoryTableOffset = { 0x10b: 96, 0x20b: 112 }[magic];
+    if (directoryTableOffset === undefined) throw new Error("unknown PE optional header magic");
+    const resourceRva = data.readUInt32LE(optionalOffset + directoryTableOffset + 2 * 8);
+    return { format: "pe", architecture, static: null, resourceRva };
   }
   if (data.length >= 20 && data.readUInt32LE(0) === 0xfeedfacf) {
     const cpu = data.readUInt32LE(4);
@@ -471,6 +488,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     inspected = inspectBinary(file);
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === goarch, `expected ${goos}/${goarch}; actual ${inspected.format}/${inspected.architecture}`));
+    if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
     if (kind === "server" && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
@@ -507,9 +525,9 @@ function packageAssertions(kind, file, goos, goarch) {
       }
       const control = output("tar", ["-xzOf", path.join(work, "control.tar.gz"), "control"], { allowFailure: true }) ?? "";
       checks.push(assertion(
-        "linux-desktop-deb-control",
-        control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
-        "control file must carry the package name, release version and architecture",
+          "linux-desktop-deb-control",
+          control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
+          "control file must carry the package name, release version and architecture",
       ));
       const listing = output("tar", ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
@@ -530,9 +548,9 @@ function packageAssertions(kind, file, goos, goarch) {
     const listing = output("tar", ["-tzf", file], { allowFailure: true });
     const members = new Set(listing?.split(/\r?\n/) || []);
     checks.push(assertion(
-      "full-server-archive-members",
-      goos === "linux" && listing !== null && required.every((member) => members.has(member)),
-      `required members: ${required.join(", ")}`,
+        "full-server-archive-members",
+        goos === "linux" && listing !== null && required.every((member) => members.has(member)),
+        `required members: ${required.join(", ")}`,
     ));
     return checks;
   }
@@ -549,8 +567,8 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   const bytes = fs.statSync(file).size;
   const rawBinary = kind === "desktop" || kind === "server";
   const inspected = rawBinary
-    ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
-    : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
+      ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
+      : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
   const assertionsFailed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed");
   const report = {
     schema_version: 2,
@@ -564,6 +582,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     build: {
       go: output("go", ["env", "GOVERSION"], { allowFailure: true })?.trim() || "unknown",
       wails_cli: WAILS_VERSION,
+      windows_resource: `rsrc ${RSRC_VERSION} embeds public/brand/icon.ico as rsrc_windows_<arch>.syso for windows desktop binaries`,
       node: process.version,
       pnpm: output("pnpm", ["--version"], { allowFailure: true })?.trim() || "unknown",
       toolchain_pin: "CI pins Go 1.26.8, Node 24 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",

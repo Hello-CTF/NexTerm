@@ -2,6 +2,7 @@ node_modules
 dist
 target
 target-alt
+.idea
 
 *.log
 .DS_Store
