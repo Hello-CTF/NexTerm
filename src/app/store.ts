@@ -16,6 +16,7 @@ import {
   type ResolvedTheme,
   type ThemeMode,
 } from "./theme";
+import { saveThemeModePreference } from "./preferences";
 import type { LayoutPreset } from "./layoutPresets";
 
 export type PaneKind =
@@ -425,6 +426,7 @@ export const useUi = create<UiState>((set, get) => ({
   resolvedTheme: getResolvedTheme(),
   setThemeMode: (m) => {
     persistThemeMode(m);
+    saveThemeModePreference(m);
     set({ themeMode: m, resolvedTheme: getResolvedTheme() });
   },
   leftWidth: initialLayout.leftWidth,

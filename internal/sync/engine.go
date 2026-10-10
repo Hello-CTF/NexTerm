@@ -61,13 +61,15 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	return &Engine{store: database, vault: credentialVault, logger: logger}
 }
 
-// kindOptIn 是 known_host/AI 模型档案在一轮同步内的 opt-in 快照; 零值即硬关闭。
+// kindOptIn 是同步对象在一轮同步内的 opt-in 快照; 零值即硬关闭。
 type kindOptIn struct {
-	knownHost bool
-	aiProfile bool
+	knownHost    bool
+	aiProfile    bool
+	aiPermission bool
+	preferences  bool
 }
 
-// loadKindOptIn 按会话用户读取两类对象的同步 opt-in; 无会话身份(userID 为空)时硬关闭, 不退化为全局设置。
+// loadKindOptIn 按会话用户读取同步对象的 opt-in; 无会话身份(userID 为空)时硬关闭, 不退化为全局设置。
 func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, error) {
 	if userID == "" {
 		return kindOptIn{}, nil
@@ -80,7 +82,15 @@ func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, e
 	if err != nil {
 		return kindOptIn{}, err
 	}
-	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile}, nil
+	aiPermission, err := e.store.AIPermissionSyncOptIn(ctx, userID)
+	if err != nil {
+		return kindOptIn{}, err
+	}
+	preferences, err := e.store.PreferencesSyncOptIn(ctx, userID)
+	if err != nil {
+		return kindOptIn{}, err
+	}
+	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, preferences: preferences}, nil
 }
 
 // allowsRemote 判定远端对象(含墓碑)本轮是否可应用; 硬关闭的种类不应用也不记对账,
@@ -91,6 +101,10 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 		return o.knownHost
 	case KindAIProfile:
 		return o.aiProfile
+	case KindAIPermission:
+		return o.aiPermission
+	case KindPreference:
+		return o.preferences
 	case KindTombstone:
 		var payload tombstoneObject
 		if err := json.Unmarshal(plaintext, &payload); err != nil {
@@ -101,6 +115,10 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 			return o.knownHost
 		case KindAIProfile:
 			return o.aiProfile
+		case KindAIPermission:
+			return o.aiPermission
+		case KindPreference:
+			return o.preferences
 		}
 	}
 	return true
@@ -211,7 +229,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		}
 		return false, ipc.NewError(ipc.CodeDisconnected, "同步数据不完整（部分对象未返回），请稍后重试")
 	}
-	objects, err := e.collectLocalObjects(ctx, report, optIn)
+	objects, err := e.collectLocalObjects(ctx, report, optIn, session.userID)
 	if err != nil {
 		return false, err
 	}

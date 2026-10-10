@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => {
     collectCredentials: vi.fn(),
     collectKnownHosts: vi.fn(),
     collectAIProfiles: vi.fn(),
+    collectAIPermission: vi.fn(),
+    collectPreferences: vi.fn(),
     kindOptInGet: vi.fn(),
     kindOptInSet: vi.fn(),
     applyObjects: vi.fn(),
@@ -44,6 +46,8 @@ vi.mock("../ipc/commands", () => ({
     collectCredentials: mocks.collectCredentials,
     collectKnownHosts: mocks.collectKnownHosts,
     collectAIProfiles: mocks.collectAIProfiles,
+    collectAIPermission: mocks.collectAIPermission,
+    collectPreferences: mocks.collectPreferences,
     kindOptInGet: mocks.kindOptInGet,
     kindOptInSet: mocks.kindOptInSet,
   },
@@ -138,7 +142,7 @@ const AI_PROFILE_DTO = {
 };
 
 let mounted: MountedView | undefined;
-let optInState: { knownHost: boolean; aiProfile: boolean };
+let optInState: { knownHost: boolean; aiProfile: boolean; aiPermission?: boolean; preferences?: boolean };
 
 function mountSyncCard(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -159,7 +163,7 @@ function seedAuthed() {
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   try {
-    const result = await runWebSync(DEK, optInState);
+    const result = await runWebSync(DEK, { aiPermission: false, preferences: false, ...optInState });
     if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
   } catch (error) {
     window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
@@ -220,7 +224,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   window.localStorage.clear();
   useUi.setState({ pushToast: mocks.toast });
-  optInState = { knownHost: false, aiProfile: false };
+  optInState = { knownHost: false, aiProfile: false, aiPermission: false, preferences: false };
   mocks.groupList.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.transcriptHosts.mockResolvedValue([]);
@@ -232,10 +236,12 @@ beforeEach(() => {
   mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [KNOWN_HOST_DTO], hasMore: false });
   mocks.collectAIProfiles.mockResolvedValue({ profiles: [AI_PROFILE_DTO], hasMore: false });
   mocks.kindOptInGet.mockImplementation(async () => ({ ...optInState }));
-  mocks.kindOptInSet.mockImplementation(async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
+  mocks.kindOptInSet.mockImplementation(async (patch: Partial<typeof optInState>) => {
     optInState = { ...optInState, ...patch };
     return { ...optInState };
   });
+  mocks.collectAIPermission.mockResolvedValue({ id: "global", mode: "read_write", dangerRules: [], updatedAt: 0, found: false });
+  mocks.collectPreferences.mockResolvedValue([]);
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -396,6 +402,54 @@ describe("M165 AI 档案同步", () => {
     expect(objects[0].kind).toBe("ai_profile");
     expect(objects[0].payload.apiKey).toBe("sk-live<>&\u2028key");
     expect(objects[0].payload.updatedAt).toBe(1700000001000);
+  });
+});
+
+describe("M166 AI 权限与偏好同步", () => {
+  it("AI 权限和外观快捷键也进入同步对象并推送", async () => {
+    optInState = { knownHost: false, aiProfile: false, aiPermission: true, preferences: true };
+    mocks.collectAIPermission.mockResolvedValue({ id: "global", mode: "silent", dangerRules: ["rm -rf /"], updatedAt: 100, found: true });
+    mocks.collectPreferences.mockResolvedValue([
+      { id: "preference:keybinding.newTerminal", key: "keybinding.newTerminal", value: "Mod+Shift+t", updatedAt: 100 },
+    ]);
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 2, applied: 2, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntilOptInRendered();
+    openDetails();
+    await flushUntil(() => text().includes("全局 AI 权限") && text().includes("keybinding.newTerminal"));
+    expect(text()).toContain("待推送 2 项");
+    expect(text()).toContain("同步 AI 权限与拦截规则");
+    expect(text()).toContain("同步外观与快捷键");
+
+    await runAutoSync();
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
+    expect(objects.map((o) => o.id).sort()).toEqual(["global", "preference:keybinding.newTerminal"]);
+    expect(await openPushed(objects.find((o) => o.id === "global")!, "ai_permission")).toBe('{"id":"global","mode":"silent","dangerRules":["rm -rf /"],"updatedAt":100}');
+    expect(await openPushed(objects.find((o) => o.id === "preference:keybinding.newTerminal")!, "preference")).toBe('{"id":"preference:keybinding.newTerminal","key":"keybinding.newTerminal","value":"Mod+Shift+t","updatedAt":100}');
+  });
+
+  it("关闭开关后不收集对象，也不推送对应墓碑", async () => {
+    mocks.collectTombstones.mockResolvedValue({
+      tombstones: [
+        { id: "global", targetKind: "ai_permission", deletedAt: 700 },
+        { id: "preference:keybinding.newTerminal", targetKind: "preference", deletedAt: 700 },
+      ],
+      hasMore: false,
+    });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 0, applied: 0, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntilOptInRendered();
+    openDetails();
+    await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
+    expect(mocks.collectAIPermission).not.toHaveBeenCalled();
+    expect(mocks.collectPreferences).not.toHaveBeenCalled();
+    expect(text()).not.toContain("preference:keybinding.newTerminal");
+
+    await runAutoSync();
+    expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 });
 

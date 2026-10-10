@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
+import { listenEvent } from "../../ipc/events";
 import type { KnownHostDto } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
@@ -44,6 +45,11 @@ export function KnownHostsCard() {
 
   useEffect(() => {
     void reload();
+    let unlisten: (() => void) | undefined;
+    void listenEvent("sync://status", () => void reload()).then((off) => {
+      unlisten = off;
+    });
+    return () => unlisten?.();
   }, [reload]);
 
   const revoke = async (host: KnownHostDto) => {

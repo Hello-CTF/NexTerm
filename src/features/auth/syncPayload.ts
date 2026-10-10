@@ -1,5 +1,5 @@
 import type { AssetGroup, TranscriptChunk, TranscriptSummary } from "../../ipc/commands";
-import type { SnippetDto, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../../ipc/types";
+import type { SnippetDto, SyncCollectAIPermission, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectPreference, SyncCollectTombstone } from "../../ipc/types";
 
 // 本文件的载荷构造与 internal/sync/object.go 的 Go 结构体逐字段对齐(字段顺序 + omitempty 语义),
 // 并经 marshalSyncPayload 产出与 Go json.Marshal 逐字节一致的文本;跨端 payload hash 相同,
@@ -96,6 +96,14 @@ export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   if (p.circuitCooldownSeconds !== undefined && p.circuitCooldownSeconds !== null) o.circuitCooldownSeconds = p.circuitCooldownSeconds;
   o.updatedAt = p.updatedAt;
   return o;
+}
+
+export function aiPermissionPayload(p: SyncCollectAIPermission): unknown {
+  return { id: p.id, mode: p.mode, dangerRules: p.dangerRules, updatedAt: p.updatedAt };
+}
+
+export function preferencePayload(p: SyncCollectPreference): unknown {
+  return { id: p.id, key: p.key, value: p.value, updatedAt: p.updatedAt };
 }
 
 // credentialPayload 对齐 credentialObject; secret 缺失的凭据不会走到这里(收集期已 warning)。

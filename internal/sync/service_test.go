@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestRecordProbeLeavesLegacyPlaintextUntouched(t *testing.T) {
@@ -174,5 +175,80 @@ func TestServiceShutdownHonorsContext(t *testing.T) {
 	}
 	if err := instance.service.Start(context.Background()); err == nil {
 		t.Fatal("Start succeeded while shutdown was still in progress")
+	}
+}
+
+func TestServiceSyncEmitsChangedStatus(t *testing.T) {
+	instance := newTestInstance(t, true)
+	server := newTestSyncServer(t)
+	ctx := context.Background()
+	const password = "alice-password"
+	server.createUser(t, "alice", password)
+	var events []ipc.Event
+	instance.service.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+		events = append(events, event)
+		return nil
+	})
+	groupID := ids.New()
+	putTestGroup(t, instance, groupID, nil, "sync-event")
+	if _, err := instance.service.LinkSet(ctx, LinkPatch{
+		URL: testPtr(server.URL), Username: testPtr("alice"), Password: testPtr(password),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.service.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
+		t.Fatalf("events = %+v, want one sync status event", events)
+	}
+}
+
+func TestSyncReportChangedIgnoresPulledOnly(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		report SyncReport
+		want   bool
+	}{
+		{name: "pulled only", report: SyncReport{Pulled: 1, PullSkipped: 1}, want: false},
+		{name: "decrypt failure", report: SyncReport{Pulled: 1, DecryptFailed: 1}, want: false},
+		{name: "applied", report: SyncReport{Applied: 1}, want: true},
+		{name: "pushed", report: SyncReport{Pushed: 1}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := syncReportChanged(test.report); got != test.want {
+				t.Fatalf("syncReportChanged(%+v) = %v, want %v", test.report, got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplyObjectsEmitsChangedStatus(t *testing.T) {
+	instance := newTestInstance(t, false)
+	ctx := context.Background()
+	var events []ipc.Event
+	instance.service.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+		events = append(events, event)
+		return nil
+	})
+	reloads := 0
+	instance.service.profilesReload = func(context.Context) error {
+		reloads++
+		return nil
+	}
+	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{
+		applyKnownHost(t, ids.New(), "sync.example.com", 22, "ssh-ed25519", "SHA256:sync", 100),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied != 1 {
+		t.Fatalf("apply result = %+v, want one applied object", result)
+	}
+	if reloads != 1 {
+		t.Fatalf("profile reloads = %d, want 1", reloads)
+	}
+	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
+		t.Fatalf("events = %+v, want one sync status event", events)
 	}
 }

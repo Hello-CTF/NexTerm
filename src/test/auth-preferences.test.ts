@@ -195,6 +195,31 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
   });
 });
 
+describe("账号主题偏好", () => {
+  it("账号覆盖生效但不改本机值，注销后恢复本机主题", async () => {
+    const theme = await import("../app/theme");
+    theme.setThemeMode("system");
+    const store = memoryStore({ "appearance.themeMode": "light" });
+    registerAccountPreferenceStore(store);
+    await vi.waitFor(() => expect(theme.getThemeMode()).toBe("light"));
+    expect(window.localStorage.getItem("nexterm.theme.v1")).toBe("system");
+
+    registerAccountPreferenceStore(null);
+    expect(theme.getThemeMode()).toBe("system");
+  });
+
+  it("本机切换主题写回账号", async () => {
+    const store = memoryStore({});
+    registerAccountPreferenceStore(store);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { useUi } = await import("../app/store");
+
+    useUi.getState().setThemeMode("light");
+    expect(store.data["appearance.themeMode"]).toBe("light");
+    expect(store.puts).toContainEqual({ "appearance.themeMode": "light" });
+  });
+});
+
 describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本地 < 账号覆盖)", () => {
   it("仅有服务端默认时生效,未声明的键仍回内置默认", async () => {
     const store = memoryStore({}, { "keybinding.newTerminal": "Mod+Shift+t" });
@@ -304,7 +329,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
     resetAppearancePrefs();
     await vi.waitFor(() =>
       expect(prefsMocks.put).toHaveBeenCalledWith({
-        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalTheme"],
+        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalTheme", "appearance.themeMode"],
       }),
     );
     // 清除后回默认,不残留已清掉的账号覆盖

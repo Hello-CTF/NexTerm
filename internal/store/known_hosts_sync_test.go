@@ -28,9 +28,12 @@ func knownHostTombstone(t *testing.T, db *Store, id string) (kind string, delete
 	return "", 0, false
 }
 
-func TestKnownHostRemoveWithoutOptInWritesNoTombstone(t *testing.T) {
+func TestKnownHostRemoveWithOptOutWritesNoTombstone(t *testing.T) {
 	db := testStore(t)
 	ctx := ipc.WithUserID(context.Background(), "u-a")
+	if err := db.SetKnownHostSyncOptIn(ctx, "u-a", false); err != nil {
+		t.Fatal(err)
+	}
 	seedKnownHost(t, db, "kh-off")
 	row, found, err := db.KnownHostGet(ctx, "host-kh-off", 22, "ssh-ed25519")
 	if err != nil || !found {
@@ -41,6 +44,23 @@ func TestKnownHostRemoveWithoutOptInWritesNoTombstone(t *testing.T) {
 	}
 	if _, _, found := knownHostTombstone(t, db, row.ID); found {
 		t.Fatal("opt-in 关闭时删除不得产生墓碑")
+	}
+}
+
+func TestKnownHostRemoveDefaultsToTombstone(t *testing.T) {
+	db := testStore(t)
+	ctx := ipc.WithUserID(context.Background(), "u-default")
+	seedKnownHost(t, db, "kh-default")
+	row, found, err := db.KnownHostGet(ctx, "host-kh-default", 22, "ssh-ed25519")
+	if err != nil || !found {
+		t.Fatalf("seed known host: found=%v err=%v", found, err)
+	}
+	if err := db.KnownHostRemove(ctx, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	kind, deletedAt, found := knownHostTombstone(t, db, row.ID)
+	if !found || kind != SyncTombstoneKindKnownHost || deletedAt <= 0 {
+		t.Fatalf("default opt-in tombstone = %q %d %v", kind, deletedAt, found)
 	}
 }
 
@@ -104,6 +124,9 @@ func TestKnownHostRemoveOptInIsolatedPerUser(t *testing.T) {
 	}
 	// A 开 B 关: B 的删除走 B 自己的 opt-in(关), 不立碑
 	ctxB := ipc.WithUserID(context.Background(), "u-b")
+	if err := db.SetKnownHostSyncOptIn(ctxB, "u-b", false); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.KnownHostRemove(ctxB, row.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +216,18 @@ func TestAIProfilesDeleteTxAtomic(t *testing.T) {
 	}
 	if _, _, found := knownHostTombstone(t, db, "p-3"); found {
 		t.Fatal("无身份不得立碑")
+	}
+}
+
+func TestAIProfilesDeleteTxDefaultsToTombstone(t *testing.T) {
+	db := testStore(t)
+	ctx := ipc.WithUserID(context.Background(), "u-default")
+	state := `{"version":1,"profiles":[],"activeId":null}`
+	if err := db.AIProfilesDeleteTx(ctx, state, "p-default", 100); err != nil {
+		t.Fatal(err)
+	}
+	kind, deletedAt, found := knownHostTombstone(t, db, "p-default")
+	if !found || kind != SyncTombstoneKindAIProfile || deletedAt != 100 {
+		t.Fatalf("default opt-in tombstone = %q %d %v", kind, deletedAt, found)
 	}
 }

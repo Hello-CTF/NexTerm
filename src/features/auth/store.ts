@@ -25,13 +25,13 @@ import {
   wrapDEKWithRecovery,
   type DekEnvelopes,
 } from "./crypto";
-import { WEB } from "../../ipc/env";
+import { DESKTOP, WEB } from "../../ipc/env";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
 
 // syncPreferenceStore 在登录/刷新后注册账号偏好存储(M140 /auth/preferences),登出时注销。
 function syncPreferenceStore(loggedIn: boolean): void {
-  if (loggedIn && WEB) {
+  if (loggedIn || DESKTOP) {
     registerAccountPreferenceStore(createHttpPreferenceStore());
   } else {
     registerAccountPreferenceStore(null);

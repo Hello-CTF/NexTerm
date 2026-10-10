@@ -183,6 +183,24 @@ func TestCollectTombstonesCredentialWinsIdCollision(t *testing.T) {
 	}
 }
 
+func TestCollectLocalObjectsNewerCredentialSkipsTombstone(t *testing.T) {
+	instance := newTestInstance(t, true)
+	ctx := context.Background()
+	credentialID := ids.New()
+	putTestCredential(t, instance, credentialID, "重新创建的凭据", "password", "secret")
+	if err := instance.db.CredentialTombstonePut(ctx, credentialID, 1); err != nil {
+		t.Fatal(err)
+	}
+	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := objects[credentialID]
+	if !found || entry.kind != KindCredential {
+		t.Fatalf("newer credential was hidden by an older tombstone: %+v", entry)
+	}
+}
+
 func TestCollectTombstonesPagination(t *testing.T) {
 	instance := newTestInstance(t, false)
 	ctx := context.Background()

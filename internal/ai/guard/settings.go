@@ -61,6 +61,23 @@ func (m *Manager) Snapshot(context.Context) (Config, error) {
 	return m.config.Normalized(), nil
 }
 
+func (m *Manager) Reload(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKey)
+	if err != nil {
+		return err
+	}
+	config := Config{Mode: ReadWrite, DangerRules: []string{}}
+	if found && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			return err
+		}
+	}
+	m.config = config.Normalized()
+	return nil
+}
+
 func (m *Manager) Get() Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

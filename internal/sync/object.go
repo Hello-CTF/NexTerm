@@ -17,18 +17,20 @@ const ProtocolVersion = 2
 
 // 同步对象种类。tombstone 与目标对象共用同一对象 id, 覆盖存储, 由客户端 LWW 裁决。
 const (
-	KindGroup      = "group"
-	KindAsset      = "asset"
-	KindCredential = "credential"
-	KindSnippet    = "snippet"
-	KindTombstone  = "tombstone"
-	KindTranscript = "transcript"
-	KindKnownHost  = "known_host"
-	KindAIProfile  = "ai_profile"
+	KindGroup        = "group"
+	KindAsset        = "asset"
+	KindCredential   = "credential"
+	KindSnippet      = "snippet"
+	KindTombstone    = "tombstone"
+	KindTranscript   = "transcript"
+	KindKnownHost    = "known_host"
+	KindAIProfile    = "ai_profile"
+	KindAIPermission = "ai_permission"
+	KindPreference   = "preference"
 )
 
 // objectKinds 是尝试解密时的固定枚举顺序; AAD 绑定 kind, 错误 kind 必然解不开。
-var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile}
+var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindPreference}
 
 const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
@@ -184,6 +186,20 @@ type aiProfileObject struct {
 	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
 
 	UpdatedAt int64 `json:"updatedAt"`
+}
+
+type aiPermissionObject struct {
+	ID          string   `json:"id"`
+	Mode        string   `json:"mode"`
+	DangerRules []string `json:"dangerRules"`
+	UpdatedAt   int64    `json:"updatedAt"`
+}
+
+type preferenceObject struct {
+	ID        string          `json:"id"`
+	Key       string          `json:"key"`
+	Value     json.RawMessage `json:"value"`
+	UpdatedAt int64           `json:"updatedAt"`
 }
 
 type transcriptChunkObject struct {

@@ -152,7 +152,7 @@ func TestDispatcherEmitsSyncStatusOnlyForRelevantSuccessfulWrites(t *testing.T) 
 		events = append(events, event)
 		return nil
 	})
-	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "sync_apply_objects"} {
+	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "ai_set_permission", "sync_apply_objects"} {
 		command := command
 		if err := Register(dispatcher, command, func(_ context.Context, _ *Call, _ struct{}) (any, error) {
 			if command == "asset_update" {
@@ -163,10 +163,10 @@ func TestDispatcherEmitsSyncStatusOnlyForRelevantSuccessfulWrites(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "sync_apply_objects"} {
+	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "ai_set_permission", "sync_apply_objects"} {
 		_ = dispatcher.Dispatch(context.Background(), Request{Command: command}, Environment{Events: emitter})
 	}
-	if len(events) != 2 || events[0].Event != TopicSyncStatus || events[1].Event != TopicSyncStatus {
-		t.Fatalf("events = %+v, want two sync status events", events)
+	if len(events) != 3 || events[0].Event != TopicSyncStatus || events[1].Event != TopicSyncStatus || events[2].Event != TopicSyncStatus {
+		t.Fatalf("events = %+v, want three sync status events", events)
 	}
 }

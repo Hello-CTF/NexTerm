@@ -884,8 +884,17 @@ export const syncApi = {
       args: { revealSecrets, afterId, limit },
     }),
 
+  collectAIPermission: () => call<import("./types").SyncCollectAIPermission>("sync_collect_ai_permission"),
+
+  collectPreferences: () => call<import("./types").SyncCollectPreference[]>("sync_collect_preferences"),
+
+  preferencesGet: () => call<import("./types").PreferenceScopeView>("sync_preferences_get"),
+
+  preferencesUpdate: (update: { set?: Record<string, unknown>; clear?: string[] }) =>
+    call<import("./types").PreferenceScopeView>("sync_preferences_set", { args: update }),
+
   kindOptInGet: () => call<import("./types").SyncKindOptIn>("sync_kind_opt_in_get"),
 
-  kindOptInSet: (patch: { knownHost?: boolean, aiProfile?: boolean }) =>
+  kindOptInSet: (patch: Partial<import("./types").SyncKindOptIn>) =>
     call<import("./types").SyncKindOptIn>("sync_kind_opt_in_set", { args: patch }),
 };

@@ -90,6 +90,34 @@ func (s *Store) SetAIProfileSyncOptIn(ctx context.Context, userID string, enable
 	return s.SettingSet(ctx, aiProfileOptInKey(userID), syncOptInValue(enabled))
 }
 
+func (s *Store) AIPermissionSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, badParam(fmt.Errorf("AI 权限同步 opt-in 需要用户身份"))
+	}
+	return s.syncOptInGet(ctx, "sync.optin.ai_permission."+userID)
+}
+
+func (s *Store) SetAIPermissionSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if userID == "" {
+		return badParam(fmt.Errorf("AI 权限同步 opt-in 需要用户身份"))
+	}
+	return s.SettingSet(ctx, "sync.optin.ai_permission."+userID, syncOptInValue(enabled))
+}
+
+func (s *Store) PreferencesSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, badParam(fmt.Errorf("外观与快捷键同步 opt-in 需要用户身份"))
+	}
+	return s.syncOptInGet(ctx, "sync.optin.preferences."+userID)
+}
+
+func (s *Store) SetPreferencesSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if userID == "" {
+		return badParam(fmt.Errorf("外观与快捷键同步 opt-in 需要用户身份"))
+	}
+	return s.SettingSet(ctx, "sync.optin.preferences."+userID, syncOptInValue(enabled))
+}
+
 // AIProfilesDeleteTx 在同一事务内写回 ai.models 状态, 并按 ctx 用户的 opt-in 记录删除墓碑(用户删除语义)。
 // 原子性保证档案删除与墓碑同成同败: 任一步失败整体回滚, 档案仍在, 重试 Delete 即可收敛,
 // 不会出现「档案已删但墓碑缺失」导致远端副本复活。
@@ -100,14 +128,16 @@ func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombst
 		return dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	optIn := false
+	optIn := hasIdentity
 	if hasIdentity {
 		var optInRaw string
 		optInErr := tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", aiProfileOptInKey(userID)).Scan(&optInRaw)
 		if optInErr != nil && !isNoRows(optInErr) {
 			return dbError(optInErr)
 		}
-		optIn = optInRaw == "1"
+		if optInErr == nil {
+			optIn = optInRaw == "1"
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,

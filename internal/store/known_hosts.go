@@ -64,14 +64,16 @@ func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 		return dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	optIn := false
+	optIn := hasIdentity
 	if hasIdentity {
 		var optInRaw string
 		optInErr := tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", knownHostOptInKey(userID)).Scan(&optInRaw)
 		if optInErr != nil && !isNoRows(optInErr) {
 			return dbError(optInErr)
 		}
-		optIn = optInRaw == "1"
+		if optInErr == nil {
+			optIn = optInRaw == "1"
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", id); err != nil {
 		return dbError(err)

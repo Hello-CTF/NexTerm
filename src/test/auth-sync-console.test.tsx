@@ -148,7 +148,7 @@ function openDetails(): void {
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   try {
-    const result = await runWebSync(DEK, { knownHost: false, aiProfile: false });
+    const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
     if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
   } catch (error) {
     window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
@@ -171,7 +171,7 @@ beforeEach(() => {
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
   mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
   mocks.collectAIProfiles.mockResolvedValue({ profiles: [], hasMore: false });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -231,6 +231,24 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     // 凭据载荷携带明文 secret(credentialObject 形状)
     const credPayload = await openPushed(objects.find((o) => o.id === "c1")!, "credential");
     expect(credPayload).toEqual({ id: "c1", name: "生产口令", kind: "password", secret: "s3cret", updatedAt: 50 });
+  });
+
+  it("较新存活凭据不被旧墓碑覆盖", async () => {
+    mocks.collectCredentials.mockResolvedValue({
+      credentials: [{ id: "c1", name: "新凭据", kind: "password", updatedAt: 500, secret: "new-secret", secretState: "revealed" }],
+      hasMore: false,
+    });
+    mocks.collectTombstones.mockResolvedValue({
+      tombstones: [{ id: "c1", targetKind: "credential", deletedAt: 400 }],
+      hasMore: false,
+    });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
+
+    await runAutoSync();
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
+    expect(objects.map((o) => o.id)).toEqual(["c1"]);
+    expect(await openPushed(objects[0], "credential")).toEqual({ id: "c1", name: "新凭据", kind: "password", secret: "new-secret", updatedAt: 500 });
   });
 
   it("collect 分页游标推进读完全部条目", async () => {

@@ -14,7 +14,7 @@ const userDEKRecoveryAAD = "nexterm/go/user-dek-recovery/v1";
 const objectAADPrefix = "nexterm/go/sync-object/v1";
 
 // 与 Go internal/sync/object.go 的 objectKinds 枚举顺序一致(AAD 绑定 kind, 错误 kind 必然解不开)。
-export const SYNC_OBJECT_KINDS = ["group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile"] as const;
+export const SYNC_OBJECT_KINDS = ["group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile", "ai_permission", "preference"] as const;
 export type SyncObjectKind = (typeof SYNC_OBJECT_KINDS)[number];
 
 // Go vault.userDEKKDFDefaults:Time/MemoryKiB/Threads 的 JSON 形为 {"t":3,"m":65536,"p":4}。

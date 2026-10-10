@@ -33,6 +33,34 @@ func objectRevision(updatedAt int64, deletedAt *int64) int64 {
 	return updatedAt
 }
 
+func localRevision(kind string, plaintext []byte) int64 {
+	var payload struct {
+		UpdatedAt int64  `json:"updatedAt"`
+		DeletedAt *int64 `json:"deletedAt"`
+		AddedAt   int64  `json:"addedAt"`
+		EndedAt   int64  `json:"endedAt"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		return 0
+	}
+	if kind == KindTranscript {
+		return payload.EndedAt
+	}
+	if kind == KindKnownHost {
+		return payload.AddedAt
+	}
+	if kind == KindTombstone {
+		if payload.DeletedAt != nil {
+			return *payload.DeletedAt
+		}
+		return 0
+	}
+	if payload.DeletedAt != nil && *payload.DeletedAt > payload.UpdatedAt {
+		return *payload.DeletedAt
+	}
+	return payload.UpdatedAt
+}
+
 // remoteWins LWW 裁决: 修订号大者胜; 平手按载荷 sha256 字典序决胜, 双向同步无需协商即可收敛。
 func remoteWins(remoteRevision, localRevision int64, remotePlaintext, localPlaintext []byte) bool {
 	if remoteRevision != localRevision {
@@ -49,9 +77,9 @@ func (report *SyncReport) warnf(format string, args ...any) {
 }
 
 // collectLocalObjects 全量扫描本地副本产出确定性载荷; 本地副本未登录与登录后保持一致。
-// known_host/AI 模型档案按会话用户 opt-in 收集: 关闭时不收集这两类对象, 也不传播其墓碑
+// 主机信任、AI 档案、AI 权限和偏好按会话用户 opt-in 收集: 关闭时不收集对应对象, 也不传播其墓碑
 // (禁用同步不得删除远端对象)。
-func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn) (map[string]localObject, error) {
+func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn, userIDs ...string) (map[string]localObject, error) {
 	objects := map[string]localObject{}
 	groups, err := e.store.GroupList(ctx)
 	if err != nil {
@@ -124,44 +152,6 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		}
 		objects[asset.ID] = localObject{KindAsset, payload}
 	}
-	tombstones, err := e.syncTombstoneList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	knownHostMetas, err := e.knownHostTombstoneMetas(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, tombstone := range tombstones {
-		if tombstone.Kind == KindKnownHost && !optIn.knownHost {
-			continue
-		}
-		if tombstone.Kind == KindAIProfile && !optIn.aiProfile {
-			continue
-		}
-		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
-		if tombstone.Kind == KindKnownHost {
-			if meta, found := knownHostMetas[tombstone.ID]; found {
-				object.Host, object.Port, object.KeyType = meta.Host, meta.Port, meta.KeyType
-			}
-		}
-		payload, err := marshalObject(object)
-		if err != nil {
-			return nil, err
-		}
-		objects[tombstone.ID] = localObject{KindTombstone, payload}
-	}
-	credentialTombstones, err := e.store.CredentialTombstoneList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, tombstone := range credentialTombstones {
-		payload, err := marshalObject(tombstoneObject{TargetKind: KindCredential, DeletedAt: tombstone.DeletedAt})
-		if err != nil {
-			return nil, err
-		}
-		objects[tombstone.ID] = localObject{KindTombstone, payload}
-	}
 	transcripts, err := e.store.TranscriptListOptedIn(ctx)
 	if err != nil {
 		return nil, err
@@ -212,6 +202,61 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 				objects[record.ID] = localObject{KindAIProfile, payload}
 			}
 		}
+	}
+	if len(userIDs) > 0 && userIDs[0] != "" {
+		if err := e.collectPreferenceObjects(ctx, userIDs[0], objects, optIn); err != nil {
+			return nil, err
+		}
+	}
+	tombstones, err := e.syncTombstoneList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	knownHostMetas, err := e.knownHostTombstoneMetas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, tombstone := range tombstones {
+		if tombstone.Kind == KindKnownHost && !optIn.knownHost {
+			continue
+		}
+		if tombstone.Kind == KindAIProfile && !optIn.aiProfile {
+			continue
+		}
+		if tombstone.Kind == KindAIPermission && !optIn.aiPermission {
+			continue
+		}
+		if tombstone.Kind == KindPreference && !optIn.preferences {
+			continue
+		}
+		if live, exists := objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
+			continue
+		}
+		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
+		if tombstone.Kind == KindKnownHost {
+			if meta, found := knownHostMetas[tombstone.ID]; found {
+				object.Host, object.Port, object.KeyType = meta.Host, meta.Port, meta.KeyType
+			}
+		}
+		payload, err := marshalObject(object)
+		if err != nil {
+			return nil, err
+		}
+		objects[tombstone.ID] = localObject{KindTombstone, payload}
+	}
+	credentialTombstones, err := e.store.CredentialTombstoneList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, tombstone := range credentialTombstones {
+		if live, exists := objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
+			continue
+		}
+		payload, err := marshalObject(tombstoneObject{TargetKind: KindCredential, DeletedAt: tombstone.DeletedAt})
+		if err != nil {
+			return nil, err
+		}
+		objects[tombstone.ID] = localObject{KindTombstone, payload}
 	}
 	return objects, nil
 }
@@ -279,7 +324,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		return
 	}
 	payloadHash := objectPayloadHash(plaintext)
-	applied, identical := e.applyDecryptedObject(ctx, object.ID, kind, plaintext, report)
+	applied, identical := e.applyDecryptedObject(ctx, object.ID, kind, plaintext, report, userID)
 	report.PullSkipped++
 	if applied {
 		report.Applied++
@@ -628,7 +673,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 	return true, false
 }
 
-func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport) (bool, bool) {
+func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
 	var payload tombstoneObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("墓碑对象载荷损坏: %v", err)
@@ -647,6 +692,10 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 		return e.applyKnownHostTombstone(ctx, objectID, payload, report)
 	case KindAIProfile:
 		return e.applyAIProfileTombstone(ctx, objectID, payload.DeletedAt, report)
+	case KindAIPermission:
+		return e.applyAIPermissionTombstone(ctx, objectID, payload.DeletedAt, report)
+	case KindPreference:
+		return e.applyPreferenceTombstone(ctx, objectID, payload.DeletedAt, report, firstUserID(userIDs))
 	default:
 		report.warnf("墓碑对象目标种类 %s 不受支持", payload.TargetKind)
 		return false, false
@@ -1059,7 +1108,7 @@ func (e *Engine) requireVault(ctx context.Context) error {
 }
 
 // objectKindRank 保证同一批推送内被依赖对象先于依赖者: 拉取端按 seq 顺序应用, 引用必须在应用前已存在。
-// 墓碑必须排在全部内容种类之后: 同批内容与其墓碑冲突时, 服务端以墓碑覆盖, 拉取端才对账收敛。
+// 普通墓碑排在内容对象之后、会话记录之前, 与浏览器推送顺序一致。
 func objectKindRank(kind string) int {
 	switch kind {
 	case KindGroup:
@@ -1074,12 +1123,16 @@ func objectKindRank(kind string) int {
 		return 4
 	case KindAIProfile:
 		return 5
-	case KindTombstone:
+	case KindAIPermission:
 		return 6
-	case KindTranscript:
+	case KindPreference:
 		return 7
-	default:
+	case KindTombstone:
 		return 8
+	case KindTranscript:
+		return 9
+	default:
+		return 10
 	}
 }
 

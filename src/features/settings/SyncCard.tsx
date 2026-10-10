@@ -15,12 +15,14 @@ import {
   type SyncObjectKind,
 } from "../auth/crypto";
 import {
+  aiPermissionPayload,
   aiProfilePayload,
   collectAssetPayload,
   credentialPayload,
   groupPayload,
   knownHostPayload,
   marshalSyncPayload,
+  preferencePayload,
   snippetPayload,
   tombstonePayload,
   transcriptPayload,
@@ -429,13 +431,13 @@ async function localEntity(
 }
 
 // loadLocalEntities 经 M141 collect RPC 收集完整本地副本: 软删资产、两类墓碑与凭据都进入对比,
-// 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,墓碑压过存活对象,存活 transcript 最后)。
+// 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,较新存活对象压过旧墓碑,存活 transcript 最后)。
 // 读不到明文的凭据(locked/unavailable/error)明确记入 warnings,不静默遗漏。
-// known_host/AI 模型档案按账号用户开关收集(默认开启): 开启才进入对比与推送;
+// 可选同步种类按账号用户开关收集(默认开启): 开启才进入对比与推送;
 // 档案 apiKey 被扣留(locked/unavailable/error)同样只记 warning; 无密钥档案(apiKeySet=false)不受凭据库锁定影响。
 async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
   const warnings: string[] = [];
-  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles] = await Promise.all([
+  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, preferences] = await Promise.all([
     assetApi.groupList(),
     assetApi.snippetList(),
     loadOptedInTranscripts(),
@@ -444,6 +446,8 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     collectCredentialsAll(),
     optIn.knownHost ? collectKnownHostsAll() : Promise.resolve([]),
     optIn.aiProfile ? collectAIProfilesAll() : Promise.resolve([]),
+    optIn.aiPermission ? syncApi.collectAIPermission() : Promise.resolve({ id: "", mode: "", dangerRules: [], updatedAt: 0, found: false }),
+    optIn.preferences ? syncApi.collectPreferences() : Promise.resolve([]),
   ]);
   const byId = new Map<string, LocalEntity>();
   for (const g of groups) {
@@ -472,10 +476,20 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     }
     byId.set(p.id, await localEntity(p.id, "ai_profile", p.name, p.updatedAt, null, aiProfilePayload(p)));
   }
+  if (aiPermission.found) {
+    byId.set(aiPermission.id, await localEntity(aiPermission.id, "ai_permission", "全局 AI 权限", aiPermission.updatedAt, null, aiPermissionPayload(aiPermission)));
+  }
+  for (const p of preferences) {
+    byId.set(p.id, await localEntity(p.id, "preference", p.key, p.updatedAt, null, preferencePayload(p)));
+  }
   for (const t of tombstones) {
     // 已禁用种类的墓碑不参与对比与推送: 禁用同步不得删除远端对象
     if (t.targetKind === "known_host" && !optIn.knownHost) continue;
     if (t.targetKind === "ai_profile" && !optIn.aiProfile) continue;
+    if (t.targetKind === "ai_permission" && !optIn.aiPermission) continue;
+    if (t.targetKind === "preference" && !optIn.preferences) continue;
+    const live = byId.get(t.id);
+    if (live && revisionOf(live.updatedAt, live.deletedAt) > t.deletedAt) continue;
     const label = KIND_LABELS[t.targetKind] ?? t.targetKind;
     byId.set(t.id, await localEntity(t.id, "tombstone", `${label} ${t.id}`, t.deletedAt, t.deletedAt, tombstonePayload(t)));
   }
@@ -490,14 +504,18 @@ function revisionOf(updatedAt: number, deletedAt: number | null): number {
 }
 
 // remoteKindVisible 按 opt-in 过滤远端对象: 禁用种类既不应用也不参与对比;
-// known_host/ai_profile 的远端墓碑按其 targetKind 同样受开关约束(禁用同步不得删除远端/本地对象)。
+// 可选种类的远端墓碑按其 targetKind 同样受开关约束(禁用同步不得删除远端/本地对象)。
 function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncKindOptIn): boolean {
   if (kind === "known_host") return optIn.knownHost;
   if (kind === "ai_profile") return optIn.aiProfile;
+  if (kind === "ai_permission") return !!optIn.aiPermission;
+  if (kind === "preference") return !!optIn.preferences;
   if (kind === "tombstone") {
     const target = (JSON.parse(plaintext) as { targetKind?: string }).targetKind;
     if (target === "known_host") return optIn.knownHost;
     if (target === "ai_profile") return optIn.aiProfile;
+    if (target === "ai_permission") return !!optIn.aiPermission;
+    if (target === "preference") return !!optIn.preferences;
   }
   return true;
 }
@@ -603,7 +621,7 @@ function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEnti
 }
 
 // sealAll 按 kind 依赖序把 winner 对象加密成线上形态(与 Go objectKindRank 对齐:
-// known_host/ai_profile 排在 tombstone 之前, 墓碑仍最后)。
+// AI 权限与偏好排在普通墓碑之前, 会话记录仍最后)。
 async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
   const rank = (k: SyncObjectKind) => {
     switch (k) {
@@ -613,9 +631,11 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "asset": return 3;
       case "known_host": return 4;
       case "ai_profile": return 5;
-      case "tombstone": return 6;
-      case "transcript": return 7;
-      default: return 8;
+      case "ai_permission": return 6;
+      case "preference": return 7;
+      case "tombstone": return 8;
+      case "transcript": return 9;
+      default: return 10;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
@@ -722,7 +742,7 @@ function computeApplySet(local: LocalEntity[], remote: RemoteObject[]): RemoteOb
 async function optInMatches(optIn: SyncKindOptIn, shouldContinue: () => boolean): Promise<boolean> {
   if (!shouldContinue()) return false;
   const current = await syncApi.kindOptInGet();
-  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && shouldContinue();
+  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && !!current.aiPermission === !!optIn.aiPermission && !!current.preferences === !!optIn.preferences && shouldContinue();
 }
 
 export async function runWebSync(
@@ -824,6 +844,8 @@ const KIND_LABELS: Record<string, string> = {
   transcript: "会话记录",
   known_host: "已知主机",
   ai_profile: "AI 模型档案",
+  ai_permission: "AI 权限",
+  preference: "偏好设置",
 };
 
 function WebSyncConsole() {
@@ -915,7 +937,7 @@ function CompareConsole() {
   const optInPanelId = useId();
   const detailsPanelId = useId();
   const [optInOpen, setOptInOpen] = useState(false);
-  const anyOptIn = !!kindOptIn && (kindOptIn.knownHost || kindOptIn.aiProfile);
+  const anyOptIn = !!kindOptIn && (kindOptIn.knownHost || kindOptIn.aiProfile || !!kindOptIn.aiPermission || !!kindOptIn.preferences);
   useEffect(() => {
     if (anyOptIn) setOptInOpen(true);
   }, [anyOptIn]);
@@ -978,7 +1000,7 @@ function CompareConsole() {
 
   const rows = useMemo(() => (local && remote ? buildRows(local, remote) : null), [local, remote]);
 
-  const updateKindOptIn = async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
+  const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     const epoch = ++optInEpochRef.current;
     setOptInBusy(true);
     setRefreshBusy(true);
@@ -1058,7 +1080,7 @@ function CompareConsole() {
               同步内容开关
             </button>
             <span className="nx-hint text-[11px]">
-              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"}
+              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"} · AI 权限 {kindOptIn.aiPermission ? "已开启" : "已关闭"} · 外观快捷键 {kindOptIn.preferences ? "已开启" : "已关闭"}
             </span>
           </div>
           {optInOpen && (
@@ -1087,6 +1109,32 @@ function CompareConsole() {
                 <span className="text-[12px] text-neutral-300">
                   同步 AI 模型档案
                   <span className="nx-hint block">默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={!!kindOptIn.aiPermission}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ aiPermission: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步 AI 权限与拦截规则
+                  <span className="nx-hint block">默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={!!kindOptIn.preferences}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ preferences: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步外观与快捷键
+                  <span className="nx-hint block">默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。</span>
                 </span>
               </label>
             </div>

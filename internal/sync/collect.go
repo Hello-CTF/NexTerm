@@ -8,11 +8,13 @@ import (
 )
 
 const (
-	CommandCollectAssets      = "sync_collect_assets"
-	CommandCollectTombstones  = "sync_collect_tombstones"
-	CommandCollectCredentials = "sync_collect_credentials"
-	CommandCollectKnownHosts  = "sync_collect_known_hosts"
-	CommandCollectAIProfiles  = "sync_collect_ai_profiles"
+	CommandCollectAssets       = "sync_collect_assets"
+	CommandCollectTombstones   = "sync_collect_tombstones"
+	CommandCollectCredentials  = "sync_collect_credentials"
+	CommandCollectKnownHosts   = "sync_collect_known_hosts"
+	CommandCollectAIProfiles   = "sync_collect_ai_profiles"
+	CommandCollectAIPermission = "sync_collect_ai_permission"
+	CommandCollectPreferences  = "sync_collect_preferences"
 )
 
 const (

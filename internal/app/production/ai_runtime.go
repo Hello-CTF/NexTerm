@@ -114,6 +114,9 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	takeoverManager := takeover.NewManager(takeoverDeps)
 
 	services.Guard = guardManager
+	if services.Sync != nil {
+		services.Sync.SetPermissionsReload(guardManager.Reload)
+	}
 	services.Agent = runner
 	services.Takeover = takeoverManager
 

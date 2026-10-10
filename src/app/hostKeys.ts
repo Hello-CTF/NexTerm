@@ -63,7 +63,12 @@ export async function connectWithHostKeyConfirm<T>(connect: () => Promise<T>): P
     if (!pending) throw e;
     if (!(await confirmHostKey(pending.detail))) return null;
     if (!(await trustPresentedHostKey(pending.detail))) throw e;
-    return await connect();
+    try {
+      return await connect();
+    } catch (retryError) {
+      if (hostKeyPendingError(retryError) !== null) return null;
+      throw retryError;
+    }
   }
 }
 

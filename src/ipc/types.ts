@@ -174,7 +174,7 @@ export type SyncReport = {
   warnings?: string[],
 };
 
-export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile";
+export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "preference";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 
@@ -216,8 +216,12 @@ export type SyncCollectKnownHostsResult = { knownHosts: SyncCollectKnownHost[], 
 
 export type SyncCollectAIProfilesResult = { profiles: SyncCollectAIProfile[], hasMore: boolean, nextAfterId?: string, };
 
-// 按账号用户隔离的同步 opt-in(默认关); 用户身份由服务端会话注入, 不由客户端上报。
-export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, };
+// 按账号用户隔离的同步 opt-in(默认开启); 用户身份由服务端会话注入, 不由客户端上报。
+export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, preferences: boolean, };
+
+export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };
+export type SyncCollectPreference = { id: string, key: string, value: unknown, updatedAt: number, };
+export type PreferenceScopeView = { defaults: Record<string, unknown>, overrides: Record<string, unknown>, effective: Record<string, unknown>, };
 
 export type AuditCountDto = { total: number, };
 

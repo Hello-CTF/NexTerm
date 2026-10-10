@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 import type { KnownHostDto } from "../../ipc/types";
@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
     applyObjects: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
+    syncStatusHandlers: [] as Array<(payload: unknown) => void>,
   };
 });
 
@@ -64,6 +65,22 @@ vi.mock("../../ipc/commands", () => ({
   vaultApi: {},
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    listenEvent: (event: string, handler: (payload: unknown) => void) => {
+      if (event === "sync://status") {
+        mocks.syncStatusHandlers.push(handler);
+        return Promise.resolve(() => {
+          const index = mocks.syncStatusHandlers.indexOf(handler);
+          if (index >= 0) mocks.syncStatusHandlers.splice(index, 1);
+        });
+      }
+      return Promise.resolve(() => {});
+    },
+  };
+});
 
 vi.mock("../../ipc/authApi", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../ipc/authApi")>();
@@ -139,7 +156,7 @@ function mountSyncCard(): MountedView {
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../../features/settings/SyncCard");
   try {
-    const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false });
+    const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
     if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
   } catch (error) {
     window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
@@ -184,6 +201,7 @@ function seedLoggedOut() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.syncStatusHandlers.length = 0;
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast });
   mocks.assetList.mockResolvedValue([]);
@@ -195,7 +213,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -243,6 +261,23 @@ describe("KnownHostsCard", () => {
     expect(text).toContain("SHA256:aaa111");
     expect(text).toContain("db.internal:2222");
     expect(text).toContain("2 台");
+  });
+
+  it("sync status refreshes the trusted host list", async () => {
+    mocks.knownHostList
+      .mockResolvedValueOnce([KH1])
+      .mockResolvedValueOnce([KH1, KH2]);
+    mounted = mount(createElement(KnownHostsCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("10.0.0.8:22");
+    expect(mounted.container.textContent).not.toContain("db.internal:2222");
+
+    await act(async () => {
+      for (const handler of mocks.syncStatusHandlers) handler({});
+    });
+    await flush();
+    expect(mounted.container.textContent).toContain("db.internal:2222");
+    expect(mocks.knownHostList).toHaveBeenCalledTimes(2);
   });
 
   it("shows an empty hint when nothing is trusted yet", async () => {
@@ -858,6 +893,23 @@ describe("connectAsset 主机指纹确认", () => {
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
     expect(useUi.getState().sessions.some((s) => s.id === "s1")).toBe(true);
+  });
+
+  it("确认后重试仍 pending 时不再弹重复错误", async () => {
+    mocks.sessionConnect.mockRejectedValue({
+      code: "host_key_pending",
+      message: "unknown SSH host key for 10.0.0.8:22",
+      detail: pendingDetail,
+    });
+    mocks.ask.mockResolvedValue(true);
+    mocks.knownHostAccept.mockResolvedValue(undefined);
+
+    await connectAsset(asset);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已取消连接");
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.any(String));
   });
 
   it("密钥变更时弹出变更警告并展示原指纹与新指纹", async () => {

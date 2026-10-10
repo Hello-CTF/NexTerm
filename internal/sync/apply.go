@@ -52,10 +52,25 @@ type ApplyObjectsResult struct {
 }
 
 func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest) (ApplyObjectsResult, error) {
-	return s.engine.applyPlainObjects(ctx, request)
+	userID, _ := UserIDFromContext(ctx)
+	result, err := s.engine.applyPlainObjects(ctx, request, userID)
+	if err == nil && result.Applied > 0 {
+		if s.profilesReload != nil {
+			if err := s.profilesReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI profiles failed", "error", err)
+			}
+		}
+		if s.permissionsReload != nil {
+			if err := s.permissionsReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI permission failed", "error", err)
+			}
+		}
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+	}
+	return result, err
 }
 
-func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequest) (ApplyObjectsResult, error) {
+func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequest, userIDs ...string) (ApplyObjectsResult, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 	if len(request.Objects) > maxApplyObjectsPerCall {
@@ -64,7 +79,7 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 	}
 	result := ApplyObjectsResult{Objects: make([]ApplyObjectResult, 0, len(request.Objects))}
 	for _, object := range request.Objects {
-		entry := e.applyPlainObject(ctx, object)
+		entry := e.applyPlainObject(ctx, object, userIDs...)
 		switch entry.Result {
 		case ApplyResultApplied:
 			result.Applied++
@@ -79,7 +94,7 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 }
 
 // applyPlainObject 校验并应用单个明文对象; 校验失败隔离为该对象的 skipped + 警告, 不阻断整批。
-func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) ApplyObjectResult {
+func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userIDs ...string) ApplyObjectResult {
 	entry := ApplyObjectResult{ID: object.ID, Kind: object.Kind, Result: ApplyResultSkipped}
 	reject := func(format string, args ...any) ApplyObjectResult {
 		entry.Warning = fmt.Sprintf(format, args...)
@@ -89,7 +104,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) Apply
 		return reject("%v", err)
 	}
 	switch object.Kind {
-	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile:
+	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindPreference:
 	default:
 		return reject("不支持的同步对象种类 %q", object.Kind)
 	}
@@ -104,7 +119,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) Apply
 		return reject("%v", err)
 	}
 	report := &SyncReport{}
-	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report)
+	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report, userIDs...)
 	entry.Warning = strings.Join(report.Warnings, "; ")
 	if applied {
 		entry.Result = ApplyResultApplied
@@ -135,6 +150,10 @@ func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 		decoded = &knownHostObject{}
 	case KindAIProfile:
 		decoded = &aiProfileObject{}
+	case KindAIPermission:
+		decoded = &aiPermissionObject{}
+	case KindPreference:
+		decoded = &preferenceObject{}
 	default:
 		return nil, ipc.NewError(ipc.CodeBadParam, "不支持的同步对象种类")
 	}
@@ -168,12 +187,23 @@ func applyPayloadID(decoded any) string {
 		return payload.ID
 	case *aiProfileObject:
 		return payload.ID
+	case *aiPermissionObject:
+		return payload.ID
+	case *preferenceObject:
+		return payload.ID
+	}
+	return ""
+}
+
+func firstUserID(ids []string) string {
+	if len(ids) > 0 {
+		return ids[0]
 	}
 	return ""
 }
 
 // applyDecryptedObject 按种类应用一个已解密对象, 拉取合并与浏览器明文应用共用同一套 apply 语义。
-func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string, plaintext []byte, report *SyncReport) (bool, bool) {
+func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
 	switch kind {
 	case KindGroup:
 		return e.applyGroupObject(ctx, plaintext, report)
@@ -184,13 +214,17 @@ func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string
 	case KindSnippet:
 		return e.applySnippetObject(ctx, plaintext, report)
 	case KindTombstone:
-		return e.applyTombstoneObject(ctx, objectID, plaintext, report)
+		return e.applyTombstoneObject(ctx, objectID, plaintext, report, userIDs...)
 	case KindTranscript:
 		return e.applyTranscriptObject(ctx, plaintext, report)
 	case KindKnownHost:
 		return e.applyKnownHostObject(ctx, plaintext, report)
 	case KindAIProfile:
 		return e.applyAIProfileObject(ctx, plaintext, report)
+	case KindAIPermission:
+		return e.applyAIPermissionObject(ctx, plaintext, report)
+	case KindPreference:
+		return e.applyPreferenceObject(ctx, plaintext, report, firstUserID(userIDs))
 	}
 	return false, false
 }

@@ -8,16 +8,25 @@ type ThemeListener = (mode: ThemeMode, resolved: ResolvedTheme) => void;
 
 const listeners = new Set<ThemeListener>();
 
-let mode: ThemeMode = loadMode();
+let localMode: ThemeMode | null = loadMode();
+let defaultMode: ThemeMode | null = null;
+let accountMode: ThemeMode | null = null;
 let media: MediaQueryList | null = null;
 
-function loadMode(): ThemeMode {
+function parseThemeMode(value: unknown): ThemeMode | null {
+  return value === "light" || value === "dark" || value === "system" ? value : null;
+}
+
+function loadMode(): ThemeMode | null {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+    return parseThemeMode(localStorage.getItem(STORAGE_KEY));
   } catch {
-    return "system";
+    return null;
   }
+}
+
+function currentMode(): ThemeMode {
+  return accountMode ?? localMode ?? defaultMode ?? "system";
 }
 
 function systemTheme(): ResolvedTheme {
@@ -30,7 +39,7 @@ function resolve(m: ThemeMode): ResolvedTheme {
 }
 
 function apply(): ResolvedTheme {
-  const resolved = resolve(mode);
+  const resolved = resolve(currentMode());
   if (typeof document !== "undefined") {
     document.documentElement.dataset.nxTheme = resolved;
   }
@@ -38,24 +47,36 @@ function apply(): ResolvedTheme {
 }
 
 function emit(): void {
+  const mode = currentMode();
   const resolved = resolve(mode);
   for (const listener of listeners) listener(mode, resolved);
 }
 
 export function getThemeMode(): ThemeMode {
-  return mode;
+  return currentMode();
 }
 
 export function getResolvedTheme(): ResolvedTheme {
-  return resolve(mode);
+  return resolve(currentMode());
 }
 
 export function setThemeMode(next: ThemeMode): void {
-  mode = next;
+  localMode = next;
+  accountMode = null;
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch {
   }
+  apply();
+  emit();
+}
+
+export function setThemePreferenceLayers(defaultValue: unknown, accountValue: unknown): void {
+  const nextDefault = parseThemeMode(defaultValue);
+  const nextAccount = parseThemeMode(accountValue);
+  if (nextDefault === defaultMode && nextAccount === accountMode) return;
+  defaultMode = nextDefault;
+  accountMode = nextAccount;
   apply();
   emit();
 }
@@ -73,7 +94,7 @@ export function initTheme(): void {
   if (media) return;
   media = window.matchMedia(LIGHT_QUERY);
   media.addEventListener("change", () => {
-    if (mode !== "system") return;
+    if (currentMode() !== "system") return;
     apply();
     emit();
   });

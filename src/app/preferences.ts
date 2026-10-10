@@ -1,7 +1,11 @@
 import { useSyncExternalStore } from "react";
-import { getResolvedTheme, subscribeTheme } from "./theme";
+import { getResolvedTheme, setThemePreferenceLayers, subscribeTheme, type ThemeMode } from "./theme";
+import { DESKTOP } from "../ipc/env";
+import { syncApi } from "../ipc/commands";
 
-// 账号级偏好的存储接口;生产实现走 /auth/preferences(M140 user_setting 后端)。
+const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
+
+// 账号级偏好的存储接口; Web 走 /auth/preferences, 桌面走同步 IPC。
 // 键名与 internal/account/preferences.go 的扁平白名单逐一对齐(如 input.selectionAutoCopy、
 // appearance.terminalFontSize、keybinding.newTerminal);注册前只有设备本地值,不冒充账号级覆盖。
 export interface AccountPreferenceView {
@@ -15,20 +19,33 @@ export interface AccountPreferenceStore {
   deleteOverrides(keys: string[]): Promise<void>;
 }
 
-// createHttpPreferenceStore 是生产用的账号偏好存储:读取/写回/清除都走 /auth/preferences。
-// 动态引入 authApi,避免 keybindings→preferences→authApi 的静态链把账号模块拉进无关测试的 env mock。
+// createHttpPreferenceStore 是生产用的账号偏好存储; Web 动态引入 authApi,
+// 避免 keybindings→preferences→authApi 的静态链把账号模块拉进无关测试的 env mock。
 export function createHttpPreferenceStore(): AccountPreferenceStore {
   return {
     async getView() {
+      if (DESKTOP) {
+        const status = await syncApi.status();
+        if (!status.userId) return { defaults: {}, overrides: {} };
+        return syncApi.preferencesGet();
+      }
       const { preferencesApi } = await import("../ipc/authApi");
       const view = await preferencesApi.get();
       return { defaults: view.defaults, overrides: view.overrides };
     },
     async putOverrides(set) {
+      if (DESKTOP) {
+        await syncApi.preferencesUpdate({ set });
+        return;
+      }
       const { preferencesApi } = await import("../ipc/authApi");
       await preferencesApi.put({ set });
     },
     async deleteOverrides(keys) {
+      if (DESKTOP) {
+        await syncApi.preferencesUpdate({ clear: keys });
+        return;
+      }
       const { preferencesApi } = await import("../ipc/authApi");
       await preferencesApi.put({ clear: keys });
     },
@@ -41,6 +58,10 @@ let accountOverrides: Record<string, unknown> = {};
 let registerGeneration = 0;
 const accountListeners = new Set<() => void>();
 
+function syncThemePreferenceLayers(): void {
+  setThemePreferenceLayers(accountDefaults[THEME_MODE_PREFERENCE_KEY], accountOverrides[THEME_MODE_PREFERENCE_KEY]);
+}
+
 // registerAccountPreferenceStore 在登录/注册/初始化完成后注册账号偏好存储,登出/401 时注销。
 // 异步读取带代次保护:旧账号晚到的响应不得覆盖新账号已经加载的状态。
 export function registerAccountPreferenceStore(store: AccountPreferenceStore | null): void {
@@ -49,6 +70,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   accountStore = store;
   accountDefaults = {};
   accountOverrides = {};
+  syncThemePreferenceLayers();
   rebuildSnapshots();
   for (const listener of accountListeners) listener();
   if (!store) return;
@@ -58,6 +80,7 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
       if (generation !== registerGeneration || store !== accountStore) return;
       accountDefaults = view.defaults;
       accountOverrides = view.overrides;
+      syncThemePreferenceLayers();
       rebuildSnapshots();
       for (const listener of accountListeners) listener();
     })
@@ -82,6 +105,13 @@ export function getAccountDefaults(): Record<string, unknown> {
 export function patchAccountOverrideCache(set: Record<string, unknown>, clear: string[]): void {
   for (const key of clear) delete accountOverrides[key];
   Object.assign(accountOverrides, set);
+  syncThemePreferenceLayers();
+}
+
+export function saveThemeModePreference(mode: ThemeMode): void {
+  if (!accountStore) return;
+  patchAccountOverrideCache({ [THEME_MODE_PREFERENCE_KEY]: mode }, []);
+  void accountStore.putOverrides({ [THEME_MODE_PREFERENCE_KEY]: mode }).catch(() => undefined);
 }
 
 export function subscribeAccountOverrides(listener: () => void): () => void {
@@ -345,7 +375,7 @@ export function resetAppearancePrefs(): void {
     localStorage.removeItem(APPEARANCE_KEY);
   } catch {
   }
-  const keys = Object.values(APPEARANCE_PREF_KEYS);
+  const keys = [...Object.values(APPEARANCE_PREF_KEYS), THEME_MODE_PREFERENCE_KEY];
   if (accountStore) {
     void accountStore.deleteOverrides(keys).catch(() => undefined);
   }

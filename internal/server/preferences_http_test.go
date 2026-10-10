@@ -230,7 +230,7 @@ func TestPreferenceHTTPValidation(t *testing.T) {
 		{"set": map[string]any{"ai.models": "[]"}},
 		{"set": map[string]any{"arbitrary.key": "value"}},
 		{"set": map[string]any{"appearance.terminalTheme": "blue"}},
-		{"set": map[string]any{"appearance.terminalFontSize": 19}},
+		{"set": map[string]any{"appearance.terminalFontSize": 33}},
 		{"set": map[string]any{"appearance.uiFontScale": 1.1}},
 		{"set": map[string]any{"input.selectionAutoCopy": "true"}},
 		{"set": map[string]any{"keybinding.closeTab": "p"}},

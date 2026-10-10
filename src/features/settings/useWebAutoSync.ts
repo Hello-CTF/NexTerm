@@ -3,6 +3,8 @@ import { syncApi } from "../../ipc/commands";
 import { listenEvent } from "../../ipc/events";
 import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
+import { useUi } from "../../app/store";
+import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import { runWebSync, WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } from "./SyncCard";
 
 const SYNC_PERIOD_MS = 60_000;
@@ -29,6 +31,10 @@ export function useWebAutoSync() {
         if (cancelled) return;
         const result = await runWebSync(dek, optIn, () => !cancelled);
         if (result && !cancelled) {
+          if (result.applied + result.pushed > 0) {
+            useUi.getState().bumpModelProfilesRevision();
+            registerAccountPreferenceStore(createHttpPreferenceStore());
+          }
           window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
         }
       } catch (error) {
@@ -68,7 +74,10 @@ export function useDesktopAutoSync() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     const wake = () => {
-      if (!disposed) void syncApi.wake().catch(() => undefined);
+      if (disposed) return;
+      useUi.getState().bumpModelProfilesRevision();
+      registerAccountPreferenceStore(createHttpPreferenceStore());
+      void syncApi.wake().catch(() => undefined);
     };
     void listenEvent("sync://status", wake).then((off) => {
       if (disposed) off();

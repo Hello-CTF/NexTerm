@@ -36,14 +36,35 @@ func WithGatewayAuthKey(key string) Option {
 	}
 }
 
+func WithEvents(events ipc.Emitter) Option {
+	return func(s *Service) {
+		s.events = events
+	}
+}
+
+func WithProfilesReload(reload func(context.Context) error) Option {
+	return func(s *Service) {
+		s.profilesReload = reload
+	}
+}
+
+func WithPermissionsReload(reload func(context.Context) error) Option {
+	return func(s *Service) {
+		s.permissionsReload = reload
+	}
+}
+
 type Service struct {
-	store          *store.Store
-	vault          *vault.Vault
-	engine         *Engine
-	appVersion     string
-	desktop        bool
-	gatewayAuthKey string
-	syncPeriod     time.Duration
+	store             *store.Store
+	vault             *vault.Vault
+	engine            *Engine
+	appVersion        string
+	desktop           bool
+	gatewayAuthKey    string
+	events            ipc.Emitter
+	profilesReload    func(context.Context) error
+	permissionsReload func(context.Context) error
+	syncPeriod        time.Duration
 
 	settingsMu  stdsync.Mutex
 	lifecycleMu stdsync.Mutex
@@ -54,6 +75,10 @@ type Service struct {
 }
 
 func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
+
+func (s *Service) SetPermissionsReload(reload func(context.Context) error) {
+	s.permissionsReload = reload
+}
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault, syncPeriod: defaultBackgroundSyncPeriod, wakeCh: make(chan struct{}, 1)}
@@ -323,6 +348,10 @@ func (s *Service) linkSecret(ctx context.Context) (linkSecret, error) {
 	return secret, nil
 }
 
+func syncReportChanged(report SyncReport) bool {
+	return report.Applied > 0 || report.Pushed > 0
+}
+
 // Sync 用已保存的链接执行一轮完整同步(对账 → 拉取合并 → 推送)。
 func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
 	s.settingsMu.Lock()
@@ -337,6 +366,19 @@ func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
 	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
 		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
 	})
+	if syncReportChanged(report) {
+		if s.profilesReload != nil {
+			if err := s.profilesReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI profiles failed", "error", err)
+			}
+		}
+		if s.permissionsReload != nil {
+			if err := s.permissionsReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI permission failed", "error", err)
+			}
+		}
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+	}
 	s.recordProbe(ctx, syncErr)
 	return report, syncErr
 }

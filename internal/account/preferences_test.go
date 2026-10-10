@@ -21,8 +21,8 @@ func testPreferences(t *testing.T) *Preferences {
 
 func TestPreferenceKeysWhitelist(t *testing.T) {
 	keys := PreferenceKeys()
-	if len(keys) != 16 {
-		t.Fatalf("declared preference keys=%d want 16: %v", len(keys), keys)
+	if len(keys) != 17 {
+		t.Fatalf("declared preference keys=%d want 17: %v", len(keys), keys)
 	}
 	for _, key := range keys {
 		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") {
@@ -78,10 +78,11 @@ func TestNormalizePreferenceBinding(t *testing.T) {
 
 func TestValidatePreferenceValue(t *testing.T) {
 	valid := map[string]string{
-		"appearance.uiFontPreset":     "14.5",
+		"appearance.uiFontPreset":     "15.5",
 		"appearance.uiFontScale":      "1.25",
-		"appearance.terminalFontSize": "18",
+		"appearance.terminalFontSize": "32",
 		"appearance.terminalTheme":    `"light"`,
+		"appearance.themeMode":        `"system"`,
 		"input.selectionAutoCopy":     "true",
 		"keybinding.closeTab":         `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":    "null",
@@ -100,10 +101,11 @@ func TestValidatePreferenceValue(t *testing.T) {
 		}
 	}
 	invalid := map[string][]string{
-		"appearance.uiFontPreset":     {`"13"`, "11", "14", "null", "true"},
+		"appearance.uiFontPreset":     {`"13"`, "7.5", "13.25", "32.5", "null", "true"},
 		"appearance.uiFontScale":      {"1.1", "2.5", "null", `{"v":1}`},
-		"appearance.terminalFontSize": {"11", "19", "13.5", `"13"`, "null"},
+		"appearance.terminalFontSize": {"7", "33", "13.5", `"13"`, "null"},
 		"appearance.terminalTheme":    {`"blue"`, "1", "null", "true"},
+		"appearance.themeMode":        {`"blue"`, "1", "null", "true"},
 		"input.selectionAutoCopy":     {`"true"`, "1", "null"},
 		"keybinding.closeTab":         {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}

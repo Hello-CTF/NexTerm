@@ -44,6 +44,9 @@ func profileTombstone(t *testing.T, database *store.Store, id string) (kind stri
 func TestDeleteWithoutOptInWritesNoTombstone(t *testing.T) {
 	ctx := ipc.WithUserID(context.Background(), "u-a")
 	database := openStore(t)
+	if err := database.SetAIProfileSyncOptIn(ctx, "u-a", false); err != nil {
+		t.Fatal(err)
+	}
 	manager, err := profiles.NewManager(ctx, database)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +111,9 @@ func TestDeleteOptInIsolatedPerUser(t *testing.T) {
 	id := seedProfile(t, manager, "isolated")
 	// A 开 B 关: B 的删除走 B 自己的 opt-in(关), 不立碑
 	ctxB := ipc.WithUserID(context.Background(), "u-b")
+	if err := database.SetAIProfileSyncOptIn(ctxB, "u-b", false); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := manager.Delete(ctxB, id); err != nil {
 		t.Fatal(err)
 	}

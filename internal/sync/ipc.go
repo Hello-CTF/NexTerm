@@ -20,8 +20,10 @@ const (
 
 	CommandTranscriptSyncOptIn = "transcript_sync_opt_in"
 
-	CommandKindOptInGet = "sync_kind_opt_in_get"
-	CommandKindOptInSet = "sync_kind_opt_in_set"
+	CommandKindOptInGet   = "sync_kind_opt_in_get"
+	CommandKindOptInSet   = "sync_kind_opt_in_set"
+	CommandPreferencesGet = "sync_preferences_get"
+	CommandPreferencesSet = "sync_preferences_set"
 )
 
 type TranscriptSyncOptInRequest struct {
@@ -29,15 +31,19 @@ type TranscriptSyncOptInRequest struct {
 	OptIn bool   `json:"optIn"`
 }
 
-// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)与 ai_profile(AI 模型档案)默认开启。
+// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)、AI 模型档案、AI 权限和外观快捷键默认开启。
 type KindOptIn struct {
-	KnownHost bool `json:"knownHost"`
-	AIProfile bool `json:"aiProfile"`
+	KnownHost    bool `json:"knownHost"`
+	AIProfile    bool `json:"aiProfile"`
+	AIPermission bool `json:"aiPermission"`
+	Preferences  bool `json:"preferences"`
 }
 
 type KindOptInPatch struct {
-	KnownHost *bool `json:"knownHost,omitempty"`
-	AIProfile *bool `json:"aiProfile,omitempty"`
+	KnownHost    *bool `json:"knownHost,omitempty"`
+	AIProfile    *bool `json:"aiProfile,omitempty"`
+	AIPermission *bool `json:"aiPermission,omitempty"`
+	Preferences  *bool `json:"preferences,omitempty"`
 }
 
 // KindOptInGet 返回会话用户的 opt-in; 无身份(匿名/桌面直连)返回全 false(默认关), 不报错。
@@ -54,7 +60,15 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 	if err != nil {
 		return KindOptIn{}, err
 	}
-	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile}, nil
+	aiPermission, err := s.store.AIPermissionSyncOptIn(ctx, userID)
+	if err != nil {
+		return KindOptIn{}, err
+	}
+	preferences, err := s.store.PreferencesSyncOptIn(ctx, userID)
+	if err != nil {
+		return KindOptIn{}, err
+	}
+	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, Preferences: preferences}, nil
 }
 
 // KindOptInSet 只写会话用户自己的 opt-in; 无身份一律 forbidden, 不接受客户端上报 userID(跨用户写入无从发生)。
@@ -70,6 +84,16 @@ func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindO
 	}
 	if patch.AIProfile != nil {
 		if err := s.store.SetAIProfileSyncOptIn(ctx, userID, *patch.AIProfile); err != nil {
+			return KindOptIn{}, err
+		}
+	}
+	if patch.AIPermission != nil {
+		if err := s.store.SetAIPermissionSyncOptIn(ctx, userID, *patch.AIPermission); err != nil {
+			return KindOptIn{}, err
+		}
+	}
+	if patch.Preferences != nil {
+		if err := s.store.SetPreferencesSyncOptIn(ctx, userID, *patch.Preferences); err != nil {
 			return KindOptIn{}, err
 		}
 	}
@@ -160,6 +184,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.CollectAIProfiles(ctx, input)
 			})
 		},
+		func() error {
+			return ipc.Register(dispatcher, CommandCollectAIPermission, func(ctx context.Context, _ *ipc.Call, _ struct{}) (CollectAIPermission, error) {
+				return s.CollectAIPermission(ctx)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, CommandCollectPreferences, func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]CollectPreference, error) {
+				return s.CollectPreferences(ctx)
+			})
+		},
 		// 同步 opt-in 读写: 用户身份由 /rpc 会话注入(UserIDFromContext), 匿名 get 全 false、set forbidden。
 		func() error {
 			return ipc.Register(dispatcher, CommandKindOptInGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (KindOptIn, error) {
@@ -169,6 +203,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandKindOptInSet, func(ctx context.Context, _ *ipc.Call, input KindOptInPatch) (KindOptIn, error) {
 				return s.KindOptInSet(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, CommandPreferencesGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (PreferenceScopeView, error) {
+				return s.PreferenceView(ctx)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandPreferencesSet, func(ctx context.Context, _ *ipc.Call, input PreferenceUpdate) (PreferenceScopeView, error) {
+				return s.PreferenceUpdate(ctx, input)
 			})
 		},
 	}

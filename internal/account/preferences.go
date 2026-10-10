@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -15,6 +16,11 @@ import (
 type PreferenceStore interface {
 	SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error
 	SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error)
+}
+
+type preferenceTombstoneRecorder interface {
+	SyncTombstoneRecord(ctx context.Context, id, kind string, deletedAt int64) error
+	PreferencesSyncOptIn(ctx context.Context, userID string) (bool, error)
 }
 
 // 偏好以命名空间键存入 setting 表: 全局默认只有超管可写, 用户覆盖只能由本人读写。
@@ -27,10 +33,28 @@ func preferenceUserKeyPrefix(userID string) string {
 	return preferenceUserPrefix + userID + "."
 }
 
+func PreferenceUserKeyPrefix(userID string) string {
+	return preferenceUserKeyPrefix(userID)
+}
+
+func PreferenceObjectID(key string) string {
+	return "preference:" + key
+}
+
+func NormalizePreferenceValue(key string, raw json.RawMessage) (string, error) {
+	return validatePreferenceValue(key, raw)
+}
+
+func PreferenceKeyDeclared(key string) bool {
+	_, ok := preferenceSpecs[key]
+	return ok
+}
+
 type preferenceKind int
 
 const (
 	preferenceKindEnumFloat preferenceKind = iota
+	preferenceKindHalfRange
 	preferenceKindIntRange
 	preferenceKindEnumString
 	preferenceKindBool
@@ -47,10 +71,11 @@ type preferenceSpec struct {
 
 // preferenceSpecs 是允许读写的全部偏好键白名单; DEK、密码、凭据与任意键一律不在其中。
 var preferenceSpecs = map[string]preferenceSpec{
-	"appearance.uiFontPreset":     {kind: preferenceKindEnumFloat, floats: []float64{12, 13, 14.5}},
+	"appearance.uiFontPreset":     {kind: preferenceKindHalfRange, min: 8, max: 32},
 	"appearance.uiFontScale":      {kind: preferenceKindEnumFloat, floats: []float64{1, 1.25, 1.5, 1.75, 2}},
-	"appearance.terminalFontSize": {kind: preferenceKindIntRange, min: 12, max: 18},
+	"appearance.terminalFontSize": {kind: preferenceKindIntRange, min: 8, max: 32},
 	"appearance.terminalTheme":    {kind: preferenceKindEnumString, strings: []string{"dark", "light", "interface"}},
+	"appearance.themeMode":        {kind: preferenceKindEnumString, strings: []string{"system", "light", "dark"}},
 	"input.selectionAutoCopy":     {kind: preferenceKindBool},
 	"keybinding.commandPalette":   {kind: preferenceKindBinding},
 	"keybinding.quickConnect":     {kind: preferenceKindBinding},
@@ -169,6 +194,12 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 				return strconv.FormatFloat(value, 'f', -1, 64), nil
 			}
 		}
+	case preferenceKindHalfRange:
+		var value float64
+		if err := json.Unmarshal(raw, &value); err != nil || value < float64(spec.min) || value > float64(spec.max) || value*2 != float64(int64(value*2)) {
+			return "", invalidPreferenceValue(key)
+		}
+		return strconv.FormatFloat(value, 'f', -1, 64), nil
 	case preferenceKindIntRange:
 		var value int64
 		if err := json.Unmarshal(raw, &value); err != nil || value < spec.min || value > spec.max {
@@ -274,7 +305,27 @@ func (p *Preferences) UserOverrides(ctx context.Context, userID string) (map[str
 }
 
 func (p *Preferences) UpdateUserOverrides(ctx context.Context, userID string, set map[string]json.RawMessage, clear []string) (map[string]json.RawMessage, error) {
-	return p.preferenceUpdate(ctx, preferenceUserKeyPrefix(userID), set, clear)
+	updated, err := p.preferenceUpdate(ctx, preferenceUserKeyPrefix(userID), set, clear)
+	if err != nil {
+		return nil, err
+	}
+	recorder, ok := p.store.(preferenceTombstoneRecorder)
+	if !ok {
+		return updated, nil
+	}
+	enabled, err := recorder.PreferencesSyncOptIn(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return updated, nil
+	}
+	for _, key := range clear {
+		if err := recorder.SyncTombstoneRecord(ctx, PreferenceObjectID(key), "preference", ids.NowMS()); err != nil {
+			return nil, err
+		}
+	}
+	return updated, nil
 }
 
 // MergePreferences 以「覆盖优先于默认」合成生效值; 显式 null(解绑)也是有效覆盖。

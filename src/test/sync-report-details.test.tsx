@@ -137,7 +137,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
 });
 
 afterEach(() => {
