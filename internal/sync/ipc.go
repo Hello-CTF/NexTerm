@@ -10,7 +10,7 @@ const (
 	CommandLinkGet     = "sync_link_get"
 	CommandLinkSet     = "sync_link_set"
 	CommandStatus      = "sync_status"
-	CommandSyncNow     = "sync_now"
+	CommandWake        = "sync_wake"
 	CommandBundleRead  = "sync_bundle_read"
 	CommandBundleWrite = "sync_bundle_write"
 
@@ -29,7 +29,7 @@ type TranscriptSyncOptInRequest struct {
 	OptIn bool   `json:"optIn"`
 }
 
-// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)与 ai_profile(AI 模型档案)默认关。
+// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)与 ai_profile(AI 模型档案)默认开启。
 type KindOptIn struct {
 	KnownHost bool `json:"knownHost"`
 	AIProfile bool `json:"aiProfile"`
@@ -103,11 +103,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, CommandSyncNow, func(ctx context.Context, _ *ipc.Call, _ struct{}) (SyncReport, error) {
-				if err := s.requireDesktop(); err != nil {
-					return SyncReport{}, err
-				}
-				return s.Sync(ctx)
+			return ipc.Register(dispatcher, CommandWake, func(_ context.Context, _ *ipc.Call, _ struct{}) (struct{}, error) {
+				s.wake()
+				return struct{}{}, nil
 			})
 		},
 		func() error {

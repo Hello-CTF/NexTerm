@@ -83,7 +83,7 @@ func TestMasterLifecyclePasswordChangeAndReload(t *testing.T) {
 	if err := v.InitMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	if status := v.Status(); status.Mode != "master" || !status.Unlocked || status.AutoLockMinutes != 30 {
+	if status := v.Status(); status.Mode != "master" || !status.Unlocked || status.AutoLockMinutes != 0 {
 		t.Fatalf("unexpected status %+v", status)
 	}
 	nonce, blob, err := v.EncryptCredential(ctx, "p@ss 中文")

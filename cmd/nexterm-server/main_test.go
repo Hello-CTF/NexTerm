@@ -82,14 +82,15 @@ func TestServerProcessBootstrapsVaultFromMasterKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status struct {
-		Initialized bool `json:"initialized"`
-		Unlocked    bool `json:"unlocked"`
+		Initialized     bool   `json:"initialized"`
+		Unlocked        bool   `json:"unlocked"`
+		AutoLockMinutes uint64 `json:"autoLockMinutes"`
 	}
 	if err := json.Unmarshal(encoded, &status); err != nil {
 		t.Fatal(err)
 	}
-	if !status.Initialized || !status.Unlocked {
-		t.Fatalf("vault status = %+v, want initialized and unlocked from --master-key-file", status)
+	if !status.Initialized || !status.Unlocked || status.AutoLockMinutes != 0 {
+		t.Fatalf("vault status = %+v, want initialized, unlocked, and no idle auto-lock from --master-key-file", status)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	created := requestFullRPC(t, client, address, "vault_set_credential", map[string]any{"args": map[string]any{"name": "regression", "kind": "password", "secret": "s3cret"}})

@@ -24,8 +24,8 @@ func TestVaultSetAutoLockCommand(t *testing.T) {
 	response := dispatchStoreTest(dispatcher, "vault_status", `null`)
 	var status vault.Status
 	requireStoreTestResponse(t, response, &status)
-	if status.AutoLockMinutes != 30 {
-		t.Fatalf("default autolock = %d, want 30", status.AutoLockMinutes)
+	if status.AutoLockMinutes != 0 {
+		t.Fatalf("default autolock = %d, want 0", status.AutoLockMinutes)
 	}
 
 	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_set_autolock", `{"minutes":5}`))

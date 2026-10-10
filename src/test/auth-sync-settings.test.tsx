@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-// M165 端到端验收: known_host/AI 档案 opt-in 开关默认关、开启后 collect/compare/push/apply 接入
+// M165 端到端验收: known_host/AI 档案同步开关显式关闭，以及开启后 collect/compare/push/apply 接入
 // M163 对象(revealed/masked 密钥处理、vault-locked 警告、墓碑按开关过滤、冲突三元组保留、二次同步收敛)。
 // 全部经真实 SyncCard 交互与真实加解密; 远端载荷是真实 Go json.Marshal fixture 字节(src/test/auth-sync-fixtures.ts)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -156,6 +156,17 @@ function seedAuthed() {
   });
 }
 
+async function runAutoSync() {
+  const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
+  try {
+    const result = await runWebSync(DEK, optInState);
+    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+    throw error;
+  }
+}
+
 async function remoteFixtureWire(id: string, kind: import("../features/auth/crypto").SyncObjectKind, fixture: string, seq: number) {
   const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../features/auth/crypto");
   return { id, seq, blob: bytesToBase64(await sealSyncObject(DEK, base64ToBytes(fixture), id, kind)) };
@@ -269,8 +280,7 @@ describe("M165 opt-in 默认关", () => {
     expect(mocks.collectAIProfiles).not.toHaveBeenCalled();
     expect(optInCheckbox(0).checked).toBe(false);
     expect(optInCheckbox(1).checked).toBe(false);
-    expect(text()).toContain("拉取并应用（0）");
-    expect(button("拉取并应用（0）")?.disabled).toBe(true);
+    expect(text()).toContain("当前待应用 0 项");
     expect(text()).not.toContain("10.0.0.9:22");
     expect(text()).not.toContain("生产 <档案> & more");
   });
@@ -288,9 +298,9 @@ describe("M165 known_host 同步", () => {
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: true });
     expect(text()).toContain("已知主机");
     expect(text()).toContain("仅本机");
-    expect(text()).toContain("推送到云端（1）");
+    expect(text()).toContain("待推送 1 项");
 
-    clickButton(mounted!.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-1"]);
@@ -302,11 +312,11 @@ describe("M165 known_host 同步", () => {
     const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 2);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
-    await flushUntil(() => text().includes("已推送 1"));
-    clickButton(mounted!.container, "刷新对比");
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    await runAutoSync();
     await flushUntil(() => text().includes("已一致"));
-    expect(text()).toContain("推送到云端（0）");
-    expect(text()).toContain("拉取并应用（0）");
+    expect(text()).toContain("待推送 0 项");
+    expect(text()).toContain("当前待应用 0 项");
     expect(mocks.syncPush).toHaveBeenCalledTimes(1);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
@@ -324,13 +334,13 @@ describe("M165 known_host 同步", () => {
     openDetails();
     // 默认关: known_host 墓碑不进入推送集合, 也不出现在对比行
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
-    expect(text()).toContain("推送到云端（0）");
+    expect(text()).toContain("待推送 0 项");
     expect(text()).not.toContain("kh-del");
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
     optInCheckbox(0).click();
-    await flushUntil(() => text().includes("推送到云端（1）"));
-    clickButton(mounted!.container, "推送到云端（1）");
+    await flushUntil(() => text().includes("待推送 1 项"));
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-del"]);
@@ -355,9 +365,9 @@ describe("M165 AI 档案同步", () => {
     await flushUntil(() => text().includes("AI 模型档案「locked-profile」凭据库未解锁，未进入本次对比与推送"));
     expect(optInCheckbox(1).checked).toBe(true);
     expect(mocks.collectAIProfiles).toHaveBeenCalledWith(true, undefined, 512);
-    expect(text()).toContain("推送到云端（1）");
+    expect(text()).toContain("待推送 1 项");
 
-    clickButton(mounted!.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["p-1"]);
@@ -378,8 +388,8 @@ describe("M165 AI 档案同步", () => {
     await flushUntil(() => text().includes("生产 <档案> & more"));
     expect(text()).toContain("AI 模型档案");
     expect(text()).toContain("仅云端");
-    expect(text()).toContain("拉取并应用（1）");
-    clickButton(mounted!.container, "拉取并应用（1）");
+    expect(text()).toContain("当前待应用 1 项");
+    await runAutoSync();
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];
     expect(objects[0].id).toBe("p-1");
@@ -412,7 +422,7 @@ describe("M165 R2 开关切换竞态", () => {
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("推送到云端（1）"));
+    await flushUntil(() => text().includes("待推送 1 项"));
 
     // 关闭开关: set 挂起期间推送已禁用; set 返回后 reload 完成前仍禁用(旧快照已作废)
     const reloadGate = deferred<void>();
@@ -422,13 +432,11 @@ describe("M165 R2 开关切换竞态", () => {
     });
     optInCheckbox(0).click();
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
-    expect(button("推送到云端（1）")?.disabled).toBe(true);
     setGate.resolve();
     // reload 已开始(collectTombstones 第二次调用)但未完成: 旧快照仍是 (1), 按钮必须保持禁用
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
-    expect(button("推送到云端（1）")?.disabled).toBe(true);
     reloadGate.resolve();
-    await flushUntil(() => text().includes("推送到云端（0）"));
+    await flushUntil(() => text().includes("待推送 0 项"));
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
@@ -448,7 +456,7 @@ describe("M165 R2 开关切换竞态", () => {
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     // 慢 load 此刻才完成: 回写必须被代次检查丢弃, 禁用种类不得出现在对比行
     slowLoad.resolve();
-    await flushUntil(() => text().includes("推送到云端（0）"));
+    await flushUntil(() => text().includes("待推送 0 项"));
     expect(text()).not.toContain("10.0.0.9:22");
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -461,7 +469,7 @@ describe("M165 R2 开关切换竞态", () => {
     mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用（1）"));
+    await flushUntil(() => text().includes("当前待应用 1 项"));
 
     const reloadGate = deferred<void>();
     mocks.collectTombstones.mockImplementationOnce(async () => {
@@ -472,14 +480,13 @@ describe("M165 R2 开关切换竞态", () => {
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
     // reload 已开始但未完成: 旧 applySet 仍是 (1), 按钮必须保持禁用
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
-    expect(button("拉取并应用（1）")?.disabled).toBe(true);
     reloadGate.resolve();
-    await flushUntil(() => text().includes("拉取并应用（0）"));
+    await flushUntil(() => text().includes("当前待应用 0 项"));
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
 });
 
-describe("CompareConsole 操作忙碌状态", () => {
+describe("CompareConsole 自动同步", () => {
   function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((res) => {
@@ -488,7 +495,7 @@ describe("CompareConsole 操作忙碌状态", () => {
     return { promise, resolve };
   }
 
-  it("拉取应用只显示 apply 忙碌,不误标成推送", async () => {
+  it("应用远端对象时不在同一轮推送空的本机 winner", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
@@ -498,37 +505,37 @@ describe("CompareConsole 操作忙碌状态", () => {
     mocks.applyObjects.mockReturnValue(applyGate.promise);
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用（1）"));
-    clickButton(mounted!.container, "拉取并应用（1）");
-    await flushUntil(() => button("应用中…") !== undefined);
-    expect(button("推送到云端（0）")?.textContent).toBe("推送到云端（0）");
-    expect(button("推送中…")).toBeUndefined();
+    await flushUntil(() => text().includes("当前待应用 1 项"));
+    const syncPromise = runAutoSync();
+    await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
 
     applyGate.resolve({ applied: 1, identical: 0, skipped: 0, objects: [] });
-    await flushUntil(() => text().includes("已应用 1"));
+    await syncPromise;
+    expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
   });
 
-  it("刷新期间禁用旧快照的 apply/push,完成后恢复", async () => {
+  it("读取快照完成前不应用或推送", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const wire = await remoteFixtureWire("kh-2", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-2", seq: 1, blob_hash: "h2" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
 
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("拉取并应用（1）") && text().includes("推送到云端（1）"));
+    await flushUntil(() => text().includes("当前待应用 1 项"));
     const refreshGate = deferred<void>();
     mocks.collectKnownHosts.mockImplementationOnce(async () => {
       await refreshGate.promise;
-      return { knownHosts: [KNOWN_HOST_DTO], hasMore: false };
+      return { knownHosts: [], hasMore: false };
     });
-    clickButton(mounted!.container, "刷新对比");
-    await flushUntil(() => button("刷新对比")?.disabled === true);
-    expect(button("拉取并应用（1）")?.disabled).toBe(true);
-    expect(button("推送到云端（1）")?.disabled).toBe(true);
+    const syncPromise = runAutoSync();
+    await flushUntil(() => mocks.collectKnownHosts.mock.calls.length > 1);
+    expect(mocks.applyObjects).not.toHaveBeenCalled();
+    expect(mocks.syncPush).not.toHaveBeenCalled();
 
     refreshGate.resolve();
-    await flushUntil(() => button("刷新对比")?.disabled === false);
-    expect(button("拉取并应用（1）")?.disabled).toBe(false);
-    expect(button("推送到云端（1）")?.disabled).toBe(false);
+    await syncPromise;
+    expect(mocks.applyObjects).toHaveBeenCalled();
   });
 });

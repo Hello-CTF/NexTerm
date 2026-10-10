@@ -55,7 +55,7 @@ func (s *Store) KnownHostList(ctx context.Context) ([]KnownHostRow, error) {
 }
 
 // KnownHostRemove 删除已知主机; 仅当删除者的 known_host 同步 opt-in 开启时在同一事务记录用户删除墓碑,
-// 让删除随下一轮同步收敛。opt-in 按账号用户隔离且默认关: 未开启(或拿不到删除者身份, 如桌面直连/匿名模式)时
+// 让删除随下一轮同步收敛。opt-in 按账号用户隔离且默认开启: 未开启(或拿不到删除者身份, 如桌面直连/匿名模式)时
 // 只删本地行, 从未同步或已禁用同步的主机删除不得产生墓碑, 远端副本不受影响。
 func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 	userID, hasIdentity := SyncOptInUserID(ctx)

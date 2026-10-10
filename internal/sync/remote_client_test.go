@@ -1,6 +1,9 @@
 package sync
 
 import (
+	"compress/gzip"
+	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -66,4 +69,41 @@ func (l *countingListener) Accept() (net.Conn, error) {
 		l.accepts.Add(1)
 	}
 	return connection, err
+}
+
+func TestRemoteClientPushCompressesRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Encoding"); got != "gzip" {
+			t.Errorf("request Content-Encoding = %q, want gzip", got)
+			http.Error(w, "missing gzip", http.StatusBadRequest)
+			return
+		}
+		reader, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "invalid gzip", http.StatusBadRequest)
+			return
+		}
+		defer reader.Close()
+		var request PushRequest
+		if err := json.NewDecoder(reader).Decode(&request); err != nil {
+			t.Error(err)
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if len(request.Objects) != 1 || len(request.Objects[0].Blob) != 2048 {
+			t.Errorf("request objects = %+v", request.Objects)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(PushResponse{Protocol: ProtocolVersion, Head: "next", MaxSeq: 1, Applied: 1})
+	}))
+	defer server.Close()
+	client := &remoteClient{base: server.URL}
+	response, err := client.push(context.Background(), "head", []WireObject{{ID: "obj-1", Blob: make([]byte, 2048)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Applied != 1 || response.Head != "next" {
+		t.Fatalf("push response = %+v", response)
+	}
 }

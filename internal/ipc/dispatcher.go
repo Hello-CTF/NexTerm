@@ -8,6 +8,17 @@ import (
 	"sync"
 )
 
+var syncObjectWriteCommands = map[string]bool{
+	"asset_create": true, "asset_update": true, "asset_delete": true,
+	"group_create": true, "group_update": true, "group_delete": true,
+	"snippet_create": true, "snippet_update": true, "snippet_delete": true,
+	"vault_set_credential": true, "credential_update": true, "vault_delete_credential": true,
+	"known_host_accept": true, "known_host_remove": true,
+	"ai_model_save": true, "ai_model_delete": true,
+	"terminal_record_stop": true, "transcript_delete": true, "transcript_sync_opt_in": true,
+	"sync_link_set": true, "sync_kind_opt_in_set": true, "sync_import": true, "ssh_import_apply": true,
+}
+
 type Environment struct {
 	ClientID string
 	Events   Emitter
@@ -102,6 +113,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, request Request, environment 
 	result, err := handler(ctx, call)
 	if err != nil {
 		return Failure(NormalizeError(err))
+	}
+	if syncObjectWriteCommands[request.Command] {
+		_ = Emit(ctx, call.Events, TopicSyncStatus, struct{}{})
 	}
 	data, err := json.Marshal(result)
 	if err != nil {

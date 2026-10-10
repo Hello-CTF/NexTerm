@@ -33,6 +33,7 @@ func wsDialOptions(insecure bool) *websocket.DialOptions {
 				return http.ErrUseLastResponse
 			},
 		},
+		CompressionMode: websocket.CompressionContextTakeover,
 	}
 }
 

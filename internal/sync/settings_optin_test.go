@@ -44,16 +44,16 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.KnownHost || view.AIProfile {
+	if !view.KnownHost || !view.AIProfile {
 		t.Fatalf("set view = %+v", view)
 	}
-	// A 开 B 关: B 读到全 false
+	// A 的开关不影响 B 的默认开启状态
 	viewB, err := instance.service.KindOptInGet(ctxB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if viewB.KnownHost || viewB.AIProfile {
-		t.Fatalf("u-a 的开启不得影响 u-b: %+v", viewB)
+	if !viewB.KnownHost || !viewB.AIProfile {
+		t.Fatalf("u-b 应保持默认开启: %+v", viewB)
 	}
 	// 底层键按用户隔离, 全局键不存在
 	var globalRows int
@@ -64,7 +64,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if globalRows != 0 {
 		t.Fatal("不得写全局 opt-in 键")
 	}
-	// 关闭后回到默认
+	// 关闭 known_host 不影响 AI 档案的默认开启状态
 	if _, err := instance.service.KindOptInSet(ctxA, KindOptInPatch{KnownHost: boolPtr(false)}); err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,8 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if viewA.KnownHost || viewA.AIProfile {
-		t.Fatalf("关闭后应回到默认: %+v", viewA)
+	if viewA.KnownHost || !viewA.AIProfile {
+		t.Fatalf("关闭 known_host 后状态错误: %+v", viewA)
 	}
 }
 

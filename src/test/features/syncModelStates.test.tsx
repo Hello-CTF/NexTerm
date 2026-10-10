@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => {
     linkGet: vi.fn(),
     linkSet: vi.fn(),
     status: vi.fn(),
-    syncNow: vi.fn(),
     overview: vi.fn(),
     presets: vi.fn(),
     save: vi.fn(),
@@ -28,7 +27,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       linkGet: mocks.linkGet,
       linkSet: mocks.linkSet,
       status: mocks.status,
-      syncNow: mocks.syncNow,
     },
     modelApi: {
       overview: mocks.overview,
@@ -48,7 +46,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { SyncCard } from "../../features/settings/SyncCard";
-import { SyncReportView } from "../../features/settings/SyncCardReport";
 import { ModelPanel } from "../../features/ai/ModelPanel";
 import { ModelManager } from "../../features/ai/ModelPanel";
 import { useUi } from "../../app/store";
@@ -82,17 +79,6 @@ beforeEach(() => {
     seq: 0,
     verifiedAt: 0,
     lastError: "",
-  });
-  mocks.syncNow.mockResolvedValue({
-    pulled: 2,
-    applied: 1,
-    pullSkipped: 1,
-    decryptFailed: 0,
-    pushed: 3,
-    conflicts: 0,
-    head: "head-1",
-    seq: 7,
-    warnings: [],
   });
   mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.presets.mockResolvedValue([]);
@@ -173,8 +159,8 @@ describe("SyncCard 桌面端状态", () => {
         password: "correct horse battery staple",
       }),
     );
-    // 登录只保存凭据完成配置,不自动执行首次同步
-    expect(mocks.syncNow).not.toHaveBeenCalled();
+    expect(text()).toContain("登录后自动同步");
+    expect(text()).not.toContain("立即同步");
   });
 
   it("未保存过密码时登录按钮要求输入密码", async () => {
@@ -197,98 +183,6 @@ describe("SyncCard 桌面端状态", () => {
     );
     expect(loginButtons.length).toBe(1);
     expect(text()).not.toContain("当前未登录");
-  });
-
-  it("立即同步成功时展示 v2 报告", async () => {
-    mocks.status.mockResolvedValue({
-      configured: true,
-      loggedIn: true,
-      username: "alice",
-      seq: 7,
-      verifiedAt: 1,
-      lastError: "",
-    });
-    mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "立即同步",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(mounted!.container, "立即同步");
-    await flushUntil(() => text().includes("同步结果"));
-    expect(text()).toContain("拉取 2");
-    expect(text()).toContain("应用 1");
-    expect(text()).toContain("推送 3");
-  });
-
-  it("立即同步失败时展示错误而不是报告", async () => {
-    mocks.status.mockResolvedValue({
-      configured: true,
-      loggedIn: false,
-      seq: 0,
-      verifiedAt: 0,
-      lastError: "会话已过期",
-    });
-    mocks.syncNow.mockRejectedValue(new Error("同步头不一致"));
-    mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "立即同步",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(mounted!.container, "立即同步");
-    await flushUntil(() => text().includes("同步头不一致"));
-    expect(text()).not.toContain("同步结果");
-  });
-});
-
-describe("SyncReportView v2 报告", () => {
-  it("展示计数与警告", async () => {
-    mounted = mount(
-      createElement(SyncReportView, {
-        data: {
-          pulled: 5,
-          applied: 2,
-          pullSkipped: 3,
-          decryptFailed: 1,
-          pushed: 4,
-          conflicts: 0,
-          head: "head-2",
-          seq: 11,
-          warnings: ["对象 a1 解密失败,已隔离"],
-        },
-      }),
-    );
-    await flush();
-    const t = mounted.container.textContent ?? "";
-    expect(t).toContain("拉取 5");
-    expect(t).toContain("应用 2");
-    expect(t).toContain("推送 4");
-    expect(t).toContain("解密失败 1");
-    expect(t).toContain("对象 a1 解密失败,已隔离");
-  });
-
-  it("无变更时不按失败样式展示", async () => {
-    mounted = mount(
-      createElement(SyncReportView, {
-        data: {
-          pulled: 0,
-          applied: 0,
-          pullSkipped: 0,
-          decryptFailed: 0,
-          pushed: 0,
-          conflicts: 0,
-          head: "head-3",
-          seq: 12,
-          warnings: [],
-        },
-      }),
-    );
-    await flush();
-    const alert = mounted.container.querySelector(".nx-alert");
-    expect(alert?.className).not.toContain("nx-alert-danger");
   });
 });
 

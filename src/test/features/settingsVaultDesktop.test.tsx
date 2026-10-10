@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     getPermission: vi.fn(),
     vaultStatus: vi.fn(),
     initDpapi: vi.fn(),
+    unlock: vi.fn(),
     changePassword: vi.fn(),
     toast: vi.fn(),
   };
@@ -28,6 +29,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       status: mocks.vaultStatus,
       initDpapi: mocks.initDpapi,
       initMaster: vi.fn(),
+      unlock: mocks.unlock,
       changePassword: mocks.changePassword,
       setAutoLock: vi.fn(),
     },
@@ -158,6 +160,26 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(mocks.changePassword).not.toHaveBeenCalled();
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
+  });
+
+  it("旧密码错误时不再询问新密码", async () => {
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText).mockResolvedValue("wrong-password");
+    mocks.unlock.mockRejectedValueOnce({ code: "bad_master_password", message: "保护密码错误" });
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
+
+    const changeButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent === "修改密码",
+    );
+    changeButton!.click();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+
+    expect(mocks.unlock).toHaveBeenCalledWith("wrong-password");
+    expect(promptText).toHaveBeenCalledTimes(1);
+    expect(mocks.changePassword).not.toHaveBeenCalled();
+    expect(mocks.initDpapi).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", "保护密码错误");
   });
 
   it("桌面端密钥存储文案区分本机与同步上传条件", async () => {

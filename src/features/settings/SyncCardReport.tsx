@@ -1,31 +1,10 @@
-import type { ImportReport, SkippedNewerEntry, SyncReport } from "../../ipc/types";
+import type { ImportReport, SkippedNewerEntry } from "../../ipc/types";
 
 const KIND_LABELS: Record<string, string> = {
   asset: "资产",
   credential: "凭据",
   snippet: "片段",
 };
-
-// SyncReportView 展示 v2 对象协议的一轮同步结果(拉取应用 + 推送)。
-export function SyncReportView({ data }: { data: SyncReport }) {
-  const failed = data.decryptFailed > 0 || data.conflicts > 0;
-  return (
-    <div className={`mt-3 nx-alert ${failed ? "nx-alert-danger" : ""}`}>
-      <div className="mb-1 font-semibold">同步结果</div>
-      <div className="font-mono text-[11px]">
-        拉取 {data.pulled} · 应用 {data.applied} · 推送 {data.pushed} · 跳过 {data.pullSkipped} ·
-        解密失败 {data.decryptFailed} · 冲突 {data.conflicts}
-      </div>
-      {data.warnings && data.warnings.length > 0 && (
-        <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">
-          {data.warnings.map((w, i) => (
-            <li key={i}>{w}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 function revisionLabels(dir?: "push" | "pull"): { local: string; remote: string } {
   if (dir === "push") return { local: "对端", remote: "本机" };

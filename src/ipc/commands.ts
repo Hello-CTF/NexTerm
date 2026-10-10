@@ -854,7 +854,7 @@ export const syncApi = {
     call<import("./types").AccountLink>("sync_link_set", { args: patch }),
 
   status: () => call<import("./types").SyncStatus>("sync_status"),
-  syncNow: () => call<import("./types").SyncReport>("sync_now"),
+  wake: () => call<void>("sync_wake"),
 
   applyObjects: (objects: import("./types").SyncApplyObject[]) =>
     call<import("./types").SyncApplyResult>("sync_apply_objects", { args: { objects } }),

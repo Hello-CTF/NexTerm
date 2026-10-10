@@ -61,7 +61,7 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	return &Engine{store: database, vault: credentialVault, logger: logger}
 }
 
-// kindOptIn 是 known_host/AI 模型档案在一轮同步内的 opt-in 快照; 零值即硬关闭(默认关)。
+// kindOptIn 是 known_host/AI 模型档案在一轮同步内的 opt-in 快照; 零值即硬关闭。
 type kindOptIn struct {
 	knownHost bool
 	aiProfile bool

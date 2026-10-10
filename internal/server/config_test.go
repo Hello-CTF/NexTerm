@@ -53,6 +53,13 @@ func (v *fakeVault) UnlockMaster(_ context.Context, password string) error {
 	return v.err
 }
 
+func (v *fakeVault) SetAutoLock(_ context.Context, minutes uint64) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.status.AutoLockMinutes = minutes
+	return v.err
+}
+
 func TestResolveMasterKey(t *testing.T) {
 	key, err := ResolveMasterKey("")
 	if err != nil || key != "" {
@@ -147,18 +154,18 @@ func TestBootstrapVaultRequired(t *testing.T) {
 }
 
 func TestBootstrapVaultInitializesOrUnlocks(t *testing.T) {
-	fresh := &fakeVault{}
+	fresh := &fakeVault{status: vault.Status{AutoLockMinutes: 30}}
 	if err := BootstrapVault(context.Background(), fresh, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	if fresh.initialized != 1 || fresh.unlocked != 0 || fresh.password != "correct-password" {
+	if fresh.initialized != 1 || fresh.unlocked != 0 || fresh.password != "correct-password" || fresh.status.AutoLockMinutes != 0 {
 		t.Fatalf("fresh vault = %+v", fresh)
 	}
-	initialized := &fakeVault{status: vault.Status{Initialized: true}}
+	initialized := &fakeVault{status: vault.Status{Initialized: true, AutoLockMinutes: 30}}
 	if err := BootstrapVault(context.Background(), initialized, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	if initialized.initialized != 0 || initialized.unlocked != 1 {
+	if initialized.initialized != 0 || initialized.unlocked != 1 || initialized.status.AutoLockMinutes != 0 {
 		t.Fatalf("initialized vault = %+v", initialized)
 	}
 	if err := BootstrapVault(context.Background(), &fakeVault{}, "short"); err == nil {

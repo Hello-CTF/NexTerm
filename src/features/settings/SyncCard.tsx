@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
-import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncReport, SyncStatus } from "../../ipc/types";
+import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
   base64ToBytes,
   bytesToBase64,
+  CryptoError,
   objectPayloadHash,
   sealSyncObject,
   tryOpenSyncObject,
@@ -29,17 +30,13 @@ import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
-import { SyncReportView } from "./SyncCardReport";
 import {
-  IconCheckCircle,
   IconChevronDown,
   IconChevronRight,
-  IconDownload,
   IconInfo,
   IconLock,
   IconRefresh,
   IconServer,
-  IconUpload,
   IconXCircle,
 } from "../../ui/icons";
 
@@ -59,7 +56,6 @@ function SyncBody() {
 }
 
 // ---------- 桌面端:账号登录与同步 ----------
-// 登录只保存凭据完成同步配置,不传输数据;会话在 sync_now 时惰性建立。
 
 function DesktopLinkCard() {
   const { pushToast } = useUi();
@@ -69,8 +65,7 @@ function DesktopLinkCard() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
   const [draftEdited, setDraftEdited] = useState(false);
-  const [busy, setBusy] = useState<null | "login" | "sync">(null);
-  const [report, setReport] = useState<SyncReport | null>(null);
+  const [busy, setBusy] = useState<null | "login">(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const insecurePanelId = useId();
@@ -104,7 +99,6 @@ function DesktopLinkCard() {
   const login = async () => {
     setBusy("login");
     setError(null);
-    setReport(null);
     try {
       await syncApi.linkSet({
         url: draft.url.trim(),
@@ -115,28 +109,9 @@ function DesktopLinkCard() {
       setDraft((d) => ({ ...d, password: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
-      pushToast("success", "登录信息已保存，同步配置完成");
+      pushToast("success", "登录信息已保存，自动同步已开启");
     } catch (e) {
       setError(describeError(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const syncNow = async () => {
-    setBusy("sync");
-    setError(null);
-    setReport(null);
-    try {
-      const r = await syncApi.syncNow();
-      setReport(r);
-      void qc.invalidateQueries();
-      await load();
-      const moved = r.applied + r.pushed;
-      pushToast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "本机与云端已一致");
-    } catch (e) {
-      setError(describeError(e));
-      await load();
     } finally {
       setBusy(null);
     }
@@ -159,7 +134,7 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        登录仅保存同步配置，不上传或下载数据。点击「立即同步」时，数据在本机加密后传输，服务端只保存密文；不登录也能继续本地使用。
+        登录后自动同步。首轮先拉取并合并云端内容，再推送本机变更；数据在本机加密后传输，服务端只保存密文。不登录也能继续本地使用。
       </p>
 
       {loadError && (
@@ -257,14 +232,6 @@ function DesktopLinkCard() {
           {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
           {busy === "login" ? "登录中…" : "登录"}
         </button>
-        <button
-          className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={busy !== null || !status?.configured}
-          onClick={() => void syncNow()}
-        >
-          {busy === "sync" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-          {busy === "sync" ? "同步中…" : "立即同步"}
-        </button>
         {status?.lastError && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
       </div>
 
@@ -274,8 +241,6 @@ function DesktopLinkCard() {
           <span className="min-w-0 flex-1 break-words">{error}</span>
         </div>
       )}
-
-      {report && <SyncReportView data={report} />}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -307,11 +272,13 @@ interface RemoteObject {
   deletedAt: number | null;
   seq: number;
   payloadHash: string;
+  blobHash: string;
   plaintext: string;
 }
 
 interface RemoteState {
   objects: RemoteObject[];
+  warnings: string[];
   head: string;
   maxSeq: number;
 }
@@ -464,7 +431,7 @@ async function localEntity(
 // loadLocalEntities 经 M141 collect RPC 收集完整本地副本: 软删资产、两类墓碑与凭据都进入对比,
 // 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,墓碑压过存活对象,存活 transcript 最后)。
 // 读不到明文的凭据(locked/unavailable/error)明确记入 warnings,不静默遗漏。
-// known_host/AI 模型档案按账号用户 opt-in 收集(默认关): 开启才进入对比与推送;
+// known_host/AI 模型档案按账号用户开关收集(默认开启): 开启才进入对比与推送;
 // 档案 apiKey 被扣留(locked/unavailable/error)同样只记 warning; 无密钥档案(apiKeySet=false)不受凭据库锁定影响。
 async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
   const warnings: string[] = [];
@@ -535,93 +502,85 @@ function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncK
   return true;
 }
 
-async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn): Promise<RemoteState> {
-  const ids = await syncV2Api.ids();
-  const out: RemoteObject[] = [];
-  for (const entry of ids.entries) {
-    const page = await syncV2Api.pull(0, [entry.id]);
-    const wire = page.objects[0];
-    if (!wire) continue;
-    const { kind, plaintext } = await tryOpenSyncObject(dek, base64ToBytes(wire.blob), entry.id);
-    const text = new TextDecoder().decode(plaintext);
-    if (!remoteKindVisible(kind, text, optIn)) continue;
-    const payloadHash = await objectPayloadHash(plaintext);
-    if (kind === "tombstone") {
-      const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
-      out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash, plaintext: text });
-      continue;
-    }
-    if (kind === "transcript") {
-      // transcript 没有 updatedAt: 修订号即 endedAt(内容结束后不可变),名称取资产名。
-      const t = JSON.parse(text) as { assetName?: string; endedAt?: number };
-      out.push({
-        id: entry.id,
-        kind,
-        name: t.assetName ? `${t.assetName} 的会话记录` : entry.id,
-        updatedAt: t.endedAt ?? 0,
-        deletedAt: null,
-        seq: entry.seq,
-        payloadHash,
-        plaintext: text,
-      });
-      continue;
-    }
-    if (kind === "known_host") {
-      // known_host 没有 name/updatedAt: 修订号即 addedAt, 名称取 host:port。
-      const k = JSON.parse(text) as { host?: string; port?: number; addedAt?: number };
-      out.push({
-        id: entry.id,
-        kind,
-        name: k.host ? `${k.host}:${k.port}` : entry.id,
-        updatedAt: k.addedAt ?? 0,
-        deletedAt: null,
-        seq: entry.seq,
-        payloadHash,
-        plaintext: text,
-      });
-      continue;
-    }
-    const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
-    out.push({
-      id: entry.id,
-      kind,
-      name: p.name ?? entry.id,
-      updatedAt: p.updatedAt ?? 0,
-      deletedAt: p.deletedAt ?? null,
-      seq: entry.seq,
-      payloadHash,
-      plaintext: text,
-    });
+interface RemoteCache {
+  head: string;
+  objects: Map<string, RemoteObject>;
+}
+
+const remoteCaches = new WeakMap<Uint8Array, RemoteCache>();
+
+async function decodeRemoteObject(entry: { id: string; seq: number; blob_hash: string }, blob: string, dek: Uint8Array): Promise<RemoteObject> {
+  const { kind, plaintext } = await tryOpenSyncObject(dek, base64ToBytes(blob), entry.id);
+  const text = new TextDecoder().decode(plaintext);
+  const payloadHash = await objectPayloadHash(plaintext);
+  const base = {
+    id: entry.id,
+    kind,
+    updatedAt: 0,
+    deletedAt: null,
+    seq: entry.seq,
+    payloadHash,
+    blobHash: entry.blob_hash,
+    plaintext: text,
+  };
+  if (kind === "tombstone") {
+    const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
+    return { ...base, name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0 };
   }
-  return { objects: out, head: ids.head, maxSeq: ids.max_seq };
+  if (kind === "transcript") {
+    const t = JSON.parse(text) as { assetName?: string; endedAt?: number };
+    return { ...base, name: t.assetName ? `${t.assetName} 的会话记录` : entry.id, updatedAt: t.endedAt ?? 0 };
+  }
+  if (kind === "known_host") {
+    const k = JSON.parse(text) as { host?: string; port?: number; addedAt?: number };
+    return { ...base, name: k.host ? `${k.host}:${k.port}` : entry.id, updatedAt: k.addedAt ?? 0 };
+  }
+  const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
+  return { ...base, name: p.name ?? entry.id, updatedAt: p.updatedAt ?? 0, deletedAt: p.deletedAt ?? null };
 }
 
-function cursorKey(userId: string): string {
-  return `sync.cursor.${userId}`;
-}
+type SyncIds = Awaited<ReturnType<typeof syncV2Api.ids>>;
 
-function loadCursor(userId: string): { head: string; seq: number } {
-  try {
-    const raw = window.localStorage.getItem(cursorKey(userId));
-    if (raw) {
-      const parsed = JSON.parse(raw) as { head?: string; seq?: number };
-      return { head: parsed.head ?? "", seq: parsed.seq ?? 0 };
+async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<RemoteState> {
+  const cache = remoteCaches.get(dek);
+  const previous = cache?.objects ?? new Map<string, RemoteObject>();
+  const ids = idsOverride ?? await syncV2Api.ids(cache?.head || undefined);
+  if (ids.unchanged && cache) {
+    const objects = [...cache.objects.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
+    return { objects, warnings: [], head: ids.head, maxSeq: ids.max_seq };
+  }
+
+  const next = new Map<string, RemoteObject>();
+  const pending: { id: string; seq: number; blob_hash: string }[] = [];
+  for (const entry of ids.entries ?? []) {
+    const existing = previous.get(entry.id);
+    if (existing && existing.blobHash === entry.blob_hash) {
+      next.set(entry.id, existing);
+    } else {
+      pending.push(entry);
     }
-  } catch {
-    // 忽略损坏的游标
   }
-  return { head: "", seq: 0 };
-}
 
-function saveCursor(userId: string, cursor: { head: string; seq: number }): void {
-  try {
-    window.localStorage.setItem(cursorKey(userId), JSON.stringify(cursor));
-  } catch {
-    // 忽略存储失败
+  const warnings: string[] = [];
+  for (let offset = 0; offset < pending.length; offset += 256) {
+    const batch = pending.slice(offset, offset + 256);
+    const page = await syncV2Api.pull(0, batch.map((entry) => entry.id));
+    for (const entry of batch) {
+      const wire = page.objects.find((object) => object.id === entry.id);
+      if (!wire) continue;
+      try {
+        const object = await decodeRemoteObject(entry, wire.blob, dek);
+        next.set(entry.id, object);
+      } catch (e) {
+        if (e instanceof CryptoError && e.code !== "decrypt") throw e;
+        warnings.push(`云端对象 ${entry.id} 解密失败，已跳过；本机同名对象可推送覆盖`);
+      }
+    }
   }
+  remoteCaches.set(dek, { head: ids.head, objects: next });
+  const objects = [...next.values()].filter((object) => remoteKindVisible(object.kind, object.plaintext, optIn));
+  return { objects, warnings, head: ids.head, maxSeq: ids.max_seq };
 }
-
-const DEFAULT_KIND_OPT_IN: SyncKindOptIn = { knownHost: false, aiProfile: false };
 
 type RowState = "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" | "local-deleted" | "remote-deleted";
 
@@ -721,6 +680,120 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
   }
   const rank = (s: RowState) => (s === "same" ? 1 : 0);
   return rows.sort((a, b) => rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
+}
+
+export const WEB_SYNC_REQUEST_EVENT = "nexterm:web-sync-request";
+export const WEB_SYNC_RESULT_EVENT = "nexterm:web-sync-result";
+export const WEB_SYNC_ERROR_EVENT = "nexterm:web-sync-error";
+
+interface Snapshot {
+  local: LocalEntity[];
+  remote: RemoteObject[];
+  warnings: string[];
+  head: string;
+  maxSeq: number;
+}
+
+export interface WebSyncResult extends Snapshot {
+  applied: number;
+  pushed: number;
+}
+
+async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<Snapshot> {
+  const [local, remote] = await Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn, idsOverride)]);
+  return {
+    local: local.entities,
+    remote: remote.objects,
+    warnings: [...local.warnings, ...remote.warnings],
+    head: remote.head,
+    maxSeq: remote.maxSeq,
+  };
+}
+
+function computeApplySet(local: LocalEntity[], remote: RemoteObject[]): RemoteObject[] {
+  return remote.filter((r) => {
+    const l = local.find((entity) => entity.id === r.id);
+    if (!l) return true;
+    if (l.payloadHash === r.payloadHash) return false;
+    return !localWins(l, r);
+  });
+}
+
+async function optInMatches(optIn: SyncKindOptIn, shouldContinue: () => boolean): Promise<boolean> {
+  if (!shouldContinue()) return false;
+  const current = await syncApi.kindOptInGet();
+  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && shouldContinue();
+}
+
+export async function runWebSync(
+  dek: Uint8Array,
+  optIn: SyncKindOptIn,
+  shouldContinue: () => boolean = () => true,
+): Promise<WebSyncResult | null> {
+  let snapshot = await loadSnapshot(dek, optIn);
+  let operationWarnings = [...snapshot.warnings];
+  const reload = async (idsOverride?: SyncIds) => {
+    snapshot = await loadSnapshot(dek, optIn, idsOverride);
+    operationWarnings = [...new Set([...operationWarnings, ...snapshot.warnings])];
+    snapshot = { ...snapshot, warnings: [...operationWarnings] };
+  };
+  if (!(await optInMatches(optIn, shouldContinue))) return null;
+
+  const applySet = computeApplySet(snapshot.local, snapshot.remote);
+  let applied = 0;
+  for (let i = 0; i < applySet.length; i += 256) {
+    if (!(await optInMatches(optIn, shouldContinue))) return null;
+    const result = await syncApi.applyObjects(
+      applySet.slice(i, i + 256).map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        payload: JSON.parse(r.plaintext) as import("../../ipc/types").JsonValue,
+      })),
+    );
+    applied += result.applied;
+    for (const object of result.objects) {
+      if (object.warning) operationWarnings.push(`${object.id}: ${object.warning}`);
+    }
+  }
+  if (applySet.length > 0) await reload();
+  if (!(await optInMatches(optIn, shouldContinue))) return null;
+
+  let winners = computeWinners(snapshot.local, snapshot.remote);
+  let pushed = 0;
+  if (winners.length > 0) {
+    const fresh = await syncV2Api.ids();
+    if (!(await optInMatches(optIn, shouldContinue))) return null;
+    if (fresh.head !== snapshot.head) {
+      await reload(fresh);
+      winners = computeWinners(snapshot.local, snapshot.remote);
+    }
+    if (winners.length > 0) {
+      let response: Awaited<ReturnType<typeof syncV2Api.push>>;
+      try {
+        response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
+      } catch (e) {
+        if (!(e instanceof AuthApiError && e.status === 409)) throw e;
+        const latest = await syncV2Api.ids();
+        await reload(latest);
+        winners = computeWinners(snapshot.local, snapshot.remote);
+        if (winners.length === 0) return { ...snapshot, applied, pushed: 0 };
+        if (!(await optInMatches(optIn, shouldContinue))) return null;
+        response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
+      }
+      if (response.applied === 0 && response.skipped === 0) {
+        const latest = await syncV2Api.ids();
+        await reload(latest);
+        winners = computeWinners(snapshot.local, snapshot.remote);
+        if (winners.length > 0) {
+          if (!(await optInMatches(optIn, shouldContinue))) return null;
+          response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
+        }
+      }
+      pushed = response.applied;
+      await reload();
+    }
+  }
+  return { ...snapshot, warnings: [...new Set([...snapshot.warnings, ...operationWarnings])], applied, pushed };
 }
 
 function rowLabel(r: Row): { text: string; tone: string; hint: string } {
@@ -827,27 +900,17 @@ function UnlockDEKCard() {
 }
 
 function CompareConsole() {
-  const { pushToast } = useUi();
-  const user = useAuth((s) => s.user)!;
   const dek = useAuth((s) => s.dek)!;
-
   const [local, setLocal] = useState<LocalEntity[] | null>(null);
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
   const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
-  const [cursor, setCursor] = useState<{ head: string; seq: number }>(() => loadCursor(user.id));
   const [refreshBusy, setRefreshBusy] = useState(false);
-  const [applyBusy, setApplyBusy] = useState(false);
-  const [pushBusy, setPushBusy] = useState(false);
   const [optInBusy, setOptInBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pushInfo, setPushInfo] = useState<string | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
-  // opt-in 代次: 开关变更即递增, 旧代次的快照与进行中的 load/push/apply 一律作废,
-  // 防止「已关闭同步仍推送/应用旧快照」(尤其删除墓碑删除远端副本)。
   const optInEpochRef = useRef(0);
   const loadSeqRef = useRef(0);
-  // 当前 local/remote 快照所属代次; 与 optInEpochRef 不一致时推送/应用保持禁用(reload 完成前)。
-  const [snapshotEpoch, setSnapshotEpoch] = useState(-1);
+  const kindOptInRef = useRef<SyncKindOptIn | null>(null);
 
   const optInPanelId = useId();
   const detailsPanelId = useId();
@@ -858,220 +921,101 @@ function CompareConsole() {
   }, [anyOptIn]);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  const load = useCallback((view: SyncKindOptIn, epoch: number) => {
+    const seq = ++loadSeqRef.current;
+    setRefreshBusy(true);
+    setError(null);
+    return loadSnapshot(dek, view)
+      .then((snapshot) => {
+        if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
+        setLocal(snapshot.local);
+        setRemote(snapshot.remote);
+        setCollectWarnings(snapshot.warnings);
+      })
+      .catch((e: unknown) => {
+        if (seq === loadSeqRef.current && epoch === optInEpochRef.current) setError(describeError(e));
+      })
+      .finally(() => {
+        if (seq === loadSeqRef.current) setRefreshBusy(false);
+      });
+  }, [dek]);
+
   useEffect(() => {
     let cancelled = false;
+    const epoch = optInEpochRef.current;
+    setRefreshBusy(true);
     Promise.resolve()
       .then(() => syncApi.kindOptInGet())
       .then((view) => {
-        if (!cancelled) setKindOptIn(view);
+        if (cancelled || epoch !== optInEpochRef.current) return;
+        kindOptInRef.current = view;
+        setKindOptIn(view);
+        void load(view, epoch);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(`读取同步开关失败：${describeError(e)}`);
+        if (!cancelled) setError(describeError(e));
       });
+
+    const onResult = (event: Event) => {
+      const result = (event as CustomEvent<WebSyncResult>).detail;
+      setLocal(result.local);
+      setRemote(result.remote);
+      setCollectWarnings(result.warnings);
+      setError(null);
+    };
+    const onError = (event: Event) => {
+      setError(describeError((event as CustomEvent<unknown>).detail));
+    };
+    window.addEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+    window.addEventListener(WEB_SYNC_ERROR_EVENT, onError);
     return () => {
       cancelled = true;
+      loadSeqRef.current += 1;
+      window.removeEventListener(WEB_SYNC_RESULT_EVENT, onResult);
+      window.removeEventListener(WEB_SYNC_ERROR_EVENT, onError);
     };
-  }, []);
+  }, [load]);
 
   const rows = useMemo(() => (local && remote ? buildRows(local, remote) : null), [local, remote]);
 
-  const load = useCallback(
-    (optIn: SyncKindOptIn, epoch: number) => {
-      const seq = ++loadSeqRef.current;
-      setRefreshBusy(true);
-      setError(null);
-      return Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn)])
-        .then(([l, r]) => {
-          if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
-          setLocal(l.entities);
-          setCollectWarnings(l.warnings);
-          setRemote(r.objects);
-          setSnapshotEpoch(epoch);
-          // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
-          const next = { head: r.head, seq: r.maxSeq };
-          saveCursor(user.id, next);
-          setCursor(next);
-        })
-        .catch((e: unknown) => {
-          if (seq !== loadSeqRef.current || epoch !== optInEpochRef.current) return;
-          setError(describeError(e));
-        })
-        .finally(() => {
-          if (seq === loadSeqRef.current) setRefreshBusy(false);
-        });
-    },
-    [dek, user.id],
-  );
-
-  useEffect(() => {
-    if (kindOptIn) void load(kindOptIn, optInEpochRef.current);
-  }, [load, kindOptIn]);
-
   const updateKindOptIn = async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
-    optInEpochRef.current += 1; // 立即作废旧快照与进行中的 push/apply
+    const epoch = ++optInEpochRef.current;
     setOptInBusy(true);
+    setRefreshBusy(true);
+    setLocal(null);
+    setRemote(null);
+    setCollectWarnings([]);
     setError(null);
     try {
       const next = await syncApi.kindOptInSet(patch);
-      setKindOptIn(next); // effect 以新代次触发 reload, 完成前操作保持禁用
+      if (epoch !== optInEpochRef.current) return;
+      kindOptInRef.current = next;
+      setKindOptIn(next);
+      await load(next, epoch);
+      window.dispatchEvent(new Event(WEB_SYNC_REQUEST_EVENT));
     } catch (e) {
-      setError(describeError(e));
-      // 开关未改成: 按当前 opt-in 重新加载, 恢复同代可用快照
-      void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current);
+      if (epoch === optInEpochRef.current) {
+        setError(describeError(e));
+        const current = kindOptInRef.current;
+        if (current) await load(current, epoch);
+      }
     } finally {
-      setOptInBusy(false);
+      if (epoch === optInEpochRef.current) setOptInBusy(false);
     }
   };
 
-  // winner 集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜);计数与上传共用同一集合。
   const winners = useMemo(() => {
     if (!local || !remote) return [];
     return computeWinners(local, remote);
   }, [local, remote]);
 
-  // applySet 集合:远端胜出(仅云端/云端较新/云端已删)需要拉取应用的对象;已一致(同 hash)不重复应用。
   const applySet = useMemo(() => {
     if (!local || !remote) return [];
-    return remote.filter((r) => {
-      const l = local.find((e) => e.id === r.id);
-      if (!l) return true; // remote-only
-      if (l.payloadHash === r.payloadHash) return false; // 已一致
-      return !localWins(l, r); // remote-newer 或 remote-deleted
-    });
+    return computeApplySet(local, remote);
   }, [local, remote]);
 
-  const [applyInfo, setApplyInfo] = useState<string | null>(null);
-
-  const applyRemote = async () => {
-    const startEpoch = optInEpochRef.current;
-    if (refreshBusy || applyBusy || pushBusy || optInBusy || snapshotEpoch !== startEpoch) return;
-    setApplyBusy(true);
-    setError(null);
-    setApplyInfo(null);
-    try {
-      const objects = applySet.map((r) => ({
-        id: r.id,
-        kind: r.kind,
-        payload: JSON.parse(r.plaintext) as import("../../ipc/types").JsonValue,
-      }));
-      // 分批(单次上限 256); 每批前核对代次, 开关切换后不再发送旧集合
-      let applied = 0;
-      let identical = 0;
-      let skipped = 0;
-      const warnings: string[] = [];
-      for (let i = 0; i < objects.length; i += 256) {
-        if (optInEpochRef.current !== startEpoch) return;
-        const result = await syncApi.applyObjects(objects.slice(i, i + 256));
-        if (optInEpochRef.current !== startEpoch) return;
-        applied += result.applied;
-        identical += result.identical;
-        skipped += result.skipped;
-        for (const o of result.objects) {
-          if (o.warning) warnings.push(`${o.id}: ${o.warning}`);
-        }
-      }
-      // 警告(如凭据库未解锁)并入结果展示,不随 load() 清除
-      setApplyInfo(
-        `已应用 ${applied} · 一致 ${identical} · 跳过 ${skipped}` +
-          (warnings.length > 0 ? ` · 警告：${warnings.join("；")}` : ""),
-      );
-      pushToast("success", `已应用 ${applied} 个对象`);
-      await load(kindOptIn ?? DEFAULT_KIND_OPT_IN, startEpoch);
-    } catch (e) {
-      if (optInEpochRef.current === startEpoch) setError(describeError(e));
-    } finally {
-      setApplyBusy(false);
-    }
-  };
-
-  const push = async () => {
-    const startEpoch = optInEpochRef.current;
-    if (refreshBusy || applyBusy || pushBusy || optInBusy || snapshotEpoch !== startEpoch) return;
-    setPushBusy(true);
-    setError(null);
-    setPushInfo(null);
-    const optIn = kindOptIn ?? DEFAULT_KIND_OPT_IN;
-    try {
-      // 对比基线(加载时的 head)。若服务端 head 已变,先重新拉取并以同一快照重算 winner,不沿用旧 winner。
-      let head = cursor.head;
-      let winnersNow = winners;
-      const fresh = await syncV2Api.ids();
-      if (optInEpochRef.current !== startEpoch) return;
-      if (fresh.head !== head) {
-        const remoteState = await loadRemoteObjects(dek, optIn);
-        if (optInEpochRef.current !== startEpoch) return;
-        setRemote(remoteState.objects);
-        winnersNow = computeWinners(local ?? [], remoteState.objects);
-        const base = { head: remoteState.head, seq: remoteState.maxSeq };
-        saveCursor(user.id, base);
-        setCursor(base);
-        head = remoteState.head;
-      }
-
-      // 上传前最后核对: 开关切换后旧 winners 一律不得上传(即使 head 未变)
-      if (optInEpochRef.current !== startEpoch) return;
-      let resp = await syncV2Api.push(head, await sealAll(dek, winnersNow));
-
-      // 空推(applied+skipped=0)或真 409(他端已更新):重新拉取并以同一快照重算 winner,再重试一次,不得只换 known_head。
-      const reconcileAndRetry = async (): Promise<typeof resp | null> => {
-        const remoteState = await loadRemoteObjects(dek, optIn);
-        if (optInEpochRef.current !== startEpoch) return null;
-        const recomputed = computeWinners(local ?? [], remoteState.objects);
-        if (remoteState.head === head && recomputed.length === winnersNow.length && !recomputed.some((e, i) => e.id !== winnersNow[i]?.id)) {
-          return null;
-        }
-        setRemote(remoteState.objects);
-        winnersNow = recomputed;
-        const base = { head: remoteState.head, seq: remoteState.maxSeq };
-        saveCursor(user.id, base);
-        setCursor(base);
-        return syncV2Api.push(remoteState.head, await sealAll(dek, recomputed));
-      };
-
-      if (resp.applied === 0 && resp.skipped === 0 && winnersNow.length > 0) {
-        const retried = await reconcileAndRetry();
-        if (retried) resp = retried;
-      }
-
-      const next = { head: resp.head, seq: resp.max_seq };
-      saveCursor(user.id, next);
-      setCursor(next);
-      setPushInfo(`已推送 ${resp.applied} 个对象（跳过 ${resp.skipped}）`);
-      pushToast("success", `已推送 ${resp.applied} 个对象`);
-      await load(optIn, startEpoch);
-    } catch (e) {
-      if (e instanceof AuthApiError && e.status === 409) {
-        // 真 409:重新对账并以新 head 重试一次;仍失败才报错。
-        try {
-          const remoteState = await loadRemoteObjects(dek, optIn);
-          if (optInEpochRef.current !== startEpoch) return;
-          const recomputed = computeWinners(local ?? [], remoteState.objects);
-          setRemote(remoteState.objects);
-          const base = { head: remoteState.head, seq: remoteState.maxSeq };
-          saveCursor(user.id, base);
-          setCursor(base);
-          const sealed = await sealAll(dek, recomputed);
-          const resp = await syncV2Api.push(remoteState.head, sealed);
-          const next = { head: resp.head, seq: resp.max_seq };
-          saveCursor(user.id, next);
-          setCursor(next);
-          setPushInfo(`已推送 ${resp.applied} 个对象（跳过 ${resp.skipped}）`);
-          pushToast("success", `已推送 ${resp.applied} 个对象`);
-          await load(optIn, startEpoch);
-          return;
-        } catch (retryError) {
-          setError(describeError(retryError));
-          return;
-        }
-      }
-      setError(describeError(e));
-    } finally {
-      setPushBusy(false);
-    }
-  };
 
   const pushCount = winners.length;
-  const actionBusy = refreshBusy || applyBusy || pushBusy || optInBusy;
   const sameCount = rows?.filter((r) => r.state === "same").length ?? 0;
   const detailsSummary = !rows
     ? "读取中…"
@@ -1085,33 +1029,15 @@ function CompareConsole() {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">账号同步</span>
-        <span className="nx-badge nx-badge-green">已解锁</span>
+        <span className="nx-badge nx-badge-green">自动同步</span>
         <span className="nx-hint">云端 {remote?.length ?? "…"} 个对象</span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={actionBusy} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
-          <IconRefresh size={12} className={refreshBusy ? "animate-spin" : ""} />
-          刷新对比
-        </button>
-        <button
-          className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={actionBusy || snapshotEpoch !== optInEpochRef.current || applySet.length === 0}
-          onClick={() => void applyRemote()}
-        >
-          {applyBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-          {applyBusy ? "应用中…" : `拉取并应用（${applySet.length}）`}
-        </button>
-        <button
-          className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={actionBusy || snapshotEpoch !== optInEpochRef.current || pushCount === 0}
-          onClick={() => void push()}
-        >
-          {pushBusy ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-          {pushBusy ? "推送中…" : `推送到云端（${pushCount}）`}
-        </button>
+        <span className="nx-hint">每 60 秒</span>
       </div>
 
       <p className="nx-hint mb-3">
-        对比本机数据与云端密文副本（在本机解密后比较，服务端无法查看内容）。推送会将本机较新的内容加密后上传到云端；拉取并应用会将云端较新的内容合并到本机，删除会随删除标记同步。
+        登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。
+        {refreshBusy ? "正在读取本机与云端数据…" : `当前待应用 ${applySet.length} 项，待推送 ${pushCount} 项。`}
       </p>
 
       {kindOptIn && (
@@ -1142,12 +1068,12 @@ function CompareConsole() {
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 shrink-0"
                   checked={kindOptIn.knownHost}
-                  disabled={applyBusy || pushBusy || optInBusy}
+                  disabled={optInBusy}
                   onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
                 />
                 <span className="text-[12px] text-neutral-300">
                   同步已知主机（主机信任）
-                  <span className="nx-hint block">默认关闭。开启后，已接受的主机密钥会端到端加密同步；本地删除会同步删除云端副本。</span>
+                  <span className="nx-hint block">默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。</span>
                 </span>
               </label>
               <label className="flex items-start gap-2">
@@ -1155,12 +1081,12 @@ function CompareConsole() {
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 shrink-0"
                   checked={kindOptIn.aiProfile}
-                  disabled={applyBusy || pushBusy || optInBusy}
+                  disabled={optInBusy}
                   onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
                 />
                 <span className="text-[12px] text-neutral-300">
                   同步 AI 模型档案
-                  <span className="nx-hint block">默认关闭。开启后，模型档案会端到端加密同步；API 密钥仅在凭据库解锁时随档案同步。</span>
+                  <span className="nx-hint block">默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。</span>
                 </span>
               </label>
             </div>
@@ -1171,25 +1097,7 @@ function CompareConsole() {
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{error}</span>
-          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
-            <IconRefresh size={12} />
-            重试
-          </button>
-        </div>
-      )}
-
-      {pushInfo && (
-        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
-          <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
-          <span>{pushInfo}</span>
-        </div>
-      )}
-
-      {applyInfo && (
-        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
-          <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
-          <span>{applyInfo}</span>
+          <span className="min-w-0 flex-1 break-words">自动同步失败：{error}，下一分钟自动重试。</span>
         </div>
       )}
 
@@ -1249,7 +1157,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录（终端录像）、已知主机和 AI 模型档案默认不同步，可在对应位置单独开启；关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          会话记录（终端录像）默认不同步，可在对应位置单独开启；已知主机和 AI 模型档案默认同步，可关闭；关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>

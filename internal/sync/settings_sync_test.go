@@ -73,7 +73,7 @@ func serverUserID(t *testing.T, server *testSyncServer, username, password strin
 }
 
 // enableDeviceKindOptIn 为设备上的指定用户开启 known_host/AI 档案同步(opt-in 是设备端按用户键存的)。
-// M165 引擎门控后, 涉及这两类对象的同步测试都显式开启, 默认关由 TestEngineKindOptInDefaultOff 覆盖。
+// M165 引擎门控后, 涉及这两类对象的同步测试都显式开启, 默认开启由 TestEngineKindOptInDefaultOnAndDisable 覆盖。
 func enableDeviceKindOptIn(t *testing.T, device *testDevice, userID string) {
 	t.Helper()
 	if err := device.db.SetKnownHostSyncOptIn(context.Background(), userID, true); err != nil {
@@ -732,29 +732,46 @@ func TestEngineAIProfileKeyedDeferredWhileVaultLocked(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-// M165 R2: opt-in 默认关: 引擎不收集/不推送/不应用 known_host 与 AI 档案(含远端已有对象)。
-func TestEngineKindOptInDefaultOff(t *testing.T) {
+// M165 R2: opt-in 默认开启, 关闭后停止收集/应用, 远端副本保留。
+func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
 
 	hostID := ids.New()
-	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:off", 100)
+	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:on", 100)
 	profileID := ids.New()
-	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: profileID, Name: "默认关档案", Model: "m", Stream: true}, 100)
+	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: profileID, Name: "默认同步档案", Model: "m", Stream: true}, 100)
 
+	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pushed != 2 {
+		t.Fatalf("opt-in 默认开启应推送两类对象: %+v", report)
+	}
+	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Applied != 2 {
+		t.Fatalf("opt-in 默认开启应应用远端对象: %+v", report)
+	}
+	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
+		t.Fatal("opt-in 默认开启应应用 known_host")
+	}
+	if state := deviceAIProfileState(t, deviceB); len(state.Profiles) != 1 {
+		t.Fatalf("opt-in 默认开启应应用 ai_profile: %+v", state.Profiles)
+	}
+
+	for _, device := range []*testDevice{deviceA, deviceB} {
+		if err := device.db.SetKnownHostSyncOptIn(context.Background(), serverUserID(t, server, "alice", "alice-pw-123"), false); err != nil {
+			t.Fatal(err)
+		}
+		if err := device.db.SetAIProfileSyncOptIn(context.Background(), serverUserID(t, server, "alice", "alice-pw-123"), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	putDeviceKnownHost(t, deviceA, ids.New(), "disabled.example.com", 22, "ssh-ed25519", "SHA256:disabled", 200)
+	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: ids.New(), Name: "关闭后不应推送", Model: "m", Stream: true}, 200)
 	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pushed != 0 {
-		t.Fatalf("opt-in 默认关不得推送两类对象: %+v", report)
+		t.Fatalf("opt-in 关闭后不得推送新对象: %+v", report)
 	}
 	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Applied != 0 {
-		t.Fatalf("opt-in 默认关不得应用远端对象: %+v", report)
-	}
-	if _, found := deviceKnownHost(t, deviceB, hostID); found {
-		t.Fatal("opt-in 默认关不得应用 known_host")
-	}
-	if state := deviceAIProfileState(t, deviceB); len(state.Profiles) != 0 {
-		t.Fatalf("opt-in 默认关不得应用 ai_profile: %+v", state.Profiles)
+		t.Fatalf("opt-in 关闭后不得应用新对象: %+v", report)
 	}
 }
 

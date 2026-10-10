@@ -1,12 +1,16 @@
 package sync
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -52,14 +56,16 @@ type PullResponse struct {
 }
 
 type IDsRequest struct {
-	Protocol int `json:"protocol"`
+	Protocol  int    `json:"protocol"`
+	KnownHead string `json:"known_head,omitempty"`
 }
 
 type IDsResponse struct {
-	Protocol int       `json:"protocol"`
-	Entries  []IDEntry `json:"entries"`
-	Head     string    `json:"head"`
-	MaxSeq   int64     `json:"max_seq"`
+	Protocol  int       `json:"protocol"`
+	Entries   []IDEntry `json:"entries"`
+	Head      string    `json:"head"`
+	MaxSeq    int64     `json:"max_seq"`
+	Unchanged bool      `json:"unchanged,omitempty"`
 }
 
 // ObjectHandler 是服务端盲存储的 HTTP 入口: 只认会话身份, 不解读对象内容, 不记录对象明细。
@@ -73,6 +79,10 @@ func NewObjectHandler(db *sql.DB, backend store.Backend) *ObjectHandler {
 
 func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Add("Vary", "Accept-Encoding")
+	buffered := newSyncResponseWriter(w, acceptsGzip(r))
+	defer buffered.Close()
+	w = buffered
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok || userID == "" {
 		writeSyncError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失，请重新登录"))
@@ -145,6 +155,20 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
 		return
 	}
+	head, err := h.store.currentHead(r.Context(), userID)
+	if err != nil {
+		writeSyncError(w, syncErrorStatus(err), err)
+		return
+	}
+	maxSeq, err := h.store.maxSeq(r.Context(), userID)
+	if err != nil {
+		writeSyncError(w, syncErrorStatus(err), err)
+		return
+	}
+	if request.KnownHead != "" && request.KnownHead == head {
+		writeSyncJSON(w, http.StatusOK, IDsResponse{Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Unchanged: true})
+		return
+	}
 	entries, head, maxSeq, err := h.store.idList(r.Context(), userID)
 	if err != nil {
 		writeSyncError(w, syncErrorStatus(err), err)
@@ -156,7 +180,17 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 }
 
 func decodeSyncRequest(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxSyncObjectBytes*2)
+	body := r.Body
+	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
+		compressed, err := gzip.NewReader(body)
+		if err != nil {
+			writeSyncError(w, http.StatusBadRequest, ipc.BadParam(fmt.Errorf("请求体不是合法的 gzip 数据: %w", err)))
+			return false
+		}
+		defer compressed.Close()
+		body = compressed
+	}
+	r.Body = http.MaxBytesReader(w, body, maxSyncObjectBytes*2)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
@@ -164,6 +198,77 @@ func decodeSyncRequest(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+func acceptsGzip(r *http.Request) bool {
+	for _, value := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		parts := strings.Split(value, ";")
+		if !strings.EqualFold(strings.TrimSpace(parts[0]), "gzip") {
+			continue
+		}
+		accepted := true
+		for _, parameter := range parts[1:] {
+			keyValue := strings.SplitN(strings.TrimSpace(parameter), "=", 2)
+			if len(keyValue) != 2 || !strings.EqualFold(keyValue[0], "q") {
+				continue
+			}
+			quality, err := strconv.ParseFloat(keyValue[1], 64)
+			if err != nil || quality <= 0 {
+				accepted = false
+			}
+		}
+		if accepted {
+			return true
+		}
+	}
+	return false
+}
+
+type syncResponseWriter struct {
+	parent     http.ResponseWriter
+	acceptGzip bool
+	status     int
+	body       bytes.Buffer
+}
+
+func newSyncResponseWriter(parent http.ResponseWriter, acceptGzip bool) *syncResponseWriter {
+	return &syncResponseWriter{parent: parent, acceptGzip: acceptGzip, status: http.StatusOK}
+}
+
+func (w *syncResponseWriter) Header() http.Header {
+	return w.parent.Header()
+}
+
+func (w *syncResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *syncResponseWriter) Write(payload []byte) (int, error) {
+	return w.body.Write(payload)
+}
+
+func (w *syncResponseWriter) Close() error {
+	raw := w.body.Bytes()
+	if w.acceptGzip && len(raw) >= 1024 {
+		var compressed bytes.Buffer
+		compressor := gzip.NewWriter(&compressed)
+		if _, err := compressor.Write(raw); err != nil {
+			_ = compressor.Close()
+			return err
+		}
+		if err := compressor.Close(); err != nil {
+			return err
+		}
+		if compressed.Len() < len(raw) {
+			w.parent.Header().Set("Content-Encoding", "gzip")
+			w.parent.WriteHeader(w.status)
+			_, err := w.parent.Write(compressed.Bytes())
+			return err
+		}
+	}
+	w.parent.WriteHeader(w.status)
+	_, err := w.parent.Write(raw)
+	return err
 }
 
 func syncErrorStatus(err error) int {

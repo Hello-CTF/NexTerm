@@ -91,6 +91,7 @@ export interface SyncIdsResponse {
   entries: SyncIdEntry[];
   head: string;
   max_seq: number;
+  unchanged?: boolean;
 }
 
 export interface SyncWireObject {
@@ -312,8 +313,11 @@ export const adminApi = {
 };
 
 export const syncV2Api = {
-  ids: () =>
-    request<SyncIdsResponse>("POST", "/sync/v2/ids", { protocol: SYNC_PROTOCOL_VERSION }),
+  ids: (knownHead?: string) =>
+    request<SyncIdsResponse>("POST", "/sync/v2/ids", {
+      protocol: SYNC_PROTOCOL_VERSION,
+      ...(knownHead ? { known_head: knownHead } : {}),
+    }),
 
   pull: (sinceSeq: number, ids?: string[], maxBytes?: number) =>
     request<SyncPullResponse>("POST", "/sync/v2/pull", {

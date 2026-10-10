@@ -49,7 +49,7 @@ func (report *SyncReport) warnf(format string, args ...any) {
 }
 
 // collectLocalObjects 全量扫描本地副本产出确定性载荷; 本地副本未登录与登录后保持一致。
-// known_host/AI 模型档案按会话用户 opt-in 收集(默认关): 未开启时不收集这两类对象, 也不传播其墓碑
+// known_host/AI 模型档案按会话用户 opt-in 收集: 关闭时不收集这两类对象, 也不传播其墓碑
 // (禁用同步不得删除远端对象)。
 func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn) (map[string]localObject, error) {
 	objects := map[string]localObject{}

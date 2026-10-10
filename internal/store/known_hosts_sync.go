@@ -8,7 +8,7 @@ import (
 )
 
 // known_host 与 AI 模型档案的同步 opt-in 开关键, 按账号用户隔离(沿用 sync.cursor.<userID> 的键先例):
-// 键形如 sync.optin.known_host.<userID>, 缺行即关闭(默认不同步主机信任与 AI 档案), 用户 A 的选择不影响用户 B。
+// 键形如 sync.optin.known_host.<userID>, 缺行即开启(默认同步主机信任与 AI 档案), 用户 A 的选择不影响用户 B。
 const (
 	syncKnownHostOptInPrefix = "sync.optin.known_host."
 	syncAIProfileOptInPrefix = "sync.optin.ai_profile."
@@ -45,8 +45,11 @@ ON CONFLICT(id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombst
 
 func (s *Store) syncOptInGet(ctx context.Context, key string) (bool, error) {
 	raw, found, err := s.SettingGet(ctx, key)
-	if err != nil || !found {
+	if err != nil {
 		return false, err
+	}
+	if !found {
+		return true, nil
 	}
 	return raw == "1", nil
 }

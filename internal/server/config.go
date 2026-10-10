@@ -73,6 +73,7 @@ type Vault interface {
 	Status() vault.Status
 	InitMaster(context.Context, string) error
 	UnlockMaster(context.Context, string) error
+	SetAutoLock(context.Context, uint64) error
 }
 
 func BootstrapVault(ctx context.Context, credentialVault Vault, masterKey string) error {
@@ -85,10 +86,16 @@ func BootstrapVault(ctx context.Context, credentialVault Vault, masterKey string
 	if len(masterKey) < 8 {
 		return fmt.Errorf("master key must contain at least 8 bytes")
 	}
+	var err error
 	if credentialVault.Status().Initialized {
-		return credentialVault.UnlockMaster(ctx, masterKey)
+		err = credentialVault.UnlockMaster(ctx, masterKey)
+	} else {
+		err = credentialVault.InitMaster(ctx, masterKey)
 	}
-	return credentialVault.InitMaster(ctx, masterKey)
+	if err != nil {
+		return err
+	}
+	return credentialVault.SetAutoLock(ctx, 0)
 }
 
 func BootstrapVaultRequired(ctx context.Context, credentialVault Vault, masterKey string) error {

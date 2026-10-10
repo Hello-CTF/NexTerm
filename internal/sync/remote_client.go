@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -161,9 +162,13 @@ func (c *remoteClient) pull(ctx context.Context, sinceSeq int64, ids []string, m
 	}
 }
 
-func (c *remoteClient) ids(ctx context.Context) (*IDsResponse, error) {
+func (c *remoteClient) ids(ctx context.Context, knownHead ...string) (*IDsResponse, error) {
 	var response IDsResponse
-	status, rpcErr, err := c.post(ctx, "/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion}, &response, false)
+	request := IDsRequest{Protocol: ProtocolVersion}
+	if len(knownHead) > 0 {
+		request.KnownHead = knownHead[0]
+	}
+	status, rpcErr, err := c.post(ctx, "/sync/v2/ids", request, &response, false)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +206,28 @@ func (c *remoteClient) post(ctx context.Context, path string, payload, out any, 
 	if err != nil {
 		return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法编码同步请求", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	wireBody := body
+	contentEncoding := ""
+	if len(body) >= 1024 {
+		var compressed bytes.Buffer
+		writer := gzip.NewWriter(&compressed)
+		if _, err := writer.Write(body); err != nil {
+			return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
+		}
+		if err := writer.Close(); err != nil {
+			return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法压缩同步请求", err)
+		}
+		if compressed.Len() < len(body) {
+			wireBody = compressed.Bytes()
+			contentEncoding = "gzip"
+		}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(wireBody))
 	if err != nil {
 		return 0, nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
+	}
+	if contentEncoding != "" {
+		request.Header.Set("Content-Encoding", contentEncoding)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")

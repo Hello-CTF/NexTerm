@@ -663,6 +663,12 @@ export function SettingsView() {
                       ? ""
                       : await promptText("输入当前保护密码：", "", { secret: true });
                     if (old === null) return;
+                    try {
+                      await vaultApi.unlock(old);
+                    } catch (e) {
+                      pushToast("error", describeError(e));
+                      return;
+                    }
                     const next = await promptText("输入新密码（至少 8 位，留空则关闭密码保护）：", "", { secret: true });
                     if (next === null) return;
                     if (next.length > 0 && next.length < 8) {

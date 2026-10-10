@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   syncLinkGet: vi.fn(),
   syncLinkSet: vi.fn(),
   syncStatus: vi.fn(),
-  syncNow: vi.fn(),
+  vaultLock: vi.fn(),
 }));
 
 const envState = vi.hoisted(() => ({
@@ -42,12 +42,11 @@ vi.mock("../ipc/commands", () => ({
     reconnect: vi.fn(),
     probe: vi.fn(),
   },
-  vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
+  vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn(), lock: mocks.vaultLock },
   syncApi: {
     linkGet: mocks.syncLinkGet,
     linkSet: mocks.syncLinkSet,
     status: mocks.syncStatus,
-    syncNow: mocks.syncNow,
   },
   layoutApi: {
     get: vi.fn().mockResolvedValue({ revision: 0, updatedAt: 0, data: null }),
@@ -243,17 +242,6 @@ describe("账号同步卡（桌面端）", () => {
       mocks.syncLinkSet.mock.calls.length > 0 ? SAVED_LINK : EMPTY_LINK,
     );
     mocks.syncLinkSet.mockResolvedValue(SAVED_LINK);
-    mocks.syncNow.mockResolvedValue({
-      pulled: 2,
-      applied: 1,
-      pullSkipped: 1,
-      decryptFailed: 0,
-      pushed: 3,
-      conflicts: 0,
-      head: "head-1",
-      seq: 7,
-      warnings: [],
-    });
   });
 
   it("登录时以账号+密码调用 linkSet 完成同步配置,不自动执行首次同步", async () => {
@@ -271,58 +259,8 @@ describe("账号同步卡（桌面端）", () => {
         password: "correct horse battery staple",
       }),
     );
-    // 登录只完成同步配置;数据传输只在用户点「立即同步」时发生
-    expect(mocks.syncNow).not.toHaveBeenCalled();
-  });
-
-  it("立即同步调用 syncNow 并展示报告", async () => {
-    mocks.syncStatus.mockResolvedValue({
-      configured: true,
-      loggedIn: true,
-      username: "alice",
-      seq: 7,
-      verifiedAt: 1,
-      lastError: "",
-    });
-    mounted = mountAppWithSyncCard();
-    await flush();
-
-    await flushUntil(() => {
-      const btn = [...document.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "立即同步",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(document.body, "立即同步");
-
-    await flushUntil(() => document.body.textContent?.includes("同步结果"));
-    expect(mocks.syncNow).toHaveBeenCalled();
-    expect(document.body.textContent).toContain("拉取 2");
-    expect(document.body.textContent).toContain("推送 3");
-  });
-
-  it("同步失败时展示错误而不是报告", async () => {
-    mocks.syncStatus.mockResolvedValue({
-      configured: true,
-      loggedIn: false,
-      seq: 0,
-      verifiedAt: 0,
-      lastError: "会话已过期",
-    });
-    mocks.syncNow.mockRejectedValue(new Error("同步头不一致"));
-    mounted = mountAppWithSyncCard();
-    await flush();
-
-    await flushUntil(() => {
-      const btn = [...document.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "立即同步",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(document.body, "立即同步");
-
-    await flushUntil(() => document.body.textContent?.includes("同步头不一致"));
-    expect(document.body.textContent).not.toContain("同步结果");
+    expect(document.body.textContent).toContain("自动同步已开启");
+    expect(document.body.textContent).not.toContain("立即同步");
   });
 
   it("单条同步开关指引指向「终端历史」分区", async () => {
@@ -335,58 +273,23 @@ describe("账号同步卡（桌面端）", () => {
   });
 });
 
-describe("全局 syncNow 快捷键(Mod+Shift+S)", () => {
-  beforeEach(() => {
-    mocks.syncStatus.mockResolvedValue({
-      configured: false,
-      loggedIn: false,
-      seq: 0,
-      verifiedAt: 0,
-      lastError: "",
-    });
-    mocks.syncLinkGet.mockResolvedValue(EMPTY_LINK);
-    mocks.syncNow.mockResolvedValue({
-      pulled: 0,
-      applied: 0,
-      pullSkipped: 0,
-      decryptFailed: 0,
-      pushed: 0,
-      conflicts: 0,
-      head: "head-1",
-      seq: 7,
-      warnings: [],
-    });
-  });
-
-  it("未配置同步时快捷键不触发同步,直接说明去哪配置", async () => {
+describe("手动同步入口已移除", () => {
+  it("Mod+Shift+S 不再触发同步动作", async () => {
     mounted = mountApp();
     await flushUntil(() => syncStatusText() === "同步：本地模式");
 
     const event = keyDown(window, "s", { ctrlKey: true, shiftKey: true });
-    expect(event.defaultPrevented).toBe(true);
-    await flush();
-
-    expect(mocks.syncNow).not.toHaveBeenCalled();
-    const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text === "尚未配置同步，请先在「设置 → 账号同步」中登录。")).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
   });
 
-  it("已配置同步时快捷键触发 syncNow", async () => {
-    mocks.syncLinkGet.mockResolvedValue(SAVED_LINK);
-    mocks.syncStatus.mockResolvedValue({
-      configured: true,
-      loggedIn: true,
-      username: "alice",
-      seq: 7,
-      verifiedAt: 1,
-      lastError: "",
-    });
+  it("Mod+Shift+L 锁定凭据库", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() === "同步：已配置");
+    await flush();
 
-    keyDown(window, "s", { ctrlKey: true, shiftKey: true });
-
-    await flushUntil(() => mocks.syncNow.mock.calls.length > 0);
-    expect(mocks.syncNow).toHaveBeenCalled();
+    keyDown(window, "l", { ctrlKey: true, shiftKey: true });
+    await flushUntil(() => mocks.vaultLock.mock.calls.length > 0);
+    expect(mocks.vaultLock).toHaveBeenCalled();
+    expect(useUi.getState().toasts.some((toast) => toast.text === "凭据库已锁定")).toBe(true);
   });
 });

@@ -3,9 +3,11 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	stdsync "sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -13,7 +15,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-const settingLink = "sync.link"
+const (
+	settingLink                 = "sync.link"
+	defaultBackgroundSyncPeriod = time.Minute
+)
 
 type Option func(*Service)
 
@@ -38,14 +43,20 @@ type Service struct {
 	appVersion     string
 	desktop        bool
 	gatewayAuthKey string
+	syncPeriod     time.Duration
 
-	settingsMu stdsync.Mutex
+	settingsMu  stdsync.Mutex
+	lifecycleMu stdsync.Mutex
+	cancel      context.CancelFunc
+	done        chan struct{}
+	wakeCh      chan struct{}
+	stopping    bool
 }
 
 func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
-	s := &Service{store: db, vault: credentialVault}
+	s := &Service{store: db, vault: credentialVault, syncPeriod: defaultBackgroundSyncPeriod, wakeCh: make(chan struct{}, 1)}
 	for _, option := range options {
 		option(s)
 	}
@@ -53,9 +64,74 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	return s
 }
 
-func (s *Service) Start(ctx context.Context) error { return nil }
+func (s *Service) Start(ctx context.Context) error {
+	if !s.desktop {
+		return nil
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return errors.New("同步服务正在关闭")
+	}
+	if s.cancel != nil {
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+	s.done = make(chan struct{})
+	done := s.done
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(s.syncPeriod)
+		defer ticker.Stop()
+		for {
+			s.syncBackground(runCtx)
+			select {
+			case <-runCtx.Done():
+				return
+			case <-s.wakeCh:
+			case <-ticker.C:
+			}
+		}
+	}()
+	return nil
+}
 
-func (s *Service) Shutdown(context.Context) error {
+func (s *Service) syncBackground(ctx context.Context) {
+	ctx = vault.WithBackground(ctx)
+	link, err := s.LinkGet(ctx)
+	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit) {
+			return
+		}
+		s.engine.logger.Warn("background sync link read failed", "error", err)
+		return
+	}
+	if !link.IsConfigured() {
+		return
+	}
+	if _, err := s.Sync(ctx); err != nil && ctx.Err() == nil {
+		s.engine.logger.Warn("background sync failed", "error", err)
+	}
+}
+
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	s.stopping = true
+	cancel := s.cancel
+	done := s.done
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	s.engine.opMu.Lock()
 	defer s.engine.opMu.Unlock()
 	s.engine.sessionMu.Lock()
@@ -64,6 +140,10 @@ func (s *Service) Shutdown(context.Context) error {
 		clear(s.engine.session.dek)
 		s.engine.session = nil
 	}
+	s.lifecycleMu.Lock()
+	s.cancel = nil
+	s.done = nil
+	s.lifecycleMu.Unlock()
 	return nil
 }
 
@@ -169,7 +249,15 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return Link{}, err
 	}
+	s.wake()
 	return s.linkView(secret), nil
+}
+
+func (s *Service) wake() {
+	select {
+	case s.wakeCh <- struct{}{}:
+	default:
+	}
 }
 
 func (s *Service) linkView(secret linkSecret) Link {
@@ -237,6 +325,8 @@ func (s *Service) linkSecret(ctx context.Context) (linkSecret, error) {
 
 // Sync 用已保存的链接执行一轮完整同步(对账 → 拉取合并 → 推送)。
 func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
 		return SyncReport{}, err

@@ -115,8 +115,8 @@ func TestKnownHostRemoveOptInIsolatedPerUser(t *testing.T) {
 func TestKnownHostSyncOptInPerUserRoundtrip(t *testing.T) {
 	db := testStore(t)
 	ctx := context.Background()
-	if enabled, err := db.KnownHostSyncOptIn(ctx, "u-a"); err != nil || enabled {
-		t.Fatalf("default opt-in = %v, %v", enabled, err)
+	if enabled, err := db.KnownHostSyncOptIn(ctx, "u-a"); err != nil || !enabled {
+		t.Fatalf("default opt-in should be on: %v, %v", enabled, err)
 	}
 	if err := db.SetKnownHostSyncOptIn(ctx, "u-a", true); err != nil {
 		t.Fatal(err)
@@ -124,8 +124,8 @@ func TestKnownHostSyncOptInPerUserRoundtrip(t *testing.T) {
 	if enabled, _ := db.KnownHostSyncOptIn(ctx, "u-a"); !enabled {
 		t.Fatal("u-a opt-in should be on")
 	}
-	if enabled, _ := db.KnownHostSyncOptIn(ctx, "u-b"); enabled {
-		t.Fatal("u-a 的开启不得影响 u-b")
+	if enabled, _ := db.KnownHostSyncOptIn(ctx, "u-b"); !enabled {
+		t.Fatal("u-b 应保持默认开启")
 	}
 	if err := db.SetKnownHostSyncOptIn(ctx, "u-a", false); err != nil {
 		t.Fatal(err)

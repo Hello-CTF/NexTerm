@@ -17,6 +17,25 @@ import (
 
 var errTestReceiverDetached = errors.New("test receiver detached")
 
+func TestWebSocketCompressionNegotiation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer server.Close()
+	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
+		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
+	}
+}
+
 type replayHub struct {
 	mu       sync.Mutex
 	channels map[string]*replayChannel

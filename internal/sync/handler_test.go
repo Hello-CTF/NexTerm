@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -101,6 +102,106 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	}
 	if len(ids.Entries) != 1 || ids.Entries[0].BlobHash != hashBlobHex([]byte("x")) {
 		t.Fatalf("ids response=%+v", ids)
+	}
+
+	response = post("/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion, KnownHead: pushed.Head})
+	var unchanged IDsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &unchanged); err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.Unchanged || len(unchanged.Entries) != 0 || unchanged.Head != pushed.Head || unchanged.MaxSeq != 1 {
+		t.Fatalf("known_head response=%+v", unchanged)
+	}
+	response = post("/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion, KnownHead: "stale"})
+	ids = IDsResponse{}
+	if err := json.Unmarshal(response.Body.Bytes(), &ids); err != nil {
+		t.Fatal(err)
+	}
+	if ids.Unchanged || len(ids.Entries) != 1 {
+		t.Fatalf("stale known_head response=%+v", ids)
+	}
+}
+
+func TestObjectHandlerGzipRequestAndResponse(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	user, err := account.New(db.DB()).CreateUser(ctx, "gzip-test-"+ids.New(), "test", "handler-pw-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = WithUserID(ctx, user.ID)
+	handler := NewObjectHandler(db.DB(), db.Backend())
+	payload, err := json.Marshal(PushRequest{Protocol: ProtocolVersion, KnownHead: genesisHead(user.ID), Objects: []WireObject{{ID: "obj-1", Blob: make([]byte, 2048)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/sync/v2/push", bytes.NewReader(compressed.Bytes())).WithContext(ctx)
+	request.Header.Set("Content-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("small response should stay uncompressed: status=%d headers=%v", recorder.Code, recorder.Header())
+	}
+
+	pull := func(acceptEncoding string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":2}`))).WithContext(ctx)
+		request.Header.Set("Accept-Encoding", acceptEncoding)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	recorder = pull("gzip")
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("large response should use gzip: status=%d headers=%v", recorder.Code, recorder.Header())
+	}
+	reader, err := gzip.NewReader(recorder.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response PullResponse
+	if err := json.NewDecoder(reader).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	_ = reader.Close()
+	if len(response.Objects) != 1 || len(response.Objects[0].Blob) != 2048 {
+		t.Fatalf("gzip pull response=%+v", response)
+	}
+	if recorder = pull("gzip;q=0"); recorder.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("gzip;q=0 must stay uncompressed: headers=%v", recorder.Header())
+	}
+}
+
+func TestSyncResponseWriterSkipsGzipWhenLarger(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writer := newSyncResponseWriter(recorder, true)
+	payload := make([]byte, 2048)
+	state := uint32(1)
+	for i := range payload {
+		state ^= state << 13
+		state ^= state >> 17
+		state ^= state << 5
+		payload[i] = byte(state)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Header().Get("Content-Encoding") != "" || !bytes.Equal(recorder.Body.Bytes(), payload) {
+		t.Fatalf("larger gzip must fall back to identity: headers=%v body=%d", recorder.Header(), recorder.Body.Len())
 	}
 }
 

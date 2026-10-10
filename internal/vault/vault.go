@@ -20,7 +20,7 @@ const (
 	settingSalt         = "vault.master_salt"
 	settingAutolock     = "vault.autolock_ms"
 	settingPasswordless = "vault.passwordless"
-	defaultAutolock     = uint64(30 * 60 * 1000)
+	defaultAutolock     = uint64(0)
 	maxAutoLockMS       = uint64(1440 * 60 * 1000)
 )
 
@@ -42,6 +42,12 @@ type Status struct {
 }
 
 type Option func(*Vault)
+
+type backgroundContextKey struct{}
+
+func WithBackground(ctx context.Context) context.Context {
+	return context.WithValue(ctx, backgroundContextKey{}, true)
+}
 
 func WithProtector(protector Protector) Option {
 	return func(v *Vault) {
@@ -455,10 +461,12 @@ func (v *Vault) SetAutoLock(ctx context.Context, minutes uint64) error {
 	return nil
 }
 
-func (v *Vault) currentDEK() (*secretKey, error) {
+func (v *Vault) currentDEK(ctx context.Context) (*secretKey, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.lastUsedAt = v.now()
+	if background, _ := ctx.Value(backgroundContextKey{}).(bool); !background {
+		v.lastUsedAt = v.now()
+	}
 	if v.dek == nil {
 		if v.mode == ModeNotInit {
 			return nil, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在\"设置 → 凭据保护\"中完成初始化")
@@ -490,8 +498,8 @@ func (v *Vault) RunAutoLock(ctx context.Context) {
 	}
 }
 
-func (v *Vault) EncryptCredential(_ context.Context, plaintext string) ([]byte, []byte, error) {
-	dek, err := v.currentDEK()
+func (v *Vault) EncryptCredential(ctx context.Context, plaintext string) ([]byte, []byte, error) {
+	dek, err := v.currentDEK(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -499,11 +507,11 @@ func (v *Vault) EncryptCredential(_ context.Context, plaintext string) ([]byte, 
 	return sealCredential(dek, []byte(plaintext))
 }
 
-func (v *Vault) DecryptCredential(_ context.Context, row store.CredentialRow) ([]byte, error) {
+func (v *Vault) DecryptCredential(ctx context.Context, row store.CredentialRow) ([]byte, error) {
 	if row.Cipher != store.CipherAES256GCM {
 		return nil, ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 未知凭据加密格式 "+row.Cipher)
 	}
-	dek, err := v.currentDEK()
+	dek, err := v.currentDEK(ctx)
 	if err != nil {
 		return nil, err
 	}

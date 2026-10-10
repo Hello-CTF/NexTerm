@@ -85,7 +85,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"input.selectionAutoCopy":     "true",
 		"keybinding.closeTab":         `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":    "null",
-		"keybinding.syncNow":          `"Mod+Shift+s"`,
+		"keybinding.reclaimTakeover":  `"Mod+Shift+s"`,
 	}
 	for key, want := range valid {
 		name := key

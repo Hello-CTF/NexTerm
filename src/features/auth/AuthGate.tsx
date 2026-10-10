@@ -224,7 +224,7 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
       <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-        {busy ? "正在登录并解锁数据…" : "登录"}
+        {busy ? "登录中…" : "登录"}
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12px]">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("recovery")}>
@@ -695,7 +695,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
         <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
         <GateError error={error} />
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-          {busy ? "正在登录并解锁数据…" : "登录"}
+          {busy ? "登录中…" : "登录"}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
           返回登录

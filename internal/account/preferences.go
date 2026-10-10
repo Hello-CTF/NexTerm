@@ -62,7 +62,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.switchTab":        {kind: preferenceKindBinding},
 	"keybinding.terminalSearch":   {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":  {kind: preferenceKindBinding},
-	"keybinding.syncNow":          {kind: preferenceKindBinding},
+	"keybinding.lockVault":        {kind: preferenceKindBinding},
 }
 
 // PreferenceKeys 返回白名单键的副本, 供 HTTP 层与测试枚举声明的偏好。

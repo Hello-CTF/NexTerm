@@ -136,6 +136,17 @@ function mountSyncCard(): MountedView {
   return mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
 }
 
+async function runAutoSync() {
+  const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../../features/settings/SyncCard");
+  try {
+    const result = await runWebSync(new Uint8Array(32).fill(7), { knownHost: false, aiProfile: false });
+    if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
+    throw error;
+  }
+}
+
 const DEMO_USER = {
   id: "u-1",
   username: "alice",
@@ -402,11 +413,11 @@ describe("SyncCard（Web 同步台）", () => {
       max_seq: 2,
     });
     mocks.syncPull.mockImplementation(async (_seq: number, ids?: string[]) => {
-      const want = ids?.[0];
+      const wanted = new Set(ids ?? []);
       const objects = [
         { id: "a1", seq: 1, blob: bytesToBase64(blobA1) },
         { id: "a3", seq: 2, blob: bytesToBase64(blobA3) },
-      ].filter((o) => !want || o.id === want);
+      ].filter((o) => wanted.size === 0 || wanted.has(o.id));
       return { protocol: 2, objects, head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true };
     });
 
@@ -419,7 +430,7 @@ describe("SyncCard（Web 同步台）", () => {
     expect(text).toContain("仅本机"); // g1/db-02 仅本机
   });
 
-  it("推送调用 /sync/v2/push 并更新本地游标", async () => {
+  it("推送调用 /sync/v2/push 使用最新 head", async () => {
     seedAuthed(true);
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -439,7 +450,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
 
-    clickButton(mounted.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     // 推送前取服务端最新 head(此处 mock 为 head-9)作为 known_head,而不是空字符串
     expect(mocks.syncPush).toHaveBeenCalledWith(
@@ -448,8 +459,6 @@ describe("SyncCard（Web 同步台）", () => {
         expect.objectContaining({ id: "a1", blob: expect.any(String) }),
       ]),
     );
-    await flushUntil(() => window.localStorage.getItem("sync.cursor.u-1")?.includes("head-9") === true);
-    expect(window.localStorage.getItem("sync.cursor.u-1")).toContain("head-9");
   });
 
   it("云端较新的对象不会被推送(winner 集合跳过远端胜出项)", async () => {
@@ -478,11 +487,10 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 0, skipped: 1 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
     // 按钮计数为 0(winner 集合为空),且不应触发推送
-    expect(mounted.container.textContent).toContain("推送到云端（0）");
-    const pushBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("推送到云端")) as HTMLButtonElement | undefined;
-    expect(pushBtn?.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
   it("平修订号按 payload hash 决胜:本地载荷 hash 较大才推送", async () => {
@@ -511,7 +519,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("aaa"));
     const expected = localHash > remoteHash ? 1 : 0;
-    expect(mounted.container.textContent).toContain(`推送到云端（${expected}）`);
+    expect(mounted.container.textContent).toContain(`待推送 ${expected} 项`);
   });
 
   it("真 409(他端已更新)时重新对账并以新 head 重试一次", async () => {
@@ -527,11 +535,12 @@ describe("SyncCard（Web 同步台）", () => {
       ],
       hasMore: false,
     });
-    // ids 调用序列:加载(head-0)→ 推送取新 head(head-0,与基线一致不重拉)→ 重试再取(head-1)
-    mocks.syncIds
-      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-0", max_seq: 0 })
-      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-0", max_seq: 0 })
-      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-1", max_seq: 1 });
+    let idsCalls = 0;
+    mocks.syncIds.mockImplementation(async () => {
+      idsCalls += 1;
+      const changed = idsCalls >= 4;
+      return { protocol: 2, entries: [], head: changed ? "head-1" : "head-0", max_seq: changed ? 1 : 0 };
+    });
     // 第一次推送真实返回 409 异常;重试以新 head 成功
     mocks.syncPush
       .mockRejectedValueOnce(new AuthApiError("forbidden", "同步头不一致", 409))
@@ -540,7 +549,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
-    clickButton(mounted.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length >= 2);
     expect(mocks.syncPush).toHaveBeenNthCalledWith(1, "head-0", expect.any(Array));
     expect(mocks.syncPush).toHaveBeenNthCalledWith(2, "head-1", expect.any(Array));
@@ -570,11 +579,10 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 0, skipped: 1 });
 
     mounted = mountSyncCard();
+    clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
     // 云端较新,winner 为空,不应推送
-    expect(mounted.container.textContent).toContain("推送到云端（0）");
-    const pushBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("推送到云端")) as HTMLButtonElement | undefined;
-    expect(pushBtn?.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
   it("按条 opt-in 的会话记录被收集并推送(默认不同步)", async () => {
@@ -600,7 +608,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
-    clickButton(mounted.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     expect(mocks.syncPush).toHaveBeenCalledWith(
       "head-9",
@@ -622,9 +630,20 @@ describe("SyncCard（Web 同步台）", () => {
       },
     ]);
     // 第一页 done=false,第二页 done=true;必须读全两页才推送
-    mocks.transcriptRead
-      .mockResolvedValueOnce({ chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }], nextSeq: 2, done: false, totalBytes: 6 })
-      .mockResolvedValueOnce({ chunks: [{ seq: 2, tabId: "tab-1", ts: 2, dataBase64: "BAUG" }, { seq: 3, tabId: "tab-1", ts: 3, dataBase64: "BwgJ" }], nextSeq: 4, done: true, totalBytes: 6 });
+    mocks.transcriptRead.mockImplementation(async (_id: string, afterSeq: number) => {
+      if (afterSeq === 0) {
+        return { chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }], nextSeq: 2, done: false, totalBytes: 6 };
+      }
+      return {
+        chunks: [
+          { seq: 2, tabId: "tab-1", ts: 2, dataBase64: "BAUG" },
+          { seq: 3, tabId: "tab-1", ts: 3, dataBase64: "BwgJ" },
+        ],
+        nextSeq: 4,
+        done: true,
+        totalBytes: 6,
+      };
+    });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
@@ -632,7 +651,7 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
-    clickButton(mounted.container, "推送到云端（1）");
+    await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     // 推送的 blob 解码后应含全部 3 个 chunk
     const pushed = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
@@ -668,10 +687,8 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
     // 已一致,winner 与 applySet 均为空,不推送也不重复应用
-    expect(mounted.container.textContent).toContain("推送到云端（0）");
-    expect(mounted.container.textContent).toContain("拉取并应用（0）");
-    const applyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("拉取并应用")) as HTMLButtonElement | undefined;
-    expect(applyBtn?.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("待推送 0 项");
+    expect(mounted.container.textContent).toContain("当前待应用 0 项");
   });
 
   it("会话记录读取失败时显式报错而不是吞成空数组", async () => {
@@ -729,11 +746,11 @@ describe("SyncCard（Web 同步台）", () => {
       max_seq: 2,
     });
     mocks.syncPull.mockImplementation(async (_seq: number, ids?: string[]) => {
-      const want = ids?.[0];
+      const wanted = new Set(ids ?? []);
       const objects = [
         { id: "a1", seq: 1, blob: bytesToBase64(blobA1) },
         { id: "a2", seq: 2, blob: bytesToBase64(blobA2) },
-      ].filter((o) => !want || o.id === want);
+      ].filter((o) => wanted.size === 0 || wanted.has(o.id));
       return { protocol: 2, objects, head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true };
     });
     mocks.applyObjects.mockResolvedValue({
@@ -747,13 +764,8 @@ describe("SyncCard（Web 同步台）", () => {
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "拉取并应用（2）",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(mounted.container, "拉取并应用（2）");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前待应用 2 项"));
+    await runAutoSync();
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith(
       expect.arrayContaining([
@@ -761,7 +773,7 @@ describe("SyncCard（Web 同步台）", () => {
         expect.objectContaining({ id: "a2", kind: "asset" }),
       ]),
     );
-    await flushUntil(() => mounted!.container.textContent?.includes("已应用 2"));
+    await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
   });
 
   it("凭据库未解锁时应用显示 skipped/warning 而不是静默成功", async () => {
@@ -787,15 +799,10 @@ describe("SyncCard（Web 同步台）", () => {
     clickButton(mounted.container, "对比详情");
     // 等远端对象加载完成(凭据行出现),按钮才会变为「拉取并应用 (1)」可用
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "拉取并应用（1）",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(mounted.container, "拉取并应用（1）");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前待应用 1 项"));
+    await runAutoSync();
     await flushUntil(() => mounted!.container.textContent?.includes("凭据库已锁定"));
-    expect(mounted.container.textContent).toContain("跳过 1");
+    expect(mounted.container.textContent).toContain("c1: 凭据库已锁定, 请先解锁");
   });
 });
 

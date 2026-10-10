@@ -144,3 +144,29 @@ func TestNormalizeErrorPreservesStructuredErrors(t *testing.T) {
 		t.Fatalf("plain error code = %s", got.Code)
 	}
 }
+
+func TestDispatcherEmitsSyncStatusOnlyForRelevantSuccessfulWrites(t *testing.T) {
+	dispatcher := NewDispatcher()
+	var events []Event
+	emitter := EmitterFunc(func(_ context.Context, event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "sync_apply_objects"} {
+		command := command
+		if err := Register(dispatcher, command, func(_ context.Context, _ *Call, _ struct{}) (any, error) {
+			if command == "asset_update" {
+				return nil, errors.New("stop")
+			}
+			return struct{}{}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, command := range []string{"asset_create", "asset_update", "asset_delete", "sync_apply_objects"} {
+		_ = dispatcher.Dispatch(context.Background(), Request{Command: command}, Environment{Events: emitter})
+	}
+	if len(events) != 2 || events[0].Event != TopicSyncStatus || events[1].Event != TopicSyncStatus {
+		t.Fatalf("events = %+v, want two sync status events", events)
+	}
+}

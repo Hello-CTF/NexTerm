@@ -16,7 +16,7 @@ func TestSetAutoLockValidation(t *testing.T) {
 	db := testStore(t)
 	v := loadTestVault(db, &fakeProtector{})
 	requireVaultCode(t, v.SetAutoLock(ctx, 1441), ipc.CodeBadParam)
-	if got := v.Status().AutoLockMinutes; got != 30 {
+	if got := v.Status().AutoLockMinutes; got != 0 {
 		t.Fatalf("rejected value must not change the setting, got %d", got)
 	}
 	if err := v.SetAutoLock(ctx, 1440); err != nil {
@@ -51,6 +51,28 @@ func TestAutoLockDisabledNeverLocks(t *testing.T) {
 	}
 }
 
+func TestBackgroundSecretUseDoesNotDelayAutoLock(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	now := int64(1000)
+	v := loadTestVault(db, &fakeProtector{}, func(v *Vault) { v.now = func() int64 { return now } })
+	if err := v.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetAutoLock(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	now = 30_000
+	if _, err := v.EncryptSecret(WithBackground(ctx), "payload"); err != nil {
+		t.Fatal(err)
+	}
+	now = 61_001
+	v.AutoLockIfIdle()
+	if v.Status().Unlocked {
+		t.Fatal("background secret use delayed auto lock")
+	}
+}
+
 func TestAutoLockPersistsAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
@@ -79,13 +101,13 @@ func TestLoadIgnoresOutOfRangeAutoLock(t *testing.T) {
 	if err := db.SettingSet(ctx, settingAutolock, "999999999"); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 30 {
+	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 0 {
 		t.Fatalf("out-of-range stored autolock = %d, want default 30", got)
 	}
 	if err := db.SettingSet(ctx, settingAutolock, "not-a-number"); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 30 {
+	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 0 {
 		t.Fatalf("corrupt stored autolock = %d, want default 30", got)
 	}
 }
@@ -97,7 +119,7 @@ func TestLoadRequiresWholeMinutes(t *testing.T) {
 		if err := db.SettingSet(ctx, settingAutolock, raw); err != nil {
 			t.Fatal(err)
 		}
-		if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 30 {
+		if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 0 {
 			t.Fatalf("stored autolock %q = %d minutes, want default 30", raw, got)
 		}
 	}

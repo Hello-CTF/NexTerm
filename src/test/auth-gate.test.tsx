@@ -340,6 +340,27 @@ describe("AuthGate 登录", () => {
     expect(useAuth.getState().gate).toBe("ready");
   });
 
+  it("登录等待只显示登录中", async () => {
+    let resolveLogin!: (value: { user: typeof ADMIN; csrf_token: string }) => void;
+    mocks.login.mockImplementation(
+      () => new Promise<{ user: typeof ADMIN; csrf_token: string }>((resolve) => { resolveLogin = resolve; }),
+    );
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("登录"));
+
+    const inputs = mounted.container.querySelectorAll("input");
+    setInputValue(inputs[0], "root");
+    setInputValue(inputs[1], "pw-123456");
+    await flush();
+    clickButton(mounted.container, "登录");
+
+    await flushUntil(() => mounted!.container.textContent?.includes("登录中…"));
+    expect(mounted.container.textContent).not.toContain("解锁");
+    expect(mounted.container.textContent).not.toContain("解密");
+    resolveLogin({ user: ADMIN, csrf_token: "csrf-1" });
+    await flushUntil(() => useAuth.getState().gate === "ready");
+  });
+
   it("管理员创建的用户首登无信封:本地生成并上传,展示恢复密钥", async () => {
     // GET /auth/dek 返回 not_found(管理员创建的用户尚无 DEK 信封)
     mocks.dekGet.mockRejectedValue({ code: "not_found", message: "未找到: DEK 信封", status: 404 });

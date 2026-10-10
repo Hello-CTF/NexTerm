@@ -10,11 +10,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func (v *Vault) EncryptSecret(_ context.Context, plaintext string) (string, error) {
+func (v *Vault) EncryptSecret(ctx context.Context, plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
 	}
-	dek, err := v.currentDEK()
+	dek, err := v.currentDEK(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -26,7 +26,7 @@ func (v *Vault) EncryptSecret(_ context.Context, plaintext string) (string, erro
 	return store.SecretEnvelopePrefix + base64.StdEncoding.EncodeToString(append(nonce, blob...)), nil
 }
 
-func (v *Vault) DecryptSecret(_ context.Context, envelope string) (string, error) {
+func (v *Vault) DecryptSecret(ctx context.Context, envelope string) (string, error) {
 	if !strings.HasPrefix(envelope, store.SecretEnvelopePrefix) {
 		return "", ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 不是密文信封")
 	}
@@ -37,7 +37,7 @@ func (v *Vault) DecryptSecret(_ context.Context, envelope string) (string, error
 	if len(raw) <= nonceLength {
 		return "", ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 信封长度不合法")
 	}
-	dek, err := v.currentDEK()
+	dek, err := v.currentDEK(ctx)
 	if err != nil {
 		return "", err
 	}

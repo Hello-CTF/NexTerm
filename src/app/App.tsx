@@ -90,6 +90,7 @@ import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
 import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
+import { useDesktopAutoSync, useWebAutoSync } from "../features/settings/useWebAutoSync";
 import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
 import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
 import { AuditView } from "../features/settings/AuditView";
@@ -579,6 +580,21 @@ function AppShell() {
     queryFn: () => syncApi.linkGet(),
     enabled: !WEB,
   });
+  const lockVault = useCallback(async () => {
+    if (vaultStatus.uninitialized) {
+      pushToast("info", "凭据库尚未初始化");
+      return;
+    }
+    try {
+      await vaultApi.lock();
+      void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
+      pushToast("info", "凭据库已锁定");
+    } catch (e) {
+      pushToast("error", describeError(e));
+    }
+  }, [queryClient, pushToast, vaultStatus.uninitialized]);
+  useWebAutoSync();
+  useDesktopAutoSync();
   useEffect(() => {
     if (WEB) {
       void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
@@ -911,27 +927,6 @@ function AppShell() {
     [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, setLeftMode, setLeftOpen, pushToast, layoutPresets],
   );
 
-  const runSyncNow = useCallback(async () => {
-    const { pushToast: toast } = useUi.getState();
-    if (WEB) {
-      toast("info", "浏览器模式下，请在「设置 → 账号同步」中同步。");
-      return;
-    }
-    const link = syncLink.data;
-    if (!link || link.url === "" || link.username === "" || !link.hasPassword) {
-      toast("info", "尚未配置同步，请先在「设置 → 账号同步」中登录。");
-      return;
-    }
-    try {
-      const r = await syncApi.syncNow();
-      const moved = r.applied + r.pushed;
-      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "本地与服务端数据已一致");
-      void queryClient.invalidateQueries();
-    } catch (e) {
-      toast("error", `同步失败：${describeError(e)}`);
-    }
-  }, [queryClient, syncLink.data]);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
@@ -972,6 +967,11 @@ function AppShell() {
           e.preventDefault();
           void requestCloseTab(activeTabId);
           return;
+        case "lockVault": {
+          e.preventDefault();
+          void lockVault();
+          return;
+        }
         case "switchTab": {
           if (hit.digit === null) return;
           const st = useUi.getState();
@@ -982,11 +982,6 @@ function AppShell() {
           if (!target) return;
           e.preventDefault();
           st.setActiveTab(target.id);
-          return;
-        }
-        case "syncNow": {
-          e.preventDefault();
-          void runSyncNow();
           return;
         }
       }
@@ -1001,7 +996,7 @@ function AppShell() {
     setRightOpen,
     openLocalTerminal,
     openNewTerminal,
-    runSyncNow,
+    lockVault,
     viewport.splitAllowed,
   ]);
 

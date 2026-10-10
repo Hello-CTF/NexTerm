@@ -251,18 +251,18 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
     expect(store.clears.flat().sort()).toEqual(["keybinding.closeTab", "keybinding.quickConnect"]);
   });
 
-  it("syncNow 走服务端默认与账号覆盖(线上白名单键)", async () => {
+  it("reclaimTakeover 走服务端默认与账号覆盖(线上白名单键)", async () => {
     const store = memoryStore(
-      { "keybinding.syncNow": "Mod+Shift+y" },
+      { "keybinding.reclaimTakeover": "Mod+Shift+y" },
       { "keybinding.commandPalette": "Mod+Shift+p" },
     );
     registerAccountPreferenceStore(store);
-    await vi.waitFor(() => expect(getKeybinding("syncNow")).toBe("Mod+Shift+y"));
+    await vi.waitFor(() => expect(getKeybinding("reclaimTakeover")).toBe("Mod+Shift+y"));
     await vi.waitFor(() => expect(getKeybinding("commandPalette")).toBe("Mod+Shift+p"));
 
-    setKeybinding("syncNow", "Mod+Shift+n");
-    await vi.waitFor(() => expect(store.data["keybinding.syncNow"]).toBe("Mod+Shift+n"));
-    expect(store.puts).toContainEqual({ "keybinding.syncNow": "Mod+Shift+n" });
+    setKeybinding("reclaimTakeover", "Mod+Shift+n");
+    await vi.waitFor(() => expect(store.data["keybinding.reclaimTakeover"]).toBe("Mod+Shift+n"));
+    expect(store.puts).toContainEqual({ "keybinding.reclaimTakeover": "Mod+Shift+n" });
   });
 });
 

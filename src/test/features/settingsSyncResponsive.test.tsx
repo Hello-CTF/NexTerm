@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => {
     linkGet: vi.fn(),
     linkSet: vi.fn(),
     status: vi.fn(),
-    syncNow: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -24,7 +23,6 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       linkGet: mocks.linkGet,
       linkSet: mocks.linkSet,
       status: mocks.status,
-      syncNow: mocks.syncNow,
     },
   };
 });

@@ -72,7 +72,7 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
 	registered := application.Dispatcher.Commands()
 	for _, command := range []string{
-		"sync_link_get", "sync_status", "sync_now", "sync_bundle_read", "sync_bundle_write",
+		"sync_link_get", "sync_status", "sync_wake", "sync_bundle_read", "sync_bundle_write",
 		"forward_env", "forward_create", "forward_create_socks", "forward_list", "forward_remove",
 		"mount_capability", "mount_create", "mount_list", "mount_remove",
 	} {
