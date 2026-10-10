@@ -65,6 +65,8 @@ export interface AppTab {
   dead?: boolean;
   exited?: boolean;
   renamedByUser?: boolean;
+  unread?: boolean;
+  closeError?: string;
 }
 
 export type WorkspaceKind = "session" | "db" | "tools";
@@ -647,7 +649,17 @@ export const useUi = create<UiState>((set, get) => ({
                 ? {
                     ...x,
                     activePaneId: p.id,
-                    panes: x.panes.map((q) => (q.id === p.id ? { ...q, activeTabId: id } : q)),
+                    panes: x.panes.map((q) =>
+                      q.id === p.id
+                        ? {
+                            ...q,
+                            activeTabId: id,
+                            tabs: q.tabs.some((t) => t.id === id && t.unread)
+                              ? q.tabs.map((t) => (t.id === id ? { ...t, unread: undefined } : t))
+                              : q.tabs,
+                          }
+                        : q,
+                    ),
                   }
                 : x,
             ),
@@ -733,6 +745,7 @@ export const useUi = create<UiState>((set, get) => ({
       try {
         await terminalApi.closeTab(target.tabId, mode);
       } catch (e) {
+        get().updateTab(id, { closeError: describeError(e) });
         get().pushToast("error", `终端操作失败：${describeError(e)}`);
         return false;
       }
@@ -740,6 +753,7 @@ export const useUi = create<UiState>((set, get) => ({
       try {
         await dbApi.disconnect(target.connId);
       } catch (e) {
+        get().updateTab(id, { closeError: describeError(e) });
         get().pushToast("error", `数据库断开失败：${describeError(e)}`);
         return false;
       }
@@ -1370,8 +1384,16 @@ export async function requestCloseTab(id: string): Promise<void> {
 }
 
 export async function requestCloseTabs(ids: string[]): Promise<void> {
+  const st = useUi.getState();
+  for (const id of ids) {
+    if (findTab(id)?.tab.closeError) st.updateTab(id, { closeError: undefined });
+  }
   for (const id of ids) {
     await requestCloseTab(id);
+  }
+  const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
+  if (failed > 0) {
+    useUi.getState().pushToast("error", `${failed} 个标签未能关闭，已保留并在标签上标出原因`);
   }
 }
 

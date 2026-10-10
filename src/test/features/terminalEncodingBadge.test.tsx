@@ -41,8 +41,6 @@ vi.mock("../../ipc/commands", () => ({
     setVisible: vi.fn().mockResolvedValue(undefined),
     switchEncoding: harness.switchEncoding,
     claim: vi.fn().mockResolvedValue(null),
-    recordStart: vi.fn().mockResolvedValue(undefined),
-    recordStop: vi.fn().mockResolvedValue(0),
     exportLog: vi.fn().mockResolvedValue(0),
   },
 }));
@@ -65,6 +63,7 @@ vi.mock("../../ui/dialogs", () => ({
   pickSavePath: vi.fn(),
   promptText: vi.fn(),
   ask: vi.fn(),
+  askChoice: vi.fn(),
 }));
 
 vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));

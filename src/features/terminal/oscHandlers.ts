@@ -15,19 +15,18 @@ export function decodeOsc52Payload(payload: string): string | null {
 export interface Osc52HandlerDeps {
   enabled: () => boolean;
   writeText: (text: string) => Promise<void>;
-  onDenied: () => void;
+  authorize: () => Promise<"once" | "session" | "deny" | null>;
   onError: (error: unknown) => void;
   now?: () => number;
-  deniedThrottleMs?: number;
   errorThrottleMs?: number;
 }
 
 export function createOsc52Handler(deps: Osc52HandlerDeps): (payload: string) => void {
   const now = deps.now ?? Date.now;
-  const deniedThrottleMs = deps.deniedThrottleMs ?? 4000;
   const errorThrottleMs = deps.errorThrottleMs ?? 4000;
-  let lastDenied = Number.NEGATIVE_INFINITY;
   let lastError = Number.NEGATIVE_INFINITY;
+  let granted: "session" | "deny" | null = null;
+  let asking = false;
   const reportError = (e: unknown) => {
     const t = now();
     if (t - lastError >= errorThrottleMs) {
@@ -35,22 +34,33 @@ export function createOsc52Handler(deps: Osc52HandlerDeps): (payload: string) =>
       deps.onError(e);
     }
   };
-  return (payload: string) => {
-    const text = decodeOsc52Payload(payload);
-    if (text === null) return;
-    if (!deps.enabled()) {
-      const t = now();
-      if (t - lastDenied >= deniedThrottleMs) {
-        lastDenied = t;
-        deps.onDenied();
-      }
-      return;
-    }
+  const write = (text: string) => {
     try {
       deps.writeText(text).catch(reportError);
     } catch (e) {
       reportError(e);
     }
+  };
+  return (payload: string) => {
+    const text = decodeOsc52Payload(payload);
+    if (text === null) return;
+    if (deps.enabled() || granted === "session") {
+      write(text);
+      return;
+    }
+    if (granted === "deny" || asking) return;
+    asking = true;
+    void deps
+      .authorize()
+      .then((choice) => {
+        asking = false;
+        if (choice === "session") granted = "session";
+        else if (choice === "deny") granted = "deny";
+        if (choice === "once" || choice === "session") write(text);
+      })
+      .catch(() => {
+        asking = false;
+      });
   };
 }
 

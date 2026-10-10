@@ -16,16 +16,24 @@ import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP, WEB } from "../../ipc/env";
 import {
+  IconArchive,
+  IconBot,
   IconCheckCircle,
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconClose,
+  IconCommand,
+  IconDownload,
+  IconGlobe,
   IconLock,
+  IconMonitor,
   IconPlus,
   IconRefresh,
+  IconServer,
   IconSettings,
   IconShield,
+  IconShieldCheck,
   IconSparkles,
   IconTerminal,
   IconXCircle,
@@ -34,26 +42,43 @@ import {
 
 // 设置分区导航:小标签直达对应区域;目标都是本视图里必然渲染的节点。
 const SETTINGS_SECTIONS = [
-  { id: "settings-appearance", label: "外观" },
-  { id: "settings-terminal", label: "终端" },
-  { id: "settings-ai-model", label: "AI 模型" },
-  { id: "settings-ai-rules", label: "AI 拦截" },
-  { id: "settings-memory", label: "长期记忆" },
-  { id: "settings-vault", label: "凭据保护" },
-  { id: "settings-known-hosts", label: "已知主机" },
-  { id: "settings-account", label: "账号同步" },
-  { id: "settings-bundle", label: "资产包" },
-  { id: "settings-share", label: "分享" },
-  { id: "settings-shortcuts", label: "快捷键" },
-  { id: "settings-update", label: "软件更新" },
+  { id: "settings-appearance", label: "外观", icon: IconMonitor },
+  { id: "settings-terminal", label: "终端", icon: IconTerminal },
+  { id: "settings-ai-model", label: "AI 模型", icon: IconSparkles },
+  { id: "settings-ai-rules", label: "AI 拦截", icon: IconShield },
+  { id: "settings-memory", label: "长期记忆", icon: IconBot },
+  { id: "settings-vault", label: "凭据保护", icon: IconLock },
+  { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck },
+  { id: "settings-account", label: "账号同步", icon: IconServer },
+  { id: "settings-bundle", label: "资产包", icon: IconArchive },
+  { id: "settings-share", label: "分享", icon: IconGlobe },
+  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand },
+  { id: "settings-update", label: "软件更新", icon: IconDownload },
 ].filter((section) => {
   if (section.id === "settings-share") return WEB;
   if (section.id === "settings-update") return DESKTOP;
   return true;
-}) as readonly { id: string; label: string }[];
+}) as readonly { id: string; label: string; icon: typeof IconMonitor }[];
 
 function jumpToSection(id: string): void {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+const NAV_OPEN_KEY = "nexterm.settingsNav.v1";
+
+function loadNavOpen(): boolean {
+  try {
+    return localStorage.getItem(NAV_OPEN_KEY) !== "collapsed";
+  } catch {
+    return true;
+  }
+}
+
+function saveNavOpen(open: boolean): void {
+  try {
+    localStorage.setItem(NAV_OPEN_KEY, open ? "open" : "collapsed");
+  } catch {
+  }
 }
 
 export function SettingsView() {
@@ -91,7 +116,11 @@ export function SettingsView() {
     setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
   }, [vault]);
 
-  const [navOpen, setNavOpen] = useState(true);
+  const [navOpen, setNavOpenState] = useState(loadNavOpen);
+  const setNavOpen = (open: boolean) => {
+    setNavOpenState(open);
+    saveNavOpen(open);
+  };
   const [activeSection, setActiveSection] = useState<string>(SETTINGS_SECTIONS[0].id);
   const jump = (id: string) => {
     setActiveSection(id);
@@ -280,7 +309,7 @@ export function SettingsView() {
               aria-label={navOpen ? "收起设置目录" : "展开设置目录"}
               aria-expanded={navOpen}
               title={navOpen ? "收起目录" : "展开目录"}
-              onClick={() => setNavOpen((v) => !v)}
+              onClick={() => setNavOpen(!navOpen)}
             >
               {navOpen ? <IconChevronLeft size={13} /> : <IconChevronRight size={13} />}
             </button>
@@ -301,12 +330,19 @@ export function SettingsView() {
                 </button>
               ))
             ) : (
-              <span
-                className="truncate pt-2 text-center text-[11px] text-neutral-400"
-                title={SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.label}
-              >
-                {SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.label}
-              </span>
+              SETTINGS_SECTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`nx-icon-btn self-center${s.id === activeSection ? " is-active" : ""}`}
+                  title={s.label}
+                  aria-label={s.label}
+                  aria-current={s.id === activeSection ? "true" : undefined}
+                  onClick={() => jump(s.id)}
+                >
+                  <s.icon size={14} />
+                </button>
+              ))
             )}
           </div>
         </nav>
@@ -330,8 +366,8 @@ export function SettingsView() {
               <div className="text-[12.5px] text-neutral-200">允许远程主机写入剪贴板（OSC 52）</div>
               <p className="nx-hint mt-0.5">
                 {terminalOsc52
-                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板。只在可信的主机与网络环境下保持开启。"
-                  : "默认关闭。远程主机发来的 OSC 52 剪贴板写入会被拒绝，并在终端里明确提示，不会静默写入。"}
+                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板，不再逐次询问。只在可信的主机与网络环境下保持开启。"
+                  : "默认关闭。远程主机每次请求写剪贴板时都会先询问你，可选择允许本次、本会话允许或拒绝。"}
               </p>
             </div>
             <input

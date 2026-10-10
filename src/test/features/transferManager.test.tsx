@@ -495,6 +495,9 @@ describe("拖拽上传（FileTree）", () => {
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false),
     );
-    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).not.toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).toBeNull();
+    expect(
+      useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt"),
+    ).toBe(true);
   });
 });

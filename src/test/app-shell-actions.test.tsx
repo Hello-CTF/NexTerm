@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, mount, type MountedView } from "./features/reactTestUtils";
 
@@ -294,5 +294,107 @@ describe("App empty states", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+});
+
+function pressCtrlT(): void {
+  act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "t", code: "KeyT", ctrlKey: true, cancelable: true }),
+    );
+  });
+}
+
+describe("App Ctrl+T 新建终端", () => {
+  it("当前工作区会话已连接时在该工作区新建终端标签", async () => {
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [workspaceOf("s1")],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+
+    pressCtrlT();
+    await flush();
+
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs.filter((t) => t.kind === "terminal" && t.sessionId === "s1")).toHaveLength(1);
+    expect(mocks.connectLocal).not.toHaveBeenCalled();
+  });
+
+  it("没有工作区时回退为本地终端", async () => {
+    mocks.connectLocal.mockResolvedValue(sessionOf("local-1"));
+    mounted = mountApp();
+    await flush();
+
+    pressCtrlT();
+    await flush();
+
+    expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
+    const st = useUi.getState();
+    expect(st.workspaces).toHaveLength(1);
+    expect(
+      st.workspaces[0].panes[0].tabs.some((t) => t.kind === "terminal" && t.sessionId === "local-1"),
+    ).toBe(true);
+  });
+
+  it("数据库工作区不能开终端,同样回退为本地终端", async () => {
+    mocks.connectLocal.mockResolvedValue(sessionOf("local-2"));
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws",
+          kind: "db",
+          title: "db-01 · MySQL",
+          assetId: "a-db",
+          connId: "c1",
+          panes: [{ id: "pane", tabs: [], activeTabId: null }],
+          activePaneId: "pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+
+    pressCtrlT();
+    await flush();
+
+    expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("App 标签栏标记", () => {
+  it("未读与关闭失败的标记渲染在标签上并进入 tooltip", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [
+        workspaceOf("s1", [
+          {
+            id: "t1",
+            kind: "terminal",
+            title: "终端 1",
+            sessionId: "s1",
+            tabId: "T1",
+            closable: true,
+            unread: true,
+            closeError: "资源不存在：tab not found",
+          },
+        ]),
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+
+    const tabEl = mounted.container.querySelector('[data-tab-id="t1"]');
+    expect(tabEl?.getAttribute("title")).toContain("有新输出");
+    expect(tabEl?.getAttribute("title")).toContain("上次关闭失败：资源不存在：tab not found");
+    expect(tabEl?.querySelector('[role="img"][aria-label="有新输出"]')).not.toBeNull();
+    expect(tabEl?.querySelector('[role="img"][aria-label="关闭失败：资源不存在：tab not found"]')).not.toBeNull();
   });
 });

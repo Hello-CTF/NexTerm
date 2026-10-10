@@ -31,98 +31,153 @@ describe("decodeOsc52Payload", () => {
 });
 
 describe("createOsc52Handler", () => {
-  const deniedDeps = () => {
+  async function flushAuth(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  function deps(choice: "once" | "session" | "deny" | null) {
     let on = false;
-    let clock = 0;
     const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
-    const onDenied = vi.fn();
+    const authorize = vi.fn<() => Promise<"once" | "session" | "deny" | null>>(() =>
+      Promise.resolve(choice),
+    );
     const onError = vi.fn();
     const handler = createOsc52Handler({
       enabled: () => on,
       writeText,
-      onDenied,
+      authorize,
       onError,
-      now: () => clock,
     });
     return {
       handler,
       writeText,
-      onDenied,
+      authorize,
       onError,
       enable: () => {
         on = true;
       },
-      tick: (ms: number) => {
-        clock += ms;
-      },
     };
-  };
+  }
 
-  it("denies the write and notifies when the setting is off", () => {
-    const d = deniedDeps();
-    d.handler("c;aGVsbG8=");
-    expect(d.writeText).not.toHaveBeenCalled();
-    expect(d.onDenied).toHaveBeenCalledTimes(1);
-    expect(d.onError).not.toHaveBeenCalled();
-  });
-
-  it("throttles repeated denials but reports again after the interval", () => {
-    const d = deniedDeps();
-    d.handler("c;YQ==");
-    d.handler("c;Yg==");
-    expect(d.onDenied).toHaveBeenCalledTimes(1);
-    d.tick(4000);
-    d.handler("c;Yw==");
-    expect(d.onDenied).toHaveBeenCalledTimes(2);
-    expect(d.writeText).not.toHaveBeenCalled();
-  });
-
-  it("writes the decoded text when the setting is on", () => {
-    const d = deniedDeps();
+  it("writes directly without asking when the setting is on", () => {
+    const d = deps("deny");
     d.enable();
     d.handler("c;aGVsbG8=");
     expect(d.writeText).toHaveBeenCalledWith("hello");
-    expect(d.onDenied).not.toHaveBeenCalled();
+    expect(d.authorize).not.toHaveBeenCalled();
+  });
+
+  it("asks once and keeps writing for the rest of the session after 本会话允许", async () => {
+    const d = deps("session");
+    d.handler("c;aGVsbG8=");
+    await flushAuth();
+    expect(d.authorize).toHaveBeenCalledTimes(1);
+    expect(d.writeText).toHaveBeenCalledWith("hello");
+    d.handler("c;YQ==");
+    expect(d.writeText).toHaveBeenCalledWith("a");
+    expect(d.authorize).toHaveBeenCalledTimes(1);
+    expect(d.onError).not.toHaveBeenCalled();
+  });
+
+  it("允许本次 writes only that payload and asks again on the next one", async () => {
+    const d = deps("once");
+    d.handler("c;aGVsbG8=");
+    await flushAuth();
+    expect(d.writeText).toHaveBeenCalledWith("hello");
+    d.handler("c;YQ==");
+    expect(d.authorize).toHaveBeenCalledTimes(2);
+    await flushAuth();
+    expect(d.writeText).toHaveBeenLastCalledWith("a");
+    expect(d.writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("拒绝 drops the payload silently and never asks again for the session", async () => {
+    const d = deps("deny");
+    d.handler("c;aGVsbG8=");
+    await flushAuth();
+    expect(d.writeText).not.toHaveBeenCalled();
+    d.handler("c;YQ==");
+    d.handler("c;Yg==");
+    expect(d.authorize).toHaveBeenCalledTimes(1);
+    expect(d.writeText).not.toHaveBeenCalled();
+  });
+
+  it("a dismissed dialog drops that payload but asks again next time", async () => {
+    const d = deps(null);
+    d.handler("c;aGVsbG8=");
+    await flushAuth();
+    expect(d.writeText).not.toHaveBeenCalled();
+    d.handler("c;YQ==");
+    expect(d.authorize).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops payloads that arrive while the authorization dialog is open", async () => {
+    let resolveAuth!: (v: "once" | "session" | "deny" | null) => void;
+    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    const authorize = vi.fn<() => Promise<"once" | "session" | "deny" | null>>(
+      () => new Promise((r) => (resolveAuth = r)),
+    );
+    const handler = createOsc52Handler({
+      enabled: () => false,
+      writeText,
+      authorize,
+      onError: vi.fn(),
+    });
+    handler("c;aGVsbG8=");
+    handler("c;YQ==");
+    expect(authorize).toHaveBeenCalledTimes(1);
+    resolveAuth("session");
+    await flushAuth();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("hello");
   });
 
   it("reports clipboard permission failures honestly", async () => {
-    const d = deniedDeps();
+    const d = deps("session");
     d.enable();
     const boom = new Error("clipboard permission denied");
     d.writeText.mockRejectedValueOnce(boom);
     d.handler("c;aGVsbG8=");
     await Promise.resolve();
     expect(d.onError).toHaveBeenCalledWith(boom);
-    expect(d.onDenied).not.toHaveBeenCalled();
   });
 
   it("throttles repeated write failures", async () => {
-    const d = deniedDeps();
-    d.enable();
-    d.writeText.mockRejectedValue(new Error("denied"));
-    d.handler("c;YQ==");
-    d.handler("c;Yg==");
+    let clock = 0;
+    const writeText = vi.fn<(text: string) => Promise<void>>(() =>
+      Promise.reject(new Error("denied")),
+    );
+    const onError = vi.fn();
+    const handler = createOsc52Handler({
+      enabled: () => true,
+      writeText,
+      authorize: vi.fn(),
+      onError,
+      now: () => clock,
+    });
+    handler("c;YQ==");
+    handler("c;Yg==");
     await Promise.resolve();
     await Promise.resolve();
-    expect(d.onError).toHaveBeenCalledTimes(1);
-    d.tick(4000);
-    d.handler("c;Yw==");
+    expect(onError).toHaveBeenCalledTimes(1);
+    clock = 4000;
+    handler("c;Yw==");
     await Promise.resolve();
-    expect(d.onError).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores queries and malformed payloads without any side effect", () => {
-    const d = deniedDeps();
-    d.enable();
+  it("ignores queries and malformed payloads without any side effect", async () => {
+    const d = deps("session");
     d.handler("c;");
     d.handler("c;!!!bad!!!");
+    await flushAuth();
     expect(d.writeText).not.toHaveBeenCalled();
-    expect(d.onDenied).not.toHaveBeenCalled();
+    expect(d.authorize).not.toHaveBeenCalled();
     expect(d.onError).not.toHaveBeenCalled();
   });
 
   it("routes a synchronous writeText throw into onError instead of propagating", () => {
-    const onDenied = vi.fn();
     const onError = vi.fn();
     const syncBoom = () => {
       throw new TypeError("Cannot read properties of undefined (reading 'writeText')");
@@ -130,13 +185,12 @@ describe("createOsc52Handler", () => {
     const handler = createOsc52Handler({
       enabled: () => true,
       writeText: syncBoom,
-      onDenied,
+      authorize: vi.fn(),
       onError,
     });
     expect(() => handler("c;aGVsbG8=")).not.toThrow();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBeInstanceOf(TypeError);
-    expect(onDenied).not.toHaveBeenCalled();
   });
 
   it("throttles synchronous writeText throws like rejections", () => {
@@ -147,7 +201,7 @@ describe("createOsc52Handler", () => {
       writeText: () => {
         throw new Error("clipboard unavailable");
       },
-      onDenied: vi.fn(),
+      authorize: vi.fn(),
       onError,
       now: () => clock,
     });
@@ -164,7 +218,7 @@ describe("createOsc52Handler", () => {
     const handler = createOsc52Handler({
       enabled: () => true,
       writeText: (text) => navigator.clipboard.writeText(text),
-      onDenied: vi.fn(),
+      authorize: vi.fn(),
       onError,
     });
     const filter = createOscStreamFilter();

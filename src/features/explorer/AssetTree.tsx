@@ -2,8 +2,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
+import { WEB } from "../../ipc/env";
 import { browserFilesAvailable } from "../../ipc/webFiles";
-import { connectAsset, useUi } from "../../app/store";
+import { connectAsset, connectQuickTarget, useUi } from "../../app/store";
 import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
@@ -12,6 +13,8 @@ import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyS
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { cloneAsset } from "./assetClone";
 import { useAssetVisibility } from "./assetVisibility";
+import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
+import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -30,6 +33,7 @@ import {
   IconPlug,
   IconPlus,
   IconSearch,
+  IconTerminal,
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
@@ -225,6 +229,24 @@ export function AssetTree() {
     pushToast("info", `已取消隐藏「${a.name}」`);
   };
 
+  const onCopySshCommand = async (a: Asset) => {
+    const command = formatSshCommand(a);
+    try {
+      await navigator.clipboard.writeText(command);
+      pushToast("success", `已复制 SSH 命令：${command}`);
+    } catch (e) {
+      pushToast("error", `复制失败：${describeError(e)}`);
+    }
+  };
+
+  const onConnectAsUser = async (a: Asset) => {
+    const host = a.host?.trim();
+    if (!host) return;
+    const username = (await promptText(`用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
+    if (!username) return;
+    void connectQuickTarget({ host, port: a.port ?? 22, username });
+  };
+
   const runDeleteAsset = async (a: Asset) => {
     setAssetError(null);
     try {
@@ -308,6 +330,24 @@ export function AssetTree() {
           { kind: "separator" },
         ]
       : [];
+    const copySsh: MenuItem | null = sshCommandCopyable(asset)
+      ? {
+          kind: "item",
+          label: "复制 SSH 命令",
+          icon: <IconTerminal size={13} />,
+          onSelect: () => void onCopySshCommand(asset),
+        }
+      : null;
+    const connectAs: MenuItem | null =
+      !WEB && asset.kind === "ssh" && asset.host?.trim()
+        ? {
+            kind: "item",
+            label: "用其他用户名连接",
+            icon: <IconPlug size={13} />,
+            hint: "走快速连接，用密码或 agent 认证",
+            onSelect: () => void onConnectAsUser(asset),
+          }
+        : null;
     return [
       ...primary,
       {
@@ -317,6 +357,8 @@ export function AssetTree() {
         hint: "与原件共用同一份凭据",
         onSelect: () => void onClone(asset),
       },
+      ...(copySsh ? [copySsh] : []),
+      ...(connectAs ? [connectAs] : []),
       isHidden(asset.id)
         ? {
             kind: "item",
@@ -1508,6 +1550,71 @@ export function AssetEditor({
     initialFocus: () => nameInputRef.current,
   });
 
+  const templates = useConnectTemplates((s) => s.templates);
+  const [templateId, setTemplateId] = useState("");
+
+  const applyTemplate = (t: ConnectTemplate) => {
+    setGroupKind(t.kind);
+    setHostError(null);
+    setPortError(null);
+    setPort(t.port);
+    setUsername(t.username);
+    setAuthKind(t.authKind);
+    setKeyOrigin(t.keyOrigin);
+    setKeyPath(t.keyPath);
+    setVaultCredId(t.vaultCredId);
+    if (t.vaultCredId) setVaultMode("existing");
+    setJumpAssetId(t.jumpAssetId);
+    setProxyCommand(t.proxyCommand);
+    setForwardAgent(t.forwardAgent);
+    setAgentSocket(t.agentSocket);
+    setCertPath(t.certPath);
+    setStartupCommand(t.startupCommand);
+    setEncoding(TERMINAL_ENCODINGS.includes(t.encoding) ? t.encoding : "utf-8");
+    setEnvText(t.envText);
+    setAdvancedOpen(
+      !!t.jumpAssetId ||
+        !!t.proxyCommand ||
+        t.forwardAgent ||
+        !!t.agentSocket ||
+        !!t.certPath ||
+        !!t.startupCommand ||
+        isNonDefaultEncoding(t.encoding) ||
+        !!t.envText.trim(),
+    );
+    setDirty(true);
+  };
+
+  const saveAsTemplate = async () => {
+    const templateName = (await promptText("模板名称", name.trim()))?.trim();
+    if (!templateName) return;
+    useConnectTemplates.getState().add({
+      name: templateName,
+      kind: groupKind,
+      port: validateAssetPort(port) === null ? port : 22,
+      username,
+      authKind,
+      keyOrigin,
+      keyPath,
+      vaultCredId: keyAuth && keyOrigin === "vault" && vaultMode === "existing" ? vaultCredId : "",
+      jumpAssetId,
+      proxyCommand,
+      forwardAgent,
+      agentSocket,
+      certPath,
+      startupCommand,
+      encoding,
+      envText,
+    });
+    pushToast("success", `已存为模板「${templateName}」`);
+  };
+
+  const deleteTemplate = () => {
+    useConnectTemplates.getState().remove(templateId);
+    setTemplateId("");
+    pushToast("info", "已删除模板");
+  };
+
   const requestClose = async () => {
     if (savingRef.current) return;
     if (!dirty) {
@@ -1579,6 +1686,41 @@ export function AssetEditor({
                   ↳ 内置的「当前设备」，始终指向本机，类型不可更改（名字可以改）
                 </div>
               )}
+            </div>
+          )}
+
+          {kind === "asset" && !initial && templates.length > 0 && (
+            <div className="nx-form-row">
+              <label className="nx-label">模板</label>
+              <div className="flex min-w-0 items-center gap-2">
+                <select
+                  className="nx-select"
+                  value={templateId}
+                  aria-label="从模板创建"
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setTemplateId(id);
+                    const t = templates.find((x) => x.id === id);
+                    if (t) applyTemplate(t);
+                  }}
+                >
+                  <option value="">从模板创建…</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                {templateId && (
+                  <button
+                    type="button"
+                    className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                    onClick={deleteTemplate}
+                  >
+                    删除模板
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -2172,6 +2314,16 @@ export function AssetEditor({
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
+          {kind === "asset" && !initial && (
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost mr-auto"
+              disabled={saving}
+              onClick={() => void saveAsTemplate()}
+            >
+              存为模板
+            </button>
+          )}
           <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
             取消
           </button>

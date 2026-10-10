@@ -65,7 +65,7 @@ function TransferRow({ task }: { task: TransferTask }) {
   );
 }
 
-export function TransferPanel({ compact = false }: { compact?: boolean }) {
+export function TransferPanel() {
   const tasks = useTransferStore((s) => s.tasks);
   if (tasks.length === 0) return null;
   const active = tasks.filter((t) => t.status === "queued" || t.status === "running").length;
@@ -84,7 +84,7 @@ export function TransferPanel({ compact = false }: { compact?: boolean }) {
           </button>
         )}
       </div>
-      <div className={`overflow-y-auto pb-1.5 ${compact ? "max-h-24" : "max-h-36"}`}>
+      <div className="max-h-36 overflow-y-auto pb-1.5">
         {tasks.map((t) => (
           <TransferRow key={t.id} task={t} />
         ))}

@@ -46,6 +46,7 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
+import { startUnreadTracking } from "./unread";
 import {
   applyLayoutPreset,
   saveLayoutPresetFromWorkspace,
@@ -105,6 +106,7 @@ import { registerPromptHandler, registerDialogHandlers, promptText } from "../ui
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
+  IconAlert,
   IconBox,
   IconCheckCircle,
   IconChevronLeft,
@@ -193,6 +195,13 @@ function WorkspaceStatusGlyph({ status }: { status: SessionInfo["status"] | unde
 function tabIcon(t: AppTab) {
   if ((t.kind === "files" || t.kind === "log") && t.path) return fileVisual(t.path, "file").Icon;
   return TAB_ICON[t.kind] ?? IconTerminal;
+}
+
+function tabTooltip(t: AppTab): string {
+  const notes: string[] = [];
+  if (t.unread) notes.push("有新输出");
+  if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
+  return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
 function handleTablistKeyDown(
@@ -788,7 +797,7 @@ function AppShell() {
       }
       return;
     }
-    if (ws?.assetId) {
+    if (ws?.assetId && ws.kind !== "db") {
       try {
         const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string));
         if (!fresh) {
@@ -946,7 +955,7 @@ function AppShell() {
           return;
         case "newTerminal":
           e.preventDefault();
-          void openLocalTerminal();
+          void openNewTerminal();
           return;
         case "toggleSplit": {
           e.preventDefault();
@@ -991,6 +1000,7 @@ function AppShell() {
     setLeftOpen,
     setRightOpen,
     openLocalTerminal,
+    openNewTerminal,
     runSyncNow,
     viewport.splitAllowed,
   ]);
@@ -1046,6 +1056,7 @@ function AppShell() {
 
   useEffect(() => {
     startLayoutSync();
+    startUnreadTracking();
   }, []);
 
   // 桌面端启动后静默检查一次更新: 不弹 toast, 有更新时由 UpdateBanner 呈现。
@@ -1740,10 +1751,22 @@ function PaneGroup({
                   e.preventDefault();
                   openTabMenu(t, e.clientX, e.clientY);
                 }}
-                title={t.title}
+                title={tabTooltip(t)}
               >
                 <Icon size={13} />
                 <span className="truncate">{t.title}</span>
+                {t.closeError && (
+                  <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={`关闭失败：${t.closeError}`}>
+                    <IconAlert size={11} />
+                  </span>
+                )}
+                {t.unread && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
+                    role="img"
+                    aria-label="有新输出"
+                  />
+                )}
                 {t.closable && (
                   <button
                     type="button"
@@ -2026,7 +2049,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
   const { setSessions, sessions } = useUi();
   const bindings = useKeybindings();
   const shortcuts: [KeybindingActionId, string, string][] = [
-    ["newTerminal", formatBinding(bindings.newTerminal), "本地终端"],
+    ["newTerminal", formatBinding(bindings.newTerminal), "新建终端"],
     ["quickConnect", formatBinding(bindings.quickConnect), "快速连接"],
     ["commandPalette", formatBinding(bindings.commandPalette), "命令面板"],
     ["toggleSidebar", formatBinding(bindings.toggleSidebar), "资产树"],

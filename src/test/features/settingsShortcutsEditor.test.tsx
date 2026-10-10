@@ -138,7 +138,7 @@ describe("shortcuts editor", () => {
     keyDown(captureInput() as HTMLInputElement, "n", { code: "KeyN", ctrlKey: true });
     expect(kbdText("newTerminal")).toBe("Ctrl+N");
     const reset = row("newTerminal").querySelector<HTMLButtonElement>(
-      'button[aria-label="恢复默认快捷键：新建本地终端"]',
+      'button[aria-label="恢复默认快捷键：新建终端标签"]',
     );
     expect(reset).not.toBeNull();
     click(reset as HTMLButtonElement);

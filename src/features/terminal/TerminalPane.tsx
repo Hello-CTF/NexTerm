@@ -26,13 +26,14 @@ import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hos
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
+import { confirmMultilinePaste } from "./terminalPaste";
 import {
   THROTTLE_RECOVERED_MS,
   throttleStateFrom,
   throttleView,
   type ThrottleState,
 } from "./terminalThrottle";
-import { ask, describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
+import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -52,7 +53,6 @@ import {
   IconSave,
   IconSearch,
   IconSplitH,
-  IconStop,
   IconZap,
 } from "../../ui/icons";
 
@@ -111,7 +111,6 @@ export function TerminalPane({
   const [kernelTabId, setKernelTabId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [recording, setRecording] = useState(false);
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
@@ -154,7 +153,6 @@ export function TerminalPane({
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
   const userClosedBlocks = useRef(false);
-  const recordTarget = useRef<{ path: string; name: string } | null>(null);
   const searchApi = useRef<{
     findNext: (t: string) => void;
     findPrevious: (t: string) => void;
@@ -231,11 +229,21 @@ export function TerminalPane({
     createOsc52Handler({
       enabled: () => useUi.getState().terminalOsc52,
       writeText: async (text) => navigator.clipboard.writeText(text),
-      onDenied: () =>
-        pushToast(
-          "info",
-          `「${sessionNameRef.current}」尝试写入剪贴板（OSC 52），已拒绝：此功能默认关闭，可在「设置 → 终端」中开启。`,
-        ),
+      authorize: async () => {
+        const choice = await askChoice(
+          `「${sessionNameRef.current}」请求写入剪贴板（OSC 52）。允许该会话写剪贴板？`,
+          {
+            title: "剪贴板写入请求",
+            level: "warning",
+            choices: [
+              { key: "once", label: "允许本次", hint: "只写入这一次，下次再询问", primary: true },
+              { key: "session", label: "本会话允许", hint: "这个终端会话内不再询问" },
+              { key: "deny", label: "拒绝", hint: "本会话内一律静默丢弃", danger: true },
+            ],
+          },
+        );
+        return choice === "once" || choice === "session" || choice === "deny" ? choice : null;
+      },
       onError: (e) =>
         pushToast(
           "error",
@@ -614,41 +622,6 @@ export function TerminalPane({
     }
   }, [storeTabId, pushToast]);
 
-  const toggleRecord = async () => {
-    if (!kernelTabId) return;
-    if (!recording) {
-      const name = `${title}-${Date.now()}.log`;
-      try {
-        const path = await pickSavePath(name);
-        if (!path) return;
-        await terminalApi.recordStart(kernelTabId, path);
-        recordTarget.current = { path, name };
-        setRecording(true);
-        pushToast("info", `开始录制 → ${describeTarget(path, name)}`);
-      } catch (e) {
-        pushToast("error", `开始录制失败：${describeError(e)}`);
-      }
-    } else {
-      const target = recordTarget.current;
-      recordTarget.current = null;
-      let bytes: number;
-      try {
-        bytes = await terminalApi.recordStop(kernelTabId);
-      } catch (e) {
-        setRecording(false);
-        pushToast("error", `停止录制失败：${describeError(e)}`);
-        return;
-      }
-      setRecording(false);
-      try {
-        const where = target ? await finishSave(target.path, target.name) : null;
-        pushToast("success", `录制完成（${bytes} 字节）${where ? ` → ${where}` : ""}`);
-      } catch (e) {
-        pushToast("error", `录制已停止（${bytes} 字节），但保存到本地失败：${describeError(e)}`);
-      }
-    }
-  };
-
   const applyEncoding = async (v: string) => {
     if (!kernelTabId) {
       pushToast("error", "终端尚未连接，无法切换编码");
@@ -668,7 +641,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     try {
       const text = await navigator.clipboard.readText();
-      if (text) handleRef.current?.paste(text);
+      if (text && (await confirmMultilinePaste(text))) handleRef.current?.paste(text);
     } catch (e) {
       pushToast("error", `读取剪贴板失败：${describeError(e)}`);
     }
@@ -729,6 +702,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     const selected = handleRef.current?.getSelection() ?? "";
     if (!selected) return;
+    if (!(await confirmMultilinePaste(selected))) return;
     handleRef.current?.paste(selected);
   };
 
@@ -821,14 +795,6 @@ export function TerminalPane({
         setSearchOpen(next);
         if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
-    },
-    {
-      kind: "item",
-      label: recording ? "停止录制" : "连续录制到文件…",
-      icon: recording ? <IconStop size={13} /> : <IconSave size={13} />,
-      hint: "保存到文件",
-      disabled: !kernelTabId,
-      onSelect: () => void toggleRecord(),
     },
     ...(blocksSupported
       ? ([
@@ -1131,18 +1097,6 @@ export function TerminalPane({
             </button>
           </>
         )}
-        {recording && (
-          <button
-            type="button"
-            className="nx-badge nx-badge-red shrink-0 cursor-pointer"
-            title="正在录制终端输出到文件，点击停止并保存"
-            aria-label="停止录制"
-            onClick={() => void toggleRecord()}
-          >
-            <span className="nx-dot nx-dot-pulse" />
-            录制中
-          </button>
-        )}
         {broadcastCount > 0 && (
           <button
             type="button"
@@ -1157,7 +1111,7 @@ export function TerminalPane({
         )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="更多终端操作（搜索 / 编码 / 录制 / 命令块）"
+          title="更多终端操作（搜索 / 编码 / 命令块）"
           aria-label="更多终端操作"
           onClick={openToolbarOverflow}
         >

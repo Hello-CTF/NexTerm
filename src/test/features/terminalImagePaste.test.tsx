@@ -114,7 +114,7 @@ vi.mock("../../ipc/events", () => ({
   disposeChannel: vi.fn(),
   onChannelReopen: () => vi.fn(),
 }));
-vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
 import { XtermView, type XtermViewProps } from "../../features/terminal/XtermView";
 

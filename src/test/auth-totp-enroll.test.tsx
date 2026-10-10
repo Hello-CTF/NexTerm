@@ -289,6 +289,23 @@ describe("TotpCard 换绑", () => {
     expect(copyBtn.textContent).not.toContain("已复制");
     expect(mounted.container.textContent).toContain("AAAA-BBBB-CCCC-DDDD");
   });
+
+  it("卡片常驻提示两步验证配置不随同步走", async () => {
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: BOUND_USER,
+      dek: null,
+      gate: "ready",
+      pendingRecoveryKey: null,
+      pendingMfa: null,
+      mfaEnrollmentPassword: null,
+      error: null,
+    });
+    mocks.totpStatus.mockResolvedValue({ enabled: true, pending: false, mfa_required: false, recovery_codes_left: 8 });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("已开启"));
+    expect(mounted.container.textContent).toContain("两步验证配置不随同步走,换设备后需要重新绑定");
+  });
 });
 
 describe("mfa_enrollment_required 全局事件", () => {

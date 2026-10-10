@@ -41,7 +41,6 @@ import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
 import { dropUploadFiles } from "./transferActions";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
-import { TransferPanel } from "./TransferPanel";
 import {
   IconArchive,
   IconArrowUp,
@@ -937,8 +936,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           </div>
         )}
       </div>
-
-      <TransferPanel compact />
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
         <span>{rows.filter((r) => r.entry).length} 项</span>

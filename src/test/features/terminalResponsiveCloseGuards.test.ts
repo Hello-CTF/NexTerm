@@ -115,7 +115,7 @@ describe("close = detach (M111)", () => {
 
     await requestCloseTab(tab.id);
 
-    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([tab]);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([{ ...tab, closeError: "boom" }]);
     expect(toastText()).toContain("终端操作失败");
   });
 

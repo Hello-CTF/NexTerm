@@ -88,6 +88,7 @@ const SECTION_LABELS = [
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  localStorage.clear();
   Element.prototype.scrollIntoView = vi.fn();
   useUi.setState({ pushToast: mocks.toast });
   useAuth.setState({
@@ -148,7 +149,7 @@ describe("设置分区导航", () => {
     expect(vaultEntry.className).toContain("bg-neutral-800/70");
   });
 
-  it("宽屏目录折叠后只保留开关与当前分区摘要,展开后恢复全部分区", async () => {
+  it("宽屏目录折叠后保留图标导航,展开后恢复全部分区", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const toggle = tocToggle();
@@ -163,16 +164,41 @@ describe("设置分区导航", () => {
     await flush();
     expect(tocToggle().getAttribute("aria-label")).toBe("展开设置目录");
     expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
-    expect(tocButtons().length).toBe(0);
-    const summary = toc().querySelector("span");
-    expect(summary?.textContent).toBe("凭据保护");
-    expect(summary?.className).toContain("truncate");
-    expect(summary?.getAttribute("title")).toBe("凭据保护");
+    const icons = tocButtons();
+    expect(icons.map((b) => b.getAttribute("aria-label"))).toEqual(SECTION_LABELS);
+    expect(icons.map((b) => b.getAttribute("title"))).toEqual(SECTION_LABELS);
+    const active = icons.find((b) => b.getAttribute("aria-current") === "true");
+    expect(active?.getAttribute("aria-label")).toBe("凭据保护");
+    expect(active?.className).toContain("is-active");
+
+    const target = document.getElementById("settings-terminal")!;
+    click(icons.find((b) => b.getAttribute("aria-label") === "终端")!);
+    expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
 
     click(tocToggle());
     await flush();
     expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
-    expect(toc().querySelector("span")).toBeNull();
+  });
+
+  it("目录展开/折叠状态持久化到本地存储", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    expect(tocToggle().getAttribute("aria-expanded")).toBe("true");
+
+    click(tocToggle());
+    await flush();
+    expect(localStorage.getItem("nexterm.settingsNav.v1")).toBe("collapsed");
+
+    mounted.unmount();
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(tocButtons().map((b) => b.getAttribute("aria-label"))).toEqual(SECTION_LABELS);
+
+    click(tocToggle());
+    await flush();
+    expect(localStorage.getItem("nexterm.settingsNav.v1")).toBe("open");
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
   });
 
   it("右侧内容滚动后宽屏目录高亮跟随当前分区", async () => {

@@ -137,7 +137,7 @@ export function CommandPalette({
       {
         id: "local-terminal",
         label: "打开本地终端",
-        hint: keyHint("newTerminal", "当前设备"),
+        hint: "当前设备",
         icon: IconTerminal,
         run: () => {
           void sessionApi

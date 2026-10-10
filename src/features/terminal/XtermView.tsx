@@ -25,7 +25,7 @@ import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
-import { wrapBracketedPaste } from "./terminalPaste";
+import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
 import { clipboardHasPlainText, pureImageFiles } from "./imagePaste";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
@@ -336,14 +336,23 @@ export function XtermView(props: XtermViewProps) {
     });
     const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
     // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板/拖放
-    // 一律交还默认处理, 普通文本与 bracketed paste 不受影响, 图片字节永远不会成为按键输入。
+    // 走文本粘贴路径, 图片字节永远不会成为按键输入。多行文本粘贴先弹确认, 单行交还默认处理。
     const pasteHost = hostRef.current;
     const onPasteCapture = (event: ClipboardEvent) => {
       const files = pureImageFiles(event.clipboardData);
-      if (files.length === 0 || clipboardHasPlainText(event.clipboardData)) return;
+      if (files.length > 0 && !clipboardHasPlainText(event.clipboardData)) {
+        event.preventDefault();
+        event.stopPropagation();
+        onPasteImagesRef.current?.(files);
+        return;
+      }
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (multilinePasteLines(text) === null) return;
       event.preventDefault();
       event.stopPropagation();
-      onPasteImagesRef.current?.(files);
+      void confirmMultilinePaste(text).then((ok) => {
+        if (ok) sendInput(wrapBracketedPaste(text, term.modes.bracketedPasteMode), text);
+      });
     };
     const onDragOver = (event: DragEvent) => {
       if (!event.dataTransfer?.types.includes("Files")) return;

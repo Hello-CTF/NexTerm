@@ -8,8 +8,6 @@ const harness = vi.hoisted(() => ({
   mac: false,
   switchEncoding: vi.fn(),
   listLive: vi.fn(),
-  recordStart: vi.fn(),
-  recordStop: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -33,8 +31,6 @@ vi.mock("../../ipc/commands", () => ({
     setVisible: vi.fn().mockResolvedValue(undefined),
     switchEncoding: harness.switchEncoding,
     claim: vi.fn().mockResolvedValue(null),
-    recordStart: harness.recordStart,
-    recordStop: harness.recordStop,
     exportLog: vi.fn().mockResolvedValue(0),
   },
 }));
@@ -57,6 +53,7 @@ vi.mock("../../ui/dialogs", () => ({
   pickSavePath: vi.fn(),
   promptText: vi.fn(),
   ask: vi.fn(),
+  askChoice: vi.fn(),
 }));
 
 vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));
@@ -131,8 +128,6 @@ beforeEach(() => {
   harness.mac = false;
   harness.listLive.mockResolvedValue([]);
   harness.switchEncoding.mockResolvedValue(undefined);
-  harness.recordStart.mockResolvedValue(undefined);
-  harness.recordStop.mockResolvedValue(0);
   vi.mocked(pickSavePath).mockResolvedValue(null);
   vi.mocked(finishSave).mockResolvedValue(null);
   useUi.setState({
@@ -194,7 +189,6 @@ describe("terminal toolbar overflow", () => {
 
     expect(menuLabels()).toEqual([
       "搜索终端内容",
-      "连续录制到文件…",
       "定位到上一条命令",
       "定位到下一条命令",
       "命令块",
@@ -208,15 +202,11 @@ describe("terminal toolbar overflow", () => {
     );
   });
 
-  it("keeps the wide toolbar free of the encoding select and the record button", async () => {
+  it("keeps the wide toolbar free of the encoding select", async () => {
     await flush();
     const toolbar = mounted!.container.querySelector(".nx-toolbar");
     if (!toolbar) throw new Error("toolbar not found");
     expect(toolbar.querySelector("select")).toBeNull();
-    const record = [...toolbar.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
-      b.textContent?.includes("录制"),
-    );
-    expect(record).toBeUndefined();
     const encodingBadge = [...toolbar.querySelectorAll(".nx-badge")].find((b) =>
       /utf-8|gbk|gb18030|big5|latin1/.test(b.textContent ?? ""),
     );
@@ -284,7 +274,7 @@ describe("terminal toolbar overflow", () => {
 
     keyDown(document.activeElement as Element, "ArrowDown");
     await flush();
-    expect(document.activeElement?.textContent).toContain("连续录制到文件…");
+    expect(document.activeElement?.textContent).toContain("命令块");
 
     keyDown(document.activeElement as Element, "ArrowUp");
     await flush();
@@ -293,32 +283,5 @@ describe("terminal toolbar overflow", () => {
     keyDown(document.activeElement as Element, "Escape");
     await flush();
     expect(document.querySelector('[role="menu"]')).toBeNull();
-  });
-
-  it("shows a persistent recording indicator with a direct stop action while recording", async () => {
-    vi.mocked(pickSavePath).mockResolvedValue("/tmp/term-1.log");
-    vi.mocked(finishSave).mockResolvedValue("/tmp/term-1.log");
-    await flush();
-    click(overflowButton());
-    await flush();
-    clickMenuItem("连续录制到文件…");
-    await waitFor(() =>
-      expect(harness.recordStart).toHaveBeenCalledWith("kernel-1", "/tmp/term-1.log"),
-    );
-
-    const indicator = [
-      ...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
-    ].find((b) => b.textContent?.includes("录制中"));
-    expect(indicator).not.toBeUndefined();
-    expect(indicator!.getAttribute("aria-label")).toBe("停止录制");
-
-    click(indicator!);
-    await waitFor(() => expect(harness.recordStop).toHaveBeenCalledWith("kernel-1"));
-    await flush();
-    expect(
-      [...mounted!.container.querySelectorAll(".nx-toolbar button")].some((b) =>
-        b.textContent?.includes("录制中"),
-      ),
-    ).toBe(false);
   });
 });

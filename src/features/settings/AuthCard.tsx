@@ -565,6 +565,8 @@ function TotpCard() {
         )}
       </div>
 
+      <p className="nx-hint mb-3">两步验证配置不随同步走,换设备后需要重新绑定。</p>
+
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />

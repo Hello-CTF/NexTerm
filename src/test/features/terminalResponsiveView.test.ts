@@ -162,8 +162,10 @@ vi.mock("../../ipc/events", () => ({
   },
 }));
 vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 
 import { XtermView, type TerminalHandle, type XtermViewProps } from "../../features/terminal/XtermView";
+import { ask } from "../../ui/dialogs";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -392,6 +394,54 @@ describe("XtermView terminal interaction", () => {
       "echo one\necho two\n",
       "\x1b[200~echo one\necho two\n\x1b[201~",
     ]);
+  });
+
+  function firePaste(host: HTMLElement, text: string): Event {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { files: [], getData: () => text },
+    });
+    act(() => {
+      host.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("confirms multi-line clipboard pastes and writes only after approval", async () => {
+    const { term } = await showWithHandle();
+    const host = term.element;
+    if (!host) throw new Error("terminal host not found");
+
+    vi.mocked(ask).mockResolvedValue(false);
+    const denied = firePaste(host, "echo one\necho two");
+    expect(denied.defaultPrevented).toBe(true);
+    await flushWork();
+    expect(writtenText()).toEqual([]);
+
+    vi.mocked(ask).mockResolvedValue(true);
+    firePaste(host, "echo one\necho two");
+    await flushWork();
+    expect(vi.mocked(ask).mock.calls[0]?.[0]).toContain("2 行");
+    expect(writtenText()).toEqual(["echo one\necho two"]);
+
+    term.modes.bracketedPasteMode = true;
+    firePaste(host, "echo three\necho four");
+    await flushWork();
+    expect(writtenText()).toEqual([
+      "echo one\necho two",
+      "\x1b[200~echo three\necho four\x1b[201~",
+    ]);
+  });
+
+  it("leaves single-line clipboard pastes to the default handler untouched", async () => {
+    const { term } = await showWithHandle();
+    const host = term.element;
+    if (!host) throw new Error("terminal host not found");
+
+    const event = firePaste(host, "echo one");
+    await flushWork();
+    expect(event.defaultPrevented).toBe(false);
+    expect(ask).not.toHaveBeenCalled();
   });
 
   it("offers return-to-bottom with the lines below and hides it at the bottom", async () => {
