@@ -387,6 +387,21 @@ func dialShareViewer(t *testing.T, f *httpFixture, path string, session *httpSes
 	return conn
 }
 
+func expectShareViewerStatus(t *testing.T, f *httpFixture, path string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := dialShareViewerStatus(t, f, path)
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %d, want %d", got, want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // dialShareViewerStatus 发起 WS 握手并返回服务端拒绝的 HTTP 状态码; 握手
 // 意外成功返回 0。用于断言 token/auth 把关只在 upgrade 路径生效 (普通 GET
 // 已被 SPA 分流接管)。
@@ -869,9 +884,7 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	collector.expectClosed(t, 10*time.Second)
 
 	// 掉线后打开/新建一律 503 (探针即时判离线, 不等 last_seen 过期)。
-	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusServiceUnavailable {
-		t.Fatalf("offline resolve: HTTP %d", status)
-	}
+	expectShareViewerStatus(t, f, "/share/public/"+token, http.StatusServiceUnavailable)
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusServiceUnavailable {
 		t.Fatalf("offline host open: HTTP %d %v", call.status, call.body)
 	}
