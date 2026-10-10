@@ -145,9 +145,10 @@ function connect(entry: ChannelEntry) {
 }
 
 function scheduleReconnect(entry: ChannelEntry) {
+  if (typeof WebSocket === "undefined") return;
   entry.retry = Math.min(entry.retry + 1, 6);
   const delay = Math.min(300 * 2 ** (entry.retry - 1), 8000);
-  window.setTimeout(() => connect(entry), delay);
+  globalThis.setTimeout(() => connect(entry), delay);
 }
 
 function decodeFrame(data: unknown): ChannelMessage | undefined {
@@ -239,9 +240,10 @@ function connectEvents() {
 }
 
 function scheduleEventsReconnect() {
+  if (typeof WebSocket === "undefined") return;
   events.retry = Math.min(events.retry + 1, 6);
   const delay = Math.min(300 * 2 ** (events.retry - 1), 8000);
-  window.setTimeout(connectEvents, delay);
+  globalThis.setTimeout(connectEvents, delay);
 }
 
 export function subscribeEvent(
