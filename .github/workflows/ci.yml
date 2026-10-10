@@ -275,8 +275,13 @@ jobs:
         if: matrix.platform == 'android'
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
       - name: Install Java 21
         if: matrix.platform == 'android'
         uses: actions/setup-java@v6

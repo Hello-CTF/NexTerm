@@ -23,6 +23,7 @@ describe("mobile build wiring", () => {
     for (const source of [androidTaskfile, iosTaskfile]) {
       expect(source).toContain("task: common:build:frontend");
       expect(source).toContain('path.resolve("cmd/nexterm-desktop"');
+      expect(source).toContain("./cmd/nexterm-desktop");
     }
     expect(commonTaskfile).toContain("cp -R dist cmd/nexterm-desktop/dist");
     expect(ci).toContain("DIST_SOURCE: verified-dist/dist");

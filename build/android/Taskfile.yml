@@ -103,7 +103,7 @@ tasks:
         mkdir -p build/android/app/src/main/jniLibs/$JNI_DIR
 
         go build -buildmode=c-shared -overlay build/android/overlay.json {{.BUILD_FLAGS}} \
-          -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so
+          -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so ./cmd/nexterm-desktop
     vars:
       BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
 
