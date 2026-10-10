@@ -26,7 +26,7 @@ var (
 )
 
 // PreviewLink 是一条只读远程预览链接: 绑定服务端会话 Manager 里的一个终端
-// 标签页 (session_id 即 tab ID), 知链人匿名打开只读视图, 看到当前屏幕与后续
+// 标签页 (session_id 即 tab ID), 获得链接的人匿名打开只读视图, 看到当前屏幕与后续
 // 实时输出, 不能输入。恒只读, 无权限档; 过期/吊销语义与 share_link 一致。
 type PreviewLink struct {
 	ID             string

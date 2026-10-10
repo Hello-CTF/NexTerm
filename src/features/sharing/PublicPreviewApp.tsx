@@ -31,7 +31,7 @@ function errorCopy(failure: PreviewFailure): ErrorCopy {
     case "expired":
       return { title: "预览链接已过期", detail: "请让分享者重新生成链接后再打开。", retryable: false };
     case "revoked":
-      return { title: "预览链接已吊销", detail: "分享者已停止本次围观，可向其确认是否重新分享。", retryable: false };
+      return { title: "预览链接已吊销", detail: "分享者已停止本次分享，可向其确认是否重新分享。", retryable: false };
     case "not_found":
       return { title: "预览链接无效", detail: "请核对链接是否完整，或向分享者确认预览状态。", retryable: false };
     case "ended":
@@ -111,7 +111,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
     };
   }, []);
 
-  // 只读围观: 终端按键不进入任何发送路径 (合同里没有输入帧), 这里只是让
+  // 只读预览: 终端按键不进入任何发送路径 (合同里没有输入帧), 这里只是让
   // xterm 的 onData 有处可去。
   const handleInput = useCallback((_data: string) => {}, []);
 
@@ -140,7 +140,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800 px-3 py-2">
         <span className="text-sm font-medium text-neutral-100">NexTerm 只读预览</span>
         {phase.kind === "live" && (
-          <span className="rounded-full bg-sky-900/60 px-2 py-0.5 text-xs text-sky-300">只读围观，不能输入</span>
+          <span className="rounded-full bg-sky-900/60 px-2 py-0.5 text-xs text-sky-300">只读预览，不能输入</span>
         )}
         {expiry && <span className="text-xs text-neutral-500">{expiry}</span>}
       </header>

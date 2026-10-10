@@ -191,7 +191,7 @@ describe("PublicPreviewApp", () => {
   it("shows the spectate badge and expiry once ready", async () => {
     const view = await mountViewer();
     await goLive();
-    expect(view.container.textContent).toContain("只读围观，不能输入");
+    expect(view.container.textContent).toContain("只读预览，不能输入");
     expect(view.container.textContent).toContain("有效期至");
   });
 

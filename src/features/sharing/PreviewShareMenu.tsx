@@ -1,5 +1,5 @@
 // 只读预览创建入口 (会话/终端分享菜单): 为当前终端标签页创建匿名可开的只读
-// 围观链接。观看者看到当前屏幕与后续实时输出, 不能输入; 链接有过期与吊销。
+// 只读预览链接。观看者看到当前屏幕与后续实时输出, 不能输入; 链接有过期与吊销。
 // 与主机分享 (host_share 登录账号间分享) 和设备公开链接是不同入口。token 只在
 // 创建成功当场持有用于拼公开 URL, 不写日志、不持久化、不进 web storage。
 
@@ -135,7 +135,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
-            为「{sessionName || "当前终端"}」创建公开只读围观链接：知链人无需登录即可看到当前屏幕与后续输出，不能输入。
+            为「{sessionName || "当前终端"}」创建公开只读预览链接：获得链接的人无需登录即可看到当前屏幕与后续输出，不能输入。
           </p>
           <div className="mt-2 flex items-center gap-2">
             <select

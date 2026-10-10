@@ -60,7 +60,7 @@ type Config struct {
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
-	// Previews 与 Spectator 一起启用只读远程预览 (公开围观链接): 管理端点
+	// Previews 与 Spectator 一起启用只读远程预览 (公开预览链接): 管理端点
 	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。
 	Previews    *sharing.Service
 	Spectator   PreviewSpectator
