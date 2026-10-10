@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
+    paths-ignore:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+      - "**.md"
   pull_request:
   workflow_call:
     inputs:
