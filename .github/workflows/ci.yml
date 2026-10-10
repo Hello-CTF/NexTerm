@@ -242,3 +242,79 @@ jobs:
             target/e2e-sync/report.json
             target/e2e-sync/*.log
           if-no-files-found: error
+
+  mobile:
+    name: ${{ matrix.platform }} mobile
+    needs: [quality, version]
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-latest
+          - platform: ios
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: verified-dist
+      - name: Install the Android SDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+      - name: Install Java 21
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v7
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Verify the iOS toolchain
+        if: matrix.platform == 'ios'
+        run: xcodebuild -version
+      - name: Restore the pinned Wails CLI
+        id: wails-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+      - name: Install the pinned Wails CLI
+        run: |
+          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
+          fi
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          wails3 version
+      - name: Stamp the mobile version
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const version = process.env.NEXTERM_RELEASE_VERSION;
+            if (version) {
+              const path = "build/config.yml";
+              const text = fs.readFileSync(path, "utf8");
+              fs.writeFileSync(path, text.replace(/version: "0\.0\.0"/g, `version: "${version}"`));
+            }
+          '
+      - name: Build the mobile package
+        env:
+          DIST_SOURCE: verified-dist/dist
+        run: wails3 task ${{ matrix.platform }}:package
+      - name: Upload the mobile package
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-${{ matrix.platform }}
+          path: bin/${{ matrix.platform == 'android' && 'nexterm.apk' || 'nexterm.app' }}
+          if-no-files-found: error

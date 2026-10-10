@@ -26,7 +26,7 @@ describe("tab close button layout stability", () => {
     expect(coarse).not.toBeNull();
     const rule = coarse![1].match(/\.nx-tab-close\s*\{([^}]*)\}/);
     expect(rule).not.toBeNull();
-    expect(rule![1]).toMatch(/width:\s*24px/);
-    expect(rule![1]).toMatch(/height:\s*24px/);
+    expect(rule![1]).toMatch(/width:\s*44px/);
+    expect(rule![1]).toMatch(/height:\s*44px/);
   });
 });

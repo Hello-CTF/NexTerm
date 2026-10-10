@@ -1,0 +1,17 @@
+version: '3'
+
+info:
+  companyName: "NexTerm contributors"
+  productName: "NexTerm"
+  productIdentifier: "com.nexterm.desktop"
+  description: "NexTerm mobile client"
+  copyright: "Copyright © NexTerm contributors"
+  comments: "NexTerm"
+  version: "0.0.0"
+
+ios:
+  bundleID: "com.nexterm.desktop"
+  displayName: "NexTerm"
+  version: "0.0.0"
+  company: "NexTerm contributors"
+  comments: "NexTerm"

@@ -2341,18 +2341,18 @@
   }
 
   .nx-icon-btn {
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
   }
 
   .nx-icon-btn-sm {
-    width: 28px;
-    height: 28px;
+    width: 44px;
+    height: 44px;
   }
 
   .nx-tab-close {
-    width: 24px;
-    height: 24px;
+    width: 44px;
+    height: 44px;
   }
 
   .nx-tab,
@@ -2361,20 +2361,20 @@
   }
 
   .nx-tab-new {
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
   }
 
   .nx-btn {
-    min-height: 32px;
+    min-height: 44px;
   }
 
   .nx-btn-sm {
-    min-height: 28px;
+    min-height: 44px;
   }
 
   .nx-btn-xs {
-    min-height: 26px;
+    min-height: 44px;
   }
 
   .nx-segment-item {
@@ -2405,7 +2405,7 @@
   .nx-link {
     display: inline-flex;
     align-items: center;
-    min-height: 24px;
+    min-height: 44px;
   }
 
   @layer components {

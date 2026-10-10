@@ -26,6 +26,12 @@ describe("responsive workspace layout", () => {
     expect(workspaceViewport(1440, true).overlaySidebars).toBe(false);
   });
 
+  it("covers phone and iPad viewport policies", () => {
+    expect(workspaceViewport(390, true)).toMatchObject({ overlaySidebars: true, compact: true, terminalKeys: true });
+    expect(workspaceViewport(768, true)).toMatchObject({ overlaySidebars: true, compact: false, terminalKeys: true });
+    expect(workspaceViewport(1024, true)).toMatchObject({ overlaySidebars: false, compact: false, terminalKeys: true });
+  });
+
   it("allows split by default and reports the viewport height", () => {
     const layout = workspaceViewport(390, true);
     expect(layout.splitAllowed).toBe(true);

@@ -57,6 +57,17 @@ describe("coarse pointer hit areas", () => {
     expect(btn).not.toMatch(/margin:/);
   });
 
+  it("all icon buttons and small controls are at least 44x44", () => {
+    for (const selector of [".nx-icon-btn", ".nx-icon-btn-sm", ".nx-tab-close", ".nx-tab-new"]) {
+      const body = rule(coarse, selector);
+      expect(body).toMatch(/width:\s*44px/);
+      expect(body).toMatch(/height:\s*44px/);
+    }
+    for (const selector of [".nx-btn", ".nx-btn-sm", ".nx-btn-xs", ".nx-link"]) {
+      expect(rule(coarse, selector)).toMatch(/min-height:\s*44px/);
+    }
+  });
+
   it("desktop keeps the compact 34px rail", () => {
     const base = rule(css, ".nx-rail-btn");
     expect(base).toMatch(/width:\s*34px/);
