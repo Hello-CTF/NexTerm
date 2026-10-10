@@ -77,7 +77,7 @@ tasks:
       DIST_SOURCE: '{{.DIST_SOURCE}}'
     cmds:
       - |
-        if [ -n "{{.DIST_SOURCE}}" ] && [ "$(realpath "{{.DIST_SOURCE}}")" != "$(realpath dist)" ]; then
+        if [ -n "{{.DIST_SOURCE}}" ] && [ "{{.DIST_SOURCE}}" != "dist" ]; then
           rm -rf dist
           mkdir -p dist
           cp -R "{{.DIST_SOURCE}}"/. dist/

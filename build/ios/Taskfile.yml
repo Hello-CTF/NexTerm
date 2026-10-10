@@ -266,6 +266,18 @@ tasks:
       - build/ios/xcode/gen/main_ios.gen.go
     cmds:
       - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config build/config.yml
+      - |
+        node -e '
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const file = "build/ios/xcode/overlay.json";
+          const overlay = JSON.parse(fs.readFileSync(file, "utf8"));
+          for (const [virtual, generated] of Object.entries(overlay.Replace)) {
+            delete overlay.Replace[virtual];
+            overlay.Replace[path.resolve("cmd/nexterm-desktop", path.basename(virtual))] = generated;
+          }
+          fs.writeFileSync(file, JSON.stringify(overlay, null, 2) + "\n");
+        '
 
   generate:ios:xcode:
     internal: true
