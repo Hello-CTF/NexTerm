@@ -72,17 +72,6 @@ export interface AppTab {
 
 export type WorkspaceKind = "session" | "db" | "tools";
 
-// 全局工具标签统一落入唯一的「工具」工作区, 不寄生主机/数据库工作区。
-export const TOOL_TAB_KINDS: ReadonlySet<PaneKind> = new Set<PaneKind>([
-  "settings",
-  "audit",
-  "devices",
-  "deviceTerminal",
-  "background",
-  "history",
-  "credentials",
-]);
-
 export interface Pane {
   id: string;
   tabs: AppTab[];
@@ -672,18 +661,14 @@ export const useUi = create<UiState>((set, get) => ({
     }),
 
   addTab: (tab, paneId) => {
-    const wsId = resolveWorkspaceId(tab, get());
-    const w = get().workspaces.find((x) => x.id === wsId);
-    if (!w) return;
-    const panes = w.panes.length ? w.panes : [makePane()];
-
-    for (const p of panes) {
-      const exists = p.tabs.find((t) => sameTab(t, tab));
-      if (exists) {
+    for (const ws of get().workspaces) {
+      for (const p of ws.panes) {
+        const exists = p.tabs.find((t) => sameTab(t, tab));
+        if (!exists) continue;
         set((st) => ({
-          activeWorkspaceId: wsId,
+          activeWorkspaceId: ws.id,
           workspaces: st.workspaces.map((x) =>
-            x.id === wsId
+            x.id === ws.id
               ? {
                   ...x,
                   activePaneId: p.id,
@@ -705,6 +690,11 @@ export const useUi = create<UiState>((set, get) => ({
         return;
       }
     }
+
+    const wsId = resolveWorkspaceId(tab, get());
+    const w = get().workspaces.find((x) => x.id === wsId);
+    if (!w) return;
+    const panes = w.panes.length ? w.panes : [makePane()];
 
     const target = paneId
       ? (panes.find((p) => p.id === paneId) ?? panes[0])
@@ -937,9 +927,6 @@ function resolveWorkspaceId(
   st: { workspaces: Workspace[]; sessions: SessionInfo[]; activeWorkspaceId: string | null },
 ): string {
   const { ensureWorkspace } = useUi.getState();
-  if (TOOL_TAB_KINDS.has(tab.kind)) {
-    return ensureWorkspace({ kind: "tools", title: "工具" });
-  }
   if (tab.sessionId) {
     const hit = st.workspaces.find((w) => w.sessionId === tab.sessionId);
     if (hit) return hit.id;

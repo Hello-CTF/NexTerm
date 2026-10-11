@@ -403,7 +403,6 @@ async function runApplyLayoutPreset(id: string, target: LayoutPresetTarget): Pro
       st1.workspaces.find((w) => w.id === st1.activeWorkspaceId) ??
       st1.workspaces[st1.workspaces.length - 1] ??
       null;
-    // 工具工作区是全局标签的固定载体, 不当预设的落地目标。
     if (ws?.kind === "tools") ws = null;
   } else {
     // 新工作区遵守「一个会话一个工作区」的既有约定: 会话已打开时就地重建。
