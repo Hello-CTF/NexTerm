@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -55,14 +56,28 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	if err := prepareDatabaseFile(path); err != nil {
 		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
-	db, err := openDB(sqliteDSN(path), 8)
-	if err != nil {
-		return nil, err
-	}
-	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
-	if err := s.migrate(ctx); err != nil {
-		_ = s.Close()
-		return nil, err
+	var s *Store
+	for attempt := 0; ; attempt++ {
+		db, err := openDB(sqliteDSN(path), 8)
+		if err == nil {
+			s = newStore(db, options.Logger, Dialect{backend: BackendSQLite})
+			err = s.migrate(ctx)
+			if err != nil {
+				_ = s.Close()
+				s = nil
+			}
+		}
+		if err == nil {
+			break
+		}
+		if !IsBusy(err) || attempt >= 9 {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
+		}
 	}
 	if err := hardenDatabaseFiles(path); err != nil {
 		_ = s.Close()

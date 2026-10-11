@@ -192,14 +192,14 @@ func (s *Store) AssetSearch(ctx context.Context, text string) ([]AssetRow, error
 }
 
 func (s *Store) AssetUpsert(ctx context.Context, row AssetRow) (bool, error) {
-	return assetUpsert(ctx, s.db, row)
+	return s.assetUpsert(ctx, s.db, row)
 }
 
 func (s *Store) AssetUpsertTx(ctx context.Context, tx *gorm.DB, row AssetRow) (bool, error) {
-	return assetUpsert(ctx, tx, row)
+	return s.assetUpsert(ctx, tx, row)
 }
 
-func assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (bool, error) {
+func (s *Store) assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (bool, error) {
 	if row.ID == BuiltinLocalAssetID {
 		return false, badParam(errString("内置资产\"当前设备\"不接受同步写入（各设备身份相互独立）"))
 	}
@@ -221,7 +221,7 @@ func assetUpsert(ctx context.Context, db *gorm.DB, row AssetRow) (bool, error) {
 	row.OwnerID = ipc.OwnerID(ctx)
 	row.Name = strings.TrimSpace(row.Name)
 	row.Builtin = false
-	if err := upsertWithDB(ctx, db, &row, []string{
+	if err := s.upsertWithDB(ctx, db, &row, []string{
 		"group_id", "kind", "name", "host", "port", "username", "auth_kind", "key_path", "cred_id",
 		"options_json", "tags", "note", "sort", "updated_at", "deleted_at",
 	}); err != nil {

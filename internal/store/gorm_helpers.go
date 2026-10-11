@@ -18,15 +18,19 @@ func ownerConditions(ctx context.Context, table string) []gen.Condition {
 }
 
 func (s *Store) upsert(ctx context.Context, values any, columns []string) error {
-	return upsertWithDB(ctx, s.db, values, columns)
+	return s.upsertWithDB(ctx, s.db, values, columns)
 }
 
-func upsertWithDB(ctx context.Context, db *gorm.DB, values any, columns []string) error {
+func (s *Store) upsertWithDB(ctx context.Context, db *gorm.DB, values any, columns []string) error {
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(values); err != nil {
+		return dbError(err)
+	}
 	err := db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns(columns),
 		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{
-			Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx),
+			Column: s.dialect.conflictTargetColumn(stmt.Schema.Table, "owner_id"), Value: ipc.OwnerID(ctx),
 		}}},
 	}).Create(values).Error
 	if err != nil {

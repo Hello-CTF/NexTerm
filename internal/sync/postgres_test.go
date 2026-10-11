@@ -23,7 +23,7 @@ func createPostgresSyncUser(t *testing.T, ctx context.Context, db *store.Store) 
 	t.Helper()
 	userID := "pg-user-" + ids.New()
 	if _, err := db.DB().ExecContext(ctx, `INSERT INTO app_user(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
-VALUES(?,?,?,?,'x','active',0,?,?)`, userID, userID, "", "user", 1, 1); err != nil {
+VALUES(?,?,?,?,'x','active',false,?,?)`, userID, userID, "", "user", 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	return userID
