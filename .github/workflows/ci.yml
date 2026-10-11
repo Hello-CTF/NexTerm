@@ -334,7 +334,7 @@ jobs:
   ios-dist:
     name: iOS TestFlight distribution
     needs: [quality, version]
-    if: vars.NEXTERM_IOS_SIGNING == 'true'
+    if: github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true'
     runs-on: macos-15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}

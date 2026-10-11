@@ -21,7 +21,7 @@ describe("mobile build wiring", () => {
 
   it("builds and verifies a signed device IPA when distribution signing is configured", () => {
     expect(ci).toContain("ios-dist:");
-    expect(ci).toContain("if: vars.NEXTERM_IOS_SIGNING == 'true'");
+    expect(ci).toContain("if: github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true'");
     expect(ci).toContain("secrets.NEXTERM_IOS_P12_BASE64");
     expect(ci).toContain("secrets.NEXTERM_IOS_PROVISIONING_PROFILE");
     expect(ci).toContain("CODESIGN_IDENTITY: Apple Distribution");
