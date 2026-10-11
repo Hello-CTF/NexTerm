@@ -330,3 +330,127 @@ jobs:
           name: mobile-${{ matrix.platform }}
           path: bin/${{ matrix.platform == 'android' && 'nexterm.apk' || 'nexterm.app' }}
           if-no-files-found: error
+
+  ios-dist:
+    name: iOS TestFlight distribution
+    needs: [quality, version]
+    if: vars.NEXTERM_IOS_SIGNING == 'true'
+    runs-on: macos-15
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: verified-dist
+      - name: Verify the iOS toolchain
+        run: xcodebuild -version
+      - name: Restore the pinned Wails CLI
+        id: wails-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+      - name: Install the pinned Wails CLI
+        run: |
+          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
+          fi
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          wails3 version
+      - name: Stamp the iOS distribution version
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          version="${NEXTERM_RELEASE_VERSION:-0.0.0}"
+          version="${version%%[-+]*}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" build/ios/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER.$RUN_ATTEMPT" build/ios/Info.plist
+      - name: Import and validate iOS App Store signing
+        env:
+          P12_BASE64: ${{ secrets.NEXTERM_IOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.NEXTERM_IOS_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.NEXTERM_IOS_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$P12_BASE64" ] || [ -z "$PROFILE_BASE64" ]; then
+            echo "NEXTERM_IOS_SIGNING requires NEXTERM_IOS_P12_BASE64 and NEXTERM_IOS_PROVISIONING_PROFILE" >&2
+            exit 1
+          fi
+          umask 077
+          P12="$RUNNER_TEMP/nexterm-ios-signing.p12"
+          PROFILE="$RUNNER_TEMP/nexterm.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/nexterm-profile.plist"
+          KEYCHAIN="$RUNNER_TEMP/nexterm-ios-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "$P12_BASE64" | base64 --decode > "$P12"
+          echo "$PROFILE_BASE64" | base64 --decode > "$PROFILE"
+          security cms -D -i "$PROFILE" -o "$PROFILE_PLIST"
+          for key in ProvisionedDevices ProvisionsAllDevices; do
+            if /usr/libexec/PlistBuddy -c "Print :$key" "$PROFILE_PLIST" >/dev/null 2>&1; then
+              echo "an App Store provisioning profile is required; development, ad-hoc and enterprise profiles cannot be uploaded to TestFlight" >&2
+              exit 1
+            fi
+          done
+          GET_TASK_ALLOW="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null || true)"
+          if [ "$GET_TASK_ALLOW" != "false" ]; then
+            echo "the App Store provisioning profile must set get-task-allow to false" >&2
+            exit 1
+          fi
+          TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")"
+          APPLICATION_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
+          if [ "$APPLICATION_IDENTIFIER" != "$TEAM_ID.com.nexterm.desktop" ]; then
+            echo "the provisioning profile application identifier must be $TEAM_ID.com.nexterm.desktop" >&2
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$PROFILE_PLIST" > "$RUNNER_TEMP/nexterm-distribution-entitlements.plist"
+          plutil -lint "$RUNNER_TEMP/nexterm-distribution-entitlements.plist"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "Apple Distribution"
+      - name: Build the signed iOS distribution IPA
+        env:
+          DIST_SOURCE: verified-dist/dist
+          CODESIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE: ${{ runner.temp }}/nexterm.mobileprovision
+          ENTITLEMENTS_FILE: ${{ runner.temp }}/nexterm-distribution-entitlements.plist
+        run: wails3 task ios:package:ipa IOS_PLATFORM=device
+      - name: Verify the signed iOS distribution IPA
+        run: |
+          set -euo pipefail
+          APP=bin/nexterm.app
+          IPA=bin/nexterm.ipa
+          test -f "$APP/embedded.mobileprovision"
+          cmp "$RUNNER_TEMP/nexterm.mobileprovision" "$APP/embedded.mobileprovision"
+          plutil -lint "$APP/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvvv "$APP" 2>&1 | grep -F "Authority=Apple Distribution"
+          codesign -d --entitlements :- "$APP" > "$RUNNER_TEMP/nexterm-signed-entitlements.plist" 2>/dev/null
+          test "$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' "$RUNNER_TEMP/nexterm-signed-entitlements.plist")" = "false"
+          unzip -Z1 "$IPA" | grep -Fx "Payload/nexterm.app/embedded.mobileprovision"
+      - name: Upload the iOS distribution IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-ios-dist
+          path: bin/nexterm.ipa
+          if-no-files-found: error
+      - name: Remove iOS signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/nexterm-ios-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/nexterm-ios-signing.p12" "$RUNNER_TEMP/nexterm.mobileprovision" "$RUNNER_TEMP/nexterm-profile.plist" "$RUNNER_TEMP/nexterm-distribution-entitlements.plist" "$RUNNER_TEMP/nexterm-signed-entitlements.plist"

@@ -19,6 +19,18 @@ describe("mobile build wiring", () => {
     expect(ci).toContain("runner: macos-15");
   });
 
+  it("builds and verifies a signed device IPA when distribution signing is configured", () => {
+    expect(ci).toContain("ios-dist:");
+    expect(ci).toContain("if: vars.NEXTERM_IOS_SIGNING == 'true'");
+    expect(ci).toContain("secrets.NEXTERM_IOS_P12_BASE64");
+    expect(ci).toContain("secrets.NEXTERM_IOS_PROVISIONING_PROFILE");
+    expect(ci).toContain("CODESIGN_IDENTITY: Apple Distribution");
+    expect(ci).toContain("wails3 task ios:package:ipa IOS_PLATFORM=device");
+    expect(ci).toContain("codesign --verify --deep --strict");
+    expect(ci).toContain("name: mobile-ios-dist");
+    expect(ci).toContain("path: bin/nexterm.ipa");
+  });
+
   it("uses the existing frontend build and keeps versions as placeholders", () => {
     for (const source of [androidTaskfile, iosTaskfile]) {
       expect(source).toContain("task: common:build:frontend");
