@@ -130,17 +130,13 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 }
 
 func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt int64, truncated bool) error {
-	flag := 0
-	if truncated {
-		flag = 1
-	}
 	transcript := query.Use(s.db).TranscriptRow
 	_, err := transcript.WithContext(ctx).
 		Where(transcript.ID.Eq(transcriptID), transcript.EndedAt.IsNull()).
 		Where(ownerConditions(ctx, transcript.TableName())...).
 		UpdateColumns(map[string]any{
 			"ended_at":  endedAt,
-			"truncated": gorm.Expr(s.dialect.ScalarMax()+"(truncated, ?)", flag),
+			"truncated": gorm.Expr(s.dialect.ScalarMax()+"(truncated, ?)", truncated),
 		})
 	if err != nil {
 		return dbError(err)
