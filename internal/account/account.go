@@ -1,17 +1,22 @@
 package account
 
 import (
-	"database/sql"
+	"context"
+	"errors"
+	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"gorm.io/gorm"
 )
 
 type Accounts struct {
-	db          *sql.DB
+	db          *gorm.DB
 	now         func() int64
 	totpKeyPath string
+	writeMu     sync.Mutex
 }
 
 // userTable 集中账号表名, 便于后续存储后端调整。
@@ -27,7 +32,7 @@ func WithNow(now func() int64) Option {
 	}
 }
 
-func New(db *sql.DB, options ...Option) *Accounts {
+func New(db *gorm.DB, options ...Option) *Accounts {
 	a := &Accounts{db: db, now: ids.NowMS}
 	for _, option := range options {
 		option(a)
@@ -35,7 +40,22 @@ func New(db *sql.DB, options ...Option) *Accounts {
 	return a
 }
 
+func userFromModel(row *store.AppUser) *User {
+	user := &User{
+		ID: row.ID, Username: row.Username, DisplayName: row.DisplayName, Role: Role(row.Role), State: State(row.State),
+		MustChangePassword: row.MustChangePassword, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, passwordHash: row.PasswordHash,
+	}
+	if row.LastLoginAt != nil {
+		user.LastLoginAt = *row.LastLoginAt
+	}
+	return user
+}
+
 func dbError(err error) error {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
 	return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 }
 
@@ -44,4 +64,24 @@ func translateUserWriteError(err error) error {
 		return ipc.NewError(ipc.CodeBadParam, "参数错误: 用户名已存在")
 	}
 	return dbError(err)
+}
+
+func (a *Accounts) withBusyRetry(ctx context.Context, fn func() error) error {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := fn()
+		if !store.IsBusy(err) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

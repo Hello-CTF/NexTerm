@@ -2,7 +2,6 @@ package fleetserver
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,12 +11,14 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 type serviceFixture struct {
 	service  *Service
 	accounts *account.Accounts
-	db       *sql.DB
+	db       *gorm.DB
 	now      int64
 }
 
@@ -28,9 +29,9 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
-	fixture := &serviceFixture{accounts: accounts, db: database.DB(), now: time.Now().UnixMilli()}
-	service, err := New(Config{DB: database.DB(), Accounts: accounts}, WithNow(func() int64 { return fixture.now }))
+	accounts := account.New(database.GORM())
+	fixture := &serviceFixture{accounts: accounts, db: database.GORM(), now: time.Now().UnixMilli()}
+	service, err := New(Config{DB: database.GORM(), Accounts: accounts}, WithNow(func() int64 { return fixture.now }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,19 +80,23 @@ func (f *serviceFixture) enrollAgent(t *testing.T, owner *account.User, name str
 
 func (f *serviceFixture) auditRows(t *testing.T, kind string) []map[string]any {
 	t.Helper()
-	rows, err := f.db.QueryContext(context.Background(), "SELECT payload_json FROM audit_log WHERE source = ? AND kind = ? ORDER BY id", auditSourceFleet, kind)
+	return auditPayloadRows(t, f.db, auditSourceFleet, kind)
+}
+
+func auditPayloadRows(t *testing.T, db *gorm.DB, source, kind string) []map[string]any {
+	t.Helper()
+	audit := query.Use(db).AuditRow
+	rows, err := audit.WithContext(context.Background()).
+		Where(audit.Source.Eq(source), audit.Kind.Eq(kind)).
+		Order(audit.ID).
+		Find()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
 	var payloads []map[string]any
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			t.Fatal(err)
-		}
+	for _, row := range rows {
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 			t.Fatal(err)
 		}
 		payloads = append(payloads, payload)
@@ -100,20 +105,23 @@ func (f *serviceFixture) auditRows(t *testing.T, kind string) []map[string]any {
 }
 
 // auditAssetIDs 返回指定 kind 的 fleet 审计行的 asset_id 列 (设备时间线的过滤锚点)。
-func auditAssetIDs(t *testing.T, db *sql.DB, kind string) []string {
+func auditAssetIDs(t *testing.T, db *gorm.DB, kind string) []string {
 	t.Helper()
-	rows, err := db.QueryContext(context.Background(), "SELECT asset_id FROM audit_log WHERE source = ? AND kind = ? ORDER BY id", auditSourceFleet, kind)
+	audit := query.Use(db).AuditRow
+	rows, err := audit.WithContext(context.Background()).
+		Where(audit.Source.Eq(auditSourceFleet), audit.Kind.Eq(kind)).
+		Order(audit.ID).
+		Find()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
 	var ids []string
-	for rows.Next() {
-		var id sql.NullString
-		if err := rows.Scan(&id); err != nil {
-			t.Fatal(err)
+	for _, row := range rows {
+		if row.AssetID != nil {
+			ids = append(ids, *row.AssetID)
+		} else {
+			ids = append(ids, "")
 		}
-		ids = append(ids, id.String)
 	}
 	return ids
 }
@@ -180,16 +188,21 @@ func TestFleetEnrollCodeSingleUse(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 
-	var kind, purpose string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT kind FROM user_device WHERE id = ?", result.DeviceID).Scan(&kind); err != nil || kind != agentDeviceKind {
-		t.Fatalf("device kind=%q err=%v", kind, err)
+	ctx := context.Background()
+	userDevice := query.Use(fixture.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(result.DeviceID)).First()
+	if err != nil || device.Kind != agentDeviceKind {
+		t.Fatalf("device kind=%q err=%v", device.Kind, err)
 	}
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT purpose FROM sync_credential WHERE device_id = ?", result.DeviceID).Scan(&purpose); err != nil || purpose != PurposeDeviceAgent {
-		t.Fatalf("credential purpose=%q err=%v", purpose, err)
+	syncCredential := query.Use(fixture.db).SyncCredential
+	credential, err := syncCredential.WithContext(ctx).Where(syncCredential.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || credential.Purpose != PurposeDeviceAgent {
+		t.Fatalf("credential purpose=%q err=%v", credential.Purpose, err)
 	}
-	var agentPlatform string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT platform FROM device_agent WHERE device_id = ?", result.DeviceID).Scan(&agentPlatform); err != nil || agentPlatform != "linux" {
-		t.Fatalf("agent platform=%q err=%v", agentPlatform, err)
+	deviceAgent := query.Use(fixture.db).DeviceAgent
+	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || agent.Platform != "linux" {
+		t.Fatalf("agent platform=%q err=%v", agent.Platform, err)
 	}
 
 	if _, err := fixture.service.ConsumeEnrollCode(context.Background(), code, "again", "linux", ""); err == nil {
@@ -251,9 +264,10 @@ func TestFleetEnrollCodeIssueTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ownerID string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT user_id FROM user_device WHERE id = ?", result.DeviceID).Scan(&ownerID); err != nil || ownerID != bob.ID {
-		t.Fatalf("device owner=%q err=%v", ownerID, err)
+	userDevice := query.Use(fixture.db).UserDevice
+	device, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(result.DeviceID)).First()
+	if err != nil || device.UserID != bob.ID {
+		t.Fatalf("device owner=%q err=%v", device.UserID, err)
 	}
 }
 
@@ -289,15 +303,21 @@ func TestFleetAuthenticateAgent(t *testing.T) {
 	if err != nil || userID != owner.ID {
 		t.Fatalf("authenticate user=%q err=%v", userID, err)
 	}
-	var lastUsedAt, deviceLastSeen, agentLastSeen sql.NullInt64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_used_at FROM sync_credential WHERE device_id = ?", result.DeviceID).Scan(&lastUsedAt); err != nil || !lastUsedAt.Valid {
-		t.Fatalf("credential last_used_at=%v err=%v", lastUsedAt, err)
+	ctx := context.Background()
+	syncCredential := query.Use(fixture.db).SyncCredential
+	credential, err := syncCredential.WithContext(ctx).Where(syncCredential.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || credential.LastUsedAt == nil {
+		t.Fatalf("credential last_used_at=%v err=%v", credential.LastUsedAt, err)
 	}
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_seen_at FROM user_device WHERE id = ?", result.DeviceID).Scan(&deviceLastSeen); err != nil || !deviceLastSeen.Valid {
-		t.Fatalf("device last_seen_at=%v err=%v", deviceLastSeen, err)
+	userDevice := query.Use(fixture.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(result.DeviceID)).First()
+	if err != nil || device.LastSeenAt == nil {
+		t.Fatalf("device last_seen_at=%v err=%v", device.LastSeenAt, err)
 	}
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_seen_at FROM device_agent WHERE device_id = ?", result.DeviceID).Scan(&agentLastSeen); err != nil || !agentLastSeen.Valid {
-		t.Fatalf("agent last_seen_at=%v err=%v", agentLastSeen, err)
+	deviceAgent := query.Use(fixture.db).DeviceAgent
+	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || agent.LastSeenAt == nil {
+		t.Fatalf("agent last_seen_at=%v err=%v", agent.LastSeenAt, err)
 	}
 
 	if _, err := fixture.service.AuthenticateAgent(context.Background(), "other-device", result.Secret); err == nil {
@@ -321,8 +341,10 @@ func TestFleetAuthenticateAgentPurposeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), `INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at, expires_at)
-VALUES(?,?,?,?,?,?,0)`, "cred-sync-purpose", owner.ID, device.ID, "sync", hashSecret(secret), fixture.now); err != nil {
+	if err := query.Use(fixture.db).SyncCredential.WithContext(context.Background()).Create(&store.SyncCredential{
+		ID: "cred-sync-purpose", UserID: owner.ID, DeviceID: device.ID, Purpose: "sync",
+		SecretHash: hashSecret(secret), CreatedAt: fixture.now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.AuthenticateAgent(context.Background(), device.ID, secret); err == nil {
@@ -388,13 +410,16 @@ func TestFleetRevokeDevice(t *testing.T) {
 	if err := fixture.service.RevokeDevice(context.Background(), fixture.identity(alice), result.DeviceID); err != nil {
 		t.Fatalf("owner revoke: %v", err)
 	}
-	var revokedAt sql.NullInt64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT revoked_at FROM user_device WHERE id = ?", result.DeviceID).Scan(&revokedAt); err != nil || !revokedAt.Valid {
-		t.Fatalf("device revoked_at=%v err=%v", revokedAt, err)
+	ctx := context.Background()
+	userDevice := query.Use(fixture.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(result.DeviceID)).First()
+	if err != nil || device.RevokedAt == nil {
+		t.Fatalf("device revoked_at=%v err=%v", device.RevokedAt, err)
 	}
-	var credentialRevoked sql.NullInt64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT revoked_at FROM sync_credential WHERE device_id = ?", result.DeviceID).Scan(&credentialRevoked); err != nil || !credentialRevoked.Valid {
-		t.Fatalf("credential revoked_at=%v err=%v", credentialRevoked, err)
+	syncCredential := query.Use(fixture.db).SyncCredential
+	credential, err := syncCredential.WithContext(ctx).Where(syncCredential.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || credential.RevokedAt == nil {
+		t.Fatalf("credential revoked_at=%v err=%v", credential.RevokedAt, err)
 	}
 	if _, err := fixture.service.AuthenticateAgent(context.Background(), result.DeviceID, result.Secret); err == nil {
 		t.Fatal("revoked device must not authenticate")
@@ -533,9 +558,10 @@ func TestFleetAutostartState(t *testing.T) {
 	if err := fixture.service.SetDesiredAutostart(context.Background(), fixture.identity(alice), result.DeviceID, false); err != nil {
 		t.Fatal(err)
 	}
-	var desired int
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT desired_autostart FROM device_agent WHERE device_id = ?", result.DeviceID).Scan(&desired); err != nil || desired != 0 {
-		t.Fatalf("desired_autostart=%d err=%v", desired, err)
+	deviceAgent := query.Use(fixture.db).DeviceAgent
+	agentRow, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(result.DeviceID)).First()
+	if err != nil || agentRow.DesiredAutostart {
+		t.Fatalf("desired_autostart=%v err=%v", agentRow.DesiredAutostart, err)
 	}
 
 	state := ServiceState{Installed: true, Enabled: false, Active: false, LastReconcileAt: fixture.now, LastError: "unit missing"}
@@ -589,6 +615,51 @@ func TestFleetMetricsRecordQuery(t *testing.T) {
 	}
 }
 
+func countDeviceMetrics(t *testing.T, db *gorm.DB, deviceID string) int64 {
+	t.Helper()
+	deviceMetrics := query.Use(db).DeviceMetrics
+	count, err := deviceMetrics.WithContext(context.Background()).Where(deviceMetrics.DeviceID.Eq(deviceID)).Count()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func countDeviceMetricsHourly(t *testing.T, db *gorm.DB, deviceID string) int64 {
+	t.Helper()
+	hourly := query.Use(db).DeviceMetricsHourly
+	count, err := hourly.WithContext(context.Background()).Where(hourly.DeviceID.Eq(deviceID)).Count()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func latestHourlyBucket(t *testing.T, db *gorm.DB, deviceID string) *store.DeviceMetricsHourly {
+	t.Helper()
+	hourly := query.Use(db).DeviceMetricsHourly
+	row, err := hourly.WithContext(context.Background()).
+		Where(hourly.DeviceID.Eq(deviceID)).
+		Order(hourly.BucketTS.Desc()).
+		First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func hourlyBucketAt(t *testing.T, db *gorm.DB, deviceID string, bucketTS int64) *store.DeviceMetricsHourly {
+	t.Helper()
+	hourly := query.Use(db).DeviceMetricsHourly
+	row, err := hourly.WithContext(context.Background()).
+		Where(hourly.DeviceID.Eq(deviceID), hourly.BucketTS.Eq(bucketTS)).
+		First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
 func TestFleetMetricsRollup(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.now = (fixture.now / metricsHourMS) * metricsHourMS
@@ -618,30 +689,14 @@ func TestFleetMetricsRollup(t *testing.T) {
 		t.Fatalf("rollup must be idempotent: %v", err)
 	}
 
-	var rawCount int
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM device_metrics WHERE device_id = ?", result.DeviceID).Scan(&rawCount); err != nil {
-		t.Fatal(err)
-	}
-	if rawCount != 1 {
+	if rawCount := countDeviceMetrics(t, fixture.db, result.DeviceID); rawCount != 1 {
 		t.Fatalf("raw rows after rollup=%d", rawCount)
 	}
-	var bucketTS int64
-	var cpu float64
-	var memUsed, uptime int64
-	var sampleCount int
-	if err := fixture.db.QueryRowContext(context.Background(), `SELECT bucket_ts, cpu_pct, mem_used, uptime_s, sample_count FROM device_metrics_hourly
-WHERE device_id = ? AND bucket_ts = (SELECT max(bucket_ts) FROM device_metrics_hourly WHERE device_id = ?)`, result.DeviceID, result.DeviceID).
-		Scan(&bucketTS, &cpu, &memUsed, &uptime, &sampleCount); err != nil {
-		t.Fatal(err)
+	bucket := latestHourlyBucket(t, fixture.db, result.DeviceID)
+	if bucket.SampleCount != 3 || *bucket.CPUPct != 20 || *bucket.MemUsed != 100 || *bucket.UptimeS != 5000 {
+		t.Fatalf("hourly bucket ts=%d cpu=%v mem=%d uptime=%d count=%d", bucket.BucketTS, *bucket.CPUPct, *bucket.MemUsed, *bucket.UptimeS, bucket.SampleCount)
 	}
-	if sampleCount != 3 || cpu != 20 || memUsed != 100 || uptime != 5000 {
-		t.Fatalf("hourly bucket ts=%d cpu=%v mem=%d uptime=%d count=%d", bucketTS, cpu, memUsed, uptime, sampleCount)
-	}
-	var hourlyCount int
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM device_metrics_hourly WHERE device_id = ?", result.DeviceID).Scan(&hourlyCount); err != nil {
-		t.Fatal(err)
-	}
-	if hourlyCount != 1 {
+	if hourlyCount := countDeviceMetricsHourly(t, fixture.db, result.DeviceID); hourlyCount != 1 {
 		t.Fatalf("hourly rows=%d (ancient bucket must be purged)", hourlyCount)
 	}
 }
@@ -664,23 +719,14 @@ func TestFleetMetricsRollupBoundaryBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	countRows := func(table string) int {
-		t.Helper()
-		var count int
-		if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table+" WHERE device_id = ?", result.DeviceID).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		return count
-	}
-
 	fixture.now = bucketStart + 48*time.Hour.Milliseconds() + 40*time.Minute.Milliseconds()
 	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if hourly := countRows("device_metrics_hourly"); hourly != 0 {
+	if hourly := countDeviceMetricsHourly(t, fixture.db, result.DeviceID); hourly != 0 {
 		t.Fatalf("boundary bucket must wait for a complete hour, hourly=%d", hourly)
 	}
-	if raw := countRows("device_metrics"); raw != 4 {
+	if raw := countDeviceMetrics(t, fixture.db, result.DeviceID); raw != 4 {
 		t.Fatalf("boundary rows must stay raw, raw=%d", raw)
 	}
 
@@ -688,10 +734,10 @@ func TestFleetMetricsRollupBoundaryBucket(t *testing.T) {
 	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if hourly := countRows("device_metrics_hourly"); hourly != 0 {
+	if hourly := countDeviceMetricsHourly(t, fixture.db, result.DeviceID); hourly != 0 {
 		t.Fatalf("cutoff advanced inside the same bucket, hourly=%d", hourly)
 	}
-	if raw := countRows("device_metrics"); raw != 4 {
+	if raw := countDeviceMetrics(t, fixture.db, result.DeviceID); raw != 4 {
 		t.Fatalf("boundary rows must stay raw, raw=%d", raw)
 	}
 
@@ -699,36 +745,23 @@ func TestFleetMetricsRollupBoundaryBucket(t *testing.T) {
 	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if raw := countRows("device_metrics"); raw != 1 {
+	if raw := countDeviceMetrics(t, fixture.db, result.DeviceID); raw != 1 {
 		t.Fatalf("completed bucket must be deleted from raw, raw=%d", raw)
 	}
-	var bucketTS int64
-	var cpu float64
-	var memUsed, uptime int64
-	var sampleCount int
-	if err := fixture.db.QueryRowContext(context.Background(), `SELECT bucket_ts, cpu_pct, mem_used, uptime_s, sample_count FROM device_metrics_hourly
-WHERE device_id = ? AND bucket_ts = ?`, result.DeviceID, bucketStart).
-		Scan(&bucketTS, &cpu, &memUsed, &uptime, &sampleCount); err != nil {
-		t.Fatal(err)
-	}
-	if sampleCount != 3 || cpu < 23.32 || cpu > 23.34 || memUsed != 100 || uptime != 5000 {
-		t.Fatalf("hourly bucket cpu=%v mem=%d uptime=%d count=%d (samples lost across batches)", cpu, memUsed, uptime, sampleCount)
+	bucket := hourlyBucketAt(t, fixture.db, result.DeviceID, bucketStart)
+	if bucket.SampleCount != 3 || *bucket.CPUPct < 23.32 || *bucket.CPUPct > 23.34 || *bucket.MemUsed != 100 || *bucket.UptimeS != 5000 {
+		t.Fatalf("hourly bucket cpu=%v mem=%d uptime=%d count=%d (samples lost across batches)", *bucket.CPUPct, *bucket.MemUsed, *bucket.UptimeS, bucket.SampleCount)
 	}
 
 	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
 		t.Fatalf("rollup must be idempotent: %v", err)
 	}
-	if raw := countRows("device_metrics"); raw != 1 {
+	if raw := countDeviceMetrics(t, fixture.db, result.DeviceID); raw != 1 {
 		t.Fatalf("idempotent rerun changed raw rows: %d", raw)
 	}
-	var recheckCount int
-	var recheckCPU float64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT sample_count, cpu_pct FROM device_metrics_hourly WHERE device_id = ? AND bucket_ts = ?",
-		result.DeviceID, bucketStart).Scan(&recheckCount, &recheckCPU); err != nil {
-		t.Fatal(err)
-	}
-	if recheckCount != sampleCount || recheckCPU != cpu {
-		t.Fatalf("idempotent rerun overwrote bucket: count=%d cpu=%v", recheckCount, recheckCPU)
+	recheck := hourlyBucketAt(t, fixture.db, result.DeviceID, bucketStart)
+	if recheck.SampleCount != bucket.SampleCount || *recheck.CPUPct != *bucket.CPUPct {
+		t.Fatalf("idempotent rerun overwrote bucket: count=%d cpu=%v", recheck.SampleCount, *recheck.CPUPct)
 	}
 }
 
@@ -755,17 +788,26 @@ func TestFleetCascadeDeleteUser(t *testing.T) {
 	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, MetricsSample{CPUPct: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "DELETE FROM app_user WHERE id = ?", alice.ID); err != nil {
+	ctx := context.Background()
+	appUser := query.Use(fixture.db).AppUser
+	if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(alice.ID)).Delete(); err != nil {
 		t.Fatal(err)
 	}
-	for table, column := range map[string]string{"user_device": "id", "device_agent": "device_id", "device_metrics": "device_id", "sync_credential": "device_id"} {
-		var count int
-		if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table+" WHERE "+column+" = ?", result.DeviceID).Scan(&count); err != nil {
-			t.Fatalf("%s: %v", table, err)
-		}
-		if count != 0 {
-			t.Fatalf("%s rows=%d after user delete", table, count)
-		}
+	userDevice := query.Use(fixture.db).UserDevice
+	if count, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(result.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("user_device rows=%d err=%v after user delete", count, err)
+	}
+	deviceAgent := query.Use(fixture.db).DeviceAgent
+	if count, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(result.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("device_agent rows=%d err=%v after user delete", count, err)
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if count, err := deviceMetrics.WithContext(ctx).Where(deviceMetrics.DeviceID.Eq(result.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("device_metrics rows=%d err=%v after user delete", count, err)
+	}
+	syncCredential := query.Use(fixture.db).SyncCredential
+	if count, err := syncCredential.WithContext(ctx).Where(syncCredential.DeviceID.Eq(result.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("sync_credential rows=%d err=%v after user delete", count, err)
 	}
 }
 

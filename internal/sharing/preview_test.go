@@ -2,7 +2,6 @@ package sharing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestPreviewCreateDefaultsAndTokenHashed(t *testing.T) {
@@ -30,11 +30,12 @@ func TestPreviewCreateDefaultsAndTokenHashed(t *testing.T) {
 	if token == "" {
 		t.Fatal("token must be returned once")
 	}
-	var tokenHash string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT token_hash FROM share_preview_link WHERE id = ?", link.ID).Scan(&tokenHash); err != nil {
+	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
+	row, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if tokenHash == token || tokenHash == "" {
+	if row.TokenHash == token || row.TokenHash == "" {
 		t.Fatal("raw token must not be stored")
 	}
 
@@ -65,16 +66,17 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 	if grant.ShareID != link.ID || grant.SessionID != link.SessionID || grant.ExpiresAt != link.ExpiresAt {
 		t.Fatalf("grant = %+v, link = %+v", grant, link)
 	}
-	var lastAccessed sql.NullInt64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_accessed_at FROM share_preview_link WHERE id = ?", link.ID).Scan(&lastAccessed); err != nil {
+	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
+	row, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !lastAccessed.Valid {
+	if row.LastAccessedAt == nil {
 		t.Fatal("last_accessed_at not updated on allow")
 	}
 
 	// 过期: 直接把 expires_at 拨到过去, resolve 拒绝且审计 reason=expired。
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE share_preview_link SET expires_at = ? WHERE id = ?", fixture.now-1, link.ID); err != nil {
+	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"expires_at": fixture.now - 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.ResolvePreview(context.Background(), token); err == nil {
@@ -82,7 +84,7 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 	}
 
 	// 吊销: resolve 拒绝且审计 reason=revoked。
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE share_preview_link SET expires_at = ?, revoked_at = ? WHERE id = ?", fixture.now+time.Hour.Milliseconds(), fixture.now, link.ID); err != nil {
+	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"expires_at": fixture.now + time.Hour.Milliseconds(), "revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.ResolvePreview(context.Background(), token); err == nil {

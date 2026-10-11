@@ -4,14 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -34,8 +35,9 @@ func (a *Accounts) IssueEnrollCode(ctx context.Context, userID string) (string, 
 	}
 	code := base64.RawURLEncoding.EncodeToString(raw)
 	now := a.now()
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO device_enroll_code(id, user_id, code_hash, created_at, expires_at)
-VALUES(?,?,?,?,?)`, ids.New(), userID, enrollCodeHash(code), now, now+EnrollCodeTTL.Milliseconds()); err != nil {
+	row := query.Use(a.db).DeviceEnrollCode
+	record := store.DeviceEnrollCode{ID: ids.New(), UserID: userID, CodeHash: enrollCodeHash(code), CreatedAt: now, ExpiresAt: now + EnrollCodeTTL.Milliseconds()}
+	if err := row.WithContext(ctx).Create(&record); err != nil {
 		return "", dbError(err)
 	}
 	return code, nil
@@ -43,12 +45,29 @@ VALUES(?,?,?,?,?)`, ids.New(), userID, enrollCodeHash(code), now, now+EnrollCode
 
 func (a *Accounts) ConsumeEnrollCode(ctx context.Context, code string) (string, error) {
 	var userID string
-	err := a.db.QueryRowContext(ctx, `UPDATE device_enroll_code SET consumed_at = ?
-WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?
-RETURNING user_id`, a.now(), enrollCodeHash(code), a.now()).Scan(&userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
-	}
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		enrollCode := query.Use(tx).DeviceEnrollCode
+		row, err := enrollCode.WithContext(ctx).
+			Where(enrollCode.CodeHash.Eq(enrollCodeHash(code)), enrollCode.ConsumedAt.IsNull(), enrollCode.ExpiresAt.Gt(a.now())).
+			First()
+		if err == gorm.ErrRecordNotFound {
+			return ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
+		}
+		if err != nil {
+			return dbError(err)
+		}
+		info, err := enrollCode.WithContext(ctx).
+			Where(enrollCode.ID.Eq(row.ID), enrollCode.ConsumedAt.IsNull()).
+			UpdateColumns(map[string]any{"consumed_at": a.now()})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
+		}
+		userID = row.UserID
+		return nil
+	})
 	if err != nil {
 		return "", dbError(err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,16 +21,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
-
-// forUpdate 返回行锁子句: PostgreSQL 默认 READ COMMITTED, enroll 首台判定必须
-// 锁住 app_user 行才能与并发的同账号 enroll 互斥; SQLite 单写者天然串行。
-func forUpdate(backend store.Backend) string {
-	if backend == store.BackendPostgres {
-		return " FOR UPDATE"
-	}
-	return ""
-}
 
 const (
 	PurposeDeviceAgent       = "device-agent"
@@ -78,7 +71,7 @@ const (
 )
 
 type Config struct {
-	DB       *sql.DB
+	DB       *gorm.DB
 	Backend  store.Backend
 	Accounts *account.Accounts
 	AuthOff  bool
@@ -87,7 +80,7 @@ type Config struct {
 }
 
 type Service struct {
-	db         *sql.DB
+	db         *gorm.DB
 	backend    store.Backend
 	accounts   *account.Accounts
 	authOff    bool
@@ -182,6 +175,10 @@ func New(config Config, options ...Option) (*Service, error) {
 }
 
 func dbError(err error) error {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
 	return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 }
 
@@ -274,12 +271,14 @@ func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) 
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	var assetID any
-	if payload.DeviceID != "" {
-		assetID = payload.DeviceID
+	row := store.AuditRow{
+		TS: s.now(), Source: auditSourceFleet, Kind: kind,
+		PayloadJSON: string(encoded), OwnerID: ipc.OwnerID(ctx),
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), assetID, auditSourceFleet, kind, string(encoded)); err != nil {
+	if payload.DeviceID != "" {
+		row.AssetID = &payload.DeviceID
+	}
+	if err := query.Use(s.db).AuditRow.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -328,19 +327,15 @@ type deviceGrant struct {
 }
 
 func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant, error) {
-	var grant deviceGrant
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT user_id, state, revoked_at FROM user_device WHERE id = ?", deviceID).
-		Scan(&grant.userID, &grant.state, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
-	grant.deviceID = deviceID
-	grant.revoked = revokedAt.Valid
-	return &grant, nil
+	return &deviceGrant{deviceID: deviceID, userID: device.UserID, state: device.State, revoked: device.RevokedAt != nil}, nil
 }
 
 // authorize 是 fleet 设备动作的唯一授权点: 仅设备 owner 放行,
@@ -415,8 +410,8 @@ func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identit
 	}
 	now := s.now()
 	expiresAt := now + ttl.Milliseconds()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO device_enroll_code(id, user_id, code_hash, created_at, expires_at)
-VALUES(?,?,?,?,?)`, ids.New(), ownerID, hashSecret(code), now, expiresAt); err != nil {
+	row := store.DeviceEnrollCode{ID: ids.New(), UserID: ownerID, CodeHash: hashSecret(code), CreatedAt: now, ExpiresAt: expiresAt}
+	if err := query.Use(s.db).DeviceEnrollCode.WithContext(ctx).Create(&row); err != nil {
 		return "", 0, dbError(err)
 	}
 	return code, expiresAt, nil
@@ -441,57 +436,78 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 		return nil, err
 	}
 	now := s.now()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var ownerID string
-	err = tx.QueryRowContext(ctx, `UPDATE device_enroll_code SET consumed_at = ?
-WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?
-RETURNING user_id`, now, hashSecret(code), now).Scan(&ownerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
-	}
-	if err != nil {
-		return nil, dbError(err)
-	}
-	var lockedOwner string
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM app_user WHERE id = ?"+forUpdate(s.backend), ownerID).Scan(&lockedOwner); err != nil {
-		return nil, dbError(err)
-	}
-	var deviceCount int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM user_device WHERE user_id = ?", ownerID).Scan(&deviceCount); err != nil {
-		return nil, dbError(err)
-	}
-	state := DeviceStatePending
-	if deviceCount == 0 {
-		state = DeviceStateActive
-	}
 	deviceID := ids.New()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_device(id, user_id, name, kind, state, created_at)
-VALUES(?,?,?,?,?,?)`, deviceID, ownerID, name, agentDeviceKind, state, now); err != nil {
-		return nil, dbError(err)
-	}
-	credentialID := ids.New()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at, expires_at)
-VALUES(?,?,?,?,?,?,0)`, credentialID, ownerID, deviceID, PurposeDeviceAgent, hashSecret(secret), now); err != nil {
-		return nil, dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO device_agent(device_id, credential_id, platform, app_version, created_at)
-VALUES(?,?,?,?,?)`, deviceID, credentialID, platform, appVersion, now); err != nil {
-		return nil, dbError(err)
-	}
-	payload, err := json.Marshal(auditPayload{Action: "enroll", DeviceID: deviceID, Requester: ownerID, Outcome: "allow"})
+	var state string
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := query.Use(tx)
+		enrollCode := q.DeviceEnrollCode
+		// 原子认领注册码: 仅未消费且未过期的行可被更新, 并发消费只有一个成功。
+		claimed, err := enrollCode.WithContext(ctx).
+			Where(enrollCode.CodeHash.Eq(hashSecret(code)), enrollCode.ConsumedAt.IsNull(), enrollCode.ExpiresAt.Gt(now)).
+			Update(enrollCode.ConsumedAt, now)
+		if err != nil {
+			return dbError(err)
+		}
+		if claimed.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeForbidden, "设备注册码无效或已过期，请重新生成")
+		}
+		consumed, err := enrollCode.WithContext(ctx).Where(enrollCode.CodeHash.Eq(hashSecret(code))).First()
+		if err != nil {
+			return dbError(err)
+		}
+		ownerID := consumed.UserID
+		// 行锁: PostgreSQL 默认 READ COMMITTED, enroll 首台判定必须锁住 app_user 行
+		// 才能与并发的同账号 enroll 互斥; SQLite 单写者天然串行。
+		appUser := q.AppUser
+		lockQuery := appUser.WithContext(ctx).Where(appUser.ID.Eq(ownerID))
+		if s.backend == store.BackendPostgres {
+			lockQuery = lockQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if _, err := lockQuery.First(); err != nil {
+			return dbError(err)
+		}
+		userDevice := q.UserDevice
+		deviceCount, err := userDevice.WithContext(ctx).Where(userDevice.UserID.Eq(ownerID)).Count()
+		if err != nil {
+			return dbError(err)
+		}
+		state = DeviceStatePending
+		if deviceCount == 0 {
+			state = DeviceStateActive
+		}
+		if err := userDevice.WithContext(ctx).Create(&store.UserDevice{
+			ID: deviceID, UserID: ownerID, Name: name, Kind: agentDeviceKind, State: state, CreatedAt: now,
+		}); err != nil {
+			return dbError(err)
+		}
+		credentialID := ids.New()
+		if err := q.SyncCredential.WithContext(ctx).Create(&store.SyncCredential{
+			ID: credentialID, UserID: ownerID, DeviceID: deviceID, Purpose: PurposeDeviceAgent,
+			SecretHash: hashSecret(secret), CreatedAt: now,
+		}); err != nil {
+			return dbError(err)
+		}
+		if err := q.DeviceAgent.WithContext(ctx).Create(&store.DeviceAgent{
+			DeviceID: deviceID, CredentialID: credentialID, Platform: platform, AppVersion: appVersion,
+			DesiredAutostart: true, TerminalEnabled: true, ServiceStateJSON: "{}", CreatedAt: now,
+		}); err != nil {
+			return dbError(err)
+		}
+		payload, err := json.Marshal(auditPayload{Action: "enroll", DeviceID: deviceID, Requester: ownerID, Outcome: "allow"})
+		if err != nil {
+			return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
+		}
+		auditRow := store.AuditRow{
+			TS: now, AssetID: &deviceID, Source: auditSourceFleet, Kind: auditKindDeviceEnroll,
+			PayloadJSON: string(payload), OwnerID: ownerID,
+		}
+		if err := q.AuditRow.WithContext(ctx).Create(&auditRow); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ownerID, now, deviceID, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
-		return nil, dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, dbError(err)
+		return nil, err
 	}
 	return &EnrollResult{
 		DeviceID:          deviceID,
@@ -508,101 +524,126 @@ VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ownerID, now, deviceID, auditSourceFleet, a
 // 凭证与设备任一吊销或过期即拒绝; 待审批设备得到 device_pending (可恢复,
 // 不碰心跳); 通过后回写 last_used_at/last_seen_at。
 func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string) (string, error) {
-	var userID, boundDeviceID, deviceState string
-	var expiresAt int64
-	var credentialRevokedAt, deviceRevokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT c.user_id, c.device_id, c.expires_at, c.revoked_at, d.revoked_at, d.state
-FROM sync_credential c JOIN user_device d ON d.id = c.device_id
-WHERE c.secret_hash = ? AND c.purpose = ?`, hashSecret(secret), PurposeDeviceAgent).
-		Scan(&userID, &boundDeviceID, &expiresAt, &credentialRevokedAt, &deviceRevokedAt, &deviceState)
-	if errors.Is(err, sql.ErrNoRows) {
+	syncCredential := query.Use(s.db).SyncCredential
+	credential, err := syncCredential.WithContext(ctx).
+		Where(syncCredential.SecretHash.Eq(hashSecret(secret)), syncCredential.Purpose.Eq(PurposeDeviceAgent)).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(credential.DeviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
 	}
 	if err != nil {
 		return "", dbError(err)
 	}
 	switch {
-	case boundDeviceID != deviceID:
+	case credential.DeviceID != deviceID:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证与设备不匹配")
-	case credentialRevokedAt.Valid:
+	case credential.RevokedAt != nil:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证已吊销")
-	case expiresAt > 0 && s.now() >= expiresAt:
+	case credential.ExpiresAt > 0 && s.now() >= credential.ExpiresAt:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证已过期")
-	case deviceRevokedAt.Valid:
+	case device.RevokedAt != nil:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case deviceState == DeviceStatePending:
+	case device.State == DeviceStatePending:
 		return "", ipc.NewError(ipc.CodeDevicePending, "设备待审批: 管理员批准后才会上线并同步数据")
 	}
 	now := s.now()
-	if _, err := s.db.ExecContext(ctx, `UPDATE sync_credential SET last_used_at = ? WHERE device_id = ? AND purpose = ?`,
-		now, deviceID, PurposeDeviceAgent); err != nil {
+	if _, err := syncCredential.WithContext(ctx).
+		Where(syncCredential.DeviceID.Eq(deviceID), syncCredential.Purpose.Eq(PurposeDeviceAgent)).
+		UpdateColumns(map[string]any{"last_used_at": now}); err != nil {
 		return "", dbError(err)
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE user_device SET last_seen_at = ? WHERE id = ?", now, deviceID); err != nil {
+	if _, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"last_seen_at": now}); err != nil {
 		return "", dbError(err)
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE device_agent SET last_seen_at = ? WHERE device_id = ?", now, deviceID); err != nil {
+	deviceAgent := query.Use(s.db).DeviceAgent
+	if _, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"last_seen_at": now}); err != nil {
 		return "", dbError(err)
 	}
-	return userID, nil
+	return credential.UserID, nil
 }
 
 func (s *Service) ListDevices(ctx context.Context, identity *account.Identity) ([]*Device, error) {
-	query := `SELECT d.id, d.user_id, d.name, d.kind, d.state, d.created_at, d.last_seen_at, d.revoked_at,
-u.username, a.platform, a.app_version, a.desired_autostart, a.terminal_enabled, a.current_url, a.service_state_json, a.last_seen_at
-FROM user_device d
-LEFT JOIN app_user u ON u.id = d.user_id
-LEFT JOIN device_agent a ON a.device_id = d.id`
-	args := []any{}
-	query += " WHERE d.user_id = ?"
-	args = append(args, identity.UserID)
-	query += " ORDER BY d.created_at, d.id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	userDevice := query.Use(s.db).UserDevice
+	rows, err := userDevice.WithContext(ctx).
+		Where(userDevice.UserID.Eq(identity.UserID)).
+		Order(userDevice.CreatedAt, userDevice.ID).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var devices []*Device
-	for rows.Next() {
-		var device Device
-		var ownerID, ownerName string
-		var lastSeenAt, revokedAt, agentLastSeenAt sql.NullInt64
-		var platform, appVersion, currentURL, serviceStateJSON sql.NullString
-		var desiredAutostart, terminalEnabled sql.NullInt64
-		if err := rows.Scan(&device.ID, &ownerID, &device.Name, &device.Kind, &device.State, &device.CreatedAt, &lastSeenAt, &revokedAt,
-			&ownerName, &platform, &appVersion, &desiredAutostart, &terminalEnabled, &currentURL, &serviceStateJSON, &agentLastSeenAt); err != nil {
+	deviceIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		deviceIDs = append(deviceIDs, row.ID)
+	}
+	agents := map[string]*store.DeviceAgent{}
+	if len(deviceIDs) > 0 {
+		deviceAgent := query.Use(s.db).DeviceAgent
+		agentRows, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.In(deviceIDs...)).Find()
+		if err != nil {
 			return nil, dbError(err)
 		}
-		if lastSeenAt.Valid {
-			device.LastSeenAt = lastSeenAt.Int64
+		for _, row := range agentRows {
+			agents[row.DeviceID] = row
 		}
-		if revokedAt.Valid {
-			device.RevokedAt = revokedAt.Int64
+	}
+	usernames := map[string]string{}
+	if identity.Role == account.RoleSuperadmin && len(deviceIDs) > 0 {
+		ownerIDs := make([]string, 0, len(rows))
+		for _, row := range rows {
+			ownerIDs = append(ownerIDs, row.UserID)
+		}
+		appUser := query.Use(s.db).AppUser
+		userRows, err := appUser.WithContext(ctx).Where(appUser.ID.In(ownerIDs...)).Find()
+		if err != nil {
+			return nil, dbError(err)
+		}
+		for _, row := range userRows {
+			usernames[row.ID] = row.Username
+		}
+	}
+	var devices []*Device
+	for _, row := range rows {
+		device := &Device{ID: row.ID, Name: row.Name, Kind: row.Kind, State: row.State, CreatedAt: row.CreatedAt}
+		if row.LastSeenAt != nil {
+			device.LastSeenAt = *row.LastSeenAt
+		}
+		if row.RevokedAt != nil {
+			device.RevokedAt = *row.RevokedAt
 		}
 		if identity.Role == account.RoleSuperadmin {
-			device.Owner = &Owner{ID: ownerID, Username: ownerName}
+			device.Owner = &Owner{ID: row.UserID, Username: usernames[row.UserID]}
 		}
-		if platform.Valid {
+		if agentRow, ok := agents[row.ID]; ok {
 			agent := &AgentInfo{
-				Platform:         platform.String,
-				AppVersion:       appVersion.String,
-				DesiredAutostart: desiredAutostart.Int64 != 0,
-				TerminalEnabled:  terminalEnabled.Int64 != 0,
-				CurrentURL:       currentURL.String,
+				Platform:         agentRow.Platform,
+				AppVersion:       agentRow.AppVersion,
+				DesiredAutostart: agentRow.DesiredAutostart,
+				TerminalEnabled:  agentRow.TerminalEnabled,
+				CurrentURL:       agentRow.CurrentURL,
 			}
-			if agentLastSeenAt.Valid {
-				agent.LastSeenAt = agentLastSeenAt.Int64
+			if agentRow.LastSeenAt != nil {
+				agent.LastSeenAt = *agentRow.LastSeenAt
 			}
-			if serviceStateJSON.Valid && serviceStateJSON.String != "" {
-				if err := json.Unmarshal([]byte(serviceStateJSON.String), &agent.ServiceState); err != nil {
+			if agentRow.ServiceStateJSON != "" {
+				if err := json.Unmarshal([]byte(agentRow.ServiceStateJSON), &agent.ServiceState); err != nil {
 					return nil, dbError(err)
 				}
 			}
 			device.Agent = agent
 		}
-		devices = append(devices, &device)
+		devices = append(devices, device)
 	}
-	return devices, rows.Err()
+	return devices, nil
 }
 
 func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, deviceID string) error {
@@ -610,22 +651,27 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 		return err
 	}
 	now := s.now()
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := query.Use(tx)
+		if _, err := q.UserDevice.WithContext(ctx).
+			Where(q.UserDevice.ID.Eq(deviceID), q.UserDevice.RevokedAt.IsNull()).
+			UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+			return dbError(err)
+		}
+		if _, err := q.UserSession.WithContext(ctx).
+			Where(q.UserSession.DeviceID.Eq(deviceID), q.UserSession.RevokedAt.IsNull()).
+			UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+			return dbError(err)
+		}
+		if _, err := q.SyncCredential.WithContext(ctx).
+			Where(q.SyncCredential.DeviceID.Eq(deviceID), q.SyncCredential.RevokedAt.IsNull()).
+			UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "UPDATE user_device SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE sync_credential SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
+		return err
 	}
 	s.registry.KickDevice(deviceID)
 	// 吊销即掉线: 控制通道被踢后不会再有注销回调 (KickDevice 已摘表),
@@ -665,7 +711,10 @@ func (s *Service) ApproveDevice(ctx context.Context, identity *account.Identity,
 	if _, err := s.authorizePending(ctx, identity, deviceID, "approve", auditKindDeviceApprove); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE user_device SET state = ? WHERE id = ? AND state = ?", DeviceStateActive, deviceID, DeviceStatePending); err != nil {
+	userDevice := query.Use(s.db).UserDevice
+	if _, err := userDevice.WithContext(ctx).
+		Where(userDevice.ID.Eq(deviceID), userDevice.State.Eq(DeviceStatePending)).
+		UpdateColumns(map[string]any{"state": DeviceStateActive}); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -677,7 +726,10 @@ func (s *Service) RejectDevice(ctx context.Context, identity *account.Identity, 
 	if _, err := s.authorizePending(ctx, identity, deviceID, "reject", auditKindDeviceReject); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM user_device WHERE id = ? AND state = ?", deviceID, DeviceStatePending); err != nil {
+	userDevice := query.Use(s.db).UserDevice
+	if _, err := userDevice.WithContext(ctx).
+		Where(userDevice.ID.Eq(deviceID), userDevice.State.Eq(DeviceStatePending)).
+		Delete(); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -686,19 +738,18 @@ func (s *Service) RejectDevice(ctx context.Context, identity *account.Identity, 
 // AgentDesiredConfig 返回服务端期望的 agent 配置; metrics 间隔是产品固定值
 // (schema 无按设备列), 与 enroll 下发保持一致。
 func (s *Service) AgentDesiredConfig(ctx context.Context, deviceID string) (AgentConfig, error) {
-	var desiredAutostart, terminalEnabled int64
-	err := s.db.QueryRowContext(ctx, "SELECT desired_autostart, terminal_enabled FROM device_agent WHERE device_id = ?", deviceID).
-		Scan(&desiredAutostart, &terminalEnabled)
-	if errors.Is(err, sql.ErrNoRows) {
+	deviceAgent := query.Use(s.db).DeviceAgent
+	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return AgentConfig{}, ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	if err != nil {
 		return AgentConfig{}, dbError(err)
 	}
 	return AgentConfig{
-		DesiredAutostart:  desiredAutostart != 0,
+		DesiredAutostart:  agent.DesiredAutostart,
 		MetricsIntervalMS: DefaultMetricsIntervalMS,
-		TerminalEnabled:   terminalEnabled != 0,
+		TerminalEnabled:   agent.TerminalEnabled,
 	}, nil
 }
 
@@ -713,39 +764,37 @@ func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Ide
 	if _, err := s.authorize(ctx, identity, deviceID, "autostart", auditKindDeviceAutostart); err != nil {
 		return err
 	}
-	value := 0
-	if desired {
-		value = 1
-	}
-	result, err := s.db.ExecContext(ctx, "UPDATE device_agent SET desired_autostart = ? WHERE device_id = ?", value, deviceID)
+	deviceAgent := query.Use(s.db).DeviceAgent
+	updated, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"desired_autostart": desired})
 	if err != nil {
 		return dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+	if updated.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
-	if updated, err := s.AgentDesiredConfig(ctx, deviceID); err == nil {
+	if config, err := s.AgentDesiredConfig(ctx, deviceID); err == nil {
 		s.registry.PushControl(deviceID, controlMessage{
 			Type:              "config",
-			DesiredAutostart:  &updated.DesiredAutostart,
-			MetricsIntervalMS: &updated.MetricsIntervalMS,
-			TerminalEnabled:   &updated.TerminalEnabled,
+			DesiredAutostart:  &config.DesiredAutostart,
+			MetricsIntervalMS: &config.MetricsIntervalMS,
+			TerminalEnabled:   &config.TerminalEnabled,
 		})
 	}
 	return nil
 }
 
 func (s *Service) BaseURLs(ctx context.Context) ([]BaseURLEntry, error) {
-	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", baseURLsSettingKey).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
+	setting := query.Use(s.db).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(baseURLsSettingKey)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return []BaseURLEntry{}, nil
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
 	var entries []BaseURLEntry
-	if err := json.Unmarshal([]byte(value), &entries); err != nil {
+	if err := json.Unmarshal([]byte(row.Value), &entries); err != nil {
 		return nil, dbError(err)
 	}
 	return entries, nil
@@ -772,9 +821,13 @@ func (s *Service) SetBaseURLs(ctx context.Context, entries []BaseURLEntry) ([]Ba
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		baseURLsSettingKey, string(encoded), s.now()); err != nil {
+	row := store.Setting{Key: baseURLsSettingKey, Value: string(encoded), UpdatedAt: s.now()}
+	if err := query.Use(s.db).Setting.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+		}).
+		Create(&row); err != nil {
 		return nil, dbError(err)
 	}
 	return normalized, nil
@@ -820,23 +873,26 @@ func isLocalOrPrivate(hostname string) bool {
 }
 
 func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample MetricsSample) error {
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return dbError(err)
 	}
-	if revokedAt.Valid {
+	if device.RevokedAt != nil {
 		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
 	if sample.TS == 0 {
 		sample.TS = s.now()
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO device_metrics(id, device_id, ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s)
-VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), deviceID, sample.TS, sample.CPUPct, sample.MemUsed, sample.MemTotal,
-		sample.DiskUsed, sample.DiskTotal, sample.UptimeS); err != nil {
+	row := store.DeviceMetrics{
+		ID: ids.New(), DeviceID: deviceID, TS: sample.TS,
+		CPUPct: &sample.CPUPct, MemUsed: &sample.MemUsed, MemTotal: &sample.MemTotal,
+		DiskUsed: &sample.DiskUsed, DiskTotal: &sample.DiskTotal, UptimeS: &sample.UptimeS,
+	}
+	if err := query.Use(s.db).DeviceMetrics.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -854,21 +910,39 @@ func (s *Service) DeviceMetrics(ctx context.Context, identity *account.Identity,
 	if since < oldest {
 		since = oldest
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s
-FROM device_metrics WHERE device_id = ? AND ts >= ? ORDER BY ts LIMIT ?`, deviceID, since, maxMetricsSamples)
+	deviceMetrics := query.Use(s.db).DeviceMetrics
+	rows, err := deviceMetrics.WithContext(ctx).
+		Where(deviceMetrics.DeviceID.Eq(deviceID), deviceMetrics.TS.Gte(since)).
+		Order(deviceMetrics.TS).
+		Limit(maxMetricsSamples).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
 	samples := []*MetricsSample{}
-	for rows.Next() {
-		var sample MetricsSample
-		if err := rows.Scan(&sample.TS, &sample.CPUPct, &sample.MemUsed, &sample.MemTotal, &sample.DiskUsed, &sample.DiskTotal, &sample.UptimeS); err != nil {
-			return nil, dbError(err)
+	for _, row := range rows {
+		sample := &MetricsSample{TS: row.TS}
+		if row.CPUPct != nil {
+			sample.CPUPct = *row.CPUPct
 		}
-		samples = append(samples, &sample)
+		if row.MemUsed != nil {
+			sample.MemUsed = *row.MemUsed
+		}
+		if row.MemTotal != nil {
+			sample.MemTotal = *row.MemTotal
+		}
+		if row.DiskUsed != nil {
+			sample.DiskUsed = *row.DiskUsed
+		}
+		if row.DiskTotal != nil {
+			sample.DiskTotal = *row.DiskTotal
+		}
+		if row.UptimeS != nil {
+			sample.UptimeS = *row.UptimeS
+		}
+		samples = append(samples, sample)
 	}
-	return samples, rows.Err()
+	return samples, nil
 }
 
 // RollupMetrics 把超过原始保留期 (48h) 的指标聚合成小时桶 (保留 30d),
@@ -880,12 +954,9 @@ func (s *Service) RollupMetrics(ctx context.Context) error {
 	rawCutoff := now - rawMetricsRetention.Milliseconds()
 	rollupCutoff := (rawCutoff / metricsHourMS) * metricsHourMS
 	hourlyCutoff := now - hourlyMetricsRetention.Milliseconds()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO device_metrics_hourly(device_id, bucket_ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s, sample_count)
+	// 聚合 INSERT...SELECT 与条件 DELETE 无法用 gen query 表达, 事务内直接执行。
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO device_metrics_hourly(device_id, bucket_ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s, sample_count)
 SELECT device_id, (ts/?)*?, avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
 FROM device_metrics WHERE ts < ?
 GROUP BY device_id, (ts/?)*?
@@ -893,17 +964,19 @@ ON CONFLICT(device_id, bucket_ts) DO UPDATE SET
 cpu_pct = excluded.cpu_pct, mem_used = excluded.mem_used, mem_total = excluded.mem_total,
 disk_used = excluded.disk_used, disk_total = excluded.disk_total, uptime_s = excluded.uptime_s,
 sample_count = excluded.sample_count`,
-		metricsHourMS, metricsHourMS, rollupCutoff, metricsHourMS, metricsHourMS); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM device_metrics WHERE ts < ?", rollupCutoff); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM device_metrics_hourly WHERE bucket_ts < ?", hourlyCutoff); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
+			metricsHourMS, metricsHourMS, rollupCutoff, metricsHourMS, metricsHourMS).Error; err != nil {
+			return dbError(err)
+		}
+		if err := tx.Exec("DELETE FROM device_metrics WHERE ts < ?", rollupCutoff).Error; err != nil {
+			return dbError(err)
+		}
+		if err := tx.Exec("DELETE FROM device_metrics_hourly WHERE bucket_ts < ?", hourlyCutoff).Error; err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -914,11 +987,13 @@ func (s *Service) UpdateServiceState(ctx context.Context, deviceID string, state
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE device_agent SET service_state_json = ? WHERE device_id = ?", string(encoded), deviceID)
+	deviceAgent := query.Use(s.db).DeviceAgent
+	updated, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"service_state_json": string(encoded)})
 	if err != nil {
 		return dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+	if updated.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
 	}
 	return nil
@@ -926,28 +1001,32 @@ func (s *Service) UpdateServiceState(ctx context.Context, deviceID string, state
 
 // SetCurrentURL 记录 agent 切换后的当前接入地址并写 failover 审计。
 func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := query.Use(tx)
+		deviceAgent := q.DeviceAgent
+		updated, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).
+			UpdateColumns(map[string]any{"current_url": url})
+		if err != nil {
+			return dbError(err)
+		}
+		if updated.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
+		}
+		payload, err := json.Marshal(auditPayload{Action: "failover", DeviceID: deviceID, Requester: deviceID, Outcome: "allow", Reason: reason, URL: url})
+		if err != nil {
+			return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
+		}
+		auditRow := store.AuditRow{
+			TS: s.now(), AssetID: &deviceID, Source: auditSourceFleet, Kind: auditKindDeviceFailover,
+			PayloadJSON: string(payload), OwnerID: ipc.OwnerID(ctx),
+		}
+		if err := q.AuditRow.WithContext(ctx).Create(&auditRow); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, "UPDATE device_agent SET current_url = ? WHERE device_id = ?", url, deviceID)
-	if err != nil {
-		return dbError(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
-	}
-	payload, err := json.Marshal(auditPayload{Action: "failover", DeviceID: deviceID, Requester: deviceID, Outcome: "allow", Reason: reason, URL: url})
-	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), deviceID, auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
+		return err
 	}
 	return nil
 }

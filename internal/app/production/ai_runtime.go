@@ -30,7 +30,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return err
 	}
 
-	outcomeStore, err := outcome.NewSQLiteStore(services.Store.DB())
+	outcomeStore, err := outcome.NewSQLiteStore(services.Store.GORM())
 	if err != nil {
 		return err
 	}

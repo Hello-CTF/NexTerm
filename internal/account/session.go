@@ -4,14 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -53,90 +54,97 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	now := a.now()
 	session := &Session{
-		ID:        ids.New(),
-		UserID:    userID,
-		DeviceID:  deviceID,
-		CreatedAt: now,
-		TouchedAt: now,
+		ID: ids.New(), UserID: userID, DeviceID: deviceID, CreatedAt: now, TouchedAt: now,
 		ExpiresAt: now + SessionSlidingTTL.Milliseconds(),
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
+	err := a.withBusyRetry(ctx, func() error {
+		return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			appUser := query.Use(tx).AppUser
+			user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+			if err == gorm.ErrRecordNotFound {
+				return ipc.NewError(ipc.CodeNotFound, "用户不存在")
+			}
+			if err != nil {
+				return dbError(err)
+			}
+			if user.State == string(StateDisabled) {
+				return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
+			}
+			if deviceID != "" {
+				userDevice := query.Use(tx).UserDevice
+				device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+				if err == gorm.ErrRecordNotFound {
+					return ipc.NewError(ipc.CodeNotFound, "设备不存在")
+				}
+				if err != nil {
+					return dbError(err)
+				}
+				if device.UserID != userID {
+					return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
+				}
+				if device.RevokedAt != nil {
+					return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+				}
+			}
+			row := store.UserSession{
+				ID: session.ID, UserID: session.UserID, TokenHash: sessionTokenHash(token),
+				CreatedAt: session.CreatedAt, TouchedAt: session.TouchedAt, ExpiresAt: session.ExpiresAt,
+			}
+			if session.DeviceID != "" {
+				row.DeviceID = &session.DeviceID
+			}
+			return query.Use(tx).UserSession.WithContext(ctx).Create(&row)
+		})
+	})
 	if err != nil {
-		return "", nil, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var state string
-	if err := tx.QueryRowContext(ctx, "SELECT state FROM "+userTable+" WHERE id = ?", userID).Scan(&state); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
-		}
-		return "", nil, dbError(err)
-	}
-	if State(state) == StateDisabled {
-		return "", nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
-	}
-	if deviceID != "" {
-		var owner string
-		var revokedAt sql.NullInt64
-		err := tx.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&owner, &revokedAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
-		}
-		if err != nil {
-			return "", nil, dbError(err)
-		}
-		if owner != userID {
-			return "", nil, ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
-		}
-		if revokedAt.Valid {
-			return "", nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_session(id, user_id, device_id, token_hash, created_at, touched_at, expires_at)
-VALUES(?,?,?,?,?,?,?)`, session.ID, session.UserID, nullableID(session.DeviceID), sessionTokenHash(token),
-		session.CreatedAt, session.TouchedAt, session.ExpiresAt); err != nil {
-		return "", nil, dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
 		return "", nil, dbError(err)
 	}
 	return token, session, nil
 }
 
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
-	row := a.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.device_id, s.created_at, s.touched_at, s.expires_at, s.revoked_at, u.role, u.state, d.revoked_at, t.secret_envelope
-FROM user_session s JOIN `+userTable+` u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
-LEFT JOIN user_totp t ON t.user_id = s.user_id
-WHERE s.token_hash = ?`, sessionTokenHash(token))
-	var session Session
-	var role, state string
-	var deviceID sql.NullString
-	var revokedAt, deviceRevokedAt sql.NullInt64
-	var totpEnvelope []byte
-	if err := row.Scan(&session.ID, &session.UserID, &deviceID, &session.CreatedAt, &session.TouchedAt,
-		&session.ExpiresAt, &revokedAt, &role, &state, &deviceRevokedAt, &totpEnvelope); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
-		}
+	userSession := query.Use(a.db).UserSession
+	row, err := userSession.WithContext(ctx).Where(userSession.TokenHash.Eq(sessionTokenHash(token))).First()
+	if err == gorm.ErrRecordNotFound {
+		return nil, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
+	}
+	if err != nil {
 		return nil, dbError(err)
 	}
-	if deviceID.Valid {
-		session.DeviceID = deviceID.String
+	session := Session{
+		ID: row.ID, UserID: row.UserID, CreatedAt: row.CreatedAt, TouchedAt: row.TouchedAt, ExpiresAt: row.ExpiresAt,
 	}
-	if revokedAt.Valid {
-		session.RevokedAt = revokedAt.Int64
+	if row.DeviceID != nil {
+		session.DeviceID = *row.DeviceID
+	}
+	if row.RevokedAt != nil {
+		session.RevokedAt = *row.RevokedAt
+	}
+	appUser := query.Use(a.db).AppUser
+	user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(session.UserID)).First()
+	if err != nil {
+		return nil, dbError(err)
+	}
+	deviceRevoked := false
+	if session.DeviceID != "" {
+		userDevice := query.Use(a.db).UserDevice
+		device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(session.DeviceID)).First()
+		if err != nil {
+			return nil, dbError(err)
+		}
+		deviceRevoked = device.RevokedAt != nil
 	}
 	now := a.now()
 	switch {
 	case session.RevokedAt != 0:
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
-	case deviceRevokedAt.Valid:
+	case deviceRevoked:
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	case now >= session.ExpiresAt:
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
 	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
-	case State(state) == StateDisabled:
+	case user.State == string(StateDisabled):
 		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
 	if now-session.TouchedAt >= sessionSlidePersist.Milliseconds() {
@@ -144,41 +152,48 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 		if absolute := session.CreatedAt + SessionAbsoluteTTL.Milliseconds(); expiresAt > absolute {
 			expiresAt = absolute
 		}
-		if _, err := a.db.ExecContext(ctx, "UPDATE user_session SET touched_at = ?, expires_at = ? WHERE id = ?",
-			now, expiresAt, session.ID); err != nil {
+		if _, err := userSession.WithContext(ctx).Where(userSession.ID.Eq(session.ID)).UpdateColumns(map[string]any{
+			"touched_at": now, "expires_at": expiresAt,
+		}); err != nil {
 			return nil, dbError(err)
 		}
 	}
-	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), State: State(state), DeviceID: session.DeviceID, MFAEnabled: len(totpEnvelope) > 0}, nil
+	mfaEnabled := false
+	userTOTP := query.Use(a.db).UserTOTP
+	if _, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(session.UserID), userTOTP.SecretEnvelope.IsNotNull()).First(); err == nil {
+		mfaEnabled = true
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, dbError(err)
+	}
+	return &Identity{
+		UserID: session.UserID, SessionID: session.ID, Role: Role(user.Role), State: State(user.State),
+		DeviceID: session.DeviceID, MFAEnabled: mfaEnabled,
+	}, nil
 }
 
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
-	result, err := a.db.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", a.now(), sessionID)
+	userSession := query.Use(a.db).UserSession
+	info, err := userSession.WithContext(ctx).
+		Where(userSession.ID.Eq(sessionID), userSession.RevokedAt.IsNull()).
+		UpdateColumns(map[string]any{"revoked_at": a.now()})
 	if err != nil {
 		return dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+	if info.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
 	}
 	return nil
 }
 
 func (a *Accounts) RevokeUserSessions(ctx context.Context, userID, exceptSessionID string) (int64, error) {
-	result, err := a.db.ExecContext(ctx, `UPDATE user_session SET revoked_at = ?
-WHERE user_id = ? AND revoked_at IS NULL AND (? = '' OR id != ?)`, a.now(), userID, exceptSessionID, exceptSessionID)
+	userSession := query.Use(a.db).UserSession
+	q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+	if exceptSessionID != "" {
+		q = q.Where(userSession.ID.Neq(exceptSessionID))
+	}
+	info, err := q.UpdateColumns(map[string]any{"revoked_at": a.now()})
 	if err != nil {
 		return 0, dbError(err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return 0, dbError(err)
-	}
-	return affected, nil
-}
-
-func nullableID(id string) any {
-	if id == "" {
-		return nil
-	}
-	return id
+	return info.RowsAffected, nil
 }

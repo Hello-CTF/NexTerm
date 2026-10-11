@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestLinkCreateDefaultsReadOnly(t *testing.T) {
@@ -35,11 +36,12 @@ func TestLinkCreateDefaultsReadOnly(t *testing.T) {
 	if token == "" {
 		t.Fatal("token must be returned once")
 	}
-	var tokenHash string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT token_hash FROM share_link WHERE id = ?", link.ID).Scan(&tokenHash); err != nil {
+	shareLink := query.Use(fixture.db).ShareLink
+	row, err := shareLink.WithContext(context.Background()).Where(shareLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if tokenHash == token {
+	if row.TokenHash == token {
 		t.Fatal("raw token must not be stored")
 	}
 }
@@ -124,12 +126,13 @@ func TestLinkResolve(t *testing.T) {
 		t.Fatalf("grant permission/expiry = %+v", grant)
 	}
 
-	var lastAccessedAt int64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_accessed_at FROM share_link WHERE id = ?", link.ID).Scan(&lastAccessedAt); err != nil {
+	shareLink := query.Use(fixture.db).ShareLink
+	row, err := shareLink.WithContext(context.Background()).Where(shareLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if lastAccessedAt != fixture.now {
-		t.Fatalf("last_accessed_at = %d, want %d", lastAccessedAt, fixture.now)
+	if row.LastAccessedAt == nil || *row.LastAccessedAt != fixture.now {
+		t.Fatalf("last_accessed_at = %v, want %d", row.LastAccessedAt, fixture.now)
 	}
 
 	rows := fixture.auditRows(t, auditKindLinkAccess)
@@ -351,11 +354,13 @@ func TestLinkNeverDisclosesCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var row string
-	if err := fixture.db.QueryRowContext(context.Background(), `SELECT id || '|' || owner_id || '|' || device_id || '|' || session_id || '|' || token_hash || '|' || permission FROM share_link`).Scan(&row); err != nil {
+	shareLink := query.Use(fixture.db).ShareLink
+	row, err := shareLink.WithContext(context.Background()).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(row, token) {
+	combined := strings.Join([]string{row.ID, row.OwnerID, row.DeviceID, row.SessionID, row.TokenHash, row.Permission}, "|")
+	if strings.Contains(combined, token) {
 		t.Fatal("raw token leaked into share_link row")
 	}
 	encoded, err := json.Marshal(grant)
@@ -421,7 +426,8 @@ func TestLinkRevokedDeviceStopsAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -516,7 +522,8 @@ func TestLinkGateStopsAfterDeviceRevocation(t *testing.T) {
 	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second")}}
 	reader.onRead = func() {
 		if reader.index == 1 {
-			if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+			userDevice := query.Use(fixture.db).UserDevice
+			if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 				t.Fatal(err)
 			}
 			fixture.now += linkRevalidateTTL.Milliseconds() + 1

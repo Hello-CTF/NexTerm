@@ -2,10 +2,8 @@ package cron
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,51 +11,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/migrations"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
-
-func sqliteTestDSN(path string) string {
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	u.RawQuery = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate"
-	return u.String()
-}
 
 func openSQLiteStore(t *testing.T, path string) *SQLStore {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteTestDSN(path))
+	database, err := store.Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var table string
-	err = db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cron_job'`).Scan(&table)
-	if errors.Is(err, sql.ErrNoRows) {
-		contents, err := migrations.Files.ReadFile("0001_init.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
-			_ = db.Close()
-			t.Fatalf("apply 0001_init.sql: %v", err)
-		}
-		contents, err = migrations.Files.ReadFile("0023_user_ownership.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
-			_ = db.Close()
-			t.Fatalf("apply 0023_user_ownership.sql: %v", err)
-		}
-	} else if err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	store, err := NewSQLiteStore(context.Background(), db)
+	sqlStore, err := NewSQLiteStore(context.Background(), database.GORM())
 	if err != nil {
-		_ = db.Close()
+		_ = database.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.db.Close() })
-	return store
+	t.Cleanup(func() { _ = sqlStore.Close() })
+	return sqlStore
 }
 
 func newTestSQLiteStore(t *testing.T) *SQLStore {
@@ -231,7 +200,7 @@ func TestSQLiteStoreRestartKeepsJobsWithoutDuplicates(t *testing.T) {
 	if _, err := store.Create(ctx, fullTestJob("idle", "session-b", now), 4); err != nil {
 		t.Fatal(err)
 	}
-	_ = store.db.Close()
+	_ = store.Close()
 
 	reopened := openSQLiteStore(t, path)
 	jobs, err := reopened.List(ctx)
@@ -269,7 +238,7 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 	if _, err := store.CompareAndSwap(ctx, job, job.Revision); err != nil {
 		t.Fatal(err)
 	}
-	_ = store.db.Close()
+	_ = store.Close()
 
 	reopened := openSQLiteStore(t, path)
 	var calls atomic.Int32
@@ -386,7 +355,7 @@ func TestSQLiteStoreConcurrentCompareAndSwapHasSingleWinner(t *testing.T) {
 func TestSQLiteStoreSurfacesExplicitStorageErrors(t *testing.T) {
 	ctx := context.Background()
 	store := newTestSQLiteStore(t)
-	_ = store.db.Close()
+	_ = store.Close()
 	if _, err := store.List(ctx); err == nil {
 		t.Fatal("list on a closed database reported success")
 	}

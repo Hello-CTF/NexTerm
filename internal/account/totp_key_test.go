@@ -25,7 +25,7 @@ func TestTOTPKeyStoredOutsideDatabase(t *testing.T) {
 	}
 
 	var settingCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Scan(&settingCount); err != nil {
+	if err := a.db.Raw("SELECT count(*) FROM setting WHERE key = ?", "auth.totp_key").Row().Scan(&settingCount); err != nil {
 		t.Fatal(err)
 	}
 	if settingCount != 0 {
@@ -63,7 +63,7 @@ func TestTOTPKeyFailClosedWithoutKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	a := New(db.DB())
+	a := New(db.GORM())
 	ctx := context.Background()
 	user, err := a.CreateUser(ctx, "nokey", "", "password-123")
 	if err != nil {

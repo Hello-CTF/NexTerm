@@ -20,7 +20,7 @@ func newSyncRPCFixture(t *testing.T, syncOnly bool) (*accountFixture, *ipc.Dispa
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	_, _, syncService := newRealSyncService(t)
 	peer, err := syncService.PeerDispatcher()
 	if err != nil {

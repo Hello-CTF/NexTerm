@@ -83,10 +83,10 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
 	// A 删除三者并同步, 墓碑到达服务端。
-	if _, err := deviceA.db.DB().ExecContext(ctx, "DELETE FROM asset_group WHERE id=?", groupID); err != nil {
+	if err := deviceA.db.GroupDelete(ctx, groupID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deviceA.db.DB().ExecContext(ctx, "DELETE FROM snippet WHERE id=?", snippetID); err != nil {
+	if err := deviceA.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
 	}
 	if err := deviceA.db.CredentialDelete(ctx, credentialID); err != nil {

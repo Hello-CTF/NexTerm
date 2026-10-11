@@ -10,17 +10,19 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -174,57 +176,48 @@ func totpAuthURI(username, secret string) string {
 	return "otpauth://totp/" + label + "?secret=" + secret + "&issuer=NexTerm"
 }
 
-// TOTPEnabled 只反映已完成确认的绑定; 登录门禁用它决定是否进入 TOTP 一步。
 func (a *Accounts) TOTPEnabled(ctx context.Context, userID string) (bool, error) {
-	var envelope []byte
-	err := a.db.QueryRowContext(ctx, "SELECT secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&envelope)
-	if errors.Is(err, sql.ErrNoRows) {
+	userTOTP := query.Use(a.db).UserTOTP
+	row, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound {
 		return false, nil
 	}
 	if err != nil {
 		return false, dbError(err)
 	}
-	return len(envelope) > 0, nil
+	return len(row.SecretEnvelope) > 0, nil
 }
 
-// TOTPEnabledMap 返回全部已完成 TOTP 绑定的用户 id 集合, 供管理端列表一次取回。
 func (a *Accounts) TOTPEnabledMap(ctx context.Context) (map[string]bool, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT user_id FROM user_totp WHERE secret_envelope IS NOT NULL")
-	if err != nil {
+	userTOTP := query.Use(a.db).UserTOTP
+	rows := []store.UserTOTP{}
+	if err := userTOTP.WithContext(ctx).Where(userTOTP.SecretEnvelope.IsNotNull()).Scan(&rows); err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	enabled := make(map[string]bool)
-	for rows.Next() {
-		var userID string
-		if err := rows.Scan(&userID); err != nil {
-			return nil, dbError(err)
-		}
-		enabled[userID] = true
+	enabled := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		enabled[row.UserID] = true
 	}
-	return enabled, rows.Err()
+	return enabled, nil
 }
 
-// TOTPStatus 汇报用户 TOTP 绑定状态与剩余恢复码数量。
 func (a *Accounts) TOTPStatus(ctx context.Context, userID string) (enabled bool, pending bool, recoveryLeft int, err error) {
-	var secretEnvelope, pendingEnvelope []byte
-	err = a.db.QueryRowContext(ctx, "SELECT secret_envelope, pending_secret_envelope FROM user_totp WHERE user_id = ?", userID).
-		Scan(&secretEnvelope, &pendingEnvelope)
-	if errors.Is(err, sql.ErrNoRows) {
+	userTOTP := query.Use(a.db).UserTOTP
+	row, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound {
 		return false, false, 0, nil
 	}
 	if err != nil {
 		return false, false, 0, dbError(err)
 	}
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM user_totp_recovery_code WHERE user_id = ? AND used_at IS NULL", userID).
-		Scan(&recoveryLeft); err != nil {
+	recoveryCode := query.Use(a.db).UserTOTPRecoveryCode
+	count, err := recoveryCode.WithContext(ctx).Where(recoveryCode.UserID.Eq(userID), recoveryCode.UsedAt.IsNull()).Count()
+	if err != nil {
 		return false, false, 0, dbError(err)
 	}
-	return len(secretEnvelope) > 0, len(pendingEnvelope) > 0, recoveryLeft, nil
+	return len(row.SecretEnvelope) > 0, len(row.PendingSecretEnvelope) > 0, int(count), nil
 }
 
-// BeginTOTPSetup 生成新密钥并写入待确认信封; 已有绑定不受影响, 确认后才替换。
-// 已绑定用户必须用 reverify(当前动态码、恢复码或登录密码)完成重验, 防止劫持的会话静默换绑。
 func (a *Accounts) BeginTOTPSetup(ctx context.Context, userID, reverify string) (secret string, otpauthURI string, returnErr error) {
 	enabled, err := a.TOTPEnabled(ctx, userID)
 	if err != nil {
@@ -235,11 +228,12 @@ func (a *Accounts) BeginTOTPSetup(ctx context.Context, userID, reverify string) 
 			return "", "", err
 		}
 	}
-	var username string
-	if err := a.db.QueryRowContext(ctx, "SELECT username FROM "+userTable+" WHERE id = ?", userID).Scan(&username); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", ipc.NewError(ipc.CodeNotFound, "用户不存在")
-		}
+	appUser := query.Use(a.db).AppUser
+	user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound {
+		return "", "", ipc.NewError(ipc.CodeNotFound, "用户不存在")
+	}
+	if err != nil {
 		return "", "", dbError(err)
 	}
 	secretBytes, err := generateTOTPSecret()
@@ -252,16 +246,15 @@ func (a *Accounts) BeginTOTPSetup(ctx context.Context, userID, reverify string) 
 	}
 	encoded := totpSecretEncoding.EncodeToString(secretBytes)
 	now := a.now()
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO user_totp(user_id, secret_envelope, pending_secret_envelope, created_at, updated_at)
-VALUES(?,NULL,?,?,?)
-ON CONFLICT(user_id) DO UPDATE SET pending_secret_envelope = excluded.pending_secret_envelope, updated_at = excluded.updated_at`,
-		userID, envelope, now, now); err != nil {
+	if err := a.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pending_secret_envelope", "updated_at"}),
+	}).Create(&store.UserTOTP{UserID: userID, PendingSecretEnvelope: envelope, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		return "", "", dbError(err)
 	}
-	return encoded, totpAuthURI(username, encoded), nil
+	return encoded, totpAuthURI(user.Username, encoded), nil
 }
 
-// verifyTOTPRebind 校验换绑重验凭据: 当前动态码/恢复码优先, 其次登录密码。
 func (a *Accounts) verifyTOTPRebind(ctx context.Context, userID, reverify string) error {
 	if reverify == "" {
 		return ipc.NewError(ipc.CodeForbidden, "已开启两步验证：更换绑定前需验证当前动态码、恢复码或登录密码")
@@ -271,26 +264,27 @@ func (a *Accounts) verifyTOTPRebind(ctx context.Context, userID, reverify string
 	} else if valid {
 		return nil
 	}
-	var hash string
-	if err := a.db.QueryRowContext(ctx, "SELECT password_hash FROM "+userTable+" WHERE id = ?", userID).Scan(&hash); err != nil {
+	appUser := query.Use(a.db).AppUser
+	user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+	if err != nil {
 		return dbError(err)
 	}
-	if verifyPassword(hash, reverify) {
+	if verifyPassword(user.PasswordHash, reverify) {
 		return nil
 	}
 	return ipc.NewError(ipc.CodeForbidden, "验证失败: 动态码、恢复码或密码错误")
 }
 
-// ConfirmTOTPSetup 用待确认密钥校验动态码, 通过后转正并签发一次性恢复码(明文只在返回值里出现这一次)。
 func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([]string, error) {
-	var pending []byte
-	err := a.db.QueryRowContext(ctx, "SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&pending)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(pending) == 0) {
+	userTOTP := query.Use(a.db).UserTOTP
+	row, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound || (err == nil && len(row.PendingSecretEnvelope) == 0) {
 		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误: 尚未开始 TOTP 绑定")
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
+	pending := row.PendingSecretEnvelope
 	secret, err := a.openTOTPSecret(userID, pending)
 	if err != nil {
 		return nil, err
@@ -303,37 +297,38 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 		return nil, err
 	}
 	now := a.now()
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var current []byte
-	err = tx.QueryRowContext(ctx, "SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&current)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !bytes.Equal(current, pending)) {
-		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
-	}
-	if err != nil {
-		return nil, dbError(err)
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE user_totp SET secret_envelope = ?, pending_secret_envelope = NULL, updated_at = ?
-WHERE user_id = ? AND pending_secret_envelope = ?`, pending, now, userID, pending)
-	if err != nil {
-		return nil, dbError(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return nil, ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp_recovery_code WHERE user_id = ?", userID); err != nil {
-		return nil, dbError(err)
-	}
-	for _, code := range codes {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_totp_recovery_code(id, user_id, code_hash, created_at)
-VALUES(?,?,?,?)`, ids.New(), userID, recoveryCodeHash(code), now); err != nil {
-			return nil, dbError(err)
+	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		totp := query.Use(tx).UserTOTP
+		current, err := totp.WithContext(ctx).Where(totp.UserID.Eq(userID)).First()
+		if err == gorm.ErrRecordNotFound || (err == nil && !bytes.Equal(current.PendingSecretEnvelope, pending)) {
+			return ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		if err != nil {
+			return dbError(err)
+		}
+		info, err := totp.WithContext(ctx).
+			Where(totp.UserID.Eq(userID), totp.PendingSecretEnvelope.Eq(pending)).
+			UpdateColumns(map[string]any{"secret_envelope": pending, "pending_secret_envelope": nil, "updated_at": now})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeBadParam, "参数错误：绑定已确认或已失效，请重新开始")
+		}
+		recoveryCode := query.Use(tx).UserTOTPRecoveryCode
+		if _, err := recoveryCode.WithContext(ctx).Where(recoveryCode.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		for _, code := range codes {
+			if err := recoveryCode.WithContext(ctx).Create(&store.UserTOTPRecoveryCode{
+				ID: ids.New(), UserID: userID, CodeHash: recoveryCodeHash(code), CreatedAt: now,
+			}); err != nil {
+				return dbError(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, dbError(err)
 	}
 	formatted := make([]string, 0, len(codes))
@@ -343,20 +338,19 @@ VALUES(?,?,?,?)`, ids.New(), userID, recoveryCodeHash(code), now); err != nil {
 	return formatted, nil
 }
 
-// VerifyTOTPLoginCode 校验第二因子: 6 位动态码或一次性恢复码; 恢复码命中即作废。
 func (a *Accounts) VerifyTOTPLoginCode(ctx context.Context, userID, code string) (bool, error) {
-	var envelope []byte
-	err := a.db.QueryRowContext(ctx, "SELECT secret_envelope FROM user_totp WHERE user_id = ?", userID).Scan(&envelope)
-	if errors.Is(err, sql.ErrNoRows) {
+	userTOTP := query.Use(a.db).UserTOTP
+	row, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound {
 		return false, nil
 	}
 	if err != nil {
 		return false, dbError(err)
 	}
-	if len(envelope) == 0 {
+	if len(row.SecretEnvelope) == 0 {
 		return false, nil
 	}
-	secret, err := a.openTOTPSecret(userID, envelope)
+	secret, err := a.openTOTPSecret(userID, row.SecretEnvelope)
 	if err != nil {
 		return false, err
 	}
@@ -370,26 +364,25 @@ func (a *Accounts) consumeRecoveryCode(ctx context.Context, userID, code string)
 	if len(normalizeRecoveryCode(code)) != recoveryCodeEncodedLen {
 		return false, nil
 	}
-	var id string
-	err := a.db.QueryRowContext(ctx, "SELECT id FROM user_totp_recovery_code WHERE user_id = ? AND code_hash = ? AND used_at IS NULL",
-		userID, recoveryCodeHash(code)).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
+	recoveryCode := query.Use(a.db).UserTOTPRecoveryCode
+	row, err := recoveryCode.WithContext(ctx).
+		Where(recoveryCode.UserID.Eq(userID), recoveryCode.CodeHash.Eq(recoveryCodeHash(code)), recoveryCode.UsedAt.IsNull()).
+		First()
+	if err == gorm.ErrRecordNotFound {
 		return false, nil
 	}
 	if err != nil {
 		return false, dbError(err)
 	}
-	result, err := a.db.ExecContext(ctx, "UPDATE user_totp_recovery_code SET used_at = ? WHERE id = ? AND used_at IS NULL", a.now(), id)
+	info, err := recoveryCode.WithContext(ctx).
+		Where(recoveryCode.ID.Eq(row.ID), recoveryCode.UsedAt.IsNull()).
+		UpdateColumns(map[string]any{"used_at": a.now()})
 	if err != nil {
 		return false, dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return false, nil
-	}
-	return true, nil
+	return info.RowsAffected > 0, nil
 }
 
-// DisableTOTP 用当前动态码或恢复码解绑; 解绑同时清除全部恢复码。
 func (a *Accounts) DisableTOTP(ctx context.Context, userID, code string) error {
 	valid, err := a.VerifyTOTPLoginCode(ctx, userID, code)
 	if err != nil {
@@ -398,34 +391,27 @@ func (a *Accounts) DisableTOTP(ctx context.Context, userID, code string) error {
 	if !valid {
 		return ipc.NewError(ipc.CodeForbidden, "验证码错误")
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp WHERE user_id = ?", userID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp_recovery_code WHERE user_id = ?", userID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
-	}
-	return nil
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := query.Use(tx).UserTOTP.WithContext(ctx).Where(query.Use(tx).UserTOTP.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).UserTOTPRecoveryCode.WithContext(ctx).Where(query.Use(tx).UserTOTPRecoveryCode.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 }
 
-// MFARequired 读取「强制要求 MFA」策略开关; 缺省关闭。开启后未绑定用户的会话被锁到只能完成 TOTP 绑定。
 func (a *Accounts) MFARequired(ctx context.Context) (bool, error) {
-	var value string
-	err := a.db.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", mfaRequiredSettingKey).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
+	setting := query.Use(a.db).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(mfaRequiredSettingKey)).First()
+	if err == gorm.ErrRecordNotFound {
 		return false, nil
 	}
 	if err != nil {
 		return false, dbError(err)
 	}
-	return value == "true", nil
+	return row.Value == "true", nil
 }
 
 func (a *Accounts) SetMFARequired(ctx context.Context, required bool) error {
@@ -433,9 +419,10 @@ func (a *Accounts) SetMFARequired(ctx context.Context, required bool) error {
 	if required {
 		value = "true"
 	}
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		mfaRequiredSettingKey, value, a.now()); err != nil {
+	if err := a.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&store.Setting{Key: mfaRequiredSettingKey, Value: value, UpdatedAt: a.now()}).Error; err != nil {
 		return dbError(err)
 	}
 	return nil

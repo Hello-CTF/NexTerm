@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 type RetentionPolicy struct {
@@ -76,120 +78,158 @@ func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (r
 	if policy.empty() {
 		return RetentionResult{}, nil
 	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return RetentionResult{}, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	now := time.Now()
-
-	if policy.AuditMaxAge > 0 {
-		cutoff := now.Add(-policy.AuditMaxAge).UnixMilli()
-		result.AuditDeleted, err = retentionDelete(ctx, tx,
-			"DELETE FROM audit_log WHERE ts < ?", cutoff)
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("audit age retention: %w", dbError(err))
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		audit := queries.AuditRow
+		if policy.AuditMaxAge > 0 {
+			info, err := audit.WithContext(ctx).Where(audit.TS.Lt(now.Add(-policy.AuditMaxAge).UnixMilli())).Delete()
+			result.AuditDeleted = info.RowsAffected
+			if err != nil {
+				return fmt.Errorf("audit age retention: %w", err)
+			}
 		}
-	}
-	if policy.AuditMaxCount > 0 {
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx, `DELETE FROM audit_log WHERE id IN (
-	SELECT id FROM audit_log ORDER BY ts DESC, id DESC `+s.dialect.limitOffset()+`
-)`, policy.AuditMaxCount)
-		result.AuditDeleted += deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("audit count retention: %w", dbError(err))
+		if policy.AuditMaxCount > 0 {
+			ids := []int64{}
+			if err := audit.WithContext(ctx).
+				Order(audit.TS.Desc(), audit.ID.Desc()).
+				Limit(-1).
+				Offset(int(policy.AuditMaxCount)).
+				Pluck(audit.ID, &ids); err != nil {
+				return fmt.Errorf("audit count retention: %w", err)
+			}
+			if len(ids) > 0 {
+				info, err := audit.WithContext(ctx).Where(audit.ID.In(ids...)).Delete()
+				result.AuditDeleted += info.RowsAffected
+				if err != nil {
+					return fmt.Errorf("audit count retention: %w", err)
+				}
+			}
 		}
-	}
-	if policy.RecordingMaxAge > 0 {
-		cutoff := now.Add(-policy.RecordingMaxAge).UnixMilli()
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx,
-			"DELETE FROM terminal_recording WHERE ended_at IS NOT NULL AND ended_at < ?", cutoff)
-		result.RecordingsDeleted = deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("recording age retention: %w", dbError(err))
+		recording := queries.RecordingRow
+		if policy.RecordingMaxAge > 0 {
+			info, err := recording.WithContext(ctx).
+				Where(recording.EndedAt.IsNotNull(), recording.EndedAt.Lt(now.Add(-policy.RecordingMaxAge).UnixMilli())).
+				Delete()
+			result.RecordingsDeleted = info.RowsAffected
+			if err != nil {
+				return fmt.Errorf("recording age retention: %w", err)
+			}
 		}
-	}
-	if policy.RecordingMaxCount > 0 {
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx, `DELETE FROM terminal_recording
-WHERE ended_at IS NOT NULL AND id IN (
-	SELECT id FROM terminal_recording WHERE ended_at IS NOT NULL
-	ORDER BY ended_at DESC, id DESC `+s.dialect.limitOffset()+`
-)`, policy.RecordingMaxCount)
-		result.RecordingsDeleted += deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("recording count retention: %w", dbError(err))
+		if policy.RecordingMaxCount > 0 {
+			ids := []string{}
+			if err := recording.WithContext(ctx).
+				Where(recording.EndedAt.IsNotNull()).
+				Order(recording.EndedAt.Desc(), recording.ID.Desc()).
+				Limit(-1).
+				Offset(int(policy.RecordingMaxCount)).
+				Pluck(recording.ID, &ids); err != nil {
+				return fmt.Errorf("recording count retention: %w", err)
+			}
+			if len(ids) > 0 {
+				info, err := recording.WithContext(ctx).Where(recording.ID.In(ids...)).Delete()
+				result.RecordingsDeleted += info.RowsAffected
+				if err != nil {
+					return fmt.Errorf("recording count retention: %w", err)
+				}
+			}
 		}
-	}
-	if policy.CommandMaxAge > 0 {
-		cutoff := now.Add(-policy.CommandMaxAge).UnixMilli()
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx,
-			"DELETE FROM command_log WHERE started_at < ?", cutoff)
-		result.CommandsDeleted = deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("command age retention: %w", dbError(err))
+		command := queries.CommandLog
+		if policy.CommandMaxAge > 0 {
+			info, err := command.WithContext(ctx).
+				Where(command.StartedAt.Lt(now.Add(-policy.CommandMaxAge).UnixMilli())).
+				Delete()
+			result.CommandsDeleted = info.RowsAffected
+			if err != nil {
+				return fmt.Errorf("command age retention: %w", err)
+			}
 		}
-	}
-	if policy.CommandMaxCount > 0 {
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx, `DELETE FROM command_log WHERE id IN (
-	SELECT id FROM command_log ORDER BY started_at DESC, id DESC `+s.dialect.limitOffset()+`
-)`, policy.CommandMaxCount)
-		result.CommandsDeleted += deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("command count retention: %w", dbError(err))
+		if policy.CommandMaxCount > 0 {
+			ids := []int64{}
+			if err := command.WithContext(ctx).
+				Order(command.StartedAt.Desc(), command.ID.Desc()).
+				Limit(-1).
+				Offset(int(policy.CommandMaxCount)).
+				Pluck(command.ID, &ids); err != nil {
+				return fmt.Errorf("command count retention: %w", err)
+			}
+			if len(ids) > 0 {
+				info, err := command.WithContext(ctx).Where(command.ID.In(ids...)).Delete()
+				result.CommandsDeleted += info.RowsAffected
+				if err != nil {
+					return fmt.Errorf("command count retention: %w", err)
+				}
+			}
 		}
-	}
-	if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {
-		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id IN (SELECT id FROM ai_run WHERE finished_at IS NOT NULL)`); err != nil {
-			return RetentionResult{}, fmt.Errorf("terminal HITL cleanup: %w", dbError(err))
+		run := queries.RunRow
+		hitl := queries.HitlRunRow
+		if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {
+			finishedIDs := []string{}
+			if err := run.WithContext(ctx).Where(run.FinishedAt.IsNotNull()).Pluck(run.ID, &finishedIDs); err != nil {
+				return fmt.Errorf("terminal HITL cleanup: %w", err)
+			}
+			if len(finishedIDs) > 0 {
+				if _, err := hitl.WithContext(ctx).Where(hitl.ID.In(finishedIDs...)).Delete(); err != nil {
+					return fmt.Errorf("terminal HITL cleanup: %w", err)
+				}
+			}
+			runIDs := []string{}
+			if err := run.WithContext(ctx).Pluck(run.ID, &runIDs); err != nil {
+				return fmt.Errorf("orphan HITL cleanup: %w", err)
+			}
+			if len(runIDs) > 0 {
+				if _, err := hitl.WithContext(ctx).Where(hitl.ID.NotIn(runIDs...)).Delete(); err != nil {
+					return fmt.Errorf("orphan HITL cleanup: %w", err)
+				}
+			} else if _, err := hitl.WithContext(ctx).Where(hitl.ID.IsNotNull()).Delete(); err != nil {
+				return fmt.Errorf("orphan HITL cleanup: %w", err)
+			}
 		}
-		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id NOT IN (SELECT id FROM ai_run)`); err != nil {
-			return RetentionResult{}, fmt.Errorf("orphan HITL cleanup: %w", dbError(err))
+		pendingHITL := []string{}
+		if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {
+			if err := hitl.WithContext(ctx).Pluck(hitl.ID, &pendingHITL); err != nil {
+				return fmt.Errorf("AI run retention: %w", err)
+			}
 		}
-	}
-	if policy.AIRunMaxAge > 0 {
-		cutoff := now.Add(-policy.AIRunMaxAge).UnixMilli()
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx, `DELETE FROM ai_run
-WHERE finished_at IS NOT NULL AND finished_at < ?
-AND id NOT IN (SELECT id FROM ai_hitl_run)`, cutoff)
-		result.AIRunsDeleted = deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("AI run age retention: %w", dbError(err))
+		if policy.AIRunMaxAge > 0 {
+			q := run.WithContext(ctx).
+				Where(run.FinishedAt.IsNotNull(), run.FinishedAt.Lt(now.Add(-policy.AIRunMaxAge).UnixMilli()))
+			if len(pendingHITL) > 0 {
+				q = q.Where(run.ID.NotIn(pendingHITL...))
+			}
+			info, err := q.Delete()
+			result.AIRunsDeleted = info.RowsAffected
+			if err != nil {
+				return fmt.Errorf("AI run age retention: %w", err)
+			}
 		}
-	}
-	if policy.AIRunMaxCount > 0 {
-		var deleted int64
-		deleted, err = retentionDelete(ctx, tx, `DELETE FROM ai_run
-WHERE finished_at IS NOT NULL
-AND id NOT IN (SELECT id FROM ai_hitl_run)
-AND id IN (
-	SELECT id FROM ai_run WHERE finished_at IS NOT NULL
-	AND id NOT IN (SELECT id FROM ai_hitl_run)
-	ORDER BY finished_at DESC, id DESC `+s.dialect.limitOffset()+`
-)`, policy.AIRunMaxCount)
-		result.AIRunsDeleted += deleted
-		if err != nil {
-			return RetentionResult{}, fmt.Errorf("AI run count retention: %w", dbError(err))
+		if policy.AIRunMaxCount > 0 {
+			q := run.WithContext(ctx).
+				Where(run.FinishedAt.IsNotNull()).
+				Order(run.FinishedAt.Desc(), run.ID.Desc()).
+				Limit(-1).
+				Offset(int(policy.AIRunMaxCount))
+			if len(pendingHITL) > 0 {
+				q = q.Where(run.ID.NotIn(pendingHITL...))
+			}
+			ids := []string{}
+			if err := q.Pluck(run.ID, &ids); err != nil {
+				return fmt.Errorf("AI run count retention: %w", err)
+			}
+			if len(ids) > 0 {
+				info, err := run.WithContext(ctx).Where(run.ID.In(ids...)).Delete()
+				result.AIRunsDeleted += info.RowsAffected
+				if err != nil {
+					return fmt.Errorf("AI run count retention: %w", err)
+				}
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return RetentionResult{}, dbError(err)
 	}
 	return result, nil
-}
-
-func retentionDelete(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
-	result, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 func (s *Store) recordRetentionResult(err error) {

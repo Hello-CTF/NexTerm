@@ -2,44 +2,41 @@ package outcome
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
+	"gorm.io/gen/field"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type SQLiteStore struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-func NewSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
+func NewSQLiteStore(db *gorm.DB) (*SQLiteStore, error) {
 	if db == nil {
 		return nil, errors.New("outcome: db is required")
 	}
 	return &SQLiteStore{db: db}, nil
 }
 
-const outcomeColumns = `idempotence_key, authorization_id, kind, canonical_arguments, state, outcome,
-	exit_code, result_error, audit_state, audit_error, audit_completed_at, revision, created_at, started_at, finished_at`
-
 func (s *SQLiteStore) Reserve(ctx context.Context, record Record) (Record, bool, error) {
-	result, err := s.db.ExecContext(ctx, `INSERT INTO outcome_record (owner_id, `+outcomeColumns+`)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id, idempotence_key) DO NOTHING`,
-		ipc.OwnerID(ctx), record.IdempotenceKey, record.AuthorizationID, string(record.Kind), string(record.CanonicalArguments),
-		string(record.State), string(record.Outcome), nullableInt(record.Result.ExitCode), record.Result.Error,
-		string(record.Audit.State), record.Audit.Error, nullableTimeMS(record.Audit.CompletedAt), record.Revision,
-		record.CreatedAt.UnixMilli(), nullableTimeMS(record.StartedAt), nullableTimeMS(record.FinishedAt))
-	if err != nil {
-		return Record{}, false, fmt.Errorf("outcome: reserve record: %w", err)
+	row := outcomeModel(ctx, record)
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "owner_id"}, {Name: "idempotence_key"}},
+		DoNothing: true,
+	}).Create(&row)
+	if result.Error != nil {
+		return Record{}, false, fmt.Errorf("outcome: reserve record: %w", result.Error)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return Record{}, false, fmt.Errorf("outcome: reserve record: %w", err)
-	}
-	if affected == 1 {
+	if result.RowsAffected == 1 {
 		return cloneRecord(record), true, nil
 	}
 	stored, err := s.Get(ctx, record.IdempotenceKey)
@@ -53,105 +50,102 @@ func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevisio
 	if record.Revision != expectedRevision+1 {
 		return ErrRevisionConflict
 	}
-	condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
-	args := []any{
-		record.AuthorizationID, string(record.Kind), string(record.CanonicalArguments),
-		string(record.State), string(record.Outcome), nullableInt(record.Result.ExitCode), record.Result.Error,
-		string(record.Audit.State), record.Audit.Error, nullableTimeMS(record.Audit.CompletedAt), record.Revision,
-		record.CreatedAt.UnixMilli(), nullableTimeMS(record.StartedAt), nullableTimeMS(record.FinishedAt),
-		record.IdempotenceKey, expectedRevision,
-	}
-	args = append(args, ownerArgs...)
-	result, err := s.db.ExecContext(ctx, `UPDATE outcome_record SET authorization_id=?, kind=?, canonical_arguments=?,
-	state=?, outcome=?, exit_code=?, result_error=?, audit_state=?, audit_error=?, audit_completed_at=?,
-	revision=?, created_at=?, started_at=?, finished_at=?
-	WHERE idempotence_key = ? AND revision = ?`+condition, args...)
+	row := outcomeModel(ctx, record)
+	outcomeRecord := query.Use(s.db).OutcomeRecord
+	info, err := outcomeRecord.WithContext(ctx).
+		Where(outcomeRecord.IdempotenceKey.Eq(record.IdempotenceKey), outcomeRecord.Revision.Eq(expectedRevision)).
+		Where(ownerConditions(ctx, outcomeRecord.TableName())...).
+		UpdateColumns(map[string]any{
+			"authorization_id": row.AuthorizationID, "kind": row.Kind, "canonical_arguments": row.CanonicalArgs,
+			"state": row.State, "outcome": row.Outcome, "exit_code": row.ExitCode, "result_error": row.ResultError,
+			"audit_state": row.AuditState, "audit_error": row.AuditError, "audit_completed_at": row.AuditCompletedAt,
+			"revision": row.Revision, "created_at": row.CreatedAt, "started_at": row.StartedAt, "finished_at": row.FinishedAt,
+		})
 	if err != nil {
 		return fmt.Errorf("outcome: update record: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("outcome: update record: %w", err)
-	}
-	if affected == 1 {
+	if info.RowsAffected == 1 {
 		return nil
 	}
-	var revision uint64
-	condition, args = ipc.OwnerCondition(ctx, "owner_id")
-	err = s.db.QueryRowContext(ctx, `SELECT revision FROM outcome_record WHERE idempotence_key = ?`+condition, append([]any{record.IdempotenceKey}, args...)...).Scan(&revision)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return ErrNotFound
-	case err != nil:
+	if _, err := s.Get(ctx, record.IdempotenceKey); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
 		return fmt.Errorf("outcome: update record: %w", err)
-	default:
-		return ErrRevisionConflict
 	}
+	return ErrRevisionConflict
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, key string) (Record, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	record, err := scanOutcomeRecord(s.db.QueryRowContext(ctx, `SELECT `+outcomeColumns+` FROM outcome_record WHERE idempotence_key = ?`+condition, append([]any{key}, args...)...))
-	if errors.Is(err, sql.ErrNoRows) {
+	outcomeRecord := query.Use(s.db).OutcomeRecord
+	row, err := outcomeRecord.WithContext(ctx).
+		Where(outcomeRecord.IdempotenceKey.Eq(key)).
+		Where(ownerConditions(ctx, outcomeRecord.TableName())...).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, fmt.Errorf("outcome: get record: %w", err)
 	}
-	return record, nil
+	return outcomeFromModel(row), nil
 }
 
-type rowScanner interface {
-	Scan(...any) error
-}
-
-func scanOutcomeRecord(row rowScanner) (Record, error) {
-	var record Record
-	var kind, state, outcomeValue, auditState string
-	var canonical, resultError, auditError string
-	var exitCode, auditCompletedAt, startedAt, finishedAt sql.NullInt64
-	var createdAt int64
-	err := row.Scan(&record.IdempotenceKey, &record.AuthorizationID, &kind, &canonical,
-		&state, &outcomeValue, &exitCode, &resultError, &auditState, &auditError,
-		&auditCompletedAt, &record.Revision, &createdAt, &startedAt, &finishedAt)
-	if err != nil {
-		return Record{}, err
+func outcomeModel(ctx context.Context, record Record) model.OutcomeRecord {
+	return model.OutcomeRecord{
+		IdempotenceKey: record.IdempotenceKey, AuthorizationID: record.AuthorizationID, Kind: string(record.Kind),
+		CanonicalArgs: string(record.CanonicalArguments), State: string(record.State), Outcome: string(record.Outcome),
+		ExitCode: outcomeExitCode(record.Result.ExitCode), ResultError: record.Result.Error,
+		AuditState: string(record.Audit.State), AuditError: record.Audit.Error, AuditCompletedAt: outcomeTimeMS(record.Audit.CompletedAt),
+		Revision: record.Revision, CreatedAt: record.CreatedAt.UnixMilli(), StartedAt: outcomeTimeMS(record.StartedAt),
+		FinishedAt: outcomeTimeMS(record.FinishedAt), OwnerID: ipc.OwnerID(ctx),
 	}
-	record.Kind = Kind(kind)
-	record.CanonicalArguments = json.RawMessage(canonical)
-	record.State = ExecutionState(state)
-	record.Outcome = Outcome(outcomeValue)
-	record.Result = ExitResult{Error: resultError}
-	if exitCode.Valid {
-		code := int(exitCode.Int64)
+}
+
+func outcomeFromModel(row *model.OutcomeRecord) Record {
+	record := Record{
+		IdempotenceKey: row.IdempotenceKey, AuthorizationID: row.AuthorizationID, Kind: Kind(row.Kind),
+		CanonicalArguments: json.RawMessage(row.CanonicalArgs), State: ExecutionState(row.State), Outcome: Outcome(row.Outcome),
+		Result: ExitResult{Error: row.ResultError}, Audit: Audit{State: AuditState(row.AuditState), Error: row.AuditError},
+		Revision: row.Revision, CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
+	}
+	if row.ExitCode != nil {
+		code := int(*row.ExitCode)
 		record.Result.ExitCode = &code
 	}
-	record.Audit = Audit{State: AuditState(auditState), Error: auditError}
-	record.Audit.CompletedAt = timeFromMS(auditCompletedAt)
-	record.CreatedAt = time.UnixMilli(createdAt).UTC()
-	record.StartedAt = timeFromMS(startedAt)
-	record.FinishedAt = timeFromMS(finishedAt)
-	return record, nil
+	record.Audit.CompletedAt = outcomeTimeFromMS(row.AuditCompletedAt)
+	record.StartedAt = outcomeTimeFromMS(row.StartedAt)
+	record.FinishedAt = outcomeTimeFromMS(row.FinishedAt)
+	return record
 }
 
-func nullableInt(value *int) any {
+func outcomeExitCode(value *int) *int32 {
 	if value == nil {
 		return nil
 	}
-	return *value
+	code := int32(*value)
+	return &code
 }
 
-func nullableTimeMS(value *time.Time) any {
+func outcomeTimeMS(value *time.Time) *int64 {
 	if value == nil {
 		return nil
 	}
-	return value.UnixMilli()
-}
-
-func timeFromMS(value sql.NullInt64) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	stamp := time.UnixMilli(value.Int64).UTC()
+	stamp := value.UnixMilli()
 	return &stamp
+}
+
+func outcomeTimeFromMS(value *int64) *time.Time {
+	if value == nil {
+		return nil
+	}
+	stamp := time.UnixMilli(*value).UTC()
+	return &stamp
+}
+
+func ownerConditions(ctx context.Context, table string) []gen.Condition {
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		return []gen.Condition{field.NewString(table, "owner_id").Eq(ownerID)}
+	}
+	return nil
 }

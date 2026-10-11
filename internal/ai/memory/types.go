@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	SchemaVersion   = 2
 	MaxTopicBytes   = 256
 	MaxContentBytes = 64 * 1024
 	maxScopeBytes   = 256

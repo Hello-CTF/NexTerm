@@ -22,7 +22,7 @@ func TestObjectHandlerRequiresUserIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	handler := NewObjectHandler(db.DB(), db.Backend())
+	handler := NewObjectHandler(db.GORM(), db.Backend())
 	for _, path := range []string{"/sync/v2/push", "/sync/v2/pull", "/sync/v2/ids"} {
 		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":2}`)))
 		recorder := httptest.NewRecorder()
@@ -40,13 +40,13 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	user, err := account.New(db.DB()).CreateUser(ctx, "handler-test-"+ids.New(), "test", "handler-pw-123")
+	user, err := account.New(db.GORM()).CreateUser(ctx, "handler-test-"+ids.New(), "test", "handler-pw-123")
 	if err != nil {
 		t.Fatal(err)
 	}
 	userID := user.ID
 	ctx = WithUserID(ctx, userID)
-	handler := NewObjectHandler(db.DB(), db.Backend())
+	handler := NewObjectHandler(db.GORM(), db.Backend())
 
 	post := func(path string, payload any) *httptest.ResponseRecorder {
 		body, err := json.Marshal(payload)
@@ -129,12 +129,12 @@ func TestObjectHandlerGzipRequestAndResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	user, err := account.New(db.DB()).CreateUser(ctx, "gzip-test-"+ids.New(), "test", "handler-pw-123")
+	user, err := account.New(db.GORM()).CreateUser(ctx, "gzip-test-"+ids.New(), "test", "handler-pw-123")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx = WithUserID(ctx, user.ID)
-	handler := NewObjectHandler(db.DB(), db.Backend())
+	handler := NewObjectHandler(db.GORM(), db.Backend())
 	payload, err := json.Marshal(PushRequest{Protocol: ProtocolVersion, KnownHead: genesisHead(user.ID), Objects: []WireObject{{ID: "obj-1", Blob: make([]byte, 2048)}}})
 	if err != nil {
 		t.Fatal(err)

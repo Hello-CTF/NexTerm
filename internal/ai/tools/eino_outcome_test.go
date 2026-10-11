@@ -20,7 +20,7 @@ func outcomeFixture(t *testing.T) (*store.Store, *outcome.Ledger, *outcome.SQLit
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = storage.Close() })
-	sqliteStore, err := outcome.NewSQLiteStore(storage.DB())
+	sqliteStore, err := outcome.NewSQLiteStore(storage.GORM())
 	if err != nil {
 		t.Fatal(err)
 	}

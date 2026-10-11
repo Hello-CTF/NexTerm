@@ -51,7 +51,7 @@ func TestSessionSlidingAndAbsoluteExpiry(t *testing.T) {
 		t.Fatalf("validate at +11h: %v", err)
 	}
 	var touched, expires int64
-	if err := a.db.QueryRowContext(ctx, "SELECT touched_at, expires_at FROM user_session WHERE id = ?", session.ID).Scan(&touched, &expires); err != nil {
+	if err := a.db.Raw("SELECT touched_at, expires_at FROM user_session WHERE id = ?", session.ID).Row().Scan(&touched, &expires); err != nil {
 		t.Fatal(err)
 	}
 	if touched != *now || expires != *now+SessionSlidingTTL.Milliseconds() {
@@ -65,7 +65,7 @@ func TestSessionSlidingAndAbsoluteExpiry(t *testing.T) {
 		}
 	}
 	absolute := session.CreatedAt + SessionAbsoluteTTL.Milliseconds()
-	if err := a.db.QueryRowContext(ctx, "SELECT expires_at FROM user_session WHERE id = ?", session.ID).Scan(&expires); err != nil {
+	if err := a.db.Raw("SELECT expires_at FROM user_session WHERE id = ?", session.ID).Row().Scan(&expires); err != nil {
 		t.Fatal(err)
 	}
 	if expires != absolute {
@@ -109,7 +109,7 @@ func TestSessionRevokeOthersAndDisabledUser(t *testing.T) {
 	}
 	requireCode(t, validateErr(a, ctx, token2), ipc.CodeForbidden)
 
-	if _, err := a.db.ExecContext(ctx, "UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
+	if err := a.db.Exec("UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	requireCode(t, validateErr(a, ctx, token1), ipc.CodeForbidden)
@@ -175,8 +175,8 @@ func TestSessionRevokedDeviceBackstop(t *testing.T) {
 	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
 
 	now := a.now()
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO user_session(id, user_id, device_id, token_hash, created_at, touched_at, expires_at)
-VALUES('sneaky-session', ?, ?, ?, ?, ?, ?)`, user.ID, device.ID, sessionTokenHash("sneaky-token"), now, now, now+SessionSlidingTTL.Milliseconds()); err != nil {
+	if err := a.db.Exec(`INSERT INTO user_session(id, user_id, device_id, token_hash, created_at, touched_at, expires_at)
+VALUES('sneaky-session', ?, ?, ?, ?, ?, ?)`, user.ID, device.ID, sessionTokenHash("sneaky-token"), now, now, now+SessionSlidingTTL.Milliseconds()).Error; err != nil {
 		t.Fatal(err)
 	}
 	requireCode(t, validateErr(a, ctx, "sneaky-token"), ipc.CodeForbidden)

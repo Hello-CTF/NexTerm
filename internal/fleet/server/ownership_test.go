@@ -7,6 +7,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestWithIdentityInjectsStoreScope(t *testing.T) {
@@ -25,11 +26,12 @@ func TestEnrollAuditUsesAccountOwner(t *testing.T) {
 	fixture := newHTTPFixture(t, false)
 	owner := fixture.createUser(t, "owner")
 	enrollAgent(t, fixture, owner, "box")
-	var ownerID string
-	if err := fixture.service.db.QueryRowContext(context.Background(), "SELECT owner_id FROM audit_log WHERE kind = ? ORDER BY id DESC LIMIT 1", auditKindDeviceEnroll).Scan(&ownerID); err != nil {
+	audit := query.Use(fixture.service.db).AuditRow
+	row, err := audit.WithContext(context.Background()).Where(audit.Kind.Eq(auditKindDeviceEnroll)).Order(audit.ID.Desc()).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if ownerID != owner.ID {
-		t.Fatalf("audit owner = %q, want %q", ownerID, owner.ID)
+	if row.OwnerID != owner.ID {
+		t.Fatalf("audit owner = %q, want %q", row.OwnerID, owner.ID)
 	}
 }

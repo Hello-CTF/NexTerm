@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"gorm.io/gorm"
 )
 
 // WithUserID/UserIDFromContext 委托 ipc 包的同一实现: /rpc(账号会话)与 /sync/v2 两条链路共享同一身份 key。
@@ -73,7 +73,7 @@ type ObjectHandler struct {
 	store *objectStore
 }
 
-func NewObjectHandler(db *sql.DB, backend store.Backend) *ObjectHandler {
+func NewObjectHandler(db *gorm.DB, backend store.Backend) *ObjectHandler {
 	return &ObjectHandler{store: &objectStore{db: db, backend: backend}}
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 const OutcomeAuditKind = "outcome"
@@ -41,53 +42,64 @@ func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,?,?,?,?,?,?,?)`, ipc.OwnerID(ctx), ids.NowMS(), input.SessionID, input.AssetID, input.Source, input.Kind,
-		string(payload), input.ExitCode, input.DurationMS)
-	if err != nil {
+	row := AuditRow{
+		TS: ids.NowMS(), SessionID: input.SessionID, AssetID: input.AssetID, Source: input.Source, Kind: input.Kind,
+		PayloadJSON: string(payload), ExitCode: input.ExitCode, DurationMS: input.DurationMS, OwnerID: ipc.OwnerID(ctx),
+	}
+	if err := query.Use(s.db).AuditRow.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
-func (s *Store) AuditCount(ctx context.Context, query AuditQuery) (int64, error) {
-	var count int64
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	queryArgs := append([]any{query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind}, args...)
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log
-WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
-AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`+condition, queryArgs...).Scan(&count)
+func (s *Store) AuditCount(ctx context.Context, filter AuditQuery) (int64, error) {
+	audit := query.Use(s.db).AuditRow
+	q := audit.WithContext(ctx).Where(ownerConditions(ctx, audit.TableName())...)
+	if filter.SessionID != nil {
+		q = q.Where(audit.SessionID.Eq(*filter.SessionID))
+	}
+	if filter.AssetID != nil {
+		q = q.Where(audit.AssetID.Eq(*filter.AssetID))
+	}
+	if filter.Source != nil {
+		q = q.Where(audit.Source.Eq(*filter.Source))
+	}
+	if filter.Kind != nil {
+		q = q.Where(audit.Kind.Eq(*filter.Kind))
+	}
+	count, err := q.Count()
 	if err != nil {
 		return 0, dbError(err)
 	}
 	return count, nil
 }
 
-func (s *Store) AuditQuery(ctx context.Context, query AuditQuery) ([]AuditRow, error) {
-	limit := query.Limit
+func (s *Store) AuditQuery(ctx context.Context, filter AuditQuery) ([]AuditRow, error) {
+	limit := filter.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	queryArgs := append([]any{query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind}, args...)
-	queryArgs = append(queryArgs, limit, query.Offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms
-FROM audit_log
-WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
-AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`+condition+`
-ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	audit := query.Use(s.db).AuditRow
+	q := audit.WithContext(ctx).Where(ownerConditions(ctx, audit.TableName())...)
+	if filter.SessionID != nil {
+		q = q.Where(audit.SessionID.Eq(*filter.SessionID))
+	}
+	if filter.AssetID != nil {
+		q = q.Where(audit.AssetID.Eq(*filter.AssetID))
+	}
+	if filter.Source != nil {
+		q = q.Where(audit.Source.Eq(*filter.Source))
+	}
+	if filter.Kind != nil {
+		q = q.Where(audit.Kind.Eq(*filter.Kind))
+	}
+	result := []AuditRow{}
+	err := q.Order(audit.TS.Desc(), audit.ID.Desc()).
+		Limit(int(limit)).
+		Offset(int(filter.Offset)).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []AuditRow{}
-	for rows.Next() {
-		var row AuditRow
-		if err := rows.Scan(&row.ID, &row.TS, &row.SessionID, &row.AssetID, &row.Source,
-			&row.Kind, &row.PayloadJSON, &row.ExitCode, &row.DurationMS); err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }

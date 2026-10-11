@@ -405,7 +405,7 @@ func TestCronRuntimeBoundedShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	cronStore, err := cron.NewSQLiteStore(ctx, database.DB())
+	cronStore, err := cron.NewSQLiteStore(ctx, database.GORM())
 	if err != nil {
 		t.Fatal(err)
 	}

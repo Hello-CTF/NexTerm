@@ -1,128 +1,48 @@
 package store
 
+import "github.com/Hello-CTF/NexTerm/internal/store/model"
+
 const (
 	BuiltinLocalAssetID   = "01J0NEXTERMLOCALDEVICE0001"
 	BuiltinLocalAssetName = "当前设备"
 	LayoutKey             = "layout.workspace"
 )
 
-type AssetGroupRow struct {
-	ID        string  `json:"id"`
-	ParentID  *string `json:"parent_id"`
-	Name      string  `json:"name"`
-	Sort      int64   `json:"sort"`
-	CreatedAt int64   `json:"created_at"`
-	UpdatedAt int64   `json:"updated_at"`
-}
+type AssetGroupRow = model.AssetGroupRow
+type AssetRow = model.AssetRow
+type CredentialRow = model.CredentialRow
+type CredentialMeta = model.CredentialMeta
+type Setting = model.Setting
 
-type AssetRow struct {
-	ID          string  `json:"id"`
-	GroupID     *string `json:"groupId"`
-	Kind        string  `json:"kind"`
-	Name        string  `json:"name"`
-	Host        *string `json:"host"`
-	Port        *int32  `json:"port"`
-	Username    *string `json:"username"`
-	AuthKind    *string `json:"authKind"`
-	KeyPath     *string `json:"keyPath"`
-	CredID      *string `json:"credId"`
-	OptionsJSON string  `json:"optionsJson"`
-	Tags        string  `json:"tags"`
-	Note        string  `json:"note"`
-	Sort        int64   `json:"sort"`
-	CreatedAt   int64   `json:"createdAt"`
-	UpdatedAt   int64   `json:"updatedAt"`
-	DeletedAt   *int64  `json:"deletedAt"`
-	Builtin     bool    `json:"builtin"`
-}
-
-type CredentialRow struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Cipher    string `json:"cipher"`
-	Nonce     []byte `json:"-"`
-	Blob      []byte `json:"-"`
-	KEKHint   string `json:"kekHint"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-}
-
-type CredentialMeta struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Cipher    string `json:"cipher"`
-	KEKHint   string `json:"kekHint"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-}
-
-func (r CredentialRow) Meta() CredentialMeta {
-	return CredentialMeta{
-		ID: r.ID, Name: r.Name, Kind: r.Kind, Cipher: r.Cipher,
-		KEKHint: r.KEKHint, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-	}
-}
-
-type AuditRow struct {
-	ID          int64   `json:"id"`
-	TS          int64   `json:"ts"`
-	SessionID   *string `json:"sessionId"`
-	AssetID     *string `json:"assetId"`
-	Source      string  `json:"source"`
-	Kind        string  `json:"kind"`
-	PayloadJSON string  `json:"payloadJson"`
-	ExitCode    *int32  `json:"exitCode"`
-	DurationMS  *int64  `json:"durationMs"`
-}
-
-type ConversationRow struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	ScopeJSON string `json:"scopeJson"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-}
-
-type MessageRow struct {
-	ID             string `json:"id"`
-	ConversationID string `json:"conversationId"`
-	Role           string `json:"role"`
-	ContentJSON    string `json:"contentJson"`
-	TokensIn       *int64 `json:"tokensIn"`
-	TokensOut      *int64 `json:"tokensOut"`
-	CreatedAt      int64  `json:"createdAt"`
-}
-
-type SnippetRow struct {
-	ID        string  `json:"id"`
-	GroupID   *string `json:"group_id"`
-	Name      string  `json:"name"`
-	Body      string  `json:"body"`
-	Sort      int64   `json:"sort"`
-	CreatedAt int64   `json:"created_at"`
-	UpdatedAt int64   `json:"updated_at"`
-}
-
-type KnownHostRow struct {
-	ID          string `json:"id"`
-	Host        string `json:"host"`
-	Port        int32  `json:"port"`
-	KeyType     string `json:"keyType"`
-	Fingerprint string `json:"fingerprint"`
-	AddedAt     int64  `json:"addedAt"`
-}
-
-type RecordingRow struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	TabID     string `json:"tab_id"`
-	Path      string `json:"path"`
-	Bytes     int64  `json:"bytes"`
-	StartedAt int64  `json:"started_at"`
-	EndedAt   *int64 `json:"ended_at"`
-}
+type AuditRow = model.AuditRow
+type ConversationRow = model.ConversationRow
+type MessageRow = model.MessageRow
+type SnippetRow = model.SnippetRow
+type KnownHostRow = model.KnownHostRow
+type RecordingRow = model.RecordingRow
+type OutcomeRecord = model.OutcomeRecord
+type CronJob = model.CronJob
+type SyncTombstone = model.SyncTombstone
+type SyncState = model.SyncState
+type AppUser = model.AppUser
+type UserDEK = model.UserDEK
+type UserDevice = model.UserDevice
+type UserSession = model.UserSession
+type SyncCredential = model.SyncCredential
+type UserSetting = model.UserSetting
+type DeviceEnrollCode = model.DeviceEnrollCode
+type UserSyncObject = model.UserSyncObject
+type UserSyncHead = model.UserSyncHead
+type DeviceAgent = model.DeviceAgent
+type DeviceMetrics = model.DeviceMetrics
+type DeviceMetricsHourly = model.DeviceMetricsHourly
+type UserTOTP = model.UserTOTP
+type UserTOTPRecoveryCode = model.UserTOTPRecoveryCode
+type ShareLink = model.ShareLink
+type SharePreviewLink = model.SharePreviewLink
+type HostShare = model.HostShare
+type CommandLog = model.CommandLog
+type DeviceShareLink = model.DeviceShareLink
 
 type AssetRef struct {
 	ID   string `json:"id"`

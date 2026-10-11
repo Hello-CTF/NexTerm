@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestDeviceLinkCreateDefaultsReadOnly(t *testing.T) {
@@ -35,11 +36,12 @@ func TestDeviceLinkCreateDefaultsReadOnly(t *testing.T) {
 	if token == "" {
 		t.Fatal("token must be returned once")
 	}
-	var tokenHash string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT token_hash FROM device_share_link WHERE id = ?", link.ID).Scan(&tokenHash); err != nil {
+	deviceShareLink := query.Use(fixture.db).DeviceShareLink
+	row, err := deviceShareLink.WithContext(context.Background()).Where(deviceShareLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if tokenHash == token {
+	if row.TokenHash == token {
 		t.Fatal("raw token must not be stored")
 	}
 }
@@ -153,12 +155,13 @@ func TestDeviceLinkResolve(t *testing.T) {
 		t.Fatalf("grant permission/expiry = %+v", grant)
 	}
 
-	var lastAccessedAt int64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_accessed_at FROM device_share_link WHERE id = ?", link.ID).Scan(&lastAccessedAt); err != nil {
+	deviceShareLink := query.Use(fixture.db).DeviceShareLink
+	row, err := deviceShareLink.WithContext(context.Background()).Where(deviceShareLink.ID.Eq(link.ID)).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if lastAccessedAt != fixture.now {
-		t.Fatalf("last_accessed_at = %d, want %d", lastAccessedAt, fixture.now)
+	if row.LastAccessedAt == nil || *row.LastAccessedAt != fixture.now {
+		t.Fatalf("last_accessed_at = %v, want %d", row.LastAccessedAt, fixture.now)
 	}
 
 	rows := fixture.auditRows(t, auditKindDeviceLinkAccess)
@@ -236,7 +239,8 @@ func TestDeviceLinkResolveDeviceRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,7 +418,8 @@ func TestDeviceLinkPermissionShrinkStopsInput(t *testing.T) {
 	}
 
 	// 权限收缩 (read_write -> read) 按当前行即时生效: 输入停止, 输出授权仍在。
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE device_share_link SET permission = 'read' WHERE device_id = ?", deviceID); err != nil {
+	deviceShareLink := query.Use(fixture.db).DeviceShareLink
+	if _, err := deviceShareLink.WithContext(context.Background()).Where(deviceShareLink.DeviceID.Eq(deviceID)).UpdateColumns(map[string]any{"permission": string(PermissionRead)}); err != nil {
 		t.Fatal(err)
 	}
 	refreshed, err := fixture.service.RevalidateDeviceLink(context.Background(), grant)
@@ -447,7 +452,8 @@ func TestDeviceLinkRevalidateStopsOnDeviceRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.RevalidateDeviceLink(context.Background(), grant); err == nil {
@@ -470,7 +476,8 @@ func TestDeviceLinkRevalidateStopsOnOwnerMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET user_id = ? WHERE id = ?", other.ID, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"user_id": other.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.RevalidateDeviceLink(context.Background(), grant); err == nil {
@@ -556,11 +563,13 @@ func TestDeviceLinkNeverDisclosesCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var row string
-	if err := fixture.db.QueryRowContext(context.Background(), `SELECT id || '|' || owner_id || '|' || device_id || '|' || token_hash || '|' || permission FROM device_share_link`).Scan(&row); err != nil {
+	deviceShareLink := query.Use(fixture.db).DeviceShareLink
+	row, err := deviceShareLink.WithContext(context.Background()).First()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(row, token) {
+	combined := strings.Join([]string{row.ID, row.OwnerID, row.DeviceID, row.TokenHash, row.Permission}, "|")
+	if strings.Contains(combined, token) {
 		t.Fatal("raw token leaked into device_share_link row")
 	}
 	encoded, err := json.Marshal(grant)

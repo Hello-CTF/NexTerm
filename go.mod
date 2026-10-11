@@ -10,6 +10,8 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/docker/go-units v0.5.0
 	github.com/eino-contrib/jsonschema v1.0.3
+	github.com/glebarez/go-sqlite v1.21.2
+	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/masterzen/winrm v0.0.0-20261004123143-57b335310d59
@@ -24,6 +26,10 @@ require (
 	golang.org/x/net v0.59.0
 	golang.org/x/text v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
+	gorm.io/driver/postgres v1.6.0
+	gorm.io/gen v0.3.27
+	gorm.io/gorm v1.31.1
+	gorm.io/plugin/dbresolver v1.6.2
 	modernc.org/sqlite v1.60.1
 	mvdan.cc/sh/v3 v3.14.1
 )
@@ -48,6 +54,8 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -70,7 +78,12 @@ require (
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	golang.org/x/arch v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/tools v0.50.0 // indirect
+	gorm.io/datatypes v1.2.4 // indirect
+	gorm.io/driver/mysql v1.5.7 // indirect
+	gorm.io/hints v1.1.0 // indirect
 )
 
 require (

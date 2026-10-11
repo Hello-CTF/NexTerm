@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,10 +12,11 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// errHeadMismatch 表示推送所基于的 head 与服务端当前 head 不一致:
-// 其他设备先推送过, 或服务端数据被回滚/分叉。客户端必须先拉取合并后重试。
 var errHeadMismatch = errors.New("sync head mismatch")
 
 const (
@@ -24,16 +24,13 @@ const (
 	maxPushObjects   = 4096
 	maxPullIDLookup  = 4096
 	maxIDListEntries = 200000
-	// maxPullWireBytes 是拉取响应的线上(JSON/base64)预算上限, 服务端分页与客户端读取共用。
 	maxPullWireBytes = 128 << 20
 )
 
-// wireObjectCost 估算单个对象在线上响应中的 JSON/base64 成本, 作为分页预算单位。
 func wireObjectCost(blob []byte) int64 {
 	return int64((len(blob)+2)/3*4) + 256
 }
 
-// WireObject 是线上传输的密文对象; 服务端不解读 blob 内容。
 type WireObject struct {
 	ID   string `json:"id"`
 	Blob []byte `json:"blob"`
@@ -66,7 +63,7 @@ func hashBlobHex(blob []byte) string {
 }
 
 type objectStore struct {
-	db      *sql.DB
+	db      *gorm.DB
 	backend store.Backend
 }
 
@@ -83,23 +80,28 @@ func validObjectID(id string) bool {
 }
 
 func (o *objectStore) currentHead(ctx context.Context, userID string) (string, error) {
-	var head string
-	err := o.db.QueryRowContext(ctx, "SELECT head_hash FROM user_sync_head WHERE user_id = ?", userID).Scan(&head)
-	if errors.Is(err, sql.ErrNoRows) {
+	head := query.Use(o.db).UserSyncHead
+	row, err := head.WithContext(ctx).Where(head.UserID.Eq(userID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return genesisHead(userID), nil
 	}
 	if err != nil {
 		return "", ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return head, nil
+	return row.HeadHash, nil
 }
 
 func (o *objectStore) maxSeq(ctx context.Context, userID string) (int64, error) {
-	var maxSeq sql.NullInt64
-	if err := o.db.QueryRowContext(ctx, "SELECT MAX(seq) FROM user_sync_object WHERE user_id = ?", userID).Scan(&maxSeq); err != nil {
+	object := query.Use(o.db).UserSyncObject
+	var maxSeq int64
+	if err := object.WithContext(ctx).
+		Where(object.UserID.Eq(userID)).
+		UnderlyingDB().
+		Select("COALESCE(MAX(seq), 0)").
+		Scan(&maxSeq).Error; err != nil {
 		return 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return maxSeq.Int64, nil
+	return maxSeq, nil
 }
 
 type appliedEntry struct {
@@ -108,7 +110,6 @@ type appliedEntry struct {
 	blobHash string
 }
 
-// push 原子应用一批密文对象: head 比对失败整体拒绝; 同内容重复推送幂等跳过。
 func (o *objectStore) push(ctx context.Context, userID, knownHead string, objects []WireObject) (applied, skipped int, head string, maxSeq int64, returnErr error) {
 	if len(objects) == 0 {
 		current, err := o.currentHead(ctx, userID)
@@ -117,79 +118,93 @@ func (o *objectStore) push(ctx context.Context, userID, knownHead string, object
 	if len(objects) > maxPushObjects {
 		return 0, 0, "", 0, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("单批推送对象数超过 %d", maxPushObjects))
 	}
-	tx, err := o.db.BeginTx(ctx, nil)
+	err := o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		headModel := query.Use(tx).UserSyncHead
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoNothing: true}).
+			Create(&store.UserSyncHead{UserID: userID, HeadHash: genesisHead(userID)}).Error; err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		q := headModel.WithContext(ctx).Where(headModel.UserID.Eq(userID))
+		if o.backend == store.BackendPostgres {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		row, err := q.First()
+		if err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		current := row.HeadHash
+		if current != knownHead {
+			return errHeadMismatch
+		}
+		objectModel := query.Use(tx).UserSyncObject
+		if err := objectModel.WithContext(ctx).
+			Where(objectModel.UserID.Eq(userID)).
+			UnderlyingDB().
+			Select("COALESCE(MAX(seq), 0)").
+			Scan(&maxSeq).Error; err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		entries := make([]appliedEntry, 0, len(objects))
+		seen := make(map[string]bool, len(objects))
+		for _, object := range objects {
+			if !validObjectID(object.ID) {
+				return ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法")
+			}
+			if len(object.Blob) == 0 || len(object.Blob) > maxSyncObjectBytes {
+				return ipc.NewError(ipc.CodeBadParam, "同步对象大小超出限制")
+			}
+			if seen[object.ID] {
+				return ipc.NewError(ipc.CodeBadParam, "同一批推送包含重复对象 ID")
+			}
+			seen[object.ID] = true
+			existing, err := objectModel.WithContext(ctx).
+				Where(objectModel.UserID.Eq(userID), objectModel.ID.Eq(object.ID)).
+				First()
+			switch {
+			case err == nil && bytes.Equal(existing.Blob, object.Blob):
+				skipped++
+				continue
+			case err != nil && !errors.Is(err, gorm.ErrRecordNotFound):
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+			maxSeq++
+			blobHash := hashBlob(object.Blob)
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "user_id"}, {Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"seq", "blob", "blob_hash"}),
+			}).Create(&store.UserSyncObject{UserID: userID, ID: object.ID, Seq: maxSeq, Blob: object.Blob, BlobHash: blobHash[:]}).Error; err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+			entries = append(entries, appliedEntry{seq: maxSeq, id: object.ID, blobHash: hashBlobHex(object.Blob)})
+		}
+		if len(entries) > 0 {
+			sort.Slice(entries, func(i, j int) bool { return entries[i].seq < entries[j].seq })
+			batch := sha256.New()
+			for _, entry := range entries {
+				fmt.Fprintf(batch, "%d\x00%s\x00%s\n", entry.seq, entry.id, entry.blobHash)
+			}
+			sum := sha256.Sum256(append([]byte(current+"\x00"), batch.Sum(nil)...))
+			current = hex.EncodeToString(sum[:])
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "user_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"head_hash"}),
+			}).Create(&store.UserSyncHead{UserID: userID, HeadHash: current}).Error; err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			}
+		}
+		applied = len(entries)
+		head = current
+		return nil
+	})
 	if err != nil {
+		if errors.Is(err, errHeadMismatch) {
+			return 0, 0, "", 0, errHeadMismatch
+		}
 		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	// 先确保 head 行存在再锁定: PostgreSQL 的 FOR UPDATE 锁不到未提交行, 首次推送的并发事务
-	// 靠 ON CONFLICT DO NOTHING 的插入互斥串行化; SQLite 单写者事务天然串行, 语义不变。
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_sync_head(user_id, head_hash) VALUES(?,?)
-ON CONFLICT(user_id) DO NOTHING`, userID, genesisHead(userID)); err != nil {
-		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	var current string
-	if err := tx.QueryRowContext(ctx, "SELECT head_hash FROM user_sync_head WHERE user_id = ?"+forUpdate(o.backend), userID).Scan(&current); err != nil {
-		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	if current != knownHead {
-		return 0, 0, "", 0, errHeadMismatch
-	}
-	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq), 0) FROM user_sync_object WHERE user_id = ?", userID).Scan(&maxSeq); err != nil {
-		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	entries := make([]appliedEntry, 0, len(objects))
-	seen := make(map[string]bool, len(objects))
-	for _, object := range objects {
-		if !validObjectID(object.ID) {
-			return 0, 0, "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法")
-		}
-		if len(object.Blob) == 0 || len(object.Blob) > maxSyncObjectBytes {
-			return 0, 0, "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象大小超出限制")
-		}
-		if seen[object.ID] {
-			return 0, 0, "", 0, ipc.NewError(ipc.CodeBadParam, "同一批推送包含重复对象 ID")
-		}
-		seen[object.ID] = true
-		var existing []byte
-		err := tx.QueryRowContext(ctx, "SELECT blob FROM user_sync_object WHERE user_id = ? AND id = ?", userID, object.ID).Scan(&existing)
-		switch {
-		case err == nil && bytes.Equal(existing, object.Blob):
-			skipped++
-			continue
-		case err != nil && !errors.Is(err, sql.ErrNoRows):
-			return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		maxSeq++
-		blobHash := hashBlob(object.Blob)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_sync_object(user_id, id, seq, blob, blob_hash) VALUES(?,?,?,?,?)
-ON CONFLICT(user_id, id) DO UPDATE SET seq = excluded.seq, blob = excluded.blob, blob_hash = excluded.blob_hash`,
-			userID, object.ID, maxSeq, object.Blob, blobHash[:]); err != nil {
-			return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		entries = append(entries, appliedEntry{seq: maxSeq, id: object.ID, blobHash: hashBlobHex(object.Blob)})
-	}
-	if len(entries) > 0 {
-		sort.Slice(entries, func(i, j int) bool { return entries[i].seq < entries[j].seq })
-		batch := sha256.New()
-		for _, entry := range entries {
-			fmt.Fprintf(batch, "%d\x00%s\x00%s\n", entry.seq, entry.id, entry.blobHash)
-		}
-		sum := sha256.Sum256(append([]byte(current+"\x00"), batch.Sum(nil)...))
-		current = hex.EncodeToString(sum[:])
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_sync_head(user_id, head_hash) VALUES(?,?)
-ON CONFLICT(user_id) DO UPDATE SET head_hash = excluded.head_hash`, userID, current); err != nil {
-			return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	return len(entries), skipped, current, maxSeq, nil
+	return applied, skipped, head, maxSeq, nil
 }
 
-// pull 按 seq 游标升序返回密文对象, 另可按 id 清单补拉; 受字节预算约束, 单对象必完整返回。
-// nextSeq/cursorDone 仅由游标对象计算: 补拉 ID 的 seq 不得推进游标或伪造游标完成状态。
 func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, ids []string, maxBytes int64) (objects []WireObjectSeq, head string, maxSeq, nextSeq int64, cursorDone bool, returnErr error) {
 	if len(ids) > maxPullIDLookup {
 		return nil, "", 0, 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 拉取的对象数超过 %d", maxPullIDLookup))
@@ -208,17 +223,16 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 	seen := map[string]bool{}
 	budget := maxBytes
 	nextSeq = sinceSeq
-	rows, err := o.db.QueryContext(ctx, "SELECT id, seq, blob FROM user_sync_object WHERE user_id = ? AND seq > ? ORDER BY seq", userID, sinceSeq)
-	if err != nil {
+	objectModel := query.Use(o.db).UserSyncObject
+	rows := []store.UserSyncObject{}
+	if err := objectModel.WithContext(ctx).
+		Where(objectModel.UserID.Eq(userID), objectModel.Seq.Gt(sinceSeq)).
+		Order(objectModel.Seq).
+		Scan(&rows); err != nil {
 		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var object WireObjectSeq
-		if err := rows.Scan(&object.ID, &object.Seq, &object.Blob); err != nil {
-			return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		// 追加前按线上成本判断预算(首个对象除外): 保证响应整体不超过上限。
+	for _, row := range rows {
+		object := WireObjectSeq{ID: row.ID, Seq: row.Seq, Blob: row.Blob}
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
 			break
 		} else {
@@ -230,25 +244,20 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 			nextSeq = object.Seq
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
 	for _, id := range ids {
 		if seen[id] {
 			continue
 		}
-		var object WireObjectSeq
-		err := o.db.QueryRowContext(ctx, "SELECT id, seq, blob FROM user_sync_object WHERE user_id = ? AND id = ?", userID, id).
-			Scan(&object.ID, &object.Seq, &object.Blob)
-		if errors.Is(err, sql.ErrNoRows) {
+		row, err := objectModel.WithContext(ctx).
+			Where(objectModel.UserID.Eq(userID), objectModel.ID.Eq(id)).
+			First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
 		if err != nil {
 			return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
+		object := WireObjectSeq{ID: row.ID, Seq: row.Seq, Blob: row.Blob}
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
 			continue
 		} else {
@@ -260,7 +269,6 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 	return objects, head, maxSeq, nextSeq, cursorDone, nil
 }
 
-// idList 返回每用户对象清单 (id, seq, blob 哈希), 供客户端不回拉密文即可对账。
 func (o *objectStore) idList(ctx context.Context, userID string) (entries []IDEntry, head string, maxSeq int64, returnErr error) {
 	head, err := o.currentHead(ctx, userID)
 	if err != nil {
@@ -269,26 +277,18 @@ func (o *objectStore) idList(ctx context.Context, userID string) (entries []IDEn
 	if maxSeq, err = o.maxSeq(ctx, userID); err != nil {
 		return nil, "", 0, err
 	}
-	rows, err := o.db.QueryContext(ctx, "SELECT id, seq, blob_hash FROM user_sync_object WHERE user_id = ? ORDER BY seq LIMIT ?", userID, maxIDListEntries+1)
-	if err != nil {
+	objectModel := query.Use(o.db).UserSyncObject
+	rows := []store.UserSyncObject{}
+	if err := objectModel.WithContext(ctx).
+		Where(objectModel.UserID.Eq(userID)).
+		Order(objectModel.Seq).
+		Limit(maxIDListEntries + 1).
+		Scan(&rows); err != nil {
 		return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	defer rows.Close()
 	entries = []IDEntry{}
-	for rows.Next() {
-		var entry IDEntry
-		var blobHash []byte
-		if err := rows.Scan(&entry.ID, &entry.Seq, &blobHash); err != nil {
-			return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		entry.BlobHash = hex.EncodeToString(blobHash)
-		entries = append(entries, entry)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	for _, row := range rows {
+		entries = append(entries, IDEntry{ID: row.ID, Seq: row.Seq, BlobHash: hex.EncodeToString(row.BlobHash)})
 	}
 	if len(entries) > maxIDListEntries {
 		return nil, "", 0, ipc.NewError(ipc.CodeBadParam, "同步对象数量超出清单上限")

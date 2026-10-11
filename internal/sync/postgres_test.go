@@ -50,7 +50,7 @@ func TestPostgresObjectStorePushPullAndHeadConflict(t *testing.T) {
 	db := newPostgresSyncStore(t)
 	ctx := context.Background()
 	userID := createPostgresSyncUser(t, ctx, db)
-	objectStore := &objectStore{db: db.DB(), backend: db.Backend()}
+	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
 
 	if head, err := objectStore.currentHead(ctx, userID); err != nil || head != genesisHead(userID) {
 		t.Fatalf("genesis head=%q err=%v", head, err)
@@ -85,7 +85,7 @@ func TestPostgresObjectStoreConcurrentPush(t *testing.T) {
 	db := newPostgresSyncStore(t)
 	ctx := context.Background()
 	userID := createPostgresSyncUser(t, ctx, db)
-	objectStore := &objectStore{db: db.DB(), backend: db.Backend()}
+	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
 
 	head := pushAllConcurrently(t, ctx, objectStore, userID, 8, 4)
 	if head == genesisHead(userID) {
@@ -224,7 +224,7 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 	}
 
 	// A 删除片段: 墓碑经服务端(PG 触发器落 sync_tombstone)推送到 B, B 端副本被清除。
-	if _, err := deviceA.db.DB().ExecContext(ctx, "DELETE FROM snippet WHERE id=?", snippetID); err != nil {
+	if err := deviceA.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")

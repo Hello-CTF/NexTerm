@@ -2,13 +2,16 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen/field"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const AIProfilesSettingKey = "ai.models"
@@ -27,89 +30,79 @@ func LayoutSettingKeyForUser(userID string) string {
 	return "user.layout." + userID
 }
 
+func settingUpsert(ctx context.Context, db *gorm.DB, key, value string, updatedAt int64) error {
+	return db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&Setting{Key: key, Value: value, UpdatedAt: updatedAt}).Error
+}
+
 func (s *Store) SettingGet(ctx context.Context, key string) (string, bool, error) {
-	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", key).Scan(&value)
+	setting := query.Use(s.db).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).First()
 	if isNoRows(err) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, dbError(err)
 	}
-	return value, true, nil
+	return row.Value, true, nil
 }
 
 func (s *Store) SettingSet(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		key, value, ids.NowMS())
-	if err != nil {
+	if err := settingUpsert(ctx, s.db, key, value, ids.NowMS()); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
-func (s *Store) SettingSetMany(ctx context.Context, values map[string]string) (returnErr error) {
+func (s *Store) SettingSetMany(ctx context.Context, values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := ids.NowMS()
+		for key, value := range values {
+			if err := settingUpsert(ctx, tx, key, value, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() {
-		if returnErr != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	now := ids.NowMS()
-	for key, value := range values {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-			key, value, now); err != nil {
-			return dbError(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
-func (s *Store) SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) (returnErr error) {
+func (s *Store) SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error {
 	if len(values) == 0 && len(deleteKeys) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := ids.NowMS()
+		for key, value := range values {
+			if err := settingUpsert(ctx, tx, key, value, now); err != nil {
+				return err
+			}
+		}
+		setting := query.Use(tx).Setting
+		for _, key := range deleteKeys {
+			if _, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).Delete(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() {
-		if returnErr != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	now := ids.NowMS()
-	for key, value := range values {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-			key, value, now); err != nil {
-			return dbError(err)
-		}
-	}
-	for _, key := range deleteKeys {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key); err != nil {
-			return dbError(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) SettingDelete(ctx context.Context, key string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key)
+	setting := query.Use(s.db).Setting
+	_, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).Delete()
 	if err != nil {
 		return dbError(err)
 	}
@@ -117,21 +110,17 @@ func (s *Store) SettingDelete(ctx context.Context, key string) error {
 }
 
 func (s *Store) SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM setting WHERE key LIKE ? ESCAPE '\'`, escapeLikePrefix(prefix)+"%")
+	setting := query.Use(s.db).Setting
+	rows := []Setting{}
+	err := setting.WithContext(ctx).
+		Where(field.NewUnsafeFieldRaw(`key LIKE ? ESCAPE '\'`, escapeLikePrefix(prefix)+"%")).
+		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer func() { _ = rows.Close() }()
 	values := map[string]string{}
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return nil, dbError(err)
-		}
-		values[key] = value
-	}
-	if err := rows.Err(); err != nil {
-		return nil, dbError(err)
+	for _, row := range rows {
+		values[row.Key] = row.Value
 	}
 	return values, nil
 }
@@ -149,15 +138,15 @@ func escapeLikePrefix(prefix string) string {
 	return out.String()
 }
 
-// SettingContainsValue 报告是否存在 value 包含 substring 的设置项(如 enc:v1: 密文信封)。
 func (s *Store) SettingContainsValue(ctx context.Context, substring string) (bool, error) {
-	var found bool
-	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM setting WHERE value LIKE ? ESCAPE '\\')",
-		"%"+escapeLikePrefix(substring)+"%").Scan(&found)
+	setting := query.Use(s.db).Setting
+	count, err := setting.WithContext(ctx).
+		Where(field.NewUnsafeFieldRaw(`value LIKE ? ESCAPE '\'`, "%"+escapeLikePrefix(substring)+"%")).
+		Count()
 	if err != nil {
 		return false, dbError(err)
 	}
-	return found, nil
+	return count > 0, nil
 }
 
 type SettingTx interface {
@@ -165,110 +154,99 @@ type SettingTx interface {
 	SettingDelete(ctx context.Context, key string) error
 }
 
-func (s *Store) SettingTx(ctx context.Context, fn func(SettingTx) error) (returnErr error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) SettingTx(ctx context.Context, fn func(SettingTx) error) error {
+	var callbackErr error
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		callbackErr = fn(&txSetting{tx: tx})
+		return callbackErr
+	})
+	if callbackErr != nil {
+		return callbackErr
+	}
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() {
-		if returnErr != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err := fn(&txSetting{tx: tx}); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 type txSetting struct {
-	tx *sql.Tx
+	tx *gorm.DB
 }
 
 func (t *txSetting) SettingGet(ctx context.Context, key string) (string, bool, error) {
-	var value string
-	err := t.tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", key).Scan(&value)
+	setting := query.Use(t.tx).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).First()
 	if isNoRows(err) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, dbError(err)
 	}
-	return value, true, nil
+	return row.Value, true, nil
 }
 
 func (t *txSetting) SettingDelete(ctx context.Context, key string) error {
-	if _, err := t.tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key); err != nil {
+	setting := query.Use(t.tx).Setting
+	_, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).Delete()
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) LayoutLoad(ctx context.Context) (int64, int64, json.RawMessage, error) {
-	var value string
-	var updatedAt int64
-	err := s.db.QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", LayoutSettingKeyForUser(ipc.OwnerID(ctx))).
-		Scan(&value, &updatedAt)
+	setting := query.Use(s.db).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(LayoutSettingKeyForUser(ipc.OwnerID(ctx)))).First()
 	if isNoRows(err) {
 		return 0, 0, nil, nil
 	}
 	if err != nil {
 		return 0, 0, nil, dbError(err)
 	}
-	revision, data := decodeLayout(value)
-	return revision, updatedAt, data, nil
+	revision, data := decodeLayout(row.Value)
+	return revision, row.UpdatedAt, data, nil
 }
 
-func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string) (saved bool, revision int64, returnErr error) {
+func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string) (bool, int64, error) {
 	var data any
 	if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
 		return false, 0, badParam(fmt.Errorf("布局不是合法 JSON: %w", err))
 	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, 0, dbError(err)
-	}
-	defer func() {
-		if returnErr != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
 	var currentRevision int64
-	var current string
-	err = tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?"+s.dialect.forUpdate(), LayoutSettingKeyForUser(ipc.OwnerID(ctx))).Scan(&current)
-	if err != nil && !isNoRows(err) {
-		return false, 0, dbError(err)
-	}
-	if err == nil {
-		currentRevision, _ = decodeLayout(current)
+	var next int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		setting := query.Use(tx).Setting
+		q := setting.WithContext(ctx).Where(setting.Key.Eq(LayoutSettingKeyForUser(ipc.OwnerID(ctx))))
+		if s.dialect.backend == BackendPostgres {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		row, err := q.First()
+		if err != nil && !isNoRows(err) {
+			return err
+		}
+		if err == nil {
+			currentRevision, _ = decodeLayout(row.Value)
+		}
+		if currentRevision != expected {
+			return nil
+		}
+		next = currentRevision + 1
+		now := ids.NowMS()
+		value, err := json.Marshal(struct {
+			Revision  int64 `json:"revision"`
+			UpdatedAt int64 `json:"updatedAt"`
+			Data      any   `json:"data"`
+		}{Revision: next, UpdatedAt: now, Data: data})
+		if err != nil {
+			return err
+		}
+		return settingUpsert(ctx, tx, LayoutSettingKeyForUser(ipc.OwnerID(ctx)), string(value), now)
+	})
+	if err != nil {
+		return false, currentRevision, dbError(err)
 	}
 	if currentRevision != expected {
-		_ = tx.Rollback()
 		return false, currentRevision, nil
-	}
-
-	next := currentRevision + 1
-	now := ids.NowMS()
-	value, err := json.Marshal(struct {
-		Revision  int64 `json:"revision"`
-		UpdatedAt int64 `json:"updatedAt"`
-		Data      any   `json:"data"`
-	}{Revision: next, UpdatedAt: now, Data: data})
-	if err != nil {
-		return false, currentRevision, dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		LayoutSettingKeyForUser(ipc.OwnerID(ctx)), string(value), now); err != nil {
-		return false, currentRevision, dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, currentRevision, dbError(err)
 	}
 	return true, next, nil
 }

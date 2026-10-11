@@ -19,7 +19,7 @@ func TestPrintAccountInitCodeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	var console bytes.Buffer

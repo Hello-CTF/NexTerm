@@ -2,250 +2,239 @@ package cron
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
+	"gorm.io/gen/field"
+	"gorm.io/gorm"
 )
 
 type SQLStore struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
 var _ Store = (*SQLStore)(nil)
 
-func NewSQLiteStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
+func NewSQLiteStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
 	return newSQLStore(ctx, db)
 }
 
-func NewPostgresStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
+func NewPostgresStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
 	return newSQLStore(ctx, db)
 }
 
-func newSQLStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
+func newSQLStore(ctx context.Context, db *gorm.DB) (*SQLStore, error) {
 	if db == nil {
 		return nil, errors.New("cron: sql store requires a database handle")
 	}
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM cron_job`).Scan(&count); err != nil {
-		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable; apply the cron migration first: %w", err)
+	if !db.WithContext(ctx).Migrator().HasTable(&store.CronJob{}) {
+		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable")
 	}
 	return &SQLStore{db: db}, nil
 }
 
+func (s *SQLStore) Close() error {
+	db, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return db.Close()
+}
+
 func (s *SQLStore) List(ctx context.Context) ([]Job, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM cron_job WHERE 1=1`+condition+` ORDER BY created_at, id`, args...)
+	cronJob := query.Use(s.db).CronJob
+	rows := []store.CronJob{}
+	err := cronJob.WithContext(ctx).
+		Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+		Order(cronJob.CreatedAt, cronJob.ID).
+		Scan(&rows)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	jobs := make([]Job, 0)
-	for rows.Next() {
-		job, err := scanJob(rows)
-		if err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, job)
+	jobs := make([]Job, 0, len(rows))
+	for _, row := range rows {
+		jobs = append(jobs, jobFromModel(&row))
 	}
-	return jobs, rows.Err()
+	return jobs, nil
 }
 
 func (s *SQLStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Job{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var existing int
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM cron_job WHERE id = ?`+condition, append([]any{job.ID}, args...)...).Scan(&existing); err != nil {
-		return Job{}, err
-	}
-	if existing > 0 {
-		return Job{}, ErrConflict
-	}
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM cron_job WHERE session_id = ?`+condition, append([]any{job.SessionID}, args...)...).Scan(&count); err != nil {
-		return Job{}, err
-	}
-	if count >= maxPerSession {
-		return Job{}, ErrJobLimit
-	}
-	job.Revision = 1
-	if _, err := tx.ExecContext(ctx, `INSERT INTO cron_job (`+jobColumns+`) VALUES (`+jobPlaceholders+`)`,
-		jobValues(ctx, job)...); err != nil {
-		if store.IsUniqueErr(err) {
-			return Job{}, ErrConflict
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cronJob := query.Use(tx).CronJob
+		existing, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(job.ID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			Count()
+		if err != nil {
+			return err
 		}
-		return Job{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Job{}, err
-	}
-	return job, nil
+		if existing > 0 {
+			return ErrConflict
+		}
+		count, err := cronJob.WithContext(ctx).
+			Where(cronJob.SessionID.Eq(job.SessionID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			Count()
+		if err != nil {
+			return err
+		}
+		if count >= int64(maxPerSession) {
+			return ErrJobLimit
+		}
+		job.Revision = 1
+		row := jobToModel(ctx, job)
+		if err := cronJob.WithContext(ctx).Create(&row); err != nil {
+			if store.IsUniqueErr(err) {
+				return ErrConflict
+			}
+			return err
+		}
+		return nil
+	})
+	return job, err
 }
 
 func (s *SQLStore) CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Job{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	var sessionID string
-	var revision uint64
-	err = tx.QueryRowContext(ctx, `SELECT session_id, revision FROM cron_job WHERE id = ?`+condition, append([]any{job.ID}, args...)...).Scan(&sessionID, &revision)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Job{}, ErrNotFound
-	}
-	if err != nil {
-		return Job{}, err
-	}
-	if revision != expectedRevision || sessionID != job.SessionID {
-		return Job{}, ErrConflict
-	}
-	job.Revision = revision + 1
-
-	values := append(jobValues(ctx, job)[1:], job.ID, expectedRevision, job.SessionID)
-	values = append(values, args...)
-	result, err := tx.ExecContext(ctx, `UPDATE cron_job SET `+jobAssignments+` WHERE id = ? AND revision = ? AND session_id = ?`+condition, values...)
-	if err != nil {
-		return Job{}, err
-	}
-	if affected, err := result.RowsAffected(); err != nil {
-		return Job{}, err
-	} else if affected != 1 {
-		return Job{}, ErrConflict
-	}
-	if err := tx.Commit(); err != nil {
-		return Job{}, err
-	}
-	return job, nil
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cronJob := query.Use(tx).CronJob
+		current, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(job.ID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.Revision != expectedRevision || current.SessionID != job.SessionID {
+			return ErrConflict
+		}
+		job.Revision = current.Revision + 1
+		row := jobToModel(ctx, job)
+		info, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(job.ID), cronJob.Revision.Eq(expectedRevision), cronJob.SessionID.Eq(job.SessionID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			UpdateColumns(jobAssignments(row))
+		if err != nil {
+			return err
+		}
+		if info.RowsAffected != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
+	return job, err
 }
 
 func (s *SQLStore) Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var currentSession string
-	var revision uint64
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	err = tx.QueryRowContext(ctx, `SELECT session_id, revision FROM cron_job WHERE id = ?`+condition, append([]any{jobID}, args...)...).Scan(&currentSession, &revision)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if currentSession != sessionID {
-		return ErrNotFound
-	}
-	if revision != expectedRevision {
-		return ErrConflict
-	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM cron_job WHERE id = ? AND revision = ? AND session_id = ?`+condition, append([]any{jobID, expectedRevision, sessionID}, args...)...)
-	if err != nil {
-		return err
-	}
-	if affected, err := result.RowsAffected(); err != nil {
-		return err
-	} else if affected != 1 {
-		return ErrConflict
-	}
-	return tx.Commit()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cronJob := query.Use(tx).CronJob
+		current, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(jobID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.SessionID != sessionID {
+			return ErrNotFound
+		}
+		if current.Revision != expectedRevision {
+			return ErrConflict
+		}
+		info, err := cronJob.WithContext(ctx).
+			Where(cronJob.ID.Eq(jobID), cronJob.Revision.Eq(expectedRevision), cronJob.SessionID.Eq(sessionID)).
+			Where(cronOwnerConditions(ctx, cronJob.TableName())...).
+			Delete()
+		if err != nil {
+			return err
+		}
+		if info.RowsAffected != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
 }
 
-const jobColumns = `id, session_id, name, prompt, schedule, timezone, enabled, timeout_ms, model_profile_id,
-	created_at, updated_at, revision, next_run_at, retry_at, circuit_open_until,
-	consecutive_failures, last_run_at, last_scheduled_for, last_coalesced, last_error,
-	lease_owner, lease_expires_at, run_id, run_scheduled_for, run_started_at, run_deadline, run_coalesced, owner_id`
-
-const jobPlaceholders = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
-
-const jobAssignments = `session_id = ?, name = ?, prompt = ?, schedule = ?, timezone = ?, enabled = ?, timeout_ms = ?, model_profile_id = ?,
-	created_at = ?, updated_at = ?, revision = ?, next_run_at = ?, retry_at = ?, circuit_open_until = ?,
-	consecutive_failures = ?, last_run_at = ?, last_scheduled_for = ?, last_coalesced = ?, last_error = ?,
-	lease_owner = ?, lease_expires_at = ?, run_id = ?, run_scheduled_for = ?, run_started_at = ?, run_deadline = ?, run_coalesced = ?, owner_id = ?`
-
-func jobValues(ctx context.Context, job Job) []any {
-	return []any{
-		job.ID, job.SessionID, job.Name, job.Prompt, job.Schedule, job.Timezone, boolInt(job.Enabled), job.Timeout.Milliseconds(), job.ModelProfileID,
-		timeMS(job.CreatedAt), timeMS(job.UpdatedAt), job.Revision, timeMS(job.NextRunAt), optionalTimeMS(job.RetryAt), optionalTimeMS(job.CircuitOpenUntil),
-		job.ConsecutiveFailures, optionalTimeMS(job.LastRunAt), optionalTimeMS(job.LastScheduledFor), boolInt(job.LastCoalesced), job.LastError,
-		job.Lease.Owner, optionalTimeMS(job.Lease.ExpiresAt), job.Run.ID, optionalTimeMS(job.Run.ScheduledFor), optionalTimeMS(job.Run.StartedAt), optionalTimeMS(job.Run.Deadline), boolInt(job.Run.Coalesced), ipc.OwnerID(ctx),
+func jobToModel(ctx context.Context, job Job) store.CronJob {
+	return store.CronJob{
+		ID: job.ID, SessionID: job.SessionID, Name: job.Name, Prompt: job.Prompt, Schedule: job.Schedule, Timezone: job.Timezone,
+		Enabled: job.Enabled, TimeoutMS: job.Timeout.Milliseconds(), ModelProfileID: job.ModelProfileID,
+		CreatedAt: timeMS(job.CreatedAt), UpdatedAt: timeMS(job.UpdatedAt), Revision: job.Revision, NextRunAt: timeMS(job.NextRunAt),
+		RetryAt: optionalTimeMS(job.RetryAt), CircuitOpenUntil: optionalTimeMS(job.CircuitOpenUntil),
+		ConsecutiveFailures: int64(job.ConsecutiveFailures), LastRunAt: optionalTimeMS(job.LastRunAt), LastScheduledFor: optionalTimeMS(job.LastScheduledFor),
+		LastCoalesced: job.LastCoalesced, LastError: job.LastError, LeaseOwner: job.Lease.Owner, LeaseExpiresAt: optionalTimeMS(job.Lease.ExpiresAt),
+		RunID: job.Run.ID, RunScheduledFor: optionalTimeMS(job.Run.ScheduledFor), RunStartedAt: optionalTimeMS(job.Run.StartedAt),
+		RunDeadline: optionalTimeMS(job.Run.Deadline), RunCoalesced: job.Run.Coalesced, OwnerID: ipc.OwnerID(ctx),
 	}
 }
 
-type jobScanner interface {
-	Scan(...any) error
+func jobAssignments(job store.CronJob) map[string]any {
+	return map[string]any{
+		"session_id": job.SessionID, "name": job.Name, "prompt": job.Prompt, "schedule": job.Schedule, "timezone": job.Timezone,
+		"enabled": job.Enabled, "timeout_ms": job.TimeoutMS, "model_profile_id": job.ModelProfileID,
+		"created_at": job.CreatedAt, "updated_at": job.UpdatedAt, "revision": job.Revision, "next_run_at": job.NextRunAt,
+		"retry_at": job.RetryAt, "circuit_open_until": job.CircuitOpenUntil, "consecutive_failures": job.ConsecutiveFailures,
+		"last_run_at": job.LastRunAt, "last_scheduled_for": job.LastScheduledFor, "last_coalesced": job.LastCoalesced, "last_error": job.LastError,
+		"lease_owner": job.LeaseOwner, "lease_expires_at": job.LeaseExpiresAt, "run_id": job.RunID,
+		"run_scheduled_for": job.RunScheduledFor, "run_started_at": job.RunStartedAt, "run_deadline": job.RunDeadline,
+		"run_coalesced": job.RunCoalesced, "owner_id": job.OwnerID,
+	}
 }
 
-func scanJob(scanner jobScanner) (Job, error) {
-	var job Job
-	var enabled, lastCoalesced, runCoalesced int
-	var ownerID string
-	var timeoutMS int64
-	var createdAt, updatedAt, nextRunAt int64
-	var retryAt, circuitOpenUntil, lastRunAt, lastScheduledFor sql.NullInt64
-	var leaseExpiresAt, runScheduledFor, runStartedAt, runDeadline sql.NullInt64
-	err := scanner.Scan(
-		&job.ID, &job.SessionID, &job.Name, &job.Prompt, &job.Schedule, &job.Timezone, &enabled, &timeoutMS, &job.ModelProfileID,
-		&createdAt, &updatedAt, &job.Revision, &nextRunAt, &retryAt, &circuitOpenUntil,
-		&job.ConsecutiveFailures, &lastRunAt, &lastScheduledFor, &lastCoalesced, &job.LastError,
-		&job.Lease.Owner, &leaseExpiresAt, &job.Run.ID, &runScheduledFor, &runStartedAt, &runDeadline, &runCoalesced, &ownerID,
-	)
-	if err != nil {
-		return Job{}, err
+func jobFromModel(row *store.CronJob) Job {
+	job := Job{
+		ID: row.ID, SessionID: row.SessionID, Name: row.Name, Prompt: row.Prompt, Schedule: row.Schedule, Timezone: row.Timezone,
+		Enabled: row.Enabled, Timeout: time.Duration(row.TimeoutMS) * time.Millisecond, ModelProfileID: row.ModelProfileID,
+		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), UpdatedAt: time.UnixMilli(row.UpdatedAt).UTC(), Revision: row.Revision,
+		NextRunAt: time.UnixMilli(row.NextRunAt).UTC(), RetryAt: nullTimeMS(row.RetryAt), CircuitOpenUntil: nullTimeMS(row.CircuitOpenUntil),
+		ConsecutiveFailures: int(row.ConsecutiveFailures), LastRunAt: nullTimeMS(row.LastRunAt), LastScheduledFor: nullTimeMS(row.LastScheduledFor),
+		LastCoalesced: row.LastCoalesced, LastError: row.LastError,
+		Lease: Lease{Owner: row.LeaseOwner}, Run: RunState{ID: row.RunID},
 	}
-	job.Enabled = enabled != 0
-	job.Timeout = time.Duration(timeoutMS) * time.Millisecond
-	job.CreatedAt = time.UnixMilli(createdAt).UTC()
-	job.UpdatedAt = time.UnixMilli(updatedAt).UTC()
-	job.NextRunAt = time.UnixMilli(nextRunAt).UTC()
-	job.RetryAt = nullTimeMS(retryAt)
-	job.CircuitOpenUntil = nullTimeMS(circuitOpenUntil)
-	job.LastRunAt = nullTimeMS(lastRunAt)
-	job.LastScheduledFor = nullTimeMS(lastScheduledFor)
-	job.LastCoalesced = lastCoalesced != 0
 	if job.Lease.Owner != "" {
-		job.Lease.ExpiresAt = nullTimeMS(leaseExpiresAt)
+		job.Lease.ExpiresAt = nullTimeMS(row.LeaseExpiresAt)
 	}
 	if job.Run.ID != "" {
-		job.Run.ScheduledFor = nullTimeMS(runScheduledFor)
-		job.Run.StartedAt = nullTimeMS(runStartedAt)
-		job.Run.Deadline = nullTimeMS(runDeadline)
-		job.Run.Coalesced = runCoalesced != 0
+		job.Run.ScheduledFor = nullTimeMS(row.RunScheduledFor)
+		job.Run.StartedAt = nullTimeMS(row.RunStartedAt)
+		job.Run.Deadline = nullTimeMS(row.RunDeadline)
+		job.Run.Coalesced = row.RunCoalesced
 	}
-	return job, nil
+	return job
 }
 
-func boolInt(value bool) int {
-	if value {
-		return 1
+func cronOwnerConditions(ctx context.Context, table string) []gen.Condition {
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		return []gen.Condition{field.NewString(table, "owner_id").Eq(ownerID)}
 	}
-	return 0
+	return nil
 }
 
 func timeMS(value time.Time) int64 {
 	return value.UnixMilli()
 }
 
-func optionalTimeMS(value time.Time) any {
+func optionalTimeMS(value time.Time) *int64 {
 	if value.IsZero() {
 		return nil
 	}
-	return value.UnixMilli()
+	stamp := value.UnixMilli()
+	return &stamp
 }
 
-func nullTimeMS(value sql.NullInt64) time.Time {
-	if !value.Valid {
+func nullTimeMS(value *int64) time.Time {
+	if value == nil {
 		return time.Time{}
 	}
-	return time.UnixMilli(value.Int64).UTC()
+	return time.UnixMilli(*value).UTC()
 }

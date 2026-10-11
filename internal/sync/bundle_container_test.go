@@ -35,7 +35,7 @@ func TestBundleContainerRejectsInvalidHeader(t *testing.T) {
 }
 
 func TestBundleContainerEncryptedRoundTrip(t *testing.T) {
-	plaintext := []byte(`{"protocol":1,"groups":[{"id":"g1"}],"assets":[],"creds":[]}`)
+	plaintext := []byte(`{"protocol":1,"groups":[{"id":"g1-7f3d9c2e-marker"}],"assets":[],"creds":[]}`)
 	encoded, err := encodeBundleContainer(plaintext, "s3cret-口令")
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestBundleContainerEncryptedRoundTrip(t *testing.T) {
 	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted == 0 {
 		t.Fatal("container is not marked encrypted")
 	}
-	if strings.Contains(string(encoded), "g1") {
+	if strings.Contains(string(encoded), "g1-7f3d9c2e-marker") {
 		t.Fatal("ciphertext leaks plaintext")
 	}
 	decoded, err := decodeBundleContainer(encoded, "s3cret-口令")

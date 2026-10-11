@@ -51,14 +51,14 @@ func newTestSyncServer(t *testing.T) *testSyncServer {
 // newTestSyncServerOn 在指定存储上搭建测试服务端; PG 回归用真实 PostgreSQL 存储。
 func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	t.Helper()
-	server := &testSyncServer{db: db, accounts: account.New(db.DB())}
+	server := &testSyncServer{db: db, accounts: account.New(db.GORM())}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/login", server.serveLogin)
 	mux.Handle("GET /auth/me", server.requireSession(http.HandlerFunc(server.serveMe)))
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
-	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.DB(), db.Backend())))))
-	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.DB(), db.Backend())))
-	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.DB(), db.Backend()))))
+	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.GORM(), db.Backend())))))
+	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.GORM(), db.Backend())))
+	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.GORM(), db.Backend()))))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server

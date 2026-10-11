@@ -1,43 +1,21 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
-	"sort"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-type TranscriptRow struct {
-	ID             string
-	SessionID      string
-	AssetID        string
-	AssetName      string
-	AssetKind      string
-	StartedAt      int64
-	EndedAt        *int64
-	Bytes          int64
-	Chunks         int64
-	Truncated      bool
-	SyncOptIn      bool
-	ContentOmitted bool
-}
-
-const transcriptColumns = `id, session_id, asset_id, asset_name, asset_kind,
-started_at, ended_at, bytes, chunks, truncated, sync_opt_in, content_omitted`
-
-type TranscriptChunkRow struct {
-	Seq   int64
-	TabID string
-	TS    int64
-	Kind  int
-	Data  []byte
-}
+type TranscriptRow = model.TranscriptRow
+type TranscriptChunkRow = model.TranscriptChunkRow
+type DurableTranscriptOffset = model.DurableTranscriptOffset
 
 const (
 	TranscriptChunkKindOutput = 0
@@ -83,11 +61,14 @@ func (s *Store) TranscriptStart(ctx context.Context, row TranscriptRow) error {
 	if row.ID == "" {
 		row.ID = ids.New()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO transcript
-(owner_id, id, session_id, asset_id, asset_name, asset_kind, started_at, ended_at, bytes, chunks, truncated)
-VALUES(?,?,?,?,?,?,?,NULL,0,0,0)`,
-		ipc.OwnerID(ctx), row.ID, row.SessionID, row.AssetID, row.AssetName, row.AssetKind, row.StartedAt)
-	if err != nil {
+	row.EndedAt = nil
+	row.Bytes = 0
+	row.Chunks = 0
+	row.Truncated = false
+	row.SyncOptIn = false
+	row.ContentOmitted = false
+	row.OwnerID = ipc.OwnerID(ctx)
+	if err := query.Use(s.db).TranscriptRow.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -100,40 +81,49 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	if _, err := s.TranscriptGet(ctx, transcriptID); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		var totalBytes, totalChunks int64
+		for _, chunk := range chunks {
+			chunk.TranscriptID = transcriptID
+			chunk.OwnerID = ipc.OwnerID(ctx)
+			if err := queries.TranscriptChunkRow.WithContext(ctx).Create(&chunk); err != nil {
+				return err
+			}
+			totalBytes += int64(len(chunk.Data))
+			totalChunks++
+		}
+		transcript := queries.TranscriptRow
+		if _, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(transcriptID)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			UpdateColumns(map[string]any{
+				"bytes":  gorm.Expr("bytes + ?", totalBytes),
+				"chunks": gorm.Expr("chunks + ?", totalChunks),
+			}); err != nil {
+			return err
+		}
+		if len(durableBytes) > 0 {
+			now := ids.NowMS()
+			for durableID, count := range durableBytes[0] {
+				if count <= 0 {
+					continue
+				}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "durable_id"}},
+					DoUpdates: clause.Assignments(map[string]any{
+						s.dialect.offsetColumn(): gorm.Expr("durable_transcript_offset."+s.dialect.offsetColumn()+" + ?", count),
+						"updated_at":             now,
+					}),
+					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: count, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var totalBytes, totalChunks int64
-	for _, chunk := range chunks {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(owner_id, transcript_id, seq, tab_id, ts, kind, data) VALUES(?,?,?,?,?,?,?)`,
-			ipc.OwnerID(ctx), transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
-			return dbError(err)
-		}
-		totalBytes += int64(len(chunk.Data))
-		totalChunks++
-	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	if _, err := tx.ExecContext(ctx, `UPDATE transcript SET bytes=bytes+?, chunks=chunks+? WHERE id = ?`+condition,
-		append([]any{totalBytes, totalChunks, transcriptID}, args...)...); err != nil {
-		return dbError(err)
-	}
-	if len(durableBytes) > 0 {
-		now := ids.NowMS()
-		for durableID, count := range durableBytes[0] {
-			if count <= 0 {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(owner_id, durable_id, `+s.dialect.offsetColumn()+`, updated_at)
-VALUES(?,?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=durable_transcript_offset.`+s.dialect.offsetColumn()+`+?, updated_at=?
-WHERE owner_id = ?`, ipc.OwnerID(ctx), durableID, count, now, count, now, ipc.OwnerID(ctx)); err != nil {
-				return dbError(err)
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -144,9 +134,14 @@ func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt 
 	if truncated {
 		flag = 1
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, `UPDATE transcript SET ended_at=?, truncated=`+s.dialect.ScalarMax()+`(truncated,?) WHERE id = ? AND ended_at IS NULL`+condition,
-		append([]any{endedAt, flag, transcriptID}, args...)...)
+	transcript := query.Use(s.db).TranscriptRow
+	_, err := transcript.WithContext(ctx).
+		Where(transcript.ID.Eq(transcriptID), transcript.EndedAt.IsNull()).
+		Where(ownerConditions(ctx, transcript.TableName())...).
+		UpdateColumns(map[string]any{
+			"ended_at":  endedAt,
+			"truncated": gorm.Expr(s.dialect.ScalarMax()+"(truncated, ?)", flag),
+		})
 	if err != nil {
 		return dbError(err)
 	}
@@ -154,107 +149,104 @@ func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt 
 }
 
 func (s *Store) TranscriptGet(ctx context.Context, id string) (TranscriptRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	row := s.db.QueryRowContext(ctx, `SELECT `+transcriptColumns+` FROM transcript WHERE id = ?`+condition, append([]any{id}, args...)...)
-	return scanTranscriptRow(row.Scan)
-}
-
-func scanTranscriptRow(scan func(...any) error) (TranscriptRow, error) {
-	var row TranscriptRow
-	var truncated, syncOptIn, contentOmitted int
-	if err := scan(&row.ID, &row.SessionID, &row.AssetID, &row.AssetName, &row.AssetKind,
-		&row.StartedAt, &row.EndedAt, &row.Bytes, &row.Chunks, &truncated, &syncOptIn, &contentOmitted); err != nil {
-		if isNoRows(err) {
-			return TranscriptRow{}, notFound("会话记录")
-		}
+	transcript := query.Use(s.db).TranscriptRow
+	row, err := transcript.WithContext(ctx).
+		Where(transcript.ID.Eq(id)).
+		Where(ownerConditions(ctx, transcript.TableName())...).
+		First()
+	if isNoRows(err) {
+		return TranscriptRow{}, notFound("会话记录")
+	}
+	if err != nil {
 		return TranscriptRow{}, dbError(err)
 	}
-	row.Truncated = truncated != 0
-	row.SyncOptIn = syncOptIn != 0
-	row.ContentOmitted = contentOmitted != 0
-	return row, nil
+	return *row, nil
 }
 
 func (s *Store) TranscriptListByAsset(ctx context.Context, assetID string, limit int64) ([]TranscriptRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	queryArgs := append([]any{assetID}, args...)
-	queryArgs = append(queryArgs, limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+transcriptColumns+` FROM transcript WHERE asset_id = ?`+condition+` ORDER BY started_at DESC, id DESC LIMIT ?`, queryArgs...)
+	transcript := query.Use(s.db).TranscriptRow
+	result := []TranscriptRow{}
+	err := transcript.WithContext(ctx).
+		Where(transcript.AssetID.Eq(assetID)).
+		Where(ownerConditions(ctx, transcript.TableName())...).
+		Order(transcript.StartedAt.Desc(), transcript.ID.Desc()).
+		Limit(int(limit)).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []TranscriptRow{}
-	for rows.Next() {
-		row, err := scanTranscriptRow(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) TranscriptHosts(ctx context.Context) ([]TranscriptHostRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "t.owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT t.asset_id, MAX(t.asset_name), MAX(t.asset_kind),
-COUNT(*), MAX(t.started_at),
-CASE WHEN a.id IS NULL OR a.deleted_at IS NOT NULL THEN 1 ELSE 0 END
-FROM transcript t LEFT JOIN asset a ON a.id = t.asset_id
-WHERE 1=1`+condition+` GROUP BY t.asset_id ORDER BY MAX(t.started_at) DESC LIMIT 500`, args...)
+	transcript := query.Use(s.db).TranscriptRow.As("t")
+	asset := query.Use(s.db).AssetRow.As("a")
+	type hostRow struct {
+		AssetID       string
+		AssetName     string
+		AssetKind     string
+		AssetDeleted  int
+		Transcripts   int64
+		LastStartedAt int64
+	}
+	rows := []hostRow{}
+	err := transcript.WithContext(ctx).
+		LeftJoin(asset, transcript.AssetID.EqCol(asset.ID)).
+		Where(ownerConditions(ctx, "t")...).
+		UnderlyingDB().
+		Select(`t.asset_id, MAX(t.asset_name) AS asset_name, MAX(t.asset_kind) AS asset_kind, COUNT(*) AS transcripts, MAX(t.started_at) AS last_started_at, CASE WHEN a.id IS NULL OR a.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS asset_deleted`).
+		Group("t.asset_id").
+		Order("MAX(t.started_at) DESC").
+		Limit(500).
+		Scan(&rows).Error
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
 	result := []TranscriptHostRow{}
-	for rows.Next() {
-		var row TranscriptHostRow
-		var deleted int
-		if err := rows.Scan(&row.AssetID, &row.AssetName, &row.AssetKind,
-			&row.Transcripts, &row.LastStartedAt, &deleted); err != nil {
-			return nil, dbError(err)
-		}
-		row.AssetDeleted = deleted != 0
-		result = append(result, row)
+	for _, row := range rows {
+		result = append(result, TranscriptHostRow{
+			AssetID: row.AssetID, AssetName: row.AssetName, AssetKind: row.AssetKind,
+			AssetDeleted: row.AssetDeleted != 0, Transcripts: row.Transcripts, LastStartedAt: row.LastStartedAt,
+		})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) TranscriptChunks(ctx context.Context, transcriptID string, afterSeq int64, maxBytes int) ([]TranscriptChunkRow, error) {
 	if maxBytes <= 0 || maxBytes > 8<<20 {
 		maxBytes = 1 << 20
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, tab_id, ts, kind, data FROM transcript_chunk
-WHERE transcript_id = ? AND seq >= ?`+condition+` ORDER BY seq LIMIT 4096`, append([]any{transcriptID, afterSeq}, args...)...)
+	chunk := query.Use(s.db).TranscriptChunkRow
+	rows := []TranscriptChunkRow{}
+	err := chunk.WithContext(ctx).
+		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Seq.Gte(afterSeq)).
+		Where(ownerConditions(ctx, chunk.TableName())...).
+		Order(chunk.Seq).
+		Limit(4096).
+		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
 	result := []TranscriptChunkRow{}
 	budget := maxBytes
-	for rows.Next() {
-		var chunk TranscriptChunkRow
-		if err := rows.Scan(&chunk.Seq, &chunk.TabID, &chunk.TS, &chunk.Kind, &chunk.Data); err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, chunk)
-		budget -= len(chunk.Data)
+	for _, row := range rows {
+		result = append(result, row)
+		budget -= len(row.Data)
 		if budget <= 0 {
 			break
 		}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
-func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, query []byte, maxMatches, maxScanBytes int) ([]TranscriptMatch, error) {
-	if len(query) == 0 {
+func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, text []byte, maxMatches, maxScanBytes int) ([]TranscriptMatch, error) {
+	if len(text) == 0 {
 		return nil, badParam(fmt.Errorf("transcript search query is empty"))
 	}
-	if len(query) > 256 {
+	if len(text) > 256 {
 		return nil, badParam(fmt.Errorf("transcript search query is too long"))
 	}
 	if maxMatches <= 0 || maxMatches > 500 {
@@ -263,472 +255,223 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, query
 	if maxScanBytes <= 0 || maxScanBytes > 64<<20 {
 		maxScanBytes = 8 << 20
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, ts, data FROM transcript_chunk
-WHERE transcript_id = ? AND kind = ?`+condition+` ORDER BY seq LIMIT 8192`, append([]any{transcriptID, TranscriptChunkKindOutput}, args...)...)
+	chunk := query.Use(s.db).TranscriptChunkRow
+	rows := []TranscriptChunkRow{}
+	err := chunk.WithContext(ctx).
+		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Kind.Eq(TranscriptChunkKindOutput)).
+		Where(ownerConditions(ctx, chunk.TableName())...).
+		Order(chunk.Seq).
+		Limit(8192).
+		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	matcher := newVisibleMatcher(query, maxMatches)
+	matcher := newVisibleMatcher(text, maxMatches)
 	scanned := 0
-	for rows.Next() && !matcher.full() && scanned < maxScanBytes {
-		var seq, ts int64
-		var data []byte
-		if err := rows.Scan(&seq, &ts, &data); err != nil {
-			return nil, dbError(err)
-		}
-		scanned += len(data)
-		matcher.consume(seq, ts, data)
-	}
-	return matcher.matches, rows.Err()
-}
-
-const (
-	visibleWindowBytes   = 16 << 10
-	visiblePreviewRadius = 80
-)
-
-type visibleSeqMark struct {
-	offset int
-	seq    int64
-	ts     int64
-}
-
-type visibleMatcher struct {
-	query      []byte
-	window     []byte
-	marks      []visibleSeqMark
-	pending    []byte
-	matches    []TranscriptMatch
-	maxMatches int
-	reportFrom int
-}
-
-func newVisibleMatcher(query []byte, maxMatches int) *visibleMatcher {
-	return &visibleMatcher{
-		query:      query,
-		maxMatches: maxMatches,
-	}
-}
-
-func (m *visibleMatcher) full() bool {
-	return len(m.matches) >= m.maxMatches
-}
-
-func (m *visibleMatcher) consume(seq, ts int64, data []byte) {
-	raw := m.pending
-	m.pending = nil
-	raw = append(raw, data...)
-	visible, tail := visibleBytes(raw)
-	m.pending = tail
-	if len(visible) == 0 {
-		return
-	}
-	m.marks = append(m.marks, visibleSeqMark{offset: len(m.window), seq: seq, ts: ts})
-	m.window = append(m.window, visible...)
-	m.searchNew()
-	m.trim()
-}
-
-func (m *visibleMatcher) searchNew() {
-	from := m.reportFrom
-	window := m.window
-	query := m.query
-	for from <= len(window)-len(query) && !m.full() {
-		index := bytes.Index(window[from:], query)
-		if index < 0 {
+	for _, row := range rows {
+		if matcher.full() || scanned >= maxScanBytes {
 			break
 		}
-		start := from + index
-		m.matches = append(m.matches, TranscriptMatch{
-			Seq:     m.seqAt(start),
-			TS:      m.tsAt(start),
-			Preview: transcriptPreview(window, start, len(query)),
-		})
-		from = start + len(query)
+		scanned += len(row.Data)
+		matcher.consume(row.Seq, row.TS, row.Data)
 	}
-	m.reportFrom = len(window) - len(query) + 1
-	if m.reportFrom < 0 {
-		m.reportFrom = 0
-	}
-}
-
-func (m *visibleMatcher) seqAt(offset int) int64 {
-	return m.markAt(offset).seq
-}
-
-func (m *visibleMatcher) tsAt(offset int) int64 {
-	return m.markAt(offset).ts
-}
-
-func (m *visibleMatcher) markAt(offset int) visibleSeqMark {
-	index := sort.Search(len(m.marks), func(i int) bool { return m.marks[i].offset > offset }) - 1
-	if index < 0 {
-		return visibleSeqMark{}
-	}
-	return m.marks[index]
-}
-
-func (m *visibleMatcher) trim() {
-	if len(m.window) <= visibleWindowBytes {
-		return
-	}
-	drop := len(m.window) - visibleWindowBytes
-	m.window = append([]byte(nil), m.window[drop:]...)
-	var carry visibleSeqMark
-	kept := make([]visibleSeqMark, 0, len(m.marks))
-	for _, mark := range m.marks {
-		if mark.offset < drop {
-			carry = mark
-			continue
-		}
-		kept = append(kept, visibleSeqMark{offset: mark.offset - drop, seq: mark.seq, ts: mark.ts})
-	}
-	if len(kept) == 0 || kept[0].offset > 0 {
-		kept = append([]visibleSeqMark{{offset: 0, seq: carry.seq, ts: carry.ts}}, kept...)
-	}
-	m.marks = kept
-	if m.reportFrom > drop {
-		m.reportFrom -= drop
-	} else {
-		m.reportFrom = 0
-	}
-}
-
-func transcriptPreview(data []byte, matchStart, matchLen int) []byte {
-	start := matchStart - visiblePreviewRadius
-	if start < 0 {
-		start = 0
-	}
-	end := matchStart + matchLen + visiblePreviewRadius
-	if end > len(data) {
-		end = len(data)
-	}
-	return bytes.Clone(data[start:end])
-}
-
-func visibleBytes(raw []byte) (visible []byte, tail []byte) {
-	index := 0
-	for index < len(raw) {
-		current := raw[index]
-		switch {
-		case current == 0x1b:
-			consumed, complete := escapeSequence(raw[index:])
-			if !complete {
-				return visible, raw[index:]
-			}
-			index += consumed
-		case current == 0x9b:
-			consumed, complete := csiSequence(raw[index+1:])
-			if !complete {
-				return visible, raw[index:]
-			}
-			index += 1 + consumed
-		case current == 0x90 || current == 0x98 || current == 0x9e || current == 0x9f:
-			consumed, complete := controlString(raw[index+1:])
-			if !complete {
-				return visible, raw[index:]
-			}
-			index += 1 + consumed
-		default:
-			r, size := utf8.DecodeRune(raw[index:])
-			if r == utf8.RuneError && size <= 1 {
-				if !utf8.FullRune(raw[index:]) {
-					return visible, raw[index:]
-				}
-				visible = append(visible, current)
-				index++
-				continue
-			}
-			if r >= 0x80 && r <= 0x9f {
-				switch r {
-				case 0x9b:
-					consumed, complete := csiSequence(raw[index+size:])
-					if !complete {
-						return visible, raw[index:]
-					}
-					index += size + consumed
-				case 0x90, 0x98, 0x9e, 0x9f:
-					consumed, complete := controlString(raw[index+size:])
-					if !complete {
-						return visible, raw[index:]
-					}
-					index += size + consumed
-				default:
-					index += size
-				}
-				continue
-			}
-			visible = append(visible, raw[index:index+size]...)
-			index += size
-		}
-	}
-	return visible, nil
-}
-
-func escapeSequence(raw []byte) (consumed int, complete bool) {
-	if len(raw) < 2 {
-		return 0, false
-	}
-	switch raw[1] {
-	case '[':
-		consumed, complete := csiSequence(raw[2:])
-		return 2 + consumed, complete
-	case ']':
-		consumed, complete := oscSequence(raw[2:])
-		return 2 + consumed, complete
-	case 'P', 'X', '^', '_':
-		consumed, complete := controlString(raw[2:])
-		return 2 + consumed, complete
-	default:
-		index := 1
-		for index < len(raw) && raw[index] >= 0x20 && raw[index] <= 0x2f {
-			index++
-		}
-		if index >= len(raw) {
-			return 0, false
-		}
-		if raw[index] >= 0x30 && raw[index] <= 0x7e {
-			return index + 1, true
-		}
-		return index, true
-	}
-}
-
-func controlString(raw []byte) (consumed int, complete bool) {
-	for index := 0; index < len(raw); index++ {
-		if raw[index] == 0x1b && index+1 < len(raw) && raw[index+1] == '\\' {
-			return index + 2, true
-		}
-		if raw[index] == 0x9c {
-			return index + 1, true
-		}
-	}
-	return 0, false
-}
-
-func csiSequence(raw []byte) (consumed int, complete bool) {
-	for index, current := range raw {
-		if current >= 0x40 && current <= 0x7e {
-			return index + 1, true
-		}
-		if current < 0x20 || current > 0x3f {
-			return index, true
-		}
-	}
-	return 0, false
-}
-
-func oscSequence(raw []byte) (consumed int, complete bool) {
-	for index := 0; index < len(raw); index++ {
-		if raw[index] == 0x07 {
-			return index + 1, true
-		}
-		if raw[index] == 0x1b && index+1 < len(raw) && raw[index+1] == '\\' {
-			return index + 2, true
-		}
-	}
-	return 0, false
+	return matcher.matches, nil
 }
 
 func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var syncOptIn int
-	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id = ?"+condition, append([]any{id}, args...)...).Scan(&syncOptIn)
-	if isNoRows(err) {
-		return notFound("会话记录")
-	}
-	if err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript WHERE id = ?"+condition, append([]any{id}, args...)...); err != nil {
-		return dbError(err)
-	}
-	if syncOptIn != 0 {
-		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		transcript := queries.TranscriptRow
+		row, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(id)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			First()
+		if isNoRows(err) {
+			return notFound("会话记录")
+		}
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
-}
-
-func transcriptTombstoneTx(ctx context.Context, tx *sql.Tx, id string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES (?, ?, 'transcript', ?)
-ON CONFLICT(owner_id, id) DO NOTHING`, ipc.OwnerID(ctx), id, ids.NowMS()); err != nil {
+		if _, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(id)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		if row.SyncOptIn {
+			return transcriptTombstoneTx(ctx, tx, id)
+		}
+		return nil
+	})
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
-// TranscriptListOptedIn 返回全部已 opt-in 且已结束的会话记录, 供同步推送枚举。
+func transcriptTombstoneTx(ctx context.Context, tx *gorm.DB, id string) error {
+	tombstone := query.Use(tx).SyncTombstone
+	err := tombstone.WithContext(ctx).
+		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
+		Create(&SyncTombstone{ID: id, Kind: "transcript", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) TranscriptListOptedIn(ctx context.Context) ([]TranscriptRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT `+transcriptColumns+` FROM transcript
-WHERE sync_opt_in=1 AND ended_at IS NOT NULL`+condition+` ORDER BY started_at, id`, args...)
+	transcript := query.Use(s.db).TranscriptRow
+	result := []TranscriptRow{}
+	err := transcript.WithContext(ctx).
+		Where(transcript.SyncOptIn.Is(true), transcript.EndedAt.IsNotNull()).
+		Where(ownerConditions(ctx, transcript.TableName())...).
+		Order(transcript.StartedAt, transcript.ID).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []TranscriptRow{}
-	for rows.Next() {
-		row, err := scanTranscriptRow(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
-// TranscriptReplaceContent 仅用拉取到的完整内容补全 content_omitted=1 的元数据副本; 完整记录拒绝且不得修改。
 func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID string, bytes, chunks int64, truncated bool, content []TranscriptChunkRow) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	result, err := tx.ExecContext(ctx, `UPDATE transcript SET bytes=?, chunks=?, truncated=?, content_omitted=0
-WHERE id = ? AND content_omitted=1`+condition, append([]any{bytes, chunks, boolInt(truncated), transcriptID}, args...)...)
-	if err != nil {
-		return dbError(err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return dbError(err)
-	}
-	if affected == 0 {
-		return notFound("会话记录")
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript_chunk WHERE transcript_id = ?"+condition, append([]any{transcriptID}, args...)...); err != nil {
-		return dbError(err)
-	}
-	for _, chunk := range content {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(owner_id, transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?,?)`,
-			ipc.OwnerID(ctx), transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
-			return dbError(err)
-		}
-	}
-	return tx.Commit()
-}
-
-// TranscriptSetSyncOptIn 切换单条会话记录的同步 opt-in; 进行中的会话不允许 opt-in。
-// opt-out 会同时写入删除墓碑: 服务端副本与其他设备副本随下一轮同步清除, 本地记录保留。
-// 已写入墓碑的记录不允许重新 opt-in: 墓碑的语义是"从同步集合中彻底删除",
-// 允许恢复会让任意设备上的旧副本借 re-opt-in 复活, 与防复活语义冲突。
-func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn bool) error {
-	flag := 0
-	if optIn {
-		flag = 1
-	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var current int
-	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id = ?"+condition, append([]any{id}, args...)...).Scan(&current)
-	if isNoRows(err) {
-		return notFound("会话记录")
-	}
-	if err != nil {
-		return dbError(err)
-	}
-	if flag == 1 {
-		var tombstones int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sync_tombstone WHERE id = ?"+condition, append([]any{id}, args...)...).Scan(&tombstones); err != nil {
-			return dbError(err)
-		}
-		if tombstones > 0 {
-			return badParam(fmt.Errorf("该记录已关闭同步并清除远端副本, 不能重新开启"))
-		}
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE transcript SET sync_opt_in=?
-WHERE id = ? AND (? = 0 OR ended_at IS NOT NULL)`+condition, append([]any{flag, id, flag}, args...)...)
-	if err != nil {
-		return dbError(err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return dbError(err)
-	}
-	if affected == 0 {
-		return badParam(fmt.Errorf("进行中的会话不能开启同步"))
-	}
-	if current != 0 && flag == 0 {
-		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		transcript := queries.TranscriptRow
+		info, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(transcriptID), transcript.ContentOmitted.Is(true)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			UpdateColumns(map[string]any{"bytes": bytes, "chunks": chunks, "truncated": truncated, "content_omitted": false})
+		if err != nil {
 			return err
 		}
+		if info.RowsAffected == 0 {
+			return notFound("会话记录")
+		}
+		chunk := queries.TranscriptChunkRow
+		if _, err := chunk.WithContext(ctx).
+			Where(chunk.TranscriptID.Eq(transcriptID)).
+			Where(ownerConditions(ctx, chunk.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		for _, row := range content {
+			row.TranscriptID = transcriptID
+			row.OwnerID = ipc.OwnerID(ctx)
+			if err := chunk.WithContext(ctx).Create(&row); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return dbError(err)
 	}
-	return tx.Commit()
+	return nil
 }
 
-// TranscriptInsertSynced 写入一条拉取到的已结束会话记录(含分块), 直接落为已 opt-in。
+func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn bool) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		transcript := queries.TranscriptRow
+		row, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(id)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			First()
+		if isNoRows(err) {
+			return notFound("会话记录")
+		}
+		if err != nil {
+			return err
+		}
+		if optIn {
+			tombstone := queries.SyncTombstone
+			count, err := tombstone.WithContext(ctx).
+				Where(tombstone.ID.Eq(id)).
+				Where(ownerConditions(ctx, tombstone.TableName())...).
+				Count()
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				return badParam(fmt.Errorf("该记录已关闭同步并清除远端副本, 不能重新开启"))
+			}
+		}
+		q := transcript.WithContext(ctx).Where(transcript.ID.Eq(id))
+		if optIn {
+			q = q.Where(transcript.EndedAt.IsNotNull())
+		}
+		info, err := q.Where(ownerConditions(ctx, transcript.TableName())...).
+			UpdateColumns(map[string]any{"sync_opt_in": optIn})
+		if err != nil {
+			return err
+		}
+		if info.RowsAffected == 0 {
+			return badParam(fmt.Errorf("进行中的会话不能开启同步"))
+		}
+		if row.SyncOptIn && !optIn {
+			return transcriptTombstoneTx(ctx, tx, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, chunks []TranscriptChunkRow) error {
 	if row.EndedAt == nil {
 		return badParam(fmt.Errorf("synced transcript must be ended"))
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row.SyncOptIn = true
+		row.OwnerID = ipc.OwnerID(ctx)
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "chunks", "truncated", "content_omitted"}),
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+		chunk := query.Use(tx).TranscriptChunkRow
+		for _, item := range chunks {
+			item.TranscriptID = row.ID
+			item.OwnerID = ipc.OwnerID(ctx)
+			if err := chunk.WithContext(ctx).Create(&item); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return dbError(err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	contentOmitted := 0
-	if row.ContentOmitted {
-		contentOmitted = 1
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO transcript
-(owner_id, id, session_id, asset_id, asset_name, asset_kind, started_at, ended_at, bytes, chunks, truncated, sync_opt_in, content_omitted)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?)
-ON CONFLICT(id) DO UPDATE SET ended_at=excluded.ended_at, bytes=excluded.bytes, chunks=excluded.chunks,
-truncated=excluded.truncated, content_omitted=excluded.content_omitted
-WHERE owner_id = ?`, ipc.OwnerID(ctx), row.ID, row.SessionID, row.AssetID, row.AssetName, row.AssetKind, row.StartedAt, *row.EndedAt,
-		row.Bytes, row.Chunks, boolInt(row.Truncated), contentOmitted, ipc.OwnerID(ctx)); err != nil {
-		return dbError(err)
-	}
-	for _, chunk := range chunks {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
-(owner_id, transcript_id, seq, tab_id, ts, kind, data) VALUES (?,?,?,?,?,?,?)`,
-			ipc.OwnerID(ctx), row.ID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Kind, chunk.Data); err != nil {
-			return dbError(err)
-		}
-	}
-	return tx.Commit()
-}
-
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
+	return nil
 }
 
 func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string) (int64, error) {
-	var offset int64
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	err := s.db.QueryRowContext(ctx,
-		"SELECT "+s.dialect.offsetColumn()+" FROM durable_transcript_offset WHERE durable_id = ?"+condition, append([]any{durableID}, args...)...).Scan(&offset)
+	offset := query.Use(s.db).DurableTranscriptOffset
+	row, err := offset.WithContext(ctx).
+		Where(offset.DurableID.Eq(durableID)).
+		Where(ownerConditions(ctx, offset.TableName())...).
+		First()
 	if isNoRows(err) {
 		return 0, nil
 	}
 	if err != nil {
 		return 0, dbError(err)
 	}
-	return offset, nil
+	return row.Offset, nil
 }
 
-func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string, offset int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO durable_transcript_offset(owner_id, durable_id, `+s.dialect.offsetColumn()+`, updated_at)
-VALUES(?,?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=excluded.`+s.dialect.offsetColumn()+`, updated_at=excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), durableID, offset, ids.NowMS(), ipc.OwnerID(ctx))
+func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string, value int64) error {
+	now := ids.NowMS()
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "durable_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{s.dialect.offsetColumn(), "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+	}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
 	if err != nil {
 		return dbError(err)
 	}
@@ -736,8 +479,11 @@ WHERE owner_id = ?`, ipc.OwnerID(ctx), durableID, offset, ids.NowMS(), ipc.Owner
 }
 
 func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "DELETE FROM durable_transcript_offset WHERE durable_id = ?"+condition, append([]any{durableID}, args...)...)
+	offset := query.Use(s.db).DurableTranscriptOffset
+	_, err := offset.WithContext(ctx).
+		Where(offset.DurableID.Eq(durableID)).
+		Where(ownerConditions(ctx, offset.TableName())...).
+		Delete()
 	if err != nil {
 		return dbError(err)
 	}
@@ -752,66 +498,64 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	if policy.MaxAge == 0 && policy.MaxCount == 0 {
 		return result, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		transcript := query.Use(tx).TranscriptRow
+		if policy.MaxAge > 0 {
+			rows := []TranscriptRow{}
+			if err := transcript.WithContext(ctx).
+				Where(transcript.EndedAt.IsNotNull(), transcript.EndedAt.Lt(time.Now().Add(-policy.MaxAge).UnixMilli())).
+				Where(ownerConditions(ctx, transcript.TableName())...).
+				Scan(&rows); err != nil {
+				return err
+			}
+			deleted, err := s.transcriptRetentionDeleteRows(ctx, tx, rows)
+			if err != nil {
+				return err
+			}
+			result.Deleted += deleted
+		}
+		if policy.MaxCount > 0 {
+			rows := []TranscriptRow{}
+			if err := transcript.WithContext(ctx).
+				Where(transcript.EndedAt.IsNotNull()).
+				Where(ownerConditions(ctx, transcript.TableName())...).
+				Order(transcript.EndedAt.Desc(), transcript.ID.Desc()).
+				Limit(-1).
+				Offset(int(policy.MaxCount)).
+				Scan(&rows); err != nil {
+				return err
+			}
+			deleted, err := s.transcriptRetentionDeleteRows(ctx, tx, rows)
+			if err != nil {
+				return err
+			}
+			result.Deleted += deleted
+		}
+		return nil
+	})
 	if err != nil {
-		return result, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if policy.MaxAge > 0 {
-		cutoff := time.Now().Add(-policy.MaxAge).UnixMilli()
-		deleted, err := s.transcriptRetentionDelete(ctx, tx,
-			"ended_at IS NOT NULL AND ended_at < ?", cutoff)
-		if err != nil {
-			return result, dbError(err)
-		}
-		result.Deleted += deleted
-	}
-	if policy.MaxCount > 0 {
-		condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
-		retentionArgs := append([]any{}, ownerArgs...)
-		retentionArgs = append(retentionArgs, policy.MaxCount)
-		deleted, err := s.transcriptRetentionDelete(ctx, tx, `ended_at IS NOT NULL AND id IN (
-	SELECT id FROM transcript WHERE ended_at IS NOT NULL`+condition+`
-	ORDER BY ended_at DESC, id DESC `+s.dialect.limitOffset()+`
-)`, retentionArgs...)
-		if err != nil {
-			return result, dbError(err)
-		}
-		result.Deleted += deleted
-	}
-	if err := tx.Commit(); err != nil {
 		return result, dbError(err)
 	}
 	return result, nil
 }
 
-// transcriptRetentionDelete 按保留策略删除已结束会话; 被删记录若已 opt-in 同步则同步写墓碑, 防止对端副本复活。
-func (s *Store) transcriptRetentionDelete(ctx context.Context, tx *sql.Tx, predicate string, args ...any) (int64, error) {
-	condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
-	scopedPredicate := predicate + condition
-	scopedArgs := append([]any{}, args...)
-	scopedArgs = append(scopedArgs, ownerArgs...)
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM transcript WHERE "+scopedPredicate+" AND sync_opt_in=1", scopedArgs...)
-	if err != nil {
-		return 0, err
+func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, rows []TranscriptRow) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
 	}
-	optedIn := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, err
+	ids := make([]string, 0, len(rows))
+	optedIn := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		if row.SyncOptIn {
+			optedIn = append(optedIn, row.ID)
 		}
-		optedIn = append(optedIn, id)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	deleted, err := retentionDelete(ctx, tx, "DELETE FROM transcript WHERE "+scopedPredicate, scopedArgs...)
+	transcript := query.Use(tx).TranscriptRow
+	info, err := transcript.WithContext(ctx).
+		Where(transcript.ID.In(ids...)).
+		Where(ownerConditions(ctx, transcript.TableName())...).
+		Delete()
 	if err != nil {
 		return 0, err
 	}
@@ -820,5 +564,5 @@ func (s *Store) transcriptRetentionDelete(ctx context.Context, tx *sql.Tx, predi
 			return 0, err
 		}
 	}
-	return deleted, nil
+	return info.RowsAffected, nil
 }

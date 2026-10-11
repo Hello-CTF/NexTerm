@@ -2,12 +2,13 @@ package account
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -35,109 +36,104 @@ func (a *Accounts) RegisterDevice(ctx context.Context, userID, name, kind string
 	if _, err := a.GetUser(ctx, userID); err != nil {
 		return nil, err
 	}
-	device := &Device{
-		ID:        ids.New(),
-		UserID:    userID,
-		Name:      name,
-		Kind:      kind,
-		CreatedAt: a.now(),
-	}
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO user_device(id, user_id, name, kind, created_at)
-VALUES(?,?,?,?,?)`, device.ID, device.UserID, device.Name, device.Kind, device.CreatedAt); err != nil {
+	device := &Device{ID: ids.New(), UserID: userID, Name: name, Kind: kind, CreatedAt: a.now()}
+	row := store.UserDevice{ID: device.ID, UserID: device.UserID, Name: device.Name, Kind: device.Kind, CreatedAt: device.CreatedAt}
+	if err := query.Use(a.db).UserDevice.WithContext(ctx).Create(&row); err != nil {
 		return nil, dbError(err)
 	}
 	return device, nil
 }
 
 func (a *Accounts) GetDevice(ctx context.Context, deviceID string) (*Device, error) {
-	row := a.db.QueryRowContext(ctx, "SELECT "+deviceColumns+" FROM user_device WHERE id = ?", deviceID)
-	return scanDevice(row)
+	userDevice := query.Use(a.db).UserDevice
+	row, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
+		}
+		return nil, dbError(err)
+	}
+	return deviceFromModel(row), nil
 }
 
 func (a *Accounts) ListDevices(ctx context.Context, userID string) ([]*Device, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT "+deviceColumns+" FROM user_device WHERE user_id = ? ORDER BY created_at, id", userID)
-	if err != nil {
+	userDevice := query.Use(a.db).UserDevice
+	rows := []store.UserDevice{}
+	if err := userDevice.WithContext(ctx).
+		Where(userDevice.UserID.Eq(userID)).
+		Order(userDevice.CreatedAt, userDevice.ID).
+		Scan(&rows); err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var devices []*Device
-	for rows.Next() {
-		device, err := scanDevice(rows)
-		if err != nil {
-			return nil, err
-		}
-		devices = append(devices, device)
+	devices := make([]*Device, 0, len(rows))
+	for _, row := range rows {
+		devices = append(devices, deviceFromModel(&row))
 	}
-	return devices, rows.Err()
+	return devices, nil
 }
 
 func (a *Accounts) TouchDevice(ctx context.Context, deviceID string) error {
-	if _, err := a.db.ExecContext(ctx, "UPDATE user_device SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL", a.now(), deviceID); err != nil {
+	userDevice := query.Use(a.db).UserDevice
+	_, err := userDevice.WithContext(ctx).
+		Where(userDevice.ID.Eq(deviceID), userDevice.RevokedAt.IsNull()).
+		UpdateColumns(map[string]any{"last_seen_at": a.now()})
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) error {
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var owner string
-	var revokedAt sql.NullInt64
-	if err := tx.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&owner, &revokedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ipc.NewError(ipc.CodeNotFound, "设备不存在")
-		}
-		return dbError(err)
-	}
-	if owner != userID {
-		return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
-	}
-	if revokedAt.Valid {
-		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	}
-	now := a.now()
-	result, err := tx.ExecContext(ctx, "UPDATE user_device SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", now, deviceID)
-	if err != nil {
-		return dbError(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE sync_credential SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
-	}
-	return nil
+	return a.withBusyRetry(ctx, func() error {
+		return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			userDevice := query.Use(tx).UserDevice
+			row, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+			if err == gorm.ErrRecordNotFound {
+				return ipc.NewError(ipc.CodeNotFound, "设备不存在")
+			}
+			if err != nil {
+				return dbError(err)
+			}
+			if row.UserID != userID {
+				return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
+			}
+			if row.RevokedAt != nil {
+				return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+			}
+			now := a.now()
+			info, err := userDevice.WithContext(ctx).
+				Where(userDevice.ID.Eq(deviceID), userDevice.RevokedAt.IsNull()).
+				UpdateColumns(map[string]any{"revoked_at": now})
+			if err != nil {
+				return dbError(err)
+			}
+			if info.RowsAffected == 0 {
+				return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+			}
+			userSession := query.Use(tx).UserSession
+			if _, err := userSession.WithContext(ctx).
+				Where(userSession.DeviceID.Eq(deviceID), userSession.RevokedAt.IsNull()).
+				UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+				return dbError(err)
+			}
+			syncCredential := query.Use(tx).SyncCredential
+			if _, err := syncCredential.WithContext(ctx).
+				Where(syncCredential.DeviceID.Eq(deviceID), syncCredential.RevokedAt.IsNull()).
+				UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+				return dbError(err)
+			}
+			return nil
+		})
+	})
 }
 
-const deviceColumns = "id, user_id, name, kind, created_at, last_seen_at, revoked_at"
-
-type rowScanner interface {
-	Scan(...any) error
-}
-
-func scanDevice(row rowScanner) (*Device, error) {
-	var device Device
-	var lastSeenAt, revokedAt sql.NullInt64
-	if err := row.Scan(&device.ID, &device.UserID, &device.Name, &device.Kind, &device.CreatedAt, &lastSeenAt, &revokedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
-		}
-		return nil, dbError(err)
+func deviceFromModel(row *store.UserDevice) *Device {
+	device := &Device{ID: row.ID, UserID: row.UserID, Name: row.Name, Kind: row.Kind, CreatedAt: row.CreatedAt}
+	if row.LastSeenAt != nil {
+		device.LastSeenAt = *row.LastSeenAt
 	}
-	if lastSeenAt.Valid {
-		device.LastSeenAt = lastSeenAt.Int64
+	if row.RevokedAt != nil {
+		device.RevokedAt = *row.RevokedAt
 	}
-	if revokedAt.Valid {
-		device.RevokedAt = revokedAt.Int64
-	}
-	return &device, nil
+	return device
 }

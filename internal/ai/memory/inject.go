@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -170,44 +169,22 @@ func uniqueIDs(values []string) ([]string, error) {
 }
 
 func (s *Store) selectEntries(ctx context.Context, scope Scope, selection Selection) ([]Entry, error) {
-
-	query := `SELECT id, topic, content, version, redacted, created_at, updated_at
-		FROM memory_entry WHERE tenant = ? AND subject = ?`
-	args := []any{scope.Tenant, scope.Subject}
+	query := s.db.WithContext(ctx).Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject)
 	if len(selection.Topics) != 0 {
-		query += " AND topic IN (" + placeholders(len(selection.Topics)) + ")"
-		for _, topic := range selection.Topics {
-			args = append(args, topic)
-		}
+		query = query.Where("topic IN ?", selection.Topics)
 	}
 	if len(selection.IDs) != 0 {
-		query += " AND id IN (" + placeholders(len(selection.IDs)) + ")"
-		for _, id := range selection.IDs {
-			args = append(args, id)
-		}
+		query = query.Where("id IN ?", selection.IDs)
 	}
-	query += " ORDER BY topic, id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
+	var rows []entryRow
+	if err := query.Order("topic, id").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("select semantic memory: %w", err)
 	}
-	defer rows.Close()
-	entries := []Entry{}
-	for rows.Next() {
-		var entry Entry
-		if err := rows.Scan(&entry.ID, &entry.Topic, &entry.Content, &entry.Version, &entry.Redacted, &entry.CreatedAt, &entry.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan semantic memory: %w", err)
-		}
-		entries = append(entries, entry)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate semantic memory: %w", err)
+	entries := make([]Entry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, entryFromRow(row))
 	}
 	return entries, nil
-}
-
-func placeholders(count int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
 func copyMessages(history []*schema.Message) []*schema.Message {

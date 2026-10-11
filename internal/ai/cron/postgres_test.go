@@ -11,13 +11,15 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func openPostgresStore(t *testing.T) *SQLStore {
 	t.Helper()
 	fixture := dbtest.NewFixture(t)
 	backend := fixture.OpenStore(t)
-	store, err := NewPostgresStore(context.Background(), backend.DB())
+	store, err := NewPostgresStore(context.Background(), backend.GORM())
 	if err != nil {
 		t.Fatalf("open postgres cron store: %v", err)
 	}
@@ -27,7 +29,7 @@ func openPostgresStore(t *testing.T) *SQLStore {
 func TestPostgresStoreStartupProbe(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	backend := fixture.OpenStore(t)
-	if _, err := NewPostgresStore(context.Background(), backend.DB()); err != nil {
+	if _, err := NewPostgresStore(context.Background(), backend.GORM()); err != nil {
 		t.Fatalf("startup probe on migrated schema: %v", err)
 	}
 }
@@ -35,7 +37,11 @@ func TestPostgresStoreStartupProbe(t *testing.T) {
 func TestPostgresStoreStartupProbeFailsWithoutCronTable(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
 	raw := fixture.OpenRaw(t)
-	if _, err := NewPostgresStore(context.Background(), raw); err == nil {
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: raw}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPostgresStore(context.Background(), db); err == nil {
 		t.Fatal("startup probe succeeded without cron_job table")
 	}
 }

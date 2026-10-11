@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,10 +116,6 @@ func TestCRUDIndexSettingsAndRestart(t *testing.T) {
 	if err != nil || !settings.InjectionEnabled || settings.Version != 1 {
 		t.Fatalf("reopened settings = %+v, err = %v", settings, err)
 	}
-	var schemaVersion int
-	if err := reopened.db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil || schemaVersion != SchemaVersion {
-		t.Fatalf("schema version = %d, err = %v", schemaVersion, err)
-	}
 	if err := reopened.Delete(ctx, testScope, first.ID, 1); err == nil {
 		t.Fatal("stale delete succeeded")
 	} else {
@@ -144,12 +139,11 @@ func TestFailedEditRollsBackEveryField(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newMemoryStore(t)
 	entry := mustCreate(t, store, testScope, "before", "original content")
-	_, err := store.db.Exec(`CREATE TRIGGER fail_memory_edit BEFORE UPDATE ON memory_entry
-		BEGIN SELECT RAISE(ABORT, 'injected edit failure'); END`)
-	if err != nil {
+	if err := store.db.Exec(`CREATE TRIGGER fail_memory_edit BEFORE UPDATE ON memory_entry
+		BEGIN SELECT RAISE(ABORT, 'injected edit failure'); END`).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.Edit(ctx, testScope, entry.ID, 1, EditInput{
+	_, err := store.Edit(ctx, testScope, entry.ID, 1, EditInput{
 		Topic: textPointer("after"), Content: textPointer("replacement content"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "injected edit failure") {
@@ -172,8 +166,8 @@ func TestSecretRejectionAndExplicitRedaction(t *testing.T) {
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("error contains secret: %v", err)
 	}
-	var count int
-	if err := store.db.QueryRow("SELECT count(*) FROM memory_entry").Scan(&count); err != nil || count != 0 {
+	var count int64
+	if err := store.db.Model(&entryRow{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("rejected secret persisted rows = %d, err = %v", count, err)
 	}
 
@@ -186,12 +180,12 @@ func TestSecretRejectionAndExplicitRedaction(t *testing.T) {
 	if !entry.Redacted || strings.Contains(entry.Content, secret) || !strings.Contains(entry.Content, redactedValue) {
 		t.Fatalf("redacted entry = %+v", entry)
 	}
-	var persisted string
-	if err := store.db.QueryRow("SELECT content FROM memory_entry WHERE id = ?", entry.ID).Scan(&persisted); err != nil {
+	var persisted entryRow
+	if err := store.db.Where("id = ?", entry.ID).Select("content").First(&persisted).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(persisted, secret) {
-		t.Fatalf("database contains secret: %q", persisted)
+	if strings.Contains(persisted.Content, secret) {
+		t.Fatalf("database contains secret: %q", persisted.Content)
 	}
 	_, err = store.Edit(ctx, testScope, entry.ID, 1, EditInput{Content: textPointer("password=" + secret)})
 	if !errors.Is(err, ErrSensitiveContent) {
@@ -317,8 +311,8 @@ func TestJSONAndEnvSecretFormatsRejectedRedactedAndInjectedSafely(t *testing.T) 
 			if strings.Contains(err.Error(), format.secret) {
 				t.Fatalf("error contains secret: %v", err)
 			}
-			var count int
-			if err := store.db.QueryRow("SELECT count(*) FROM memory_entry").Scan(&count); err != nil || count != 0 {
+			var count int64
+			if err := store.db.Model(&entryRow{}).Count(&count).Error; err != nil || count != 0 {
 				t.Fatalf("rejected secret persisted rows = %d, err = %v", count, err)
 			}
 
@@ -331,12 +325,12 @@ func TestJSONAndEnvSecretFormatsRejectedRedactedAndInjectedSafely(t *testing.T) 
 			if !entry.Redacted || strings.Contains(entry.Content, format.secret) || !strings.Contains(entry.Content, redactedValue) {
 				t.Fatalf("redacted entry = %+v", entry)
 			}
-			var persisted string
-			if err := store.db.QueryRow("SELECT content FROM memory_entry WHERE id = ?", entry.ID).Scan(&persisted); err != nil {
+			var persisted entryRow
+			if err := store.db.Where("id = ?", entry.ID).Select("content").First(&persisted).Error; err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(persisted, format.secret) {
-				t.Fatalf("database contains secret: %q", persisted)
+			if strings.Contains(persisted.Content, format.secret) {
+				t.Fatalf("database contains secret: %q", persisted.Content)
 			}
 
 			mustEnableInjection(t, store, testScope)
@@ -348,7 +342,7 @@ func TestJSONAndEnvSecretFormatsRejectedRedactedAndInjectedSafely(t *testing.T) 
 				t.Fatalf("prompt contains secret: %+v", injection)
 			}
 
-			if _, err := store.db.Exec("UPDATE memory_entry SET content = ? WHERE id = ?", format.content, entry.ID); err != nil {
+			if err := store.db.Model(&entryRow{}).Where("id = ?", entry.ID).Update("content", format.content).Error; err != nil {
 				t.Fatal(err)
 			}
 			injection, err = store.Inject(ctx, testScope, nil, Selection{}, Budget{})
@@ -491,27 +485,6 @@ func TestConcurrentEditsAcrossStoresHonorCAS(t *testing.T) {
 	got, err := first.Get(ctx, testScope, entry.ID)
 	if err != nil || got != winner {
 		t.Fatalf("final entry = %+v, winner = %+v, err = %v", got, winner, err)
-	}
-}
-
-func TestFutureSchemaVersionIsRejected(t *testing.T) {
-	ctx := context.Background()
-	store, path := newMemoryStore(t)
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion+1)); err != nil {
-		t.Fatal(err)
-	}
-	if err := raw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(ctx, path); err == nil || !strings.Contains(err.Error(), "unsupported semantic memory schema version") {
-		t.Fatalf("future schema open err = %v", err)
 	}
 }
 

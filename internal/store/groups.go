@@ -6,56 +6,48 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
-
-const groupColumns = "id, parent_id, name, sort, created_at, updated_at"
 
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanGroup(row rowScanner) (AssetGroupRow, error) {
-	var result AssetGroupRow
-	err := row.Scan(&result.ID, &result.ParentID, &result.Name, &result.Sort, &result.CreatedAt, &result.UpdatedAt)
-	return result, err
-}
-
 func (s *Store) GroupList(ctx context.Context) ([]AssetGroupRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, "SELECT "+groupColumns+" FROM asset_group WHERE 1=1"+condition+" ORDER BY sort, name", args...)
+	group := query.Use(s.db).AssetGroupRow
+	result := []AssetGroupRow{}
+	err := group.WithContext(ctx).
+		Where(ownerConditions(ctx, group.TableName())...).
+		Order(group.Sort, group.Name).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []AssetGroupRow{}
-	for rows.Next() {
-		row, err := scanGroup(rows)
-		if err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) GroupGet(ctx context.Context, id string) (AssetGroupRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	row, err := scanGroup(s.db.QueryRowContext(ctx, "SELECT "+groupColumns+" FROM asset_group WHERE id = ?"+condition, append([]any{id}, args...)...))
+	group := query.Use(s.db).AssetGroupRow
+	row, err := group.WithContext(ctx).
+		Where(group.ID.Eq(id)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		First()
 	if isNoRows(err) {
 		return AssetGroupRow{}, notFound("分组")
 	}
 	if err != nil {
 		return AssetGroupRow{}, dbError(err)
 	}
-	return row, nil
+	return *row, nil
 }
 
 func (s *Store) GroupCreate(ctx context.Context, input GroupInput) (AssetGroupRow, error) {
 	id := ids.New()
 	now := ids.NowMS()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO asset_group(owner_id, id, parent_id, name, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?)`, ipc.OwnerID(ctx), id, input.ParentID, input.Name, input.Sort, now, now)
-	if err != nil {
+	row := AssetGroupRow{ID: id, ParentID: input.ParentID, Name: input.Name, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	if err := query.Use(s.db).AssetGroupRow.WithContext(ctx).Create(&row); err != nil {
 		return AssetGroupRow{}, dbError(err)
 	}
 	return s.GroupGet(ctx, id)
@@ -81,27 +73,31 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 	if row.ParentID != nil {
 		cursor := *row.ParentID
 		for depth := 0; depth <= 32; depth++ {
-			var parent *string
-			parentCondition, parentArgs := ipc.OwnerCondition(ctx, "owner_id")
-			err := s.db.QueryRowContext(ctx, "SELECT parent_id FROM asset_group WHERE id = ?"+parentCondition, append([]any{cursor}, parentArgs...)...).Scan(&parent)
+			group := query.Use(s.db).AssetGroupRow
+			parent, err := group.WithContext(ctx).
+				Where(group.ID.Eq(cursor)).
+				Where(ownerConditions(ctx, group.TableName())...).
+				First()
 			if isNoRows(err) {
 				break
 			}
 			if err != nil {
 				return AssetGroupRow{}, dbError(err)
 			}
-			if parent == nil {
+			if parent.ParentID == nil {
 				break
 			}
-			if *parent == id {
+			if *parent.ParentID == id {
 				return AssetGroupRow{}, badParam(errString("不允许将分组移动到其后代分组下"))
 			}
-			cursor = *parent
+			cursor = *parent.ParentID
 		}
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err = s.db.ExecContext(ctx, "UPDATE asset_group SET name=?, parent_id=?, sort=?, updated_at=? WHERE id = ?"+condition,
-		append([]any{row.Name, row.ParentID, row.Sort, ids.NowMS(), id}, args...)...)
+	group := query.Use(s.db).AssetGroupRow
+	_, err = group.WithContext(ctx).
+		Where(group.ID.Eq(id)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		UpdateColumns(map[string]any{"name": row.Name, "parent_id": row.ParentID, "sort": row.Sort, "updated_at": ids.NowMS()})
 	if err != nil {
 		return AssetGroupRow{}, dbError(err)
 	}
@@ -109,8 +105,20 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 }
 
 func (s *Store) GroupDelete(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "DELETE FROM asset_group WHERE id = ?"+condition, append([]any{id}, args...)...)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		group := queries.AssetGroupRow
+		if _, err := group.WithContext(ctx).
+			Where(group.ID.Eq(id)).
+			Where(ownerConditions(ctx, group.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		tombstone := queries.SyncTombstone
+		return tombstone.WithContext(ctx).
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
+			Create(&SyncTombstone{ID: id, Kind: "group", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+	})
 	if err != nil {
 		return dbError(err)
 	}
@@ -124,20 +132,18 @@ func (s *Store) GroupUpsert(ctx context.Context, id string, parentID *string, na
 	if strings.TrimSpace(name) == "" {
 		return false, badParam(errString("分组名称不能为空"))
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	var ignored string
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM asset_group WHERE id = ?"+condition, append([]any{id}, args...)...).Scan(&ignored)
+	group := query.Use(s.db).AssetGroupRow
+	_, err := group.WithContext(ctx).
+		Where(group.ID.Eq(id)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		First()
 	exists := err == nil
 	if err != nil && !isNoRows(err) {
 		return false, dbError(err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO asset_group(owner_id, id, parent_id, name, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, name=excluded.name,
-sort=excluded.sort, updated_at=excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), id, parentID, strings.TrimSpace(name), sort, createdAt, updatedAt, ipc.OwnerID(ctx))
-	if err != nil {
-		return false, dbError(err)
+	row := AssetGroupRow{ID: id, ParentID: parentID, Name: strings.TrimSpace(name), Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt, OwnerID: ipc.OwnerID(ctx)}
+	if err := s.upsert(ctx, &row, []string{"parent_id", "name", "sort", "updated_at"}); err != nil {
+		return false, err
 	}
 	return !exists, nil
 }

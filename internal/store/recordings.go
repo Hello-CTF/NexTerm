@@ -5,21 +5,24 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func (s *Store) RecordingStart(ctx context.Context, sessionID, tabID, path string) (string, error) {
 	id := ids.New()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO terminal_recording(owner_id, id, session_id, tab_id, path, bytes, started_at)
-VALUES(?,?,?,?,?,0,?)`, ipc.OwnerID(ctx), id, sessionID, tabID, path, ids.NowMS())
-	if err != nil {
+	row := RecordingRow{ID: id, SessionID: sessionID, TabID: tabID, Path: path, StartedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	if err := query.Use(s.db).RecordingRow.WithContext(ctx).Create(&row); err != nil {
 		return "", dbError(err)
 	}
 	return id, nil
 }
 
 func (s *Store) RecordingUpdateBytes(ctx context.Context, id string, bytes int64) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "UPDATE terminal_recording SET bytes=? WHERE id = ?"+condition, append([]any{bytes, id}, args...)...)
+	recording := query.Use(s.db).RecordingRow
+	_, err := recording.WithContext(ctx).
+		Where(recording.ID.Eq(id)).
+		Where(ownerConditions(ctx, recording.TableName())...).
+		UpdateColumns(map[string]any{"bytes": bytes})
 	if err != nil {
 		return dbError(err)
 	}
@@ -27,8 +30,11 @@ func (s *Store) RecordingUpdateBytes(ctx context.Context, id string, bytes int64
 }
 
 func (s *Store) RecordingEnd(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "UPDATE terminal_recording SET ended_at=? WHERE id = ?"+condition, append([]any{ids.NowMS(), id}, args...)...)
+	recording := query.Use(s.db).RecordingRow
+	_, err := recording.WithContext(ctx).
+		Where(recording.ID.Eq(id)).
+		Where(ownerConditions(ctx, recording.TableName())...).
+		UpdateColumns(map[string]any{"ended_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}
@@ -36,21 +42,15 @@ func (s *Store) RecordingEnd(ctx context.Context, id string) error {
 }
 
 func (s *Store) RecordingList(ctx context.Context) ([]RecordingRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, tab_id, path, bytes, started_at, ended_at
-FROM terminal_recording WHERE 1=1`+condition+` ORDER BY started_at DESC LIMIT 200`, args...)
+	recording := query.Use(s.db).RecordingRow
+	result := []RecordingRow{}
+	err := recording.WithContext(ctx).
+		Where(ownerConditions(ctx, recording.TableName())...).
+		Order(recording.StartedAt.Desc()).
+		Limit(200).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []RecordingRow{}
-	for rows.Next() {
-		var row RecordingRow
-		if err := rows.Scan(&row.ID, &row.SessionID, &row.TabID, &row.Path, &row.Bytes,
-			&row.StartedAt, &row.EndedAt); err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }

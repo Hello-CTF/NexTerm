@@ -38,7 +38,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -49,6 +48,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -103,7 +105,7 @@ func permissionFor(write bool) Permission {
 }
 
 type Config struct {
-	DB       *sql.DB
+	DB       *gorm.DB
 	Accounts *account.Accounts
 }
 
@@ -113,7 +115,7 @@ type Config struct {
 type AgentProbeFunc func(ctx context.Context, deviceID string) error
 
 type Service struct {
-	db             *sql.DB
+	db             *gorm.DB
 	accounts       *account.Accounts
 	now            func() int64
 	agentStaleness time.Duration
@@ -204,12 +206,16 @@ type auditPayload struct {
 }
 
 func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) error {
+	return s.writeAudit(ctx, kind, payload)
+}
+
+func (s *Service) writeAudit(ctx context.Context, kind string, payload any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,NULL,NULL,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
+	row := store.AuditRow{TS: s.now(), Source: auditSourceSharing, Kind: kind, PayloadJSON: string(encoded), OwnerID: ipc.OwnerID(ctx)}
+	if err := query.Use(s.db).AuditRow.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -222,19 +228,15 @@ type deviceGrant struct {
 }
 
 func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant, error) {
-	var grant deviceGrant
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).
-		Scan(&grant.userID, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
-	grant.deviceID = deviceID
-	grant.revoked = revokedAt.Valid
-	return &grant, nil
+	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
 }
 
 // authorizeDevice 判定设备归属并给出 outcome/reason, 不写审计。
@@ -269,20 +271,18 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 // 且当前 owner 与 Grant.OwnerID 一致 (设备易主后旧授权立即失效); 返回机器
 // 可读的拒绝原因 ("" 表示通过)。
 func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string, error) {
-	var ownerID string
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", grant.DeviceID).
-		Scan(&ownerID, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(grant.DeviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "device_not_found", ipc.NewError(ipc.CodeForbidden, "设备不存在")
 	}
 	if err != nil {
 		return "", dbError(err)
 	}
-	if revokedAt.Valid {
+	if device.RevokedAt != nil {
 		return "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
-	if ownerID != grant.OwnerID {
+	if device.UserID != grant.OwnerID {
 		return "owner_mismatch", ipc.NewError(ipc.CodeForbidden, "设备归属与授权不一致")
 	}
 	return "", nil
@@ -291,20 +291,18 @@ func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string,
 // requireDaemon 限定分享目标为 daemon 主机: 必须有 device_agent 记录且终端
 // 功能开启; last_seen 超过 staleness 窗口视为代理离线。
 func (s *Service) requireDaemon(ctx context.Context, deviceID string) error {
-	var terminalEnabled int
-	var lastSeenAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT terminal_enabled, last_seen_at FROM device_agent WHERE device_id = ?", deviceID).
-		Scan(&terminalEnabled, &lastSeenAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	deviceAgent := query.Use(s.db).DeviceAgent
+	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ipc.NewError(ipc.CodeForbidden, "设备未接入代理")
 	}
 	if err != nil {
 		return dbError(err)
 	}
-	if terminalEnabled == 0 {
+	if !agent.TerminalEnabled {
 		return ipc.NewError(ipc.CodeForbidden, "设备终端功能已禁用")
 	}
-	if !lastSeenAt.Valid || s.now()-lastSeenAt.Int64 > s.agentStaleness.Milliseconds() {
+	if agent.LastSeenAt == nil || s.now()-*agent.LastSeenAt > s.agentStaleness.Milliseconds() {
 		return ipc.NewError(ipc.CodeDisconnected, "设备代理离线")
 	}
 	if s.agentProbe != nil {

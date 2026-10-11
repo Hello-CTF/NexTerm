@@ -2,7 +2,6 @@ package sharing
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -12,12 +11,14 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 type serviceFixture struct {
 	service  *Service
 	accounts *account.Accounts
-	db       *sql.DB
+	db       *gorm.DB
 	now      int64
 }
 
@@ -28,9 +29,9 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
-	fixture := &serviceFixture{accounts: accounts, db: database.DB(), now: time.Now().UnixMilli()}
-	service, err := New(Config{DB: database.DB(), Accounts: accounts}, WithNow(func() int64 { return fixture.now }))
+	accounts := account.New(database.GORM())
+	fixture := &serviceFixture{accounts: accounts, db: database.GORM(), now: time.Now().UnixMilli()}
+	service, err := New(Config{DB: database.GORM(), Accounts: accounts}, WithNow(func() int64 { return fixture.now }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +68,8 @@ func (f *serviceFixture) identity(user *account.User) *account.Identity {
 func (f *serviceFixture) createDevice(t *testing.T, owner *account.User, name string) string {
 	t.Helper()
 	deviceID := ids.New()
-	if _, err := f.db.ExecContext(context.Background(), `INSERT INTO user_device(id, user_id, name, kind, created_at)
-VALUES(?,?,?,?,?)`, deviceID, owner.ID, name, "desktop", f.now); err != nil {
+	row := store.UserDevice{ID: deviceID, UserID: owner.ID, Name: name, Kind: "desktop", CreatedAt: f.now}
+	if err := query.Use(f.db).UserDevice.WithContext(context.Background()).Create(&row); err != nil {
 		t.Fatal(err)
 	}
 	return deviceID
@@ -77,16 +78,18 @@ VALUES(?,?,?,?,?)`, deviceID, owner.ID, name, "desktop", f.now); err != nil {
 func (f *serviceFixture) createAgentDevice(t *testing.T, owner *account.User, name string) string {
 	t.Helper()
 	deviceID := f.createDevice(t, owner, name)
-	if _, err := f.db.ExecContext(context.Background(), `UPDATE user_device SET kind = 'agent' WHERE id = ?`, deviceID); err != nil {
+	userDevice := query.Use(f.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"kind": "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	credentialID := ids.New()
-	if _, err := f.db.ExecContext(context.Background(), `INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at)
-VALUES(?,?,?,?,?,?)`, credentialID, owner.ID, deviceID, "device-agent", "test-secret-"+credentialID, f.now); err != nil {
+	credential := store.SyncCredential{ID: credentialID, UserID: owner.ID, DeviceID: deviceID, Purpose: "device-agent", SecretHash: "test-secret-" + credentialID, CreatedAt: f.now}
+	if err := query.Use(f.db).SyncCredential.WithContext(context.Background()).Create(&credential); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(context.Background(), `INSERT INTO device_agent(device_id, credential_id, platform, created_at, last_seen_at)
-VALUES(?,?,?,?,?)`, deviceID, credentialID, "linux", f.now, f.now); err != nil {
+	lastSeen := f.now
+	agent := store.DeviceAgent{DeviceID: deviceID, CredentialID: credentialID, Platform: "linux", CreatedAt: f.now, LastSeenAt: &lastSeen}
+	if err := query.Use(f.db).DeviceAgent.WithContext(context.Background()).Create(&agent); err != nil {
 		t.Fatal(err)
 	}
 	return deviceID
@@ -111,9 +114,11 @@ func (f *serviceFixture) insertHostShare(_ context.Context, identity *account.Id
 		RecipientID: recipient.ID, RecipientUsername: recipient.Username, Permission: permissionFor(write),
 		CreatedAt: now, ExpiresAt: now + ttl.Milliseconds(),
 	}
-	_, err = f.db.ExecContext(context.Background(), `INSERT INTO host_share(id, owner_id, device_id, recipient_id, permission, created_at, expires_at)
-VALUES(?,?,?,?,?,?,?)`, share.ID, share.OwnerID, share.DeviceID, share.RecipientID, string(share.Permission), share.CreatedAt, share.ExpiresAt)
-	if err != nil {
+	row := store.HostShare{
+		ID: share.ID, OwnerID: share.OwnerID, DeviceID: share.DeviceID, RecipientID: share.RecipientID,
+		Permission: string(share.Permission), CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt,
+	}
+	if err := query.Use(f.db).HostShare.WithContext(context.Background()).Create(&row); err != nil {
 		return nil, err
 	}
 	return share, nil
@@ -125,26 +130,26 @@ func (f *serviceFixture) setAgentOnline(t *testing.T, deviceID string, online bo
 	if online {
 		lastSeen = f.now
 	}
-	if _, err := f.db.ExecContext(context.Background(), "UPDATE device_agent SET last_seen_at = ? WHERE device_id = ?", lastSeen, deviceID); err != nil {
+	deviceAgent := query.Use(f.db).DeviceAgent
+	if _, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).UpdateColumns(map[string]any{"last_seen_at": lastSeen}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (f *serviceFixture) auditRows(t *testing.T, kind string) []map[string]any {
 	t.Helper()
-	rows, err := f.db.QueryContext(context.Background(), "SELECT payload_json FROM audit_log WHERE source = ? AND kind = ? ORDER BY id", auditSourceSharing, kind)
+	audit := query.Use(f.db).AuditRow
+	rows, err := audit.WithContext(context.Background()).
+		Where(audit.Source.Eq(auditSourceSharing), audit.Kind.Eq(kind)).
+		Order(audit.ID).
+		Find()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
 	var payloads []map[string]any
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			t.Fatal(err)
-		}
+	for _, row := range rows {
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 			t.Fatal(err)
 		}
 		payloads = append(payloads, payload)

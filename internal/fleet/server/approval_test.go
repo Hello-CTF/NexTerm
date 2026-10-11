@@ -2,12 +2,12 @@ package fleetserver
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestFleetEnrollFirstDeviceAutoActive(t *testing.T) {
@@ -18,9 +18,10 @@ func TestFleetEnrollFirstDeviceAutoActive(t *testing.T) {
 	if first.State != DeviceStateActive {
 		t.Fatalf("first device state=%q, want %q", first.State, DeviceStateActive)
 	}
-	var state string
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT state FROM user_device WHERE id = ?", first.DeviceID).Scan(&state); err != nil || state != DeviceStateActive {
-		t.Fatalf("db state=%q err=%v", state, err)
+	userDevice := query.Use(fixture.db).UserDevice
+	device, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(first.DeviceID)).First()
+	if err != nil || device.State != DeviceStateActive {
+		t.Fatalf("db state=%q err=%v", device.State, err)
 	}
 	second := fixture.enrollAgent(t, alice, "second-host")
 	if second.State != DeviceStatePending {
@@ -65,9 +66,10 @@ func TestFleetPendingDeviceApproveLifecycle(t *testing.T) {
 	} else {
 		requireIPCCode(t, err, ipc.CodeDevicePending)
 	}
-	var lastSeen sql.NullInt64
-	if err := fixture.db.QueryRowContext(context.Background(), "SELECT last_seen_at FROM user_device WHERE id = ?", pending.DeviceID).Scan(&lastSeen); err != nil || lastSeen.Valid {
-		t.Fatalf("pending device must not touch heartbeat, last_seen=%v err=%v", lastSeen, err)
+	userDevice := query.Use(fixture.db).UserDevice
+	pendingRow, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(pending.DeviceID)).First()
+	if err != nil || pendingRow.LastSeenAt != nil {
+		t.Fatalf("pending device must not touch heartbeat, last_seen=%v err=%v", pendingRow.LastSeenAt, err)
 	}
 
 	if err := fixture.service.ApproveDevice(context.Background(), fixture.identity(root), pending.DeviceID); err != nil {
@@ -149,14 +151,18 @@ func TestFleetRejectDevice(t *testing.T) {
 	if err := fixture.service.RejectDevice(context.Background(), fixture.identity(root), pending.DeviceID); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
-	for table, column := range map[string]string{"user_device": "id", "device_agent": "device_id", "sync_credential": "device_id"} {
-		var count int
-		if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table+" WHERE "+column+" = ?", pending.DeviceID).Scan(&count); err != nil {
-			t.Fatalf("%s: %v", table, err)
-		}
-		if count != 0 {
-			t.Fatalf("%s rows=%d after reject", table, count)
-		}
+	ctx := context.Background()
+	userDevice := query.Use(fixture.db).UserDevice
+	if count, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(pending.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("user_device rows=%d err=%v after reject", count, err)
+	}
+	deviceAgent := query.Use(fixture.db).DeviceAgent
+	if count, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(pending.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("device_agent rows=%d err=%v after reject", count, err)
+	}
+	syncCredential := query.Use(fixture.db).SyncCredential
+	if count, err := syncCredential.WithContext(ctx).Where(syncCredential.DeviceID.Eq(pending.DeviceID)).Count(); err != nil || count != 0 {
+		t.Fatalf("sync_credential rows=%d err=%v after reject", count, err)
 	}
 	if _, err := fixture.service.AuthenticateAgent(context.Background(), pending.DeviceID, pending.Secret); err == nil {
 		t.Fatal("rejected device must not authenticate")

@@ -2,31 +2,30 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-const entryColumns = "topic, content, version, redacted, created_at, updated_at, tenant, subject"
-
-type rowQueryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+func entryFromRow(row entryRow) Entry {
+	return Entry{
+		ID: row.ID, Topic: row.Topic, Content: row.Content, Version: row.Version, Redacted: row.Redacted,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 }
 
-func loadEntry(ctx context.Context, queryer rowQueryer, id string) (Entry, Scope, error) {
-	entry := Entry{ID: id}
-	var owner Scope
-	err := queryer.QueryRowContext(ctx, "SELECT "+entryColumns+" FROM memory_entry WHERE id = ?", id).Scan(
-		&entry.Topic, &entry.Content, &entry.Version, &entry.Redacted, &entry.CreatedAt, &entry.UpdatedAt,
-		&owner.Tenant, &owner.Subject,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
+func loadEntry(ctx context.Context, db *gorm.DB, id string) (Entry, Scope, error) {
+	var row entryRow
+	err := db.WithContext(ctx).Where("id = ?", id).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Entry{}, Scope{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	if err != nil {
 		return Entry{}, Scope{}, fmt.Errorf("read semantic memory: %w", err)
 	}
-	return entry, owner, nil
+	return entryFromRow(row), Scope{Tenant: row.Tenant, Subject: row.Subject}, nil
 }
 
 func authorize(owner, scope Scope) error {
@@ -60,11 +59,11 @@ func (s *Store) Create(ctx context.Context, scope Scope, input CreateInput) (Ent
 	if err := validateID(entry.ID); err != nil {
 		return Entry{}, fmt.Errorf("generate semantic memory ID: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO memory_entry
-		(id, tenant, subject, topic, content, version, redacted, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, entry.ID, scope.Tenant, scope.Subject, entry.Topic, entry.Content,
-		entry.Version, entry.Redacted, entry.CreatedAt, entry.UpdatedAt)
-	if err != nil {
+	row := entryRow{
+		ID: entry.ID, Tenant: scope.Tenant, Subject: scope.Subject, Topic: entry.Topic, Content: entry.Content,
+		Version: entry.Version, Redacted: entry.Redacted, CreatedAt: entry.CreatedAt, UpdatedAt: entry.UpdatedAt,
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return Entry{}, fmt.Errorf("create semantic memory: %w", err)
 	}
 	return entry, nil
@@ -123,51 +122,45 @@ func (s *Store) Edit(ctx context.Context, scope Scope, id string, expectedVersio
 		return Entry{}, fmt.Errorf("%w: secret policy requires content", ErrInvalidInput)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Entry{}, fmt.Errorf("begin semantic memory edit: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	var next Entry
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, owner, err := loadEntry(ctx, tx, id)
+		if err != nil {
+			return err
 		}
-	}()
-	current, owner, err := loadEntry(ctx, tx, id)
+		if err := authorize(owner, scope); err != nil {
+			return err
+		}
+		if current.Version != expectedVersion {
+			return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
+		}
+		next = current
+		if input.Topic != nil {
+			next.Topic = topic
+		}
+		if input.Content != nil {
+			next.Content = content
+			next.Redacted = redacted
+		}
+		next.Version++
+		next.UpdatedAt = s.now()
+		result := tx.Model(&entryRow{}).
+			Where("id = ? AND tenant = ? AND subject = ? AND version = ?", id, scope.Tenant, scope.Subject, expectedVersion).
+			Updates(map[string]any{
+				"topic": next.Topic, "content": next.Content, "version": next.Version,
+				"redacted": next.Redacted, "updated_at": next.UpdatedAt,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("edit semantic memory: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
+		}
+		return nil
+	})
 	if err != nil {
 		return Entry{}, err
 	}
-	if err := authorize(owner, scope); err != nil {
-		return Entry{}, err
-	}
-	if current.Version != expectedVersion {
-		return Entry{}, &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
-	}
-	next := current
-	if input.Topic != nil {
-		next.Topic = topic
-	}
-	if input.Content != nil {
-		next.Content = content
-		next.Redacted = redacted
-	}
-	next.Version++
-	next.UpdatedAt = s.now()
-	result, err := tx.ExecContext(ctx, `UPDATE memory_entry
-		SET topic = ?, content = ?, version = ?, redacted = ?, updated_at = ?
-		WHERE id = ? AND tenant = ? AND subject = ? AND version = ?`,
-		next.Topic, next.Content, next.Version, next.Redacted, next.UpdatedAt,
-		id, scope.Tenant, scope.Subject, expectedVersion)
-	if err != nil {
-		return Entry{}, fmt.Errorf("edit semantic memory: %w", err)
-	}
-	if err := exactlyOneRow(result); err != nil {
-		return Entry{}, &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
-	}
-	if err := tx.Commit(); err != nil {
-		return Entry{}, fmt.Errorf("commit semantic memory edit: %w", err)
-	}
-	committed = true
 	return next, nil
 }
 
@@ -182,51 +175,27 @@ func (s *Store) Delete(ctx context.Context, scope Scope, id string, expectedVers
 	if expectedVersion == 0 {
 		return fmt.Errorf("%w: expected version must be positive", ErrInvalidInput)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin semantic memory delete: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, owner, err := loadEntry(ctx, tx, id)
+		if err != nil {
+			return err
 		}
-	}()
-	current, owner, err := loadEntry(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	if err := authorize(owner, scope); err != nil {
-		return err
-	}
-	if current.Version != expectedVersion {
-		return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
-	}
-	result, err := tx.ExecContext(ctx,
-		"DELETE FROM memory_entry WHERE id = ? AND tenant = ? AND subject = ? AND version = ?",
-		id, scope.Tenant, scope.Subject, expectedVersion)
-	if err != nil {
-		return fmt.Errorf("delete semantic memory: %w", err)
-	}
-	if err := exactlyOneRow(result); err != nil {
-		return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit semantic memory delete: %w", err)
-	}
-	committed = true
-	return nil
-}
-
-func exactlyOneRow(result sql.Result) error {
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return fmt.Errorf("expected one affected row, got %d", count)
-	}
-	return nil
+		if err := authorize(owner, scope); err != nil {
+			return err
+		}
+		if current.Version != expectedVersion {
+			return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
+		}
+		result := tx.Where("id = ? AND tenant = ? AND subject = ? AND version = ?",
+			id, scope.Tenant, scope.Subject, expectedVersion).Delete(&entryRow{})
+		if result.Error != nil {
+			return fmt.Errorf("delete semantic memory: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return &VersionConflictError{ID: id, Expected: expectedVersion, Actual: current.Version}
+		}
+		return nil
+	})
 }
 
 func (s *Store) Index(ctx context.Context, scope Scope) ([]TopicIndex, error) {
@@ -234,26 +203,21 @@ func (s *Store) Index(ctx context.Context, scope Scope) ([]TopicIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT topic, id, version, redacted, updated_at
-		FROM memory_entry WHERE tenant = ? AND subject = ? ORDER BY topic, id`, scope.Tenant, scope.Subject)
-	if err != nil {
+	var rows []entryRow
+	if err := s.db.WithContext(ctx).
+		Select("topic", "id", "version", "redacted", "updated_at").
+		Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).
+		Order("topic, id").
+		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("index semantic memory: %w", err)
 	}
-	defer rows.Close()
 	result := []TopicIndex{}
-	for rows.Next() {
-		var topic string
-		var item IndexEntry
-		if err := rows.Scan(&topic, &item.ID, &item.Version, &item.Redacted, &item.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan semantic memory index: %w", err)
-		}
-		if len(result) == 0 || result[len(result)-1].Topic != topic {
-			result = append(result, TopicIndex{Topic: topic, Entries: []IndexEntry{}})
+	for _, row := range rows {
+		item := IndexEntry{ID: row.ID, Version: row.Version, Redacted: row.Redacted, UpdatedAt: row.UpdatedAt}
+		if len(result) == 0 || result[len(result)-1].Topic != row.Topic {
+			result = append(result, TopicIndex{Topic: row.Topic, Entries: []IndexEntry{}})
 		}
 		result[len(result)-1].Entries = append(result[len(result)-1].Entries, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate semantic memory index: %w", err)
 	}
 	return result, nil
 }
@@ -267,16 +231,15 @@ func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	var settings Settings
-	err = s.db.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
-		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).Scan(&settings.InjectionEnabled, &settings.ToolsEnabled, &settings.Version)
-	if errors.Is(err, sql.ErrNoRows) {
+	var row settingsRow
+	err = s.db.WithContext(ctx).Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return defaultSettings(), nil
 	}
 	if err != nil {
 		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
 	}
-	return settings, nil
+	return Settings{InjectionEnabled: row.InjectionEnabled, ToolsEnabled: row.ToolsEnabled, Version: row.Version}, nil
 }
 
 func (s *Store) SetInjectionEnabled(ctx context.Context, scope Scope, enabled bool, expectedVersion uint64) (Settings, error) {
@@ -291,48 +254,43 @@ func (s *Store) UpdateSettings(ctx context.Context, scope Scope, input SettingsI
 	if input.InjectionEnabled == nil && input.ToolsEnabled == nil {
 		return Settings{}, fmt.Errorf("%w: settings update requires at least one flag", ErrInvalidInput)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Settings{}, fmt.Errorf("begin semantic memory settings update: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	var next Settings
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current Settings
+		var row settingsRow
+		err := tx.Where("tenant = ? AND subject = ?", scope.Tenant, scope.Subject).First(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			current = defaultSettings()
+		} else if err != nil {
+			return fmt.Errorf("read semantic memory settings: %w", err)
+		} else {
+			current = Settings{InjectionEnabled: row.InjectionEnabled, ToolsEnabled: row.ToolsEnabled, Version: row.Version}
 		}
-	}()
-	var current Settings
-	err = tx.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
-		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).
-		Scan(&current.InjectionEnabled, &current.ToolsEnabled, &current.Version)
-	if errors.Is(err, sql.ErrNoRows) {
-		current = defaultSettings()
-	} else if err != nil {
-		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
-	}
-	if current.Version != expectedVersion {
-		return Settings{}, &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
-	}
-	next := current
-	if input.InjectionEnabled != nil {
-		next.InjectionEnabled = *input.InjectionEnabled
-	}
-	if input.ToolsEnabled != nil {
-		next.ToolsEnabled = *input.ToolsEnabled
-	}
-	next.Version = current.Version + 1
-	_, err = tx.ExecContext(ctx, `INSERT INTO memory_settings
-		(tenant, subject, injection_enabled, tools_enabled, version, updated_at) VALUES(?,?,?,?,?,?)
-		ON CONFLICT(tenant, subject) DO UPDATE SET
-		injection_enabled = excluded.injection_enabled, tools_enabled = excluded.tools_enabled,
-		version = excluded.version, updated_at = excluded.updated_at`,
-		scope.Tenant, scope.Subject, next.InjectionEnabled, next.ToolsEnabled, next.Version, s.now())
+		if current.Version != expectedVersion {
+			return &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
+		}
+		next = current
+		if input.InjectionEnabled != nil {
+			next.InjectionEnabled = *input.InjectionEnabled
+		}
+		if input.ToolsEnabled != nil {
+			next.ToolsEnabled = *input.ToolsEnabled
+		}
+		next.Version = current.Version + 1
+		write := settingsRow{
+			Tenant: scope.Tenant, Subject: scope.Subject, InjectionEnabled: next.InjectionEnabled,
+			ToolsEnabled: next.ToolsEnabled, Version: next.Version, UpdatedAt: s.now(),
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "tenant"}, {Name: "subject"}},
+			DoUpdates: clause.AssignmentColumns([]string{"injection_enabled", "tools_enabled", "version", "updated_at"}),
+		}).Create(&write).Error; err != nil {
+			return fmt.Errorf("update semantic memory settings: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return Settings{}, fmt.Errorf("update semantic memory settings: %w", err)
+		return Settings{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Settings{}, fmt.Errorf("commit semantic memory settings update: %w", err)
-	}
-	committed = true
 	return next, nil
 }

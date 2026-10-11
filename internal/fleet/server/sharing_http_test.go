@@ -20,6 +20,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/coder/websocket"
 )
@@ -440,24 +441,7 @@ func createShareLink(t *testing.T, f *httpFixture, session *httpSession, deviceI
 
 func auditPayloads(t *testing.T, f *httpFixture, kind string) []map[string]any {
 	t.Helper()
-	rows, err := f.service.db.QueryContext(context.Background(), "SELECT payload_json FROM audit_log WHERE source = ? AND kind = ? ORDER BY id", "sharing", kind)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var payloads []map[string]any
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			t.Fatal(err)
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			t.Fatal(err)
-		}
-		payloads = append(payloads, payload)
-	}
-	return payloads
+	return auditPayloadRows(t, f.service.db, "sharing", kind)
 }
 
 func TestShareLinkManagement(t *testing.T) {
@@ -700,7 +684,10 @@ func TestSharePublicTerminalExpiryStopsStream(t *testing.T) {
 	// 只读链接走 discardInput 路径, 覆盖读 ctx 取消误杀连接的回归 (SHARE138)。
 	collector.expectReady(t, "read")
 
-	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE share_link SET expires_at = ? WHERE device_id = ?", time.Now().UnixMilli()-1000, device.deviceID); err != nil {
+	shareLink := query.Use(f.service.db).ShareLink
+	if _, err := shareLink.WithContext(context.Background()).
+		Where(shareLink.DeviceID.Eq(device.deviceID)).
+		UpdateColumns(map[string]any{"expires_at": time.Now().UnixMilli() - 1000}); err != nil {
 		t.Fatal(err)
 	}
 	errorFrame := collector.expectErrorFrame(t, 10*time.Second)

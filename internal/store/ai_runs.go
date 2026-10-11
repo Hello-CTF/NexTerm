@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -25,26 +27,7 @@ type RunErrorCounts struct {
 	Failures int64
 }
 
-type RunRow struct {
-	ID                  string
-	ConversationID      string
-	Status              string
-	Attempt             int64
-	Seq                 uint64
-	PlanMode            bool
-	Source              string
-	ProfileID           string
-	Answer              string
-	Turns               int
-	TokensIn            int64
-	TokensOut           int64
-	CacheCreationTokens int64
-	LatencyMS           int64
-	Error               string
-	CreatedAt           int64
-	UpdatedAt           int64
-	FinishedAt          *int64
-}
+type RunRow = model.RunRow
 
 type RunUsageSummaryRow struct {
 	Source              string `json:"source"`
@@ -56,37 +39,13 @@ type RunUsageSummaryRow struct {
 	AverageLatencyMS    int64  `json:"averageLatencyMs"`
 }
 
-type RunEventRow struct {
-	RunID       string
-	Seq         uint64
-	Type        string
-	PayloadJSON string
-	CreatedAt   int64
-}
+type RunEventRow = model.RunEventRow
 
-type HitlRunRow struct {
-	ID        string
-	Data      []byte
-	UpdatedAt int64
-}
+type HitlRunRow = model.HitlRunRow
 
-func scanRun(row rowScanner) (RunRow, error) {
-	var result RunRow
-	var planMode int
-	err := row.Scan(&result.ID, &result.ConversationID, &result.Status, &result.Attempt, &result.Seq,
-		&planMode, &result.Source, &result.ProfileID, &result.Answer, &result.Turns, &result.TokensIn, &result.TokensOut,
-		&result.CacheCreationTokens, &result.LatencyMS, &result.Error, &result.CreatedAt, &result.UpdatedAt, &result.FinishedAt)
-	result.PlanMode = planMode != 0
-	return result, err
-}
-
-const runColumns = `id, conversation_id, status, attempt, seq, plan_mode, source, profile_id, answer, turns, tokens_in, tokens_out, cache_creation_tokens, latency_ms, error, created_at, updated_at, finished_at`
+type CheckpointRow = model.CheckpointRow
 
 func (s *Store) RunInsert(ctx context.Context, run RunRow) error {
-	planMode := 0
-	if run.PlanMode {
-		planMode = 1
-	}
 	if run.Source == "" {
 		run.Source = "chat"
 	}
@@ -100,108 +59,106 @@ func (s *Store) RunInsert(ctx context.Context, run RunRow) error {
 	if _, err := s.ConvGet(ctx, run.ConversationID); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_run(owner_id, `+runColumns+`)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		ipc.OwnerID(ctx), run.ID, run.ConversationID, run.Status, run.Attempt, run.Seq, planMode, run.Source, run.ProfileID,
-		run.Answer, run.Turns, run.TokensIn, run.TokensOut, run.CacheCreationTokens, run.LatencyMS, run.Error, run.CreatedAt, run.UpdatedAt, run.FinishedAt)
-	if err != nil {
+	run.OwnerID = ipc.OwnerID(ctx)
+	if err := query.Use(s.db).RunRow.WithContext(ctx).Create(&run); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	row, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE id = ?`+condition, append([]any{id}, args...)...))
+	run := query.Use(s.db).RunRow
+	row, err := run.WithContext(ctx).
+		Where(run.ID.Eq(id)).
+		Where(ownerConditions(ctx, run.TableName())...).
+		First()
 	if isNoRows(err) {
 		return RunRow{}, notFound("AI 运行")
 	}
 	if err != nil {
 		return RunRow{}, dbError(err)
 	}
-	return row, nil
+	return *row, nil
 }
 
 func (s *Store) RunList(ctx context.Context, conversationID string, limit int) ([]RunRow, error) {
-	query := `SELECT ` + runColumns + ` FROM ai_run WHERE source != ?`
-	args := []any{RunSourceTitle}
-	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	query += condition
-	args = append(args, ownerArgs...)
+	run := query.Use(s.db).RunRow
+	q := run.WithContext(ctx).
+		Where(run.Source.Neq(RunSourceTitle)).
+		Where(ownerConditions(ctx, run.TableName())...)
 	if conversationID != "" {
-		query += ` AND conversation_id = ?`
-		args = append(args, conversationID)
+		q = q.Where(run.ConversationID.Eq(conversationID))
 	}
-	query += ` ORDER BY created_at DESC, id DESC`
+	q = q.Order(run.CreatedAt.Desc(), run.ID.Desc())
 	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
+		q = q.Limit(limit)
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
+	result := []RunRow{}
+	if err := q.Scan(&result); err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []RunRow{}
-	for rows.Next() {
-		row, err := scanRun(rows)
-		if err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) RunsActive(ctx context.Context) ([]RunRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE status IN (?, ?) AND finished_at IS NULL`+condition+` ORDER BY created_at`, append([]any{RunStatusRunning, RunStatusInterrupted}, args...)...)
+	run := query.Use(s.db).RunRow
+	result := []RunRow{}
+	err := run.WithContext(ctx).
+		Where(run.Status.In(RunStatusRunning, RunStatusInterrupted)).
+		Where(run.FinishedAt.IsNull()).
+		Where(ownerConditions(ctx, run.TableName())...).
+		Order(run.CreatedAt).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []RunRow{}
-	for rows.Next() {
-		row, err := scanRun(rows)
-		if err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, payload func(seq uint64) ([]byte, error)) (uint64, error) {
 	if _, err := s.RunGet(ctx, runID); err != nil {
 		return 0, err
 	}
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	now := ids.NowMS()
-	if _, err := tx.ExecContext(ctx, `UPDATE ai_run SET seq = seq + 1, updated_at = ? WHERE id = ?`+condition, append([]any{now, runID}, args...)...); err != nil {
-		return 0, dbError(err)
-	}
 	var seq uint64
-	if err := tx.QueryRowContext(ctx, `SELECT seq FROM ai_run WHERE id = ?`+condition, append([]any{runID}, args...)...).Scan(&seq); err != nil {
-		if isNoRows(err) {
-			return 0, notFound("AI 运行")
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		run := queries.RunRow
+		now := ids.NowMS()
+		info, err := run.WithContext(ctx).
+			Where(run.ID.Eq(runID)).
+			Where(ownerConditions(ctx, run.TableName())...).
+			UpdateColumns(map[string]any{"seq": gorm.Expr("seq + 1"), "updated_at": now})
+		if err != nil {
+			return dbError(err)
 		}
-		return 0, dbError(err)
-	}
-	encoded, err := payload(seq)
+		if info.RowsAffected == 0 {
+			return notFound("AI 运行")
+		}
+		row, err := run.WithContext(ctx).
+			Where(run.ID.Eq(runID)).
+			Where(ownerConditions(ctx, run.TableName())...).
+			First()
+		if isNoRows(err) {
+			return notFound("AI 运行")
+		}
+		if err != nil {
+			return dbError(err)
+		}
+		seq = row.Seq
+		encoded, err := payload(seq)
+		if err != nil {
+			return err
+		}
+		event := queries.RunEventRow
+		if err := event.WithContext(ctx).Create(&RunEventRow{
+			RunID: runID, Seq: seq, Type: eventType, PayloadJSON: string(encoded), CreatedAt: now, OwnerID: ipc.OwnerID(ctx),
+		}); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_run_event(owner_id, run_id, seq, type, payload_json, created_at)
-VALUES(?,?,?,?,?,?)`, ipc.OwnerID(ctx), runID, seq, eventType, string(encoded), now); err != nil {
-		return 0, dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, dbError(err)
 	}
 	return seq, nil
 }
@@ -214,28 +171,19 @@ func (s *Store) RunEventsAfterLimit(ctx context.Context, runID string, afterSeq 
 	if _, err := s.RunGet(ctx, runID); err != nil {
 		return nil, err
 	}
-	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run_event.owner_id")
-	query := `SELECT run_id, seq, type, payload_json, created_at FROM ai_run_event
-WHERE run_id = ? AND seq > ?` + condition + ` ORDER BY seq`
-	args := append([]any{runID, afterSeq}, ownerArgs...)
+	event := query.Use(s.db).RunEventRow
+	q := event.WithContext(ctx).
+		Where(event.RunID.Eq(runID), event.Seq.Gt(afterSeq)).
+		Where(ownerConditions(ctx, event.TableName())...).
+		Order(event.Seq)
 	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
+		q = q.Limit(limit)
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
+	result := []RunEventRow{}
+	if err := q.Scan(&result); err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []RunEventRow{}
-	for rows.Next() {
-		var row RunEventRow
-		if err := rows.Scan(&row.RunID, &row.Seq, &row.Type, &row.PayloadJSON, &row.CreatedAt); err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string]RunErrorCounts, error) {
@@ -243,48 +191,43 @@ func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string
 	if len(runIDs) == 0 {
 		return result, nil
 	}
-	query := `SELECT run_id, payload_json FROM ai_run_event WHERE type = 'error' AND run_id IN (?` + strings.Repeat(",?", len(runIDs)-1) + `)`
-	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run_event.owner_id")
-	query += condition
-	args := make([]any, len(runIDs))
-	args = append(args, ownerArgs...)
-	for index, id := range runIDs {
-		args[index] = id
-	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	event := query.Use(s.db).RunEventRow
+	rows := []RunEventRow{}
+	err := event.WithContext(ctx).
+		Where(event.Type.Eq("error"), event.RunID.In(runIDs...)).
+		Where(ownerConditions(ctx, event.TableName())...).
+		Scan(&rows)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var runID string
-		var payload string
-		if err := rows.Scan(&runID, &payload); err != nil {
-			return nil, dbError(err)
-		}
+	for _, row := range rows {
 		var event struct {
 			Retryable bool `json:"retryable"`
 		}
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &event); err != nil {
 			return nil, dbError(err)
 		}
-		counts := result[runID]
+		counts := result[row.RunID]
 		if event.Retryable {
 			counts.Retries++
 		} else {
 			counts.Failures++
 		}
-		result[runID] = counts
+		result[row.RunID] = counts
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) RunDelete(ctx context.Context, id string) error {
 	if _, err := s.RunGet(ctx, id); err != nil {
 		return err
 	}
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_run WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
+	run := query.Use(s.db).RunRow
+	_, err := run.WithContext(ctx).
+		Where(run.ID.Eq(id)).
+		Where(ownerConditions(ctx, run.TableName())...).
+		Delete()
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -294,12 +237,15 @@ func (s *Store) RunUpdateStatus(ctx context.Context, runID, status string) error
 	if _, err := s.RunGet(ctx, runID); err != nil {
 		return err
 	}
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, updated_at = ? WHERE id = ?`+condition, append([]any{status, ids.NowMS(), runID}, args...)...)
+	run := query.Use(s.db).RunRow
+	info, err := run.WithContext(ctx).
+		Where(run.ID.Eq(runID)).
+		Where(ownerConditions(ctx, run.TableName())...).
+		UpdateColumns(map[string]any{"status": status, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+	if info.RowsAffected == 0 {
 		return notFound("AI 运行")
 	}
 	return nil
@@ -313,15 +259,20 @@ func (s *Store) RunFinishUsage(ctx context.Context, runID, status, answer, errMs
 	if _, err := s.RunGet(ctx, runID); err != nil {
 		return err
 	}
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	updateArgs := []any{status, answer, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS, errMsg, ids.NowMS(), ids.NowMS(), runID}
-	updateArgs = append(updateArgs, args...)
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, answer = ?, turns = ?, tokens_in = ?, tokens_out = ?, cache_creation_tokens = ?, latency_ms = ?, error = ?, updated_at = ?, finished_at = ?
-WHERE id = ? AND finished_at IS NULL`+condition, updateArgs...)
+	now := ids.NowMS()
+	run := query.Use(s.db).RunRow
+	info, err := run.WithContext(ctx).
+		Where(run.ID.Eq(runID), run.FinishedAt.IsNull()).
+		Where(ownerConditions(ctx, run.TableName())...).
+		UpdateColumns(map[string]any{
+			"status": status, "answer": answer, "turns": turns, "tokens_in": tokensIn, "tokens_out": tokensOut,
+			"cache_creation_tokens": cacheCreationTokens, "latency_ms": latencyMS, "error": errMsg,
+			"updated_at": now, "finished_at": now,
+		})
 	if err != nil {
 		return dbError(err)
 	}
-	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+	if info.RowsAffected == 0 {
 		if _, getErr := s.RunGet(ctx, runID); getErr != nil {
 			return getErr
 		}
@@ -330,88 +281,82 @@ WHERE id = ? AND finished_at IS NULL`+condition, updateArgs...)
 }
 
 func (s *Store) RunUsageSummary(ctx context.Context) ([]RunUsageSummaryRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT source, profile_id, count(*), coalesce(sum(tokens_in), 0), coalesce(sum(tokens_out), 0), coalesce(sum(cache_creation_tokens), 0), CAST(round(coalesce(avg(latency_ms), 0)) AS INTEGER)
-FROM ai_run WHERE finished_at IS NOT NULL`+condition+` GROUP BY source, profile_id ORDER BY source, profile_id`, args...)
+	run := query.Use(s.db).RunRow
+	q := run.WithContext(ctx).
+		Where(run.FinishedAt.IsNotNull()).
+		Where(ownerConditions(ctx, run.TableName())...)
+	result := []RunUsageSummaryRow{}
+	err := q.UnderlyingDB().
+		Select(`source, profile_id, COUNT(*) AS runs, COALESCE(SUM(tokens_in), 0) AS tokens_in, COALESCE(SUM(tokens_out), 0) AS tokens_out, COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens, CAST(ROUND(COALESCE(AVG(latency_ms), 0)) AS INTEGER) AS average_latency_ms`).
+		Group("source, profile_id").
+		Order("source, profile_id").
+		Scan(&result).Error
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []RunUsageSummaryRow{}
-	for rows.Next() {
-		var row RunUsageSummaryRow
-		if err := rows.Scan(&row.Source, &row.ProfileID, &row.Runs, &row.TokensIn, &row.TokensOut, &row.CacheCreationTokens, &row.AverageLatencyMS); err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) CheckpointGet(ctx context.Context, id string) ([]byte, bool, error) {
-	var data []byte
-	condition, args := ipc.OwnerCondition(ctx, "ai_checkpoint.owner_id")
-	err := s.db.QueryRowContext(ctx, `SELECT data FROM ai_checkpoint WHERE id = ?`+condition, append([]any{id}, args...)...).Scan(&data)
+	checkpoint := query.Use(s.db).CheckpointRow
+	row, err := checkpoint.WithContext(ctx).
+		Where(checkpoint.ID.Eq(id)).
+		Where(ownerConditions(ctx, checkpoint.TableName())...).
+		First()
 	if isNoRows(err) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, dbError(err)
 	}
-	return append([]byte(nil), data...), true, nil
+	return append([]byte(nil), row.Data...), true, nil
 }
 
 func (s *Store) CheckpointSet(ctx context.Context, id string, data []byte) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_checkpoint(owner_id, id, data, updated_at) VALUES(?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), id, data, ids.NowMS(), ipc.OwnerID(ctx))
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
+	row := CheckpointRow{ID: id, Data: data, UpdatedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	return s.upsert(ctx, &row, []string{"data", "updated_at"})
 }
 
 func (s *Store) CheckpointDelete(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "ai_checkpoint.owner_id")
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_checkpoint WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
+	checkpoint := query.Use(s.db).CheckpointRow
+	_, err := checkpoint.WithContext(ctx).
+		Where(checkpoint.ID.Eq(id)).
+		Where(ownerConditions(ctx, checkpoint.TableName())...).
+		Delete()
+	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) HitlRunSave(ctx context.Context, id string, data []byte) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_hitl_run(owner_id, id, data, updated_at) VALUES(?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), id, data, ids.NowMS(), ipc.OwnerID(ctx))
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
+	row := HitlRunRow{ID: id, Data: data, UpdatedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}
+	return s.upsert(ctx, &row, []string{"data", "updated_at"})
 }
 
 func (s *Store) HitlRunList(ctx context.Context) ([]HitlRunRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "ai_hitl_run.owner_id")
-	rows, err := s.db.QueryContext(ctx, `SELECT id, data, updated_at FROM ai_hitl_run WHERE 1=1`+condition+` ORDER BY updated_at`, args...)
+	hitl := query.Use(s.db).HitlRunRow
+	result := []HitlRunRow{}
+	err := hitl.WithContext(ctx).
+		Where(ownerConditions(ctx, hitl.TableName())...).
+		Order(hitl.UpdatedAt).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []HitlRunRow{}
-	for rows.Next() {
-		var row HitlRunRow
-		var data []byte
-		if err := rows.Scan(&row.ID, &data, &row.UpdatedAt); err != nil {
-			return nil, dbError(err)
-		}
-		row.Data = append([]byte(nil), data...)
-		result = append(result, row)
+	for index := range result {
+		result[index].Data = append([]byte(nil), result[index].Data...)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) HitlRunDelete(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "ai_hitl_run.owner_id")
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_hitl_run WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
+	hitl := query.Use(s.db).HitlRunRow
+	_, err := hitl.WithContext(ctx).
+		Where(hitl.ID.Eq(id)).
+		Where(ownerConditions(ctx, hitl.TableName())...).
+		Delete()
+	if err != nil {
 		return dbError(err)
 	}
 	return nil

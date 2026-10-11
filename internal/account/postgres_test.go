@@ -17,7 +17,7 @@ func testPostgresAccounts(t *testing.T) (*Accounts, *int64) {
 	t.Helper()
 	db := dbtest.NewFixture(t).OpenStore(t)
 	now := int64(1_700_000_000_000)
-	return New(db.DB(), WithNow(func() int64 { return now })), &now
+	return New(db.GORM(), WithNow(func() int64 { return now })), &now
 }
 
 func TestPostgresAccountCoreFlows(t *testing.T) {

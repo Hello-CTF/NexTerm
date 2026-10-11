@@ -5,60 +5,55 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-func scanSnippet(row rowScanner) (SnippetRow, error) {
-	var result SnippetRow
-	err := row.Scan(&result.ID, &result.GroupID, &result.Name, &result.Body, &result.Sort, &result.CreatedAt, &result.UpdatedAt)
-	return result, err
-}
-
 func (s *Store) SnippetList(ctx context.Context) ([]SnippetRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := s.db.QueryContext(ctx, "SELECT id, group_id, name, body, sort, created_at, updated_at FROM snippet WHERE 1=1"+condition+" ORDER BY group_id, sort, name, id", args...)
+	snippet := query.Use(s.db).SnippetRow
+	result := []SnippetRow{}
+	err := snippet.WithContext(ctx).
+		Where(ownerConditions(ctx, snippet.TableName())...).
+		Order(snippet.GroupID, snippet.Sort, snippet.Name, snippet.ID).
+		Scan(&result)
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	result := []SnippetRow{}
-	for rows.Next() {
-		row, err := scanSnippet(rows)
-		if err != nil {
-			return nil, dbError(err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *string, sort int64) (SnippetRow, error) {
 	id := ids.New()
 	now := ids.NowMS()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO snippet(owner_id, id, group_id, name, body, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)`, ipc.OwnerID(ctx), id, groupID, name, body, sort, now, now)
-	if err != nil {
+	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	if err := query.Use(s.db).SnippetRow.WithContext(ctx).Create(&row); err != nil {
 		return SnippetRow{}, dbError(err)
 	}
 	return s.SnippetGet(ctx, id)
 }
 
 func (s *Store) SnippetGet(ctx context.Context, id string) (SnippetRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	row, err := scanSnippet(s.db.QueryRowContext(ctx,
-		"SELECT id, group_id, name, body, sort, created_at, updated_at FROM snippet WHERE id = ?"+condition, append([]any{id}, args...)...))
+	snippet := query.Use(s.db).SnippetRow
+	row, err := snippet.WithContext(ctx).
+		Where(snippet.ID.Eq(id)).
+		Where(ownerConditions(ctx, snippet.TableName())...).
+		First()
 	if isNoRows(err) {
 		return SnippetRow{}, notFound("片段")
 	}
 	if err != nil {
 		return SnippetRow{}, dbError(err)
 	}
-	return row, nil
+	return *row, nil
 }
 
 func (s *Store) SnippetUpdate(ctx context.Context, id, name, body string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "UPDATE snippet SET name=?, body=?, updated_at=? WHERE id = ?"+condition,
-		append([]any{name, body, ids.NowMS(), id}, args...)...)
+	snippet := query.Use(s.db).SnippetRow
+	_, err := snippet.WithContext(ctx).
+		Where(snippet.ID.Eq(id)).
+		Where(ownerConditions(ctx, snippet.TableName())...).
+		UpdateColumns(map[string]any{"name": name, "body": body, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}
@@ -83,9 +78,11 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 	if patch.Sort != nil {
 		row.Sort = *patch.Sort
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err = s.db.ExecContext(ctx, "UPDATE snippet SET name=?, body=?, group_id=?, sort=?, updated_at=? WHERE id = ?"+condition,
-		append([]any{row.Name, row.Body, row.GroupID, row.Sort, ids.NowMS(), id}, args...)...)
+	snippet := query.Use(s.db).SnippetRow
+	_, err = snippet.WithContext(ctx).
+		Where(snippet.ID.Eq(id)).
+		Where(ownerConditions(ctx, snippet.TableName())...).
+		UpdateColumns(map[string]any{"name": row.Name, "body": row.Body, "group_id": row.GroupID, "sort": row.Sort, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}
@@ -93,8 +90,20 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 }
 
 func (s *Store) SnippetDelete(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := s.db.ExecContext(ctx, "DELETE FROM snippet WHERE id = ?"+condition, append([]any{id}, args...)...)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		queries := query.Use(tx)
+		snippet := queries.SnippetRow
+		if _, err := snippet.WithContext(ctx).
+			Where(snippet.ID.Eq(id)).
+			Where(ownerConditions(ctx, snippet.TableName())...).
+			Delete(); err != nil {
+			return err
+		}
+		tombstone := queries.SyncTombstone
+		return tombstone.WithContext(ctx).
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
+			Create(&SyncTombstone{ID: id, Kind: "snippet", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+	})
 	if err != nil {
 		return dbError(err)
 	}

@@ -2,12 +2,16 @@ package account
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func validateEnvelopes(envelopes *vault.UserDEKEnvelopes) error {
@@ -24,51 +28,54 @@ func (a *Accounts) SetUserDEKEnvelopes(ctx context.Context, userID string, envel
 		return err
 	}
 	now := a.now()
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(user_id) DO UPDATE SET dek_envelope = excluded.dek_envelope, kdf_salt = excluded.kdf_salt,
-	kdf_params = excluded.kdf_params, recovery_envelope = excluded.recovery_envelope,
-	recovery_hash = excluded.recovery_hash, updated_at = excluded.updated_at`,
-		userID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, now); err != nil {
+	if err := a.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"dek_envelope", "kdf_salt", "kdf_params", "recovery_envelope", "recovery_hash", "updated_at"}),
+	}).Create(&store.UserDEK{
+		UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
+		RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
-// InsertUserDEKEnvelopes 仅在该用户尚无信封时写入; 已存在时返回 ErrDEKEnvelopesExist, 不会覆盖。
 var ErrDEKEnvelopesExist = errors.New("账号加密密钥已存在")
 
 func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, envelopes *vault.UserDEKEnvelopes) error {
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	result, err := a.db.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(user_id) DO NOTHING`,
-		userID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, a.now(), a.now())
-	if err != nil {
-		return dbError(err)
+	now := a.now()
+	result := a.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoNothing: true,
+	}).Create(&store.UserDEK{
+		UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
+		RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+	})
+	if result.Error != nil {
+		return dbError(result.Error)
 	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+	if result.RowsAffected == 0 {
 		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
 	}
 	return nil
 }
 
 func (a *Accounts) GetUserDEKEnvelopes(ctx context.Context, userID string) (*vault.UserDEKEnvelopes, error) {
-	var envelopes vault.UserDEKEnvelopes
-	err := a.db.QueryRowContext(ctx, `SELECT dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash
-FROM user_dek WHERE user_id = ?`, userID).
-		Scan(&envelopes.DEKEnvelope, &envelopes.KDFSalt, &envelopes.KDFParams, &envelopes.RecoveryEnvelope, &envelopes.RecoveryHash)
-	if errors.Is(err, sql.ErrNoRows) {
+	userDEK := query.Use(a.db).UserDEK
+	row, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(userID)).First()
+	if err == gorm.ErrRecordNotFound {
 		return nil, ipc.NewError(ipc.CodeNotFound, "账号加密密钥不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
-	return &envelopes, nil
+	return &vault.UserDEKEnvelopes{
+		DEKEnvelope: row.DEKEnvelope, KDFSalt: row.KDFSalt, KDFParams: row.KDFParams,
+		RecoveryEnvelope: row.RecoveryEnvelope, RecoveryHash: row.RecoveryHash,
+	}, nil
 }
 
 func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string, envelopes *vault.UserDEKEnvelopes, keepSessionID string) error {
@@ -78,52 +85,55 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var hash string
-	if err := tx.QueryRowContext(ctx, "SELECT password_hash FROM "+userTable+" WHERE id = ?", userID).Scan(&hash); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		appUser := query.Use(tx).AppUser
+		user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(userID)).First()
+		if err == gorm.ErrRecordNotFound {
 			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
 		}
-		return dbError(err)
-	}
-	if !verifyPassword(hash, oldPassword) {
-		return ipc.NewError(ipc.CodeForbidden, "原密码错误")
-	}
-	newHash, err := hashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-	now := a.now()
-	result, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
-	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ? AND password_hash = ?`,
-		newHash, string(StateResetRequired), string(StateActive), now, userID, hash)
-	if err != nil {
-		return dbError(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeForbidden, "原密码错误")
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(user_id) DO UPDATE SET dek_envelope = excluded.dek_envelope, kdf_salt = excluded.kdf_salt,
-	kdf_params = excluded.kdf_params, recovery_envelope = excluded.recovery_envelope,
-	recovery_hash = excluded.recovery_hash, updated_at = excluded.updated_at`,
-		userID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, now); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE user_session SET revoked_at = ?
-WHERE user_id = ? AND revoked_at IS NULL AND (? = '' OR id != ?)`, now, userID, keepSessionID, keepSessionID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
-	}
-	return nil
+		if err != nil {
+			return dbError(err)
+		}
+		if !verifyPassword(user.PasswordHash, oldPassword) {
+			return ipc.NewError(ipc.CodeForbidden, "原密码错误")
+		}
+		newHash, err := hashPassword(newPassword)
+		if err != nil {
+			return err
+		}
+		now := a.now()
+		state := user.State
+		if state == string(StateResetRequired) {
+			state = string(StateActive)
+		}
+		info, err := appUser.WithContext(ctx).
+			Where(appUser.ID.Eq(userID), appUser.PasswordHash.Eq(user.PasswordHash)).
+			UpdateColumns(map[string]any{"password_hash": newHash, "must_change_password": false, "state": state, "updated_at": now})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeForbidden, "原密码错误")
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"dek_envelope", "kdf_salt", "kdf_params", "recovery_envelope", "recovery_hash", "updated_at"}),
+		}).Create(&store.UserDEK{
+			UserID: userID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
+			RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			return dbError(err)
+		}
+		userSession := query.Use(tx).UserSession
+		q := userSession.WithContext(ctx).Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull())
+		if keepSessionID != "" {
+			q = q.Where(userSession.ID.Neq(keepSessionID))
+		}
+		if _, err := q.UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 }
 
 func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, recoveryKey, newPassword string, envelopes *vault.UserDEKEnvelopes) error {
@@ -133,88 +143,92 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	if err := validateEnvelopes(envelopes); err != nil {
 		return err
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var userID, state string
-	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM "+userTable+" WHERE LOWER(username) = LOWER(?)", username).Scan(&userID, &state); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		appUser := query.Use(tx).AppUser
+		user, err := appUser.WithContext(ctx).Where(appUser.Username.Lower().Eq(strings.ToLower(username))).First()
+		if err == gorm.ErrRecordNotFound {
 			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
 		}
-		return dbError(err)
-	}
-	if State(state) == StateDisabled {
-		return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
-	}
-	var recoveryHash string
-	if err := tx.QueryRowContext(ctx, "SELECT recovery_hash FROM user_dek WHERE user_id = ?", userID).Scan(&recoveryHash); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
+			return dbError(err)
+		}
+		if user.State == string(StateDisabled) {
+			return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
+		}
+		userDEK := query.Use(tx).UserDEK
+		dek, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(user.ID)).First()
+		if err == gorm.ErrRecordNotFound {
 			return ipc.NewError(ipc.CodeForbidden, "账号未设置加密密钥，不能使用恢复密钥")
 		}
-		return dbError(err)
-	}
-	if !vault.VerifyRecoveryKey(recoveryKey, recoveryHash) {
-		return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
-	}
-	newHash, err := hashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-	now := a.now()
-	if _, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
-	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
-		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
-		return dbError(err)
-	}
-	dekResult, err := tx.ExecContext(ctx, `UPDATE user_dek SET dek_envelope = ?, kdf_salt = ?, kdf_params = ?,
-	recovery_envelope = ?, recovery_hash = ?, updated_at = ? WHERE user_id = ? AND recovery_hash = ?`,
-		envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, userID, recoveryHash)
-	if err != nil {
-		return dbError(err)
-	}
-	if affected, err := dekResult.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
-	}
-	return nil
+		if err != nil {
+			return dbError(err)
+		}
+		if !vault.VerifyRecoveryKey(recoveryKey, dek.RecoveryHash) {
+			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
+		}
+		newHash, err := hashPassword(newPassword)
+		if err != nil {
+			return err
+		}
+		now := a.now()
+		state := user.State
+		if state == string(StateResetRequired) {
+			state = string(StateActive)
+		}
+		if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(user.ID)).UpdateColumns(map[string]any{
+			"password_hash": newHash, "must_change_password": false, "state": state, "updated_at": now,
+		}); err != nil {
+			return dbError(err)
+		}
+		info, err := userDEK.WithContext(ctx).
+			Where(userDEK.UserID.Eq(user.ID), userDEK.RecoveryHash.Eq(dek.RecoveryHash)).
+			UpdateColumns(map[string]any{
+				"dek_envelope": envelopes.DEKEnvelope, "kdf_salt": envelopes.KDFSalt, "kdf_params": envelopes.KDFParams,
+				"recovery_envelope": envelopes.RecoveryEnvelope, "recovery_hash": envelopes.RecoveryHash, "updated_at": now,
+			})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
+		}
+		userSession := query.Use(tx).UserSession
+		if _, err := userSession.WithContext(ctx).
+			Where(userSession.UserID.Eq(user.ID), userSession.RevokedAt.IsNull()).
+			UpdateColumns(map[string]any{"revoked_at": now}); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 }
 
 func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET state = ?, must_change_password = 1, updated_at = ? WHERE id = ?`,
-		string(StateResetRequired), a.now(), userID)
-	if err != nil {
-		return dbError(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "用户不存在")
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_dek WHERE user_id = ?", userID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp WHERE user_id = ?", userID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM user_totp_recovery_code WHERE user_id = ?", userID); err != nil {
-		return dbError(err)
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", a.now(), userID); err != nil {
-		return dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return dbError(err)
-	}
-	return nil
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		appUser := query.Use(tx).AppUser
+		info, err := appUser.WithContext(ctx).
+			Where(appUser.ID.Eq(userID)).
+			UpdateColumns(map[string]any{"state": string(StateResetRequired), "must_change_password": true, "updated_at": a.now()})
+		if err != nil {
+			return dbError(err)
+		}
+		if info.RowsAffected == 0 {
+			return ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		if _, err := query.Use(tx).UserDEK.WithContext(ctx).Where(query.Use(tx).UserDEK.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).UserTOTP.WithContext(ctx).Where(query.Use(tx).UserTOTP.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).UserTOTPRecoveryCode.WithContext(ctx).Where(query.Use(tx).UserTOTPRecoveryCode.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		userSession := query.Use(tx).UserSession
+		if _, err := userSession.WithContext(ctx).
+			Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull()).
+			UpdateColumns(map[string]any{"revoked_at": a.now()}); err != nil {
+			return dbError(err)
+		}
+		return nil
+	})
 }

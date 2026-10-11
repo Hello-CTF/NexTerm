@@ -19,8 +19,8 @@ func newTestFleet(t *testing.T, authOff bool) *fleetserver.Service {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	service, err := fleetserver.New(fleetserver.Config{
-		DB:       database.DB(),
-		Accounts: account.New(database.DB()),
+		DB:       database.GORM(),
+		Accounts: account.New(database.GORM()),
 		AuthOff:  authOff,
 	})
 	if err != nil {

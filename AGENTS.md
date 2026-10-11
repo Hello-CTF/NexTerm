@@ -33,7 +33,7 @@
 
 - 默认不写解释性注释，代码自解释；评审追溯、来源说明类注释一律不留。
 - 仅保留功能性指令，且必须原样保留：
-  - Go：`//go:build`（一律在文件第 1 行）与 `//go:embed`（`migrations/migrations.go`、`cmd/nexterm-desktop/assets_production.go`）。
+  - Go：`//go:build`（一律在文件第 1 行）与 `//go:embed`（`cmd/nexterm-desktop/assets_production.go`）。
   - 脚本首行 shebang（`#!...`）。
   - 打包指令：`lazycat/lzc-manifest.yml` 的 `#@build if/else/end`（被 lzc-cli 与 `scripts/verify-manifest-injects` 解析）。
   - 前端测试首行 pragma：`/** @vitest-environment jsdom */`。
@@ -47,7 +47,7 @@
 
 ## 质量命令（提交前须全绿，与 CI 一致）
 
-- Go：`gofmt -l ./cmd ./internal ./migrations ./scripts` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
+- Go：`gofmt -l ./cmd ./internal ./scripts` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
 - 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）。
@@ -67,11 +67,12 @@
 - 平台分支一律用文件级 `//go:build`（在文件第 1 行）；常见约束为 `windows`、`unix`、`darwin || linux`、`!windows`，文件名多用 `*_unix.go`、`*_windows.go`、`*_darwin.go` 后缀，但按约束语义命名即可，如 `winsize_signed.go`（`aix || solaris`）、`protector_unsupported.go`（`!windows && !darwin`）及多处 `darwin || linux` 测试均无平台后缀。
 - 非平台标签：`production`（内嵌桌面资源，需先备好 `cmd/nexterm-desktop/dist`）、`race`（竞态测试开关）；改动后必须跑对应 `-tags` 测试。
 
-## migrations（breaking 版本可重写）
+## schema 与数据层（GORM）
 
-- `migrations/NNNN_name.sql` 按版本号升序应用，经 `//go:embed` 打包进二进制。
-- `migrations/postgres/` 是根 `migrations/*.sql` 的 PostgreSQL 镜像：版本号与描述一一对应，仅方言不同（如 `BIGINT`/`BYTEA`、无 `PRAGMA`）。schema 变更必须在两处同步修改同版本号文件；`TestPostgresMigrationsMatchRootVersions` 守住版本与描述对齐。
-- 下一版本是 breaking-change 全新版本：允许直接修改、合并重写已发布迁移文件，不保留旧库兼容；`schema_migrations` 校验 SHA-256 不匹配即启动失败，旧库作废属预期。新库迁移必须通过。
+- 数据层统一使用 GORM + GORM Gen：模型在 `internal/store/model/`，生成查询代码在 `internal/store/query/*.gen.go`（生成物，禁止手改）；改动模型后运行 `go run ./scripts/gen-gorm` 重新生成并随改动一起提交。
+- schema 由 `Store.migrate` 的 `AutoMigrate` 在启动时建立，不再有 SQL migration 文件，也没有 `schema_migrations` 表；允许 breaking change，不做旧库兼容。
+- 业务查询一律走 gen query API（`query.Use(db).<Model>`），不再新增手写 SQL；判断记录不存在用 `errors.Is(err, gorm.ErrRecordNotFound)`。
+- SQLite 驱动用纯 Go 的 `github.com/glebarez/sqlite`（替代 CGO 的 `mattn/go-sqlite3`）；PostgreSQL 用 `gorm.io/driver/postgres`，同一套模型与查询代码两个方言共用。
 
 ## PostgreSQL 真实测试
 

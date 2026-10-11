@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/coder/websocket"
 )
 
@@ -116,7 +117,10 @@ func TestDeviceShareLinkNotYetValidStopsHandshake(t *testing.T) {
 	}
 
 	// 生效时刻到达后同一 token 可用 (直接推进行的 not_before)。
-	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE device_share_link SET not_before = ?", time.Now().UnixMilli()-1000); err != nil {
+	deviceShareLink := query.Use(f.service.db).DeviceShareLink
+	if _, err := deviceShareLink.WithContext(context.Background()).
+		Where(deviceShareLink.TokenHash.Eq(hashSecret(token))).
+		UpdateColumns(map[string]any{"not_before": time.Now().UnixMilli() - 1000}); err != nil {
 		t.Fatal(err)
 	}
 	conn := dialShareViewer(t, f, "/share/public/device/"+token, nil)
@@ -210,7 +214,10 @@ func TestSharePublicDeviceTerminalReadOnlyAndShrink(t *testing.T) {
 	collector2.sendBinary(t, []byte("while true; do echo tick; sleep 0.2; done\n"))
 	collector2.expectOutput(t, "tick", 10*time.Second)
 
-	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE device_share_link SET permission = 'read' WHERE token_hash = ?", hashSecret(writeToken)); err != nil {
+	deviceShareLink := query.Use(f.service.db).DeviceShareLink
+	if _, err := deviceShareLink.WithContext(context.Background()).
+		Where(deviceShareLink.TokenHash.Eq(hashSecret(writeToken))).
+		UpdateColumns(map[string]any{"permission": "read"}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(600 * time.Millisecond)

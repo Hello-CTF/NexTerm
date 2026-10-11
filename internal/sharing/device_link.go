@@ -2,13 +2,15 @@ package sharing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 // DeviceLink 把一台 daemon 设备在限定时间内分享给无账号访客: 与绑定单个
@@ -64,8 +66,11 @@ func (s *Service) CreateDeviceLink(ctx context.Context, identity *account.Identi
 		NotBefore:  notBeforeMS,
 		ExpiresAt:  expiresAt,
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO device_share_link(id, owner_id, device_id, token_hash, permission, created_at, not_before, expires_at)
-VALUES(?,?,?,?,?,?,?,?)`, link.ID, link.OwnerID, link.DeviceID, hashSecret(token), string(link.Permission), link.CreatedAt, link.NotBefore, link.ExpiresAt); err != nil {
+	row := store.DeviceShareLink{
+		ID: link.ID, OwnerID: link.OwnerID, DeviceID: link.DeviceID, TokenHash: hashSecret(token),
+		Permission: string(link.Permission), CreatedAt: link.CreatedAt, NotBefore: link.NotBefore, ExpiresAt: link.ExpiresAt,
+	}
+	if err := query.Use(s.db).DeviceShareLink.WithContext(ctx).Create(&row); err != nil {
 		return nil, "", dbError(err)
 	}
 	if err := s.audit(ctx, auditKindDeviceLinkCreate, auditPayload{
@@ -81,19 +86,29 @@ VALUES(?,?,?,?,?,?,?,?)`, link.ID, link.OwnerID, link.DeviceID, hashSecret(token
 // 设备不可达一律拒绝并写审计, 不区分无效与不存在。返回的 Grant 不带 SessionID
 // (数据面据此新建终端而不是 attach 既有会话)。
 func (s *Service) ResolveDeviceLink(ctx context.Context, token string) (*Grant, error) {
-	var link DeviceLink
-	var deviceOwnerID string
-	var revokedAt, deviceRevokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT l.id, l.owner_id, l.device_id, l.permission, l.created_at, l.not_before, l.expires_at, l.revoked_at, d.user_id, d.revoked_at
-FROM device_share_link l JOIN user_device d ON d.id = l.device_id
-WHERE l.token_hash = ?`, hashSecret(token)).
-		Scan(&link.ID, &link.OwnerID, &link.DeviceID, &link.Permission, &link.CreatedAt, &link.NotBefore, &link.ExpiresAt, &revokedAt, &deviceOwnerID, &deviceRevokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	notFound := func() (*Grant, error) {
 		auditErr := s.audit(ctx, auditKindDeviceLinkAccess, auditPayload{Action: "access", Requester: "", Outcome: "deny", Reason: "not_found"})
 		if auditErr != nil {
 			return nil, auditErr
 		}
 		return nil, ErrTokenNotFound
+	}
+	deviceShareLink := query.Use(s.db).DeviceShareLink
+	row, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.TokenHash.Eq(hashSecret(token))).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return notFound()
+	}
+	if err != nil {
+		return nil, dbError(err)
+	}
+	link := DeviceLink{
+		ID: row.ID, OwnerID: row.OwnerID, DeviceID: row.DeviceID, Permission: Permission(row.Permission),
+		CreatedAt: row.CreatedAt, NotBefore: row.NotBefore, ExpiresAt: row.ExpiresAt,
+	}
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(link.DeviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return notFound()
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -110,13 +125,13 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 	}
 	now := s.now()
 	switch {
-	case revokedAt.Valid:
+	case row.RevokedAt != nil:
 		return deny("revoked", "分享链接已吊销")
 	case now >= link.ExpiresAt:
 		return deny("expired", "分享链接已过期")
 	case now < link.NotBefore:
 		return deny("not_yet_valid", "分享链接尚未生效")
-	case deviceRevokedAt.Valid:
+	case device.RevokedAt != nil:
 		return deny("device_revoked", "设备已吊销")
 	}
 	if err := s.requireDaemon(ctx, link.DeviceID); err != nil {
@@ -134,7 +149,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 		}
 		return nil, err
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE device_share_link SET last_accessed_at = ? WHERE id = ?", now, link.ID); err != nil {
+	if _, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"last_accessed_at": now}); err != nil {
 		return nil, dbError(err)
 	}
 	if err := s.audit(ctx, auditKindDeviceLinkAccess, auditPayload{
@@ -146,7 +161,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 	return &Grant{
 		ShareIDs:   []string{link.ID},
 		DeviceID:   link.DeviceID,
-		OwnerID:    deviceOwnerID,
+		OwnerID:    device.UserID,
 		Permission: link.Permission,
 		ExpiresAt:  link.ExpiresAt,
 	}, nil
@@ -155,16 +170,15 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 // RevokeDeviceLink 吊销设备公开链接; owner 可执行, 重复吊销不
 // 报错。吊销只影响本行, 同设备的会话链接与其他设备链接不受影响。
 func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identity, linkID string) error {
-	var link DeviceLink
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT id, owner_id, device_id, revoked_at FROM device_share_link WHERE id = ?", linkID).
-		Scan(&link.ID, &link.OwnerID, &link.DeviceID, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	deviceShareLink := query.Use(s.db).DeviceShareLink
+	row, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.ID.Eq(linkID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ipc.NewError(ipc.CodeNotFound, "分享链接不存在")
 	}
 	if err != nil {
 		return dbError(err)
 	}
+	link := DeviceLink{ID: row.ID, OwnerID: row.OwnerID, DeviceID: row.DeviceID}
 	_, outcome, reason, decision := s.authorizeDevice(ctx, identity, link.DeviceID)
 	auditErr := s.audit(ctx, auditKindDeviceLinkRevoke, auditPayload{
 		Action: "revoke", ShareID: link.ID, DeviceID: link.DeviceID,
@@ -176,7 +190,7 @@ func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identi
 	if auditErr != nil {
 		return auditErr
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE device_share_link SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", s.now(), linkID); err != nil {
+	if _, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.ID.Eq(linkID), deviceShareLink.RevokedAt.IsNull()).UpdateColumns(map[string]any{"revoked_at": s.now()}); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -185,32 +199,29 @@ func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identi
 // ListDeviceLinks 返回 owner 创建的设备公开链接; 仅 owner 可见。不含
 // token 哈希。
 func (s *Service) ListDeviceLinks(ctx context.Context, identity *account.Identity) ([]*DeviceLink, error) {
-	query := `SELECT id, owner_id, device_id, permission, created_at, not_before, expires_at, revoked_at, last_accessed_at FROM device_share_link`
-	args := []any{}
-	query += " WHERE owner_id = ?"
-	args = append(args, identity.UserID)
-	query += " ORDER BY created_at, id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	deviceShareLink := query.Use(s.db).DeviceShareLink
+	rows, err := deviceShareLink.WithContext(ctx).
+		Where(deviceShareLink.OwnerID.Eq(identity.UserID)).
+		Order(deviceShareLink.CreatedAt, deviceShareLink.ID).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var links []*DeviceLink
-	for rows.Next() {
-		var link DeviceLink
-		var revokedAt, lastAccessedAt sql.NullInt64
-		if err := rows.Scan(&link.ID, &link.OwnerID, &link.DeviceID, &link.Permission, &link.CreatedAt, &link.NotBefore, &link.ExpiresAt, &revokedAt, &lastAccessedAt); err != nil {
-			return nil, dbError(err)
+	links := make([]*DeviceLink, 0, len(rows))
+	for _, row := range rows {
+		link := &DeviceLink{
+			ID: row.ID, OwnerID: row.OwnerID, DeviceID: row.DeviceID, Permission: Permission(row.Permission),
+			CreatedAt: row.CreatedAt, NotBefore: row.NotBefore, ExpiresAt: row.ExpiresAt,
 		}
-		if revokedAt.Valid {
-			link.RevokedAt = revokedAt.Int64
+		if row.RevokedAt != nil {
+			link.RevokedAt = *row.RevokedAt
 		}
-		if lastAccessedAt.Valid {
-			link.LastAccessedAt = lastAccessedAt.Int64
+		if row.LastAccessedAt != nil {
+			link.LastAccessedAt = *row.LastAccessedAt
 		}
-		links = append(links, &link)
+		links = append(links, link)
 	}
-	return links, rows.Err()
+	return links, nil
 }
 
 // revalidateDeviceLink 是 RevalidateDeviceLink 的内部实现, 额外返回机器可读
@@ -230,35 +241,32 @@ func (s *Service) revalidateDeviceLink(ctx context.Context, grant *Grant) (*Gran
 	permission := PermissionRead
 	var expiresAt int64
 	var validIDs []string
+	deviceShareLink := query.Use(s.db).DeviceShareLink
 	for _, id := range grant.ShareIDs {
-		var deviceID, rowPermission string
-		var notBefore, rowExpiresAt int64
-		var revokedAt sql.NullInt64
-		err := s.db.QueryRowContext(ctx, `SELECT device_id, permission, not_before, expires_at, revoked_at FROM device_share_link WHERE id = ?`, id).
-			Scan(&deviceID, &rowPermission, &notBefore, &rowExpiresAt, &revokedAt)
-		if errors.Is(err, sql.ErrNoRows) {
+		row, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.ID.Eq(id)).First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
 		if err != nil {
 			return nil, "", dbError(err)
 		}
-		if deviceID != grant.DeviceID {
+		if row.DeviceID != grant.DeviceID {
 			continue
 		}
 		switch {
-		case revokedAt.Valid:
+		case row.RevokedAt != nil:
 			reason = "revoked"
-		case now >= rowExpiresAt:
+		case now >= row.ExpiresAt:
 			reason = "expired"
-		case now < notBefore:
+		case now < row.NotBefore:
 			reason = "not_yet_valid"
 		default:
 			validIDs = append(validIDs, id)
-			if Permission(rowPermission).AllowsWrite() {
+			if Permission(row.Permission).AllowsWrite() {
 				permission = PermissionReadWrite
 			}
-			if rowExpiresAt > expiresAt {
-				expiresAt = rowExpiresAt
+			if row.ExpiresAt > expiresAt {
+				expiresAt = row.ExpiresAt
 			}
 		}
 	}

@@ -67,7 +67,7 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if services.Store == nil {
 		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
-	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.DB())
+	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.GORM())
 	if err != nil {
 		return nil, nil, err
 	}

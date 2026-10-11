@@ -22,7 +22,7 @@ func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {
 	if err := storage.DB().QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'outcome_record'`).Scan(&table); err != nil {
 		t.Fatalf("outcome_record table missing: %v", err)
 	}
-	sqliteStore, err := outcome.NewSQLiteStore(storage.DB())
+	sqliteStore, err := outcome.NewSQLiteStore(storage.GORM())
 	if err != nil {
 		t.Fatal(err)
 	}

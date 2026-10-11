@@ -27,7 +27,7 @@ func newSyncV2Fixture(t *testing.T) *accountFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	server, httpServer := newTestHTTP(t, Config{
 		Options: Options{
 			Listen: "127.0.0.1:0", DataDir: t.TempDir(), Auth: AuthOn,

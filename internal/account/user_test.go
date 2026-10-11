@@ -92,7 +92,7 @@ func TestAuthenticate(t *testing.T) {
 	if loaded.LastLoginAt == 0 {
 		t.Fatal("last_login_at not stamped")
 	}
-	if _, err := a.db.ExecContext(ctx, "UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
+	if err := a.db.Exec("UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	requireCode(t, authErr(a, ctx, "carol", "synthetic-password-1"), ipc.CodeForbidden)

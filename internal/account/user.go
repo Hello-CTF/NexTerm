@@ -4,16 +4,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 	"golang.org/x/crypto/argon2"
+	"gorm.io/gorm"
 )
 
 type Role string
@@ -118,7 +119,6 @@ func (a *Accounts) CreateUser(ctx context.Context, username, displayName, passwo
 	return a.createUser(ctx, username, displayName, password, nil)
 }
 
-// CreateUserWithEnvelopes 在同一个事务里创建用户并写入初始 DEK 信封, 不留半初始化账号。
 func (a *Accounts) CreateUserWithEnvelopes(ctx context.Context, username, displayName, password string, envelopes *vault.UserDEKEnvelopes) (*User, error) {
 	if err := validateEnvelopes(envelopes); err != nil {
 		return nil, err
@@ -142,48 +142,57 @@ func (a *Accounts) createUser(ctx context.Context, username, displayName, passwo
 	}
 	now := a.now()
 	user := &User{
-		ID:           ids.New(),
-		Username:     username,
-		DisplayName:  displayName,
-		Role:         RoleUser,
-		State:        StateActive,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		passwordHash: hash,
+		ID: ids.New(), Username: username, DisplayName: displayName, Role: RoleUser, State: StateActive,
+		CreatedAt: now, UpdatedAt: now, passwordHash: hash,
+	}
+	row := store.AppUser{
+		ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: string(user.Role),
+		PasswordHash: hash, State: string(user.State), CreatedAt: now, UpdatedAt: now,
 	}
 	if envelopes == nil {
-		if _, err := a.db.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
-VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, user.DisplayName, string(user.Role), hash, string(user.State), now, now); err != nil {
+		if err := query.Use(a.db).AppUser.WithContext(ctx).Create(&row); err != nil {
 			return nil, translateUserWriteError(err)
 		}
 		return user, nil
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
+	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := query.Use(tx).AppUser.WithContext(ctx).Create(&row); err != nil {
+			return translateUserWriteError(err)
+		}
+		dek := store.UserDEK{
+			UserID: user.ID, DEKEnvelope: envelopes.DEKEnvelope, KDFSalt: envelopes.KDFSalt, KDFParams: envelopes.KDFParams,
+			RecoveryEnvelope: envelopes.RecoveryEnvelope, RecoveryHash: envelopes.RecoveryHash, CreatedAt: now, UpdatedAt: now,
+		}
+		return query.Use(tx).UserDEK.WithContext(ctx).Create(&dek)
+	})
 	if err != nil {
-		return nil, dbError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
-VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, user.DisplayName, string(user.Role), hash, string(user.State), now, now); err != nil {
-		return nil, translateUserWriteError(err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)`, user.ID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, now); err != nil {
-		return nil, dbError(err)
-	}
-	if err := tx.Commit(); err != nil {
 		return nil, dbError(err)
 	}
 	return user, nil
 }
 
 func (a *Accounts) GetUser(ctx context.Context, id string) (*User, error) {
-	return scanUser(a.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+userTable+" WHERE id = ?", id))
+	appUser := query.Use(a.db).AppUser
+	row, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(id)).First()
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		return nil, dbError(err)
+	}
+	return userFromModel(row), nil
 }
 
 func (a *Accounts) GetUserByUsername(ctx context.Context, username string) (*User, error) {
-	return scanUser(a.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+userTable+" WHERE LOWER(username) = LOWER(?)", username))
+	appUser := query.Use(a.db).AppUser
+	row, err := appUser.WithContext(ctx).Where(appUser.Username.Lower().Eq(strings.ToLower(username))).First()
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
+		}
+		return nil, dbError(err)
+	}
+	return userFromModel(row), nil
 }
 
 func (a *Accounts) Authenticate(ctx context.Context, username, password string) (*User, error) {
@@ -198,30 +207,10 @@ func (a *Accounts) Authenticate(ctx context.Context, username, password string) 
 		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
 	now := a.now()
-	if _, err := a.db.ExecContext(ctx, "UPDATE "+userTable+" SET last_login_at = ? WHERE id = ?", now, user.ID); err != nil {
+	appUser := query.Use(a.db).AppUser
+	if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(user.ID)).UpdateColumns(map[string]any{"last_login_at": now}); err != nil {
 		return nil, dbError(err)
 	}
 	user.LastLoginAt = now
 	return user, nil
-}
-
-const userColumns = "id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at, last_login_at"
-
-func scanUser(row rowScanner) (*User, error) {
-	var user User
-	var role, state string
-	var lastLoginAt sql.NullInt64
-	if err := row.Scan(&user.ID, &user.Username, &user.DisplayName, &role, &user.passwordHash, &state,
-		&user.MustChangePassword, &user.CreatedAt, &user.UpdatedAt, &lastLoginAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
-		}
-		return nil, dbError(err)
-	}
-	user.Role = Role(role)
-	user.State = State(state)
-	if lastLoginAt.Valid {
-		user.LastLoginAt = lastLoginAt.Int64
-	}
-	return &user, nil
 }

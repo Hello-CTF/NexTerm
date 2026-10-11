@@ -173,7 +173,7 @@ func run(args []string) int {
 	}
 	var accounts *account.Accounts
 	if application.Services.Store != nil {
-		accounts = account.New(application.Services.Store.DB(), account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")))
+		accounts = account.New(application.Services.Store.GORM(), account.WithTOTPKeyFile(filepath.Join(paths.DataDir, "totp.key")))
 	}
 	if invocation.Auth == core.AuthOff && accounts != nil {
 		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
@@ -192,7 +192,7 @@ func run(args []string) int {
 	var previewService *sharing.Service
 	if application.Services.Store != nil && accounts != nil && !invocation.SyncOnly {
 		fleetService, err = fleetserver.New(fleetserver.Config{
-			DB:       application.Services.Store.DB(),
+			DB:       application.Services.Store.GORM(),
 			Backend:  application.Services.Store.Backend(),
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
@@ -203,7 +203,7 @@ func run(args []string) int {
 			return 1
 		}
 		previewService, err = sharing.New(sharing.Config{
-			DB:       application.Services.Store.DB(),
+			DB:       application.Services.Store.GORM(),
 			Accounts: accounts,
 		})
 		if err != nil {

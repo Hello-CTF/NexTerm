@@ -183,7 +183,7 @@ func outcomeRecordCount(t *testing.T, database *store.Store) int {
 
 func composedOutcomeRecord(t *testing.T, database *store.Store, key string) outcome.Record {
 	t.Helper()
-	sqliteStore, err := outcome.NewSQLiteStore(database.DB())
+	sqliteStore, err := outcome.NewSQLiteStore(database.GORM())
 	if err != nil {
 		t.Fatal(err)
 	}

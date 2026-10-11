@@ -12,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/coder/websocket"
 )
 
@@ -340,7 +341,9 @@ func TestDeviceBridgeRelayRequiresTerminalEnabled(t *testing.T) {
 	session := f.session(t, owner)
 
 	// 直接关闭终端授权位 (产品当前无 HTTP 入口改 terminal_enabled, 这里验证守卫本身)。
-	if _, err := f.service.db.ExecContext(context.Background(), "UPDATE device_agent SET terminal_enabled = 0 WHERE device_id = ?", deviceID); err != nil {
+	deviceAgent := query.Use(f.service.db).DeviceAgent
+	if _, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).
+		UpdateColumns(map[string]any{"terminal_enabled": false}); err != nil {
 		t.Fatal(err)
 	}
 	response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, session, "")

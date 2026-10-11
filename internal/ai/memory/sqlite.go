@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -12,11 +11,38 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
-	_ "modernc.org/sqlite"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
+type entryRow struct {
+	ID        string `gorm:"column:id;primaryKey"`
+	Tenant    string `gorm:"column:tenant;not null;index:memory_entry_scope_topic,priority:1"`
+	Subject   string `gorm:"column:subject;not null;index:memory_entry_scope_topic,priority:2"`
+	Topic     string `gorm:"column:topic;not null;index:memory_entry_scope_topic,priority:3"`
+	Content   string `gorm:"column:content;not null"`
+	Version   uint64 `gorm:"column:version;not null"`
+	Redacted  bool   `gorm:"column:redacted;not null"`
+	CreatedAt int64  `gorm:"column:created_at;not null"`
+	UpdatedAt int64  `gorm:"column:updated_at;not null"`
+}
+
+func (entryRow) TableName() string { return "memory_entry" }
+
+type settingsRow struct {
+	Tenant           string `gorm:"column:tenant;not null;primaryKey"`
+	Subject          string `gorm:"column:subject;not null;primaryKey"`
+	InjectionEnabled bool   `gorm:"column:injection_enabled;not null"`
+	ToolsEnabled     bool   `gorm:"column:tools_enabled;not null;default:0"`
+	Version          uint64 `gorm:"column:version;not null"`
+	UpdatedAt        int64  `gorm:"column:updated_at;not null"`
+}
+
+func (settingsRow) TableName() string { return "memory_settings" }
+
 type Store struct {
-	db    *sql.DB
+	db    *gorm.DB
 	now   func() int64
 	newID func() string
 }
@@ -59,15 +85,19 @@ func Open(ctx context.Context, path string) (*Store, error) {
 }
 
 func open(ctx context.Context, dsn string, connections int) (*Store, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open semantic memory database: %w", err)
 	}
-	db.SetMaxOpenConns(connections)
-	db.SetMaxIdleConns(connections)
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("open semantic memory database: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(connections)
+	sqlDB.SetMaxIdleConns(connections)
 	store := &Store{db: db, now: ids.NowMS, newID: ids.New}
 	if err := store.migrate(ctx); err != nil {
-		_ = db.Close()
+		_ = sqlDB.Close()
 		return nil, err
 	}
 	return store, nil
@@ -79,79 +109,21 @@ func sqliteDSN(path string) string {
 		path = "/" + path
 	}
 	u := &url.URL{Scheme: "file", Path: path}
-	u.RawQuery = strings.TrimPrefix(pragmaQuery(false), "&")
+	u.RawQuery = "_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)&_txlock=immediate&_pragma=journal_mode(WAL)"
 	return u.String()
 }
 
-func pragmaQuery(memory bool) string {
-	query := "&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)&_txlock=immediate"
-	if !memory {
-		query += "&_pragma=journal_mode(WAL)"
-	}
-	return query
-}
-
 func (s *Store) migrate(ctx context.Context) error {
-	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("read semantic memory schema version: %w", err)
+	if err := s.db.WithContext(ctx).AutoMigrate(&entryRow{}, &settingsRow{}); err != nil {
+		return fmt.Errorf("migrate semantic memory schema: %w", err)
 	}
-	if version > SchemaVersion {
-		return fmt.Errorf("unsupported semantic memory schema version %d", version)
-	}
-	if version == SchemaVersion {
-		return nil
-	}
-	if version != 0 {
-		return fmt.Errorf("unsupported semantic memory schema version %d", version)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin semantic memory migration: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS memory_entry (
-			id TEXT PRIMARY KEY,
-			tenant TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			topic TEXT NOT NULL,
-			content TEXT NOT NULL,
-			version INTEGER NOT NULL CHECK(version > 0),
-			redacted INTEGER NOT NULL CHECK(redacted IN (0, 1)),
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS memory_entry_scope_topic
-			ON memory_entry(tenant, subject, topic, id)`,
-		`CREATE TABLE IF NOT EXISTS memory_settings (
-			tenant TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			injection_enabled INTEGER NOT NULL CHECK(injection_enabled IN (0, 1)),
-			tools_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tools_enabled IN (0, 1)),
-			version INTEGER NOT NULL CHECK(version > 0),
-			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(tenant, subject)
-		)`,
-		fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion),
-	}
-	for _, statement := range statements {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("migrate semantic memory schema: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit semantic memory migration: %w", err)
-	}
-	committed = true
 	return nil
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	db, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return db.Close()
 }

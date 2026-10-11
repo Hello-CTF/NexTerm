@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,10 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -384,21 +386,18 @@ func (e *Engine) saveCursor(ctx context.Context, userID string, cursor syncCurso
 }
 
 func (e *Engine) syncStateGet(ctx context.Context, userID, objectID string) (payloadHash string, blobHash string, found bool, returnErr error) {
-	var payload []byte
-	var blob []byte
-	err := e.store.DB().QueryRowContext(ctx,
-		"SELECT payload_hash, blob_hash FROM sync_state WHERE user_id = ? AND object_id = ?",
-		userID, objectID).Scan(&payload, &blob)
-	if errors.Is(err, sql.ErrNoRows) {
+	state := query.Use(e.store.GORM()).SyncState
+	row, err := state.WithContext(ctx).Where(state.UserID.Eq(userID), state.ObjectID.Eq(objectID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", "", false, nil
 	}
 	if err != nil {
 		return "", "", false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	if payload != nil {
-		payloadHash = string(payload)
+	if row.PayloadHash != nil {
+		payloadHash = string(row.PayloadHash)
 	}
-	return payloadHash, hex.EncodeToString(blob), true, nil
+	return payloadHash, hex.EncodeToString(row.BlobHash), true, nil
 }
 
 func (e *Engine) syncStatePut(ctx context.Context, userID, objectID string, payloadHash *string, blobHash [32]byte) error {
@@ -406,10 +405,10 @@ func (e *Engine) syncStatePut(ctx context.Context, userID, objectID string, payl
 	if payloadHash != nil {
 		payload = []byte(*payloadHash)
 	}
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO sync_state(user_id, object_id, payload_hash, blob_hash) VALUES(?,?,?,?)
-ON CONFLICT(user_id, object_id) DO UPDATE SET payload_hash = excluded.payload_hash, blob_hash = excluded.blob_hash`,
-		userID, objectID, payload, blobHash[:])
-	if err != nil {
+	if err := e.store.GORM().WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "object_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"payload_hash", "blob_hash"}),
+	}).Create(&store.SyncState{UserID: userID, ObjectID: objectID, PayloadHash: payload, BlobHash: blobHash[:]}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
@@ -422,43 +421,42 @@ type syncTombstoneRow struct {
 }
 
 func (e *Engine) syncTombstoneList(ctx context.Context) ([]syncTombstoneRow, error) {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	rows, err := e.store.DB().QueryContext(ctx, "SELECT id, kind, deleted_at FROM sync_tombstone WHERE 1=1"+condition+" ORDER BY id", args...)
+	tombstone := query.Use(e.store.GORM()).SyncTombstone
+	result := []syncTombstoneRow{}
+	err := tombstone.WithContext(ctx).
+		Select(tombstone.ID, tombstone.Kind, tombstone.DeletedAt).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Order(tombstone.ID).
+		Scan(&result)
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	defer rows.Close()
-	result := []syncTombstoneRow{}
-	for rows.Next() {
-		var row syncTombstoneRow
-		if err := rows.Scan(&row.ID, &row.Kind, &row.DeletedAt); err != nil {
-			return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (e *Engine) syncTombstoneGet(ctx context.Context, objectID string) (syncTombstoneRow, bool, error) {
-	var row syncTombstoneRow
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	err := e.store.DB().QueryRowContext(ctx,
-		"SELECT id, kind, deleted_at FROM sync_tombstone WHERE id = ?"+condition, append([]any{objectID}, args...)...).
-		Scan(&row.ID, &row.Kind, &row.DeletedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	tombstone := query.Use(e.store.GORM()).SyncTombstone
+	row, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(objectID)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return syncTombstoneRow{}, false, nil
 	}
 	if err != nil {
 		return syncTombstoneRow{}, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return row, true, nil
+	return syncTombstoneRow{ID: row.ID, Kind: row.Kind, DeletedAt: row.DeletedAt}, true, nil
 }
 
 func (e *Engine) syncTombstonePut(ctx context.Context, objectID, kind string, deletedAt int64) error {
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
-ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)
-WHERE owner_id = ?`, ipc.OwnerID(ctx), objectID, kind, deletedAt, ipc.OwnerID(ctx))
-	if err != nil {
+	if err := e.store.GORM().WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"deleted_at": gorm.Expr(scalarMax(e.store.Backend()) + "(sync_tombstone.deleted_at, excluded.deleted_at)"),
+		}),
+		Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+	}).Create(&store.SyncTombstone{ID: objectID, Kind: kind, DeletedAt: deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
@@ -467,28 +465,26 @@ WHERE owner_id = ?`, ipc.OwnerID(ctx), objectID, kind, deletedAt, ipc.OwnerID(ct
 // snippetUpsert 与 store.GroupUpsert 同款语义: 按 ID 幂等写入并保留对端修订号,
 // 并在同一事务清除同 ID 的删除墓碑: 较新片段胜过旧墓碑后不得留下可回滚对象的墓碑。
 func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error {
-	tx, err := e.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := e.snippetUpsertTx(ctx, tx, row); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return e.snippetUpsertTx(ctx, tx, row)
+	})
 }
 
 // snippetUpsertTx 是 snippetUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
-func (e *Engine) snippetUpsertTx(ctx context.Context, tx *sql.Tx, row store.SnippetRow) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO snippet(owner_id, id, group_id, name, body, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, name=excluded.name, body=excluded.body,
-sort=excluded.sort, updated_at=excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), row.ID, row.GroupID, row.Name, row.Body, row.Sort, row.CreatedAt, row.UpdatedAt, ipc.OwnerID(ctx)); err != nil {
+func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.SnippetRow) error {
+	row.OwnerID = ipc.OwnerID(ctx)
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"group_id", "name", "body", "sort", "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+	}).Create(&row).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{row.ID}, args...)...); err != nil {
+	tombstone := query.Use(tx).SyncTombstone
+	if _, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(row.ID)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Delete(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil

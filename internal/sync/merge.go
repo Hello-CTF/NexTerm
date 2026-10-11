@@ -3,7 +3,6 @@ package sync
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,9 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -421,27 +423,25 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 	if strings.TrimSpace(payload.Name) == "" {
 		return ipc.NewError(ipc.CodeBadParam, "分组名称不能为空")
 	}
-	tx, err := e.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := e.groupUpsertTx(ctx, tx, payload, parentID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return e.groupUpsertTx(ctx, tx, payload, parentID)
+	})
 }
 
 // groupUpsertTx 是 groupUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
-func (e *Engine) groupUpsertTx(ctx context.Context, tx *sql.Tx, payload groupObject, parentID *string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_group(owner_id, id, parent_id, name, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, name=excluded.name, sort=excluded.sort, updated_at=excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), payload.ID, parentID, strings.TrimSpace(payload.Name), payload.Sort, payload.CreatedAt, payload.UpdatedAt, ipc.OwnerID(ctx)); err != nil {
+func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"parent_id", "name", "sort", "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+	}).Create(&store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{payload.ID}, args...)...); err != nil {
+	tombstone := query.Use(tx).SyncTombstone
+	if _, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(payload.ID)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Delete(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
@@ -591,29 +591,25 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 // 同步载荷哈希以修订号为准, 必须原样保留才能幂等对账。
 // 写入与删除墓碑清除在同一事务: 较新凭据胜过旧墓碑后不得留下可回滚对象的墓碑。
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
-	tx, err := e.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := e.credentialUpsertTx(ctx, tx, payload, nonce, blob); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob)
+	})
 }
 
 // credentialUpsertTx 是 credentialUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
-func (e *Engine) credentialUpsertTx(ctx context.Context, tx *sql.Tx, payload credentialObject, nonce, blob []byte) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credential(owner_id, id, name, kind, cipher, nonce, blob, kek_hint, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, cipher=excluded.cipher,
-nonce=excluded.nonce, blob=excluded.blob, kek_hint=excluded.kek_hint, updated_at=excluded.updated_at
-WHERE owner_id = ?`, ipc.OwnerID(ctx), payload.ID, payload.Name, payload.Kind, store.CipherAES256GCM, nonce, blob, e.vault.KEKHint(),
-		payload.UpdatedAt, payload.UpdatedAt, ipc.OwnerID(ctx)); err != nil {
+func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte) error {
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"name", "kind", "cipher", "nonce", "blob", "kek_hint", "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+	}).Create(&store.CredentialRow{ID: payload.ID, Name: payload.Name, Kind: payload.Kind, Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob, KEKHint: e.vault.KEKHint(), CreatedAt: payload.UpdatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM credential_tombstone WHERE id = ?"+condition, append([]any{payload.ID}, args...)...); err != nil {
+	tombstone := query.Use(tx).CredentialTombstone
+	if _, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(payload.ID)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Delete(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
@@ -789,8 +785,11 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 		return false, false
 	}
 	if exists {
-		condition, args := ipc.OwnerCondition(ctx, "owner_id")
-		if _, err := e.store.DB().ExecContext(ctx, "DELETE FROM transcript WHERE id = ?"+condition, append([]any{objectID}, args...)...); err != nil {
+		transcript := query.Use(e.store.GORM()).TranscriptRow
+		if _, err := transcript.WithContext(ctx).
+			Where(transcript.ID.Eq(objectID)).
+			Where(ownerConditions(ctx, transcript.TableName())...).
+			Delete(); err != nil {
 			report.warnf("会话记录 %s 按墓碑删除失败: %v", objectID, err)
 			return false, false
 		}
@@ -944,7 +943,6 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 	if exists && local.AddedAt > payload.DeletedAt {
 		return false, false
 	}
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	conflict := payload.Host != "" || payload.KeyType != ""
 	if exists && conflict && (local.Host != payload.Host || local.Port != payload.Port || local.KeyType != payload.KeyType) {
 		newID, err := e.knownHostReincarnationID(&local)
@@ -952,48 +950,39 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
 			return false, false
 		}
-		tx, err := e.store.DB().BeginTx(ctx, nil)
+		err = e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			knownHost := query.Use(tx).KnownHostRow
+			if _, err := knownHost.WithContext(ctx).
+				Where(knownHost.ID.Eq(local.ID)).
+				Where(ownerConditions(ctx, knownHost.TableName())...).
+				UpdateColumns(map[string]any{"id": newID}); err != nil {
+				return err
+			}
+			return e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType})
+		})
 		if err != nil {
-			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
-			return false, false
-		}
-		defer func() { _ = tx.Rollback() }()
-		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?"+condition, append([]any{newID, local.ID}, args...)...); err != nil {
-			report.warnf("已知主机冲突项 %s 重新分配 ID 失败：%v", objectID, err)
-			return false, false
-		}
-		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
-		if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
-			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
-			return false, false
-		}
-		if err := tx.Commit(); err != nil {
 			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
 			return false, false
 		}
 		return true, false
 	}
-	tx, err := e.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
-		return false, false
-	}
-	defer func() { _ = tx.Rollback() }()
-	if exists {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?"+condition, append([]any{objectID}, args...)...); err != nil {
-			report.warnf("已知主机 %s 按墓碑删除失败: %v", objectID, err)
-			return false, false
+	err = e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if exists {
+			knownHost := query.Use(tx).KnownHostRow
+			if _, err := knownHost.WithContext(ctx).
+				Where(knownHost.ID.Eq(objectID)).
+				Where(ownerConditions(ctx, knownHost.TableName())...).
+				Delete(); err != nil {
+				return err
+			}
 		}
-	}
-	var meta *knownHostTombstoneMeta
-	if conflict {
-		meta = &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
-	}
-	if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
-		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
-		return false, false
-	}
-	if err := tx.Commit(); err != nil {
+		var meta *knownHostTombstoneMeta
+		if conflict {
+			meta = &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+		}
+		return e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta)
+	})
+	if err != nil {
 		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
 		return false, false
 	}

@@ -34,8 +34,8 @@ func newHTTPFixture(t *testing.T, authOff bool, options ...Option) *httpFixture 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
-	service, err := New(Config{DB: database.DB(), Accounts: accounts, AuthOff: authOff}, options...)
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	service, err := New(Config{DB: database.GORM(), Accounts: accounts, AuthOff: authOff}, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestFleetHTTPMFARequiredDatabaseErrorFailClosed(t *testing.T) {
 	fixture := newHTTPFixture(t, false)
 	alice := fixture.createUser(t, "alice")
 	session := fixture.session(t, alice)
-	if _, err := fixture.service.db.Exec("DROP TABLE setting"); err != nil {
+	if err := fixture.service.db.Exec("DROP TABLE setting").Error; err != nil {
 		t.Fatal(err)
 	}
 	call := fixture.call(t, http.MethodGet, "/fleet/devices", nil, session, "")

@@ -195,6 +195,24 @@ BEGIN SELECT RAISE(ABORT, 'injected retention failure'); END`)
 	}
 }
 
+func TestRetentionOrphanHitlCleanupWithoutRuns(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	if err := db.HitlRunSave(ctx, "orphan-run", []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.EnforceRetention(ctx, RetentionPolicy{AIRunMaxAge: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.HitlRunList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("orphan HITL rows survived retention: %+v", rows)
+	}
+}
+
 func TestRetentionDisabledAndRejectsNegativeLimits(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -293,7 +311,6 @@ func TestRetentionReopenPreservesStoreAndVaultRows(t *testing.T) {
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 2)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

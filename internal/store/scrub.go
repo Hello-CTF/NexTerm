@@ -13,7 +13,7 @@ func IsBusy(err error) bool {
 
 func (s *Store) ScrubFreeSpace(ctx context.Context) error {
 	if s.dialect.backend == BackendPostgres {
-		if _, err := s.db.ExecContext(ctx, "VACUUM"); err != nil {
+		if err := s.db.WithContext(ctx).Exec("VACUUM").Error; err != nil {
 			return dbError(err)
 		}
 		return nil
@@ -21,7 +21,7 @@ func (s *Store) ScrubFreeSpace(ctx context.Context) error {
 	if err := s.truncateWAL(ctx); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, "VACUUM"); err != nil {
+	if err := s.db.WithContext(ctx).Exec("VACUUM").Error; err != nil {
 		return dbError(err)
 	}
 	return s.truncateWAL(ctx)
@@ -29,7 +29,7 @@ func (s *Store) ScrubFreeSpace(ctx context.Context) error {
 
 func (s *Store) truncateWAL(ctx context.Context) error {
 	var busy, logPages, checkpointed int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logPages, &checkpointed); err != nil {
+	if err := s.db.WithContext(ctx).Raw("PRAGMA wal_checkpoint(TRUNCATE)").Row().Scan(&busy, &logPages, &checkpointed); err != nil {
 		return dbError(err)
 	}
 	if busy != 0 || logPages > 0 {

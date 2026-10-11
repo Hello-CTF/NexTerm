@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,6 +9,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // 资产包协议 v1: 面向文件的导入/导出, 与 v2 同步对象协议相互独立。
@@ -365,7 +367,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		return ImportReport{}, err
 	}
 	// 两遍写入: 先全部按顶级分组落库(任意顺序都无 FK 依赖), 再链接父级; 整类一个事务。
-	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, plan := range groupPlans {
 			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
 				ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
@@ -461,7 +463,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		})
 		seenCredIDs[id] = true
 	}
-	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, cred := range preparedCreds {
 			if err := s.engine.credentialUpsertTx(ctx, tx, credentialObject{
 				ID: cred.id, Name: cred.name, Kind: cred.kind, UpdatedAt: cred.updatedAt,
@@ -551,7 +553,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		preparedAssets = append(preparedAssets, row)
 	}
 	createdFlags := make([]bool, len(preparedAssets))
-	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for index, row := range preparedAssets {
 			created, err := s.store.AssetUpsertTx(ctx, tx, row)
 			if err != nil {
@@ -605,15 +607,22 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		}
 		preparedTombstones = append(preparedTombstones, preparedCredTombstone{id: id, deletedAt: tombstone.DeletedAt})
 	}
-	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
-		condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
+		credential := query.Use(tx).CredentialRow
 		for _, tombstone := range preparedTombstones {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?"+condition, append([]any{tombstone.id}, args...)...); err != nil {
+			if _, err := credential.WithContext(ctx).
+				Where(credential.ID.Eq(tombstone.id)).
+				Where(ownerConditions(ctx, credential.TableName())...).
+				Delete(); err != nil {
 				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(owner_id, id, deleted_at) VALUES(?,?,?)
-ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at=`+scalarMax(s.store.Backend())+`(credential_tombstone.deleted_at, excluded.deleted_at)
-WHERE owner_id = ?`, ipc.OwnerID(ctx), tombstone.id, tombstone.deletedAt, ipc.OwnerID(ctx)); err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
+				DoUpdates: clause.Assignments(map[string]any{
+					"deleted_at": gorm.Expr(scalarMax(s.store.Backend()) + "(credential_tombstone.deleted_at, excluded.deleted_at)"),
+				}),
+				Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			}).Create(&store.CredentialTombstone{ID: tombstone.id, DeletedAt: tombstone.deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}
 		}
@@ -697,7 +706,7 @@ WHERE owner_id = ?`, ipc.OwnerID(ctx), tombstone.id, tombstone.deletedAt, ipc.Ow
 		})
 		seenSnippetIDs[id] = true
 	}
-	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, snippet := range preparedSnippets {
 			if err := s.engine.snippetUpsertTx(ctx, tx, snippet.row); err != nil {
 				return err
@@ -718,16 +727,16 @@ WHERE owner_id = ?`, ipc.OwnerID(ctx), tombstone.id, tombstone.deletedAt, ipc.Ow
 }
 
 // inImportTx 在单个事务内提交一个对象类的全部写入, 任一语句失败整类回滚。
-func (s *Service) inImportTx(ctx context.Context, apply func(*sql.Tx) error) error {
-	tx, err := s.store.DB().BeginTx(ctx, nil)
+func (s *Service) inImportTx(ctx context.Context, apply func(*gorm.DB) error) error {
+	var applyErr error
+	err := s.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		applyErr = apply(tx)
+		return applyErr
+	})
+	if applyErr != nil {
+		return applyErr
+	}
 	if err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := apply(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil

@@ -105,17 +105,17 @@ func TestRegistrationEnabledDefaultClosed(t *testing.T) {
 
 func failDEKInsertTrigger(t *testing.T, a *Accounts) {
 	t.Helper()
-	if _, err := a.db.ExecContext(context.Background(), `CREATE TRIGGER fail_dek_insert BEFORE INSERT ON user_dek
+	if err := a.db.Exec(`CREATE TRIGGER fail_dek_insert BEFORE INSERT ON user_dek
 BEGIN
 	SELECT RAISE(ABORT, 'injected dek failure');
-END`); err != nil {
+END`).Error; err != nil {
 		t.Fatal(err)
 	}
 }
 
 func dropFailDEKInsertTrigger(t *testing.T, a *Accounts) {
 	t.Helper()
-	if _, err := a.db.ExecContext(context.Background(), "DROP TRIGGER fail_dek_insert"); err != nil {
+	if err := a.db.Exec("DROP TRIGGER fail_dek_insert").Error; err != nil {
 		t.Fatal(err)
 	}
 }

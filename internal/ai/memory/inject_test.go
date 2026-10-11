@@ -171,7 +171,7 @@ func TestInjectionRedactsUnexpectedPersistedSecret(t *testing.T) {
 	entry := mustCreate(t, store, testScope, "operations", "clean")
 	mustEnableInjection(t, store, testScope)
 	const secret = "unexpected-persisted-secret"
-	if _, err := store.db.Exec("UPDATE memory_entry SET content = ? WHERE id = ?", "token="+secret, entry.ID); err != nil {
+	if err := store.db.Model(&entryRow{}).Where("id = ?", entry.ID).Update("content", "token="+secret).Error; err != nil {
 		t.Fatal(err)
 	}
 	injection, err := store.Inject(ctx, testScope, nil, Selection{}, Budget{})

@@ -8,6 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type BackendConfig struct {
@@ -39,7 +42,7 @@ func openPostgres(ctx context.Context, cfg BackendConfig, options OpenOptions) (
 	if err := applyPostgresDefaults(config, cfg.Password); err != nil {
 		return nil, badParam(err)
 	}
-	db := sql.OpenDB(&rebindConnector{inner: stdlib.GetConnector(*config)})
+	db := sql.OpenDB(stdlib.GetConnector(*config))
 	maxOpen := cfg.MaxOpenConns
 	if maxOpen <= 0 {
 		maxOpen = 16
@@ -59,9 +62,14 @@ func openPostgres(ctx context.Context, cfg BackendConfig, options OpenOptions) (
 		_ = db.Close()
 		return nil, dbError(fmt.Errorf("postgres startup ping: %w", err))
 	}
-	s := newStore(db, options.Logger, Dialect{backend: BackendPostgres})
-	if err := s.migrate(ctx); err != nil {
+	gormDB, err := gorm.Open(postgres.New(postgres.Config{Conn: db}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
 		_ = db.Close()
+		return nil, dbError(err)
+	}
+	s := newStore(gormDB, options.Logger, Dialect{backend: BackendPostgres})
+	if err := s.migrate(ctx); err != nil {
+		_ = s.Close()
 		return nil, err
 	}
 	return s, nil

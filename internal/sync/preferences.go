@@ -3,7 +3,6 @@ package sync
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -12,6 +11,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen/field"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const preferenceObjectPrefix = "preference:"
@@ -31,21 +35,20 @@ func (e *Engine) collectPreferenceObjects(ctx context.Context, userID string, ob
 }
 
 func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]localObject) error {
-	var value string
-	var updatedAt int64
-	err := e.store.DB().QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", guard.PermissionSettingKeyForUser(ctx)).Scan(&value, &updatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	setting := query.Use(e.store.GORM()).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(guard.PermissionSettingKeyForUser(ctx))).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	var config guard.Config
-	if err := json.Unmarshal([]byte(value), &config); err != nil {
+	if err := json.Unmarshal([]byte(row.Value), &config); err != nil {
 		return ipc.WrapError(ipc.CodeBadParam, "AI 权限配置数据损坏", err)
 	}
 	config = config.Normalized()
-	payload, err := marshalObject(aiPermissionObject{ID: "global", Mode: string(config.Mode), DangerRules: config.DangerRules, UpdatedAt: updatedAt})
+	payload, err := marshalObject(aiPermissionObject{ID: "global", Mode: string(config.Mode), DangerRules: config.DangerRules, UpdatedAt: row.UpdatedAt})
 	if err != nil {
 		return err
 	}
@@ -55,30 +58,27 @@ func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]loc
 
 func (e *Engine) collectPreferences(ctx context.Context, userID string, objects map[string]localObject) error {
 	prefix := account.PreferenceUserKeyPrefix(userID)
-	rows, err := e.store.DB().QueryContext(ctx, "SELECT key, value, updated_at FROM setting WHERE key LIKE ? ESCAPE '\\'", prefix+"%")
-	if err != nil {
+	setting := query.Use(e.store.GORM()).Setting
+	rows := []store.Setting{}
+	if err := setting.WithContext(ctx).
+		Where(field.NewUnsafeFieldRaw(`key LIKE ? ESCAPE '\'`, prefix+"%")).
+		Scan(&rows); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, value string
-		var updatedAt int64
-		if err := rows.Scan(&key, &value, &updatedAt); err != nil {
-			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		key = strings.TrimPrefix(key, prefix)
-		normalized, err := account.NormalizePreferenceValue(key, json.RawMessage(value))
+	for _, row := range rows {
+		key := strings.TrimPrefix(row.Key, prefix)
+		normalized, err := account.NormalizePreferenceValue(key, json.RawMessage(row.Value))
 		if err != nil {
 			continue
 		}
 		id := preferenceObjectPrefix + key
-		payload, err := marshalObject(preferenceObject{ID: id, Key: key, Value: json.RawMessage(normalized), UpdatedAt: updatedAt})
+		payload, err := marshalObject(preferenceObject{ID: id, Key: key, Value: json.RawMessage(normalized), UpdatedAt: row.UpdatedAt})
 		if err != nil {
 			return err
 		}
 		objects[id] = localObject{KindPreference, payload}
 	}
-	return rows.Err()
+	return nil
 }
 
 func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
@@ -264,38 +264,41 @@ func (e *Engine) applyPreferenceTombstone(ctx context.Context, objectID string, 
 }
 
 func (e *Engine) settingRevision(ctx context.Context, key string) (int64, bool, error) {
-	var updatedAt int64
-	err := e.store.DB().QueryRowContext(ctx, "SELECT updated_at FROM setting WHERE key = ?", key).Scan(&updatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	setting := query.Use(e.store.GORM()).Setting
+	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return updatedAt, true, nil
+	return row.UpdatedAt, true, nil
 }
 
 func (e *Engine) settingPut(ctx context.Context, key, value string, updatedAt int64) error {
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, updatedAt)
-	if err != nil {
+	if err := e.store.GORM().WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&store.Setting{Key: key, Value: value, UpdatedAt: updatedAt}).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
 }
 
 func (e *Engine) settingDelete(ctx context.Context, key string) error {
-	_, err := e.store.DB().ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key)
-	if err != nil {
+	setting := query.Use(e.store.GORM()).Setting
+	if _, err := setting.WithContext(ctx).Where(setting.Key.Eq(key)).Delete(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
 }
 
 func (e *Engine) clearTombstone(ctx context.Context, id string) error {
-	condition, args := ipc.OwnerCondition(ctx, "owner_id")
-	_, err := e.store.DB().ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{id}, args...)...)
-	if err != nil {
+	tombstone := query.Use(e.store.GORM()).SyncTombstone
+	if _, err := tombstone.WithContext(ctx).
+		Where(tombstone.ID.Eq(id)).
+		Where(ownerConditions(ctx, tombstone.TableName())...).
+		Delete(); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil

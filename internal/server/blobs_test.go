@@ -619,7 +619,7 @@ func TestBlobOpenAccessFollowsDeploymentForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	if blobs := newWithForm(t, func(config *Config) {
 		config.Options.Auth = AuthOn
 		config.Accounts = accounts

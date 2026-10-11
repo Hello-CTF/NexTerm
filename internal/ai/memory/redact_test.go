@@ -77,12 +77,12 @@ func TestBareCredentialRejectedRedactedAndInjectedSafely(t *testing.T) {
 	if !entry.Redacted || strings.Contains(entry.Content, secret) {
 		t.Fatalf("redacted entry = %+v", entry)
 	}
-	var persisted string
-	if err := store.db.QueryRow("SELECT content FROM memory_entry WHERE id = ?", entry.ID).Scan(&persisted); err != nil {
+	var persisted entryRow
+	if err := store.db.Where("id = ?", entry.ID).Select("content").First(&persisted).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(persisted, secret) {
-		t.Fatalf("database contains bare credential: %q", persisted)
+	if strings.Contains(persisted.Content, secret) {
+		t.Fatalf("database contains bare credential: %q", persisted.Content)
 	}
 	mustEnableInjection(t, store, testScope)
 	injection, err := store.Inject(ctx, testScope, nil, Selection{}, Budget{})

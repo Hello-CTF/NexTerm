@@ -82,7 +82,7 @@ func newTestAccounts(t *testing.T) *account.Accounts {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	return account.New(database.DB())
+	return account.New(database.GORM())
 }
 
 // newRealSyncService 装配一个真实的 v2 同步服务(内存库+已解锁凭据库), 供需要同步模块的集成测试使用。

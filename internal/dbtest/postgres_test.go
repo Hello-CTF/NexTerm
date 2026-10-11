@@ -3,10 +3,8 @@ package dbtest
 import (
 	"bytes"
 	"context"
-	"errors"
 	"testing"
 
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -18,21 +16,17 @@ var requiredTables = []string{
 	"app_user", "user_dek", "user_session", "user_device", "sync_credential",
 	"user_setting", "device_enroll_code", "user_sync_object", "user_sync_head",
 	"device_agent", "device_metrics", "device_metrics_hourly",
-	"sync_tombstone", "sync_state", "share_link", "host_share", "schema_migrations",
+	"sync_tombstone", "sync_state", "share_link", "host_share",
 	"command_log", "device_share_link", "user_totp", "user_totp_recovery_code",
 }
 
-func TestPostgresFromScratchMigration(t *testing.T) {
+func TestPostgresFromScratchSchema(t *testing.T) {
 	fixture := NewFixture(t)
 	db := fixture.OpenStore(t)
 	if db.Backend() != store.BackendPostgres {
 		t.Fatalf("Backend() = %q", db.Backend())
 	}
 	raw := fixture.OpenRaw(t)
-	var count int
-	if err := raw.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("migration count=%d err=%v", count, err)
-	}
 	rows, err := raw.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")
 	if err != nil {
 		t.Fatal(err)
@@ -77,33 +71,9 @@ func TestPostgresIdempotentReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := fixture.OpenStore(t)
-	var count int
-	if err := second.DB().QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("migration count after reopen=%d err=%v", count, err)
-	}
 	value, found, err := second.SettingGet(context.Background(), "reopen")
 	if err != nil || !found || value != "kept" {
 		t.Fatalf("SettingGet = %q, %v, %v", value, found, err)
-	}
-}
-
-func TestPostgresRejectsChecksumDrift(t *testing.T) {
-	fixture := NewFixture(t)
-	db := fixture.OpenStore(t)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	raw := fixture.OpenRaw(t)
-	if _, err := raw.Exec("UPDATE schema_migrations SET checksum = $1 WHERE version = 1", bytes.Repeat([]byte{1}, 32)); err != nil {
-		t.Fatal(err)
-	}
-	_, err := store.OpenBackend(context.Background(), store.BackendConfig{Backend: store.BackendPostgres, DSN: fixture.DSN}, store.OpenOptions{})
-	if err == nil {
-		t.Fatal("reopen accepted a tampered checksum")
-	}
-	var appErr *ipc.Error
-	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeDBMigrate {
-		t.Fatalf("error = %v; want code %s", err, ipc.CodeDBMigrate)
 	}
 }
 

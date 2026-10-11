@@ -32,7 +32,7 @@ func tableNames(t *testing.T, db *sql.DB) map[string]bool {
 	return names
 }
 
-func TestMigrationFreshInstall(t *testing.T) {
+func TestSchemaFreshInstall(t *testing.T) {
 	db := testStore(t)
 	names := tableNames(t, db.DB())
 	for _, name := range multiUserTables {
@@ -42,19 +42,15 @@ func TestMigrationFreshInstall(t *testing.T) {
 	}
 	for _, name := range []string{"asset", "asset_group", "credential", "snippet"} {
 		if !names[name] {
-			t.Errorf("init migration dropped legacy table %s", name)
+			t.Errorf("missing core table %s", name)
 		}
 	}
 	if names["sync_tokens"] {
-		t.Errorf("sync_tokens must not exist in the merged init schema")
-	}
-	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 2 {
-		t.Fatalf("migration count=%d err=%v", count, err)
+		t.Errorf("sync_tokens must not exist in the schema")
 	}
 }
 
-func TestMigrationAppUserRoleAndStateConstraints(t *testing.T) {
+func TestAppUserRoleAndStateConstraints(t *testing.T) {
 	db := testStore(t)
 	if _, err := db.DB().Exec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u1', 'alice', 'admin', 'x', 'active', 1, 1)`); err == nil || !strings.Contains(err.Error(), "CHECK") {
@@ -74,7 +70,7 @@ VALUES('u2', 'Alice', 'user', 'x', 'active', 1, 1)`); err == nil {
 	}
 }
 
-func TestMigrationAppUserForeignKeyCascade(t *testing.T) {
+func TestAppUserForeignKeyCascade(t *testing.T) {
 	db := testStore(t)
 	ctx := context.Background()
 	mustExec := func(query string, args ...any) {

@@ -2,13 +2,15 @@ package sharing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 const (
@@ -69,8 +71,11 @@ func (s *Service) CreatePreviewLink(ctx context.Context, identity *account.Ident
 		CreatedAt: now,
 		ExpiresAt: now + ttl.Milliseconds(),
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO share_preview_link(id, owner_id, session_id, token_hash, created_at, expires_at)
-VALUES(?,?,?,?,?,?)`, link.ID, link.OwnerID, link.SessionID, hashSecret(token), link.CreatedAt, link.ExpiresAt); err != nil {
+	row := store.SharePreviewLink{
+		ID: link.ID, OwnerID: link.OwnerID, SessionID: link.SessionID,
+		TokenHash: hashSecret(token), CreatedAt: link.CreatedAt, ExpiresAt: link.ExpiresAt,
+	}
+	if err := query.Use(s.db).SharePreviewLink.WithContext(ctx).Create(&row); err != nil {
 		return nil, "", dbError(err)
 	}
 	if err := s.audit(ctx, auditKindPreviewCreate, auditPayload{
@@ -85,11 +90,9 @@ VALUES(?,?,?,?,?,?)`, link.ID, link.OwnerID, link.SessionID, hashSecret(token), 
 // ResolvePreview 用公开 token 换取只读授权快照; 无效、过期或已吊销一律拒绝
 // 并写审计, 不区分无效与不存在。
 func (s *Service) ResolvePreview(ctx context.Context, token string) (*PreviewGrant, error) {
-	var link PreviewLink
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT id, owner_id, session_id, expires_at, revoked_at FROM share_preview_link WHERE token_hash = ?`, hashSecret(token)).
-		Scan(&link.ID, &link.OwnerID, &link.SessionID, &link.ExpiresAt, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	sharePreviewLink := query.Use(s.db).SharePreviewLink
+	row, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.TokenHash.Eq(hashSecret(token))).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if auditErr := s.audit(ctx, auditKindPreviewAccess, auditPayload{Action: "access", Requester: "", Outcome: "deny", Reason: "not_found"}); auditErr != nil {
 			return nil, auditErr
 		}
@@ -98,6 +101,7 @@ func (s *Service) ResolvePreview(ctx context.Context, token string) (*PreviewGra
 	if err != nil {
 		return nil, dbError(err)
 	}
+	link := PreviewLink{ID: row.ID, OwnerID: row.OwnerID, SessionID: row.SessionID, ExpiresAt: row.ExpiresAt}
 	deny := func(reason string, err error) (*PreviewGrant, error) {
 		if auditErr := s.audit(ctx, auditKindPreviewAccess, auditPayload{
 			Action: "access", ShareID: link.ID, SessionID: link.SessionID,
@@ -108,12 +112,12 @@ func (s *Service) ResolvePreview(ctx context.Context, token string) (*PreviewGra
 		return nil, err
 	}
 	switch {
-	case revokedAt.Valid:
+	case row.RevokedAt != nil:
 		return deny("revoked", ErrPreviewRevoked)
 	case s.now() >= link.ExpiresAt:
 		return deny("expired", ErrPreviewExpired)
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE share_preview_link SET last_accessed_at = ? WHERE id = ?", s.now(), link.ID); err != nil {
+	if _, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"last_accessed_at": s.now()}); err != nil {
 		return nil, dbError(err)
 	}
 	if err := s.audit(ctx, auditKindPreviewAccess, auditPayload{
@@ -136,38 +140,33 @@ func (s *Service) RevalidatePreview(ctx context.Context, grant *PreviewGrant) (*
 	if grant == nil || grant.ShareID == "" {
 		return nil, ErrPreviewInvalid
 	}
-	var sessionID string
-	var expiresAt int64
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT session_id, expires_at, revoked_at FROM share_preview_link WHERE id = ?", grant.ShareID).
-		Scan(&sessionID, &expiresAt, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	sharePreviewLink := query.Use(s.db).SharePreviewLink
+	row, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.ID.Eq(grant.ShareID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrPreviewInvalid
 	}
 	if err != nil {
 		return nil, dbError(err)
 	}
 	switch {
-	case sessionID != grant.SessionID:
+	case row.SessionID != grant.SessionID:
 		return nil, ErrPreviewInvalid
-	case revokedAt.Valid:
+	case row.RevokedAt != nil:
 		return nil, ErrPreviewRevoked
-	case s.now() >= expiresAt:
+	case s.now() >= row.ExpiresAt:
 		return nil, ErrPreviewExpired
 	}
 	refreshed := *grant
-	refreshed.ExpiresAt = expiresAt
+	refreshed.ExpiresAt = row.ExpiresAt
 	return &refreshed, nil
 }
 
 // RevokePreviewLink 吊销只读预览链接; owner 可执行, 重复吊销
 // 不报错。每次判定都写含 share_id 的审计。
 func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Identity, linkID string) error {
-	var ownerID, sessionID string
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT owner_id, session_id, revoked_at FROM share_preview_link WHERE id = ?", linkID).
-		Scan(&ownerID, &sessionID, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	sharePreviewLink := query.Use(s.db).SharePreviewLink
+	row, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.ID.Eq(linkID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ipc.NewError(ipc.CodeNotFound, "分享链接不存在")
 	}
 	if err != nil {
@@ -175,20 +174,20 @@ func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Ident
 	}
 	outcome, reason := "allow", ""
 	var decision error
-	if ownerID != identity.UserID {
+	if row.OwnerID != identity.UserID {
 		outcome, reason = "deny", "not_owner"
 		decision = ipc.NewError(ipc.CodeForbidden, "分享链接不属于该用户")
 	}
 	if auditErr := s.audit(ctx, auditKindPreviewRevoke, auditPayload{
-		Action: "revoke", ShareID: linkID, SessionID: sessionID,
-		OwnerID: ownerID, Requester: identity.UserID, Outcome: outcome, Reason: reason,
+		Action: "revoke", ShareID: linkID, SessionID: row.SessionID,
+		OwnerID: row.OwnerID, Requester: identity.UserID, Outcome: outcome, Reason: reason,
 	}); auditErr != nil {
 		return auditErr
 	}
 	if decision != nil {
 		return decision
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE share_preview_link SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", s.now(), linkID); err != nil {
+	if _, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.ID.Eq(linkID), sharePreviewLink.RevokedAt.IsNull()).UpdateColumns(map[string]any{"revoked_at": s.now()}); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -197,30 +196,27 @@ func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Ident
 // ListPreviewLinks 返回 owner 创建的只读预览链接; 仅 owner 可见。
 // 不含 token 哈希。
 func (s *Service) ListPreviewLinks(ctx context.Context, identity *account.Identity) ([]*PreviewLink, error) {
-	query := `SELECT id, owner_id, session_id, created_at, expires_at, revoked_at, last_accessed_at FROM share_preview_link`
-	args := []any{}
-	query += " WHERE owner_id = ?"
-	args = append(args, identity.UserID)
-	query += " ORDER BY created_at, id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	sharePreviewLink := query.Use(s.db).SharePreviewLink
+	rows, err := sharePreviewLink.WithContext(ctx).
+		Where(sharePreviewLink.OwnerID.Eq(identity.UserID)).
+		Order(sharePreviewLink.CreatedAt, sharePreviewLink.ID).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var links []*PreviewLink
-	for rows.Next() {
-		var link PreviewLink
-		var revokedAt, lastAccessedAt sql.NullInt64
-		if err := rows.Scan(&link.ID, &link.OwnerID, &link.SessionID, &link.CreatedAt, &link.ExpiresAt, &revokedAt, &lastAccessedAt); err != nil {
-			return nil, dbError(err)
+	links := make([]*PreviewLink, 0, len(rows))
+	for _, row := range rows {
+		link := &PreviewLink{
+			ID: row.ID, OwnerID: row.OwnerID, SessionID: row.SessionID,
+			CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
 		}
-		if revokedAt.Valid {
-			link.RevokedAt = revokedAt.Int64
+		if row.RevokedAt != nil {
+			link.RevokedAt = *row.RevokedAt
 		}
-		if lastAccessedAt.Valid {
-			link.LastAccessedAt = lastAccessedAt.Int64
+		if row.LastAccessedAt != nil {
+			link.LastAccessedAt = *row.LastAccessedAt
 		}
-		links = append(links, &link)
+		links = append(links, link)
 	}
-	return links, rows.Err()
+	return links, nil
 }

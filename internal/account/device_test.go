@@ -51,8 +51,8 @@ func TestDeviceLifecycleAndRevokeCascade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at)
-VALUES('sc1', ?, ?, 'sync', 'synthetic-hash', 1)`, owner.ID, device.ID); err != nil {
+	if err := a.db.Exec(`INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at)
+VALUES('sc1', ?, ?, 'sync', 'synthetic-hash', 1)`, owner.ID, device.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,7 +63,7 @@ VALUES('sc1', ?, ?, 'sync', 'synthetic-hash', 1)`, owner.ID, device.ID); err != 
 	requireCode(t, a.RevokeDevice(ctx, owner.ID, device.ID), ipc.CodeForbidden)
 	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
 	var credRevoked int64
-	if err := a.db.QueryRowContext(ctx, "SELECT revoked_at FROM sync_credential WHERE id = 'sc1'").Scan(&credRevoked); err != nil {
+	if err := a.db.Raw("SELECT revoked_at FROM sync_credential WHERE id = 'sc1'").Row().Scan(&credRevoked); err != nil {
 		t.Fatal(err)
 	}
 	if credRevoked == 0 {

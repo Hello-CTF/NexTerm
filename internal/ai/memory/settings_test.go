@@ -2,9 +2,7 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -99,48 +97,5 @@ func TestUpdateSettingsConcurrentCASHasSingleWinner(t *testing.T) {
 	}
 	if settings.Version != 2 {
 		t.Fatalf("version after race = %d", settings.Version)
-	}
-}
-
-func TestMigrationV1IsRejected(t *testing.T) {
-	ctx := context.Background()
-	path := t.TempDir() + "/memory-v1.db"
-	legacy, err := sql.Open("sqlite", sqliteDSN(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	statements := []string{
-		`CREATE TABLE memory_entry (
-			id TEXT PRIMARY KEY,
-			tenant TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			topic TEXT NOT NULL,
-			content TEXT NOT NULL,
-			version INTEGER NOT NULL CHECK(version > 0),
-			redacted INTEGER NOT NULL CHECK(redacted IN (0, 1)),
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE memory_settings (
-			tenant TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			injection_enabled INTEGER NOT NULL CHECK(injection_enabled IN (0, 1)),
-			version INTEGER NOT NULL CHECK(version > 0),
-			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(tenant, subject)
-		)`,
-		"PRAGMA user_version = 1",
-	}
-	for _, statement := range statements {
-		if _, err := legacy.ExecContext(ctx, statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := Open(ctx, path); err == nil || !strings.Contains(err.Error(), "unsupported semantic memory schema version 1") {
-		t.Fatalf("v1 schema open err = %v", err)
 	}
 }

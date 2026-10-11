@@ -46,13 +46,8 @@ func TestRollupRunnerSchedulesMetricsRetention(t *testing.T) {
 		t.Fatalf("rollup last error: %s", status.LastError)
 	}
 
-	var hourlyCount, rawCount int
-	if err := f.service.db.QueryRowContext(context.Background(), "SELECT count(*) FROM device_metrics_hourly WHERE device_id = ?", deviceID).Scan(&hourlyCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.db.QueryRowContext(context.Background(), "SELECT count(*) FROM device_metrics WHERE device_id = ?", deviceID).Scan(&rawCount); err != nil {
-		t.Fatal(err)
-	}
+	hourlyCount := countDeviceMetricsHourly(t, f.service.db, deviceID)
+	rawCount := countDeviceMetrics(t, f.service.db, deviceID)
 	if hourlyCount != 1 || rawCount != 0 {
 		t.Fatalf("hourly=%d raw=%d, want 1/0", hourlyCount, rawCount)
 	}

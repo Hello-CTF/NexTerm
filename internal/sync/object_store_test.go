@@ -19,12 +19,12 @@ func newObjectStoreUser(t *testing.T) (context.Context, *objectStore, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	accounts := account.New(db.DB())
+	accounts := account.New(db.GORM())
 	user, err := accounts.CreateUser(ctx, "sync-store-user-"+ids.New(), "test", "store-pw-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ctx, &objectStore{db: db.DB(), backend: db.Backend()}, user.ID
+	return ctx, &objectStore{db: db.GORM(), backend: db.Backend()}, user.ID
 }
 
 func TestObjectStoreGenesisHeadAndIdempotentPush(t *testing.T) {

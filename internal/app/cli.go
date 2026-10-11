@@ -210,7 +210,7 @@ Flags:
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
   --db BACKEND        Server database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
-                      postgres runs the embedded migrations/postgres schema and, in this first
+                      postgres uses the same auto-migrated schema and, in this first
                       version, supports a single writer instance only
   --db-dsn DSN        Postgres connection string (env NEXTERM_DB_DSN), e.g.
                       postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt;

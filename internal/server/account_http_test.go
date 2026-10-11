@@ -40,7 +40,7 @@ func newAccountFixtureListen(t *testing.T, auth, listen string) *accountFixture 
 	config := testConfig(t, false)
 	config.Options.Auth = auth
 	config.Options.Listen = listen
-	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{
@@ -800,7 +800,7 @@ func TestAccountHTTPConfigValidation(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	config = testConfig(t, false)
 	config.Options.Auth = AuthOn
-	config.Accounts = account.New(database.DB())
+	config.Accounts = account.New(database.GORM())
 	server, err := New(config)
 	if err != nil {
 		t.Fatalf("auth=on with accounts only must start: %v", err)

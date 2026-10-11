@@ -96,7 +96,7 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	fleet, err := fleetserver.New(fleetserver.Config{DB: database.DB(), Accounts: account.New(database.DB())})
+	fleet, err := fleetserver.New(fleetserver.Config{DB: database.GORM(), Accounts: account.New(database.GORM())})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -185,7 +185,7 @@ func TestTOTPSecretStoredEncrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var envelope []byte
-	if err := a.db.QueryRowContext(ctx, "SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", user.ID).Scan(&envelope); err != nil {
+	if err := a.db.Raw("SELECT pending_secret_envelope FROM user_totp WHERE user_id = ?", user.ID).Row().Scan(&envelope); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(envelope), secret) || strings.Contains(string(envelope), string(raw)) {
@@ -199,14 +199,14 @@ func TestTOTPSecretStoredEncrypted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.QueryRowContext(ctx, "SELECT secret_envelope FROM user_totp WHERE user_id = ?", user.ID).Scan(&envelope); err != nil {
+	if err := a.db.Raw("SELECT secret_envelope FROM user_totp WHERE user_id = ?", user.ID).Row().Scan(&envelope); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(envelope), secret) {
 		t.Fatal("active secret stored as plaintext")
 	}
 	var hashCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM user_totp_recovery_code WHERE code_hash = ?", codes[0]).Scan(&hashCount); err != nil {
+	if err := a.db.Raw("SELECT count(*) FROM user_totp_recovery_code WHERE code_hash = ?", codes[0]).Row().Scan(&hashCount); err != nil {
 		t.Fatal(err)
 	}
 	if hashCount != 0 {

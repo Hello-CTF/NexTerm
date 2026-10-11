@@ -2,13 +2,16 @@ package sharing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // HostShare 把一台 daemon 主机分享给一个注册用户: recipient 可在有效期内
@@ -73,14 +76,27 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 		CreatedAt:         now,
 		ExpiresAt:         expiresAt,
 	}
-	err = s.db.QueryRowContext(ctx, `INSERT INTO host_share(id, owner_id, device_id, recipient_id, permission, created_at, expires_at)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(owner_id, device_id, recipient_id) DO UPDATE SET
-permission = excluded.permission, created_at = excluded.created_at, expires_at = excluded.expires_at, revoked_at = NULL
-RETURNING id`, share.ID, share.OwnerID, deviceID, recipient.ID, string(permission), now, expiresAt).Scan(&share.ID)
+	hostShare := query.Use(s.db).HostShare
+	row := store.HostShare{
+		ID: share.ID, OwnerID: share.OwnerID, DeviceID: deviceID, RecipientID: recipient.ID,
+		Permission: string(permission), CreatedAt: now, ExpiresAt: expiresAt,
+	}
+	err = hostShare.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "device_id"}, {Name: "recipient_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"permission", "created_at", "expires_at", "revoked_at"}),
+		}).
+		Create(&row)
 	if err != nil {
 		return nil, dbError(err)
 	}
+	actual, err := hostShare.WithContext(ctx).
+		Where(hostShare.OwnerID.Eq(share.OwnerID), hostShare.DeviceID.Eq(deviceID), hostShare.RecipientID.Eq(recipient.ID)).
+		First()
+	if err != nil {
+		return nil, dbError(err)
+	}
+	share.ID = actual.ID
 	if err := s.audit(ctx, auditKindHostCreate, auditPayload{
 		Action: "create", ShareID: share.ID, DeviceID: deviceID, OwnerID: share.OwnerID, Recipient: recipient.ID,
 		Requester: identity.UserID, Outcome: "allow", Permission: string(permission),
@@ -92,46 +108,66 @@ RETURNING id`, share.ID, share.OwnerID, deviceID, recipient.ID, string(permissio
 
 // ListHostShares 返回与 identity 相关的分享 (授予的或接收的); 仅 owner 可见。
 func (s *Service) ListHostShares(ctx context.Context, identity *account.Identity) ([]*HostShare, error) {
-	query := `SELECT h.id, h.owner_id, h.device_id, h.recipient_id, h.permission, h.created_at, h.expires_at, h.revoked_at,
-ou.username, ru.username
-FROM host_share h
-JOIN app_user ou ON ou.id = h.owner_id
-JOIN app_user ru ON ru.id = h.recipient_id`
-	args := []any{}
-	query += " WHERE h.owner_id = ? OR h.recipient_id = ?"
-	args = append(args, identity.UserID, identity.UserID)
-	query += " ORDER BY h.created_at, h.id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	hostShare := query.Use(s.db).HostShare
+	rows, err := hostShare.WithContext(ctx).
+		Where(hostShare.OwnerID.Eq(identity.UserID)).
+		Or(hostShare.RecipientID.Eq(identity.UserID)).
+		Order(hostShare.CreatedAt, hostShare.ID).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var shares []*HostShare
-	for rows.Next() {
-		var share HostShare
-		var revokedAt sql.NullInt64
-		if err := rows.Scan(&share.ID, &share.OwnerID, &share.DeviceID, &share.RecipientID, &share.Permission,
-			&share.CreatedAt, &share.ExpiresAt, &revokedAt, &share.OwnerUsername, &share.RecipientUsername); err != nil {
+	userIDs := make([]string, 0, 2*len(rows))
+	seen := map[string]bool{}
+	for _, row := range rows {
+		for _, id := range []string{row.OwnerID, row.RecipientID} {
+			if !seen[id] {
+				seen[id] = true
+				userIDs = append(userIDs, id)
+			}
+		}
+	}
+	usernames := map[string]string{}
+	if len(userIDs) > 0 {
+		appUser := query.Use(s.db).AppUser
+		users, err := appUser.WithContext(ctx).Where(appUser.ID.In(userIDs...)).Find()
+		if err != nil {
 			return nil, dbError(err)
 		}
-		if revokedAt.Valid {
-			share.RevokedAt = revokedAt.Int64
+		for _, user := range users {
+			usernames[user.ID] = user.Username
 		}
-		shares = append(shares, &share)
 	}
-	return shares, rows.Err()
+	shares := make([]*HostShare, 0, len(rows))
+	for _, row := range rows {
+		share := &HostShare{
+			ID: row.ID, OwnerID: row.OwnerID, OwnerUsername: usernames[row.OwnerID],
+			DeviceID: row.DeviceID, RecipientID: row.RecipientID, RecipientUsername: usernames[row.RecipientID],
+			Permission: Permission(row.Permission), CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
+		}
+		if row.RevokedAt != nil {
+			share.RevokedAt = *row.RevokedAt
+		}
+		shares = append(shares, share)
+	}
+	return shares, nil
 }
 
 // RevokeHostShare 吊销主机分享: 授予者、设备 owner  可执行,
 // 重复吊销不报错。吊销只影响本行, 同设备的其他分享不受影响。
 func (s *Service) RevokeHostShare(ctx context.Context, identity *account.Identity, shareID string) error {
-	var share HostShare
-	var deviceOwnerID string
-	var revokedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT h.id, h.owner_id, h.device_id, h.revoked_at, d.user_id
-FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shareID).
-		Scan(&share.ID, &share.OwnerID, &share.DeviceID, &revokedAt, &deviceOwnerID)
-	if errors.Is(err, sql.ErrNoRows) {
+	hostShare := query.Use(s.db).HostShare
+	row, err := hostShare.WithContext(ctx).Where(hostShare.ID.Eq(shareID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ipc.NewError(ipc.CodeNotFound, "主机分享不存在")
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	share := HostShare{ID: row.ID, OwnerID: row.OwnerID, DeviceID: row.DeviceID}
+	userDevice := query.Use(s.db).UserDevice
+	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(share.DeviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ipc.NewError(ipc.CodeNotFound, "主机分享不存在")
 	}
 	if err != nil {
@@ -139,7 +175,7 @@ FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shar
 	}
 	outcome, reason := "allow", ""
 	var decision error
-	if identity.UserID != share.OwnerID && identity.UserID != deviceOwnerID {
+	if identity.UserID != share.OwnerID && identity.UserID != device.UserID {
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "无权限吊销该分享")
 	}
 	auditErr := s.audit(ctx, auditKindHostRevoke, auditPayload{
@@ -152,7 +188,7 @@ FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shar
 	if auditErr != nil {
 		return auditErr
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE host_share SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", s.now(), shareID); err != nil {
+	if _, err := hostShare.WithContext(ctx).Where(hostShare.ID.Eq(shareID), hostShare.RevokedAt.IsNull()).UpdateColumns(map[string]any{"revoked_at": s.now()}); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -189,23 +225,20 @@ func unionHostShares(rows []hostShareRow) (Permission, int64, []string) {
 
 // loadValidHostShares 读取 (device, recipient) 下全部未吊销未过期的分享行。
 func (s *Service) loadValidHostShares(ctx context.Context, deviceID, recipientID string) ([]hostShareRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, permission, expires_at FROM host_share
-WHERE device_id = ? AND recipient_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY id`, deviceID, recipientID, s.now())
+	hostShare := query.Use(s.db).HostShare
+	rows, err := hostShare.WithContext(ctx).
+		Where(hostShare.DeviceID.Eq(deviceID), hostShare.RecipientID.Eq(recipientID),
+			hostShare.RevokedAt.IsNull(), hostShare.ExpiresAt.Gt(s.now())).
+		Order(hostShare.ID).
+		Find()
 	if err != nil {
 		return nil, dbError(err)
 	}
-	defer rows.Close()
-	var shares []hostShareRow
-	for rows.Next() {
-		var share hostShareRow
-		var permission string
-		if err := rows.Scan(&share.id, &permission, &share.expiresAt); err != nil {
-			return nil, dbError(err)
-		}
-		share.permission = Permission(permission)
-		shares = append(shares, share)
+	shares := make([]hostShareRow, 0, len(rows))
+	for _, row := range rows {
+		shares = append(shares, hostShareRow{id: row.ID, permission: Permission(row.Permission), expiresAt: row.ExpiresAt})
 	}
-	return shares, rows.Err()
+	return shares, nil
 }
 
 // AuthorizeTerminalOpen 校验注册用户能否通过 host agent 在设备上新建终端:
@@ -281,30 +314,27 @@ func (s *Service) RevalidateHostAccess(ctx context.Context, grant *Grant) (*Gran
 	now := s.now()
 	var valid []hostShareRow
 	reason := "no_share"
+	hostShare := query.Use(s.db).HostShare
 	for _, id := range grant.ShareIDs {
-		var deviceID, recipientID, permission string
-		var expiresAt int64
-		var revokedAt sql.NullInt64
-		err := s.db.QueryRowContext(ctx, `SELECT device_id, recipient_id, permission, expires_at, revoked_at FROM host_share WHERE id = ?`, id).
-			Scan(&deviceID, &recipientID, &permission, &expiresAt, &revokedAt)
-		if errors.Is(err, sql.ErrNoRows) {
+		row, err := hostShare.WithContext(ctx).Where(hostShare.ID.Eq(id)).First()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
 		if err != nil {
 			return nil, dbError(err)
 		}
-		if deviceID != grant.DeviceID || recipientID != grant.Recipient {
+		if row.DeviceID != grant.DeviceID || row.RecipientID != grant.Recipient {
 			continue
 		}
-		if revokedAt.Valid {
+		if row.RevokedAt != nil {
 			reason = "revoked"
 			continue
 		}
-		if now >= expiresAt {
+		if now >= row.ExpiresAt {
 			reason = "expired"
 			continue
 		}
-		valid = append(valid, hostShareRow{id: id, permission: Permission(permission), expiresAt: expiresAt})
+		valid = append(valid, hostShareRow{id: id, permission: Permission(row.Permission), expiresAt: row.ExpiresAt})
 	}
 	if len(valid) == 0 {
 		return nil, ipc.NewError(ipc.CodeForbidden, hostShareDenyMessage(reason))

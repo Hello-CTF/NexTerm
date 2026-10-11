@@ -145,7 +145,7 @@ func TestEngineTombstonePreventsResurrection(t *testing.T) {
 	if err := deviceA.db.CredentialDelete(ctx, credentialID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deviceA.db.DB().ExecContext(ctx, "DELETE FROM snippet WHERE id=?", snippetID); err != nil {
+	if err := deviceA.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")

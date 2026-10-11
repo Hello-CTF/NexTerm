@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 func TestHostShareCreateAndOpenTerminal(t *testing.T) {
@@ -443,7 +444,8 @@ func TestHostShareDeviceRevokedStopsOpen(t *testing.T) {
 	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -603,7 +605,8 @@ func TestRevalidateHostOwnerMismatchAndDeviceRevoked(t *testing.T) {
 		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 
-	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+	userDevice := query.Use(fixture.db).UserDevice
+	if _, err := userDevice.WithContext(context.Background()).Where(userDevice.ID.Eq(deviceID)).UpdateColumns(map[string]any{"revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err == nil {

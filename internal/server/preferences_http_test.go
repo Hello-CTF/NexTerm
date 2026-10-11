@@ -25,7 +25,7 @@ func newPreferenceFixture(t *testing.T, auth string) *preferenceFixture {
 	t.Cleanup(func() { _ = database.Close() })
 	config := testConfig(t, false)
 	config.Options.Auth = auth
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	config.Accounts = accounts
 	config.Settings = database
 	server, httpServer := newTestHTTP(t, config)

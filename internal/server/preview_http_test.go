@@ -37,8 +37,8 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
-	previews, err := sharing.New(sharing.Config{DB: database.DB(), Accounts: accounts})
+	accounts := account.New(database.GORM())
+	previews, err := sharing.New(sharing.Config{DB: database.GORM(), Accounts: accounts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,8 +408,8 @@ func TestSharePreviewAbsentInSyncOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	accounts := account.New(database.DB())
-	previews, err := sharing.New(sharing.Config{DB: database.DB(), Accounts: accounts})
+	accounts := account.New(database.GORM())
+	previews, err := sharing.New(sharing.Config{DB: database.GORM(), Accounts: accounts})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -87,11 +87,11 @@ func TestObjectStoreConcurrentPushSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	user, err := account.New(db.DB()).CreateUser(ctx, "sync-concurrent-"+ids.New(), "test", "store-pw-123")
+	user, err := account.New(db.GORM()).CreateUser(ctx, "sync-concurrent-"+ids.New(), "test", "store-pw-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectStore := &objectStore{db: db.DB(), backend: db.Backend()}
+	objectStore := &objectStore{db: db.GORM(), backend: db.Backend()}
 
 	head := pushAllConcurrently(t, ctx, objectStore, user.ID, 8, 4)
 	if head == genesisHead(user.ID) {

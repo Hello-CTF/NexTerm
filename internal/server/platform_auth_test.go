@@ -26,7 +26,7 @@ func newPlatformFixture(t *testing.T) *accountFixture {
 	config.Options.Auth = AuthPlatform
 	config.Options.Listen = "0.0.0.0:8080"
 	config.GatewayAuthKey = testGatewayKey
-	accounts := account.New(database.DB(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{

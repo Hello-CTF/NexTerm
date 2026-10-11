@@ -16,11 +16,17 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	_ "modernc.org/sqlite"
+	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Store struct {
-	db        *sql.DB
+	db        *gorm.DB
+	sqlDB     *sql.DB
+	keepAlive *sql.Conn
 	dialect   Dialect
 	logger    *slog.Logger
 	retention retentionState
@@ -43,11 +49,11 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, ipc.WrapError(ipc.CodeIO, "IO 错误: "+err.Error(), err)
+			return nil, ipc.WrapError(ipc.CodeIO, "创建数据库目录失败: "+err.Error(), err)
 		}
 	}
 	if err := prepareDatabaseFile(path); err != nil {
-		return nil, ipc.WrapError(ipc.CodeIO, "IO 错误: "+err.Error(), err)
+		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
 	db, err := openDB(sqliteDSN(path), 8)
 	if err != nil {
@@ -55,12 +61,12 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	}
 	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
 	if err := s.migrate(ctx); err != nil {
-		_ = db.Close()
+		_ = s.Close()
 		return nil, err
 	}
 	if err := hardenDatabaseFiles(path); err != nil {
-		_ = db.Close()
-		return nil, ipc.WrapError(ipc.CodeIO, "IO 错误: "+err.Error(), err)
+		_ = s.Close()
+		return nil, ipc.WrapError(ipc.CodeIO, "保护数据库文件失败: "+err.Error(), err)
 	}
 	return s, nil
 }
@@ -70,33 +76,51 @@ func OpenInMemory(ctx context.Context) (*Store, error) {
 }
 
 func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, error) {
-	dsn := "file:nexterm-" + ids.New() + "?mode=memory" + pragmaQuery(true)
-	db, err := openDB(dsn, 1)
+	dsn := "file:nexterm-" + ids.New() + "?mode=memory&cache=shared" + pragmaQuery(true)
+	db, err := openDB(dsn, 2)
 	if err != nil {
 		return nil, err
 	}
 	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
 	if err := s.migrate(ctx); err != nil {
-		_ = db.Close()
+		_ = s.Close()
 		return nil, err
 	}
+	keepAlive, err := s.sqlDB.Conn(context.Background())
+	if err != nil {
+		_ = s.Close()
+		return nil, dbError(err)
+	}
+	s.keepAlive = keepAlive
 	return s, nil
 }
 
-func newStore(db *sql.DB, logger *slog.Logger, dialect Dialect) *Store {
+func newStore(db *gorm.DB, logger *slog.Logger, dialect Dialect) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Store{db: db, dialect: dialect, logger: logger}
+	sqlDB, _ := db.DB()
+	return &Store{db: db, sqlDB: sqlDB, dialect: dialect, logger: logger}
 }
 
-func openDB(dsn string, maxConnections int) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn)
+func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
+	var db *gorm.DB
+	var err error
+	config := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)}
+	if strings.HasPrefix(dsn, "postgres") {
+		db, err = gorm.Open(postgres.Open(dsn), config)
+	} else {
+		db, err = gorm.Open(sqlite.Open(dsn), config)
+	}
 	if err != nil {
 		return nil, dbError(err)
 	}
-	db.SetMaxOpenConns(maxConnections)
-	db.SetMaxIdleConns(maxConnections)
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, dbError(err)
+	}
+	sqlDB.SetMaxOpenConns(maxConnections)
+	sqlDB.SetMaxIdleConns(maxConnections)
 	return db, nil
 }
 
@@ -119,6 +143,10 @@ func pragmaQuery(memory bool) string {
 }
 
 func (s *Store) DB() *sql.DB {
+	return s.sqlDB
+}
+
+func (s *Store) GORM() *gorm.DB {
 	return s.db
 }
 
@@ -127,7 +155,11 @@ func (s *Store) Backend() Backend {
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	if s.keepAlive != nil {
+		_ = s.keepAlive.Close()
+		s.keepAlive = nil
+	}
+	return s.sqlDB.Close()
 }
 
 func EnsureID(id string) error {
@@ -145,6 +177,10 @@ func ParseJSONOr(raw string) json.RawMessage {
 }
 
 func dbError(err error) error {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
 	return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 }
 
@@ -161,5 +197,25 @@ func notFound(what string) error {
 }
 
 func isNoRows(err error) bool {
-	return errors.Is(err, sql.ErrNoRows)
+	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+var migrateMu sync.Mutex
+
+func (s *Store) migrate(ctx context.Context) error {
+	migrateMu.Lock()
+	defer migrateMu.Unlock()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.AutoMigrate(model.AllModels...); err != nil {
+			return err
+		}
+		if s.dialect.backend == BackendPostgres {
+			return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username ON app_user(lower(username))`).Error
+		}
+		return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username ON app_user(username COLLATE NOCASE)`).Error
+	})
+	if err != nil {
+		return migrateError(err)
+	}
+	return nil
 }

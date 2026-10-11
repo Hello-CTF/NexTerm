@@ -455,7 +455,7 @@ func newSyncBundleHTTPFixture(t *testing.T) *syncBundleHTTPFixture {
 	ctx := t.Context()
 	database, _, syncService := newSyncBundleTestService(t, false, true)
 	dispatcher := registerSyncBundleDispatcher(t, syncService)
-	accounts := account.New(database.DB())
+	accounts := account.New(database.GORM())
 	transport, err := server.New(server.Config{
 		Options: server.Options{
 			Listen: "127.0.0.1:0", DataDir: t.TempDir(), Auth: server.AuthOn,
