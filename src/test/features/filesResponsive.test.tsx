@@ -449,7 +449,6 @@ describe("MountPanel 可选凭据折叠", () => {
 });
 
 describe("凭据 overlay dock 选中后收起", () => {
-  // 凭据是全局工具标签, 统一落入「工具」工作区, 不在默认工作区里
   function allTabs() {
     return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
   }

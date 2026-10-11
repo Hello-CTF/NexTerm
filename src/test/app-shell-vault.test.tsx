@@ -152,12 +152,11 @@ describe("状态栏凭据库状态", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("存在隐藏设置页的其他工作区时仍滚动当前工作区的设置页", async () => {
+  it("设置标签已在其它工作区打开时去重激活原标签并滚动该设置页", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     useUi.setState({
       workspaces: [
         {
-          // 迁移前遗留: 设置页还寄生在主机工作区里, 保持隐藏不参与滚动
           id: "ws-a",
           kind: "session",
           title: "web-01",
@@ -187,32 +186,26 @@ describe("状态栏凭据库状态", () => {
     mounted = mountApp();
     await flush();
 
-    const hiddenCard = [
-      ...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-a .nx-card"),
-    ].find((c) => c.textContent?.includes("凭据保护"));
-    expect(hiddenCard).toBeTruthy();
-    const hiddenScroll = vi.fn();
-    (hiddenCard as HTMLElement).scrollIntoView = hiddenScroll;
-
     click(vaultStatusControl() as HTMLElement);
     await flush();
 
-    // 设置标签统一落入「工具」工作区并成为活动工作区
+    const wsA = useUi.getState().workspaces.find((w) => w.id === "ws-a");
     const wsB = useUi.getState().workspaces.find((w) => w.id === "ws-b");
-    expect(wsB?.panes.flatMap((p) => p.tabs).some((t) => t.kind === "settings")).toBe(true);
-    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
-    const visibleCard = [
-      ...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card"),
-    ].find((c) => c.textContent?.includes("凭据保护"));
-    expect(visibleCard).toBeTruthy();
-    const visibleScroll = vi.fn();
-    (visibleCard as HTMLElement).scrollIntoView = visibleScroll;
+    expect(wsA?.panes.flatMap((p) => p.tabs).map((t) => t.kind)).toEqual(["settings"]);
+    expect(wsB?.panes.flatMap((p) => p.tabs)).toHaveLength(0);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-a");
+
+    const card = [...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-a .nx-card")].find(
+      (c) => c.textContent?.includes("凭据保护"),
+    );
+    expect(card).toBeTruthy();
+    const scroll = vi.fn();
+    (card as HTMLElement).scrollIntoView = scroll;
 
     click(vaultStatusControl() as HTMLElement);
     await flush();
 
-    expect(visibleScroll).toHaveBeenCalledWith({ block: "start" });
-    expect(hiddenScroll).not.toHaveBeenCalled();
+    expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
   it("已锁定时保持纯文本状态，不给出开启保护入口", async () => {
