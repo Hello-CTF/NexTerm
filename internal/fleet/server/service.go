@@ -957,14 +957,14 @@ func (s *Service) RollupMetrics(ctx context.Context) error {
 	// 聚合 INSERT...SELECT 与条件 DELETE 无法用 gen query 表达, 事务内直接执行。
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`INSERT INTO device_metrics_hourly(device_id, bucket_ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s, sample_count)
-SELECT device_id, (ts/?)*?, avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
+SELECT device_id, (ts/3600000)*3600000, avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
 FROM device_metrics WHERE ts < ?
-GROUP BY device_id, (ts/?)*?
+GROUP BY device_id, (ts/3600000)*3600000
 ON CONFLICT(device_id, bucket_ts) DO UPDATE SET
 cpu_pct = excluded.cpu_pct, mem_used = excluded.mem_used, mem_total = excluded.mem_total,
 disk_used = excluded.disk_used, disk_total = excluded.disk_total, uptime_s = excluded.uptime_s,
 sample_count = excluded.sample_count`,
-			metricsHourMS, metricsHourMS, rollupCutoff, metricsHourMS, metricsHourMS).Error; err != nil {
+			rollupCutoff).Error; err != nil {
 			return dbError(err)
 		}
 		if err := tx.Exec("DELETE FROM device_metrics WHERE ts < ?", rollupCutoff).Error; err != nil {
