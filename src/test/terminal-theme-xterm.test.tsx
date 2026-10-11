@@ -274,6 +274,7 @@ describe("XtermView appearance hot updates", () => {
     await show();
     const term = harness.terminals[0];
     expect(term.options.fontSize).toBe(13);
+    expect(term.options.overviewRuler).toEqual({ width: 10 });
     expect((term.options.theme as Record<string, string>).background).toBe(XTERM_DARK_THEME.background);
     expect(term.resize).toHaveBeenCalledWith(55, 30);
   });

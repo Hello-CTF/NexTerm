@@ -105,3 +105,12 @@ describe("editor highlight palettes", () => {
     expect(outside).not.toContain('--color-term: #f4f6fa');
   });
 });
+
+describe("terminal scrollbar", () => {
+  it("keeps the xterm slider narrow and rounded inside its pointer area", () => {
+    const body = blockBody(".xterm .xterm-scrollable-element > .scrollbar > .slider");
+    expect(body).toMatch(/left:\s*3px !important/);
+    expect(body).toMatch(/width:\s*4px !important/);
+    expect(body).toMatch(/border-radius:\s*8px/);
+  });
+});

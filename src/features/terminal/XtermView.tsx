@@ -124,7 +124,7 @@ export function XtermView(props: XtermViewProps) {
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
-      overviewRuler: { width: 14 },
+      overviewRuler: { width: 10 },
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: getAppearancePrefs().terminalFontSize,
       cursorBlink: true,
