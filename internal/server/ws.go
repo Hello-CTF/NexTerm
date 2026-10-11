@@ -111,11 +111,11 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
-// deviceStatusFilter 按订阅者身份过滤 device://status: 超管与无身份连接
+// deviceStatusFilter 按订阅者身份过滤 device://status: 无身份连接
 // (开放部署/网关)不做过滤; 普通登录用户只收到自己设备的上下线
 // 推送, 不广播全部设备 ID。设备归属查询失败一律不下发 (失败关闭)。
 func (s *Server) deviceStatusFilter(identity *account.Identity) func(ipc.Event) bool {
-	if identity == nil || s.fleet == nil || identity.Role == account.RoleSuperadmin {
+	if identity == nil || s.fleet == nil {
 		return nil
 	}
 	userID := identity.UserID

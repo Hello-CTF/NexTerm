@@ -39,6 +39,14 @@ func openSQLiteStore(t *testing.T, path string) *SQLStore {
 			_ = db.Close()
 			t.Fatalf("apply 0001_init.sql: %v", err)
 		}
+		contents, err = migrations.Files.ReadFile("0023_user_ownership.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
+			_ = db.Close()
+			t.Fatalf("apply 0023_user_ownership.sql: %v", err)
+		}
 	} else if err != nil {
 		_ = db.Close()
 		t.Fatal(err)

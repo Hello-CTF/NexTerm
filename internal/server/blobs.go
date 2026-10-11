@@ -16,7 +16,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
@@ -328,22 +327,20 @@ func (b *BlobStore) writeOwnerMeta(dir string, r *http.Request) error {
 	return os.WriteFile(filepath.Join(dir, blobMetaName), encoded, 0o600)
 }
 
-// canAccess 校验请求身份是暂存条目属主或超管；无属主元数据的条目仅在没有请求身份的
+// canAccess 校验请求身份是暂存条目属主；无属主元数据的条目仅在没有请求身份的
 // 部署形态 (openAccess) 下放行。拒绝与不存在同样回 404, 不泄露存在性。
 func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 	identity := accountIdentityFrom(r.Context())
 	userID := ""
-	superadmin := false
 	if identity != nil {
 		userID = identity.UserID
-		superadmin = identity.Role == account.RoleSuperadmin
 	}
-	return b.canAccessDir(dir, userID, superadmin)
+	return b.canAccessDir(dir, userID)
 }
 
 // canAccessDir 是 canAccess 的按身份判等拆分, 供 HTTP 面与 IPC 面共用;
 // userID 空串表示无身份 (网关/auth=off), 仅 openAccess 形态放行无属主条目。
-func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
+func (b *BlobStore) canAccessDir(dir, userID string) bool {
 	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
 	if errors.Is(err, os.ErrNotExist) {
 		return b.openAccess
@@ -358,7 +355,7 @@ func (b *BlobStore) canAccessDir(dir, userID string, superadmin bool) bool {
 	if meta.OwnerID == "" {
 		return b.openAccess
 	}
-	return userID != "" && (userID == meta.OwnerID || superadmin)
+	return userID != "" && userID == meta.OwnerID
 }
 
 // ResolveStagedPath 把 Stage/Reserve 响应里的相对 path (id/name) 解析为暂存文件的服务器
@@ -373,7 +370,7 @@ func (b *BlobStore) ResolveStagedPath(rel, userID string) (string, error) {
 		return "", errStagedNotFound
 	}
 	dir := filepath.Join(b.stageRoot(), id)
-	if !b.canAccessDir(dir, userID, false) {
+	if !b.canAccessDir(dir, userID) {
 		return "", errStagedNotFound
 	}
 	path := filepath.Join(dir, name)

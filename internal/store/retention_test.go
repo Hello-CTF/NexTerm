@@ -293,7 +293,7 @@ func TestRetentionReopenPreservesStoreAndVaultRows(t *testing.T) {
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 1)
+	requireTableCount(t, reopened, migrationsTable, 2)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

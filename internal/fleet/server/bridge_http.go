@@ -7,7 +7,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// serveDeviceBridgeRelay 处理 GET /fleet/devices/{id}/bridge: owner 或 superadmin
+// serveDeviceBridgeRelay 处理 GET /fleet/devices/{id}/bridge: owner
 // 经会话认证后, 服务端经控制通道请 agent 出站拨一条桥接, 再把这条用户侧
 // websocket 与桥接字节流双向接通。supervisor 协议帧原样穿过 (二进制帧, 字节透明),
 // 会话语义 (create/attach/resume) 由对端 supervisor helper 裁决。
@@ -29,7 +29,7 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "设备已关闭终端访问")))
 		return
 	}
-	user, err := websocket.Accept(w, r, nil)
+	user, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		return
 	}

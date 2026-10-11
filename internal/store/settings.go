@@ -8,9 +8,24 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const AIProfilesSettingKey = "ai.models"
+
+func AIProfilesSettingKeyForUser(userID string) string {
+	if userID == "" {
+		return AIProfilesSettingKey
+	}
+	return "user.ai.models." + userID
+}
+
+func LayoutSettingKeyForUser(userID string) string {
+	if userID == "" {
+		return LayoutKey
+	}
+	return "user.layout." + userID
+}
 
 func (s *Store) SettingGet(ctx context.Context, key string) (string, bool, error) {
 	var value string
@@ -195,7 +210,7 @@ func (t *txSetting) SettingDelete(ctx context.Context, key string) error {
 func (s *Store) LayoutLoad(ctx context.Context) (int64, int64, json.RawMessage, error) {
 	var value string
 	var updatedAt int64
-	err := s.db.QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", LayoutKey).
+	err := s.db.QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", LayoutSettingKeyForUser(ipc.OwnerID(ctx))).
 		Scan(&value, &updatedAt)
 	if isNoRows(err) {
 		return 0, 0, nil, nil
@@ -225,7 +240,7 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 
 	var currentRevision int64
 	var current string
-	err = tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?"+s.dialect.forUpdate(), LayoutKey).Scan(&current)
+	err = tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?"+s.dialect.forUpdate(), LayoutSettingKeyForUser(ipc.OwnerID(ctx))).Scan(&current)
 	if err != nil && !isNoRows(err) {
 		return false, 0, dbError(err)
 	}
@@ -249,7 +264,7 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		LayoutKey, string(value), now); err != nil {
+		LayoutSettingKeyForUser(ipc.OwnerID(ctx)), string(value), now); err != nil {
 		return false, currentRevision, dbError(err)
 	}
 	if err := tx.Commit(); err != nil {

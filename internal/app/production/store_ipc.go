@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -497,8 +496,8 @@ func productionSnippetDTO(row store.SnippetRow) snippetDTO {
 }
 
 // commandLogUserFilter 返回命令日志查询生效的 userId 过滤: 服务端装配
-// (desktop=false)下, 已登录的非超管调用者一律强制收敛为自己的 userId,
-// 客户端自报过滤不被信任; 超管可任意查询, 桌面端与无身份的开放部署
+// (desktop=false)下, 已登录调用者一律强制收敛为自己的 userId,
+// 客户端自报过滤不被信任; 桌面端与无身份的开放部署
 // (auth=off / loopback 免登录 / 网关)保持客户端给定过滤。
 func commandLogUserFilter(ctx context.Context, desktop bool, requested *string) *string {
 	if desktop {
@@ -506,9 +505,6 @@ func commandLogUserFilter(ctx context.Context, desktop bool, requested *string) 
 	}
 	userID, ok := ipc.UserIDFromContext(ctx)
 	if !ok {
-		return requested
-	}
-	if role, _ := ipc.RoleFromContext(ctx); role == string(account.RoleSuperadmin) {
 		return requested
 	}
 	return &userID

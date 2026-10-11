@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func scanKnownHost(row rowScanner) (KnownHostRow, error) {
@@ -13,9 +14,10 @@ func scanKnownHost(row rowScanner) (KnownHostRow, error) {
 }
 
 func (s *Store) KnownHostGet(ctx context.Context, host string, port int32, keyType string) (KnownHostRow, bool, error) {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	row, err := scanKnownHost(s.db.QueryRowContext(ctx,
-		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE host=? AND port=? AND key_type=?",
-		host, port, keyType))
+		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE host=? AND port=? AND key_type=?"+condition,
+		append([]any{host, port, keyType}, args...)...))
 	if isNoRows(err) {
 		return KnownHostRow{}, false, nil
 	}
@@ -26,10 +28,11 @@ func (s *Store) KnownHostGet(ctx context.Context, host string, port int32, keyTy
 }
 
 func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, keyType, fingerprint string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO known_host(id, host, port, key_type, fingerprint, added_at)
-VALUES(?,?,?,?,?,?)
-ON CONFLICT(host, port, key_type) DO UPDATE SET fingerprint=excluded.fingerprint, added_at=excluded.added_at`,
-		ids.New(), host, port, keyType, fingerprint, ids.NowMS())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO known_host(owner_id, id, host, port, key_type, fingerprint, added_at)
+VALUES(?,?,?,?,?,?,?)
+ON CONFLICT(owner_id, host, port, key_type) DO UPDATE SET fingerprint=excluded.fingerprint, added_at=excluded.added_at
+	WHERE owner_id = ?`,
+		ipc.OwnerID(ctx), ids.New(), host, port, keyType, fingerprint, ids.NowMS(), ipc.OwnerID(ctx))
 	if err != nil {
 		return dbError(err)
 	}
@@ -37,8 +40,9 @@ ON CONFLICT(host, port, key_type) DO UPDATE SET fingerprint=excluded.fingerprint
 }
 
 func (s *Store) KnownHostList(ctx context.Context) ([]KnownHostRow, error) {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host ORDER BY host, port")
+		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE 1=1"+condition+" ORDER BY host, port", args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -75,13 +79,15 @@ func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 			optIn = optInRaw == "1"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", id); err != nil {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?"+condition, append([]any{id}, args...)...); err != nil {
 		return dbError(err)
 	}
 	if optIn {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-			id, SyncTombstoneKindKnownHost, ids.NowMS()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)
+	WHERE owner_id = ?`,
+			ipc.OwnerID(ctx), id, SyncTombstoneKindKnownHost, ids.NowMS(), ipc.OwnerID(ctx)); err != nil {
 			return dbError(err)
 		}
 	}

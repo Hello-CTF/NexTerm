@@ -255,13 +255,8 @@ func TestFleetHTTPEnrollFlow(t *testing.T) {
 		t.Fatalf("admin list status=%d", call.status)
 	}
 	adminDevices := call.body["devices"].([]any)
-	if len(adminDevices) != 1 {
+	if len(adminDevices) != 0 {
 		t.Fatalf("admin devices=%v", adminDevices)
-	}
-	adminDevice := adminDevices[0].(map[string]any)
-	owner := adminDevice["owner"].(map[string]any)
-	if owner["username"] != "alice" {
-		t.Fatalf("admin owner view=%v", owner)
 	}
 }
 

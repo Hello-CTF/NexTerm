@@ -92,6 +92,33 @@ VALUES(?,?,?,?,?)`, deviceID, credentialID, "linux", f.now, f.now); err != nil {
 	return deviceID
 }
 
+func (f *serviceFixture) insertHostShare(_ context.Context, identity *account.Identity, deviceID, recipientUsername string, write bool, ttl time.Duration) (*HostShare, error) {
+	recipient, err := f.accounts.GetUserByUsername(context.Background(), recipientUsername)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := f.accounts.GetUser(context.Background(), identity.UserID)
+	if err != nil {
+		return nil, err
+	}
+	ttl, err = normalizeTTL(ttl, defaultHostShareTTL)
+	if err != nil {
+		return nil, err
+	}
+	now := f.now
+	share := &HostShare{
+		ID: ids.New(), OwnerID: identity.UserID, OwnerUsername: owner.Username, DeviceID: deviceID,
+		RecipientID: recipient.ID, RecipientUsername: recipient.Username, Permission: permissionFor(write),
+		CreatedAt: now, ExpiresAt: now + ttl.Milliseconds(),
+	}
+	_, err = f.db.ExecContext(context.Background(), `INSERT INTO host_share(id, owner_id, device_id, recipient_id, permission, created_at, expires_at)
+VALUES(?,?,?,?,?,?,?)`, share.ID, share.OwnerID, share.DeviceID, share.RecipientID, string(share.Permission), share.CreatedAt, share.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	return share, nil
+}
+
 func (f *serviceFixture) setAgentOnline(t *testing.T, deviceID string, online bool) {
 	t.Helper()
 	var lastSeen any

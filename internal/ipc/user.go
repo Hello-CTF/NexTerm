@@ -19,6 +19,18 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return userID, true
 }
 
+func OwnerID(ctx context.Context) string {
+	userID, _ := UserIDFromContext(ctx)
+	return userID
+}
+
+func OwnerCondition(ctx context.Context, column string) (string, []any) {
+	if OwnerID(ctx) == "" {
+		return "", nil
+	}
+	return " AND " + column + " = ?", []any{OwnerID(ctx)}
+}
+
 // roleContextKey 由服务端在会话校验通过后注入操作者角色(账号用户作用域),
 // 与 userIDContextKey 同一注入点; 消费方按 account.Role 的字面值比较。
 type roleContextKey struct{}

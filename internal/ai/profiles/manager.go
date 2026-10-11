@@ -351,7 +351,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 func load(ctx context.Context, settings Settings) (loadResult, error) {
-	raw, found, err := settings.SettingGet(ctx, SettingKey)
+	raw, found, err := settings.SettingGet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))
 	if err != nil {
 		return loadResult{}, err
 	}
@@ -377,7 +377,7 @@ func save(ctx context.Context, settings Settings, protector store.SecretProtecto
 	if err != nil {
 		return value, err
 	}
-	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
+	if err := settings.SettingSet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)), string(encoded)); err != nil {
 		return value, err
 	}
 	return saved, nil

@@ -23,12 +23,13 @@ func scanAsset(row rowScanner) (AssetRow, error) {
 }
 
 func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow, error) {
-	query := "SELECT " + assetColumns + " FROM asset"
+	query := "SELECT " + assetColumns + " FROM asset WHERE 1=1"
 	if !includeDeleted {
-		query += " WHERE deleted_at IS NULL"
+		query += " AND deleted_at IS NULL"
 	}
-	query += " ORDER BY sort, name"
-	rows, err := s.db.QueryContext(ctx, query)
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	query += condition + " ORDER BY sort, name"
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -48,7 +49,8 @@ func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow,
 }
 
 func (s *Store) AssetGet(ctx context.Context, id string) (AssetRow, error) {
-	row, err := scanAsset(s.db.QueryRowContext(ctx, "SELECT "+assetColumns+" FROM asset WHERE id = ?", id))
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	row, err := scanAsset(s.db.QueryRowContext(ctx, "SELECT "+assetColumns+" FROM asset WHERE id = ?"+condition, append([]any{id}, args...)...))
 	if isNoRows(err) {
 		return AssetRow{}, notFound("资产")
 	}
@@ -64,9 +66,9 @@ func (s *Store) AssetCreate(ctx context.Context, input AssetInput) (AssetRow, er
 	}
 	id := ids.New()
 	now := ids.NowMS()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO asset(id, group_id, kind, name, host, port, username,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO asset(owner_id, id, group_id, kind, name, host, port, username,
 auth_kind, key_path, cred_id, options_json, tags, note, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.GroupID, input.Kind, strings.TrimSpace(input.Name),
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ipc.OwnerID(ctx), id, input.GroupID, input.Kind, strings.TrimSpace(input.Name),
 		input.Host, input.Port, input.Username, input.AuthKind, input.KeyPath, input.CredID,
 		input.OptionsJSON, input.Tags, input.Note, input.Sort, now, now)
 	if err != nil {
@@ -123,8 +125,10 @@ func (s *Store) AssetUpdate(ctx context.Context, id string, patch AssetPatch) (A
 		add("sort", *patch.Sort)
 	}
 	add("updated_at", ids.NowMS())
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
 	args = append(args, id)
-	if _, err := s.db.ExecContext(ctx, "UPDATE asset SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
+	args = append(args, ownerArgs...)
+	if _, err := s.db.ExecContext(ctx, "UPDATE asset SET "+strings.Join(sets, ", ")+" WHERE id = ?"+condition, args...); err != nil {
 		return AssetRow{}, dbError(err)
 	}
 	return s.AssetGet(ctx, id)
@@ -144,7 +148,8 @@ func (s *Store) AssetDelete(ctx context.Context, id string) error {
 	if row.Builtin {
 		return badParam(errString("\"当前设备\"是内置资产，不能删除"))
 	}
-	_, err = s.db.ExecContext(ctx, "UPDATE asset SET deleted_at = ? WHERE id = ?", ids.NowMS(), id)
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	_, err = s.db.ExecContext(ctx, "UPDATE asset SET deleted_at = ? WHERE id = ?"+condition, append([]any{ids.NowMS(), id}, args...)...)
 	if err != nil {
 		return dbError(err)
 	}
@@ -157,8 +162,9 @@ func (s *Store) AssetEnsureBuiltinLocal(ctx context.Context) (AssetRow, error) {
 		if row.DeletedAt == nil {
 			return row, nil
 		}
-		if _, err := s.db.ExecContext(ctx, "UPDATE asset SET deleted_at=NULL, updated_at=? WHERE id=?",
-			ids.NowMS(), BuiltinLocalAssetID); err != nil {
+		condition, args := ipc.OwnerCondition(ctx, "owner_id")
+		if _, err := s.db.ExecContext(ctx, "UPDATE asset SET deleted_at=NULL, updated_at=? WHERE id = ?"+condition,
+			append([]any{ids.NowMS(), BuiltinLocalAssetID}, args...)...); err != nil {
 			return AssetRow{}, dbError(err)
 		}
 		return s.AssetGet(ctx, BuiltinLocalAssetID)
@@ -166,6 +172,9 @@ func (s *Store) AssetEnsureBuiltinLocal(ctx context.Context) (AssetRow, error) {
 	var appErr *ipc.Error
 	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeNotFound {
 		return AssetRow{}, err
+	}
+	if ipc.OwnerID(ctx) != "" {
+		return AssetRow{}, notFound("当前设备不可用")
 	}
 	now := ids.NowMS()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO asset(id, group_id, kind, name, host, port, username,
@@ -180,10 +189,12 @@ VALUES(?,NULL,'local',?,NULL,NULL,NULL,NULL,NULL,NULL,'{}','','',-1,?,?,1)`,
 
 func (s *Store) AssetSearch(ctx context.Context, query string) ([]AssetRow, error) {
 	like := "%" + strings.ToLower(query) + "%"
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
+	args := append([]any{like, like, like, like, like}, ownerArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+assetColumns+` FROM asset
 WHERE deleted_at IS NULL AND (lower(name) LIKE ? OR lower(coalesce(host,'')) LIKE ?
 OR lower(coalesce(username,'')) LIKE ? OR lower(note) LIKE ? OR lower(tags) LIKE ?)
-ORDER BY sort, name LIMIT 100`, like, like, like, like, like)
+`+condition+` ORDER BY sort, name LIMIT 100`, args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -223,22 +234,24 @@ func assetUpsert(ctx context.Context, exec assetExecer, row AssetRow) (bool, err
 	if strings.TrimSpace(row.Name) == "" {
 		return false, badParam(errString("资产名称不能为空"))
 	}
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	var ignored string
-	err := exec.QueryRowContext(ctx, "SELECT id FROM asset WHERE id = ?", row.ID).Scan(&ignored)
+	err := exec.QueryRowContext(ctx, "SELECT id FROM asset WHERE id = ?"+condition, append([]any{row.ID}, args...)...).Scan(&ignored)
 	exists := err == nil
 	if err != nil && !isNoRows(err) {
 		return false, dbError(err)
 	}
-	_, err = exec.ExecContext(ctx, `INSERT INTO asset(id, group_id, kind, name, host, port, username,
+	_, err = exec.ExecContext(ctx, `INSERT INTO asset(owner_id, id, group_id, kind, name, host, port, username,
 auth_kind, key_path, cred_id, options_json, tags, note, sort, created_at, updated_at, deleted_at, builtin)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
 ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, kind=excluded.kind, name=excluded.name,
 host=excluded.host, port=excluded.port, username=excluded.username, auth_kind=excluded.auth_kind,
 key_path=excluded.key_path, cred_id=excluded.cred_id, options_json=excluded.options_json,
 tags=excluded.tags, note=excluded.note, sort=excluded.sort, updated_at=excluded.updated_at,
-deleted_at=excluded.deleted_at`, row.ID, row.GroupID, row.Kind, strings.TrimSpace(row.Name), row.Host,
+deleted_at=excluded.deleted_at
+	WHERE owner_id = ?`, ipc.OwnerID(ctx), row.ID, row.GroupID, row.Kind, strings.TrimSpace(row.Name), row.Host,
 		row.Port, row.Username, row.AuthKind, row.KeyPath, row.CredID, row.OptionsJSON, row.Tags,
-		row.Note, row.Sort, row.CreatedAt, row.UpdatedAt, row.DeletedAt)
+		row.Note, row.Sort, row.CreatedAt, row.UpdatedAt, row.DeletedAt, ipc.OwnerID(ctx))
 	if err != nil {
 		return false, dbError(err)
 	}

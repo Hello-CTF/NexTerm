@@ -278,8 +278,8 @@ func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) 
 	if payload.DeviceID != "" {
 		assetID = payload.DeviceID
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,?,?,?,?,NULL,NULL)`, s.now(), assetID, auditSourceFleet, kind, string(encoded)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), assetID, auditSourceFleet, kind, string(encoded)); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -343,7 +343,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	return &grant, nil
 }
 
-// authorize 是 fleet 设备动作的唯一授权点: superadmin 或设备 owner 放行,
+// authorize 是 fleet 设备动作的唯一授权点: 仅设备 owner 放行,
 // 已吊销设备一律拒绝; 每次判定 (放行或拒绝) 都写审计。
 func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
@@ -354,7 +354,7 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 		outcome, reason, decision = "deny", "not_found", err
 	case grant.revoked:
 		outcome, reason, decision = "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case identity.Role != account.RoleSuperadmin && grant.userID != identity.UserID:
+	case grant.userID != identity.UserID:
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
 	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
@@ -367,7 +367,7 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	return grant, nil
 }
 
-// canAccess 与 authorize 同一套 owner-or-superadmin 规则, 供只读路径使用, 不写审计。
+// canAccess 与 authorize 同一套 owner 规则, 供只读路径使用, 不写审计。
 func (s *Service) canAccess(ctx context.Context, identity *account.Identity, deviceID string) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	if err != nil {
@@ -376,7 +376,7 @@ func (s *Service) canAccess(ctx context.Context, identity *account.Identity, dev
 	if grant.revoked {
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
-	if identity.Role != account.RoleSuperadmin && grant.userID != identity.UserID {
+	if grant.userID != identity.UserID {
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
 	return grant, nil
@@ -486,8 +486,8 @@ VALUES(?,?,?,?,?)`, deviceID, credentialID, platform, appVersion, now); err != n
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,?,?,?,?,NULL,NULL)`, now, deviceID, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ownerID, now, deviceID, auditSourceFleet, auditKindDeviceEnroll, string(payload)); err != nil {
 		return nil, dbError(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -554,10 +554,8 @@ FROM user_device d
 LEFT JOIN app_user u ON u.id = d.user_id
 LEFT JOIN device_agent a ON a.device_id = d.id`
 	args := []any{}
-	if identity.Role != account.RoleSuperadmin {
-		query += " WHERE d.user_id = ?"
-		args = append(args, identity.UserID)
-	}
+	query += " WHERE d.user_id = ?"
+	args = append(args, identity.UserID)
 	query += " ORDER BY d.created_at, d.id"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -944,8 +942,8 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,?,?,?,?,NULL,NULL)`, s.now(), deviceID, auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,NULL,?,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), deviceID, auditSourceFleet, auditKindDeviceFailover, string(payload)); err != nil {
 		return dbError(err)
 	}
 	if err := tx.Commit(); err != nil {

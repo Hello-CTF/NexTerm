@@ -119,8 +119,13 @@ func TestPreviewRevokeAuthorization(t *testing.T) {
 	if _, err := fixture.service.ResolvePreview(context.Background(), token); err != nil {
 		t.Fatalf("denied revoke must not revoke: %v", err)
 	}
-	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(admin), link.ID); err != nil {
-		t.Fatalf("superadmin revoke: %v", err)
+	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(admin), link.ID); err == nil {
+		t.Fatal("superadmin revoke on another user's link must fail")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatalf("owner revoke: %v", err)
 	}
 	// 重复吊销不报错。
 	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
@@ -166,7 +171,7 @@ func TestPreviewListScoping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(links) != 1 {
+	if len(links) != 0 {
 		t.Fatalf("superadmin list = %v", links)
 	}
 }

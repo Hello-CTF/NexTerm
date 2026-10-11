@@ -422,7 +422,8 @@ type syncTombstoneRow struct {
 }
 
 func (e *Engine) syncTombstoneList(ctx context.Context) ([]syncTombstoneRow, error) {
-	rows, err := e.store.DB().QueryContext(ctx, "SELECT id, kind, deleted_at FROM sync_tombstone ORDER BY id")
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	rows, err := e.store.DB().QueryContext(ctx, "SELECT id, kind, deleted_at FROM sync_tombstone WHERE 1=1"+condition+" ORDER BY id", args...)
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
@@ -440,8 +441,9 @@ func (e *Engine) syncTombstoneList(ctx context.Context) ([]syncTombstoneRow, err
 
 func (e *Engine) syncTombstoneGet(ctx context.Context, objectID string) (syncTombstoneRow, bool, error) {
 	var row syncTombstoneRow
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	err := e.store.DB().QueryRowContext(ctx,
-		"SELECT id, kind, deleted_at FROM sync_tombstone WHERE id = ?", objectID).
+		"SELECT id, kind, deleted_at FROM sync_tombstone WHERE id = ?"+condition, append([]any{objectID}, args...)...).
 		Scan(&row.ID, &row.Kind, &row.DeletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return syncTombstoneRow{}, false, nil
@@ -453,8 +455,9 @@ func (e *Engine) syncTombstoneGet(ctx context.Context, objectID string) (syncTom
 }
 
 func (e *Engine) syncTombstonePut(ctx context.Context, objectID, kind string, deletedAt int64) error {
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`, objectID, kind, deletedAt)
+	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)
+WHERE owner_id = ?`, ipc.OwnerID(ctx), objectID, kind, deletedAt, ipc.OwnerID(ctx))
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
@@ -477,14 +480,15 @@ func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error 
 
 // snippetUpsertTx 是 snippetUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
 func (e *Engine) snippetUpsertTx(ctx context.Context, tx *sql.Tx, row store.SnippetRow) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO snippet(owner_id, id, group_id, name, body, sort, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, name=excluded.name, body=excluded.body,
-sort=excluded.sort, updated_at=excluded.updated_at`,
-		row.ID, row.GroupID, row.Name, row.Body, row.Sort, row.CreatedAt, row.UpdatedAt); err != nil {
+sort=excluded.sort, updated_at=excluded.updated_at
+WHERE owner_id = ?`, ipc.OwnerID(ctx), row.ID, row.GroupID, row.Name, row.Body, row.Sort, row.CreatedAt, row.UpdatedAt, ipc.OwnerID(ctx)); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", row.ID); err != nil {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{row.ID}, args...)...); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil

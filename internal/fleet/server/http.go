@@ -25,7 +25,9 @@ const (
 type identityContextKey struct{}
 
 func withIdentity(r *http.Request, identity *account.Identity) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), identityContextKey{}, identity))
+	ctx := ipc.WithUserID(r.Context(), identity.UserID)
+	ctx = ipc.WithRole(ctx, string(identity.Role))
+	return r.WithContext(context.WithValue(ctx, identityContextKey{}, identity))
 }
 
 func identityFrom(r *http.Request) *account.Identity {

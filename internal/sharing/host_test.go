@@ -68,7 +68,7 @@ func TestHostShareCreatePopulatesUsernames(t *testing.T) {
 		t.Fatalf("owner share usernames = %q/%q, want %q/%q", ownerShare.OwnerUsername, ownerShare.RecipientUsername, "alice", "bob")
 	}
 
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
+	adminShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,22 +80,13 @@ func TestHostShareCreatePopulatesUsernames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(shares) != 2 {
+	if len(shares) != 1 || shares[0].ID != adminShare.ID {
 		t.Fatalf("list shares = %+v", shares)
 	}
-	byID := make(map[string]*HostShare, len(shares))
-	for _, share := range shares {
-		byID[share.ID] = share
-	}
-	for _, created := range []*HostShare{ownerShare, adminShare} {
-		listed := byID[created.ID]
-		if listed == nil {
-			t.Fatalf("share %s missing from list", created.ID)
-		}
-		if listed.OwnerUsername != created.OwnerUsername || listed.RecipientUsername != created.RecipientUsername {
-			t.Fatalf("share %s create usernames = %q/%q, list = %q/%q", created.ID,
-				created.OwnerUsername, created.RecipientUsername, listed.OwnerUsername, listed.RecipientUsername)
-		}
+	listed := shares[0]
+	if listed.OwnerUsername != adminShare.OwnerUsername || listed.RecipientUsername != adminShare.RecipientUsername {
+		t.Fatalf("share %s create usernames = %q/%q, list = %q/%q", adminShare.ID,
+			adminShare.OwnerUsername, adminShare.RecipientUsername, listed.OwnerUsername, listed.RecipientUsername)
 	}
 }
 
@@ -170,7 +161,7 @@ func TestHostShareRecipientIsolation(t *testing.T) {
 	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, carol.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
+	adminShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +207,7 @@ func TestHostShareUnionPermissionPerLevelExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
+	writeShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +257,7 @@ func TestHostShareRevalidateShrinksAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
+	writeShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +351,7 @@ func TestHostShareRevokeAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, carol.Username, true, 0)
+	adminShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, carol.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,8 +364,13 @@ func TestHostShareRevokeAuthorization(t *testing.T) {
 	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), adminShare.ID); err != nil {
 		t.Fatalf("device owner must revoke any share on their device: %v", err)
 	}
-	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(admin), ownerShare.ID); err != nil {
-		t.Fatalf("superadmin must revoke any share: %v", err)
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(admin), ownerShare.ID); err == nil {
+		t.Fatal("superadmin revoke on another user's share must fail")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), ownerShare.ID); err != nil {
+		t.Fatalf("owner revoke: %v", err)
 	}
 	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), ownerShare.ID); err != nil {
 		t.Fatalf("repeated revoke must be idempotent: %v", err)
@@ -496,7 +492,7 @@ func TestHostShareListScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(shares) != 1 {
+	if len(shares) != 0 {
 		t.Fatalf("superadmin shares = %+v", shares)
 	}
 }
@@ -507,7 +503,7 @@ func TestHostGateShrinksToReadThenStops(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, time.Hour)
+	writeShare, err := fixture.insertHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

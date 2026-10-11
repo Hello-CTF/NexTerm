@@ -262,13 +262,16 @@ func expectPreviewError(t *testing.T, conn *websocket.Conn, code string, timeout
 
 func dialPreviewViewer(t *testing.T, httpURL, token string) *websocket.Conn {
 	t.Helper()
-	conn, handshake, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpURL, "http")+"/share/preview/"+token, nil)
+	conn, handshake, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpURL, "http")+"/share/preview/"+token, &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		status := 0
 		if handshake != nil {
 			status = handshake.StatusCode
 		}
 		t.Fatalf("viewer dial: %v (status %d)", err, status)
+	}
+	if got := handshake.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
+		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn

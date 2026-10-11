@@ -208,8 +208,8 @@ func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) 
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,NULL,NULL,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
 		return dbError(err)
 	}
 	return nil
@@ -237,7 +237,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	return &grant, nil
 }
 
-// authorizeDevice 判定 owner-or-superadmin 并给出 outcome/reason, 不写审计。
+// authorizeDevice 判定设备归属并给出 outcome/reason, 不写审计。
 func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identity, deviceID string) (*deviceGrant, string, string, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	switch {
@@ -245,13 +245,13 @@ func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identit
 		return nil, "deny", "not_found", err
 	case grant.revoked:
 		return nil, "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case identity.Role != account.RoleSuperadmin && grant.userID != identity.UserID:
+	case grant.userID != identity.UserID:
 		return nil, "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
 	return grant, "allow", "", nil
 }
 
-// authorize 是分享设备动作的授权点: superadmin 或设备 owner 放行, 已吊销设备
+// authorize 是分享设备动作的授权点: 仅设备 owner 放行, 已吊销设备
 // 一律拒绝; 每次判定 (放行或拒绝) 都写审计。
 func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
 	grant, outcome, reason, decision := s.authorizeDevice(ctx, identity, deviceID)

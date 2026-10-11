@@ -17,9 +17,12 @@ import (
 
 func dialDeviceWS(t *testing.T, f *httpFixture) *websocket.Conn {
 	t.Helper()
-	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+agent.PathDeviceWS, nil)
+	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+agent.PathDeviceWS, &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
+		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn
@@ -58,9 +61,13 @@ func dialRelay(t *testing.T, f *httpFixture, deviceID string, cookie *http.Cooki
 	if cookie != nil {
 		options.HTTPHeader = http.Header{"Cookie": []string{cookie.Name + "=" + cookie.Value}}
 	}
-	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+"/fleet/devices/"+deviceID+"/bridge", options)
+	options.CompressionMode = websocket.CompressionContextTakeover
+	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+"/fleet/devices/"+deviceID+"/bridge", options)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
+		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn
@@ -290,7 +297,7 @@ func TestDeviceBridgeRelayAuthorization(t *testing.T) {
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, nil, ""); response.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous relay: HTTP %d %v", response.status, response.body)
 	}
-	// 非 owner 非 superadmin: 403 且写审计。
+	// 非 owner: 403 且写审计。
 	otherSession := f.session(t, other)
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, otherSession, ""); response.status != http.StatusForbidden {
 		t.Fatalf("non-owner relay: HTTP %d %v", response.status, response.body)

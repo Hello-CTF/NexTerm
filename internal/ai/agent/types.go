@@ -87,7 +87,7 @@ type Config struct {
 	MemoryScope memory.Scope
 
 	// ServerMode 标记 nexterm-server 装配(桌面端为 false): 设备授权与授权规则
-	// 是全局设置, 多用户模式下仅超管可变更。
+	// 按账号隔离, 当前仅超管可变更。
 	ServerMode bool
 }
 

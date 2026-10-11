@@ -34,9 +34,9 @@ func SyncOptInUserID(ctx context.Context) (string, bool) {
 // 仅供已 opt-in 的 known_host/AI 模型档案删除路径使用; 用户删除墓碑不带冲突三元组,
 // known_host 冲突墓碑的三元组元数据由 internal/sync 侧管理, 不经过这里。
 func (s *Store) SyncTombstoneRecord(ctx context.Context, id, kind string, deletedAt int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-		id, kind, deletedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)
+WHERE owner_id = ?`, ipc.OwnerID(ctx), id, kind, deletedAt, ipc.OwnerID(ctx))
 	if err != nil {
 		return dbError(err)
 	}
@@ -141,13 +141,13 @@ func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombst
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-		AIProfilesSettingKey, stateJSON, deletedAt); err != nil {
+		AIProfilesSettingKeyForUser(userID), stateJSON, deletedAt); err != nil {
 		return dbError(err)
 	}
 	if optIn {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-			tombstoneID, SyncTombstoneKindAIProfile, deletedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)
+WHERE owner_id = ?`, ipc.OwnerID(ctx), tombstoneID, SyncTombstoneKindAIProfile, deletedAt, ipc.OwnerID(ctx)); err != nil {
 			return dbError(err)
 		}
 	}

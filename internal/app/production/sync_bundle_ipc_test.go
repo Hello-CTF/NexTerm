@@ -551,7 +551,7 @@ func (f *syncBundleHTTPFixture) rpc(t *testing.T, command string, args any, cook
 	return response.StatusCode, decoded
 }
 
-// 账号模式边界: /rpc 传输层把关会话与 CSRF; 资产库为共享工作区, 摘要/导入对所有账号一致可见。
+// 账号模式边界: /rpc 传输层把关会话与 CSRF; 资产摘要与导入按当前账号隔离。
 func TestSyncBundleHTTPAuthBoundaries(t *testing.T) {
 	fixture := newSyncBundleHTTPFixture(t)
 
@@ -590,20 +590,31 @@ func TestSyncBundleHTTPAuthBoundaries(t *testing.T) {
 		t.Fatalf("alice import = status %d response %+v", status, response)
 	}
 
+	status, response = fixture.rpc(t, syncservice.CommandDigest, nil, aliceCookie, aliceCSRF)
+	if status != http.StatusOK || !response.OK {
+		t.Fatalf("alice second digest = status %d response %+v", status, response)
+	}
+	aliceDigest = decodeSyncBundleResponse[syncservice.SyncDigest](t, response)
+	ownerFound := false
+	for _, entry := range aliceDigest.Assets {
+		if entry.ID == assetID {
+			ownerFound = true
+		}
+	}
+	if !ownerFound {
+		t.Fatalf("asset owner must see the imported asset: %+v", aliceDigest.Assets)
+	}
+
 	bobCookie, bobCSRF := fixture.login(t, "bob", "password-b1")
 	status, response = fixture.rpc(t, syncservice.CommandDigest, nil, bobCookie, bobCSRF)
 	if status != http.StatusOK || !response.OK {
 		t.Fatalf("bob digest = status %d response %+v", status, response)
 	}
 	bobDigest := decodeSyncBundleResponse[syncservice.SyncDigest](t, response)
-	found := false
 	for _, entry := range bobDigest.Assets {
 		if entry.ID == assetID {
-			found = true
+			t.Fatalf("another account must not see the imported asset: %+v", bobDigest.Assets)
 		}
-	}
-	if !found {
-		t.Fatalf("shared library asset must be visible to every account: %+v", bobDigest.Assets)
 	}
 }
 

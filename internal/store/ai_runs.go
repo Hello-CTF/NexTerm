@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const (
@@ -96,9 +97,12 @@ func (s *Store) RunInsert(ctx context.Context, run RunRow) error {
 	if run.UpdatedAt == 0 {
 		run.UpdatedAt = now
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_run(`+runColumns+`)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.ConversationID, run.Status, run.Attempt, run.Seq, planMode, run.Source, run.ProfileID,
+	if _, err := s.ConvGet(ctx, run.ConversationID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_run(owner_id, `+runColumns+`)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ipc.OwnerID(ctx), run.ID, run.ConversationID, run.Status, run.Attempt, run.Seq, planMode, run.Source, run.ProfileID,
 		run.Answer, run.Turns, run.TokensIn, run.TokensOut, run.CacheCreationTokens, run.LatencyMS, run.Error, run.CreatedAt, run.UpdatedAt, run.FinishedAt)
 	if err != nil {
 		return dbError(err)
@@ -107,7 +111,8 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 }
 
 func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
-	row, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE id = ?`, id))
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	row, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE id = ?`+condition, append([]any{id}, args...)...))
 	if isNoRows(err) {
 		return RunRow{}, notFound("AI 运行")
 	}
@@ -120,6 +125,9 @@ func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
 func (s *Store) RunList(ctx context.Context, conversationID string, limit int) ([]RunRow, error) {
 	query := `SELECT ` + runColumns + ` FROM ai_run WHERE source != ?`
 	args := []any{RunSourceTitle}
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	query += condition
+	args = append(args, ownerArgs...)
 	if conversationID != "" {
 		query += ` AND conversation_id = ?`
 		args = append(args, conversationID)
@@ -146,7 +154,8 @@ func (s *Store) RunList(ctx context.Context, conversationID string, limit int) (
 }
 
 func (s *Store) RunsActive(ctx context.Context) ([]RunRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE status IN (?, ?) AND finished_at IS NULL ORDER BY created_at`, RunStatusRunning, RunStatusInterrupted)
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE status IN (?, ?) AND finished_at IS NULL`+condition+` ORDER BY created_at`, append([]any{RunStatusRunning, RunStatusInterrupted}, args...)...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -163,17 +172,21 @@ func (s *Store) RunsActive(ctx context.Context) ([]RunRow, error) {
 }
 
 func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, payload func(seq uint64) ([]byte, error)) (uint64, error) {
+	if _, err := s.RunGet(ctx, runID); err != nil {
+		return 0, err
+	}
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := ids.NowMS()
-	if _, err := tx.ExecContext(ctx, `UPDATE ai_run SET seq = seq + 1, updated_at = ? WHERE id = ?`, now, runID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE ai_run SET seq = seq + 1, updated_at = ? WHERE id = ?`+condition, append([]any{now, runID}, args...)...); err != nil {
 		return 0, dbError(err)
 	}
 	var seq uint64
-	if err := tx.QueryRowContext(ctx, `SELECT seq FROM ai_run WHERE id = ?`, runID).Scan(&seq); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT seq FROM ai_run WHERE id = ?`+condition, append([]any{runID}, args...)...).Scan(&seq); err != nil {
 		if isNoRows(err) {
 			return 0, notFound("AI 运行")
 		}
@@ -183,8 +196,8 @@ func (s *Store) RunAppendEvent(ctx context.Context, runID, eventType string, pay
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_run_event(run_id, seq, type, payload_json, created_at)
-VALUES(?,?,?,?,?)`, runID, seq, eventType, string(encoded), now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_run_event(owner_id, run_id, seq, type, payload_json, created_at)
+VALUES(?,?,?,?,?,?)`, ipc.OwnerID(ctx), runID, seq, eventType, string(encoded), now); err != nil {
 		return 0, dbError(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -198,9 +211,13 @@ func (s *Store) RunEventsAfter(ctx context.Context, runID string, afterSeq uint6
 }
 
 func (s *Store) RunEventsAfterLimit(ctx context.Context, runID string, afterSeq uint64, limit int) ([]RunEventRow, error) {
+	if _, err := s.RunGet(ctx, runID); err != nil {
+		return nil, err
+	}
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run_event.owner_id")
 	query := `SELECT run_id, seq, type, payload_json, created_at FROM ai_run_event
-WHERE run_id = ? AND seq > ? ORDER BY seq`
-	args := []any{runID, afterSeq}
+WHERE run_id = ? AND seq > ?` + condition + ` ORDER BY seq`
+	args := append([]any{runID, afterSeq}, ownerArgs...)
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)
@@ -227,7 +244,10 @@ func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string
 		return result, nil
 	}
 	query := `SELECT run_id, payload_json FROM ai_run_event WHERE type = 'error' AND run_id IN (?` + strings.Repeat(",?", len(runIDs)-1) + `)`
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "ai_run_event.owner_id")
+	query += condition
 	args := make([]any, len(runIDs))
+	args = append(args, ownerArgs...)
 	for index, id := range runIDs {
 		args[index] = id
 	}
@@ -260,14 +280,22 @@ func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string
 }
 
 func (s *Store) RunDelete(ctx context.Context, id string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_run WHERE id = ?`, id); err != nil {
+	if _, err := s.RunGet(ctx, id); err != nil {
+		return err
+	}
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_run WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) RunUpdateStatus(ctx context.Context, runID, status string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, updated_at = ? WHERE id = ?`, status, ids.NowMS(), runID)
+	if _, err := s.RunGet(ctx, runID); err != nil {
+		return err
+	}
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, updated_at = ? WHERE id = ?`+condition, append([]any{status, ids.NowMS(), runID}, args...)...)
 	if err != nil {
 		return dbError(err)
 	}
@@ -282,9 +310,14 @@ func (s *Store) RunFinish(ctx context.Context, runID, status, answer, errMsg str
 }
 
 func (s *Store) RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error {
+	if _, err := s.RunGet(ctx, runID); err != nil {
+		return err
+	}
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
+	updateArgs := []any{status, answer, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS, errMsg, ids.NowMS(), ids.NowMS(), runID}
+	updateArgs = append(updateArgs, args...)
 	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, answer = ?, turns = ?, tokens_in = ?, tokens_out = ?, cache_creation_tokens = ?, latency_ms = ?, error = ?, updated_at = ?, finished_at = ?
-WHERE id = ? AND finished_at IS NULL`,
-		status, answer, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS, errMsg, ids.NowMS(), ids.NowMS(), runID)
+WHERE id = ? AND finished_at IS NULL`+condition, updateArgs...)
 	if err != nil {
 		return dbError(err)
 	}
@@ -297,8 +330,9 @@ WHERE id = ? AND finished_at IS NULL`,
 }
 
 func (s *Store) RunUsageSummary(ctx context.Context) ([]RunUsageSummaryRow, error) {
+	condition, args := ipc.OwnerCondition(ctx, "ai_run.owner_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT source, profile_id, count(*), coalesce(sum(tokens_in), 0), coalesce(sum(tokens_out), 0), coalesce(sum(cache_creation_tokens), 0), CAST(round(coalesce(avg(latency_ms), 0)) AS INTEGER)
-FROM ai_run WHERE finished_at IS NOT NULL GROUP BY source, profile_id ORDER BY source, profile_id`)
+FROM ai_run WHERE finished_at IS NOT NULL`+condition+` GROUP BY source, profile_id ORDER BY source, profile_id`, args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -316,7 +350,8 @@ FROM ai_run WHERE finished_at IS NOT NULL GROUP BY source, profile_id ORDER BY s
 
 func (s *Store) CheckpointGet(ctx context.Context, id string) ([]byte, bool, error) {
 	var data []byte
-	err := s.db.QueryRowContext(ctx, `SELECT data FROM ai_checkpoint WHERE id = ?`, id).Scan(&data)
+	condition, args := ipc.OwnerCondition(ctx, "ai_checkpoint.owner_id")
+	err := s.db.QueryRowContext(ctx, `SELECT data FROM ai_checkpoint WHERE id = ?`+condition, append([]any{id}, args...)...).Scan(&data)
 	if isNoRows(err) {
 		return nil, false, nil
 	}
@@ -327,9 +362,9 @@ func (s *Store) CheckpointGet(ctx context.Context, id string) ([]byte, bool, err
 }
 
 func (s *Store) CheckpointSet(ctx context.Context, id string, data []byte) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_checkpoint(id, data, updated_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
-		id, data, ids.NowMS())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_checkpoint(owner_id, id, data, updated_at) VALUES(?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+WHERE owner_id = ?`, ipc.OwnerID(ctx), id, data, ids.NowMS(), ipc.OwnerID(ctx))
 	if err != nil {
 		return dbError(err)
 	}
@@ -337,16 +372,17 @@ ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.update
 }
 
 func (s *Store) CheckpointDelete(ctx context.Context, id string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_checkpoint WHERE id = ?`, id); err != nil {
+	condition, args := ipc.OwnerCondition(ctx, "ai_checkpoint.owner_id")
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_checkpoint WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
 func (s *Store) HitlRunSave(ctx context.Context, id string, data []byte) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_hitl_run(id, data, updated_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
-		id, data, ids.NowMS())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_hitl_run(owner_id, id, data, updated_at) VALUES(?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+WHERE owner_id = ?`, ipc.OwnerID(ctx), id, data, ids.NowMS(), ipc.OwnerID(ctx))
 	if err != nil {
 		return dbError(err)
 	}
@@ -354,7 +390,8 @@ ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.update
 }
 
 func (s *Store) HitlRunList(ctx context.Context) ([]HitlRunRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, data, updated_at FROM ai_hitl_run ORDER BY updated_at`)
+	condition, args := ipc.OwnerCondition(ctx, "ai_hitl_run.owner_id")
+	rows, err := s.db.QueryContext(ctx, `SELECT id, data, updated_at FROM ai_hitl_run WHERE 1=1`+condition+` ORDER BY updated_at`, args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -373,7 +410,8 @@ func (s *Store) HitlRunList(ctx context.Context) ([]HitlRunRow, error) {
 }
 
 func (s *Store) HitlRunDelete(ctx context.Context, id string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_hitl_run WHERE id = ?`, id); err != nil {
+	condition, args := ipc.OwnerCondition(ctx, "ai_hitl_run.owner_id")
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM ai_hitl_run WHERE id = ?`+condition, append([]any{id}, args...)...); err != nil {
 		return dbError(err)
 	}
 	return nil

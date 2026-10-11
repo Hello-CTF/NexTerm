@@ -103,8 +103,10 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 	t.Cleanup(func() { _ = fleet.Close() })
 	server := &Server{fleet: fleet}
 
-	if filter := server.deviceStatusFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); filter != nil {
-		t.Fatal("superadmin must not be filtered")
+	if filter := server.deviceStatusFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); filter == nil {
+		t.Fatal("superadmin must be scoped to owned devices")
+	} else if filter(ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}) {
+		t.Fatal("superadmin received another user's device event")
 	}
 	if filter := server.deviceStatusFilter(nil); filter != nil {
 		t.Fatal("identity-less connection (open deployment) must not be filtered")

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -58,8 +57,7 @@ type previewLinkCreateRequest struct {
 }
 
 // servePreviewLinkCreate 处理 POST /share/previews: 为服务端托管的终端标签页
-// 创建只读预览链接。会话有主时仅本人或超管, 无主会话 (后台/桌面来源) 仅超管;
-// 创建响应是唯一携带一次性 token 的入口。
+// 创建只读预览链接。仅会话所有者可创建; 创建响应是唯一携带一次性 token 的入口。
 func (s *Server) servePreviewLinkCreate(w http.ResponseWriter, r *http.Request) {
 	var request previewLinkCreateRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
@@ -76,7 +74,7 @@ func (s *Server) servePreviewLinkCreate(w http.ResponseWriter, r *http.Request) 
 		writeAccountFailure(w, err)
 		return
 	}
-	if identity.Role != account.RoleSuperadmin && owner != identity.UserID {
+	if owner != identity.UserID {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "终端不属于该用户"))
 		return
 	}

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -813,7 +812,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 	}
 
 	// A 删除本地行(关闭期间, opt-in 关): 不立碑不传播, 远端副本保留。
-	if err := deviceA.db.KnownHostRemove(ipc.WithUserID(ctx, userID), hostID); err != nil {
+	if err := deviceA.db.KnownHostRemove(ctx, hostID); err != nil {
 		t.Fatal(err)
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")

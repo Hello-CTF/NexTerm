@@ -43,7 +43,7 @@ func writeControlJSON(ctx context.Context, conn *websocket.Conn, message control
 // 首帧必须是 hello; protocol 不匹配回 version_mismatch, 凭证无效回 forbidden,
 // 两种错误帧都会让 agent 按合同停止 (协议错误退出 / 视同吊销)。
 func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		return
 	}

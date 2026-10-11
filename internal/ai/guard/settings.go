@@ -6,11 +6,27 @@ import (
 	"errors"
 	"strings"
 	"sync"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const PermissionSettingKey = "ai.permission"
 
 const DevicePermissionSettingKey = "ai.device_permission"
+
+func PermissionSettingKeyForUser(ctx context.Context) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return PermissionSettingKey + ".user." + userID
+	}
+	return PermissionSettingKey
+}
+
+func DevicePermissionSettingKeyForUser(ctx context.Context) string {
+	if userID, ok := ipc.UserIDFromContext(ctx); ok {
+		return DevicePermissionSettingKey + ".user." + userID
+	}
+	return DevicePermissionSettingKey
+}
 
 type Settings interface {
 	SettingGet(context.Context, string) (string, bool, error)
@@ -26,7 +42,7 @@ type Manager struct {
 
 func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	manager := &Manager{settings: settings, config: Config{Mode: ReadWrite, DangerRules: []string{}}, modes: make(map[string]Mode)}
-	raw, found, err := settings.SettingGet(ctx, PermissionSettingKey)
+	raw, found, err := settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +52,7 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 		}
 		manager.config = manager.config.Normalized()
 	}
-	raw, found, err = settings.SettingGet(ctx, DevicePermissionSettingKey)
+	raw, found, err = settings.SettingGet(ctx, DevicePermissionSettingKeyForUser(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +80,7 @@ func (m *Manager) Snapshot(context.Context) (Config, error) {
 func (m *Manager) Reload(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKey)
+	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
 	if err != nil {
 		return err
 	}
@@ -92,7 +108,7 @@ func (m *Manager) Set(ctx context.Context, config Config) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.settings.SettingSet(ctx, PermissionSettingKey, string(encoded)); err != nil {
+	if err := m.settings.SettingSet(ctx, PermissionSettingKeyForUser(ctx), string(encoded)); err != nil {
 		return err
 	}
 	m.config = config
@@ -151,7 +167,7 @@ func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode)
 		}
 		return err
 	}
-	if err := m.settings.SettingSet(ctx, DevicePermissionSettingKey, string(encoded)); err != nil {
+	if err := m.settings.SettingSet(ctx, DevicePermissionSettingKeyForUser(ctx), string(encoded)); err != nil {
 		if existed {
 			m.modes[deviceID] = previous
 		} else {

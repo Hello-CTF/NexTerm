@@ -606,13 +606,14 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		preparedTombstones = append(preparedTombstones, preparedCredTombstone{id: id, deletedAt: tombstone.DeletedAt})
 	}
 	if err := s.inImportTx(ctx, func(tx *sql.Tx) error {
+		condition, args := ipc.OwnerCondition(ctx, "owner_id")
 		for _, tombstone := range preparedTombstones {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", tombstone.id); err != nil {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?"+condition, append([]any{tombstone.id}, args...)...); err != nil {
 				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(id, deleted_at) VALUES(?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at=`+scalarMax(s.store.Backend())+`(credential_tombstone.deleted_at, excluded.deleted_at)`,
-				tombstone.id, tombstone.deletedAt); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(owner_id, id, deleted_at) VALUES(?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at=`+scalarMax(s.store.Backend())+`(credential_tombstone.deleted_at, excluded.deleted_at)
+WHERE owner_id = ?`, ipc.OwnerID(ctx), tombstone.id, tombstone.deletedAt, ipc.OwnerID(ctx)); err != nil {
 				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}
 		}

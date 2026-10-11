@@ -33,7 +33,7 @@ func (e *Engine) collectPreferenceObjects(ctx context.Context, userID string, ob
 func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]localObject) error {
 	var value string
 	var updatedAt int64
-	err := e.store.DB().QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", guard.PermissionSettingKey).Scan(&value, &updatedAt)
+	err := e.store.DB().QueryRowContext(ctx, "SELECT value, updated_at FROM setting WHERE key = ?", guard.PermissionSettingKeyForUser(ctx)).Scan(&value, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -98,14 +98,14 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
-	updatedAt, found, err := e.settingRevision(ctx, guard.PermissionSettingKey)
+	updatedAt, found, err := e.settingRevision(ctx, guard.PermissionSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 权限配置: %v", err)
 		return false, false
 	}
 	if found {
 		var local guard.Config
-		raw, _, err := e.store.SettingGet(ctx, guard.PermissionSettingKey)
+		raw, _, err := e.store.SettingGet(ctx, guard.PermissionSettingKeyForUser(ctx))
 		if err != nil {
 			report.warnf("无法读取 AI 权限配置: %v", err)
 			return false, false
@@ -130,7 +130,7 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 	if err != nil {
 		return false, false
 	}
-	if err := e.settingPut(ctx, guard.PermissionSettingKey, string(encoded), payload.UpdatedAt); err != nil {
+	if err := e.settingPut(ctx, guard.PermissionSettingKeyForUser(ctx), string(encoded), payload.UpdatedAt); err != nil {
 		report.warnf("AI 权限配置应用失败: %v", err)
 		return false, false
 	}
@@ -210,7 +210,7 @@ func (e *Engine) applyAIPermissionTombstone(ctx context.Context, objectID string
 		report.warnf("AI 权限墓碑 ID %s 不受支持", objectID)
 		return false, false
 	}
-	updatedAt, found, err := e.settingRevision(ctx, guard.PermissionSettingKey)
+	updatedAt, found, err := e.settingRevision(ctx, guard.PermissionSettingKeyForUser(ctx))
 	if err != nil {
 		report.warnf("无法读取 AI 权限配置: %v", err)
 		return false, false
@@ -223,7 +223,7 @@ func (e *Engine) applyAIPermissionTombstone(ctx context.Context, objectID string
 		return false, false
 	}
 	if found {
-		if err := e.settingDelete(ctx, guard.PermissionSettingKey); err != nil {
+		if err := e.settingDelete(ctx, guard.PermissionSettingKeyForUser(ctx)); err != nil {
 			report.warnf("AI 权限配置删除失败: %v", err)
 			return false, false
 		}
@@ -293,7 +293,8 @@ func (e *Engine) settingDelete(ctx context.Context, key string) error {
 }
 
 func (e *Engine) clearTombstone(ctx context.Context, id string) error {
-	_, err := e.store.DB().ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", id)
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	_, err := e.store.DB().ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{id}, args...)...)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}

@@ -13,7 +13,7 @@ import (
 
 // HostShare 把一台 daemon 主机分享给一个注册用户: recipient 可在有效期内
 // 随时通过 host agent 新建终端, 全程不接触 owner 的密码或密钥。owner_id 是
-// 授予者 (设备 owner 或代管的 superadmin), 同一 (owner, device, recipient)
+// 授予者 (设备 owner), 同一 (owner, device, recipient)
 // 三元组只有一行, 不同授予者的分享相互独立。
 type HostShare struct {
 	ID                string
@@ -28,7 +28,7 @@ type HostShare struct {
 	RevokedAt         int64
 }
 
-// CreateHostShare 把设备分享给注册用户。仅设备 owner 或 superadmin 可授予;
+// CreateHostShare 把设备分享给注册用户。仅设备 owner  可授予;
 // 目标设备必须是 daemon 主机且代理在线; recipient 按用户名精确解析 (大小写
 // 不敏感), 不能是设备 owner 本人。重复授予同一三元组会刷新权限与有效期并解除吊销。
 // 设备授权与审计 (authorize) 先于用户名解析: 越权请求一律 403 并写 deny 审计,
@@ -90,8 +90,7 @@ RETURNING id`, share.ID, share.OwnerID, deviceID, recipient.ID, string(permissio
 	return share, nil
 }
 
-// ListHostShares 返回与 identity 相关的分享 (授予的或接收的); superadmin
-// 返回全部。
+// ListHostShares 返回与 identity 相关的分享 (授予的或接收的); 仅 owner 可见。
 func (s *Service) ListHostShares(ctx context.Context, identity *account.Identity) ([]*HostShare, error) {
 	query := `SELECT h.id, h.owner_id, h.device_id, h.recipient_id, h.permission, h.created_at, h.expires_at, h.revoked_at,
 ou.username, ru.username
@@ -99,10 +98,8 @@ FROM host_share h
 JOIN app_user ou ON ou.id = h.owner_id
 JOIN app_user ru ON ru.id = h.recipient_id`
 	args := []any{}
-	if identity.Role != account.RoleSuperadmin {
-		query += " WHERE h.owner_id = ? OR h.recipient_id = ?"
-		args = append(args, identity.UserID, identity.UserID)
-	}
+	query += " WHERE h.owner_id = ? OR h.recipient_id = ?"
+	args = append(args, identity.UserID, identity.UserID)
 	query += " ORDER BY h.created_at, h.id"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -125,7 +122,7 @@ JOIN app_user ru ON ru.id = h.recipient_id`
 	return shares, rows.Err()
 }
 
-// RevokeHostShare 吊销主机分享: 授予者、设备 owner 或 superadmin 可执行,
+// RevokeHostShare 吊销主机分享: 授予者、设备 owner  可执行,
 // 重复吊销不报错。吊销只影响本行, 同设备的其他分享不受影响。
 func (s *Service) RevokeHostShare(ctx context.Context, identity *account.Identity, shareID string) error {
 	var share HostShare
@@ -142,7 +139,7 @@ FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shar
 	}
 	outcome, reason := "allow", ""
 	var decision error
-	if identity.Role != account.RoleSuperadmin && identity.UserID != share.OwnerID && identity.UserID != deviceOwnerID {
+	if identity.UserID != share.OwnerID && identity.UserID != deviceOwnerID {
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "无权限吊销该分享")
 	}
 	auditErr := s.audit(ctx, auditKindHostRevoke, auditPayload{

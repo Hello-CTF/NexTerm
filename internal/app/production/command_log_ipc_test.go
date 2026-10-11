@@ -78,8 +78,8 @@ func TestCommandLogIPCFollowsFilters(t *testing.T) {
 	}
 }
 
-// 服务端装配(desktop=false)下, 已登录的非超管调用者无论是否自报 userId 都只能
-// 读到自己的命令记录; 超管可全量查询; 无身份的开放部署保持原行为。
+// 服务端装配(desktop=false)下, 已登录调用者无论是否自报 userId 都只能
+// 读到自己的命令记录; 无身份的开放部署保持原行为。
 func TestCommandLogIPCServerModeScopesToCaller(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -139,11 +139,11 @@ func TestCommandLogIPCServerModeScopesToCaller(t *testing.T) {
 	if got := query(plain, `{"userId":"u-2"}`); len(got) != 1 || got[0].UserID == nil || *got[0].UserID != "u-1" {
 		t.Fatalf("non-admin cross-user query = %+v", got)
 	}
-	if got := count(admin, `{}`); got != 3 {
-		t.Fatalf("superadmin unfiltered count = %d, want 3", got)
+	if got := count(admin, `{}`); got != 0 {
+		t.Fatalf("superadmin cross-user count = %d, want 0", got)
 	}
-	if got := query(admin, `{"userId":"u-2"}`); len(got) != 2 || got[0].Command != "whoami" {
-		t.Fatalf("superadmin filtered query = %+v", got)
+	if got := query(admin, `{"userId":"u-2"}`); len(got) != 0 {
+		t.Fatalf("superadmin cross-user query = %+v", got)
 	}
 	if got := count(ctx, `{}`); got != 3 {
 		t.Fatalf("identity-less (open deployment) count = %d, want 3", got)

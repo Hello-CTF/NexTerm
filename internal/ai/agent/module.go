@@ -14,7 +14,7 @@ import (
 )
 
 // guardGrantMutation 在服务端装配(ServerMode)下把设备授权/授权规则的变更收敛为
-// 超管: 授权状态是全局设置, 普通用户修改等于替全体用户授权。桌面端与无身份的
+// 超管: 授权状态按账号隔离, 但当前仅超管可变更。桌面端与无身份的
 // 开放部署(auth=off / loopback 免登录)保持原行为。
 func (r *Runner) guardGrantMutation(ctx context.Context) error {
 	if !r.config.ServerMode {

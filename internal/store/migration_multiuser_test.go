@@ -49,7 +49,7 @@ func TestMigrationFreshInstall(t *testing.T) {
 		t.Errorf("sync_tokens must not exist in the merged init schema")
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 1 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }

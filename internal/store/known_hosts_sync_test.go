@@ -7,9 +7,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-func seedKnownHost(t *testing.T, db *Store, id string) {
+func seedKnownHost(t *testing.T, db *Store, ctx context.Context, id string) {
 	t.Helper()
-	if err := db.KnownHostAccept(context.Background(), "host-"+id, 22, "ssh-ed25519", "SHA256:fp"); err != nil {
+	if err := db.KnownHostAccept(ctx, "host-"+id, 22, "ssh-ed25519", "SHA256:fp"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -34,7 +34,7 @@ func TestKnownHostRemoveWithOptOutWritesNoTombstone(t *testing.T) {
 	if err := db.SetKnownHostSyncOptIn(ctx, "u-a", false); err != nil {
 		t.Fatal(err)
 	}
-	seedKnownHost(t, db, "kh-off")
+	seedKnownHost(t, db, ctx, "kh-off")
 	row, found, err := db.KnownHostGet(ctx, "host-kh-off", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
@@ -50,7 +50,7 @@ func TestKnownHostRemoveWithOptOutWritesNoTombstone(t *testing.T) {
 func TestKnownHostRemoveDefaultsToTombstone(t *testing.T) {
 	db := testStore(t)
 	ctx := ipc.WithUserID(context.Background(), "u-default")
-	seedKnownHost(t, db, "kh-default")
+	seedKnownHost(t, db, ctx, "kh-default")
 	row, found, err := db.KnownHostGet(ctx, "host-kh-default", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
@@ -70,7 +70,7 @@ func TestKnownHostRemoveWithOptInWritesUserTombstone(t *testing.T) {
 	if err := db.SetKnownHostSyncOptIn(ctx, "u-a", true); err != nil {
 		t.Fatal(err)
 	}
-	seedKnownHost(t, db, "kh-on")
+	seedKnownHost(t, db, ctx, "kh-on")
 	row, found, err := db.KnownHostGet(ctx, "host-kh-on", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
@@ -99,7 +99,7 @@ func TestKnownHostRemoveWithoutIdentityWritesNoTombstone(t *testing.T) {
 	if err := db.SetKnownHostSyncOptIn(context.Background(), "u-a", true); err != nil {
 		t.Fatal(err)
 	}
-	seedKnownHost(t, db, "kh-anon")
+	seedKnownHost(t, db, context.Background(), "kh-anon")
 	row, found, err := db.KnownHostGet(context.Background(), "host-kh-anon", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
@@ -117,7 +117,7 @@ func TestKnownHostRemoveOptInIsolatedPerUser(t *testing.T) {
 	if err := db.SetKnownHostSyncOptIn(context.Background(), "u-a", true); err != nil {
 		t.Fatal(err)
 	}
-	seedKnownHost(t, db, "kh-b")
+	seedKnownHost(t, db, context.Background(), "kh-b")
 	row, found, err := db.KnownHostGet(context.Background(), "host-kh-b", 22, "ssh-ed25519")
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
@@ -192,7 +192,7 @@ func TestAIProfilesDeleteTxAtomic(t *testing.T) {
 	if err := db.AIProfilesDeleteTx(userCtx, state, "p-1", 100); err != nil {
 		t.Fatal(err)
 	}
-	if raw, found, err := db.SettingGet(ctx, AIProfilesSettingKey); err != nil || !found || raw != state {
+	if raw, found, err := db.SettingGet(ctx, AIProfilesSettingKeyForUser("u-a")); err != nil || !found || raw != state {
 		t.Fatalf("ai.models 必须写回: found=%v err=%v", found, err)
 	}
 	if kind, deletedAt, found := knownHostTombstone(t, db, "p-1"); !found || kind != SyncTombstoneKindAIProfile || deletedAt != 100 {

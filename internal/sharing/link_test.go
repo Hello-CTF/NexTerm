@@ -68,8 +68,10 @@ func TestLinkCreateAuthorization(t *testing.T) {
 	_, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(other), deviceID, ids.New(), false, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 
-	if _, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(admin), deviceID, ids.New(), false, 0); err != nil {
-		t.Fatalf("superadmin create: %v", err)
+	if _, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(admin), deviceID, ids.New(), false, 0); err == nil {
+		t.Fatal("superadmin create on another user's device must fail")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 
 	rows := fixture.auditRows(t, auditKindLinkCreate)
@@ -388,10 +390,6 @@ func TestLinkListScope(t *testing.T) {
 	if _, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), false, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(admin), deviceID, ids.New(), true, 0); err != nil {
-		t.Fatal(err)
-	}
-
 	links, err := fixture.service.ListLinks(context.Background(), fixture.identity(owner))
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +408,7 @@ func TestLinkListScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(links) != 2 {
+	if len(links) != 0 {
 		t.Fatalf("superadmin links = %+v", links)
 	}
 }

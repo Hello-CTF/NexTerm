@@ -513,8 +513,8 @@ func TestBlobOwnerEnforcedOnDownloadAndDelete(t *testing.T) {
 	if status, _ := download(owned.ID, nil); status != http.StatusNotFound {
 		t.Fatalf("anonymous download status = %d, want 404", status)
 	}
-	if status, body := download(owned.ID, admin); status != http.StatusOK || body != "owned-by-user" {
-		t.Fatalf("superadmin download = %d %q", status, body)
+	if status, _ := download(owned.ID, admin); status != http.StatusNotFound {
+		t.Fatalf("superadmin download on another user's blob = %d, want 404", status)
 	}
 	if status := remove(owned.ID, other); status != http.StatusNotFound {
 		t.Fatalf("non-owner delete status = %d, want 404", status)
@@ -522,8 +522,11 @@ func TestBlobOwnerEnforcedOnDownloadAndDelete(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(store.stageRoot(), owned.ID)); err != nil {
 		t.Fatalf("non-owner delete removed the blob: %v", err)
 	}
-	if status := remove(owned.ID, admin); status != http.StatusNoContent {
-		t.Fatalf("superadmin delete status = %d", status)
+	if status := remove(owned.ID, admin); status != http.StatusNotFound {
+		t.Fatalf("superadmin delete on another user's blob = %d, want 404", status)
+	}
+	if status := remove(owned.ID, owner); status != http.StatusNoContent {
+		t.Fatalf("owner delete status = %d", status)
 	}
 
 	reservedRecorder := httptest.NewRecorder()

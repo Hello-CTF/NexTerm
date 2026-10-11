@@ -379,9 +379,13 @@ func dialShareViewer(t *testing.T, f *httpFixture, path string, session *httpSes
 	if session != nil {
 		options.HTTPHeader = http.Header{"Cookie": []string{session.cookie.Name + "=" + session.cookie.Value}}
 	}
-	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+path, options)
+	options.CompressionMode = websocket.CompressionContextTakeover
+	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+path, options)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(got, "permessage-deflate") {
+		t.Fatalf("compression extensions = %q, want permessage-deflate", got)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn
@@ -821,7 +825,7 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 		t.Fatalf("disabled recipient: HTTP %d %v", call.status, call.body)
 	}
 
-	// 非设备 owner 的普通用户不能在该设备上创建 (服务端 owner/superadmin 把关不变)。
+	// 非设备 owner 的普通用户不能在该设备上创建 (服务端 仅设备 owner 把关)。
 	strangerSession := f.session(t, stranger)
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "byname-recipient", "write": false, "ttl_ms": 3600000,

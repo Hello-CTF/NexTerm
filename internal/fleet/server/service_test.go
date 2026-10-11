@@ -359,11 +359,13 @@ func TestFleetAuthorizeRoleIsolation(t *testing.T) {
 	if err := fixture.service.SetDesiredAutostart(context.Background(), fixture.identity(alice), result.DeviceID, false); err != nil {
 		t.Fatalf("owner autostart: %v", err)
 	}
-	if err := fixture.service.SetDesiredAutostart(context.Background(), fixture.identity(root), result.DeviceID, true); err != nil {
-		t.Fatalf("superadmin autostart: %v", err)
+	if err := fixture.service.SetDesiredAutostart(context.Background(), fixture.identity(root), result.DeviceID, true); err == nil {
+		t.Fatal("superadmin autostart on another user's device must fail")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 	allows := fixture.auditRows(t, auditKindDeviceAutostart)
-	if len(allows) != 3 || allows[0]["outcome"] != "deny" || allows[1]["outcome"] != "allow" || allows[2]["outcome"] != "allow" {
+	if len(allows) != 3 || allows[0]["outcome"] != "deny" || allows[1]["outcome"] != "allow" || allows[2]["outcome"] != "deny" || allows[2]["reason"] != "not_owner" {
 		t.Fatalf("autostart audits=%v", allows)
 	}
 
@@ -380,12 +382,11 @@ func TestFleetAuthorizeRoleIsolation(t *testing.T) {
 
 func TestFleetRevokeDevice(t *testing.T) {
 	fixture := newServiceFixture(t)
-	root := fixture.createSuperadmin(t, "root")
 	alice := fixture.createUser(t, "alice")
 	result := fixture.enrollAgent(t, alice, "alice-host")
 
-	if err := fixture.service.RevokeDevice(context.Background(), fixture.identity(root), result.DeviceID); err != nil {
-		t.Fatalf("superadmin revoke: %v", err)
+	if err := fixture.service.RevokeDevice(context.Background(), fixture.identity(alice), result.DeviceID); err != nil {
+		t.Fatalf("owner revoke: %v", err)
 	}
 	var revokedAt sql.NullInt64
 	if err := fixture.db.QueryRowContext(context.Background(), "SELECT revoked_at FROM user_device WHERE id = ?", result.DeviceID).Scan(&revokedAt); err != nil || !revokedAt.Valid {
@@ -407,7 +408,7 @@ func TestFleetRevokeDevice(t *testing.T) {
 	}
 
 	audits := fixture.auditRows(t, auditKindDeviceRevoke)
-	if len(audits) != 2 || audits[0]["outcome"] != "allow" || audits[0]["requester"] != root.ID ||
+	if len(audits) != 2 || audits[0]["outcome"] != "allow" || audits[0]["requester"] != alice.ID ||
 		audits[1]["outcome"] != "deny" || audits[1]["reason"] != "device_revoked" {
 		t.Fatalf("revoke audits=%v", audits)
 	}
@@ -427,7 +428,7 @@ func TestFleetListDevicesFiltering(t *testing.T) {
 	alice := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	aliceResult := fixture.enrollAgent(t, alice, "alice-host")
-	bobResult := fixture.enrollAgent(t, bob, "bob-host")
+	_ = fixture.enrollAgent(t, bob, "bob-host")
 
 	aliceDevices, err := fixture.service.ListDevices(context.Background(), fixture.identity(alice))
 	if err != nil {
@@ -444,18 +445,8 @@ func TestFleetListDevicesFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allDevices) != 2 {
+	if len(allDevices) != 0 {
 		t.Fatalf("superadmin sees %d devices", len(allDevices))
-	}
-	owners := map[string]string{}
-	for _, device := range allDevices {
-		if device.Owner == nil {
-			t.Fatalf("superadmin view missing owner: %+v", device)
-		}
-		owners[device.ID] = device.Owner.Username
-	}
-	if owners[aliceResult.DeviceID] != "alice" || owners[bobResult.DeviceID] != "bob" {
-		t.Fatalf("owners=%v", owners)
 	}
 }
 

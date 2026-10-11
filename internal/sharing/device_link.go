@@ -14,7 +14,7 @@ import (
 // DeviceLink 把一台 daemon 设备在限定时间内分享给无账号访客: 与绑定单个
 // 实时会话的 Link 不同, 访客每次打开都在设备上经 host agent 新建终端, 链接
 // 本身不依附任何既有会话。not_before 之前链接不可用 (延迟生效); owner_id 是
-// 授予者 (设备 owner 或代管的 superadmin), 设备 owner 与 superadmin 都可吊销。
+// 授予者 (设备 owner 或代管的 owner)。
 type DeviceLink struct {
 	ID             string
 	OwnerID        string
@@ -152,7 +152,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 	}, nil
 }
 
-// RevokeDeviceLink 吊销设备公开链接; owner 或 superadmin 可执行, 重复吊销不
+// RevokeDeviceLink 吊销设备公开链接; owner 可执行, 重复吊销不
 // 报错。吊销只影响本行, 同设备的会话链接与其他设备链接不受影响。
 func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	var link DeviceLink
@@ -182,15 +182,13 @@ func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identi
 	return nil
 }
 
-// ListDeviceLinks 返回 owner 创建的设备公开链接; superadmin 返回全部。不含
+// ListDeviceLinks 返回 owner 创建的设备公开链接; 仅 owner 可见。不含
 // token 哈希。
 func (s *Service) ListDeviceLinks(ctx context.Context, identity *account.Identity) ([]*DeviceLink, error) {
 	query := `SELECT id, owner_id, device_id, permission, created_at, not_before, expires_at, revoked_at, last_accessed_at FROM device_share_link`
 	args := []any{}
-	if identity.Role != account.RoleSuperadmin {
-		query += " WHERE owner_id = ?"
-		args = append(args, identity.UserID)
-	}
+	query += " WHERE owner_id = ?"
+	args = append(args, identity.UserID)
 	query += " ORDER BY created_at, id"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

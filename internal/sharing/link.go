@@ -36,7 +36,7 @@ type Grant struct {
 }
 
 // Link 是一条公开分享链接; OwnerID 是授予者 (设备 owner 或代管的
-// superadmin), 设备 owner 与 superadmin 都可吊销。
+// owner)。
 type Link struct {
 	ID             string
 	OwnerID        string
@@ -166,7 +166,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 	}, nil
 }
 
-// RevokeLink 吊销公开链接; owner 或 superadmin 可执行, 重复吊销不报错。
+// RevokeLink 吊销公开链接; owner 可执行, 重复吊销不报错。
 // 每次判定都写含 share_id 的审计。
 func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	var link Link
@@ -200,14 +200,12 @@ func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, li
 	return nil
 }
 
-// ListLinks 返回 owner 创建的公开链接; superadmin 返回全部。不含 token 哈希。
+// ListLinks 返回 owner 创建的公开链接; 仅 owner 可见。不含 token 哈希。
 func (s *Service) ListLinks(ctx context.Context, identity *account.Identity) ([]*Link, error) {
 	query := `SELECT id, owner_id, device_id, session_id, permission, created_at, expires_at, revoked_at, last_accessed_at FROM share_link`
 	args := []any{}
-	if identity.Role != account.RoleSuperadmin {
-		query += " WHERE owner_id = ?"
-		args = append(args, identity.UserID)
-	}
+	query += " WHERE owner_id = ?"
+	args = append(args, identity.UserID)
 	query += " ORDER BY created_at, id"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -436,8 +434,8 @@ func (s *Service) auditInput(ctx context.Context, kind string, payload linkInput
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,NULL,NULL,?,?,?,NULL,NULL)`, ipc.OwnerID(ctx), s.now(), auditSourceSharing, kind, string(encoded)); err != nil {
 		return dbError(err)
 	}
 	return nil

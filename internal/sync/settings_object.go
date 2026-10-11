@@ -120,7 +120,7 @@ func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bo
 	var value string
 	var updatedAt int64
 	err := e.store.DB().QueryRowContext(ctx,
-		"SELECT value, updated_at FROM setting WHERE key = ?", store.AIProfilesSettingKey).
+		"SELECT value, updated_at FROM setting WHERE key = ?", store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx))).
 		Scan(&value, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return aiProfilesState{Version: aiProfilesStoreVersion, Profiles: []aiProfileRecord{}}, 0, false, nil
@@ -154,11 +154,12 @@ func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, upda
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-		store.AIProfilesSettingKey, string(encoded), updatedAt); err != nil {
+		store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)), string(encoded), updatedAt); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	if clearTombstoneID != "" {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", clearTombstoneID); err != nil {
+		condition, args := ipc.OwnerCondition(ctx, "owner_id")
+		if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{clearTombstoneID}, args...)...); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 	}
@@ -187,8 +188,9 @@ func (e *Engine) protectAIProfileKey(ctx context.Context, plaintext string) (str
 
 func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostRow, bool, error) {
 	var row store.KnownHostRow
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	err := e.store.DB().QueryRowContext(ctx,
-		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE id = ?", id).
+		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE id = ?"+condition, append([]any{id}, args...)...).
 		Scan(&row.ID, &row.Host, &row.Port, &row.KeyType, &row.Fingerprint, &row.AddedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.KnownHostRow{}, false, nil
@@ -214,39 +216,54 @@ func knownHostTombstoneMetaKey(id string) string {
 	return knownHostTombstoneMetaPrefix + id
 }
 
+func knownHostTombstoneMetaPrefixForUser(ctx context.Context) string {
+	if ownerID := ipc.OwnerID(ctx); ownerID != "" {
+		return knownHostTombstoneMetaPrefix + ownerID + "."
+	}
+	return knownHostTombstoneMetaPrefix
+}
+
+func knownHostTombstoneMetaKeyForUser(ctx context.Context, id string) string {
+	return knownHostTombstoneMetaPrefixForUser(ctx) + id
+}
+
 // knownHostTombstoneRecordTx 在事务内写入/合并 known_host 墓碑: sync_tombstone 按
 // scalarMax 合并修订号; 冲突三元组元数据仅在本次修订号不落后于现有墓碑时写入(用户删除
 // 传 nil, 表示清除元数据)。门条件在墓碑合并后求值, 因此等价于「新修订号 >= 旧修订号」,
 // 两个不同三元组的冲突墓碑并发落地时, 元数据确定性地跟随修订号最大者, 不拼出混合墓碑。
 func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *sql.Tx, id string, deletedAt int64, conflict *knownHostTombstoneMeta) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-		id, KindKnownHost, deletedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(owner_id, id, kind, deleted_at) VALUES(?,?,?,?)
+ON CONFLICT(owner_id, id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)
+WHERE owner_id = ?`, ipc.OwnerID(ctx), id, KindKnownHost, deletedAt, ipc.OwnerID(ctx)); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	if conflict != nil {
 		encoded, err := json.Marshal(conflict)
 		if err != nil {
 			return ipc.WrapError(ipc.CodeInternal, "无法编码冲突墓碑元数据", err)
 		}
+		queryArgs := []any{knownHostTombstoneMetaKeyForUser(ctx, id), string(encoded), deletedAt, deletedAt, id}
+		queryArgs = append(queryArgs, args...)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-WHERE ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?)`,
-			knownHostTombstoneMetaKey(id), string(encoded), deletedAt, deletedAt, id); err != nil {
+WHERE ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?`+condition+`)`, queryArgs...); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM setting WHERE key = ? AND ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?)`,
-		knownHostTombstoneMetaKey(id), deletedAt, id); err != nil {
+	queryArgs := []any{knownHostTombstoneMetaKeyForUser(ctx, id), deletedAt, id}
+	queryArgs = append(queryArgs, args...)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM setting WHERE key = ? AND ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?`+condition+`)`, queryArgs...); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
 }
 
-// knownHostTombstoneMetas 读取全部 known_host 冲突墓碑元数据, 供墓碑再传播时还原三元组。
+// knownHostTombstoneMetas 读取当前用户的 known_host 冲突墓碑元数据, 供墓碑再传播时还原三元组。
 func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownHostTombstoneMeta, error) {
-	values, err := e.store.SettingListPrefix(ctx, knownHostTombstoneMetaPrefix)
+	prefix := knownHostTombstoneMetaPrefixForUser(ctx)
+	values, err := e.store.SettingListPrefix(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +273,7 @@ func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownH
 		if err := json.Unmarshal([]byte(value), &meta); err != nil {
 			continue
 		}
-		metas[strings.TrimPrefix(key, knownHostTombstoneMetaPrefix)] = meta
+		metas[strings.TrimPrefix(key, prefix)] = meta
 	}
 	return metas, nil
 }
@@ -267,6 +284,7 @@ func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownH
 // 原样保留(修订号不变, 不产生重复对象), 原 ID 立碑给远端败者; 其他设备拉取该墓碑时
 // 本地已无原 ID 行, 只合并墓碑记录, 不会触碰 re-ID 后的化身。
 func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostObject, incarnation *store.KnownHostRow, winnerAddedAt int64) error {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	tx, err := e.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
@@ -277,11 +295,11 @@ func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostO
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", newID, incarnation.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?"+condition, append([]any{newID, incarnation.ID}, args...)...); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
-	} else if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?",
-		payload.ID, payload.Host, payload.Port, payload.KeyType); err != nil {
+	} else if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?"+condition,
+		append([]any{payload.ID, payload.Host, payload.Port, payload.KeyType}, args...)...); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
@@ -319,13 +337,14 @@ func (e *Engine) knownHostReincarnationID(incarnation *store.KnownHostRow) (stri
 
 // knownHostUpsert 按 ID 幂等写入并保留对端修订号 added_at; 三元组冲突的败者行与其墓碑在同一事务清除。
 func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string) error {
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
 	tx, err := e.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if displacedID != "" {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", displacedID); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?"+condition, append([]any{displacedID}, args...)...); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
@@ -333,16 +352,16 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO known_host(id, host, port, key_type, fingerprint, added_at) VALUES(?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO known_host(owner_id, id, host, port, key_type, fingerprint, added_at) VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET host=excluded.host, port=excluded.port, key_type=excluded.key_type,
-fingerprint=excluded.fingerprint, added_at=excluded.added_at`,
-		payload.ID, payload.Host, payload.Port, payload.KeyType, payload.Fingerprint, payload.AddedAt); err != nil {
+fingerprint=excluded.fingerprint, added_at=excluded.added_at
+WHERE owner_id = ?`, ipc.OwnerID(ctx), payload.ID, payload.Host, payload.Port, payload.KeyType, payload.Fingerprint, payload.AddedAt, ipc.OwnerID(ctx)); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", payload.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?"+condition, append([]any{payload.ID}, args...)...); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", knownHostTombstoneMetaKey(payload.ID)); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", knownHostTombstoneMetaKeyForUser(ctx, payload.ID)); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return tx.Commit()

@@ -41,8 +41,8 @@ func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
-VALUES(?,?,?,?,?,?,?,?)`, ids.NowMS(), input.SessionID, input.AssetID, input.Source, input.Kind,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(owner_id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
+VALUES(?,?,?,?,?,?,?,?,?)`, ipc.OwnerID(ctx), ids.NowMS(), input.SessionID, input.AssetID, input.Source, input.Kind,
 		string(payload), input.ExitCode, input.DurationMS)
 	if err != nil {
 		return dbError(err)
@@ -52,10 +52,11 @@ VALUES(?,?,?,?,?,?,?,?)`, ids.NowMS(), input.SessionID, input.AssetID, input.Sou
 
 func (s *Store) AuditCount(ctx context.Context, query AuditQuery) (int64, error) {
 	var count int64
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	queryArgs := append([]any{query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind}, args...)
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log
 WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
-AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`,
-		query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind).Scan(&count)
+AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`+condition, queryArgs...).Scan(&count)
 	if err != nil {
 		return 0, dbError(err)
 	}
@@ -67,12 +68,14 @@ func (s *Store) AuditQuery(ctx context.Context, query AuditQuery) ([]AuditRow, e
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	queryArgs := append([]any{query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind}, args...)
+	queryArgs = append(queryArgs, limit, query.Offset)
 	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms
 FROM audit_log
 WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
-AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)
-ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, query.SessionID, query.SessionID,
-		query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind, limit, query.Offset)
+AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`+condition+`
+ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return nil, dbError(err)
 	}

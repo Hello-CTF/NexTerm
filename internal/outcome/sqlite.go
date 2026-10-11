@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type SQLiteStore struct {
@@ -24,9 +26,9 @@ const outcomeColumns = `idempotence_key, authorization_id, kind, canonical_argum
 	exit_code, result_error, audit_state, audit_error, audit_completed_at, revision, created_at, started_at, finished_at`
 
 func (s *SQLiteStore) Reserve(ctx context.Context, record Record) (Record, bool, error) {
-	result, err := s.db.ExecContext(ctx, `INSERT INTO outcome_record (`+outcomeColumns+`)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotence_key) DO NOTHING`,
-		record.IdempotenceKey, record.AuthorizationID, string(record.Kind), string(record.CanonicalArguments),
+	result, err := s.db.ExecContext(ctx, `INSERT INTO outcome_record (owner_id, `+outcomeColumns+`)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id, idempotence_key) DO NOTHING`,
+		ipc.OwnerID(ctx), record.IdempotenceKey, record.AuthorizationID, string(record.Kind), string(record.CanonicalArguments),
 		string(record.State), string(record.Outcome), nullableInt(record.Result.ExitCode), record.Result.Error,
 		string(record.Audit.State), record.Audit.Error, nullableTimeMS(record.Audit.CompletedAt), record.Revision,
 		record.CreatedAt.UnixMilli(), nullableTimeMS(record.StartedAt), nullableTimeMS(record.FinishedAt))
@@ -51,15 +53,19 @@ func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevisio
 	if record.Revision != expectedRevision+1 {
 		return ErrRevisionConflict
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE outcome_record SET authorization_id=?, kind=?, canonical_arguments=?,
-	state=?, outcome=?, exit_code=?, result_error=?, audit_state=?, audit_error=?, audit_completed_at=?,
-	revision=?, created_at=?, started_at=?, finished_at=?
-	WHERE idempotence_key=? AND revision=?`,
+	condition, ownerArgs := ipc.OwnerCondition(ctx, "owner_id")
+	args := []any{
 		record.AuthorizationID, string(record.Kind), string(record.CanonicalArguments),
 		string(record.State), string(record.Outcome), nullableInt(record.Result.ExitCode), record.Result.Error,
 		string(record.Audit.State), record.Audit.Error, nullableTimeMS(record.Audit.CompletedAt), record.Revision,
 		record.CreatedAt.UnixMilli(), nullableTimeMS(record.StartedAt), nullableTimeMS(record.FinishedAt),
-		record.IdempotenceKey, expectedRevision)
+		record.IdempotenceKey, expectedRevision,
+	}
+	args = append(args, ownerArgs...)
+	result, err := s.db.ExecContext(ctx, `UPDATE outcome_record SET authorization_id=?, kind=?, canonical_arguments=?,
+	state=?, outcome=?, exit_code=?, result_error=?, audit_state=?, audit_error=?, audit_completed_at=?,
+	revision=?, created_at=?, started_at=?, finished_at=?
+	WHERE idempotence_key = ? AND revision = ?`+condition, args...)
 	if err != nil {
 		return fmt.Errorf("outcome: update record: %w", err)
 	}
@@ -71,7 +77,8 @@ func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevisio
 		return nil
 	}
 	var revision uint64
-	err = s.db.QueryRowContext(ctx, `SELECT revision FROM outcome_record WHERE idempotence_key=?`, record.IdempotenceKey).Scan(&revision)
+	condition, args = ipc.OwnerCondition(ctx, "owner_id")
+	err = s.db.QueryRowContext(ctx, `SELECT revision FROM outcome_record WHERE idempotence_key = ?`+condition, append([]any{record.IdempotenceKey}, args...)...).Scan(&revision)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return ErrNotFound
@@ -83,7 +90,8 @@ func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevisio
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, key string) (Record, error) {
-	record, err := scanOutcomeRecord(s.db.QueryRowContext(ctx, `SELECT `+outcomeColumns+` FROM outcome_record WHERE idempotence_key=?`, key))
+	condition, args := ipc.OwnerCondition(ctx, "owner_id")
+	record, err := scanOutcomeRecord(s.db.QueryRowContext(ctx, `SELECT `+outcomeColumns+` FROM outcome_record WHERE idempotence_key = ?`+condition, append([]any{key}, args...)...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}

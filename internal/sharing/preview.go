@@ -160,7 +160,7 @@ func (s *Service) RevalidatePreview(ctx context.Context, grant *PreviewGrant) (*
 	return &refreshed, nil
 }
 
-// RevokePreviewLink 吊销只读预览链接; owner 或 superadmin 可执行, 重复吊销
+// RevokePreviewLink 吊销只读预览链接; owner 可执行, 重复吊销
 // 不报错。每次判定都写含 share_id 的审计。
 func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	var ownerID, sessionID string
@@ -175,7 +175,7 @@ func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Ident
 	}
 	outcome, reason := "allow", ""
 	var decision error
-	if ownerID != identity.UserID && identity.Role != account.RoleSuperadmin {
+	if ownerID != identity.UserID {
 		outcome, reason = "deny", "not_owner"
 		decision = ipc.NewError(ipc.CodeForbidden, "分享链接不属于该用户")
 	}
@@ -194,15 +194,13 @@ func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Ident
 	return nil
 }
 
-// ListPreviewLinks 返回 owner 创建的只读预览链接; superadmin 返回全部。
+// ListPreviewLinks 返回 owner 创建的只读预览链接; 仅 owner 可见。
 // 不含 token 哈希。
 func (s *Service) ListPreviewLinks(ctx context.Context, identity *account.Identity) ([]*PreviewLink, error) {
 	query := `SELECT id, owner_id, session_id, created_at, expires_at, revoked_at, last_accessed_at FROM share_preview_link`
 	args := []any{}
-	if identity.Role != account.RoleSuperadmin {
-		query += " WHERE owner_id = ?"
-		args = append(args, identity.UserID)
-	}
+	query += " WHERE owner_id = ?"
+	args = append(args, identity.UserID)
 	query += " ORDER BY created_at, id"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
