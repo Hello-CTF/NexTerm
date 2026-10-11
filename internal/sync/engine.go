@@ -476,7 +476,7 @@ func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.Sni
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"group_id", "name", "body", "sort", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: conflictOwnerColumn(e.store.Backend(), "sync_tombstone"), Value: ipc.OwnerID(ctx)}}},
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: conflictOwnerColumn(e.store.Backend(), "snippet"), Value: ipc.OwnerID(ctx)}}},
 	}).Create(&row).Error; err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}

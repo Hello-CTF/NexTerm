@@ -32,7 +32,7 @@ func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, ke
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
 			DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "added_at"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("sync_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("known_host", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).
 		Create(&row)
 	if err != nil {
