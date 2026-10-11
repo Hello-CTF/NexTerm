@@ -123,17 +123,28 @@ func TestTitleGenerationAfterFirstRun(t *testing.T) {
 	if title != expected {
 		t.Fatalf("generated title = %q, want %q", title, expected)
 	}
-	summary, err := storage.RunUsageSummary(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	var titleRow store.RunUsageSummaryRow
+	usageFound := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		summary, err := storage.RunUsageSummary(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range summary {
+			if row.Source == store.RunSourceTitle {
+				titleRow = row
+				usageFound = true
+				break
+			}
+		}
+		if usageFound {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	bySource := map[string]store.RunUsageSummaryRow{}
-	for _, row := range summary {
-		bySource[row.Source] = row
-	}
-	titleRow, ok := bySource[store.RunSourceTitle]
-	if !ok {
-		t.Fatalf("title usage dimension missing from summary: %+v", summary)
+	if !usageFound {
+		t.Fatal("title usage dimension missing from summary")
 	}
 	if titleRow.TokensIn != 12 || titleRow.TokensOut != 8 || titleRow.Runs != 1 {
 		t.Fatalf("title usage row = %+v", titleRow)

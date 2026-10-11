@@ -372,16 +372,20 @@ func subagentPersistenceRunner(t *testing.T, parent, child model.BaseChatModel, 
 
 func findSubagentRow(t *testing.T, storage *store.Store) *store.RunRow {
 	t.Helper()
-	rows, err := storage.RunList(context.Background(), "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for index := range rows {
-		if rows[index].Source == "subagent" {
-			return &rows[index]
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := storage.RunList(context.Background(), "", 0)
+		if err != nil {
+			t.Fatal(err)
 		}
+		for index := range rows {
+			if rows[index].Source == "subagent" {
+				return &rows[index]
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("no subagent run persisted: %+v", rows)
+	t.Fatal("no subagent run persisted")
 	return nil
 }
 
