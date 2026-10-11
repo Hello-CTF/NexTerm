@@ -17,6 +17,8 @@ function packageNamesFor(version) {
     `NexTerm_${version}_arm64-setup.exe`,
     `NexTerm_${version}_aarch64.dmg`,
     `NexTerm_${version}_x86_64.dmg`,
+    `NexTerm_${version}_android.apk`,
+    `NexTerm_${version}_ios.ipa`,
     ...["amd64", "arm64"].flatMap((arch) => [
       `NexTerm-desktop_${version}_linux_${arch}.deb`,
       `NexTerm-server_${version}_linux_${arch}.tar.gz`,
@@ -194,7 +196,7 @@ test("gates an unexpected package before any request", async (t) => {
   assert.match(result.stderr, /NexTerm_9\.9\.9_evil\.exe/);
 });
 
-test("creates the draft release and uploads all 9 assets", async (t) => {
+test("creates the draft release and uploads all 11 assets", async (t) => {
   const stub = await startStub(t, { listReleases: () => [] });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
@@ -220,14 +222,14 @@ test("creates the draft release and uploads all 9 assets", async (t) => {
   assert.equal(summary.prerelease, false);
   assert.equal(summary.deleted_assets, 0);
   assert.deepEqual(summary.failed, []);
-  assert.equal(summary.files.length, 9);
+  assert.equal(summary.files.length, 11);
   for (const file of summary.files) {
     assert.equal(file.attempts, 1, file.name);
     assert.ok(file.bytes > 0, file.name);
     assert.ok(file.seconds > 0, file.name);
   }
   const uploadedLines = result.stderr.split("\n").filter((line) => line.includes("release-upload: uploaded ") && line.includes(" bytes="));
-  assert.equal(uploadedLines.length, 9);
+  assert.equal(uploadedLines.length, 11);
 });
 
 test("marks a matching prerelease version as prerelease", async (t) => {
@@ -262,9 +264,9 @@ test("replaces same-name assets on the existing draft discovered through the lis
   assert.deepEqual(releaseMutations, []);
   assert.ok(!stub.state.requests.some((entry) => entry.url.includes("/releases/tags/")));
   assert.deepEqual([...stub.state.deletedAssetIds].sort((a, b) => a - b), existingAssets.map((asset) => asset.id));
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   const summary = summaryOf(result);
-  assert.equal(summary.deleted_assets, 9);
+  assert.equal(summary.deleted_assets, 11);
   assert.equal(summary.draft, true);
 });
 
@@ -289,7 +291,7 @@ test("finds the existing draft on a later releases page", async (t) => {
   assert.equal(pages.length, 2);
   assert.ok(pages[0].url.includes("page=1"));
   assert.ok(pages[1].url.includes("page=2"));
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   const summary = summaryOf(result);
   assert.equal(summary.release_id, RELEASE_ID);
   assert.equal(summary.draft, true);
@@ -311,7 +313,7 @@ test("resolves a published release through the list without creating or drafting
   const result = await runUploader(stub, directory);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.releaseCreated, null);
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   const summary = summaryOf(result);
   assert.equal(summary.draft, false);
   assert.equal(summary.prerelease, false);
@@ -325,7 +327,7 @@ test("bounds in-flight uploads to the configured concurrency", async (t) => {
   const result = await runUploader(stub, directory, ["--concurrency", "4"]);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.assetPeak, 4);
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   const summary = summaryOf(result);
   assert.equal(summary.concurrency, 4);
 });
@@ -355,9 +357,9 @@ test("fails after retry exhaustion and names the failed asset", async (t) => {
   const result = await runUploader(stub, directory, ["--max-attempts", "2", "--retry-base-ms", "10"]);
   assert.notEqual(result.status, 0);
   assert.equal(stub.state.assetAttempts.get(broken), 2);
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   assert.match(result.stderr, new RegExp(`failed ${broken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(result.stderr, /1\/9 uploads failed/);
+  assert.match(result.stderr, /1\/11 uploads failed/);
   const summary = summaryOf(result);
   assert.equal(summary.failed.length, 1);
   assert.equal(summary.failed[0].name, broken);
@@ -409,7 +411,7 @@ test("fails when the final asset listing misses an uploaded file", async (t) => 
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
   assert.notEqual(result.status, 0);
-  assert.equal(stub.state.assetAttempts.size, 9);
+  assert.equal(stub.state.assetAttempts.size, 11);
   assert.match(result.stderr, /missing uploaded assets/);
   assert.match(result.stderr, new RegExp(lost.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
