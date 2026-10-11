@@ -40,6 +40,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   const epochRef = useRef(0);
   const unmountedRef = useRef(false);
   const copyHintTimerRef = useRef<number | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -65,17 +66,30 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
     if (open) void refresh();
   }, [open, refresh]);
 
+  const close = useCallback(() => {
+    epochRef.current += 1;
+    setOpen(false);
+    setCreating(false);
+    setCreatedUrl(null);
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open, close]);
+
   const toggle = useCallback(() => {
     if (open) {
-      epochRef.current += 1;
-      setOpen(false);
-      setCreating(false);
-      setCreatedUrl(null);
-      setError(null);
+      close();
       return;
     }
     setOpen(true);
-  }, [open]);
+  }, [open, close]);
 
   const create = useCallback(async () => {
     if (creating) return;
@@ -122,7 +136,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   }, []);
 
   return (
-    <div className="relative inline-block">
+    <div ref={rootRef} className="relative inline-block">
       <button
         type="button"
         title="创建只读预览链接"

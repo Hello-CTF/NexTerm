@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // PreviewShareMenu 创建入口: 创建只读预览链接、当场展示并复制公开 URL、
 // 列出进行中的预览并吊销。token 只在创建响应里出现一次。
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flush, clickButton, type MountedView } from "./reactTestUtils";
 import { PreviewShareMenu } from "../../features/sharing/PreviewShareMenu";
@@ -86,6 +86,22 @@ describe("PreviewShareMenu", () => {
     const revokeCalls = mocks.fetch.mock.calls.filter((call) => String(call[0]).includes("/revoke"));
     expect(revokeCalls.length).toBe(revokeCallsBefore + 1);
     expect(String(revokeCalls[0]?.[0])).toContain("/share/previews/lnk-1/revoke");
+  });
+
+  it("closes on outside pointer down but not on inside pointer down", async () => {
+    queueResponses({ links: [] });
+    const view = await mountMenu();
+    const select = view.container.querySelector("select");
+    expect(select).not.toBeNull();
+    act(() => {
+      select?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    expect(view.container.textContent).toContain("创建链接");
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    expect(view.container.textContent).not.toContain("创建链接");
+    view.unmount();
   });
 
   it("surfaces create errors inline", async () => {

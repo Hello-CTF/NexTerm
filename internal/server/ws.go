@@ -69,6 +69,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  s.options.AllowedOrigins,
 		CompressionMode: websocket.CompressionContextTakeover,
+		Subprotocols:    []string{"nexterm"},
 	})
 	if err != nil {
 		return
@@ -138,6 +139,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  s.options.AllowedOrigins,
 		CompressionMode: websocket.CompressionContextTakeover,
+		Subprotocols:    []string{"nexterm"},
 	})
 	if err != nil {
 		return
