@@ -236,7 +236,8 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
         </span>
       )}
 
-      <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden w-max group-hover:block group-focus-within:block">
+      {!detailsOpen ? (
+        <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden w-max group-hover:block group-focus-within:block">
         <span className="block rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-300 shadow-xl">
           {hasData ? (
             <>
@@ -258,7 +259,8 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
             <span className="block text-neutral-500">尚未产生用量</span>
           )}
         </span>
-      </span>
+        </span>
+      ) : null}
 
       {detailsAvailable && detailsOpen ? (
         <UsageDetails runs={runs} summaryRows={summaryRows} summaryFailed={summaryFailed} onRetrySummary={loadSummaryRows} />
@@ -281,7 +283,7 @@ function UsageDetails({
   const errorStats = runs ? runErrorStats(runs) : null;
   const scenes = summaryRows ? aggregateUsageRows(summaryRows) : null;
   return (
-    <span className="absolute top-full right-0 z-20 mt-1.5 block w-64 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
+    <span className="absolute top-full right-0 z-20 mt-1.5 block w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
       <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
@@ -309,7 +311,7 @@ function UsageDetails({
           ) : null}
           <span className="block text-neutral-500">
             标题 {scenes.title.runs} 次 · 输入 {formatTokens(scenes.title.tokensIn)} · 输出{" "}
-            {formatTokens(scenes.title.tokensOut)}（单独统计，不计入对话总量）
+            {formatTokens(scenes.title.tokensOut)}（单独统计）
           </span>
         </>
       ) : null}

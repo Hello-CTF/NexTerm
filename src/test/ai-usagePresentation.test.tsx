@@ -159,8 +159,12 @@ describe("UsageRing details", () => {
     expect(text).toContain("对话 4 次");
     expect(text).toContain("输入 400");
     expect(text).toContain("标题 8 次");
-    expect(text).toContain("单独统计，不计入对话总量");
+    expect(text).toContain("（单独统计）");
     expect(loadSummary).toHaveBeenCalledTimes(1);
+    const details = view.container.querySelector(".top-full");
+    expect(details?.className).toContain("w-72");
+    expect(details?.className).toContain("max-w-[calc(100vw-1rem)]");
+    expect(view.container.querySelector(".bottom-full")).toBeNull();
 
     click(button!);
     await flush();
