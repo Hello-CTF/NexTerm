@@ -33,6 +33,8 @@
 | macOS（Apple Silicon / Intel） | `NexTerm_x.y.z_<架构>.dmg`，打开后拖入「应用程序」。 |
 | Linux 桌面（amd64 / arm64） | `NexTerm-desktop_x.y.z_linux_<架构>.deb`，`apt install ./<包名>.deb` 安装（自动装 GTK4 与 WebKitGTK 6.0 依赖）。 |
 | Linux 服务器 | `NexTerm-server_x.y.z_linux_<架构>.tar.gz`，提供完整浏览器界面，安装见包内 README。 |
+| Android（构建预览） | 从 [GitHub Actions](https://github.com/Hello-CTF/NexTerm/actions/workflows/ci.yml) 的 `mobile-android` 产物获取 `nexterm.apk`，尚未纳入 Releases。 |
+| iOS / iPadOS（构建预览） | 配置 Apple Distribution 签名后，CI 产出 `nexterm.ipa`，可用 Transporter 上传 TestFlight。 |
 | 懒猫微服 | 在应用中心安装 NexTerm。 |
 
 macOS 首次打开提示无法验证开发者时，在「系统设置 → 隐私与安全性」中点「仍要打开」；提示应用已损坏则在终端执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。

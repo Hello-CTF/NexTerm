@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, CodeXml, Download, Monitor, Moon, Server, Sun } from "lucide-react";
+import { ArrowRight, CodeXml, Download, Monitor, Moon, Server, Smartphone, Sun } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
@@ -112,6 +112,8 @@ function App() {
               <span><Monitor size={15} /> macOS</span>
               <span><Monitor size={15} /> Linux</span>
               <span><Server size={15} /> 浏览器版</span>
+              <span><Smartphone size={15} /> Android（预览）</span>
+              <span><Smartphone size={15} /> iOS / iPadOS（预览）</span>
             </div>
             <div className="window hero-window">
               <div className="window-bar" aria-hidden="true">
@@ -149,7 +151,7 @@ function App() {
             <div className="download-panel">
               <div>
                 <h2>下载 NexTerm</h2>
-                <p>桌面安装包和 Linux 服务端都在 GitHub Releases 提供，源代码采用 MIT 协议。</p>
+                <p>桌面安装包和 Linux 服务端都在 GitHub Releases 提供；Android 与 iOS/iPadOS 移动端处于构建预览阶段。源代码采用 MIT 协议。</p>
               </div>
               <div className="download-actions">
                 <a className="button button-primary" href={releases} target="_blank" rel="noreferrer">
