@@ -2,6 +2,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import {
+  setTerminalCloseAction,
+  useTerminalPrefs,
+  type TerminalCloseAction,
+} from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelManager } from "../ai/ModelPanel";
@@ -66,6 +71,12 @@ function jumpToSection(id: string): void {
 
 const NAV_OPEN_KEY = "nexterm.settingsNav.v1";
 
+const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
+  { value: "ask", label: "每次询问" },
+  { value: "kill", label: "直接关闭" },
+  { value: "detach", label: "转到后台" },
+];
+
 function loadNavOpen(): boolean {
   try {
     return localStorage.getItem(NAV_OPEN_KEY) !== "collapsed";
@@ -85,6 +96,7 @@ export function SettingsView() {
   const { pushToast } = useUi();
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
+  const terminalPrefs = useTerminalPrefs();
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -377,6 +389,28 @@ export function SettingsView() {
               onChange={(e) => setTerminalOsc52(e.target.checked)}
             />
           </label>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5">关闭运行中的终端标签时</div>
+            <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签时">
+              {CLOSE_ACTION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.closeAction === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.closeAction === option.value}
+                  onClick={() => setTerminalCloseAction(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              {terminalPrefs.closeAction === "ask" &&
+                "每次关闭前询问：转到后台运行（可在「后台会话」接管）或直接关闭结束进程。弹窗里勾选「以后都按此选择」会记住你的决定。"}
+              {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签，不再询问。"}
+              {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可在「后台会话」中随时接管。"}
+            </p>
+          </div>
         </section>
 
         <section id="settings-ai-model" className="nx-card scroll-mt-12">

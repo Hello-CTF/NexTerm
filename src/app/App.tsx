@@ -103,7 +103,7 @@ import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
-import { registerPromptHandler, registerDialogHandlers, promptText } from "../ui/dialogs";
+import { registerPromptHandler, registerDialogHandlers, promptText, type ChoiceResult } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
@@ -1037,13 +1037,14 @@ function AppShell() {
             .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
         }),
       choose: (message, options) =>
-        new Promise<string | null>((resolve) => {
+        new Promise<ChoiceResult | null>((resolve) => {
           useUi.getState().openAppChoice({
             title: options?.title ?? "请选择",
             message,
             options: options?.choices ?? [],
             level: options?.level ?? "info",
-            resolve,
+            rememberLabel: options?.rememberLabel,
+            resolve: (key, remember) => resolve(key === null ? null : { key, remember }),
           });
         }),
     });

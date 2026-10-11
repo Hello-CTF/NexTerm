@@ -152,7 +152,7 @@ describe("shared dialog accessibility", () => {
     keyDown(window, "Escape");
     await flush();
 
-    expect(choiceResolve).toHaveBeenCalledExactlyOnceWith(null);
+    expect(choiceResolve).toHaveBeenCalledExactlyOnceWith(null, false);
     expect(dialogResolve).not.toHaveBeenCalled();
     expect(useUi.getState().appChoice).toBeNull();
     expect(useUi.getState().appDialog?.message).toBe("底层确认");

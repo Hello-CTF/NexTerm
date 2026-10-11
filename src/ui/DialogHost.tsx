@@ -3,6 +3,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -323,10 +324,10 @@ export function DialogHost() {
     useUi.setState({ appDialog: null });
     dialog.resolve(value);
   };
-  const closeChoice = (value: string | null) => {
+  const closeChoice = (value: string | null, remember = false) => {
     if (!choice || useUi.getState().appChoice !== choice) return;
     useUi.setState({ appChoice: null });
-    choice.resolve(value);
+    choice.resolve(value, remember);
   };
   const active = choice ?? dialog;
   const modalRef = useRef<HTMLDivElement>(null);
@@ -336,6 +337,10 @@ export function DialogHost() {
   });
   const titleId = useId();
   const descriptionId = useId();
+  const [rememberChecked, setRememberChecked] = useState(false);
+  useEffect(() => {
+    setRememberChecked(false);
+  }, [choice]);
 
   useEffect(() => {
     if (!active) return;
@@ -408,7 +413,7 @@ export function DialogHost() {
                       : "border-neutral-700/70 bg-neutral-900/60 hover:bg-neutral-800/80"
                   }`}
                   onClick={() => {
-                    if (useUi.getState().appChoice === choice) closeChoice(option.key);
+                    if (useUi.getState().appChoice === choice) closeChoice(option.key, rememberChecked);
                   }}
                 >
                   <span className={`block text-[12.5px] font-semibold ${option.danger ? "text-red-200" : "text-neutral-100"}`}>
@@ -422,6 +427,17 @@ export function DialogHost() {
                 </button>
               ))}
             </div>
+            {choice.rememberLabel && (
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 shrink-0"
+                  checked={rememberChecked}
+                  onChange={(event) => setRememberChecked(event.target.checked)}
+                />
+                {choice.rememberLabel}
+              </label>
+            )}
           </div>
           <div className="nx-modal-footer">
             <button

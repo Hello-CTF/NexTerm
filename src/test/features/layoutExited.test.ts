@@ -26,6 +26,7 @@ import {
   serializeLayout,
   type PersistedLayout,
 } from "../../app/layout";
+import { setTerminalCloseAction } from "../../app/preferences";
 import { requestCloseTab, useUi, type AppTab, type Workspace } from "../../app/store";
 
 function terminal(id = "terminal"): AppTab {
@@ -62,6 +63,7 @@ async function flushAsync() {
 describe("remote layout preserves exited terminal state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setTerminalCloseAction("detach");
     mocks.listLive.mockResolvedValue([]);
     mocks.layoutPut.mockResolvedValue({ saved: true, revision: 1, conflict: false });
   });

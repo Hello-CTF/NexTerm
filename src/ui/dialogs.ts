@@ -29,9 +29,15 @@ export type ChoiceOptions = {
   title?: string;
   level?: "info" | "warning";
   choices: ChoiceOption[];
+  rememberLabel?: string;
 };
 
-type ChooseFn = (message: string, options: ChoiceOptions) => Promise<string | null>;
+export interface ChoiceResult {
+  key: string;
+  remember: boolean;
+}
+
+type ChooseFn = (message: string, options: ChoiceOptions) => Promise<ChoiceResult | null>;
 
 interface DialogHandlers {
   ask: AskFn;
@@ -106,10 +112,14 @@ export const messageBox: MessageFn = (message) => {
   return deferDialog(() => current.message(message));
 };
 
-export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
+export function askChoiceRemember(message: string, options: ChoiceOptions): Promise<ChoiceResult | null> {
   if (!handlers) return Promise.resolve(null);
   const current = handlers;
   return deferDialog(() => current.choose(message, options));
+}
+
+export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
+  return askChoiceRemember(message, options).then((result) => (result ? result.key : null));
 }
 
 export async function pickLocalFile(): Promise<string | null> {

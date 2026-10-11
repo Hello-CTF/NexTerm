@@ -77,6 +77,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.terminalTheme":    {kind: preferenceKindEnumString, strings: []string{"dark", "light", "interface"}},
 	"appearance.themeMode":        {kind: preferenceKindEnumString, strings: []string{"system", "light", "dark"}},
 	"input.selectionAutoCopy":     {kind: preferenceKindBool},
+	"terminal.closeAction":        {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
 	"keybinding.commandPalette":   {kind: preferenceKindBinding},
 	"keybinding.quickConnect":     {kind: preferenceKindBinding},
 	"keybinding.newTerminal":      {kind: preferenceKindBinding},

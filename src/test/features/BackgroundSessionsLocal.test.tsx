@@ -21,6 +21,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { BackgroundSessions } from "../../features/terminal/BackgroundSessions";
+import { setTerminalCloseAction } from "../../app/preferences";
 import {
   closeActionHint,
   closeTabHint,
@@ -142,6 +143,7 @@ describe("BackgroundSessions hides local terminals", () => {
 describe("closing a local terminal ends its process", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setTerminalCloseAction("detach");
     mocks.ask.mockResolvedValue(true);
   });
 

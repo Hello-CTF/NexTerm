@@ -21,11 +21,11 @@ func testPreferences(t *testing.T) *Preferences {
 
 func TestPreferenceKeysWhitelist(t *testing.T) {
 	keys := PreferenceKeys()
-	if len(keys) != 17 {
-		t.Fatalf("declared preference keys=%d want 17: %v", len(keys), keys)
+	if len(keys) != 18 {
+		t.Fatalf("declared preference keys=%d want 18: %v", len(keys), keys)
 	}
 	for _, key := range keys {
-		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") {
+		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") {
 			t.Fatalf("unexpected preference key %q", key)
 		}
 	}
@@ -84,6 +84,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.terminalTheme":    `"light"`,
 		"appearance.themeMode":        `"system"`,
 		"input.selectionAutoCopy":     "true",
+		"terminal.closeAction":        `"kill"`,
 		"keybinding.closeTab":         `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":    "null",
 		"keybinding.reclaimTakeover":  `"Mod+Shift+s"`,
@@ -107,6 +108,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"appearance.terminalTheme":    {`"blue"`, "1", "null", "true"},
 		"appearance.themeMode":        {`"blue"`, "1", "null", "true"},
 		"input.selectionAutoCopy":     {`"true"`, "1", "null"},
+		"terminal.closeAction":        {`"background"`, "1", "null", "true"},
 		"keybinding.closeTab":         {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
 	for key, rawStrings := range invalid {

@@ -138,13 +138,15 @@ function preferenceValue<T>(key: string, local: T | undefined, builtin: T): T {
   return builtin;
 }
 
-// rebuildSnapshots 在账号覆盖加载/清除后,按合并值重建 input/appearance 快照并应用外观。
+// rebuildSnapshots 在账号覆盖加载/清除后,按合并值重建 input/appearance/terminal 快照并应用外观。
 function rebuildSnapshots(): void {
   prefs = load();
   appearance = loadAppearance();
+  terminalPrefs = loadTerminal();
   applyAppearance();
   for (const listener of listeners) listener();
   for (const listener of appearanceListeners) listener();
+  for (const listener of terminalListeners) listener();
 }
 
 export interface InputPrefs {
@@ -198,6 +200,61 @@ export function subscribeInputPrefs(listener: () => void): () => void {
 
 export function useInputPrefs(): InputPrefs {
   return useSyncExternalStore(subscribeInputPrefs, getInputPrefs);
+}
+
+export type TerminalCloseAction = "ask" | "kill" | "detach";
+
+export interface TerminalPrefs {
+  closeAction: TerminalCloseAction;
+}
+
+const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
+const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
+const TERMINAL_DEFAULTS: TerminalPrefs = { closeAction: "ask" };
+
+function loadTerminal(): TerminalPrefs {
+  let local: Partial<TerminalPrefs> = {};
+  try {
+    const raw = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    local = raw ? (JSON.parse(raw) as Partial<TerminalPrefs>) : {};
+  } catch {
+    local = {};
+  }
+  const value = preferenceValue<unknown>(TERMINAL_CLOSE_ACTION_KEY, local.closeAction, TERMINAL_DEFAULTS.closeAction);
+  return { closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction };
+}
+
+let terminalPrefs: TerminalPrefs = loadTerminal();
+const terminalListeners = new Set<() => void>();
+
+export function getTerminalPrefs(): TerminalPrefs {
+  return terminalPrefs;
+}
+
+export function setTerminalCloseAction(value: TerminalCloseAction): void {
+  if (terminalPrefs.closeAction === value) return;
+  terminalPrefs = { ...terminalPrefs, closeAction: value };
+  try {
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify(terminalPrefs));
+  } catch {
+  }
+  // 账号级覆盖:注册后写往 user_setting 后端,实现跨设备同步
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_CLOSE_ACTION_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_CLOSE_ACTION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function subscribeTerminalPrefs(listener: () => void): () => void {
+  terminalListeners.add(listener);
+  return () => {
+    terminalListeners.delete(listener);
+  };
+}
+
+export function useTerminalPrefs(): TerminalPrefs {
+  return useSyncExternalStore(subscribeTerminalPrefs, getTerminalPrefs);
 }
 
 export type UiFontPreset = number;

@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
+  askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
   dbDisconnect: vi.fn(),
 }));
-vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../ipc/commands", () => ({
   assetApi: {},
   dbApi: { disconnect: mocks.dbDisconnect },
@@ -24,6 +25,7 @@ import {
   type Pane,
   type Workspace,
 } from "../app/store";
+import { setTerminalCloseAction } from "../app/preferences";
 import type { SessionInfo } from "../ipc/commands";
 
 function terminal(id: string): AppTab {
@@ -57,6 +59,7 @@ function tabById(id: string): AppTab | undefined {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setTerminalCloseAction("detach");
   mocks.ask.mockResolvedValue(true);
   mocks.dbDisconnect.mockResolvedValue(undefined);
   useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [sessionInfo()], toasts: [] });

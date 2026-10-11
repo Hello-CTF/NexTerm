@@ -16,6 +16,7 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
+import { setTerminalCloseAction } from "../../app/preferences";
 import {
   closeActionHint,
   closeTabHint,
@@ -69,6 +70,7 @@ function toastText(): string {
 describe("close = detach (M111)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setTerminalCloseAction("detach");
     mocks.ask.mockResolvedValue(true);
   });
 
@@ -338,6 +340,7 @@ describe("kill danger actions", () => {
 describe("winrm ephemeral line tabs share the no-detach path", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setTerminalCloseAction("detach");
     mocks.ask.mockResolvedValue(true);
   });
 

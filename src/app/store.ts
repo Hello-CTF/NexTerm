@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
 import { describeError } from "../ui/errorText";
+import type { ChoiceOption } from "../ui/dialogs";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
 import { formatQuickConnectTarget, type QuickConnectTarget } from "./quickConnectTarget";
 import { dirtyFileEditors } from "../features/files/editorGuards";
@@ -16,7 +17,12 @@ import {
   type ResolvedTheme,
   type ThemeMode,
 } from "./theme";
-import { saveThemeModePreference } from "./preferences";
+import {
+  getTerminalPrefs,
+  saveThemeModePreference,
+  setTerminalCloseAction,
+  type TerminalCloseAction,
+} from "./preferences";
 import type { LayoutPreset } from "./layoutPresets";
 
 export type PaneKind =
@@ -138,7 +144,8 @@ export interface AppChoiceState {
   message: string;
   options: AppChoiceOption[];
   level: "info" | "warning";
-  resolve: (v: string | null) => void;
+  rememberLabel?: string;
+  resolve: (v: string | null, remember: boolean) => void;
 }
 
 export interface TakeoverState {
@@ -456,7 +463,7 @@ export const useUi = create<UiState>((set, get) => ({
   openAppChoice: (c) => set({ appChoice: c }),
   closeAppChoice: (v) => {
     const cur = get().appChoice;
-    cur?.resolve(v);
+    cur?.resolve(v, false);
     set({ appChoice: null });
   },
 
@@ -1324,7 +1331,10 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "local") return "结束本地进程";
   if (block === "unknown") return "结束进程";
-  return "转入后台运行";
+  const action = getTerminalPrefs().closeAction;
+  if (action === "kill") return "结束进程";
+  if (action === "detach") return "转入后台运行";
+  return "转入后台运行或结束进程";
 }
 
 export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
@@ -1342,7 +1352,16 @@ export function closeTabHint(t: AppTab): string {
   return action ? `关闭标签（${action}）` : "关闭标签";
 }
 
-export async function requestCloseTab(id: string): Promise<void> {
+const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
+  { key: "detach", label: "转到后台运行", hint: "进程继续运行，可在「后台会话」随时接管", primary: true },
+  { key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true },
+];
+
+// decided 仅由批量关闭传入: undefined=按偏好分派, null=批量选择已取消(保留运行中终端), 其余为统一决定。
+async function requestCloseTabWithAction(
+  id: string,
+  decided: TerminalCloseAction | null | undefined,
+): Promise<void> {
   const st = useUi.getState();
   const found = findTab(id);
   if (!found) return;
@@ -1367,9 +1386,36 @@ export async function requestCloseTab(id: string): Promise<void> {
     await st.closeTab(id, "kill");
     return;
   }
+  let action = decided;
+  if (action === undefined) {
+    action = getTerminalPrefs().closeAction;
+    if (action === "ask") {
+      const { askChoiceRemember } = await import("../ui/dialogs");
+      const result = await askChoiceRemember(
+        `「${target.title}」的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
+        {
+          title: `关闭「${target.title}」`,
+          rememberLabel: "以后都按此选择",
+          choices: CLOSE_CHOICE_OPTIONS,
+        },
+      );
+      if (!result) return;
+      action = result.key === "kill" ? "kill" : "detach";
+      if (result.remember) setTerminalCloseAction(action);
+    }
+  }
+  if (action === null) return;
+  if (action === "kill") {
+    await st.closeTab(id, "kill");
+    return;
+  }
   if (await st.closeTab(id, "detach")) {
     st.pushToast("info", `「${target.title}」已转入后台，可在「后台会话」接管`);
   }
+}
+
+export async function requestCloseTab(id: string): Promise<void> {
+  await requestCloseTabWithAction(id, undefined);
 }
 
 export async function requestCloseTabs(ids: string[]): Promise<void> {
@@ -1377,8 +1423,27 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
   for (const id of ids) {
     if (findTab(id)?.tab.closeError) st.updateTab(id, { closeError: undefined });
   }
+  let decided: TerminalCloseAction | null | undefined;
+  if (getTerminalPrefs().closeAction === "ask") {
+    const pending = ids.filter((id) => {
+      const found = findTab(id);
+      return (
+        found !== null &&
+        isRunningTerminal(found.tab) &&
+        !detachBlockOf(found.tab, st.sessions, found.ws.assetKind)
+      );
+    });
+    if (pending.length > 0) {
+      const { askChoiceRemember } = await import("../ui/dialogs");
+      const result = await askChoiceRemember(
+        `${pending.length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
+        { title: "关闭终端标签", choices: CLOSE_CHOICE_OPTIONS },
+      );
+      decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
+    }
+  }
   for (const id of ids) {
-    await requestCloseTab(id);
+    await requestCloseTabWithAction(id, decided);
   }
   const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
   if (failed > 0) {
