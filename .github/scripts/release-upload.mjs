@@ -10,6 +10,8 @@ const packageNames = [
   `NexTerm_${version}_arm64-setup.exe`,
   `NexTerm_${version}_aarch64.dmg`,
   `NexTerm_${version}_x86_64.dmg`,
+  `NexTerm_${version}_android.apk`,
+  `NexTerm_${version}_ios.ipa`,
   ...["amd64", "arm64"].flatMap((arch) => [
     `NexTerm-desktop_${version}_linux_${arch}.deb`,
     `NexTerm-server_${version}_linux_${arch}.tar.gz`,
@@ -58,7 +60,7 @@ if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
   process.exit(1);
 }
 const missing = expectedNames.filter((name) => !fs.existsSync(path.join(directory, name)));
-const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|deb|tar\.gz)$/.test(name) && !packageNames.includes(name));
+const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|deb|tar\.gz|apk|ipa)$/.test(name) && !packageNames.includes(name));
 if (missing.length || unexpected.length) {
   if (missing.length) console.error(`release-upload: missing candidate files: ${missing.join(", ")}`);
   if (unexpected.length) console.error(`release-upload: unexpected candidate files: ${unexpected.join(", ")}`);

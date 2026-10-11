@@ -19,6 +19,13 @@
 | Linux amd64 | `NexTerm-desktop_*_linux_amd64.deb`（`apt install ./NexTerm-desktop_*_linux_amd64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 | Linux ARM64 | `NexTerm-desktop_*_linux_arm64.deb`（`apt install ./NexTerm-desktop_*_linux_arm64.deb`，自动装 GTK4 / WebKitGTK 6.0 依赖） |
 
+**移动端**
+
+| 平台 | 文件 |
+|---|---|
+| Android | `NexTerm_*_android.apk`（ arm64 设备直接安装） |
+| iOS | `NexTerm_*_ios.ipa`（ad-hoc 签名，TestFlight 需使用 Apple Distribution 签名重新构建） |
+
 **服务端（浏览器访问）**
 
 | 用途 | 文件 |

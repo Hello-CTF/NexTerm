@@ -274,9 +274,69 @@ jobs:
           path: target/e2e-sync/
           if-no-files-found: error
 
+  mobile:
+    name: ${{ matrix.platform }} mobile package
+    needs: [ci-source, ci]
+    if: ${{ !failure() && !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-latest
+          - platform: ios
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve the release version from the tag
+        shell: bash
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Download the verified mobile package
+        uses: actions/download-artifact@v8
+        with:
+          name: mobile-${{ matrix.platform }}
+          path: mobile-input
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package and verify the mobile artifact
+        shell: bash
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="${NEXTERM_RELEASE_VERSION}"
+          mkdir -p target/release-assets
+          case "${{ matrix.platform }}" in
+            android)
+              package="NexTerm_${version}_android.apk"
+              cp "mobile-input/nexterm.apk" "target/release-assets/$package"
+              ;;
+            ios)
+              package="NexTerm_${version}_ios.ipa"
+              rm -rf target/mobile-payload
+              mkdir -p target/mobile-payload/Payload/nexterm.app
+              cp -R "mobile-input/." "target/mobile-payload/Payload/nexterm.app/"
+              (cd target/mobile-payload && zip -qry "../release-assets/$package" Payload)
+              ;;
+          esac
+          node .github/scripts/mobile-evidence.mjs "target/release-assets/$package" "mobile-${{ matrix.platform }}"
+      - name: Upload mobile candidates and raw/final reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-mobile-${{ matrix.platform }}
+          path: |
+            target/release-assets/
+            target/go-build/*.artifact.json
+          if-no-files-found: error
+
   publish:
     name: Verify complete release evidence and upload a draft
-    needs: [desktop, server]
+    needs: [desktop, server, mobile]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
