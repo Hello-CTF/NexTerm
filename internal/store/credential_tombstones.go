@@ -47,7 +47,7 @@ func (s *Store) CredentialTombstonePut(ctx context.Context, id string, deletedAt
 			DoUpdates: clause.Assignments(map[string]any{
 				"deleted_at": gorm.Expr(s.dialect.ScalarMax() + "(credential_tombstone.deleted_at, excluded.deleted_at)"),
 			}),
-			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("credential_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).
 		Create(&CredentialTombstone{ID: id, DeletedAt: deletedAt, OwnerID: ipc.OwnerID(ctx)}).Error
 	if err != nil {

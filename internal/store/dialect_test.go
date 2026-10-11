@@ -71,3 +71,23 @@ func TestPostgresErrorClassification(t *testing.T) {
 		t.Fatal("non-driver error must not classify")
 	}
 }
+func TestRebindDollarPlaceholders(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM t WHERE id = ?":                      "SELECT * FROM t WHERE id = $1",
+		"INSERT INTO t(a, b) VALUES(?, ?)":                  "INSERT INTO t(a, b) VALUES($1, $2)",
+		"SELECT * FROM t WHERE a = ? AND b = ? AND c = ?":   "SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3",
+		"SELECT * FROM t WHERE name = '?' AND id = ?":       "SELECT * FROM t WHERE name = '?' AND id = $1",
+		"SELECT * FROM t WHERE name = 'it''s?' AND id = ?":  "SELECT * FROM t WHERE name = 'it''s?' AND id = $1",
+		`SELECT "weird?col" FROM t WHERE id = ?`:            `SELECT "weird?col" FROM t WHERE id = $1`,
+		"SELECT * FROM t -- comment ?\nWHERE id = ?":        "SELECT * FROM t -- comment ?\nWHERE id = $1",
+		"SELECT * FROM t /* ? */ WHERE id = ?":              "SELECT * FROM t /* ? */ WHERE id = $1",
+		"SELECT * FROM t":                                   "SELECT * FROM t",
+		"UPDATE t SET a = ? WHERE b = ? AND c = 'x?y'":      "UPDATE t SET a = $1 WHERE b = $2 AND c = 'x?y'",
+		"SELECT * FROM t WHERE a = ? AND b = '?' AND c = ?": "SELECT * FROM t WHERE a = $1 AND b = '?' AND c = $2",
+	}
+	for input, want := range cases {
+		if got := rebindDollarPlaceholders(input); got != want {
+			t.Fatalf("rebindDollarPlaceholders(%q) = %q; want %q", input, got, want)
+		}
+	}
+}

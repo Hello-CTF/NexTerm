@@ -135,7 +135,7 @@ func sqliteDSN(path string) string {
 }
 
 func pragmaQuery(memory bool) string {
-	query := "&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_txlock=immediate"
+	query := "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 	if !memory {
 		query += "&_pragma=journal_mode(WAL)"
 	}

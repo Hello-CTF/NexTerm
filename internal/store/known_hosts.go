@@ -32,7 +32,7 @@ func (s *Store) KnownHostAccept(ctx context.Context, host string, port int32, ke
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "owner_id"}, {Name: "host"}, {Name: "port"}, {Name: "key_type"}},
 			DoUpdates: clause.AssignmentColumns([]string{"fingerprint", "added_at"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("sync_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).
 		Create(&row)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *Store) KnownHostRemove(ctx context.Context, id string) error {
 			DoUpdates: clause.Assignments(map[string]any{
 				"deleted_at": gorm.Expr(s.dialect.ScalarMax() + "(sync_tombstone.deleted_at, excluded.deleted_at)"),
 			}),
-			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("sync_tombstone", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).Create(&SyncTombstone{ID: id, Kind: SyncTombstoneKindKnownHost, DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)}).Error
 	})
 	if err != nil {

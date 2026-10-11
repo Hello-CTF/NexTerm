@@ -115,7 +115,7 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 						s.dialect.offsetColumn(): gorm.Expr("durable_transcript_offset."+s.dialect.offsetColumn()+" + ?", count),
 						"updated_at":             now,
 					}),
-					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+					Where: clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: count, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error; err != nil {
 					return err
 				}
@@ -430,7 +430,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "chunks", "truncated", "content_omitted"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).Create(&row).Error; err != nil {
 			return err
 		}
@@ -470,7 +470,7 @@ func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "durable_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{s.dialect.offsetColumn(), "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 	}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
 	if err != nil {
 		return dbError(err)

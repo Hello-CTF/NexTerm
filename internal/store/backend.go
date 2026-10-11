@@ -42,7 +42,7 @@ func openPostgres(ctx context.Context, cfg BackendConfig, options OpenOptions) (
 	if err := applyPostgresDefaults(config, cfg.Password); err != nil {
 		return nil, badParam(err)
 	}
-	db := sql.OpenDB(stdlib.GetConnector(*config))
+	db := sql.OpenDB(&rebindConnector{inner: stdlib.GetConnector(*config)})
 	maxOpen := cfg.MaxOpenConns
 	if maxOpen <= 0 {
 		maxOpen = 16
