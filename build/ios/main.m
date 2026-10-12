@@ -3,8 +3,34 @@
 // delegate below satisfies the UIScene lifecycle requirement (TN3187) that
 // is fatal when building with the iOS 27 SDK.
 #import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 #include <stdio.h>
 #include <stdbool.h>
+
+// WailsViewController insets the WebView to the safe area, so the home-indicator
+// zone shows the raw window background. Wrap its layout to re-pin the WebView to
+// the full window; notch/gesture-bar avoidance is handled by CSS safe-area rules.
+static void nxSwizzleFullScreenWebViewLayout(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class cls = NSClassFromString(@"WailsViewController");
+        SEL sel = @selector(viewDidLayoutSubviews);
+        Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
+        if (!method) return;
+        IMP original = method_getImplementation(method);
+        IMP replacement = imp_implementationWithBlock(^(UIViewController *vc) {
+            ((void (*)(id, SEL))original)(vc, sel);
+            CGFloat bottom = 0;
+            UITabBar *tabBar = [vc valueForKey:@"tabBar"];
+            if (tabBar && !tabBar.hidden) bottom = tabBar.bounds.size.height;
+            UIView *webView = [vc valueForKey:@"webView"];
+            if (webView) webView.frame = UIEdgeInsetsInsetRect(vc.view.bounds, UIEdgeInsetsMake(0, 0, bottom, 0));
+        });
+        method_setImplementation(method, replacement);
+    });
+}
 
 #define WailsEventApplicationDidBecomeActive 1245
 #define WailsEventApplicationDidEnterBackground 1246
@@ -24,6 +50,7 @@ extern void processApplicationEvent(unsigned int, void* data);
     if (![scene isKindOfClass:[UIWindowScene class]]) {
         return;
     }
+    nxSwizzleFullScreenWebViewLayout();
     UIWindowScene *windowScene = (UIWindowScene *)scene;
     id appDelegate = [UIApplication sharedApplication].delegate;
     UIWindow *legacyWindow = nil;
