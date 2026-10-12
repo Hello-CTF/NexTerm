@@ -63,6 +63,8 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <key>NSFaceIDUsageDescription</key>
+    <string>使用面容 ID 快速解锁 NexTerm 数据密钥</string>
 
 
     <key>NSHumanReadableCopyright</key>

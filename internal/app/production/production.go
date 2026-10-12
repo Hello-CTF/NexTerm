@@ -220,6 +220,9 @@ func productionModules(services ProductionServices) []Module {
 			return registerUpdateCommands(dispatcher, services.Update)
 		}})
 	}
+	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+		return registerBiometricCommands(dispatcher, platformBiometric{}, biometricVaultState(services))
+	}})
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})
 	}
@@ -227,6 +230,13 @@ func productionModules(services ProductionServices) []Module {
 }
 
 type aiHooksComponent struct{ release func() }
+
+func biometricVaultState(services ProductionServices) vaultUnlockState {
+	if services.Vault == nil {
+		return nil
+	}
+	return services.Vault
+}
 
 func (c aiHooksComponent) Start(context.Context) error { return nil }
 

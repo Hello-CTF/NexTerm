@@ -112,6 +112,27 @@ export const systemApi = {
   platform: () => call<string>("app_platform"),
 };
 
+export interface BiometricStatus {
+  available: boolean;
+  canEvaluate: boolean;
+  hasMaterial: boolean;
+}
+
+export interface BiometricUnlockResult {
+  ok: boolean;
+  password?: string;
+  message?: string;
+}
+
+// 生物识别快捷解锁(iOS): 解锁材料为凭据库主密码, 存 iOS Keychain(设备级保护),
+// 验证由系统面容/指纹弹窗完成; 其他平台 status.available 恒 false。
+export const biometricApi = {
+  status: () => call<BiometricStatus>("biometric_status"),
+  unlock: () => call<BiometricUnlockResult>("biometric_unlock"),
+  enable: (password: string) => call<void>("biometric_enable", { password }),
+  disable: () => call<void>("biometric_disable"),
+};
+
 import type { UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {

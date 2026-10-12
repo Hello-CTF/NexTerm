@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { aiApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
+import { aiApi, biometricApi, vaultApi, type AiPermissionConfig } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
@@ -9,6 +9,7 @@ import {
 } from "../../app/preferences";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
+import { isMobile } from "../../app/platform";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
@@ -214,6 +215,15 @@ export function SettingsView() {
         pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
       } else {
         await vaultApi.changePassword(old, next);
+        // iOS 上已登记 FaceID 材料的, 改密后用新密码静默重存, 否则面容解锁会稳定失败
+        if (next !== "" && isMobile()) {
+          try {
+            const bio = await biometricApi.status();
+            if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
+          } catch {
+            // 重存失败只意味着下次仍需密码解锁
+          }
+        }
         pushToast(
           "success",
           next === ""
