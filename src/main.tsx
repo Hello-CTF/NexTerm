@@ -12,6 +12,7 @@ import { openDeepLink } from "./app/deepLink";
 import { useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
+import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { PublicShareApp } from "./features/sharing/PublicShareApp";
 import { PublicPreviewApp } from "./features/sharing/PublicPreviewApp";
@@ -95,6 +96,7 @@ function wireDesktopShell(): void {
     if (inEditable && !inTerminal) return;
     e.preventDefault();
   });
+  installLongPressContextMenu();
 }
 
 async function bootstrapApp(): Promise<void> {

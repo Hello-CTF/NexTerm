@@ -65,6 +65,7 @@ import {
   coarsePointerMedia,
   isCoarsePointer,
   isMac,
+  isMobile,
   isWailsDragRegionTarget,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
@@ -165,7 +166,7 @@ const TAB_ICON = {
 } as const;
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
-  if (TRANSPORT !== "desktop") return;
+  if (TRANSPORT !== "desktop" || isMobile()) return;
   if (isWailsDragRegionTarget(event.target)) {
     void toggleMaximiseWindow();
   }
@@ -684,6 +685,10 @@ function AppShell() {
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
+    if (isMobile()) {
+      pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
+      return;
+    }
     try {
       const s = await sessionApi.connectLocal();
       const list = useUi.getState().sessions;
@@ -853,6 +858,10 @@ function AppShell() {
       } catch (e) {
         pushToast("error", `重新连接失败：${describeError(e)}`);
       }
+      return;
+    }
+    if (isMobile()) {
+      pushToast("info", "移动端不支持本地终端，请双击左侧资产连接远程主机");
       return;
     }
     void openLocalTerminal();
@@ -1406,7 +1415,7 @@ function AppShell() {
             >
               <IconCommand size={15} />
             </button>
-            {TRANSPORT === "desktop" && !isMac() && (
+            {TRANSPORT === "desktop" && !isMac() && !isMobile() && (
               <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
@@ -2152,22 +2161,24 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          className="nx-btn nx-btn-primary"
-          onClick={() => {
-            if (onLocal) {
-              onLocal();
-              return;
-            }
-            void sessionApi.connectLocal().then((s) => {
-              setSessions([...sessions.filter((x) => x.id !== s.id), s]);
-              void openTerminalTab(s);
-            });
-          }}
-        >
-          <IconTerminal size={14} />
-          打开本地终端
-        </button>
+        {!isMobile() && (
+          <button
+            className="nx-btn nx-btn-primary"
+            onClick={() => {
+              if (onLocal) {
+                onLocal();
+                return;
+              }
+              void sessionApi.connectLocal().then((s) => {
+                setSessions([...sessions.filter((x) => x.id !== s.id), s]);
+                void openTerminalTab(s);
+              });
+            }}
+          >
+            <IconTerminal size={14} />
+            打开本地终端
+          </button>
+        )}
         {onPalette && (
           <button className="nx-btn nx-btn-outline" onClick={onPalette}>
             <IconCommand size={14} />

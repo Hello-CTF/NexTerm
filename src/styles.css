@@ -1378,7 +1378,7 @@
     position: fixed;
     z-index: 80;
     min-width: 188px;
-    max-width: 340px;
+    max-width: min(340px, calc(100vw - 16px));
     padding: 4px;
     border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-md);
@@ -2336,6 +2336,12 @@
   .nx-row {
     flex-wrap: wrap;
     row-gap: 4px;
+  }
+
+  .nx-tab,
+  .nx-row {
+    -webkit-touch-callout: none;
+    user-select: none;
   }
 
   .nx-row-actions {

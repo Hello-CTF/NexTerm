@@ -28,6 +28,13 @@ export function isMac(): boolean {
   return macPlatform;
 }
 
+const mobileUA =
+  typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
+
+export function isMobile(): boolean {
+  return mobileUA;
+}
+
 export function modHint(): string {
   return macPlatform ? "⌘" : "Ctrl";
 }
