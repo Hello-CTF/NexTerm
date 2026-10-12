@@ -102,8 +102,11 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		return nil, err
 	}
 	if len(credentials) > 0 {
+		// 凭据库锁定/未初始化时凭据本轮不同步(与带密钥 AI 档案同款延迟语义), 其余对象照常收集;
+		// 凭据不进 objects 即不写对账状态, 解锁后的下一轮自动补推。
 		if err := e.requireVault(ctx); err != nil {
-			return nil, err
+			report.warnf("%d 条凭据因凭据库未解锁本次不同步, 其余对象正常同步: %v", len(credentials), err)
+			credentials = nil
 		}
 	}
 	for _, row := range credentials {
@@ -325,6 +328,15 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		report.PullSkipped++
 		return
 	}
+	// 凭据应用需要解锁的凭据库: 锁定时不应用也不记对账(与 opt-in 硬关闭同款语义),
+	// 保持未对账状态, 解锁后的下一轮自动重拉应用; 记了 blob 哈希会被误判已收敛而永久跳过。
+	if kind == KindCredential {
+		if err := e.requireVault(ctx); err != nil {
+			report.PullSkipped++
+			report.warnf("凭据 %s 暂缓应用, 凭据库未解锁, 解锁后下一轮同步自动重试", object.ID)
+			return
+		}
+	}
 	payloadHash := objectPayloadHash(plaintext)
 	applied, identical := e.applyDecryptedObject(ctx, object.ID, kind, plaintext, report, userID)
 	report.PullSkipped++
@@ -332,9 +344,12 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		report.Applied++
 		report.PullSkipped--
 	}
-	if applied || identical {
+	switch {
+	case report.hasUnresolvedRef(object.ID):
+		// 引用降级应用: 不记对账, 依赖对象到达后下一轮重拉恢复。
+	case applied || identical:
 		e.syncStatePut(ctx, userID, object.ID, &payloadHash, hashBlob(object.Blob))
-	} else {
+	default:
 		e.syncStatePut(ctx, userID, object.ID, nil, hashBlob(object.Blob))
 	}
 }
@@ -493,7 +508,24 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		if bytes.Equal(plaintext, localPayload) {
 			return false, true
 		}
-		if !remoteWins(objectRevision(payload.UpdatedAt, payload.DeletedAt), objectRevision(local.UpdatedAt, local.DeletedAt), plaintext, localPayload) {
+		// 本地是对端载荷的引用降级形态(此前凭据未到被暂时清除): 凭据仍未到则不动不写、保持未对账,
+		// 下轮重拉再判; 已到达则绕过 LWW 直接恢复——降级形态不是用户编辑, 不参与修订号决胜。
+		degraded := payload
+		degraded.CredID = nil
+		degradedPayload, err := marshalObject(degraded)
+		if err != nil {
+			report.warnf("资产 %s 降级形态编码失败: %v", payload.ID, err)
+			return false, false
+		}
+		if bytes.Equal(degradedPayload, localPayload) {
+			if _, err := e.store.CredentialGetRow(ctx, *payload.CredID); isNotFound(err) {
+				report.markUnresolvedRef(payload.ID)
+				return false, false
+			} else if err != nil {
+				report.warnf("无法检查资产 %s 的凭据: %v", payload.ID, err)
+				return false, false
+			}
+		} else if !remoteWins(objectRevision(payload.UpdatedAt, payload.DeletedAt), objectRevision(local.UpdatedAt, local.DeletedAt), plaintext, localPayload) {
 			return false, false
 		}
 	}
@@ -519,8 +551,11 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		if *row.CredID == "" {
 			row.CredID = nil
 		} else if _, err := e.store.CredentialGetRow(ctx, *row.CredID); isNotFound(err) {
-			report.warnf("资产 %s 引用的凭据 %s 不存在, 已清除该引用", payload.ID, *row.CredID)
+			// cred_id 有外键约束(OnDelete:SET NULL), 悬空引用写不进库, 只能降级清除;
+			// 标记未决引用后引擎不记对账, 凭据到达后的下一轮重拉经降级形态判定自动恢复引用。
+			report.warnf("资产 %s 引用的凭据 %s 尚未同步到本机, 已暂时清除该引用, 凭据同步后自动恢复", payload.ID, *row.CredID)
 			row.CredID = nil
+			report.markUnresolvedRef(payload.ID)
 		} else if err != nil {
 			report.warnf("无法检查资产 %s 的凭据: %v", payload.ID, err)
 			return false, false

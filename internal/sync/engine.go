@@ -35,6 +35,23 @@ type SyncReport struct {
 	Head          string   `json:"head"`
 	Seq           int64    `json:"seq"`
 	Warnings      []string `json:"warnings,omitempty"`
+
+	unresolvedRefs map[string]bool
+}
+
+// markUnresolvedRef 标记对象以引用降级形态应用(依赖对象未到): 引擎不得记对账,
+// 保持未对账状态使下一轮重拉, 依赖到达后自动恢复。
+func (report *SyncReport) markUnresolvedRef(id string) {
+	if report.unresolvedRefs == nil {
+		report.unresolvedRefs = map[string]bool{}
+	}
+	report.unresolvedRefs[id] = true
+}
+
+// hasUnresolvedRef 报告对象本轮是否以引用降级形态应用; 标记留存整个 syncOnce,
+// 供推送侧抑制降级版本回推, 每个同步轮次开始时应清空重计。
+func (report *SyncReport) hasUnresolvedRef(id string) bool {
+	return report.unresolvedRefs[id]
 }
 
 type remoteSession struct {
@@ -198,10 +215,10 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 		return nil, err
 	}
 	if outcome.mfaTicket != "" {
-		return nil, ipc.NewError(ipc.CodeForbidden, "账号已开启两步验证：请先在同步设置中完成验证")
+		return nil, errReloginMFA
 	}
 	if outcome.resetRequired {
-		return nil, ipc.NewError(ipc.CodeForbidden, "账号密码已被管理员重置：请先在同步设置中完成密码重置")
+		return nil, errReloginReset
 	}
 	return e.establishSession(ctx, key, client, config.Password)
 }
@@ -235,9 +252,17 @@ func (e *Engine) dropSession(key string) {
 	}
 }
 
+func (e *Engine) hasSession() bool {
+	e.sessionMu.Lock()
+	defer e.sessionMu.Unlock()
+	return e.session != nil
+}
+
 // syncOnce 单轮同步; conflict 为 true 表示推送时 head 不一致, 需要重新对账后再试。
 func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *SyncReport) (bool, error) {
 	userID := session.userID
+	// 未决引用标记只在本轮有效: 拉取阶段降级应用的对象不记对账、不回推, 冲突重试时清空重计。
+	report.unresolvedRefs = nil
 	optIn, err := e.loadKindOptIn(ctx, userID)
 	if err != nil {
 		return false, err
@@ -282,6 +307,10 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	pending := make([]WireObject, 0, len(objects))
 	pendingHashes := make([]string, 0, len(objects))
 	for _, id := range sortObjectsForPush(objects) {
+		if report.hasUnresolvedRef(id) {
+			// 本地是对端载荷的引用降级形态: 不得回推覆盖云端带引用对象, 依赖到达后恢复正常对账。
+			continue
+		}
 		local := objects[id]
 		payloadHash := objectPayloadHash(local.plaintext)
 		statePayloadHash, stateBlobHash, found, err := e.syncStateGet(ctx, userID, id)
