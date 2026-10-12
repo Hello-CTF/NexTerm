@@ -42,6 +42,7 @@ vi.mock("../ipc/events", async (importOriginal) => {
 import { UpdateCard } from "../features/settings/UpdateCard";
 import { UpdateBanner } from "../app/UpdateBanner";
 import { updateVerdict, useUpdateStore } from "../app/useUpdate";
+import { useUi } from "../app/store";
 
 function makeStatus(patch: Partial<UpdateStatusDto> = {}): UpdateStatusDto {
   return {
@@ -67,7 +68,8 @@ function resetUpdateStore(): void {
     installedVersion: null,
     restarting: false,
     restartError: null,
-    dismissedVersion: null,
+    skippedVersion: null,
+    remindedVersion: null,
   });
 }
 
@@ -80,6 +82,7 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  window.localStorage.clear();
   resetUpdateStore();
 });
 
@@ -268,7 +271,7 @@ describe("UpdateCard 安装流程", () => {
 });
 
 describe("UpdateBanner 桌面端横幅", () => {
-  it("有更新时展示版本与入口,忽略后同版本不再出现", async () => {
+  it("有更新时展示版本与入口,跳过后同版本不再出现并写入持久偏好", async () => {
     useUpdateStore.setState({ status: makeStatus() });
     const onOpenSettings = vi.fn();
     mounted = mount(createElement(UpdateBanner, { onOpenSettings }));
@@ -280,12 +283,14 @@ describe("UpdateBanner 桌面端横幅", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
 
     act(() => {
-      mounted?.container.querySelector<HTMLButtonElement>('[aria-label="忽略此版本"]')?.dispatchEvent(
+      mounted?.container.querySelector<HTMLButtonElement>('[aria-label="跳过此版本"]')?.dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       );
     });
     await flush();
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
+    expect(window.localStorage.getItem("nexterm.update.v1")).toBe("0.3.0");
+    expect(useUpdateStore.getState().skippedVersion).toBe("0.3.0");
 
     act(() => {
       useUpdateStore.setState({ status: makeStatus({ version: "0.3.1" }) });
@@ -294,15 +299,89 @@ describe("UpdateBanner 桌面端横幅", () => {
     expect(mounted.container.querySelector('[aria-label="软件更新"]')?.textContent).toContain("v0.3.1");
   });
 
-  it("无更新或已安装待重启时不显示横幅", async () => {
+  it("已跳过的版本不显示横幅", async () => {
+    useUpdateStore.setState({ status: makeStatus(), skippedVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
+  });
+
+  it("安装期间显示进度,total 缺失时走不确定进度", async () => {
+    useUpdateStore.setState({
+      status: makeStatus(),
+      install: {
+        active: true,
+        phase: "download",
+        transferred: 4 << 20,
+        total: 8 << 20,
+        error: null,
+        taskId: "t1",
+      },
+    });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    expect(mounted.container.textContent).toContain("正在下载");
+    expect(mounted.container.textContent).toContain("v0.3.0");
+    expect(
+      mounted.container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"),
+    ).toBe("50");
+    expect(mounted.container.textContent).toContain("50%");
+
+    act(() => {
+      useUpdateStore.setState({
+        install: {
+          active: true,
+          phase: "install",
+          transferred: 0,
+          total: 0,
+          error: null,
+          taskId: "t1",
+        },
+      });
+    });
+    await flush();
+    expect(mounted.container.textContent).toContain("正在安装");
+    expect(mounted.container.textContent).toContain("进度未知");
+    expect(
+      mounted.container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"),
+    ).toBeNull();
+  });
+
+  it("安装失败弹出 error toast", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    act(() => {
+      useUpdateStore.setState({
+        install: {
+          active: false,
+          phase: null,
+          transferred: 0,
+          total: 0,
+          error: "磁盘已满",
+          taskId: null,
+        },
+      });
+    });
+    await flush();
+    expect(toast).toHaveBeenCalledWith("error", "更新安装失败：磁盘已满");
+  });
+
+  it("无更新时不显示横幅，已安装待重启时显示重启视图", async () => {
     useUpdateStore.setState({ status: makeStatus({ available: false, version: "" }) });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
 
+    const restart = vi.fn();
     act(() => {
-      useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+      useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0", restart });
     });
     await flush();
-    expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
+    const banner = mounted.container.querySelector('[aria-label="软件更新"]');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toContain("已安装");
+    expect(banner!.textContent).toContain("v0.3.0");
+    expect(banner!.textContent).toContain("重启应用后生效");
+    clickButton(mounted.container, "立即重启");
+    expect(restart).toHaveBeenCalled();
   });
 });

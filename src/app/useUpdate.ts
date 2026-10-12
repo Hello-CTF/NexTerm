@@ -30,14 +30,15 @@ export interface UpdateState {
   installedVersion: string | null;
   restarting: boolean;
   restartError: string | null;
-  dismissedVersion: string | null;
+  skippedVersion: string | null;
+  remindedVersion: string | null;
 }
 
 interface UpdateActions {
   check: () => Promise<void>;
   installUpdate: () => Promise<void>;
   restart: () => Promise<void>;
-  dismissBanner: () => void;
+  skipVersion: (version: string) => void;
   onProgress: (event: UpdateProgressEvent) => void;
 }
 
@@ -50,6 +51,16 @@ const idleInstall: UpdateInstallState = {
   taskId: null,
 };
 
+const SKIPPED_VERSION_KEY = "nexterm.update.v1";
+
+function loadSkippedVersion(): string | null {
+  try {
+    return localStorage.getItem(SKIPPED_VERSION_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) => ({
   status: null,
   checking: false,
@@ -58,7 +69,8 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   installedVersion: null,
   restarting: false,
   restartError: null,
-  dismissedVersion: null,
+  skippedVersion: loadSkippedVersion(),
+  remindedVersion: null,
 
   check: async () => {
     if (get().checking) return;
@@ -106,9 +118,12 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     }
   },
 
-  dismissBanner: () => {
-    const status = get().status;
-    set({ dismissedVersion: status?.available ? status.version : null });
+  skipVersion: (version) => {
+    set({ skippedVersion: version });
+    try {
+      localStorage.setItem(SKIPPED_VERSION_KEY, version);
+    } catch {
+    }
   },
 
   onProgress: (event) => {

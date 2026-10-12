@@ -26,6 +26,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
 import { UpdateCard } from "../features/settings/UpdateCard";
 import { UpdateBanner } from "../app/UpdateBanner";
 import { useUpdateStore } from "../app/useUpdate";
+import { promptUpdateIfNeeded } from "../app/updatePrompt";
 
 const DEMO_STATUS: UpdateStatusDto = {
   available: true,
@@ -44,6 +45,7 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  window.localStorage.clear();
   useUpdateStore.setState({
     status: null,
     checking: false,
@@ -52,7 +54,8 @@ beforeEach(() => {
     installedVersion: null,
     restarting: false,
     restartError: null,
-    dismissedVersion: null,
+    skippedVersion: null,
+    remindedVersion: null,
   });
 });
 
@@ -82,5 +85,13 @@ describe("软件更新 · WEB 门控", () => {
     useUpdateStore.setState({ status: DEMO_STATUS });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
+  });
+
+  it("WEB 不弹更新提醒", async () => {
+    useUpdateStore.setState({ status: DEMO_STATUS });
+    await promptUpdateIfNeeded();
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("nexterm.update.v1")).toBeNull();
+    expect(useUpdateStore.getState().remindedVersion).toBeNull();
   });
 });
