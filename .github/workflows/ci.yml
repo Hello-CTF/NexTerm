@@ -319,7 +319,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
-          "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
+          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
       - name: Download the verified frontend dist
         if: matrix.kind == 'desktop'
         uses: actions/download-artifact@v8
