@@ -4,7 +4,7 @@
 // device://status 上下线事件实时翻转在线状态。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -204,7 +204,7 @@ describe("设备管理视图 · 角色差异", () => {
   it("超管看到 owner 徽章与接入地址编辑器", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     expect(document.body.textContent).toContain("alice");
@@ -221,7 +221,7 @@ describe("设备管理视图 · 角色差异", () => {
   it("普通用户看不到 owner 徽章与编辑器, 接入地址只读", async () => {
     route(fleetHandler());
     seedUser(PLAIN_USER);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const expand = [...document.querySelectorAll("button")].find(
@@ -238,7 +238,7 @@ describe("设备管理视图 · 角色差异", () => {
   it("未登录时只给说明(零按钮, 登录入口唯一在「账号」卡), 不发任何 fleet 请求", async () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("登录后才能查看") ?? false);
 
     expect(document.body.textContent).toContain("登录入口在「设置 → 账号同步」里的「账号」卡");
@@ -249,7 +249,7 @@ describe("设备管理视图 · 角色差异", () => {
   it("auth=off 时如实显示账号功能已关闭, 不指向登录入口, 不发任何 fleet 请求", async () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: false, registration_open: false, auth: "off" } });
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
 
     expect(document.body.textContent).toContain("这台服务器关闭了账号功能，设备管理不可用。");
@@ -263,7 +263,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
   it("在线设备显示心跳与当前接入地址, 指标展开展示 CPU/内存/磁盘/运行时长并可刷新", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
@@ -287,7 +287,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
   it("搜索与全部/在线/离线/已吊销过滤只筛选当前列表, 不发新请求", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const cardOf = (name: string) => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
@@ -326,14 +326,15 @@ describe("设备管理视图 · 设备列表与指标", () => {
     expect(cardOf("web-01")).toBeTruthy();
     expect(cardOf("db-02")).toBeTruthy();
     expect(cardOf("browser-01")).toBeTruthy();
-    expect(cardOf("old-laptop")).toBeTruthy();
+    expect(cardOf("old-laptop")).toBeFalsy();
+    expect(document.body.textContent).toContain("已隐藏 1 台已吊销设备");
     expect(calls).toHaveLength(requestCount);
   });
 
   it("离线设备显示离线徽章与离线自启动提示", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
@@ -345,13 +346,16 @@ describe("设备管理视图 · 设备列表与指标", () => {
   it("非 agent 设备提示没有运行状态, 已吊销设备不再给操作按钮", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("browser-01") ?? false);
 
     const browserCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("browser-01"));
     expect(browserCard?.textContent).toContain("没有运行状态和指标");
     expect([...(browserCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
 
+    expect([...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"))).toBeUndefined();
+    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]') as HTMLSelectElement;
+    setSelectValue(filter, "revoked");
     const revokedCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"));
     expect(revokedCard?.textContent).toContain("已吊销");
     expect([...(revokedCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.includes("吊销"))).toBe(false);
@@ -360,12 +364,12 @@ describe("设备管理视图 · 设备列表与指标", () => {
   it("空列表给接入引导, 列表失败给错误与重试", async () => {
     route(fleetHandler({ devices: { devices: [] } }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("还没有接入设备") ?? false);
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("设备列表加载失败") ?? false);
     expect(document.body.textContent).toContain("数据库错误");
   });
@@ -375,7 +379,7 @@ describe("设备管理视图 · 接入码签发", () => {
   it("签发后只显示一次, 带有效期/单次使用说明与真实 agent 接入命令", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
@@ -399,12 +403,12 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(text).not.toContain("第 1 步");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
-      `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
+      `nexterm-agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
     );
     expect(text).toContain(
-      `nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
+      `nexterm-agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
     );
-    expect(text).toContain(`nexterm-server agent install --data-dir ${dataDir}`);
+    expect(text).toContain(`nexterm-agent install --data-dir ${dataDir}`);
     expect(text).toContain("不会执行安装");
     expect(text).not.toContain("/var/lib");
 
@@ -448,7 +452,7 @@ describe("设备管理视图 · 接入码签发", () => {
     useUi.setState({ pushToast: toast });
     route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
@@ -492,7 +496,7 @@ describe("设备管理视图 · 接入码签发", () => {
     });
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
     const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement;
@@ -527,7 +531,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
@@ -544,7 +548,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
@@ -558,7 +562,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
   it("在线设备切换自启动直接生效, 不弹确认", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
@@ -576,7 +580,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("db-02"));
@@ -610,7 +614,7 @@ describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", ()
   it("已启用但未运行: 无漂移, 运行状态单列未运行", async () => {
     route(fleetHandler({ devices: agentWith({ installed: true, enabled: true, active: false }, true) }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
@@ -624,7 +628,7 @@ describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", ()
   it("未启用但进程在跑: 报未生效漂移", async () => {
     route(fleetHandler({ devices: agentWith({ installed: true, enabled: false, active: true }, true) }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
@@ -638,7 +642,7 @@ describe("设备管理视图 · 接入命令 shell quoting", () => {
   it("URL path 含 ; 与 $() 时被单引号包裹, 不会被 shell 当命令语法", async () => {
     route(fleetHandler({ baseUrls: { base_urls: [{ url: "https://nexterm.example.com/mirror;v2/$(id)" }] } }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
@@ -677,7 +681,7 @@ describe("设备管理视图 · 账号切换隔离", () => {
     });
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
 
     await flushUntil(() => document.body.textContent?.includes("2 个地址") ?? false);
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
@@ -733,7 +737,7 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
     });
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
@@ -789,7 +793,7 @@ describe("设备管理视图 · 待审批", () => {
   it("超管看到待审批徽章/横幅/提示, 批准后徽章消失并发出 approve 请求", async () => {
     const calls = route(fleetHandler({ devices: devicesWithPending }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
 
     expect(document.body.textContent).toContain("1 台设备待审批");
@@ -813,7 +817,7 @@ describe("设备管理视图 · 待审批", () => {
   it("普通用户看到待审批徽章与提示, 但没有批准/拒绝按钮与横幅", async () => {
     route(fleetHandler({ devices: devicesWithPending }));
     seedUser(PLAIN_USER);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
 
     expect(document.body.textContent).not.toContain("台设备待审批:");
@@ -827,7 +831,7 @@ describe("设备管理视图 · 待审批", () => {
   it("「查看待审批」一键过滤, 只显示待审批设备", async () => {
     route(fleetHandler({ devices: devicesWithPending }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("1 台设备待审批") ?? false);
 
     const jump = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "查看待审批");
@@ -843,7 +847,7 @@ describe("设备管理视图 · 待审批", () => {
     const calls = route(fleetHandler({ devices: devicesWithPending }));
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
 
     const rejectButton = [...(pendingCard()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "拒绝");
@@ -860,7 +864,7 @@ describe("设备管理视图 · 待审批", () => {
     const calls = route(fleetHandler({ devices: devicesWithPending }));
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
 
     const rejectButton = [...(pendingCard()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "拒绝");
@@ -876,7 +880,7 @@ describe("设备管理视图 · 上下线实时事件", () => {
   it("device://status 实时翻转在线状态, 不重新拉列表; 未知设备 ID 忽略", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const cardOf = (name: string) =>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -17,7 +17,7 @@ import {
 import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
 import { PreviewShareMenu } from "../sharing/PreviewShareMenu";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, terminalApi, fsApi, assetApi } from "../../ipc/commands";
+import { sessionApi, terminalApi, fsApi, assetApi, syncApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
@@ -100,6 +100,54 @@ function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   return true;
 }
 
+// 桌面端只读预览依赖已登录的服务端账号 (「账号同步」link): 共享单例轮询
+// syncApi.status, 首个订阅的 TerminalPane 启动, 全部卸载后停止; 登录/断开
+// 最多 PREVIEW_STATUS_POLL_MS 内反映到入口显隐。TerminalPane 的挂载环境不保证
+// 有 react-query Provider, 故不走 useQuery。Transport 只有 web/desktop 两值,
+// 这里只用 WEB 表达 (部分既有测试的 env mock 不含 DESKTOP 导出)。未登录桌面
+// 返回 false, TerminalPane 不渲染预览菜单入口, 即门控公式
+// (WEB || (DESKTOP && 已登录)) && kernelTabId。
+const PREVIEW_STATUS_POLL_MS = 5_000;
+
+let previewStatusLoggedIn = false;
+let previewStatusKnown = false;
+const previewStatusListeners = new Set<() => void>();
+let previewStatusTimer: ReturnType<typeof setInterval> | null = null;
+
+async function pollPreviewStatus(): Promise<void> {
+  let loggedIn = false;
+  try {
+    loggedIn = (await syncApi.status()).loggedIn;
+  } catch {
+    loggedIn = false;
+  }
+  if (previewStatusKnown && loggedIn === previewStatusLoggedIn) return;
+  previewStatusLoggedIn = loggedIn;
+  previewStatusKnown = true;
+  for (const listener of previewStatusListeners) listener();
+}
+
+function subscribePreviewStatus(listener: () => void): () => void {
+  if (WEB) return () => {};
+  previewStatusListeners.add(listener);
+  if (previewStatusTimer === null) {
+    void pollPreviewStatus();
+    previewStatusTimer = setInterval(() => void pollPreviewStatus(), PREVIEW_STATUS_POLL_MS);
+  }
+  return () => {
+    previewStatusListeners.delete(listener);
+    if (previewStatusListeners.size === 0 && previewStatusTimer !== null) {
+      clearInterval(previewStatusTimer);
+      previewStatusTimer = null;
+    }
+  };
+}
+
+export function usePreviewShareEnabled(): boolean {
+  const loggedIn = useSyncExternalStore(subscribePreviewStatus, () => previewStatusLoggedIn);
+  return WEB || loggedIn;
+}
+
 export function TerminalPane({
   sessionId,
   title,
@@ -110,6 +158,7 @@ export function TerminalPane({
   visible,
 }: TerminalPaneProps) {
   const [kernelTabId, setKernelTabId] = useState<string | null>(null);
+  const previewShareEnabled = usePreviewShareEnabled();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
@@ -1048,7 +1097,7 @@ export function TerminalPane({
         )}
         <Cwd cwd={cwd} />
         {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
-        {WEB && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
+        {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         <div className="nx-spacer" />
 
         <button

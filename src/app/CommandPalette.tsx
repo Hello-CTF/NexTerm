@@ -8,7 +8,6 @@ import {
 } from "./layoutPresets";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, sessionApi, type Asset } from "../ipc/commands";
-import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
@@ -216,15 +215,13 @@ export function CommandPalette({
           void qc.invalidateQueries({ queryKey: ["vault-status"] });
         },
       },
-      ...(WEB
-        ? [{
-            id: "devices",
-            label: "打开设备管理",
-            hint: "已安装 agent 的设备",
-            icon: IconMonitor,
-            run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
-          }]
-        : []),
+      {
+        id: "devices",
+        label: "打开设备管理",
+        hint: "已安装 agent 的设备",
+        icon: IconMonitor,
+        run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
+      },
       ...(
         [
           ["system", "主题：跟随系统"],

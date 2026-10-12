@@ -99,6 +99,7 @@ import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
 import { getUpdateState } from "./useUpdate";
+import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
@@ -453,7 +454,6 @@ function LazyAuthGate() {
 function LazyDeviceTerminalBoundary() {
   const [view, setView] = useState<React.ComponentType | null>(null);
   useEffect(() => {
-    if (!WEB) return;
     let alive = true;
     void import("../features/fleet/DeviceTerminalBoundary").then((m) => {
       if (alive) setView(() => m.DeviceTerminalBoundary);
@@ -564,15 +564,18 @@ function AppShell() {
   const vaultStatus = vaultQuery.data
     ? {
         uninitialized: !vaultQuery.data.initialized,
+        passwordless: vaultQuery.data.passwordless,
         text: !vaultQuery.data.initialized
           ? "凭据库未初始化"
-          : vaultQuery.data.unlocked
-            ? "凭据库已解锁"
-            : "凭据库已锁定",
+          : vaultQuery.data.passwordless
+            ? "已启用 · 未设密码"
+            : vaultQuery.data.unlocked
+              ? "凭据库已解锁"
+              : "凭据库已锁定",
       }
     : vaultQuery.isError
-      ? { text: "凭据库不可用", uninitialized: false }
-      : { text: "…", uninitialized: false };
+      ? { text: "凭据库不可用", uninitialized: false, passwordless: false }
+      : { text: "…", uninitialized: false, passwordless: false };
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list() });
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const syncLink = useQuery({
@@ -585,6 +588,10 @@ function AppShell() {
       pushToast("info", "凭据库尚未初始化");
       return;
     }
+    if (vaultStatus.passwordless) {
+      pushToast("info", "空密码凭据库无需锁定");
+      return;
+    }
     try {
       await vaultApi.lock();
       void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
@@ -592,7 +599,7 @@ function AppShell() {
     } catch (e) {
       pushToast("error", describeError(e));
     }
-  }, [queryClient, pushToast, vaultStatus.uninitialized]);
+  }, [queryClient, pushToast, vaultStatus.uninitialized, vaultStatus.passwordless]);
   useWebAutoSync();
   useDesktopAutoSync();
   useEffect(() => {
@@ -1055,9 +1062,13 @@ function AppShell() {
     startUnreadTracking();
   }, []);
 
-  // 桌面端启动后静默检查一次更新: 不弹 toast, 有更新时由 UpdateBanner 呈现。
+  // 桌面端启动后静默检查一次更新: 不弹 toast, 有更新时由 UpdateBanner 呈现;
+  // 检查完成后按版本与防重门控弹一次更新提醒(见 updatePrompt)。
   useEffect(() => {
-    if (TRANSPORT === "desktop") void getUpdateState().check();
+    if (TRANSPORT !== "desktop") return;
+    void getUpdateState()
+      .check()
+      .then(() => promptUpdateIfNeeded());
   }, []);
 
   useEffect(() => {
@@ -1222,9 +1233,7 @@ function AppShell() {
   ];
 
   const railBottom = [
-    ...(WEB
-      ? [{ key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装 agent 的设备并远程打开终端", icon: IconMonitor, onClick: openDevices }]
-      : []),
+    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装 agent 的设备并远程打开终端", icon: IconMonitor, onClick: openDevices },
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: openAudit },
     { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: openSettings },
   ];

@@ -1,8 +1,13 @@
 // 超管卡片:用户管理(创建 / 禁用 / 重置)与开放注册开关。仅超管可见。
+// 桌面端身份来自「账号同步」link 会话(../auth/desktopAccount.ts),用户管理走
+// remoteAccountApi 代理;注册开关/MFA 策略代理未覆盖,如实隐藏并注明浏览器管理。
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { adminApi, authApi, type AccountUser, type AdminSettings } from "../../ipc/authApi";
+import { remoteAccountApi } from "../../ipc/remoteApi";
+import { DESKTOP } from "../../ipc/env";
 import { useAuth } from "../auth/store";
+import { useDesktopAccount } from "../auth/desktopAccount";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -24,7 +29,10 @@ function stateBadge(user: AccountUser): { text: string; tone: string } {
 
 export function AccountCard() {
   const { pushToast } = useUi();
-  const user = useAuth((s) => s.user);
+  const sessionUser = useAuth((s) => s.user);
+  // 桌面端身份来自「账号同步」link 的服务端会话(useAuth 在桌面不持有用户)。
+  const desktopAccount = useDesktopAccount();
+  const user = DESKTOP ? desktopAccount : sessionUser;
 
   const [users, setUsers] = useState<AccountUser[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -42,6 +50,13 @@ export function AccountCard() {
 
   const load = useCallback(() => {
     setListError(null);
+    // 桌面: 注册开关/MFA 策略无代理通道, 只取用户列表。
+    if (DESKTOP) {
+      return remoteAccountApi
+        .adminUsers()
+        .then((r) => setUsers(r.users))
+        .catch((e: unknown) => setListError(describeError(e)));
+    }
     return Promise.all([
       adminApi.users().then((r) => setUsers(r.users)),
       adminApi.settingsGet().then((s) => {
@@ -53,8 +68,9 @@ export function AccountCard() {
   }, []);
 
   useEffect(() => {
+    if (user?.role !== "superadmin") return;
     void load();
-  }, [load]);
+  }, [load, user?.role]);
 
   if (!user || user.role !== "superadmin") return null;
 
@@ -67,7 +83,11 @@ export function AccountCard() {
     }
     setCreateBusy(true);
     try {
-      await adminApi.createUser(username.trim(), password, displayName.trim());
+      if (DESKTOP) {
+        await remoteAccountApi.adminCreateUser(username.trim(), password, displayName.trim());
+      } else {
+        await adminApi.createUser(username.trim(), password, displayName.trim());
+      }
       pushToast("success", `已创建用户「${username.trim()}」，请将初始密码告知对方`);
       setUsername("");
       setDisplayName("");
@@ -88,7 +108,11 @@ export function AccountCard() {
     );
     if (!ok) return;
     try {
-      await adminApi.disableUser(target.id);
+      if (DESKTOP) {
+        await remoteAccountApi.adminSetUserState(target.id, "disabled");
+      } else {
+        await adminApi.disableUser(target.id);
+      }
       pushToast("success", `已禁用「${target.username}」`);
       await load();
     } catch (e) {
@@ -103,7 +127,11 @@ export function AccountCard() {
     );
     if (!ok) return;
     try {
-      await adminApi.resetUser(target.id);
+      if (DESKTOP) {
+        await remoteAccountApi.adminSetUserState(target.id, "reset_required");
+      } else {
+        await adminApi.resetUser(target.id);
+      }
       pushToast("success", `已重置「${target.username}」`);
       await load();
     } catch (e) {
@@ -249,6 +277,7 @@ export function AccountCard() {
         </div>
       )}
 
+      {!DESKTOP && (
       <div className="mt-3 border-t border-neutral-800/60 pt-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[12.5px] text-neutral-200">开放注册</span>
@@ -284,6 +313,13 @@ export function AccountCard() {
             : "默认不强制。用户可在账号设置中开启 TOTP 两步验证。"}
         </p>
       </div>
+      )}
+
+      {DESKTOP && (
+        <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-3">
+          开放注册与两步验证（MFA）策略暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理。
+        </p>
+      )}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />

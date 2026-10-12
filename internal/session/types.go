@@ -264,6 +264,11 @@ type Session struct {
 	durableProvider  base.DurableProvider
 	durableGen       uint64
 	durableTransport *transportHandle
+
+	// 远程会话壳 (KindRemote) 的空闲回收状态: remoteActivity 是上次推流/管理
+	// 操作时刻, remoteFeeds 是活跃推流连接数 (>0 时回收挂起); 普通会话不用。
+	remoteActivity time.Time
+	remoteFeeds    int
 }
 
 func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {

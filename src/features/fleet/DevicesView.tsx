@@ -1,13 +1,16 @@
-// 设备管理视图 (FLEET149): WEB 账号模式下的真实设备管理界面。
+// 设备管理视图 (FLEET149): 账号模式下的真实设备管理界面。
 // 数据全部来自 /fleet/* 真实 HTTP 合同 (见 internal/fleet/server/http.go):
 // 设备列表由服务端按角色过滤 (超管看全部+owner, 普通用户只看自己的);
-// 桌面端没有账号体系/fleet 后端, 一律给显式不可用态, 不发任何请求。
+// 桌面端经「账号同步」link 的服务端会话代理同一批合同 (remote_fleet_*),
+// 未登录给「登录服务端账号后可用」的引导视图并指向「设置 → 账号同步」, 不发任何请求。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fleetApi, type FleetBaseURLEntry, type FleetDevice, type FleetMetricsSample } from "../../ipc/fleetApi";
+import { type FleetBaseURLEntry, type FleetDevice, type FleetMetricsSample } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { openDeviceTerminalTab, useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
+import { fleetClient } from "./clients";
+import { useFleetAccount } from "./useFleetAccount";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
@@ -25,7 +28,7 @@ import {
 } from "../../ui/icons";
 import { formatBytes, formatTime, formatUptime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./format";
 import { BaseUrlsSection } from "./BaseUrlsSection";
-import { oneLineInstallCommand, shellQuote } from "./installCommand";
+import { oneLineInstallCommand, oneLineInstallCommandWindows, shellQuote } from "./installCommand";
 
 const ENROLL_TTL_OPTIONS = [
   { label: "5 分钟", ms: 5 * 60_000 },
@@ -40,11 +43,11 @@ const ENROLL_TTL_OPTIONS = [
 const AGENT_DATA_DIR = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
 
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
-  return `nexterm-server agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""} --data-dir ${AGENT_DATA_DIR}`;
+  return `nexterm-agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""} --data-dir ${AGENT_DATA_DIR}`;
 }
 
 function installCommand(): string {
-  return `nexterm-server agent install --data-dir ${AGENT_DATA_DIR}`;
+  return `nexterm-agent install --data-dir ${AGENT_DATA_DIR}`;
 }
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
@@ -73,16 +76,37 @@ function FleetUnsupported() {
           </div>
           <div>
             <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">
-              桌面端暂无设备管理
+              登录服务端账号后可用
             </div>
             <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
-              桌面端是本地优先模式，没有账号体系；设备管理仅在浏览器模式连接服务器并登录后可用。
+              设备接入与远程终端依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可管理接入设备、签发接入码并打开远程终端。
             </div>
           </div>
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline nx-btn-sm"
+            onClick={() => openAccountSyncSettings()}
+          >
+            去设置 → 账号同步登录
+          </button>
         </div>
       </div>
     </div>
   );
+}
+
+// openAccountSyncSettings 打开设置标签并滚动到「账号同步」分区; 设置页异步挂载,
+// 轮询等待目标节点出现, 约 1 秒后放弃。
+function openAccountSyncSettings(attempt = 0): void {
+  if (attempt === 0) {
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+  }
+  const target = document.getElementById("settings-account");
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (attempt < 20) window.setTimeout(() => openAccountSyncSettings(attempt + 1), 50);
 }
 
 function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean }) {
@@ -95,7 +119,7 @@ function MetricsPanel({ deviceId, online }: { deviceId: string; online: boolean 
     const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
-    fleetApi
+    fleetClient()
       .metrics(deviceId)
       .then((r) => {
         if (seq === loadSeq.current) setSamples(r.samples);
@@ -215,7 +239,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     if (!ok) return;
     setBusy(true);
     try {
-      await fleetApi.revoke(device.id);
+      await fleetClient().revoke(device.id);
       pushToast("success", `已吊销「${device.name}」`);
       onRevoked(device.id);
     } catch (e) {
@@ -228,7 +252,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
   const approve = async () => {
     setBusy(true);
     try {
-      await fleetApi.approve(device.id);
+      await fleetClient().approve(device.id);
       pushToast("success", `已批准「${device.name}」，设备上线后可用`);
       onPatch(device.id, { state: "active" });
     } catch (e) {
@@ -246,7 +270,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     if (!ok) return;
     setBusy(true);
     try {
-      await fleetApi.reject(device.id);
+      await fleetClient().reject(device.id);
       pushToast("success", `已拒绝并删除「${device.name}」`);
       onRejected(device.id);
     } catch (e) {
@@ -268,7 +292,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
     }
     setBusy(true);
     try {
-      const r = await fleetApi.setAutostart(device.id, desired);
+      const r = await fleetClient().setAutostart(device.id, desired);
       onPatch(device.id, { agent: { ...agent, desired_autostart: r.desired_autostart } });
       pushToast("success", `已将「${device.name}」的期望自启动设为${r.desired_autostart ? "开启" : "关闭"}`);
     } catch (e) {
@@ -457,7 +481,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked, onReject
 
 export function DevicesView() {
   const { pushToast } = useUi();
-  const user = useAuth((s) => s.user);
+  const account = useFleetAccount();
   const authStatus = useAuth((s) => s.status);
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [deviceQuery, setDeviceQuery] = useState("");
@@ -485,8 +509,8 @@ export function DevicesView() {
   // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
   const accountEpoch = useRef(0);
 
-  const isAdmin = user?.role === "superadmin";
-  const userId = user?.id ?? null;
+  const isAdmin = account.isAdmin;
+  const userId = account.userId;
 
   // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (设备/base URL/一次性接入码),
   // 并递增 loadSeq 使旧账号的晚到响应失效; AuthGate 只是 overlay, 登出再登录不会卸载本 pane。
@@ -513,11 +537,10 @@ export function DevicesView() {
   }
 
   const loadBaseUrls = useCallback(() => {
-    if (!WEB) return;
     const seq = ++baseUrlsSeq.current;
     setBaseUrlsStatus("loading");
     setBaseUrlsError(null);
-    void fleetApi
+    void fleetClient()
       .baseUrls()
       .then((r) => {
         if (seq !== baseUrlsSeq.current) return;
@@ -532,12 +555,11 @@ export function DevicesView() {
   }, []);
 
   const load = useCallback(() => {
-    if (!WEB) return;
     const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     loadBaseUrls();
-    fleetApi
+    fleetClient()
       .devices()
       .then((r) => {
         if (seq === loadSeq.current) setDevices(r.devices);
@@ -551,16 +573,16 @@ export function DevicesView() {
   }, [loadBaseUrls]);
 
   useEffect(() => {
-    if (!WEB || !user) return;
+    if (!userId) return;
     load();
-  }, [user, load]);
+  }, [userId, load]);
 
-  // 轮询兜底: 事件流之外每 60 秒静默刷新一次设备列表, 事件丢失/WS 断开时
-  // 在线状态仍能收敛; 静默刷新不碰 loading 态, 避免周期性打扰界面。
+  // 轮询兜底: WEB 靠事件流保持实时, 每 60 秒静默刷新一次收敛丢失/断线;
+  // 桌面没有 /ws/events 通道, 在线状态只靠轮询, 加密到 30 秒。
+  // 静默刷新不碰 loading 态, 避免周期性打扰界面。
   const poll = useCallback(() => {
-    if (!WEB) return;
     const seq = ++loadSeq.current;
-    fleetApi
+    fleetClient()
       .devices()
       .then((r) => {
         if (seq === loadSeq.current) setDevices(r.devices);
@@ -569,15 +591,16 @@ export function DevicesView() {
   }, []);
 
   useEffect(() => {
-    if (!WEB || !user) return;
-    const timer = setInterval(poll, 60_000);
+    if (!userId) return;
+    const timer = setInterval(poll, WEB ? 60_000 : 30_000);
     return () => clearInterval(timer);
-  }, [user, poll]);
+  }, [userId, poll]);
 
   // device://status 实时上下线: 只写入 presence, 徽章与终端按钮随渲染更新;
   // 不在当前账号设备清单内的 ID (他人设备) 不会被渲染, 自然忽略。
+  // 仅 WEB 有该事件通道, 桌面端只靠上面的轮询。
   useEffect(() => {
-    if (!WEB || !user) return;
+    if (!WEB || !userId) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<DeviceStatusEvent>(EVENTS.deviceStatus, (p) => {
@@ -591,13 +614,13 @@ export function DevicesView() {
       cancelled = true;
       unlisten?.();
     };
-  }, [user]);
+  }, [userId]);
 
   // 事件 WS 重连并错过事件 (resync) 时立即刷新, 不等下一轮轮询。
   useEffect(() => {
-    if (!WEB || !user) return;
+    if (!WEB || !userId) return;
     return onEventsResync(() => load());
-  }, [user, load]);
+  }, [userId, load]);
 
   // 有效在线 = 实时事件优先 (心跳阈值内), 否则回落心跳判定; 非 agent 设备恒离线。
   const onlineOf = (d: FleetDevice): boolean => {
@@ -610,9 +633,9 @@ export function DevicesView() {
   // 打开接入面板时经 /healthz 读取真实服务端版本 (一键安装的 --version);
   // 失败或空串都归为 null: 一键安装指令整段隐藏, 绝不伪造版本。
   useEffect(() => {
-    if (!enrollOpen || !WEB || !user) return;
+    if (!enrollOpen || !userId) return;
     const seq = ++versionSeq.current;
-    fleetApi
+    fleetClient()
       .serverVersion()
       .then((v) => {
         if (seq === versionSeq.current) setServerVersion(v || null);
@@ -620,18 +643,30 @@ export function DevicesView() {
       .catch(() => {
         if (seq === versionSeq.current) setServerVersion(null);
       });
-  }, [enrollOpen, user]);
+  }, [enrollOpen, userId]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
 
-  if (!WEB) {
+  if (account.loading) {
+    return (
+      <div className="nx-pane">
+        <div className="nx-toolbar flex-wrap">
+          <IconMonitor size={14} className="text-neutral-500" />
+          <span className="nx-toolbar-title">设备管理</span>
+          <span className="nx-hint">账号状态读取中…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userId && !WEB) {
     return <FleetUnsupported />;
   }
 
-  if (!user) {
+  if (!userId) {
     const authOff = authStatus?.auth === "off";
     return (
       <div className="nx-pane">
@@ -657,11 +692,11 @@ export function DevicesView() {
   }
 
   const issueEnrollCode = async () => {
-    if (!WEB || !user || baseUrlsStatus !== "ready") return;
+    if (!userId || baseUrlsStatus !== "ready") return;
     const epoch = accountEpoch.current;
     setIssuing(true);
     try {
-      const r = await fleetApi.issueEnrollCode(ttlMs);
+      const r = await fleetClient().issueEnrollCode(ttlMs);
       if (epoch !== accountEpoch.current) return;
       setIssued({ code: r.code, expiresAt: r.expires_at });
     } catch (e) {
@@ -712,19 +747,34 @@ export function DevicesView() {
           ),
         )
       : null;
+  const windowsRows =
+    issued && serverVersion
+      ? baseUrls.map((entry) =>
+          copyCommandRow(
+            `one-line-windows:${entry.url}`,
+            oneLineInstallCommandWindows(entry.url, Boolean(entry.insecure), issued.code, serverVersion),
+            "Windows 一键安装命令",
+          ),
+        )
+      : null;
   const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
   const normalizedDeviceQuery = deviceQuery.trim().toLowerCase();
   const pendingCount = devices?.filter((d) => d.state === "pending" && d.revoked_at === 0).length ?? 0;
-  const visibleDevices = devices?.filter((d) => {
-    const revoked = d.revoked_at !== 0;
-    if (deviceFilter === "revoked" && !revoked) return false;
-    if (deviceFilter === "pending" && (revoked || d.state !== "pending")) return false;
-    if (deviceFilter === "online" && (revoked || !onlineOf(d))) return false;
-    if (deviceFilter === "offline" && (revoked || onlineOf(d))) return false;
+  const matchesDeviceQuery = (d: FleetDevice) => {
     if (!normalizedDeviceQuery) return true;
     return [d.name, d.id, d.kind, d.owner?.username, d.agent?.platform, d.agent?.current_url]
       .map((value) => value?.toLowerCase() ?? "")
       .some((value) => value.includes(normalizedDeviceQuery));
+  };
+  const hiddenRevokedCount = devices?.filter((d) => d.revoked_at !== 0).length ?? 0;
+  const visibleDevices = devices?.filter((d) => {
+    const revoked = d.revoked_at !== 0;
+    if (deviceFilter === "revoked") return revoked && matchesDeviceQuery(d);
+    if (revoked) return false;
+    if (deviceFilter === "pending" && d.state !== "pending") return false;
+    if (deviceFilter === "online" && !onlineOf(d)) return false;
+    if (deviceFilter === "offline" && onlineOf(d)) return false;
+    return matchesDeviceQuery(d);
   });
 
   return (
@@ -783,6 +833,9 @@ export function DevicesView() {
                 显示 {visibleDevices?.length ?? 0} / {devices.length} 台
               </span>
             )}
+            {deviceFilter !== "revoked" && hiddenRevokedCount > 0 && (
+              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已吊销设备（选「已吊销」可见）</span>
+            )}
           </div>
         )}
 
@@ -836,11 +889,11 @@ export function DevicesView() {
                 </div>
               </>
             ) : (
-              <div className="nx-alert nx-alert-danger flex flex-col gap-2">
+              <div className="nx-alert nx-alert-info flex flex-col gap-2">
                 <div className="flex items-start gap-2">
                   <IconInfo size={14} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    接入码<b>仅显示一次</b>，只能使用一次，有效期至 {formatTime(issued.expiresAt)}。接入码经服务器兑换为设备凭证；凭证仅保存在设备本地，本页面不再显示。
+                    接入码<b className="text-red-300">仅显示一次</b>，只能使用一次，有效期至 {formatTime(issued.expiresAt)}。接入码经服务器兑换为设备凭证；凭证仅保存在设备本地，本页面不再显示。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -875,8 +928,12 @@ export function DevicesView() {
                     <>
                       {serverVersion ? (
                         <>
-                          <div className="text-[12px] text-neutral-200">在设备上用<b>普通用户</b>执行一键接入命令：</div>
+                          <div className="text-[12px] text-neutral-200">
+                            在设备上用<b>普通用户</b>执行一键接入命令（Linux / macOS）：
+                          </div>
                           {oneLineRows?.[0]}
+                          <div className="text-[12px] text-neutral-200">Windows 设备请用 PowerShell 版：</div>
+                          {windowsRows?.[0]}
                         </>
                       ) : (
                         <>
@@ -896,13 +953,13 @@ export function DevicesView() {
                           {baseUrls.length > 1 && (
                             <>
                               <div className="text-[11.5px] text-neutral-400">其他接入地址按配置顺序作为备用，第一个可达的即接入点：</div>
-                              {serverVersion ? oneLineRows?.slice(1) : enrollRows?.slice(1)}
+                              {serverVersion ? [...(oneLineRows?.slice(1) ?? []), ...(windowsRows?.slice(1) ?? [])] : enrollRows?.slice(1)}
                             </>
                           )}
                           {serverVersion && (
                             <>
                               <div className="text-[11.5px] text-neutral-400">
-                                设备已安装 nexterm-server 时，也可手动执行 enroll 与 install：
+                                设备已安装 nexterm-agent 时，也可手动执行 enroll 与 install：
                               </div>
                               {enrollRows}
                               {installRow}

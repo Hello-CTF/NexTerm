@@ -4,7 +4,7 @@
 // 账号的终端标签关闭且桥接 detach (旧 shell 不可继续输入)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -274,14 +274,14 @@ afterEach(() => {
 describe("DeviceTerminalBoundary 账号隔离", () => {
   it("mount 时不误清 (previous user id 守卫)", async () => {
     seedTabs();
-    mounted = mount(createElement(DeviceTerminalBoundary));
+    mounted = mountWithClient(createElement(DeviceTerminalBoundary));
     await flush();
     expect(storeTabs().some((t) => t.kind === "deviceTerminal")).toBe(true);
   });
 
   it("账号 A->B 切换: 关闭全部设备终端标签, 与 DevicesView 是否挂载无关", async () => {
     seedTabs();
-    mounted = mount(createElement(DeviceTerminalBoundary));
+    mounted = mountWithClient(createElement(DeviceTerminalBoundary));
     await flush();
     seedUser(OTHER_USER);
     await flush();
@@ -292,7 +292,7 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
 
   it("logout (user -> null) 同样关闭全部设备终端标签", async () => {
     seedTabs();
-    mounted = mount(createElement(DeviceTerminalBoundary));
+    mounted = mountWithClient(createElement(DeviceTerminalBoundary));
     await flush();
     seedUser(null);
     await flush();
@@ -301,7 +301,7 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
 
   it("401 会话过期 (SESSION_EXPIRED_EVENT) 经账号 store 清空 user 后关闭标签", async () => {
     seedTabs();
-    mounted = mount(createElement(DeviceTerminalBoundary));
+    mounted = mountWithClient(createElement(DeviceTerminalBoundary));
     await flush();
     window.dispatchEvent(new CustomEvent("nexterm:session-expired"));
     await flush();
@@ -311,7 +311,7 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
 
   it("账号切换后旧桥接被 detach: 旧账号的 shell 不可继续输入", async () => {
     seedTabs();
-    mounted = mount(
+    mounted = mountWithClient(
       <>
         {createElement(TabHarness)}
         {createElement(DeviceTerminalBoundary)}
@@ -334,7 +334,7 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
   it("在途 open 遇账号切换: boundary 关标签后经 creator 旧连接回收 killSession, 全部旧 WS 关闭", async () => {
     FakeWebSocket.deferAttach = true;
     seedTabs();
-    mounted = mount(
+    mounted = mountWithClient(
       <>
         {createElement(TabHarness)}
         {createElement(DeviceTerminalBoundary)}
@@ -356,7 +356,7 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
 
   it("在途 resume 遇账号切换: boundary 关标签关闭替换 WS, 既有会话仍可再次 resume", async () => {
     seedTabs();
-    mounted = mount(
+    mounted = mountWithClient(
       <>
         {createElement(TabHarness)}
         {createElement(DeviceTerminalBoundary)}

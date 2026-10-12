@@ -44,6 +44,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   };
 });
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ipc/remoteApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/remoteApi")>();
+  return {
+    ...actual,
+    remoteLinkApi: { ...actual.remoteLinkApi, linkSet: mocks.linkSet },
+  };
+});
 
 import { SyncCard } from "../../features/settings/SyncCard";
 import { ModelPanel } from "../../features/ai/ModelPanel";

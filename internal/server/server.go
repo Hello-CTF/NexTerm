@@ -61,7 +61,9 @@ type Config struct {
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
 	// Previews 与 Spectator 一起启用只读远程预览 (公开预览链接): 管理端点
-	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。
+	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。Spectator 若同时
+	// 实现 RemoteSessionRegistry (生产注入的 *session.Manager 即如此), 额外
+	// 挂载 /share/remote-sessions 远程会话壳管理面。
 	Previews    *sharing.Service
 	Spectator   PreviewSpectator
 	DB          DBHealthSource
@@ -98,7 +100,9 @@ type Server struct {
 	fleet           *fleetserver.Service
 	previews        *sharing.Service
 	spectator       PreviewSpectator
-	previewResolve  *account.LoginThrottle
+	// remoteSessions 由 Spectator 断言得到 (同一实例), 非空时挂载远程会话壳端点。
+	remoteSessions RemoteSessionRegistry
+	previewResolve *account.LoginThrottle
 	// previewRevalidateInterval 是预览连接的授权复查间隔, 测试可调小。
 	previewRevalidateInterval time.Duration
 	db                        DBHealthSource
@@ -246,6 +250,9 @@ func New(config Config) (*Server, error) {
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
+	}
+	if remote, ok := config.Spectator.(RemoteSessionRegistry); ok {
+		s.remoteSessions = remote
 	}
 	if config.Settings != nil {
 		s.preferences = account.NewPreferences(config.Settings)

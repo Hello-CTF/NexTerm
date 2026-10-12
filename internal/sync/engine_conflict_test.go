@@ -20,7 +20,7 @@ func TestRemoteClientPushStaleHeadGetsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.login(ctx, config.Username, config.Password); err != nil {
+	if _, err := client.login(ctx, config.Username, config.Password); err != nil {
 		t.Fatal(err)
 	}
 	userID, err := client.me(ctx)

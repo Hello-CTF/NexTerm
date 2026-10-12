@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
 // FLEET168 全新机器一键安装指令: oneLineInstallCommand 的构造 (curl 拉取
 // /install-device.sh + --server/--code/--version 真实版本 + --insecure 跟随
-// 接入地址, 动态参数单引号包裹), 以及 DevicesView 接入面板里的一行安装
+// 接入地址, 动态参数单引号包裹), Windows 设备另给 PowerShell 版
+// oneLineInstallCommandWindows (iex 拉取 /install-device.ps1, 同名参数),
+// 以及 DevicesView 接入面板里的一行安装
 // 指令 — 版本来自真实 /healthz, 版本不可用时整段隐藏 (不伪造), 既有
 // enroll/install 命令保留, 绝不声称安装成功。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -19,7 +21,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { DevicesView } from "../../features/fleet/DevicesView";
-import { oneLineInstallCommand, shellQuote } from "../../features/fleet/installCommand";
+import { oneLineInstallCommand, oneLineInstallCommandWindows, psQuote, shellQuote } from "../../features/fleet/installCommand";
 import { useAuth } from "../../features/auth/store";
 
 const NOW = Date.now();
@@ -122,7 +124,7 @@ afterEach(() => {
 });
 
 async function openIssuedPanel(): Promise<void> {
-  mounted = mount(createElement(DevicesView));
+  mounted = mountWithClient(createElement(DevicesView));
   await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
   click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
   click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
@@ -167,6 +169,30 @@ describe("oneLineInstallCommand 构造", () => {
   });
 });
 
+describe("oneLineInstallCommandWindows 构造", () => {
+  it("iex 拉取接入地址的 install-device.ps1 并透传与 sh 版相同的参数", () => {
+    expect(oneLineInstallCommandWindows("https://nexterm.example.com", false, "c-1", "0.2.2")).toBe(
+      "iex \"& { $(iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1') } " +
+        "--server 'https://nexterm.example.com' --code 'c-1' --version '0.2.2'\"",
+    );
+  });
+
+  it("显式 insecure 的接入地址: --insecure 透传给脚本参数", () => {
+    const command = oneLineInstallCommandWindows("https://10.0.0.8:8443", true, "c-1", "0.2.2");
+    expect(command).toBe(
+      "iex \"& { $(iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1') } " +
+        "--server 'https://10.0.0.8:8443' --code 'c-1' --version '0.2.2' --insecure\"",
+    );
+  });
+
+  it("动态参数按 PowerShell 字面字符串引用, 内嵌单引号双写转义", () => {
+    const command = oneLineInstallCommandWindows("https://nexterm.example.com/mirror;v2/$(id)", false, "co'de", "0.2.2");
+    expect(command).toContain("'https://nexterm.example.com/mirror;v2/$(id)/install-device.ps1'");
+    expect(command).toContain("--code 'co''de'");
+    expect(psQuote("a'b")).toBe("'a''b'");
+  });
+});
+
 describe("设备管理 · 一键安装指令", () => {
   it("签发后按接入地址展示一行安装指令 (真实 /healthz 版本), 既有 enroll/install 命令保留", async () => {
     const calls = route();
@@ -190,9 +216,24 @@ describe("设备管理 · 一键安装指令", () => {
     expect(details?.open).toBe(false);
     expect(oneLineElements[0].closest("details")).toBeNull();
     expect(oneLineElements[1].closest("details")).toBe(details);
+    // Windows PowerShell 版提示与命令: 首个地址在主区, 备用地址进高级说明
+    expect(document.body.textContent).toContain("Windows 设备请用 PowerShell 版");
+    const windowsOneLiners = commands.filter((c) => c.includes("install-device.ps1"));
+    expect(windowsOneLiners).toHaveLength(2);
+    expect(windowsOneLiners[0]).toBe(
+      "iex \"& { $(iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1') } " +
+        "--server 'https://nexterm.example.com' --code 'fleet-code-1' --version '0.2.2'\"",
+    );
+    expect(windowsOneLiners[1]).toBe(
+      "iex \"& { $(iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1') } " +
+        "--server 'https://10.0.0.8:8443' --code 'fleet-code-1' --version '0.2.2' --insecure\"",
+    );
+    const windowsElements = [...document.querySelectorAll("code")].filter((c) => c.textContent?.includes("install-device.ps1"));
+    expect(windowsElements[0].closest("details")).toBeNull();
+    expect(windowsElements[1].closest("details")).toBe(details);
     // 既有命令 (已装二进制) 保留
-    expect(commands.some((c) => c.includes("nexterm-server agent enroll"))).toBe(true);
-    expect(commands.some((c) => c.includes("nexterm-server agent install"))).toBe(true);
+    expect(commands.some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
+    expect(commands.some((c) => c.includes("nexterm-agent install"))).toBe(true);
     // 绝不声称安装成功
     expect(document.body.textContent).toContain("不会执行安装");
     expect(document.body.textContent).toContain("无法确认安装结果");
@@ -230,9 +271,11 @@ describe("设备管理 · 一键安装指令", () => {
     await openIssuedPanel();
 
     expect(commandTexts().some((c) => c.includes("install-device.sh"))).toBe(false);
+    expect(commandTexts().some((c) => c.includes("install-device.ps1"))).toBe(false);
     expect(document.body.textContent).not.toContain("--version");
+    expect(document.body.textContent).not.toContain("PowerShell");
     // 既有命令不受影响
-    expect(commandTexts().some((c) => c.includes("nexterm-server agent enroll"))).toBe(true);
+    expect(commandTexts().some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
   });
 
   it("版本为空串时同样隐藏一键安装指令", async () => {
@@ -241,5 +284,6 @@ describe("设备管理 · 一键安装指令", () => {
     await openIssuedPanel();
 
     expect(commandTexts().some((c) => c.includes("install-device.sh"))).toBe(false);
+    expect(commandTexts().some((c) => c.includes("install-device.ps1"))).toBe(false);
   });
 });

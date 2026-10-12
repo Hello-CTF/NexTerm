@@ -5,7 +5,7 @@
 // 保持 shrink-0 常驻, 主机名截断保留 title 完整值入口。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -136,7 +136,7 @@ afterEach(() => {
 
 describe("ShareCard 窄屏行结构 (M233)", () => {
   it("分享行可折行, 时间戳与方向文本可收缩换行, 吊销按钮与徽章保持 shrink-0", async () => {
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const rows = shareRows();

@@ -486,11 +486,25 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		id   string
 		idle time.Time
 	}
+	type remoteCandidate struct {
+		id       string
+		activity time.Time
+	}
 	now := time.Now()
 	m.mu.Lock()
 	candidates := make([]candidate, 0)
+	remoteCandidates := make([]remoteCandidate, 0)
 	for _, session := range m.sessions {
 		session.mu.Lock()
+		if session.asset.Kind == KindRemote {
+			// 远程壳没有 "无标签页" 的空闲形态: 空闲 = 无推流连接、无订阅
+			// 观看者, 且距上次推流/管理活动超时; 任一条件不满足不收割。
+			if !session.closed && session.remoteFeeds == 0 && !session.remoteWatchingLocked() && !session.remoteActivity.IsZero() && now.Sub(session.remoteActivity) >= m.idleTimeout {
+				remoteCandidates = append(remoteCandidates, remoteCandidate{id: session.ID, activity: session.remoteActivity})
+			}
+			session.mu.Unlock()
+			continue
+		}
 		if session.status == StatusConnected && len(session.tabs) == 0 && !session.idleSince.IsZero() && now.Sub(session.idleSince) >= m.idleTimeout {
 			candidates = append(candidates, candidate{id: session.ID, idle: session.idleSince})
 		}
@@ -502,6 +516,14 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 			return err
 		}
 		if err := m.disconnect(candidate.id, &candidate.idle); err != nil && !errors.Is(err, ErrSessionNotFound) {
+			return err
+		}
+	}
+	for _, candidate := range remoteCandidates {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.reapRemote(candidate.id, candidate.activity); err != nil {
 			return err
 		}
 	}

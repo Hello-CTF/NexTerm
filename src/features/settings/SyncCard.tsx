@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
+import { remoteLinkApi } from "../../ipc/remoteApi";
 import { useAuth } from "../auth/store";
 import {
   base64ToBytes,
@@ -30,15 +31,18 @@ import {
 import { useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
+import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
 import {
   IconChevronDown,
   IconChevronRight,
+  IconCopy,
   IconInfo,
   IconLock,
   IconRefresh,
   IconServer,
+  IconShield,
   IconXCircle,
 } from "../../ui/icons";
 
@@ -59,6 +63,15 @@ function SyncBody() {
 
 // ---------- 桌面端:账号登录与同步 ----------
 
+// LinkStep 是桌面登录的分步状态机: linkSet 返回 connected 之外的
+// mfa_required / reset_required 时进入对应入职步骤, 强制改密完成后
+// 先一次性展示恢复密钥 (recovery) 再进入已登录态。
+type LinkStep =
+  | { kind: "form" }
+  | { kind: "mfa" }
+  | { kind: "reset" }
+  | { kind: "recovery"; recoveryKey: string };
+
 function DesktopLinkCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
@@ -67,9 +80,17 @@ function DesktopLinkCard() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
   const [draftEdited, setDraftEdited] = useState(false);
-  const [busy, setBusy] = useState<null | "login">(null);
+  const [step, setStep] = useState<LinkStep>({ kind: "form" });
+  const [busy, setBusy] = useState<null | "login" | "mfa" | "reset">(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [keyRevealed, setKeyRevealed] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [keyConfirmed, setKeyConfirmed] = useState(false);
+  const [keyCopyError, setKeyCopyError] = useState<string | null>(null);
   const insecurePanelId = useId();
   const [insecureOpen, setInsecureOpen] = useState(false);
   const savedInsecure = link?.insecure ?? false;
@@ -98,20 +119,36 @@ function DesktopLinkCard() {
     void load();
   }, [load]);
 
+  const finishLogin = async () => {
+    setStep({ kind: "form" });
+    void qc.invalidateQueries({ queryKey: ["sync-link"] });
+    await load();
+    pushToast("success", "登录信息已保存，自动同步已开启");
+  };
+
   const login = async () => {
     setBusy("login");
     setError(null);
     try {
-      await syncApi.linkSet({
+      const r = await remoteLinkApi.linkSet({
         url: draft.url.trim(),
         username: draft.username.trim(),
         ...(draft.password ? { password: draft.password } : {}),
         insecure: draft.insecure,
       });
       setDraft((d) => ({ ...d, password: "" }));
-      void qc.invalidateQueries({ queryKey: ["sync-link"] });
-      await load();
-      pushToast("success", "登录信息已保存，自动同步已开启");
+      if (r.connect === "mfa_required") {
+        setMfaCode("");
+        setStep({ kind: "mfa" });
+        return;
+      }
+      if (r.connect === "reset_required") {
+        setNewPassword("");
+        setConfirmPassword("");
+        setStep({ kind: "reset" });
+        return;
+      }
+      await finishLogin();
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -119,9 +156,77 @@ function DesktopLinkCard() {
     }
   };
 
+  const submitMfa = async () => {
+    const code = mfaCode.trim();
+    if (!code) return;
+    setBusy("mfa");
+    setError(null);
+    try {
+      await remoteLinkApi.mfa(code);
+      setMfaCode("");
+      await finishLogin();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submitReset = async () => {
+    if (newPassword.length < 8) {
+      setError("新密码至少 8 位");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
+    setBusy("reset");
+    setError(null);
+    try {
+      const r = await remoteLinkApi.resetPassword(newPassword);
+      setNewPassword("");
+      setConfirmPassword("");
+      if (r.recoveryKey) {
+        setKeyRevealed(false);
+        setKeyCopied(false);
+        setKeyConfirmed(false);
+        setKeyCopyError(null);
+        setStep({ kind: "recovery", recoveryKey: r.recoveryKey });
+        return;
+      }
+      await finishLogin();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const backToForm = () => {
+    setError(null);
+    setStep({ kind: "form" });
+  };
+
+  const copyRecoveryKey = async (recoveryKey: string) => {
+    setKeyCopied(false);
+    setKeyCopyError(null);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(recoveryKey);
+      setKeyCopied(true);
+      setKeyConfirmed(true);
+    } catch {
+      setKeyRevealed(true);
+      setKeyConfirmed(true);
+      setKeyCopyError("复制失败，请手动复制恢复密钥");
+    }
+  };
+
   const connected = !!status?.loggedIn && !status.lastError;
 
   return (
+    <>
     <section className="nx-card">
       <div className="mb-1 flex items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
@@ -150,92 +255,227 @@ function DesktopLinkCard() {
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
-            服务端
-          </label>
-          <input
-            id="sync-url"
-            className="nx-input min-w-0 flex-1 font-mono"
-            placeholder="https://nexterm.example.com"
-            value={draft.url}
-            autoComplete="url"
-            onChange={(e) => updateDraft({ url: e.target.value })}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-user">
-            账号
-          </label>
-          <input
-            id="sync-user"
-            className="nx-input min-w-0 flex-1"
-            placeholder="用户名"
-            value={draft.username}
-            autoComplete="username"
-            onChange={(e) => updateDraft({ username: e.target.value })}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-pass">
-            密码
-          </label>
-          <input
-            id="sync-pass"
-            type="password"
-            className="nx-input min-w-0 flex-1"
-            placeholder={link?.hasPassword ? "留空则不修改已保存的密码" : "账号密码（用于解锁数据密钥）"}
-            value={draft.password}
-            autoComplete="new-password"
-            onChange={(e) => updateDraft({ password: e.target.value })}
-          />
-        </div>
-        <div className="mt-1 border-t border-neutral-800/60 pt-2">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
-            aria-expanded={insecureOpen}
-            aria-controls={insecurePanelId}
-            onClick={() => setInsecureOpen((v) => !v)}
-          >
-            {insecureOpen ? (
-              <IconChevronDown size={12} className="shrink-0" />
-            ) : (
-              <IconChevronRight size={12} className="shrink-0" />
-            )}
-            高级选项
-          </button>
-          {insecureOpen && (
-            <div id={insecurePanelId} className="mt-2">
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={draft.insecure}
-                  onChange={(e) => updateDraft({ insecure: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  跳过证书校验
-                  <span className="nx-hint block">勾选后不再验证服务端身份，可能被中间人冒充；仅在自签名证书的内网或自建服务中使用。</span>
-                </span>
+      {step.kind === "form" && (
+        <>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
+                服务端
               </label>
+              <input
+                id="sync-url"
+                className="nx-input min-w-0 flex-1 font-mono"
+                placeholder="https://nexterm.example.com"
+                value={draft.url}
+                autoComplete="url"
+                onChange={(e) => updateDraft({ url: e.target.value })}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-user">
+                账号
+              </label>
+              <input
+                id="sync-user"
+                className="nx-input min-w-0 flex-1"
+                placeholder="用户名"
+                value={draft.username}
+                autoComplete="username"
+                onChange={(e) => updateDraft({ username: e.target.value })}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-pass">
+                密码
+              </label>
+              <input
+                id="sync-pass"
+                type="password"
+                className="nx-input min-w-0 flex-1"
+                placeholder={link?.hasPassword ? "留空则不修改已保存的密码" : "账号密码（用于解锁数据密钥）"}
+                value={draft.password}
+                autoComplete="new-password"
+                onChange={(e) => updateDraft({ password: e.target.value })}
+              />
+            </div>
+            <div className="mt-1 border-t border-neutral-800/60 pt-2">
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+                aria-expanded={insecureOpen}
+                aria-controls={insecurePanelId}
+                onClick={() => setInsecureOpen((v) => !v)}
+              >
+                {insecureOpen ? (
+                  <IconChevronDown size={12} className="shrink-0" />
+                ) : (
+                  <IconChevronRight size={12} className="shrink-0" />
+                )}
+                高级选项
+              </button>
+              {insecureOpen && (
+                <div id={insecurePanelId} className="mt-2">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                      checked={draft.insecure}
+                      onChange={(e) => updateDraft({ insecure: e.target.checked })}
+                    />
+                    <span className="text-[12px] text-neutral-300">
+                      跳过证书校验
+                      <span className="nx-hint block">勾选后不再验证服务端身份，可能被中间人冒充；仅在自签名证书的内网或自建服务中使用。</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              className="nx-btn nx-btn-primary nx-btn-sm"
+              disabled={busy !== null || !draft.url.trim() || !draft.username.trim() || (!draft.password && !link?.hasPassword)}
+              onClick={() => void login()}
+            >
+              {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
+              {busy === "login" ? "登录中…" : "登录"}
+            </button>
+            {status?.lastError && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
+          </div>
+        </>
+      )}
+
+      {step.kind === "mfa" && (
+        <div className="flex flex-col gap-2">
+          <p className="nx-hint">
+            此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；手机丢失时，也可输入未使用的恢复码。
+          </p>
+          <div className="flex items-center gap-2">
+            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-mfa-code">
+              动态码
+            </label>
+            <input
+              id="sync-mfa-code"
+              className="nx-input min-w-0 flex-1 font-mono"
+              placeholder="6 位数字或恢复码"
+              value={mfaCode}
+              autoComplete="one-time-code"
+              onChange={(e) => setMfaCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && mfaCode.trim() && busy === null) void submitMfa();
+              }}
+            />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <button
+              className="nx-btn nx-btn-primary nx-btn-sm"
+              disabled={busy !== null || !mfaCode.trim()}
+              onClick={() => void submitMfa()}
+            >
+              {busy === "mfa" ? <IconRefresh size={12} className="animate-spin" /> : <IconShield size={12} />}
+              {busy === "mfa" ? "验证中…" : "验证并登录"}
+            </button>
+            <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={backToForm}>
+              返回
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step.kind === "reset" && (
+        <div className="flex flex-col gap-2">
+          <p className="nx-hint">
+            账号被管理员重置，必须先设置新密码。数据密钥、所有会话和两步验证绑定已清除；设置新密码后会签发新的数据密钥与一次性恢复密钥，云端密文需从仍持有数据的设备重新同步。
+          </p>
+          <div className="flex items-center gap-2">
+            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
+              新密码
+            </label>
+            <input
+              id="sync-new-pass"
+              type="password"
+              className="nx-input min-w-0 flex-1"
+              placeholder="至少 8 位"
+              value={newPassword}
+              autoComplete="new-password"
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass2">
+              确认密码
+            </label>
+            <input
+              id="sync-new-pass2"
+              type="password"
+              className="nx-input min-w-0 flex-1"
+              placeholder="再输入一次"
+              value={confirmPassword}
+              autoComplete="new-password"
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newPassword && confirmPassword && busy === null) void submitReset();
+              }}
+            />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <button
+              className="nx-btn nx-btn-primary nx-btn-sm"
+              disabled={busy !== null || !newPassword || !confirmPassword}
+              onClick={() => void submitReset()}
+            >
+              {busy === "reset" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
+              {busy === "reset" ? "设置中…" : "设置新密码"}
+            </button>
+            <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={backToForm}>
+              返回
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step.kind === "recovery" && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <IconShield size={15} className="text-amber-300" />
+            <span className="text-[13px] font-semibold text-neutral-100">恢复密钥（仅显示一次）</span>
+          </div>
+          <p className="nx-hint">
+            这是找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
+          </p>
+          <div className="nx-alert nx-alert-danger flex flex-col gap-2">
+            <code className="nx-code break-all font-mono text-[13px]">
+              {keyRevealed ? step.recoveryKey : "•".repeat(step.recoveryKey.length)}
+            </code>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setKeyRevealed((v) => !v)}>
+                {keyRevealed ? "隐藏" : "显示"}
+              </button>
+              <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyRecoveryKey(step.recoveryKey)}>
+                <IconCopy size={12} />
+                {keyCopied ? "已复制" : "复制"}
+              </button>
+            </div>
+          </div>
+          {keyCopyError && (
+            <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
+              <IconXCircle size={13} className="mt-0.5 shrink-0" />
+              <span>{keyCopyError}</span>
             </div>
           )}
+          <div className="nx-alert nx-alert-info flex items-start gap-2">
+            <IconInfo size={14} className="mt-0.5 shrink-0" />
+            <div>恢复密钥仅用于忘记密码时重置账号；日常解密使用密码。两者都需要保密。</div>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={!keyConfirmed} onClick={() => void finishLogin()}>
+              已保存，进入同步
+            </button>
+            {!keyConfirmed && <span className="nx-hint text-[11px]">请先复制或手动保存恢复密钥</span>}
+          </div>
         </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={busy !== null || !draft.url.trim() || !draft.username.trim() || (!draft.password && !link?.hasPassword)}
-          onClick={() => void login()}
-        >
-          {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
-          {busy === "login" ? "登录中…" : "登录"}
-        </button>
-        {status?.lastError && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
-      </div>
+      )}
 
       {error && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
@@ -244,10 +484,202 @@ function DesktopLinkCard() {
         </div>
       )}
 
-      <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
+      {step.kind === "form" && (
+        <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
+          <IconInfo size={14} className="mt-0.5 shrink-0" />
+          <div>
+            会话记录（终端录像）默认不同步；如需同步，请在「终端历史」中为对应记录开启同步。同步采用端到端加密，服务端无法查看资产名、主机、用户名和内容。
+          </div>
+        </div>
+      )}
+    </section>
+    {status?.loggedIn && <DesktopSyncConsole />}
+    </>
+  );
+}
+
+// ---------- 桌面端:同步台 ----------
+
+// DesktopSyncConsole 桌面登录 (link 已建立) 后展示: 同步内容开关 (kindOptInGet/Set)、
+// 同步状态 (账号验证时间/已应用云端序号/最近错误) 与手动触发 (sync_wake 唤醒后台同步循环)。
+// 逐条对比详情依赖浏览器端的 DEK 内存态与 runWebSync, 桌面端不做。
+function DesktopSyncConsole() {
+  const { pushToast } = useUi();
+  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
+  const [optInBusy, setOptInBusy] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const optInPanelId = useId();
+  const [optInOpen, setOptInOpen] = useState(false);
+
+  const load = useCallback(() => {
+    return Promise.all([
+      syncApi.status().then((s) => setStatus(s)),
+      syncApi.kindOptInGet().then((o) => setKindOptIn(o)),
+    ]).catch((e: unknown) => setError(describeError(e)));
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const anyOptIn =
+    !!kindOptIn &&
+    (kindOptIn.knownHost || kindOptIn.aiProfile || !!kindOptIn.aiPermission || !!kindOptIn.preferences);
+  useEffect(() => {
+    if (anyOptIn) setOptInOpen(true);
+  }, [anyOptIn]);
+
+  const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
+    setOptInBusy(true);
+    setError(null);
+    try {
+      setKindOptIn(await syncApi.kindOptInSet(patch));
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setOptInBusy(false);
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncBusy(true);
+    setError(null);
+    try {
+      await syncApi.wake();
+      pushToast("success", "已触发一轮后台同步");
+      // 同步在后台循环里异步执行, 稍后重取状态反映结果。
+      window.setTimeout(() => void load(), 2000);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  return (
+    <section className="nx-card">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <IconServer size={15} className="text-neutral-400" />
+        <span className="nx-card-title">同步台</span>
+        <span className="nx-badge nx-badge-green">自动同步</span>
+        <span className="nx-hint">每 60 秒</span>
+        <div className="nx-spacer" />
+        <button
+          className="nx-btn nx-btn-outline nx-btn-sm"
+          disabled={syncBusy}
+          onClick={() => void syncNow()}
+        >
+          <IconRefresh size={12} className={syncBusy ? "animate-spin" : ""} />
+          立即同步
+        </button>
+      </div>
+
+      <p className="nx-hint mb-3">
+        每轮先拉取并合并云端内容，再推送本机变更；「立即同步」立刻触发一轮，不等下一分钟。
+        {status && status.verifiedAt > 0 && `账号验证于 ${formatTime(status.verifiedAt)}。`}
+        {status && status.seq > 0 && `已应用云端第 ${status.seq} 号。`}
+      </p>
+
+      {kindOptIn && (
+        <div className="mb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+              aria-expanded={optInOpen}
+              aria-controls={optInPanelId}
+              onClick={() => setOptInOpen((v) => !v)}
+            >
+              {optInOpen ? (
+                <IconChevronDown size={12} className="shrink-0" />
+              ) : (
+                <IconChevronRight size={12} className="shrink-0" />
+              )}
+              同步内容开关
+            </button>
+            <span className="nx-hint text-[11px]">
+              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"} · AI 权限 {kindOptIn.aiPermission ? "已开启" : "已关闭"} · 外观快捷键 {kindOptIn.preferences ? "已开启" : "已关闭"}
+            </span>
+          </div>
+          {optInOpen && (
+            <div id={optInPanelId} className="mt-2 flex flex-col gap-2">
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={kindOptIn.knownHost}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步已知主机（主机信任）
+                  <span className="nx-hint block">默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={kindOptIn.aiProfile}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步 AI 模型档案
+                  <span className="nx-hint block">默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={!!kindOptIn.aiPermission}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ aiPermission: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步 AI 权限与拦截规则
+                  <span className="nx-hint block">默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={!!kindOptIn.preferences}
+                  disabled={optInBusy}
+                  onChange={(e) => void updateKindOptIn({ preferences: e.target.checked })}
+                />
+                <span className="text-[12px] text-neutral-300">
+                  同步外观与快捷键
+                  <span className="nx-hint block">默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。</span>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
+      {status?.lastError && (
+        <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">上次同步失败：{status.lastError}，下一分钟自动重试。</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">{error}</span>
+        </div>
+      )}
+
+      <div className="nx-alert nx-alert-info flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录（终端录像）默认不同步；如需同步，请在「终端历史」中为对应记录开启同步。同步采用端到端加密，服务端无法查看资产名、主机、用户名和内容。
+          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确。本机与云端的逐条对比详情目前在浏览器模式的账号同步台提供。
         </div>
       </div>
     </section>

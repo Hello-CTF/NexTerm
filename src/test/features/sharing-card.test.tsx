@@ -5,7 +5,7 @@
 // 以及账号切换隔离 (晚到响应不写入新账号)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -234,7 +234,7 @@ describe("分享卡片 · 创建入口与角色", () => {
   it("超管与普通用户都有新建入口, 设备下拉只列接入设备, 全程不访问 /admin/users", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     expect(document.body.textContent).toContain("新建主机分享");
@@ -251,7 +251,7 @@ describe("分享卡片 · 创建入口与角色", () => {
     // 普通用户: 同样的创建入口 (服务端按角色过滤设备列表, 这里只返回 alice 的设备)
     const plainCalls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
     seedUser(ALICE);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
     expect(document.body.textContent).toContain("新建主机分享");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -263,7 +263,7 @@ describe("分享卡片 · 创建入口与角色", () => {
   it("未登录时只给说明卡(零按钮, 登录入口唯一在「账号」卡), 不发任何分享/设备请求", async () => {
     const calls = route(shareHandler());
     seedUser(null);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
@@ -275,7 +275,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
   it("auth=off: 如实显示账号功能已关闭与分享不可用, 零按钮, 不给死登录承诺, 不发任何分享/设备请求", async () => {
     const calls = route(shareHandler());
     seedUser(null, "off");
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
 
     const text = document.body.textContent ?? "";
@@ -288,7 +288,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
   it("auth=off 且残留旧会话视图: 零请求渲染关闭态; 切回 auth=on 后加载与入口恢复", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN, "off");
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("终端分享不可用") ?? false);
 
     expect(document.body.textContent).not.toContain("新建主机分享");
@@ -311,7 +311,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
   it("auth=on 未登录: 保持登录提示口径不变", async () => {
     const calls = route(shareHandler());
     seedUser(null, "on");
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
@@ -322,7 +322,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
   it("loopback 未登录: 保持登录提示口径不变", async () => {
     const calls = route(shareHandler());
     seedUser(null, "loopback");
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的设备分享给其他注册用户") ?? false);
 
     expect(document.body.textContent).not.toContain("终端分享不可用");
@@ -335,7 +335,7 @@ describe("分享卡片 · 列表与状态", () => {
   it("主机分享渲染设备名/方向/权限/状态/有效期, 公开链接渲染会话短 id 与最近访问", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
 
     const text = document.body.textContent ?? "";
@@ -363,20 +363,20 @@ describe("分享卡片 · 列表与状态", () => {
   it("空列表给空态, 加载失败给错误与重试, 断网显示离线原因", async () => {
     route(shareHandler({ shares: { shares: [] }, links: { links: [] } }));
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
     expect(document.body.textContent).toContain("还没有公开链接");
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("分享数据加载失败") ?? false);
     expect(document.body.textContent).toContain("数据库错误");
     mounted.unmount();
 
     mocks.fetch.mockRejectedValue(new Error("connect ECONNREFUSED"));
     vi.stubGlobal("fetch", mocks.fetch);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("无法连接服务器") ?? false);
     expect(document.body.textContent).toContain("分享数据加载失败");
   });
@@ -386,7 +386,7 @@ describe("分享卡片 · 创建主机分享", () => {
   it("默认只读 + 24 小时: 用户名 trim 后随蛇形请求体提交并刷新列表", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -412,7 +412,7 @@ describe("分享卡片 · 创建主机分享", () => {
   it("普通用户以 recipient_username 创建成功 (与超管同一合同)", async () => {
     const calls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
     seedUser(ALICE);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -429,7 +429,7 @@ describe("分享卡片 · 创建主机分享", () => {
   it("显式读写 + 7 天: write 与 ttl_ms 随选择提交", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -453,7 +453,7 @@ describe("分享卡片 · 创建主机分享", () => {
       shareHandler({ create: { status: 404, payload: { error: { code: "not_found", message: "未找到: 用户" } } } }),
     );
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -466,7 +466,7 @@ describe("分享卡片 · 创建主机分享", () => {
     route(
       shareHandler({ create: { status: 403, payload: { error: { code: "forbidden", message: "接收者账号不可用" } } } }),
     );
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
@@ -481,7 +481,7 @@ describe("分享卡片 · 创建主机分享", () => {
       shareHandler({ create: { status: 503, payload: { error: { code: "disconnected", message: "设备代理离线" } } } }),
     );
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
@@ -498,7 +498,7 @@ describe("分享卡片 · 吊销", () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
@@ -521,7 +521,7 @@ describe("分享卡片 · 吊销", () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
@@ -537,7 +537,7 @@ describe("分享卡片 · 吊销", () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
 
     const card = shareCard();
@@ -558,7 +558,7 @@ describe("分享卡片 · 吊销", () => {
     }));
     mocks.ask.mockResolvedValue(true);
     seedUser(ALICE);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
 
     const card = shareCard();
@@ -578,7 +578,7 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
     const dialog = deferred<boolean>();
     mocks.ask.mockReturnValue(dialog.promise);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
@@ -601,7 +601,7 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
     const dialog = deferred<boolean>();
     mocks.ask.mockReturnValue(dialog.promise);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
 
     const card = shareCard();
@@ -625,7 +625,7 @@ describe("分享卡片 · 公开链接只有列表与吊销", () => {
   it("没有创建入口/会话 id 输入框/token 展示", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
 
     const card = shareCard();
@@ -668,7 +668,7 @@ describe("分享卡片 · 账号切换隔离", () => {
     });
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") !== null);
 
     // 切换前旧账号的列表还在途中: 模拟 AuthGate 场景改登普通用户, 卡片不重挂载。
@@ -712,7 +712,7 @@ describe("分享卡片 · 账号切换隔离", () => {
     });
     vi.stubGlobal("fetch", mocks.fetch);
     seedUser(SUPERADMIN);
-    mounted = mount(createElement(ShareCard));
+    mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("还没有主机分享") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);

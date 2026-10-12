@@ -3,11 +3,12 @@
 // 保存只影响之后 enroll 的设备; 已接入设备持有 enroll 时下发的地址列表。
 
 import { useEffect, useRef, useState } from "react";
-import { fleetApi, type FleetBaseURLEntry } from "../../ipc/fleetApi";
+import { type FleetBaseURLEntry } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown, IconArrowUp, IconChevronRight, IconGlobe, IconPlus, IconRefresh, IconSave, IconTrash, IconXCircle } from "../../ui/icons";
 import { MAX_BASE_URLS, validateBaseURL } from "./baseUrlValidation";
+import { fleetClient } from "./clients";
 
 interface BaseUrlsSectionProps {
   entries: FleetBaseURLEntry[];
@@ -80,7 +81,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
     setSaving(true);
     setSaveError(null);
     try {
-      const saved = await fleetApi.putBaseUrls(draft);
+      const saved = await fleetClient().putBaseUrls(draft);
       onSaved(saved.base_urls);
       setDraft(saved.base_urls);
       setDirty(false);

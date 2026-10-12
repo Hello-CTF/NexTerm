@@ -57,6 +57,13 @@ vi.mock("../ipc/commands", () => ({
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
+vi.mock("../ipc/remoteApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/remoteApi")>();
+  return {
+    ...actual,
+    remoteLinkApi: { ...actual.remoteLinkApi, linkSet: mocks.syncLinkSet },
+  };
+});
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));

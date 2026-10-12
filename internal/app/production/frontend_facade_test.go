@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// 前端 IPC facade(src/ipc 下直接发起 call 的四个文件)的命令钉值必须全部落在
+// 前端 IPC facade(src/ipc 下直接发起 call 的文件)的命令钉值必须全部落在
 // production dispatcher 注册面上; 反向差集只允许 ai_takeover_resume 这一个纯后端
 // 入口(前端只接 ai_takeover_enter/run/exit)。
 var frontendFacadeFiles = []string{
@@ -18,6 +18,8 @@ var frontendFacadeFiles = []string{
 	filepath.Join("..", "..", "..", "src", "ipc", "cron.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "grantApi.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "memory.ts"),
+	filepath.Join("..", "..", "..", "src", "ipc", "remoteApi.ts"),
+	filepath.Join("..", "..", "..", "src", "ipc", "deviceTerminalApi.ts"),
 }
 
 var (

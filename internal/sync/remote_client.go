@@ -24,6 +24,8 @@ import (
 const (
 	sessionCookieName = "nexterm_session"
 	csrfHeaderName    = "X-NexTerm-CSRF"
+	// accountStateResetRequired 是账号视图 user.state 的线上常量(internal/account StateResetRequired)。
+	accountStateResetRequired = "reset_required"
 )
 
 // errSessionExpired 表示服务端会话已失效, 客户端需要用保存的口令重新登录。
@@ -54,18 +56,69 @@ func newRemoteClient(config RemoteConfig) (*remoteClient, error) {
 
 type accountSessionView struct {
 	User struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
+		ID                 string `json:"id"`
+		Username           string `json:"username"`
+		State              string `json:"state"`
+		MustChangePassword bool   `json:"must_change_password"`
 	} `json:"user"`
 	CSRFToken string `json:"csrf_token"`
 }
 
-func (c *remoteClient) login(ctx context.Context, username, password string) error {
+// loginOutcome 是 /auth/login 的 200 响应分类: 已建立会话(可区分是否强制改密)或 MFA 挑战。
+// MFA 挑战不携带会话 cookie, 凭 ticket 走 /auth/totp/login 换正式会话。
+type loginOutcome struct {
+	established   bool
+	resetRequired bool
+	mfaTicket     string
+	mfaExpiresAt  int64
+}
+
+func (c *remoteClient) login(ctx context.Context, username, password string) (*loginOutcome, error) {
 	body, err := json.Marshal(map[string]string{"username": username, "password": password})
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeInternal, "无法编码登录请求", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	response, err := syncHTTPClient(c.insecure).Do(request)
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, accountRouteError(response)
+	}
+	var view struct {
+		accountSessionView
+		Ticket    string `json:"ticket"`
+		ExpiresAt int64  `json:"expires_at"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+		return nil, ipc.WrapError(ipc.CodeInternal, "远端登录响应结构无效", err)
+	}
+	if view.Ticket != "" {
+		return &loginOutcome{mfaTicket: view.Ticket, mfaExpiresAt: view.ExpiresAt}, nil
+	}
+	if err := c.holdSession(response, view.CSRFToken); err != nil {
+		return nil, err
+	}
+	return &loginOutcome{
+		established:   true,
+		resetRequired: view.User.State == accountStateResetRequired || view.User.MustChangePassword,
+	}, nil
+}
+
+// loginTOTP 用 MFA 挑战票据 + 动态码(或一次性恢复码)换正式会话。
+func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error {
+	body, err := json.Marshal(map[string]string{"ticket": ticket, "code": code})
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码登录请求", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/auth/login", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/auth/totp/login", bytes.NewReader(body))
 	if err != nil {
 		return ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
 	}
@@ -83,6 +136,11 @@ func (c *remoteClient) login(ctx context.Context, username, password string) err
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "远端登录响应结构无效", err)
 	}
+	return c.holdSession(response, session.CSRFToken)
+}
+
+// holdSession 把登录响应的会话 cookie 与 CSRF 令牌收入内存。
+func (c *remoteClient) holdSession(response *http.Response, csrfToken string) error {
 	cookie := ""
 	for _, candidate := range response.Cookies() {
 		if candidate.Name == sessionCookieName {
@@ -93,7 +151,7 @@ func (c *remoteClient) login(ctx context.Context, username, password string) err
 		return ipc.NewError(ipc.CodeInternal, "远端登录响应缺少会话 cookie")
 	}
 	c.cookieToken = cookie
-	c.csrfToken = session.CSRFToken
+	c.csrfToken = csrfToken
 	return nil
 }
 
@@ -198,6 +256,66 @@ func (c *remoteClient) get(ctx context.Context, path string, out any) error {
 		return errSessionExpired
 	default:
 		return remoteStatusError(status, rpcErr)
+	}
+}
+
+// request 执行任意方法的 JSON 请求并保留 HTTP 状态, 语义与 do 一致:
+// err 仅覆盖传输层失败, 业务失败以状态码+rpcErr 返回。写请求自动携带 CSRF 头。
+func (c *remoteClient) request(ctx context.Context, method, path string, payload, out any) (int, *ipc.Error, error) {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法编码远端请求", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return 0, nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
+	}
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set("Accept", "application/json")
+	return c.do(request, out, true)
+}
+
+// api 是类型化远端方法的统一出口: 200 解码成功, 401 交给调用方的重登流程,
+// 其余状态映射成 ipc.Error。
+func (c *remoteClient) api(ctx context.Context, method, path string, payload, out any) error {
+	status, rpcErr, err := c.request(ctx, method, path, payload, out)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized:
+		return errSessionExpired
+	default:
+		return remoteAPIError(status, rpcErr)
+	}
+}
+
+// remoteAPIError 把远端账号/舰队/分享路由的失败映射成 ipc.Error:
+// 服务端下发的 rpcErr 代码原样透传(其 message 已是面向用户的终态文案),
+// 无 rpcErr 时按状态码归类。
+func remoteAPIError(status int, rpcErr *ipc.Error) error {
+	if rpcErr != nil {
+		return ipc.NewError(rpcErr.Code, rpcErr.Message)
+	}
+	switch {
+	case status == http.StatusBadRequest:
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("远端服务拒绝了请求参数(HTTP %d)", status))
+	case status == http.StatusForbidden || status == http.StatusTooManyRequests:
+		return ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("远端服务拒绝了请求(HTTP %d)", status))
+	case status == http.StatusNotFound:
+		return ipc.NewError(ipc.CodeNotFound, fmt.Sprintf("远端资源不存在或该功能未启用(HTTP %d)", status))
+	case status >= http.StatusInternalServerError:
+		return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("远端服务暂不可用(HTTP %d)", status))
+	default:
+		return ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端服务返回 HTTP %d", status))
 	}
 }
 

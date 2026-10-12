@@ -232,23 +232,23 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 	return link, nil
 }
 
-func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
+func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
 	if initialized, _ := s.vaultStatus(); !initialized {
-		return Link{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
+		return LinkResult{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	secret := linkSecret{}
 	// 仅信封值参与逐字段合并; 历史明文整单覆写的前提是调用方每次提交完整链接。
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
-		return Link{}, err
+		return LinkResult{}, err
 	} else if found && strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
 		plaintext, err := s.revealSettingSecret(ctx, value)
 		if err != nil {
-			return Link{}, err
+			return LinkResult{}, err
 		}
 		if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
-			return Link{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
+			return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 		}
 	}
 	if patch.URL != nil {
@@ -265,17 +265,111 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
 	}
 	encoded, err := json.Marshal(secret)
 	if err != nil {
-		return Link{}, ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
+		return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
 	}
 	protected, err := s.protectSettingSecret(ctx, string(encoded))
 	if err != nil {
-		return Link{}, err
+		return LinkResult{}, err
 	}
 	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
-		return Link{}, err
+		return LinkResult{}, err
 	}
 	s.wake()
-	return s.linkView(secret), nil
+	result := LinkResult{Link: s.linkView(secret)}
+	if !result.Link.IsConfigured() {
+		return result, nil
+	}
+	// 保存不因探测失败而回滚(与既有"先存后验"语义一致): 失败只记 LastError,
+	// 成功分态 connected/mfa_required/reset_required, connected 时刷新 VerifiedAt。
+	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
+	if err != nil {
+		s.recordProbe(ctx, err)
+		return s.refreshLinkResult(ctx, result), nil
+	}
+	result.applyConnect(connect)
+	if connect.State == LinkConnectConnected {
+		s.recordProbe(ctx, nil)
+		return s.refreshLinkResult(ctx, result), nil
+	}
+	return result, nil
+}
+
+func (s *Service) refreshLinkResult(ctx context.Context, result LinkResult) LinkResult {
+	link, err := s.LinkGet(ctx)
+	if err != nil {
+		return result
+	}
+	result.Link = link
+	return result
+}
+
+// LinkResult 是链接写操作与登录入职的返回: Link 视图之外附带连接三态,
+// MFA/强制改密分支携带完成入职所需的票据或一次性恢复密钥。
+type LinkResult struct {
+	Link
+	Connect      string `json:"connect"`
+	MFATicket    string `json:"mfaTicket,omitempty"`
+	MFAExpiresAt int64  `json:"mfaExpiresAt,omitempty"`
+	RecoveryKey  string `json:"recoveryKey,omitempty"`
+}
+
+func (r *LinkResult) applyConnect(connect LinkConnectResult) {
+	r.Connect = connect.State
+	r.MFATicket = connect.MFATicket
+	r.MFAExpiresAt = connect.MFAExpiresAt
+	r.RecoveryKey = connect.RecoveryKey
+}
+
+func remoteConfigFromSecret(secret linkSecret) RemoteConfig {
+	return RemoteConfig{URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure}
+}
+
+// LinkMFA 提交 TOTP 码完成两步登录入职; 票据由上一次 LinkSet 的 mfa_required 返回下发。
+func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	secret, err := s.linkSecret(ctx)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	if strings.TrimSpace(code) == "" {
+		return LinkResult{}, ipc.NewError(ipc.CodeBadParam, "验证码不能为空")
+	}
+	connect, err := s.engine.CompleteMFA(ctx, remoteConfigFromSecret(secret), strings.TrimSpace(code))
+	if err != nil {
+		return LinkResult{}, err
+	}
+	s.recordProbe(ctx, nil)
+	s.wake()
+	result := LinkResult{Link: s.linkView(secret)}
+	result.applyConnect(connect)
+	return result, nil
+}
+
+// LinkResetPassword 提交新密码完成强制改密入职; 成功后保存的链接口令同步更新为新口令。
+func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (LinkResult, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	secret, err := s.linkSecret(ctx)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	if newPassword == "" {
+		return LinkResult{}, ipc.NewError(ipc.CodeBadParam, "新密码不能为空")
+	}
+	connect, err := s.engine.CompleteResetPassword(ctx, remoteConfigFromSecret(secret), newPassword)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	secret.Password = newPassword
+	if err := s.saveLinkSecret(ctx, secret); err != nil {
+		return LinkResult{}, err
+	}
+	s.recordProbe(ctx, nil)
+	s.wake()
+	result := LinkResult{Link: s.linkView(secret)}
+	result.applyConnect(connect)
+	return result, nil
 }
 
 func (s *Service) wake() {

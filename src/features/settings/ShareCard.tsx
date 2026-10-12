@@ -1,4 +1,4 @@
-// 终端分享卡片 (SHARE158): WEB 账号模式下的真实分享管理界面。
+// 终端分享卡片 (SHARE158): 账号模式下的真实分享管理界面。
 // 数据全部来自真实 HTTP 合同 (internal/fleet/server/sharing_http.go 与 http.go):
 // - 主机分享 (POST/GET /share/host-shares + /share/host-shares/{id}/revoke):
 //   注册用户把接入设备 (装有设备 agent 的主机) 分享给另一个注册用户, 对方在有效期内经
@@ -9,13 +9,13 @@
 // - 公开链接 (GET /share/links + /share/links/{id}/revoke): 本切片只有列表与
 //   吊销, 没有创建入口, 也不展示任何 token (列表合同不含 token, 一次性 token
 //   只可能来自真实创建响应)。
-// 列表由服务端按 owner/superadmin 过滤; 桌面端没有分享后端,
-// 一律给显式不可用态, 不发任何请求。
+// 列表由服务端按 owner/superadmin 过滤; 桌面端经「账号同步」link 的服务端会话
+// 代理同一批合同 (remote_share_*), 未登录给「登录服务端账号后可用」的引导卡
+// 并指向「账号同步」分区, 不发任何请求。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
+import { type FleetDevice } from "../../ipc/fleetApi";
 import {
-  sharingApi,
   type HostShareView,
   type ShareLinkView,
   type SharePermission,
@@ -23,6 +23,8 @@ import {
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
+import { fleetClient, sharingClient } from "../fleet/clients";
+import { useFleetAccount } from "../fleet/useFleetAccount";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
@@ -65,11 +67,22 @@ function ShareUnsupported() {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
-        <span className="nx-badge nx-badge-amber">桌面端不可用</span>
+        <span className="nx-badge nx-badge-amber">登录服务端账号后可用</span>
       </div>
       <p className="nx-hint">
-        桌面端是本地优先模式，没有账号体系；终端分享仅在浏览器模式连接服务器并登录后可用。
+        主机分享与公开链接依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可把接入的设备分享给其他注册用户并管理公开链接。
       </p>
+      <div className="mt-3">
+        <button
+          type="button"
+          className="nx-btn nx-btn-outline nx-btn-sm"
+          onClick={() =>
+            document.getElementById("settings-account")?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }
+        >
+          去设置 → 账号同步登录
+        </button>
+      </div>
     </section>
   );
 }
@@ -104,16 +117,26 @@ function ShareAuthOff() {
 
 export function ShareCard() {
   const authStatus = useAuth((s) => s.status);
-  if (!WEB) return <ShareUnsupported />;
-  if (authStatus?.auth === "off") return <ShareAuthOff />;
-  return <ShareManagement />;
+  const account = useFleetAccount();
+  // auth=off 只有 WEB 能感知 (桌面登录本身依赖账号体系, 登录即隐含 auth=on)。
+  if (WEB && authStatus?.auth === "off") return <ShareAuthOff />;
+  if (account.loading) {
+    return (
+      <section className="nx-card">
+        <div className="mb-1 flex items-center gap-2">
+          <IconGlobe size={15} className="text-neutral-400" />
+          <span className="nx-card-title">分享</span>
+          <span className="nx-hint">账号状态读取中…</span>
+        </div>
+      </section>
+    );
+  }
+  if (!account.userId) return WEB ? <ShareLoginHint /> : <ShareUnsupported />;
+  return <ShareManagement userId={account.userId} isAdmin={account.isAdmin} />;
 }
 
-function ShareManagement() {
+function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean }) {
   const { pushToast } = useUi();
-  const user = useAuth((s) => s.user);
-  const isAdmin = user?.role === "superadmin";
-  const userId = user?.id ?? null;
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [shares, setShares] = useState<HostShareView[] | null>(null);
@@ -157,12 +180,13 @@ function ShareManagement() {
   }
 
   const load = useCallback(() => {
-    if (!WEB) return;
     const seq = ++loadSeq.current;
     setLoading(true);
     setListError(null);
+    const fleet = fleetClient();
+    const sharing = sharingClient();
     const tasks = [
-      fleetApi.devices().then(
+      fleet.devices().then(
         (r) => {
           if (seq === loadSeq.current) setDevices(r.devices);
         },
@@ -170,7 +194,7 @@ function ShareManagement() {
           if (seq === loadSeq.current) setListError(describeError(e));
         },
       ),
-      sharingApi.hostShares().then(
+      sharing.hostShares().then(
         (r) => {
           if (seq === loadSeq.current) setShares(r.shares);
         },
@@ -178,7 +202,7 @@ function ShareManagement() {
           if (seq === loadSeq.current) setListError(describeError(e));
         },
       ),
-      sharingApi.links().then(
+      sharing.links().then(
         (r) => {
           if (seq === loadSeq.current) setLinks(r.links);
         },
@@ -193,16 +217,13 @@ function ShareManagement() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
     load();
-  }, [user, load]);
+  }, [userId, load]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-
-  if (!user) return <ShareLoginHint />;
 
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
   // 服务端要求分享目标是接入设备 (device_agent 行 + 终端开启), 已吊销设备不可分享。
@@ -215,7 +236,7 @@ function ShareManagement() {
     setCreating(true);
     setCreateError(null);
     try {
-      await sharingApi.createHostShare({ deviceId, recipientUsername: recipient, write, ttlMs });
+      await sharingClient().createHostShare({ deviceId, recipientUsername: recipient, write, ttlMs });
       if (epoch !== accountEpoch.current) return;
       pushToast("success", `已将主机「${deviceName(deviceId)}」分享给 ${recipient}`);
       setCreateOpen(false);
@@ -241,7 +262,7 @@ function ShareManagement() {
     if (!ok) return;
     if (epoch !== accountEpoch.current) return;
     try {
-      await sharingApi.revokeHostShare(share.id);
+      await sharingClient().revokeHostShare(share.id);
       if (epoch !== accountEpoch.current) return;
       pushToast("success", `已吊销「${share.recipient_username}」的主机分享`);
       load();
@@ -261,7 +282,7 @@ function ShareManagement() {
     if (!ok) return;
     if (epoch !== accountEpoch.current) return;
     try {
-      await sharingApi.revokeLink(link.id);
+      await sharingClient().revokeLink(link.id);
       if (epoch !== accountEpoch.current) return;
       pushToast("success", "已吊销公开链接");
       load();

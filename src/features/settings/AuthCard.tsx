@@ -1,11 +1,15 @@
 // 个人账号卡片:当前用户、修改密码(重包裹 DEK)、两步验证(TOTP)、恢复密钥、设备管理、退出登录。
-// 未登录时是设置页唯一的登录入口(WEB);桌面端本地优先,账号体系在同步服务端
-// (见 SyncCard 桌面端登录卡),未登录不渲染。
+// 未登录时是设置页唯一的登录入口(WEB);桌面端身份来自「账号同步」link 的服务端会话
+// (见 ../auth/desktopAccount.ts),登录后渲染账号信息/改密/设备管理(均走 remoteAccountApi 代理),
+// TOTP 与配对码添加设备代理未覆盖,如实隐藏并注明浏览器管理;未登录不渲染,登录入口在 SyncCard。
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { authApi, authAvailable, type AccountDevice, type TotpSetup, type TotpStatus } from "../../ipc/authApi";
+import { remoteAccountApi } from "../../ipc/remoteApi";
+import { DESKTOP } from "../../ipc/env";
 import { useAuth } from "../auth/store";
+import { useDesktopAccount } from "../auth/desktopAccount";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -26,7 +30,10 @@ import {
 export function AuthCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
-  const user = useAuth((s) => s.user);
+  const sessionUser = useAuth((s) => s.user);
+  // 桌面端身份来自「账号同步」link 的服务端会话(useAuth 在桌面不持有用户)。
+  const desktopAccount = useDesktopAccount();
+  const user = DESKTOP ? desktopAccount : sessionUser;
   const status = useAuth((s) => s.status);
   const changePassword = useAuth((s) => s.changePassword);
   const logout = useAuth((s) => s.logout);
@@ -50,8 +57,8 @@ export function AuthCard() {
   const loadDevices = useCallback(() => {
     if (!user) return Promise.resolve();
     setDevicesError(null);
-    return authApi
-      .devices()
+    const fetchDevices = DESKTOP ? remoteAccountApi.devices : authApi.devices;
+    return fetchDevices()
       .then((r) => setDevices(r.devices))
       .catch((e: unknown) => setDevicesError(describeError(e)));
   }, [user]);
@@ -73,7 +80,15 @@ export function AuthCard() {
     }
     setPwdBusy(true);
     try {
-      await changePassword(oldPassword, newPassword);
+      if (DESKTOP) {
+        // 桌面: DEK 重包裹在 Go 侧引擎会话内完成, 恢复密钥仅本次响应下发, 当场展示。
+        const r = await remoteAccountApi.changePassword(oldPassword, newPassword);
+        if (r.recoveryKey) {
+          useAuth.setState({ pendingRecoveryKey: { formatted: r.recoveryKey, canonical: r.recoveryKey } });
+        }
+      } else {
+        await changePassword(oldPassword, newPassword);
+      }
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -92,7 +107,11 @@ export function AuthCard() {
     });
     if (!ok) return;
     try {
-      await authApi.deviceRevoke(device.id);
+      if (DESKTOP) {
+        await remoteAccountApi.deviceRevoke(device.id);
+      } else {
+        await authApi.deviceRevoke(device.id);
+      }
       pushToast("success", `已吊销「${device.name}」`);
       void loadDevices();
     } catch (e) {
@@ -203,7 +222,7 @@ export function AuthCard() {
             用户名 <b>{user.username}</b>
           </span>
           {user.display_name && <span>显示名 {user.display_name}</span>}
-          <span className="nx-hint">最近登录 {formatTime(user.last_login_at)}</span>
+          {user.last_login_at > 0 && <span className="nx-hint">最近登录 {formatTime(user.last_login_at)}</span>}
         </div>
 
         {platformManaged && (
@@ -213,7 +232,14 @@ export function AuthCard() {
           </p>
         )}
 
-        {!platformManaged && (
+        {DESKTOP && (
+          <p className="nx-hint mt-2">
+            本账号由「账号同步」的服务端连接登录，切换账号或重新登录在下方「账号同步」中操作；
+            退出登录与两步验证管理请在浏览器中打开服务端 Web 界面。
+          </p>
+        )}
+
+        {!platformManaged && !DESKTOP && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
@@ -302,7 +328,19 @@ export function AuthCard() {
         </section>
       )}
 
-      <TotpCard />
+      {DESKTOP ? (
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconShield size={15} className="text-neutral-400" />
+            <span className="nx-card-title">两步验证（TOTP）</span>
+          </div>
+          <p className="nx-hint">
+            两步验证的绑定、换绑与关闭暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理；开启后对桌面端登录同样生效。
+          </p>
+        </section>
+      ) : (
+        <TotpCard />
+      )}
 
       {pendingRecoveryKey && (
         <section className="nx-card">
@@ -347,13 +385,16 @@ export function AuthCard() {
             <IconRefresh size={12} />
             刷新
           </button>
-          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void issueEnrollCode()}>
-            <IconPlus size={12} />
-            添加设备
-          </button>
+          {!DESKTOP && (
+            <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void issueEnrollCode()}>
+              <IconPlus size={12} />
+              添加设备
+            </button>
+          )}
         </div>
         <p className="nx-hint mb-3">
           已登录的设备可以随时吊销，吊销后该设备立即退出登录。
+          {DESKTOP && "配对码添加新设备请在浏览器中打开服务端 Web 界面操作。"}
         </p>
 
         {enrollCode && (

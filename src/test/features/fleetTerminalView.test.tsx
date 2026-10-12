@@ -4,7 +4,7 @@
 // 吊销/策略/离线摘要缺失状态、DevicesView 设备行的打开入口与账号切换清理。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { flush, flushUntil, mount, mountWithClient, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -599,7 +599,7 @@ describe("DeviceTerminalView 结束终端", () => {
 describe("DevicesView 打开入口", () => {
   it("在线且开启终端的设备行显示「终端」按钮, 点击打开 deviceTerminal 标签", async () => {
     routeDevices([DEVICE]);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => bodyText().includes("web-01"));
     const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "终端");
     expect(button).toBeTruthy();
@@ -616,7 +616,7 @@ describe("DevicesView 打开入口", () => {
       { ...DEVICE, id: "d-2", name: "offline-01", last_seen_at: NOW - 3600_000, agent: { ...DEVICE.agent, last_seen_at: NOW - 3600_000 } },
       { ...DEVICE, id: "d-3", name: "no-term-01", agent: { ...DEVICE.agent, terminal_enabled: false } },
     ]);
-    mounted = mount(createElement(DevicesView));
+    mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => bodyText().includes("offline-01"));
     const buttons = [...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "终端");
     expect(buttons).toHaveLength(1);

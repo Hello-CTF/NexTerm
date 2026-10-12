@@ -2,6 +2,9 @@
 // 只读预览链接。观看者看到当前屏幕与后续实时输出, 不能输入; 链接有过期与吊销。
 // 与主机分享 (host_share 登录账号间分享) 和设备公开链接是不同入口。token 只在
 // 创建成功当场持有用于拼公开 URL, 不写日志、不持久化、不进 web storage。
+// 数据源按 TRANSPORT 分流: WEB 直连 previewApi (服务端托管 tab 同 id); 桌面走
+// 远程中继 — 创建经 preview_share_create (建远程壳+链接+起输出中继), 列表按
+// 当前 tab 活跃中继的壳 id 过滤 remoteSharingApi.previewLinks, 吊销同远程。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -11,6 +14,8 @@ import {
   revokePreviewLink,
   type PreviewLinkView,
 } from "./previewApi";
+import { WEB } from "../../ipc/env";
+import { remotePreviewApi, remoteSharingApi } from "../../ipc/remoteApi";
 import { describeError } from "../../ui/errorText";
 import { IconGlobe } from "../../ui/icons";
 
@@ -54,9 +59,22 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   const refresh = useCallback(async () => {
     const epoch = epochRef.current;
     try {
-      const result = await listPreviewLinks();
-      if (epoch !== epochRef.current || unmountedRef.current) return;
-      setLinks(activePreviews(result.links ?? [], tabId));
+      if (WEB) {
+        const result = await listPreviewLinks();
+        if (epoch !== epochRef.current || unmountedRef.current) return;
+        setLinks(activePreviews(result.links ?? [], tabId));
+      } else {
+        // 桌面: 链接挂在远程壳上, 先查当前 tab 活跃中继的壳 id 再过滤。
+        const active = await remotePreviewApi.active(tabId);
+        if (!active.sessionId) {
+          if (epoch !== epochRef.current || unmountedRef.current) return;
+          setLinks([]);
+          return;
+        }
+        const result = await remoteSharingApi.previewLinks();
+        if (epoch !== epochRef.current || unmountedRef.current) return;
+        setLinks(activePreviews(result.links ?? [], active.sessionId));
+      }
     } catch {
       // 列表失败不打断创建入口; 下一次打开面板会重试。
     }
@@ -97,9 +115,15 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
     setCreating(true);
     setError(null);
     try {
-      const link = await createPreviewLink({ sessionId: tabId, ttlMs });
-      if (epoch !== epochRef.current || unmountedRef.current) return;
-      setCreatedUrl(previewPublicUrl(link.token));
+      if (WEB) {
+        const link = await createPreviewLink({ sessionId: tabId, ttlMs });
+        if (epoch !== epochRef.current || unmountedRef.current) return;
+        setCreatedUrl(previewPublicUrl(link.token));
+      } else {
+        const created = await remotePreviewApi.create(tabId, ttlMs);
+        if (epoch !== epochRef.current || unmountedRef.current) return;
+        setCreatedUrl(created.url);
+      }
       void refresh();
     } catch (e) {
       if (epoch !== epochRef.current || unmountedRef.current) return;
@@ -112,7 +136,11 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   const revoke = useCallback(
     async (id: string) => {
       try {
-        await revokePreviewLink(id);
+        if (WEB) {
+          await revokePreviewLink(id);
+        } else {
+          await remoteSharingApi.revokePreviewLink(id);
+        }
       } catch (e) {
         if (!unmountedRef.current) setError(describeError(e));
       }

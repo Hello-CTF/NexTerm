@@ -52,6 +52,7 @@ type ProductionServices struct {
 	Events           ipc.Emitter
 	Update           *update.Manager
 	channelBridge    *terminalBridge
+	previewRelay     *previewRelayManager
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore
 	sshConnector     *productionConnector
@@ -80,6 +81,9 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	}
 	if services.channelBridge == nil {
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
+	}
+	if services.previewRelay == nil && services.Sync != nil {
+		services.previewRelay = newPreviewRelayManager(services.Sessions, services.Sync.Remote(), services.Sync, nil)
 	}
 	if services.terminalCommands == nil {
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
@@ -129,12 +133,28 @@ func productionModules(services ProductionServices) []Module {
 		})
 	}
 	if services.Sync != nil {
+		deviceTerminal := newDeviceTerminalManager(services.Sync.Remote().DialDeviceBridge, services.Events)
 		modules = append(modules, Module{Name: "sync", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 			if err := services.Sync.RegisterCommands(dispatcher); err != nil {
 				return err
 			}
-			return registerSyncApplyCommands(dispatcher, services.Sync)
+			if err := registerSyncApplyCommands(dispatcher, services.Sync); err != nil {
+				return err
+			}
+			if err := registerRemoteCommands(dispatcher, services.Sync); err != nil {
+				return err
+			}
+			if services.previewRelay != nil {
+				if err := registerPreviewRelayCommands(dispatcher, services.previewRelay); err != nil {
+					return err
+				}
+			}
+			return registerDeviceTerminalCommands(dispatcher, deviceTerminal)
 		}, Component: services.Sync})
+		modules = append(modules, Module{Name: "device-terminal", Component: deviceTerminal})
+		if services.previewRelay != nil {
+			modules = append(modules, Module{Name: "preview-relay", Component: services.previewRelay})
+		}
 	}
 	if services.Profiles != nil {
 		modules = append(modules, Module{

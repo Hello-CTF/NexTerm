@@ -3,6 +3,10 @@
 // 安全边界: 输入只转发终端按键字节, create 不带命令 (设备默认 shell), 绝不发送
 // 宿主密码或私钥; state digest 只在内存中用于 hello, 不展示不持久化。
 // 关闭标签 = detach (设备端会话保留), 「结束终端」是唯一销毁路径且需显式确认。
+// 双传输 (FLEET 第 2 期): WEB 直连 WebSocket, 桌面走 wails IPC 桥
+// (device_terminal_* 命令), 桥句柄同为 DeviceBridgeHandle, 视图主体不感知差异;
+// 设备清单与公开链接按 TRANSPORT 在 fleetApi/remoteApi 间分流, 桌面未登录
+// 服务端账号时给显式降级卡 (DevicesView 同一风格)。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
@@ -10,13 +14,16 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
+import { WEB } from "../../ipc/env";
 import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
+import { remoteFleetApi, remoteSharingApi } from "../../ipc/remoteApi";
+import { syncApi } from "../../ipc/commands";
 import {
   DeviceTerminalError,
   killDeviceTerminal,
   openDeviceTerminal,
   resumeDeviceTerminal,
-  type DeviceBridge,
+  type DeviceBridgeHandle,
   type SupervisorSessionIdentity,
 } from "../../ipc/deviceTerminalApi";
 import type { SharePermission } from "../../ipc/sharingApi";
@@ -46,6 +53,7 @@ type Phase =
   | { kind: "ready" }
   | { kind: "exited"; detail: string }
   | { kind: "disconnected"; message: string }
+  | { kind: "linkRequired" }
   | { kind: "failed"; message: string; canRestart: boolean };
 
 interface SessionRef {
@@ -99,13 +107,27 @@ function describeSessionError(error: unknown): { message: string; canRestart: bo
   return { message: describeError(error), canRestart: true };
 }
 
+// openAccountSyncSettings 跳转「设置 → 账号同步」卡 (与 DevicesView 同一实现,
+// 此处独立副本避免 features 内交叉引用); 桌面降级卡的登录入口。
+function openAccountSyncSettings(attempt = 0): void {
+  if (attempt === 0) {
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+  }
+  const target = document.getElementById("settings-account");
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (attempt < 20) window.setTimeout(() => openAccountSyncSettings(attempt + 1), 50);
+}
+
 export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; visible?: boolean }) {
   const [device, setDevice] = useState<FleetDevice | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const bridgeRef = useRef<DeviceBridge | null>(null);
+  const bridgeRef = useRef<DeviceBridgeHandle | null>(null);
   const sessionRef = useRef<SessionRef | null>(null);
   const deviceRef = useRef<FleetDevice | null>(null);
   // generationRef 是 open/resume 的代次: 新一次 open/resume 使旧代次的 wire/
@@ -130,13 +152,16 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   // shareCreated 只在创建成功后当场持有公开 URL (含一次性 token); 面板关闭、
   // 会话离开 ready 或视图卸载即清除, 不写日志、不持久化、不进 web storage。
   const [shareCreated, setShareCreated] = useState<{ url: string; permission: SharePermission; expiresAt: number } | null>(null);
+  // linkUrlRef 是桌面端已连接服务端的基础地址: 公开分享链接必须指向服务端,
+  // 桌面窗口自身的 wails:// origin 对外不可达。
+  const linkUrlRef = useRef("");
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
   deviceRef.current = device;
   const { pushToast } = useUi();
 
   const wireBridge = useCallback(
-    (bridge: DeviceBridge) => {
+    (bridge: DeviceBridgeHandle) => {
       // 替换旧桥接时必定先 detach (自然 exit/失败重开路径下旧桥可能仍半开)
       if (bridgeRef.current && bridgeRef.current !== bridge) bridgeRef.current.detach();
       bridge.onOutput = (data) => termRef.current?.write(data);
@@ -158,7 +183,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   );
 
   const loadDevice = useCallback(async (): Promise<FleetDevice | null> => {
-    const list = await fleetApi.devices();
+    const list = WEB ? await fleetApi.devices() : await remoteFleetApi.devices();
     return list.devices.find((d) => d.id === deviceId) ?? null;
   }, [deviceId]);
 
@@ -167,6 +192,27 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       const generation = ++generationRef.current;
       const stale = () => generation !== generationRef.current || Boolean(isDisposed?.());
       setPhase({ kind: "connecting" });
+      if (!WEB) {
+        // 桌面端先验账号连接: 未登录给显式降级卡, 不让远端请求砸成 generic 失败;
+        // 通过时顺带取服务端基础地址供公开链接拼接。
+        let status: Awaited<ReturnType<typeof syncApi.status>>;
+        try {
+          status = await syncApi.status();
+        } catch (e) {
+          if (!stale()) setPhase({ kind: "failed", message: `读取账号连接状态失败：${describeError(e)}`, canRestart: true });
+          return;
+        }
+        if (!status.loggedIn) {
+          if (!stale()) setPhase({ kind: "linkRequired" });
+          return;
+        }
+        try {
+          const link = await syncApi.linkGet();
+          linkUrlRef.current = link.url.replace(/\/+$/, "");
+        } catch {
+          linkUrlRef.current = "";
+        }
+      }
       let row: FleetDevice | null;
       try {
         row = await loadDevice();
@@ -190,7 +236,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       const rows = Math.max(1, term.rows);
       // wire 在 attach 前调用; 过期代次直接 detach, attach 随之中断,
       // openDeviceTerminal 的回收逻辑会 killSession, 设备端不留孤儿 shell。
-      const wire = (bridge: DeviceBridge) => {
+      const wire = (bridge: DeviceBridgeHandle) => {
         if (stale()) {
           bridge.detach();
           return;
@@ -256,7 +302,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     // backlog 从 seq 0 全量重放, 先清屏再写回, 断开期间的内容不丢;
     // 清屏必须发生在 attach 之前 (attach 一批准对端立即开始重放)。
     termRef.current?.reset();
-    const wire = (bridge: DeviceBridge) => {
+    const wire = (bridge: DeviceBridgeHandle) => {
       if (stale()) {
         bridge.detach();
         return;
@@ -332,9 +378,12 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     setShareCreating(true);
     setShareError(null);
     try {
-      const link = await createShareLink({ deviceId, sessionId: session.id, write: shareWrite, ttlMs: shareTtlMs });
+      const link = WEB
+        ? await createShareLink({ deviceId, sessionId: session.id, write: shareWrite, ttlMs: shareTtlMs })
+        : await remoteSharingApi.createLink({ deviceId, sessionId: session.id, write: shareWrite, ttlMs: shareTtlMs });
       if (epoch !== shareEpochRef.current || unmountedRef.current) return;
-      setShareCreated({ url: sharePublicUrl(link.token), permission: link.permission, expiresAt: link.expires_at });
+      const url = WEB ? sharePublicUrl(link.token) : `${linkUrlRef.current}/share/public/${link.token}`;
+      setShareCreated({ url, permission: link.permission, expiresAt: link.expires_at });
     } catch (e) {
       if (epoch !== shareEpochRef.current || unmountedRef.current) return;
       setShareError(describeError(e));
@@ -450,6 +499,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       <span className="nx-badge">连接中</span>
     ) : phase.kind === "exited" ? (
       <span className="nx-badge">已结束</span>
+    ) : phase.kind === "linkRequired" ? (
+      <span className="nx-badge">未登录</span>
     ) : (
       <span className="nx-badge nx-badge-red">已断开</span>
     );
@@ -582,6 +633,30 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
               <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void resume()}>
                 <IconRefresh size={12} />
                 重新连接
+              </button>
+            </div>
+          </div>
+        )}
+        {phase.kind === "linkRequired" && (
+          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 px-4">
+            <div className="flex w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/85 px-6 py-7 text-center">
+              <div className="nx-empty-icon">
+                <IconTerminal size={18} />
+              </div>
+              <div>
+                <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">
+                  登录服务端账号后可用
+                </div>
+                <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
+                  设备远程终端依赖服务端账号体系，在「设置 → 账号同步」连接并登录服务端账号后即可打开这台设备的终端。
+                </div>
+              </div>
+              <button
+                type="button"
+                className="nx-btn nx-btn-outline nx-btn-sm"
+                onClick={() => openAccountSyncSettings()}
+              >
+                去设置 → 账号同步登录
               </button>
             </div>
           </div>

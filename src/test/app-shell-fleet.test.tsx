@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-// FLEET149 app 壳: 桌面端传输不显示「设备管理」入口,避免用户点进去才发现不可用。
+// FLEET149 app 壳: 桌面端也显示「设备管理」入口(点进去是登录引导视图), 仅入口展示不发 HTTP。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -77,12 +77,12 @@ afterEach(() => {
 });
 
 describe("app 壳 · 设备管理导航", () => {
-  it("桌面端不显示设备管理入口,也不发 HTTP", async () => {
+  it("桌面端显示设备管理入口,仅展示入口不发 HTTP", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountApp();
     await flushUntil(() => document.querySelector('button[aria-label="设置"]') !== null);
 
-    expect(document.querySelector('button[aria-label="设备管理"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="设备管理"]')).not.toBeNull();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

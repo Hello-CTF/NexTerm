@@ -54,13 +54,14 @@ type Engine struct {
 	opMu      sync.Mutex
 	sessionMu sync.Mutex
 	session   *remoteSession
+	pending   map[string]*pendingLinkLogin
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Engine{store: database, vault: credentialVault, logger: logger}
+	return &Engine{store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{}}
 }
 
 // kindOptIn 是同步对象在一轮同步内的 opt-in 快照; 零值即硬关闭。
@@ -155,17 +156,30 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remoteSession, error) {
 	key := config.URL + "\x00" + config.Username
 	e.sessionMu.Lock()
-	defer e.sessionMu.Unlock()
-	if e.session != nil && e.session.key == key {
-		return e.session, nil
+	cached := e.session
+	e.sessionMu.Unlock()
+	if cached != nil && cached.key == key {
+		return cached, nil
 	}
 	client, err := newRemoteClient(config)
 	if err != nil {
 		return nil, err
 	}
-	if err := client.login(ctx, config.Username, config.Password); err != nil {
+	outcome, err := client.login(ctx, config.Username, config.Password)
+	if err != nil {
 		return nil, err
 	}
+	if outcome.mfaTicket != "" {
+		return nil, ipc.NewError(ipc.CodeForbidden, "账号已开启两步验证：请先在同步设置中完成验证")
+	}
+	if outcome.resetRequired {
+		return nil, ipc.NewError(ipc.CodeForbidden, "账号密码已被管理员重置：请先在同步设置中完成密码重置")
+	}
+	return e.establishSession(ctx, key, client, config.Password)
+}
+
+// establishSession 在密码通道已通过后完成会话入职: 取身份与 DEK 信封、解包 DEK 并缓存会话。
+func (e *Engine) establishSession(ctx context.Context, key string, client *remoteClient, password string) (*remoteSession, error) {
 	userID, err := client.me(ctx)
 	if err != nil {
 		return nil, err
@@ -174,10 +188,12 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 	if err != nil {
 		return nil, err
 	}
-	dek, err := vault.UnwrapUserDEK(config.Password, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams)
+	dek, err := vault.UnwrapUserDEK(password, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams)
 	if err != nil {
 		return nil, err
 	}
+	e.sessionMu.Lock()
+	defer e.sessionMu.Unlock()
 	e.session = &remoteSession{key: key, userID: userID, client: client, dek: dek}
 	return e.session, nil
 }

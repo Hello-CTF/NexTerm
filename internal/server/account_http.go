@@ -164,6 +164,11 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 		session("GET /share/previews", s.servePreviewLinkList)
 		sessionCSRF("POST /share/previews", s.servePreviewLinkCreate)
 		sessionCSRF("POST /share/previews/{id}/revoke", s.servePreviewLinkRevoke)
+		if s.remoteSessions != nil {
+			sessionCSRF("POST /share/remote-sessions", s.serveRemoteSessionCreate)
+			sessionCSRF("GET /share/remote-sessions/{id}/feed", s.serveRemoteSessionFeed)
+			sessionCSRF("DELETE /share/remote-sessions/{id}", s.serveRemoteSessionDelete)
+		}
 	}
 
 	s.mountPreferenceRoutes(mux)

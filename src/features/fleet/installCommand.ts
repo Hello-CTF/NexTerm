@@ -18,3 +18,17 @@ export function oneLineInstallCommand(baseUrl: string, insecure: boolean, code: 
   const scriptUrl = `${baseUrl}/install-device.sh`;
   return `curl -fsSL${insecure ? " --insecure" : ""} ${shellQuote(scriptUrl)} | sh -s -- --server ${shellQuote(baseUrl)} --code ${shellQuote(code)} --version ${shellQuote(version)}${insecure ? " --insecure" : ""}`;
 }
+
+// psQuote 是 PowerShell 字面字符串引用: 单引号包裹, 内嵌单引号双写转义
+// (shellQuote 的 '\'' 形态在 PowerShell 里不合法)。
+export function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+// Windows 设备走 PowerShell 版 install-device.ps1: iex 包 scriptblock 的形态
+// 才能向远端脚本透传 --server/--code/--version (与 sh 版同名参数); 直管道
+// iwr ... | iex 无法带参数。ps1 由独立交付物提供, 此处只约定 URL 与参数形态。
+export function oneLineInstallCommandWindows(baseUrl: string, insecure: boolean, code: string, version: string): string {
+  const scriptUrl = `${baseUrl}/install-device.ps1`;
+  return `iex "& { $(iwr -UseBasicParsing ${psQuote(scriptUrl)}) } --server ${psQuote(baseUrl)} --code ${psQuote(code)} --version ${psQuote(version)}${insecure ? " --insecure" : ""}"`;
+}

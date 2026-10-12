@@ -8,8 +8,16 @@
 // create/attach 与 killSession 各用一条独立桥接 (与 Go 客户端同一模型:
 // 每条桥接一条连接); attach 后 output 从 seq 0 重放全量 backlog, 客户端按
 // seq 严格递增校验, 失配即 protocol 错误 (与 Go Stream.readLoop 一致)。
+//
+// 双传输: WEB 经 DeviceBridge (WebSocket 直连, 同源 cookie 自动携带); 桌面经
+// DesktopDeviceBridge (wails IPC 桥到 internal/app/production/device_terminal.go,
+// 协议编解码在 Go 侧复用 internal/supervisor 客户端, 会话 cookie+CSRF 由
+// internal/sync 的 remoteClient 注入)。两者实现同一 DeviceBridgeHandle,
+// openDeviceTerminal/resumeDeviceTerminal/killDeviceTerminal 按 TRANSPORT 分流。
 
-import { wsUrl } from "./env";
+import { WEB, wsUrl } from "./env";
+import { call } from "./commands";
+import { listenEvent } from "./events";
 
 export const SUPERVISOR_PROTOCOL_VERSION = 2;
 export const SUPERVISOR_MAX_FRAME_PAYLOAD = 256 * 1024;
@@ -191,6 +199,21 @@ export interface DeviceBridgeHandlers {
   onClose?: (error: DeviceTerminalError | null) => void;
 }
 
+// DeviceBridgeHandle 是视图层消费的桥接句柄: WEB 由 DeviceBridge (WebSocket
+// 直连) 实现, 桌面由 DesktopDeviceBridge (IPC 桥) 实现。input/resize/kill 与
+// output/exit/close 回调语义两种传输逐条对齐, 视图不感知传输差异。
+export interface DeviceBridgeHandle {
+  onOutput: ((data: Uint8Array) => void) | null;
+  onExit: ((exit: SupervisorExit) => void) | null;
+  onClose: ((error: DeviceTerminalError | null) => void) | null;
+  input(data: Uint8Array): Promise<number>;
+  resize(cols: number, rows: number): Promise<void>;
+  kill(): Promise<void>;
+  detach(): void;
+  readonly isAttached: boolean;
+  readonly isClosed: boolean;
+}
+
 type WebSocketFactory = (url: string) => WebSocket;
 
 const defaultWebSocketFactory: WebSocketFactory = (url) => new WebSocket(url);
@@ -199,7 +222,7 @@ const defaultWebSocketFactory: WebSocketFactory = (url) => new WebSocket(url);
 // connect (hello 协商) -> create 或 attach (流式) -> input/resize/kill -> detach。
 // 同一时刻只允许一个未完成请求 (对齐 Go clientConn 的串行语义); attach 后
 // output/exit/fatal 与响应帧交错, 由读循环按类型分发。
-export class DeviceBridge {
+export class DeviceBridge implements DeviceBridgeHandle {
   private socket: WebSocket;
   private parser = new SupervisorFrameParser();
   private pending: {
@@ -560,7 +583,7 @@ export class DeviceBridge {
 // settled 后以 onCancel(null) 注销; connecting 取消直接关闭 creator (create
 // 未发出, 无会话可回收), creating 取消按 attempt 管线化回收后关闭 creator,
 // attaching 取消关闭 attach 解锁 await, creator 留给回收路径用完再关。
-export async function openDeviceTerminal(options: {
+export interface OpenDeviceTerminalOptions {
   deviceId: string;
   stateDigest: string;
   cols: number;
@@ -568,9 +591,21 @@ export async function openDeviceTerminal(options: {
   command?: string[];
   factory?: WebSocketFactory;
   bridgePath?: (deviceId: string) => string;
-  wire?: (bridge: DeviceBridge) => void;
+  wire?: (bridge: DeviceBridgeHandle) => void;
   onCancel?: (cancel: (() => void) | null) => void;
-}): Promise<{ info: SupervisorSessionInfo; identity: SupervisorSessionIdentity; bridge: DeviceBridge }> {
+}
+
+export interface OpenDeviceTerminalResult {
+  info: SupervisorSessionInfo;
+  identity: SupervisorSessionIdentity;
+  bridge: DeviceBridgeHandle;
+}
+
+export function openDeviceTerminal(options: OpenDeviceTerminalOptions): Promise<OpenDeviceTerminalResult> {
+  return WEB ? openDeviceTerminalWeb(options) : openDeviceTerminalDesktop(options);
+}
+
+async function openDeviceTerminalWeb(options: OpenDeviceTerminalOptions): Promise<OpenDeviceTerminalResult> {
   const { deviceId, stateDigest, factory, bridgePath } = options;
   const sessionId = newSupervisorId();
   const attempt = newSupervisorId();
@@ -662,16 +697,27 @@ export async function openDeviceTerminal(options: {
 // onCancel 从 socket 建立 (含 CONNECTING/hello 阶段) 起登记取消函数, settled
 // 后以 onCancel(null) 注销; 取消关闭连接解锁 connect/attach 的 await (resume
 // 不创建会话, 取消只是断开替换连接, 既有会话仍可再次 resume)。
-export async function resumeDeviceTerminal(options: {
+export interface ResumeDeviceTerminalOptions {
   deviceId: string;
   stateDigest: string;
   sessionId: string;
   identity: SupervisorSessionIdentity;
   factory?: WebSocketFactory;
   bridgePath?: (deviceId: string) => string;
-  wire?: (bridge: DeviceBridge) => void;
+  wire?: (bridge: DeviceBridgeHandle) => void;
   onCancel?: (cancel: (() => void) | null) => void;
-}): Promise<{ info: SupervisorSessionInfo; bridge: DeviceBridge }> {
+}
+
+export interface ResumeDeviceTerminalResult {
+  info: SupervisorSessionInfo;
+  bridge: DeviceBridgeHandle;
+}
+
+export function resumeDeviceTerminal(options: ResumeDeviceTerminalOptions): Promise<ResumeDeviceTerminalResult> {
+  return WEB ? resumeDeviceTerminalWeb(options) : resumeDeviceTerminalDesktop(options);
+}
+
+async function resumeDeviceTerminalWeb(options: ResumeDeviceTerminalOptions): Promise<ResumeDeviceTerminalResult> {
   let bridge: DeviceBridge | null = null;
   let cancelled = false;
   let settled = false;
@@ -707,14 +753,20 @@ export async function resumeDeviceTerminal(options: {
 }
 
 // killDeviceTerminal 在独立控制桥接上按 id+期望身份结束会话 (显式 kill 确认后调用)。
-export async function killDeviceTerminal(options: {
+export interface KillDeviceTerminalOptions {
   deviceId: string;
   stateDigest: string;
   sessionId: string;
   identity?: SupervisorSessionIdentity;
   factory?: WebSocketFactory;
   bridgePath?: (deviceId: string) => string;
-}): Promise<void> {
+}
+
+export function killDeviceTerminal(options: KillDeviceTerminalOptions): Promise<void> {
+  return WEB ? killDeviceTerminalWeb(options) : killDeviceTerminalDesktop(options);
+}
+
+async function killDeviceTerminalWeb(options: KillDeviceTerminalOptions): Promise<void> {
   const bridge = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
     factory: options.factory,
     bridgePath: options.bridgePath,
@@ -724,4 +776,300 @@ export async function killDeviceTerminal(options: {
   } finally {
     bridge.detach();
   }
+}
+
+// ---- 桌面 IPC 桥 (wails 传输) ----
+//
+// Go 侧合同 (internal/app/production/device_terminal*.go): device_terminal_open /
+// device_terminal_resume 完成 create+attach 并返回通道 id, 但不推流; 前端先
+// 订阅三个事件主题 (wails 事件在订阅注册前发出即丢), 再发 device_terminal_begin
+// 显式开闸 (supervisor Stream 从 attach 起已在缓冲, backlog 不丢)。input 字节
+// 以 base64 携带 (Go []byte 直接解), output 事件 data 同为 base64。
+// identity 的 createdAtUnixNano 以字符串往返 (JS number 装不下纳秒)。
+
+interface DeviceTerminalIdentityDTO {
+  createdAtUnixNano: string;
+  incarnation: string;
+}
+
+interface DeviceTerminalOpenResponse {
+  channelId: string;
+  info: SupervisorSessionInfo;
+  identity: DeviceTerminalIdentityDTO;
+}
+
+interface DesktopOutputEvent {
+  channelId: string;
+  data: string;
+}
+
+interface DesktopExitEvent {
+  channelId: string;
+  code: number;
+  signal: string;
+}
+
+interface DesktopClosedEvent {
+  channelId: string;
+  code?: string;
+  message?: string;
+}
+
+const DESKTOP_DEVICE_TERMINAL_EVENTS = {
+  output: "device-terminal://output",
+  exit: "device-terminal://exit",
+  closed: "device-terminal://closed",
+} as const;
+
+function encodeBase64(data: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < data.length; i += 0x8000) {
+    binary += String.fromCharCode(...data.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function identityToDTO(identity: SupervisorSessionIdentity): DeviceTerminalIdentityDTO {
+  return { createdAtUnixNano: identity.createdAtUnixNano.toString(), incarnation: identity.incarnation };
+}
+
+function identityFromDTO(dto: DeviceTerminalIdentityDTO): SupervisorSessionIdentity {
+  return { createdAtUnixNano: BigInt(dto.createdAtUnixNano), incarnation: dto.incarnation };
+}
+
+class DesktopDeviceBridge implements DeviceBridgeHandle {
+  onOutput: ((data: Uint8Array) => void) | null = null;
+  onExit: ((exit: SupervisorExit) => void) | null = null;
+  onClose: ((error: DeviceTerminalError | null) => void) | null = null;
+
+  private channelId = "";
+  private attached = false;
+  private closed = false;
+  private failure: DeviceTerminalError | null = null;
+  private detachSent = false;
+  private unlisten: (() => void)[] = [];
+  private requestChain: Promise<unknown> = Promise.resolve();
+
+  private constructor() {}
+
+  // open 的订阅-开闸顺序是合同核心: subscribe (事件 listeners 注册) -> open IPC
+  // (Go 建通道) -> wire (视图挂回调) -> begin (Go 启动输出泵)。wire 必须先于
+  // begin, 否则开闸后首批 output/exit 到达时回调未挂。
+  static async open(
+    options: { deviceId: string; stateDigest: string; cols: number; rows: number },
+    wire?: (bridge: DeviceBridgeHandle) => void,
+  ): Promise<{ bridge: DesktopDeviceBridge; response: DeviceTerminalOpenResponse }> {
+    const bridge = new DesktopDeviceBridge();
+    await bridge.subscribe();
+    let response: DeviceTerminalOpenResponse | null = null;
+    try {
+      response = await call<DeviceTerminalOpenResponse>("device_terminal_open", {
+        args: { deviceId: options.deviceId, stateDigest: options.stateDigest, cols: options.cols, rows: options.rows },
+      });
+      bridge.channelId = response.channelId;
+      bridge.attached = true;
+      wire?.(bridge);
+      await call("device_terminal_begin", { args: { channelId: response.channelId } });
+      return { bridge, response };
+    } catch (error) {
+      if (response) {
+        // 会话已建但开闸失败: 结束会话并关通道, 设备端不留孤儿 shell。
+        void call("device_terminal_kill_session", {
+          args: {
+            deviceId: options.deviceId,
+            stateDigest: options.stateDigest,
+            sessionId: response.info.id,
+            identity: response.identity,
+          },
+        }).catch(() => undefined);
+        void call("device_terminal_close", { args: { channelId: response.channelId } }).catch(() => undefined);
+      }
+      bridge.finish(null);
+      throw error;
+    }
+  }
+
+  static async resume(
+    options: { deviceId: string; stateDigest: string; sessionId: string; identity: SupervisorSessionIdentity },
+    wire?: (bridge: DeviceBridgeHandle) => void,
+  ): Promise<{ bridge: DesktopDeviceBridge; response: DeviceTerminalOpenResponse }> {
+    const bridge = new DesktopDeviceBridge();
+    await bridge.subscribe();
+    let response: DeviceTerminalOpenResponse | null = null;
+    try {
+      response = await call<DeviceTerminalOpenResponse>("device_terminal_resume", {
+        args: {
+          deviceId: options.deviceId,
+          stateDigest: options.stateDigest,
+          sessionId: options.sessionId,
+          identity: identityToDTO(options.identity),
+        },
+      });
+      bridge.channelId = response.channelId;
+      bridge.attached = true;
+      wire?.(bridge);
+      await call("device_terminal_begin", { args: { channelId: response.channelId } });
+      return { bridge, response };
+    } catch (error) {
+      // resume 不创建会话, 失败只需关通道, 设备端会话保留可再次 resume。
+      if (response) {
+        void call("device_terminal_close", { args: { channelId: response.channelId } }).catch(() => undefined);
+      }
+      bridge.finish(null);
+      throw error;
+    }
+  }
+
+  private async subscribe(): Promise<void> {
+    this.unlisten = await Promise.all([
+      listenEvent<DesktopOutputEvent>(DESKTOP_DEVICE_TERMINAL_EVENTS.output, (event) => {
+        if (!event || event.channelId !== this.channelId || this.closed) return;
+        this.onOutput?.(decodeBase64(event.data));
+      }),
+      listenEvent<DesktopExitEvent>(DESKTOP_DEVICE_TERMINAL_EVENTS.exit, (event) => {
+        if (!event || event.channelId !== this.channelId || this.closed) return;
+        this.onExit?.({ code: event.code ?? null, signal: event.signal ?? "" });
+      }),
+      listenEvent<DesktopClosedEvent>(DESKTOP_DEVICE_TERMINAL_EVENTS.closed, (event) => {
+        if (!event || event.channelId !== this.channelId || this.closed) return;
+        // 干净关闭 (exit 之后或对端正常结束) code 为空; 非空是带码断线。
+        const error = event.code
+          ? new DeviceTerminalError(event.code, event.message || "桥接连接断开")
+          : null;
+        this.finish(error);
+      }),
+    ]);
+  }
+
+  // input/resize/kill 与 WEB 同一单未完成请求语义 (Go Stream 内部也串行化),
+  // 串行链保证按键顺序不乱。
+  private enqueue<T>(run: () => Promise<T>): Promise<T> {
+    const result = this.requestChain.then(() => {
+      if (this.closed) {
+        return Promise.reject(this.failure ?? new DeviceTerminalError("closed", "桥接连接已关闭"));
+      }
+      return run();
+    });
+    this.requestChain = result.catch(() => undefined);
+    return result;
+  }
+
+  input(data: Uint8Array): Promise<number> {
+    return this.enqueue(async () => {
+      const response = await call<{ written: number }>("device_terminal_input", {
+        args: { channelId: this.channelId, data: encodeBase64(data) },
+      });
+      return response.written;
+    });
+  }
+
+  resize(cols: number, rows: number): Promise<void> {
+    return this.enqueue(() =>
+      call("device_terminal_resize", { args: { channelId: this.channelId, cols, rows } }),
+    ).then(() => undefined);
+  }
+
+  // kill 结束 attach 的会话本身 (Go 侧 frame 14); 通道随 Stream.Kill 静默关闭,
+  // 本地在兑现后按干净关闭收尾。
+  kill(): Promise<void> {
+    return this.enqueue(() => call("device_terminal_kill", { args: { channelId: this.channelId } }))
+      .then(() => undefined)
+      .finally(() => this.finish(null));
+  }
+
+  // detach 发送关闭命令 (Go 侧 detach 语义, 设备端会话保留); 通道可能已被
+  // exit/断线先行移除, 失败静默。
+  detach(): void {
+    if (this.detachSent || this.closed) return;
+    this.detachSent = true;
+    void call("device_terminal_close", { args: { channelId: this.channelId } }).catch(() => undefined);
+    this.finish(null);
+  }
+
+  private finish(error: DeviceTerminalError | null): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (error && !this.failure) this.failure = error;
+    for (const off of this.unlisten.splice(0)) off();
+    this.onClose?.(error);
+  }
+
+  get isAttached(): boolean {
+    return this.attached;
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+}
+
+async function openDeviceTerminalDesktop(options: OpenDeviceTerminalOptions): Promise<OpenDeviceTerminalResult> {
+  let cancelled = false;
+  let settled = false;
+  const cancel = () => {
+    if (!settled) cancelled = true;
+  };
+  options.onCancel?.(cancel);
+  try {
+    const { bridge, response } = await DesktopDeviceBridge.open(options, options.wire);
+    settled = true;
+    options.onCancel?.(null);
+    if (cancelled) {
+      // 打开跨过取消: 结束刚创建的会话并关通道, 设备端不留孤儿 shell。
+      void call("device_terminal_kill_session", {
+        args: {
+          deviceId: options.deviceId,
+          stateDigest: options.stateDigest,
+          sessionId: response.info.id,
+          identity: response.identity,
+        },
+      }).catch(() => undefined);
+      bridge.detach();
+      throw new DeviceTerminalError("closed", "打开已取消");
+    }
+    return { info: response.info, identity: identityFromDTO(response.identity), bridge };
+  } catch (error) {
+    options.onCancel?.(null);
+    throw error;
+  }
+}
+
+async function resumeDeviceTerminalDesktop(options: ResumeDeviceTerminalOptions): Promise<ResumeDeviceTerminalResult> {
+  let cancelled = false;
+  let settled = false;
+  const cancel = () => {
+    if (!settled) cancelled = true;
+  };
+  options.onCancel?.(cancel);
+  try {
+    const { bridge, response } = await DesktopDeviceBridge.resume(options, options.wire);
+    settled = true;
+    options.onCancel?.(null);
+    if (cancelled) {
+      bridge.detach();
+      throw new DeviceTerminalError("closed", "resume 已取消");
+    }
+    return { info: response.info, bridge };
+  } catch (error) {
+    options.onCancel?.(null);
+    throw error;
+  }
+}
+
+async function killDeviceTerminalDesktop(options: KillDeviceTerminalOptions): Promise<void> {
+  await call("device_terminal_kill_session", {
+    args: {
+      deviceId: options.deviceId,
+      stateDigest: options.stateDigest,
+      sessionId: options.sessionId,
+      ...(options.identity ? { identity: identityToDTO(options.identity) } : {}),
+    },
+  });
 }

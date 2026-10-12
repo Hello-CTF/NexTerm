@@ -1,5 +1,6 @@
-import { act, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,6 +24,13 @@ export function mount(node: ReactNode): MountedView {
       container.remove();
     },
   };
+}
+
+// mountWithClient 供依赖 react-query 的视图使用 (如桌面账号身份查询);
+// retry:false 让查询错误立刻落定, 不拖慢断言。
+export function mountWithClient(node: ReactNode): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(createElement(QueryClientProvider, { client }, node));
 }
 
 export async function flush(): Promise<void> {

@@ -7,12 +7,14 @@ import (
 )
 
 const (
-	CommandLinkGet     = "sync_link_get"
-	CommandLinkSet     = "sync_link_set"
-	CommandStatus      = "sync_status"
-	CommandWake        = "sync_wake"
-	CommandBundleRead  = "sync_bundle_read"
-	CommandBundleWrite = "sync_bundle_write"
+	CommandLinkGet           = "sync_link_get"
+	CommandLinkSet           = "sync_link_set"
+	CommandLinkMFA           = "sync_link_mfa"
+	CommandLinkResetPassword = "sync_link_reset_password"
+	CommandStatus            = "sync_status"
+	CommandWake              = "sync_wake"
+	CommandBundleRead        = "sync_bundle_read"
+	CommandBundleWrite       = "sync_bundle_write"
 
 	CommandDigest = "sync_digest"
 	CommandExport = "sync_export"
@@ -31,6 +33,14 @@ type TranscriptSyncOptInRequest struct {
 	OptIn bool   `json:"optIn"`
 }
 
+type LinkMFARequest struct {
+	Code string `json:"code"`
+}
+
+type LinkResetPasswordRequest struct {
+	NewPassword string `json:"newPassword"`
+}
+
 // KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)、AI 模型档案、AI 权限和外观快捷键默认开启。
 type KindOptIn struct {
 	KnownHost    bool `json:"knownHost"`
@@ -46,9 +56,23 @@ type KindOptInPatch struct {
 	Preferences  *bool `json:"preferences,omitempty"`
 }
 
-// KindOptInGet 返回会话用户的 opt-in; 无身份(匿名/桌面直连)返回全 false(默认关), 不报错。
+// kindOptInUserID 解析 opt-in 归属用户: 优先 /rpc 会话注入的身份; 桌面端匿名
+// 直连回退到引擎持有的已登录账号会话 (与 preferenceUserID 同一回退)。
+func (s *Service) kindOptInUserID(ctx context.Context) (string, bool) {
+	if userID, ok := UserIDFromContext(ctx); ok && userID != "" {
+		return userID, true
+	}
+	s.engine.sessionMu.Lock()
+	defer s.engine.sessionMu.Unlock()
+	if s.engine.session != nil && s.engine.session.userID != "" {
+		return s.engine.session.userID, true
+	}
+	return "", false
+}
+
+// KindOptInGet 返回归属用户的 opt-in; 无身份(匿名且桌面引擎未登录)返回全 false(默认关), 不报错。
 func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
-	userID, ok := UserIDFromContext(ctx)
+	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
 		return KindOptIn{}, nil
 	}
@@ -71,9 +95,9 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, Preferences: preferences}, nil
 }
 
-// KindOptInSet 只写会话用户自己的 opt-in; 无身份一律 forbidden, 不接受客户端上报 userID(跨用户写入无从发生)。
+// KindOptInSet 只写归属用户自己的 opt-in; 无身份(匿名且桌面引擎未登录)一律 forbidden, 不接受客户端上报 userID(跨用户写入无从发生)。
 func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindOptIn, error) {
-	userID, ok := UserIDFromContext(ctx)
+	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
 		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步 opt-in")
 	}
@@ -111,11 +135,27 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandLinkSet, func(ctx context.Context, _ *ipc.Call, input LinkPatch) (Link, error) {
+			return ipc.RegisterNested(dispatcher, CommandLinkSet, func(ctx context.Context, _ *ipc.Call, input LinkPatch) (LinkResult, error) {
 				if err := s.requireDesktop(); err != nil {
-					return Link{}, err
+					return LinkResult{}, err
 				}
 				return s.LinkSet(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandLinkMFA, func(ctx context.Context, _ *ipc.Call, input LinkMFARequest) (LinkResult, error) {
+				if err := s.requireDesktop(); err != nil {
+					return LinkResult{}, err
+				}
+				return s.LinkMFA(ctx, input.Code)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandLinkResetPassword, func(ctx context.Context, _ *ipc.Call, input LinkResetPasswordRequest) (LinkResult, error) {
+				if err := s.requireDesktop(); err != nil {
+					return LinkResult{}, err
+				}
+				return s.LinkResetPassword(ctx, input.NewPassword)
 			})
 		},
 		func() error {
@@ -194,7 +234,8 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.CollectPreferences(ctx)
 			})
 		},
-		// 同步 opt-in 读写: 用户身份由 /rpc 会话注入(UserIDFromContext), 匿名 get 全 false、set forbidden。
+		// 同步 opt-in 读写: 用户身份由 /rpc 会话注入(UserIDFromContext), 桌面匿名直连
+		// 回退引擎已登录会话(kindOptInUserID), 均无身份时 get 全 false、set forbidden。
 		func() error {
 			return ipc.Register(dispatcher, CommandKindOptInGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (KindOptIn, error) {
 				return s.KindOptInGet(ctx)
