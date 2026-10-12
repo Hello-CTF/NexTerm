@@ -87,22 +87,6 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, "remote_fleet_device_approve", func(ctx context.Context, _ *ipc.Call, input remoteDeviceRequest) (syncservice.RemoteOK, error) {
-				if input.DeviceID == "" {
-					return syncservice.RemoteOK{}, badEmpty("deviceId")
-				}
-				return remote.ApproveDevice(ctx, input.DeviceID)
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, "remote_fleet_device_reject", func(ctx context.Context, _ *ipc.Call, input remoteDeviceRequest) (syncservice.RemoteOK, error) {
-				if input.DeviceID == "" {
-					return syncservice.RemoteOK{}, badEmpty("deviceId")
-				}
-				return remote.RejectDevice(ctx, input.DeviceID)
-			})
-		},
-		func() error {
 			return ipc.RegisterNested(dispatcher, "remote_fleet_device_autostart", func(ctx context.Context, _ *ipc.Call, input remoteAutostartRequest) (syncservice.RemoteAutostartResult, error) {
 				if input.DeviceID == "" {
 					return syncservice.RemoteAutostartResult{}, badEmpty("deviceId")

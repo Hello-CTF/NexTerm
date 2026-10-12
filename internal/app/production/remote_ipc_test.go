@@ -17,8 +17,6 @@ func TestRemoteCommandsRegistered(t *testing.T) {
 		"remote_fleet_devices",
 		"remote_fleet_device_metrics",
 		"remote_fleet_device_revoke",
-		"remote_fleet_device_approve",
-		"remote_fleet_device_reject",
 		"remote_fleet_device_autostart",
 		"remote_fleet_enroll_code",
 		"remote_fleet_base_urls_get",

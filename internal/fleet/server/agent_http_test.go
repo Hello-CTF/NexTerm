@@ -63,6 +63,20 @@ func TestAgentSyncRequiresDeviceCredential(t *testing.T) {
 	}
 }
 
+func TestAgentSyncSecondDeviceActiveImmediately(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "sync-multi")
+	firstID, firstSecret := enrollAgent(t, f, owner, "multi-box-1")
+	secondID, secondSecret := enrollAgent(t, f, owner, "multi-box-2")
+
+	for _, device := range [][2]string{{firstID, firstSecret}, {secondID, secondSecret}} {
+		response := f.call(t, "POST", "/agent/sync", map[string]any{"device_id": device[0], "secret": device[1]}, nil, "")
+		if response.status != http.StatusOK {
+			t.Fatalf("sync %s: HTTP %d %v", device[0], response.status, response.body)
+		}
+	}
+}
+
 func TestAgentSyncRecordsMetricsAndState(t *testing.T) {
 	f := newHTTPFixture(t, false)
 	owner := f.createUser(t, "sync-metrics")

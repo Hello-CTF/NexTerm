@@ -4,8 +4,7 @@
 // (role=treeitem, 单击/双击/Enter 打开远程终端, 不再有单独的「终端」按钮)。
 // 未登录不渲染且不发任何请求; 已吊销设备不显示 (不是灰显)。吊销需两个
 // warning 确认 (第二个明确「凭证立即失效, 从资产中移除且不可恢复」),
-// 成功后立即把设备从分区移除。待审批的批准/拒绝与设备管理视图同一确认语义
-// (批准直接执行, 拒绝需一次 warning 确认)。
+// 成功后立即把设备从分区移除。
 // 收敛节奏与设备管理视图一致: WEB 每 60s / 桌面每 30s 轮询兜底 (上线/新接入/
 // 他处吊销随刷新收敛), WEB 另订阅 device://status 实时翻转在线状态
 // (事件阈值内以事件为准, 否则回落心跳判定), 事件 WS 重连 resync 时立即重取;
@@ -20,7 +19,6 @@ import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import {
   IconActivity,
-  IconCheckCircle,
   IconInfo,
   IconMonitor,
   IconRefresh,
@@ -58,7 +56,6 @@ export function DeviceTreeSection() {
   const { pushToast } = useUi();
   const account = useFleetAccount();
   const userId = account.userId;
-  const isAdmin = account.isAdmin;
   const [menu, setMenu] = useState<{ x: number; y: number; device: FleetDevice } | null>(null);
   const [metricsOpenId, setMetricsOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -123,11 +120,6 @@ export function DeviceTreeSection() {
     return isOnline(d.agent.last_seen_at || d.last_seen_at, now);
   };
 
-  const patchDevice = (id: string, patch: Partial<FleetDevice>) => {
-    qc.setQueryData<{ devices: FleetDevice[] }>(["fleet-devices", userId], (old) =>
-      old ? { devices: old.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)) } : old,
-    );
-  };
   const removeDevice = (id: string) => {
     qc.setQueryData<{ devices: FleetDevice[] }>(["fleet-devices", userId], (old) =>
       old ? { devices: old.devices.filter((d) => d.id !== id) } : old,
@@ -157,62 +149,23 @@ export function DeviceTreeSection() {
     }
   };
 
-  const approve = async (device: FleetDevice) => {
-    setBusyId(device.id);
-    try {
-      await fleetClient().approve(device.id);
-      pushToast("success", `已批准「${device.name}」，设备上线后可用`);
-      patchDevice(device.id, { state: "active" });
-    } catch (e) {
-      pushToast("error", describeError(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const reject = async (device: FleetDevice) => {
-    const ok = await ask(`拒绝设备「${device.name}」的接入？\n\n拒绝后该设备立即被删除、凭证失效，需要新接入码才能重新接入。`, {
-      title: "拒绝接入",
-      kind: "warning",
-    });
-    if (!ok) return;
-    setBusyId(device.id);
-    try {
-      await fleetClient().reject(device.id);
-      pushToast("success", `已拒绝并删除「${device.name}」`);
-      removeDevice(device.id);
-    } catch (e) {
-      pushToast("error", describeError(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const buildMenu = (device: FleetDevice, pending: boolean, connectable: boolean, disabledReason: string | null): MenuItem[] => {
+  const buildMenu = (device: FleetDevice, connectable: boolean, disabledReason: string | null): MenuItem[] => {
     const items: MenuItem[] = [];
-    if (pending && isAdmin) {
-      items.push(
-        { kind: "item", label: "批准", icon: <IconCheckCircle size={13} />, onSelect: () => void approve(device) },
-        { kind: "item", label: "拒绝", icon: <IconXCircle size={13} />, onSelect: () => void reject(device) },
-        { kind: "separator" },
-      );
-    } else {
+    items.push({
+      kind: "item",
+      label: "打开终端",
+      icon: <IconTerminal size={13} />,
+      disabled: !connectable,
+      hint: disabledReason ?? undefined,
+      onSelect: () => openDeviceTerminalTab(device),
+    });
+    if (device.agent) {
       items.push({
         kind: "item",
-        label: "打开终端",
-        icon: <IconTerminal size={13} />,
-        disabled: !connectable,
-        hint: disabledReason ?? undefined,
-        onSelect: () => openDeviceTerminalTab(device),
+        label: "指标",
+        icon: <IconActivity size={13} />,
+        onSelect: () => setMetricsOpenId((id) => (id === device.id ? null : device.id)),
       });
-      if (device.agent) {
-        items.push({
-          kind: "item",
-          label: "指标",
-          icon: <IconActivity size={13} />,
-          onSelect: () => setMetricsOpenId((id) => (id === device.id ? null : device.id)),
-        });
-      }
     }
     items.push(
       { kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab },
@@ -268,13 +221,10 @@ export function DeviceTreeSection() {
             key={device.id}
             device={device}
             online={onlineOf(device)}
-            isAdmin={isAdmin}
             busy={busyId === device.id}
             metricsOpen={metricsOpenId === device.id}
             onToggleMetrics={() => setMetricsOpenId((id) => (id === device.id ? null : device.id))}
             onMenu={(x, y) => setMenu({ x, y, device })}
-            onApprove={() => void approve(device)}
-            onReject={() => void reject(device)}
             onRevoke={() => void revoke(device)}
           />
         ))
@@ -289,7 +239,6 @@ export function DeviceTreeSection() {
                 title: menu.device.name,
                 items: buildMenu(
                   menu.device,
-                  menu.device.state === "pending",
                   disabledReasonOf(menu.device, onlineOf(menu.device)) === null,
                   disabledReasonOf(menu.device, onlineOf(menu.device)),
                 ),
@@ -303,7 +252,6 @@ export function DeviceTreeSection() {
 }
 
 function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
-  if (device.state === "pending") return "设备待审批，批准后才能打开终端";
   if (!device.agent) return "该设备未安装设备代理，无法打开终端";
   if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
   if (!online) return "设备离线，无法打开终端";
@@ -313,29 +261,22 @@ function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
 function DeviceTreeRow({
   device,
   online,
-  isAdmin,
   busy,
   metricsOpen,
   onToggleMetrics,
   onMenu,
-  onApprove,
-  onReject,
   onRevoke,
 }: {
   device: FleetDevice;
   online: boolean;
-  isAdmin: boolean;
   busy: boolean;
   metricsOpen: boolean;
   onToggleMetrics: () => void;
   onMenu: (x: number, y: number) => void;
-  onApprove: () => void;
-  onReject: () => void;
   onRevoke: () => void;
 }) {
   const coarse = useCoarsePointer();
   const agent = device.agent;
-  const pending = device.state === "pending";
   const disabledReason = disabledReasonOf(device, online);
   const connectable = disabledReason === null;
 
@@ -348,7 +289,6 @@ function DeviceTreeRow({
     device.name,
     agent?.platform || "",
     disabledReason ?? "单击打开远程终端 · 右键管理",
-    pending ? "待管理员审批" : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -381,11 +321,7 @@ function DeviceTreeRow({
         <IconMonitor size={14} className="shrink-0 text-neutral-500" />
         <span className="nx-row-name min-w-0 flex-auto truncate">{device.name}</span>
         {agent?.platform && <span className="nx-row-target min-w-0 truncate text-[11px] text-neutral-500">{agent.platform}</span>}
-        {pending ? (
-          <span className="nx-badge nx-badge-amber" title="管理员批准前设备不会上线，也不同步数据">
-            待审批
-          </span>
-        ) : agent ? (
+        {agent ? (
           <span className={`nx-badge ${online ? "nx-badge-green" : ""}`}>{online ? "在线" : "离线"}</span>
         ) : (
           <span className="nx-badge">无代理</span>
@@ -406,59 +342,34 @@ function DeviceTreeRow({
           </button>
         ) : (
           <span className="nx-row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-            {pending && isAdmin ? (
-              <>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
-                  title="批准接入"
-                  aria-label={`批准 ${device.name}`}
-                  disabled={busy}
-                  onClick={onApprove}
-                >
-                  <IconCheckCircle size={12} />
-                </button>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm is-danger"
-                  title="拒绝并删除"
-                  aria-label={`拒绝 ${device.name}`}
-                  disabled={busy}
-                  onClick={onReject}
-                >
-                  <IconXCircle size={12} />
-                </button>
-              </>
-            ) : (
-              <>
-                {agent && !pending && (
-                  <button
-                    className="nx-icon-btn nx-icon-btn-sm"
-                    title="指标"
-                    aria-label={`指标 ${device.name}`}
-                    aria-expanded={metricsOpen}
-                    onClick={onToggleMetrics}
-                  >
-                    <IconActivity size={12} />
-                  </button>
-                )}
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
-                  title="详情（打开设备管理）"
-                  aria-label={`详情 ${device.name}`}
-                  onClick={openDevicesTab}
-                >
-                  <IconInfo size={12} />
-                </button>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm is-danger"
-                  title="吊销"
-                  aria-label={`吊销 ${device.name}`}
-                  disabled={busy}
-                  onClick={onRevoke}
-                >
-                  <IconTrash size={12} />
-                </button>
-              </>
+            {agent && (
+              <button
+                className="nx-icon-btn nx-icon-btn-sm"
+                title="指标"
+                aria-label={`指标 ${device.name}`}
+                aria-expanded={metricsOpen}
+                onClick={onToggleMetrics}
+              >
+                <IconActivity size={12} />
+              </button>
             )}
+            <button
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="详情（打开设备管理）"
+              aria-label={`详情 ${device.name}`}
+              onClick={openDevicesTab}
+            >
+              <IconInfo size={12} />
+            </button>
+            <button
+              className="nx-icon-btn nx-icon-btn-sm is-danger"
+              title="吊销"
+              aria-label={`吊销 ${device.name}`}
+              disabled={busy}
+              onClick={onRevoke}
+            >
+              <IconTrash size={12} />
+            </button>
             <button
               className="nx-icon-btn nx-icon-btn-sm"
               title="更多操作"

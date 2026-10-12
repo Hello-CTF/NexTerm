@@ -202,7 +202,6 @@ func run(args []string) int {
 	if application.Services.Store != nil && accounts != nil && !invocation.SyncOnly {
 		fleetService, err = fleetserver.New(fleetserver.Config{
 			DB:       application.Services.Store.GORM(),
-			Backend:  application.Services.Store.Backend(),
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
 			Events:   broker,

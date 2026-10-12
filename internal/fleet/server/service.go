@@ -54,8 +54,6 @@ const (
 const (
 	auditKindDeviceEnroll    = "device_enroll"
 	auditKindDeviceRevoke    = "device_revoke"
-	auditKindDeviceApprove   = "device_approve"
-	auditKindDeviceReject    = "device_reject"
 	auditKindDeviceAutostart = "device_autostart"
 	auditKindDeviceFailover  = "device_failover"
 	auditKindDeviceTerminal  = "device_terminal"
@@ -63,16 +61,8 @@ const (
 	auditKindDeviceOffline   = "device_offline"
 )
 
-// 设备审批状态机: 凭接入码接入默认 pending (首台设备除外, 避免无人能批准的死锁),
-// 超管批准后 active 才允许同步数据; 拒绝即删除 pending 设备。
-const (
-	DeviceStatePending = "pending"
-	DeviceStateActive  = "active"
-)
-
 type Config struct {
 	DB       *gorm.DB
-	Backend  store.Backend
 	Accounts *account.Accounts
 	AuthOff  bool
 	// Events 是可选的事件出口 (EventBroker); nil 时上下线只落审计不推送。
@@ -81,7 +71,6 @@ type Config struct {
 
 type Service struct {
 	db         *gorm.DB
-	backend    store.Backend
 	accounts   *account.Accounts
 	authOff    bool
 	now        func() int64
@@ -145,7 +134,6 @@ func New(config Config, options ...Option) (*Service, error) {
 	}
 	s := &Service{
 		db:               config.DB,
-		backend:          config.Backend,
 		accounts:         config.Accounts,
 		authOff:          config.AuthOff,
 		now:              ids.NowMS,
@@ -227,7 +215,6 @@ type Device struct {
 	ID         string
 	Name       string
 	Kind       string
-	State      string
 	CreatedAt  int64
 	LastSeenAt int64
 	RevokedAt  int64
@@ -248,7 +235,6 @@ type MetricsSample struct {
 type EnrollResult struct {
 	DeviceID          string
 	Secret            string
-	State             string
 	BaseURLs          []BaseURLEntry
 	MetricsIntervalMS int64
 	DesiredAutostart  bool
@@ -322,7 +308,6 @@ func (s *Service) transitionPresence(deviceID string, online bool) {
 type deviceGrant struct {
 	deviceID string
 	userID   string
-	state    string
 	revoked  bool
 }
 
@@ -335,7 +320,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	if err != nil {
 		return nil, dbError(err)
 	}
-	return &deviceGrant{deviceID: deviceID, userID: device.UserID, state: device.State, revoked: device.RevokedAt != nil}, nil
+	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
 }
 
 // authorize 是 fleet 设备动作的唯一授权点: 仅设备 owner 放行,
@@ -437,7 +422,6 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 	}
 	now := s.now()
 	deviceID := ids.New()
-	var state string
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := query.Use(tx)
 		enrollCode := q.DeviceEnrollCode
@@ -456,27 +440,8 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 			return dbError(err)
 		}
 		ownerID := consumed.UserID
-		// 行锁: PostgreSQL 默认 READ COMMITTED, enroll 首台判定必须锁住 app_user 行
-		// 才能与并发的同账号 enroll 互斥; SQLite 单写者天然串行。
-		appUser := q.AppUser
-		lockQuery := appUser.WithContext(ctx).Where(appUser.ID.Eq(ownerID))
-		if s.backend == store.BackendPostgres {
-			lockQuery = lockQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		if _, err := lockQuery.First(); err != nil {
-			return dbError(err)
-		}
-		userDevice := q.UserDevice
-		deviceCount, err := userDevice.WithContext(ctx).Where(userDevice.UserID.Eq(ownerID)).Count()
-		if err != nil {
-			return dbError(err)
-		}
-		state = DeviceStatePending
-		if deviceCount == 0 {
-			state = DeviceStateActive
-		}
-		if err := userDevice.WithContext(ctx).Create(&store.UserDevice{
-			ID: deviceID, UserID: ownerID, Name: name, Kind: agentDeviceKind, State: state, CreatedAt: now,
+		if err := q.UserDevice.WithContext(ctx).Create(&store.UserDevice{
+			ID: deviceID, UserID: ownerID, Name: name, Kind: agentDeviceKind, CreatedAt: now,
 		}); err != nil {
 			return dbError(err)
 		}
@@ -512,7 +477,6 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 	return &EnrollResult{
 		DeviceID:          deviceID,
 		Secret:            secret,
-		State:             state,
 		BaseURLs:          baseURLs,
 		MetricsIntervalMS: DefaultMetricsIntervalMS,
 		DesiredAutostart:  true,
@@ -521,8 +485,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 }
 
 // AuthenticateAgent 校验设备凭证三元组绑定 (device_id + secret + purpose),
-// 凭证与设备任一吊销或过期即拒绝; 待审批设备得到 device_pending (可恢复,
-// 不碰心跳); 通过后回写 last_used_at/last_seen_at。
+// 凭证与设备任一吊销或过期即拒绝; 通过后回写 last_used_at/last_seen_at。
 func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string) (string, error) {
 	syncCredential := query.Use(s.db).SyncCredential
 	credential, err := syncCredential.WithContext(ctx).
@@ -551,8 +514,6 @@ func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string
 		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证已过期")
 	case device.RevokedAt != nil:
 		return "", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case device.State == DeviceStatePending:
-		return "", ipc.NewError(ipc.CodeDevicePending, "设备待审批: 管理员批准后才会上线并同步数据")
 	}
 	now := s.now()
 	if _, err := syncCredential.WithContext(ctx).
@@ -613,7 +574,7 @@ func (s *Service) ListDevices(ctx context.Context, identity *account.Identity) (
 	}
 	var devices []*Device
 	for _, row := range rows {
-		device := &Device{ID: row.ID, Name: row.Name, Kind: row.Kind, State: row.State, CreatedAt: row.CreatedAt}
+		device := &Device{ID: row.ID, Name: row.Name, Kind: row.Kind, CreatedAt: row.CreatedAt}
 		if row.LastSeenAt != nil {
 			device.LastSeenAt = *row.LastSeenAt
 		}
@@ -677,61 +638,6 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 	// 吊销即掉线: 控制通道被踢后不会再有注销回调 (KickDevice 已摘表),
 	// 这里补一次离线迁移, 让审计时间线与 device://status 推送保持完整。
 	s.deviceOffline(deviceID)
-	return nil
-}
-
-// authorizePending 是审批/拒绝的授权点: 仅超管, 设备须为未吊销的 pending;
-// 每次判定 (放行或拒绝) 都写审计。
-func (s *Service) authorizePending(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
-	grant, err := s.loadGrant(ctx, deviceID)
-	outcome, reason := "allow", ""
-	var decision error
-	switch {
-	case err != nil:
-		outcome, reason, decision = "deny", "not_found", err
-	case identity.Role != account.RoleSuperadmin:
-		outcome, reason, decision = "deny", "not_superadmin", ipc.NewError(ipc.CodeForbidden, "需要超管权限")
-	case grant.revoked:
-		outcome, reason, decision = "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case grant.state != DeviceStatePending:
-		outcome, reason, decision = "deny", "not_pending", ipc.NewError(ipc.CodeBadParam, "设备不在待审批状态")
-	}
-	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
-	if decision != nil {
-		return nil, decision
-	}
-	if auditErr != nil {
-		return nil, auditErr
-	}
-	return grant, nil
-}
-
-// ApproveDevice 批准待审批设备: state 置 active, 设备下次鉴权即放行上线。
-func (s *Service) ApproveDevice(ctx context.Context, identity *account.Identity, deviceID string) error {
-	if _, err := s.authorizePending(ctx, identity, deviceID, "approve", auditKindDeviceApprove); err != nil {
-		return err
-	}
-	userDevice := query.Use(s.db).UserDevice
-	if _, err := userDevice.WithContext(ctx).
-		Where(userDevice.ID.Eq(deviceID), userDevice.State.Eq(DeviceStatePending)).
-		UpdateColumns(map[string]any{"state": DeviceStateActive}); err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
-// RejectDevice 拒绝待审批设备: 删除设备行, 凭证/agent/指标经外键级联一并清除,
-// 设备下次鉴权得到凭证无效, 按合同视同吊销停止。
-func (s *Service) RejectDevice(ctx context.Context, identity *account.Identity, deviceID string) error {
-	if _, err := s.authorizePending(ctx, identity, deviceID, "reject", auditKindDeviceReject); err != nil {
-		return err
-	}
-	userDevice := query.Use(s.db).UserDevice
-	if _, err := userDevice.WithContext(ctx).
-		Where(userDevice.ID.Eq(deviceID), userDevice.State.Eq(DeviceStatePending)).
-		Delete(); err != nil {
-		return dbError(err)
-	}
 	return nil
 }
 

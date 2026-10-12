@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // 资产树「设备」分区测试: 分区位置(内置本地终端后、其他资产/分组前)、未登录不渲染且
-// 零请求、单击/Enter 打开设备终端(无独立「终端」按钮)、离线/pending 禁用提示、
-// pending 批准/拒绝、revoked 不显示、吊销两次确认与取消、上下文菜单吊销 danger 样式、
+// 零请求、单击/Enter 打开设备终端(无独立「终端」按钮)、离线/终端关闭禁用提示、
+// revoked 不显示、吊销两次确认与取消、上下文菜单吊销 danger 样式、
 // 指标趋势 SVG/加载-错误-空三态/手动刷新、DevicesView 复用 MetricsPanel 回归。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
@@ -81,7 +81,6 @@ const ONLINE_DEVICE = {
   id: "d-1",
   name: "web-01",
   kind: "agent",
-  state: "active" as const,
   created_at: NOW - 86400_000,
   last_seen_at: NOW - 30_000,
   revoked_at: 0,
@@ -100,7 +99,6 @@ const OFFLINE_DEVICE = {
   id: "d-2",
   name: "db-02",
   kind: "agent",
-  state: "active" as const,
   created_at: NOW - 172800_000,
   last_seen_at: NOW - 3600_000,
   revoked_at: 0,
@@ -121,25 +119,6 @@ const TERMINAL_DISABLED_DEVICE = {
   name: "noterm-01",
   last_seen_at: NOW - 30_000,
   agent: { ...OFFLINE_DEVICE.agent, terminal_enabled: false, last_seen_at: NOW - 30_000 },
-};
-
-const PENDING_DEVICE = {
-  id: "d-5",
-  name: "gpu-03",
-  kind: "agent",
-  state: "pending" as const,
-  created_at: NOW - 600_000,
-  last_seen_at: 0,
-  revoked_at: 0,
-  agent: {
-    platform: "linux",
-    app_version: "0.2.2",
-    desired_autostart: true,
-    terminal_enabled: true,
-    current_url: "",
-    service_state: {},
-    last_seen_at: 0,
-  },
 };
 
 const REVOKED_DEVICE = { ...ONLINE_DEVICE, id: "d-4", name: "old-laptop", revoked_at: NOW - 3600_000 };
@@ -204,7 +183,7 @@ function route(devices: unknown, metrics: unknown = { samples: METRICS_SAMPLES }
     if (u === "/fleet/devices" && method === "GET") return json(devices);
     if (u === "/fleet/base-urls" && method === "GET") return json({ base_urls: [] });
     if (u === "/fleet/devices/d-1/metrics" && method === "GET") return json(metrics);
-    if (/\/(approve|reject|revoke)$/.test(u) && method === "POST") return json({ ok: true });
+    if (u.endsWith("/revoke") && method === "POST") return json({ ok: true });
     return json({ error: { code: "not_found", message: u } }, 404);
   });
   vi.stubGlobal("fetch", mocks.fetch);
@@ -368,11 +347,11 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect(deviceTerminalTabs()[0].deviceId).toBe("d-1");
   });
 
-  it("离线/终端关闭/pending 的设备行禁用并给出提示, 点击不打开终端", async () => {
-    route({ devices: [OFFLINE_DEVICE, TERMINAL_DISABLED_DEVICE, PENDING_DEVICE] });
+  it("离线/终端关闭的设备行禁用并给出提示, 点击不打开终端", async () => {
+    route({ devices: [OFFLINE_DEVICE, TERMINAL_DISABLED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("noterm-01") ?? false);
 
     const offline = deviceRow("db-02");
     expect(offline.getAttribute("aria-disabled")).toBe("true");
@@ -383,15 +362,9 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect(noTerm.getAttribute("aria-disabled")).toBe("true");
     expect(noTerm.getAttribute("title")).toContain("该设备已关闭远程终端");
 
-    const pending = deviceRow("gpu-03");
-    expect(pending.getAttribute("aria-disabled")).toBe("true");
-    expect(pending.getAttribute("title")).toContain("设备待审批");
-    expect(pending.textContent).toContain("待审批");
-
     click(offline);
     click(noTerm);
-    click(pending);
-    keydown(pending, "Enter");
+    keydown(noTerm, "Enter");
     await flush();
     expect(deviceTerminalTabs()).toHaveLength(0);
   });
@@ -502,40 +475,6 @@ describe("资产树「设备」分区 · 自动收敛", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     await flushUntil(() => deviceFetches() > before);
-  });
-});
-
-describe("资产树「设备」分区 · 待审批", () => {
-  it("批准直接执行(无确认), 发出 approve 请求后待审批徽章消失", async () => {
-    const calls = route({ devices: [PENDING_DEVICE] });
-    seedUser(SUPERADMIN);
-    mountTree();
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
-
-    expect(section().textContent).toContain("待审批");
-    click(section().querySelector('button[aria-label="批准 gpu-03"]') as HTMLButtonElement);
-    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-5/approve" && c.method === "POST"));
-    await flushUntil(() => !(section().textContent ?? "").includes("待审批"));
-    expect(mocks.ask).not.toHaveBeenCalled();
-  });
-
-  it("拒绝需一次确认, 确认后发出 reject 请求且设备行移除; 取消则不发请求", async () => {
-    const calls = route({ devices: [PENDING_DEVICE] });
-    mocks.ask.mockResolvedValue(false);
-    seedUser(SUPERADMIN);
-    mountTree();
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
-
-    click(section().querySelector('button[aria-label="拒绝 gpu-03"]') as HTMLButtonElement);
-    await flushUntil(() => mocks.ask.mock.calls.length === 1);
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("需要新接入码才能重新接入");
-    expect(calls.some((c) => c.url.includes("/reject"))).toBe(false);
-    expect(section().textContent).toContain("gpu-03");
-
-    mocks.ask.mockResolvedValue(true);
-    click(section().querySelector('button[aria-label="拒绝 gpu-03"]') as HTMLButtonElement);
-    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-5/reject" && c.method === "POST"));
-    await flushUntil(() => !(section().textContent ?? "").includes("gpu-03"));
   });
 });
 
