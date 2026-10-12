@@ -13,16 +13,18 @@ import (
 const launchdLabel = "com.nexterm.agent"
 
 type launchdManager struct {
-	runner    CommandRunner
-	plistPath string
-	uid       string
+	runner        CommandRunner
+	plistPath     string
+	uid           string
+	commandPrefix []string
 }
 
-func newLaunchdManager(runner CommandRunner, homeDir, uid string) ServiceManager {
+func newLaunchdManager(runner CommandRunner, homeDir, uid string, commandPrefix ...string) ServiceManager {
 	return &launchdManager{
-		runner:    runner,
-		plistPath: filepath.Join(homeDir, "Library", "LaunchAgents", launchdLabel+".plist"),
-		uid:       uid,
+		runner:        runner,
+		plistPath:     filepath.Join(homeDir, "Library", "LaunchAgents", launchdLabel+".plist"),
+		uid:           uid,
+		commandPrefix: commandPrefix,
 	}
 }
 
@@ -31,7 +33,7 @@ func (m *launchdManager) domain() string {
 }
 
 func (m *launchdManager) Install(ctx context.Context, executable, dataDir string) error {
-	plist := renderLaunchdPlist(executable, dataDir)
+	plist := renderLaunchdPlist(executable, dataDir, m.commandPrefix...)
 	if err := os.MkdirAll(filepath.Dir(m.plistPath), 0o755); err != nil {
 		return fmt.Errorf("create LaunchAgents directory: %w", err)
 	}
@@ -129,8 +131,11 @@ func launchdFailure(output string, err error) string {
 	return err.Error()
 }
 
-func renderLaunchdPlist(executable, dataDir string) string {
-	arguments := []string{executable, "agent", "run", "--data-dir", dataDir}
+func renderLaunchdPlist(executable, dataDir string, commandPrefix ...string) string {
+	arguments := make([]string, 0, len(commandPrefix)+4)
+	arguments = append(arguments, executable)
+	arguments = append(arguments, commandPrefix...)
+	arguments = append(arguments, "run", "--data-dir", dataDir)
 	var builder strings.Builder
 	builder.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
 	builder.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")

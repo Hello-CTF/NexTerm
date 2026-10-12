@@ -55,7 +55,7 @@ func run(args []string) int {
 		return supervisor.RunHelperCLI(args[1:])
 	}
 	if len(args) > 0 && args[0] == "agent" {
-		return fleetagent.RunCLI(args[1:], os.Getenv, os.Stdout, os.Stderr)
+		return fleetagent.RunCLIWithServicePrefix(args[1:], []string{"agent"}, os.Getenv, os.Stdout, os.Stderr)
 	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {

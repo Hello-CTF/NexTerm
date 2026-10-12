@@ -2,6 +2,6 @@
 
 package agent
 
-func newWindowsManager(CommandRunner) ServiceManager {
+func newWindowsManager(CommandRunner, ...string) ServiceManager {
 	return unsupportedManager{}
 }
