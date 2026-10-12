@@ -156,7 +156,7 @@ jobs:
           frontend_log="$RUNNER_TEMP/frontend-lint-tests.log"
           go test -mod=readonly ./... >"$go_log" 2>&1 &
           go_pid=$!
-          (pnpm lint && pnpm test) >"$frontend_log" 2>&1 &
+          (pnpm lint && pnpm test --maxWorkers=4) >"$frontend_log" 2>&1 &
           frontend_pid=$!
           go_status=0
           frontend_status=0

@@ -362,7 +362,7 @@ var negativeControls = []negativeControl{
 		"quality runs Go and pnpm lint && pnpm test as background branches",
 		func(ci, release map[string]interface{}, packText string) string {
 			step := findStep(asMap(jobsOf(ci)["quality"]), "Go tests and frontend lint/tests")
-			step["run"] = strings.Replace(stepRun(step), "(pnpm lint && pnpm test)", "(pnpm lint)", 1)
+			step["run"] = strings.Replace(stepRun(step), "(pnpm lint && pnpm test --maxWorkers=4)", "(pnpm lint)", 1)
 			return packText
 		}},
 	{"parallel Go wait removal is caught",

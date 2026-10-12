@@ -291,7 +291,7 @@ func runWiringChecks(in inputs) []checkResult {
 	parallelRun := stepRun(findStep(qualityJob, "Go tests and frontend lint/tests"))
 	check("quality runs Go and pnpm lint && pnpm test as background branches",
 		strings.Contains(parallelRun, `go test -mod=readonly ./... >"$go_log" 2>&1 &`) &&
-			strings.Contains(parallelRun, `(pnpm lint && pnpm test) >"$frontend_log" 2>&1 &`) &&
+			strings.Contains(parallelRun, `(pnpm lint && pnpm test --maxWorkers=4) >"$frontend_log" 2>&1 &`) &&
 			strings.Contains(parallelRun, "go_pid=$!") && strings.Contains(parallelRun, "frontend_pid=$!"),
 		fmt.Sprintf("run=%q", parallelRun))
 	check("quality waits for both background PIDs",
