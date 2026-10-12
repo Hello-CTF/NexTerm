@@ -27,6 +27,8 @@ import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { confirmMultilinePaste, multilinePasteLines, wrapBracketedPaste } from "./terminalPaste";
+import { SelectionActionBar, isCoarsePointerDevice } from "./SelectionActionBar";
+import { copyText } from "../../ui/clipboard";
 import { clipboardHasPlainText, pureImageFiles } from "./imagePaste";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
@@ -77,6 +79,7 @@ export interface XtermViewProps {
   onClipboard?: (payload: string) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
   onPasteImages?: (files: File[]) => void;
+  onRequestPaste?: () => void;
 }
 
 export function XtermView(props: XtermViewProps) {
@@ -86,6 +89,7 @@ export function XtermView(props: XtermViewProps) {
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
   const [linesBelow, setLinesBelow] = useState(0);
+  const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
   const onBlocksRef = useRef(props.onBlocks);
   const onHandleRef = useRef(props.onHandle);
   const onAttachInfoRef = useRef(props.onAttachInfo);
@@ -96,6 +100,7 @@ export function XtermView(props: XtermViewProps) {
   const onClipboardRef = useRef(props.onClipboard);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
   const onPasteImagesRef = useRef(props.onPasteImages);
+  const onRequestPasteRef = useRef(props.onRequestPaste);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachInfoRef.current = props.onAttachInfo;
@@ -106,6 +111,7 @@ export function XtermView(props: XtermViewProps) {
   onClipboardRef.current = props.onClipboard;
   onSelectionCopyRef.current = props.onSelectionCopy;
   onPasteImagesRef.current = props.onPasteImages;
+  onRequestPasteRef.current = props.onRequestPaste;
 
   const fitIfSized = (afterClaim = false, final = false) => {
     const host = hostRef.current;
@@ -345,10 +351,38 @@ export function XtermView(props: XtermViewProps) {
       onCopied: (text) => onSelectionCopyRef.current?.(text, null),
       onError: (error) => onSelectionCopyRef.current?.("", error),
     });
-    const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
     // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板/拖放
     // 走文本粘贴路径, 图片字节永远不会成为按键输入。多行文本粘贴先弹确认, 单行交还默认处理。
     const pasteHost = hostRef.current;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let touchSeen = false;
+    // capture 阶段跟踪手指位置: xterm 的触摸选择在 target 阶段处理, 不冒泡也能拿到坐标。
+    const trackTouch = (event: TouchEvent) => {
+      const touch = event.touches[0] ?? event.changedTouches[0];
+      if (!touch) return;
+      lastTouchX = touch.clientX;
+      lastTouchY = touch.clientY;
+      touchSeen = true;
+    };
+    pasteHost.addEventListener("touchstart", trackTouch, true);
+    pasteHost.addEventListener("touchmove", trackTouch, true);
+    const updateSelectionBar = () => {
+      if (!isCoarsePointerDevice() || !term.getSelection()) {
+        touchSeen = false;
+        setSelectionBar(null);
+        return;
+      }
+      const rect = pasteHost.getBoundingClientRect();
+      setSelectionBar({
+        x: touchSeen ? lastTouchX : rect.left + rect.width / 2,
+        y: touchSeen ? lastTouchY : rect.top + Math.min(96, rect.height / 3),
+      });
+    };
+    const selectionDisposable = term.onSelectionChange(() => {
+      autoCopy.notifySelectionChanged();
+      updateSelectionBar();
+    });
     const onPasteCapture = (event: ClipboardEvent) => {
       const files = pureImageFiles(event.clipboardData);
       if (files.length > 0 && !clipboardHasPlainText(event.clipboardData)) {
@@ -433,6 +467,8 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("paste", onPasteCapture, true);
       pasteHost.removeEventListener("dragover", onDragOver);
       pasteHost.removeEventListener("drop", onDropCapture, true);
+      pasteHost.removeEventListener("touchstart", trackTouch, true);
+      pasteHost.removeEventListener("touchmove", trackTouch, true);
       dataDisposable.dispose();
       scrollDisposable.dispose();
       titleDisposable.dispose();
@@ -482,9 +518,41 @@ export function XtermView(props: XtermViewProps) {
     if (remote) gridRef.current?.observe(remote.revision, remote);
   }, [props.remoteGrid]);
 
+  const copySelectionViaBar = () => {
+    const term = termRef.current;
+    if (!term) return;
+    const text = term.getSelection();
+    if (!text) return;
+    copyText(text).then(
+      () => {
+        term.clearSelection();
+        onSelectionCopyRef.current?.(text, null);
+      },
+      (error: unknown) => {
+        onSelectionCopyRef.current?.("", error);
+      },
+    );
+  };
+
+  const pasteViaBar = () => {
+    onRequestPasteRef.current?.();
+    const term = termRef.current;
+    term?.clearSelection();
+    term?.focus();
+  };
+
   return (
     <div className="relative h-full w-full min-h-0">
       <div ref={hostRef} className="h-full w-full min-h-0" />
+      {selectionBar && (
+        <SelectionActionBar
+          x={selectionBar.x}
+          y={selectionBar.y}
+          onCopy={copySelectionViaBar}
+          onPaste={pasteViaBar}
+          onSelectAll={() => termRef.current?.selectAll()}
+        />
+      )}
       {linesBelow > 0 && (
         <button
           type="button"

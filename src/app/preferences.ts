@@ -283,6 +283,19 @@ const DEFAULT_APPEARANCE: AppearancePrefs = {
   terminalTheme: "dark",
 };
 
+const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
+
+// 与 platform.ts 的 isMobile 同一判定; 不引用 platform 是因为多个终端测试对 platform 的局部 mock 未导出 isMobile。
+function isMobileDevice(): boolean {
+  return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
+}
+
+// builtinAppearance 返回字段的内置默认; 移动端终端默认字号比桌面小一档。
+function builtinAppearance(field: keyof AppearancePrefs): number | string {
+  if (field === "terminalFontSize" && isMobileDevice()) return MOBILE_DEFAULT_TERMINAL_FONT_SIZE;
+  return DEFAULT_APPEARANCE[field];
+}
+
 const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   uiFontPreset: "appearance.uiFontPreset",
   uiFontScale: "appearance.uiFontScale",
@@ -334,7 +347,7 @@ function loadAppearance(): AppearancePrefs {
   }
   const merged = {} as Record<keyof AppearancePrefs, unknown>;
   for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
-    merged[field] = preferenceValue(APPEARANCE_PREF_KEYS[field], local[field], DEFAULT_APPEARANCE[field]);
+    merged[field] = preferenceValue(APPEARANCE_PREF_KEYS[field], local[field], builtinAppearance(field));
   }
   return {
     uiFontPreset: parsePreset(merged.uiFontPreset),

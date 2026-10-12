@@ -4,10 +4,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type TouchEvent as ReactTouchEvent,
 } from "react";
 import { documentTabTarget, isImeKeyEvent, useOverlayFocus } from "./DialogHost";
+import "./contextMenuSheet.css";
 
 export type MenuItem =
   | { kind: "separator" }
@@ -31,7 +34,25 @@ export interface ContextMenuState {
   title?: string;
 }
 
+type ActionMenuItem = Extract<MenuItem, { kind: "item" }>;
+
 const MARGIN = 8;
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
+
+// 不引用 app/platform 的 useCoarsePointer: 多个终端测试对 platform 的局部 mock 未导出它。
+function subscribeCoarsePointer(callback: () => void): () => void {
+  const query = window.matchMedia(COARSE_POINTER_QUERY);
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+
+function coarsePointerMatches(): boolean {
+  return window.matchMedia(COARSE_POINTER_QUERY).matches;
+}
+
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(subscribeCoarsePointer, coarsePointerMatches);
+}
 
 function menuButtons(menu: ParentNode | null): HTMLButtonElement[] {
   if (!menu) return [];
@@ -41,6 +62,18 @@ function menuButtons(menu: ParentNode | null): HTMLButtonElement[] {
 }
 
 export function ContextMenu({
+  state,
+  onClose,
+}: {
+  state: ContextMenuState | null;
+  onClose: () => void;
+}) {
+  const coarse = useCoarsePointer();
+  const Menu = coarse ? ContextMenuSheet : FloatingContextMenu;
+  return <Menu state={state} onClose={onClose} />;
+}
+
+function FloatingContextMenu({
   state,
   onClose,
 }: {
@@ -176,10 +209,12 @@ function MenuList({
   items,
   onClose,
   onExit,
+  onOpenSubmenu,
 }: {
   items: MenuItem[];
   onClose: () => boolean;
   onExit?: () => void;
+  onOpenSubmenu?: (item: ActionMenuItem) => void;
 }) {
   const [openSub, setOpenSub] = useState<number | null>(null);
   const [focusSub, setFocusSub] = useState(false);
@@ -224,6 +259,7 @@ function MenuList({
             key={`${item.label}-${index}`}
             className="nx-menu-row"
             onMouseEnter={() => {
+              if (onOpenSubmenu) return;
               setFocusSub(false);
               setOpenSub(hasSubmenu ? index : null);
             }}
@@ -238,11 +274,15 @@ function MenuList({
               tabIndex={-1}
               className={`nx-menu-item ${item.danger ? "is-danger" : ""}`}
               disabled={item.disabled}
-              aria-haspopup={hasSubmenu ? "menu" : undefined}
-              aria-expanded={hasSubmenu ? expanded : undefined}
-              aria-controls={hasSubmenu ? submenuId : undefined}
+              aria-haspopup={hasSubmenu && !onOpenSubmenu ? "menu" : undefined}
+              aria-expanded={hasSubmenu && !onOpenSubmenu ? expanded : undefined}
+              aria-controls={hasSubmenu && !onOpenSubmenu ? submenuId : undefined}
               onClick={() => {
                 if (hasSubmenu) {
+                  if (onOpenSubmenu) {
+                    onOpenSubmenu(item);
+                    return;
+                  }
                   setFocusSub(true);
                   setOpenSub((current) => (current === index ? null : index));
                   return;
@@ -258,7 +298,8 @@ function MenuList({
                 } else if (hasSubmenu && event.key === "ArrowRight") {
                   event.preventDefault();
                   event.stopPropagation();
-                  openForKeyboard(index, submenuId);
+                  if (onOpenSubmenu) onOpenSubmenu(item);
+                  else openForKeyboard(index, submenuId);
                 }
               }}
             >
@@ -319,6 +360,218 @@ function SubMenu({
       aria-label={label}
     >
       <MenuList items={items} onClose={onClose} onExit={onExit} />
+    </div>
+  );
+}
+
+function ContextMenuSheet({
+  state,
+  onClose,
+}: {
+  state: ContextMenuState | null;
+  onClose: () => void;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const closedRef = useRef(false);
+  const closeTimerRef = useRef(0);
+  const dragRef = useRef<{ startY: number; base: number } | null>(null);
+  const [levels, setLevels] = useState<Array<{ label: string; items: MenuItem[] }>>([]);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [prevState, setPrevState] = useState(state);
+  if (prevState !== state) {
+    // 换菜单时回到第一级并复位拖动状态
+    setPrevState(state);
+    setLevels([]);
+    setDragOffset(0);
+    setDragging(false);
+    setClosing(false);
+  }
+  const layer = useOverlayFocus(state, boxRef, {
+    modal: true,
+    initialFocus: () => menuButtons(listRef.current)[0] ?? boxRef.current,
+  });
+
+  const close = (): boolean => {
+    if (closedRef.current) return false;
+    closedRef.current = true;
+    onCloseRef.current();
+    return true;
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
+  useLayoutEffect(() => {
+    closedRef.current = false;
+    dragRef.current = null;
+  }, [state]);
+
+  const levelDepth = levels.length;
+  useEffect(() => {
+    if (levelDepth > 0) menuButtons(listRef.current)[0]?.focus();
+  }, [levelDepth]);
+
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
+
+  useEffect(() => {
+    if (!state) return;
+    const onDown = (event: PointerEvent) => {
+      if (!layer.isTopmost() || boxRef.current?.contains(event.target as Node)) return;
+      closeRef.current();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || isImeKeyEvent(event) || !layer.isTopmost()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeRef.current();
+    };
+    const dismiss = () => closeRef.current();
+    const dismissOnScroll = (event: WheelEvent) => {
+      if (!layer.isTopmost() || boxRef.current?.contains(event.target as Node)) return;
+      closeRef.current();
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("wheel", dismissOnScroll, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("wheel", dismissOnScroll);
+    };
+  }, [state, layer]);
+
+  if (!state) return null;
+
+  const current = levels.at(-1);
+  const items = current?.items ?? state.items;
+
+  const openLevel = (item: ActionMenuItem) => {
+    const submenu = item.submenu;
+    if (!submenu || submenu.length === 0) return;
+    setLevels((stack) => [...stack, { label: item.label, items: submenu }]);
+  };
+  const backLevel = () => setLevels((stack) => stack.slice(0, -1));
+
+  const onGrabberTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1) return;
+    dragRef.current = { startY: event.touches[0].clientY, base: dragOffset };
+    setDragging(true);
+  };
+
+  const onGrabberTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || event.touches.length !== 1) return;
+    setDragOffset(Math.max(0, drag.base + event.touches[0].clientY - drag.startY));
+  };
+
+  const onGrabberTouchEnd = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    const height = boxRef.current?.offsetHeight ?? 0;
+    const threshold = height > 0 ? Math.min(140, height / 3) : 140;
+    if (dragOffset > threshold) {
+      setClosing(true);
+      setDragOffset(window.innerHeight);
+      closeTimerRef.current = window.setTimeout(() => closeRef.current(), 180);
+    } else {
+      setDragOffset(0);
+    }
+  };
+
+  const onSheetKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (isImeKeyEvent(event) || !layer.isTopmost()) return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      if (boxRef.current) {
+        const target = documentTabTarget(
+          layer.getReturnFocus(),
+          event.shiftKey ? -1 : 1,
+          boxRef.current,
+        );
+        layer.setReturnFocus(target);
+      }
+      close();
+      return;
+    }
+    if (event.key === "ArrowLeft" && levels.length === 0) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item") : null;
+    if (!target || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const buttons = menuButtons(listRef.current);
+    if (buttons.length === 0) return;
+    event.preventDefault();
+    const index = buttons.indexOf(target);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? buttons.length - 1
+          : event.key === "ArrowDown"
+            ? (index + 1 + buttons.length) % buttons.length
+            : (index - 1 + buttons.length) % buttons.length;
+    buttons[next].focus();
+  };
+
+  return (
+    <div className="nx-overlay nx-menu-sheet-overlay">
+      <div
+        ref={boxRef}
+        className="nx-menu-sheet"
+        role="menu"
+        aria-label={state.title ?? "上下文菜单"}
+        tabIndex={-1}
+        style={{
+          transform: dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined,
+          transition: dragging ? "none" : undefined,
+          pointerEvents: closing ? "none" : undefined,
+        }}
+        onContextMenu={(event) => event.preventDefault()}
+        onKeyDown={onSheetKeyDown}
+      >
+        <div
+          className="nx-menu-sheet-grabber"
+          onTouchStart={onGrabberTouchStart}
+          onTouchMove={onGrabberTouchMove}
+          onTouchEnd={onGrabberTouchEnd}
+          onTouchCancel={onGrabberTouchEnd}
+        >
+          <div className="nx-menu-sheet-bar" />
+        </div>
+        {(current || state.title) && (
+          <div className="nx-menu-sheet-header">
+            {current ? (
+              <button type="button" className="nx-menu-sheet-back" onClick={backLevel}>
+                ‹ {current.label}
+              </button>
+            ) : (
+              <div className="nx-menu-sheet-title" title={state.title}>
+                {state.title}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="nx-menu-sheet-list" ref={listRef}>
+          <MenuList
+            items={items}
+            onClose={close}
+            onExit={current ? backLevel : undefined}
+            onOpenSubmenu={openLevel}
+          />
+        </div>
+      </div>
     </div>
   );
 }

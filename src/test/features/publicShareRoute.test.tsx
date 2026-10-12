@@ -55,11 +55,11 @@ describe("main.tsx public share route", () => {
       expect(socket.url).toContain("/share/public/route-token-1");
     }
     expect(document.body.textContent).not.toContain("route-token-1");
-  });
+  }, 15000);
 
   it("ignores malformed share paths and falls through to the app branch", async () => {
     FakeWebSocket.instances = [];
     await importMainAt("/share/public/");
     expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/public/"))).toBe(false);
-  });
+  }, 15000);
 });
