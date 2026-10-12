@@ -471,7 +471,7 @@ func runWiringChecks(in inputs) []checkResult {
 	check("release desktop installs Wails and NSIS only on cache misses and always verifies them",
 		normalizedStepIf(releaseWailsInstall) == "matrix.os=='windows'" && normalizedStepIf(releaseNSISInstall) == "matrix.os=='windows'" &&
 			cacheMissInstallAndAlwaysVerify(stepRun(releaseWailsInstall), "wails-cache", "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27", "wails3 version") &&
-			cacheMissInstallAndAlwaysVerify(stepRun(releaseNSISInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
+			cacheMissInstallAndAlwaysVerify(stepRun(releaseNSISInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
 		"")
 
 	nativeJob := asMap(jobsOf(ci)["native"])
@@ -489,7 +489,7 @@ func runWiringChecks(in inputs) []checkResult {
 		"")
 	check("native warm caches install only on misses and always verify Wails and NSIS",
 		cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "wails-cache", "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27", "wails3 version") &&
-			cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
+			cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
 		"")
 	nativeSteps := asList(nativeJob["steps"])
 	uploadStep := findStep(nativeJob, "Upload native runtime")

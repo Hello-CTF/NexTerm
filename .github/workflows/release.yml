@@ -122,7 +122,7 @@ jobs:
           if [ "${{ steps.nsis-cache.outputs.cache-hit }}" != "true" ]; then
             choco install nsis --version=3.12 --yes --no-progress
           fi
-          "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
+          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
       - name: Download the verified frontend dist
         uses: actions/download-artifact@v8
         with:
