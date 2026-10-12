@@ -152,7 +152,7 @@ func matrixEntries(job map[string]interface{}) []map[string]string {
 	return entries
 }
 
-func artifactStepNames(workflow map[string]interface{}, actionPrefix string) map[string]bool {
+func artifactStepNames(workflow map[string]interface{}, actionPrefix string, patternCandidates map[string]bool) map[string]bool {
 	names := map[string]bool{}
 	jobs := jobsOf(workflow)
 	for _, jobKey := range sortedKeys(jobs) {
@@ -161,11 +161,25 @@ func artifactStepNames(workflow map[string]interface{}, actionPrefix string) map
 			for _, rawStep := range asList(job["steps"]) {
 				step := asMap(rawStep)
 				with := asMap(step["with"])
-				if with == nil {
+				if with == nil || !strings.HasPrefix(str(step["uses"]), actionPrefix) {
 					continue
 				}
-				if strings.HasPrefix(str(step["uses"]), actionPrefix) && str(with["name"]) != "" {
+				if str(with["name"]) != "" {
 					names[matrixSubstitute(str(with["name"]), values)] = true
+				}
+				pattern := str(with["pattern"])
+				if pattern == "" || patternCandidates == nil {
+					continue
+				}
+				pattern = matrixSubstitute(pattern, values)
+				for candidate := range patternCandidates {
+					matched, err := filepath.Match(pattern, candidate)
+					if err != nil {
+						panic(fmt.Sprintf("invalid artifact pattern %q: %v", pattern, err))
+					}
+					if matched {
+						names[candidate] = true
+					}
 				}
 			}
 		}
@@ -257,7 +271,7 @@ func evaluateRelease(release map[string]interface{}, scenario map[string]string)
 	if scenario["ci-source"] == "success" {
 		outputs["reused"] = scenario["reused"]
 	}
-	order := []string{"ci", "desktop", "server", "agent", "publish"}
+	order := []string{"ci", "desktop", "server", "agent", "mobile", "publish"}
 	jobs := jobsOf(release)
 	ancestors := map[string]map[string]bool{"ci-source": {}}
 	for _, jobID := range order {
@@ -452,13 +466,13 @@ func main() {
 		fmt.Printf("\n%d check(s) failed\n", len(failures))
 		os.Exit(1)
 	}
-	fmt.Printf("\nall %d workflow reuse wiring checks passed\n", len(results)+len(negativeControls))
+	fmt.Printf("\nall %d workflow reuse wiring checks passed\n", len(results)+len(negativeControls)+len(resolverNegativeControls))
 	fmt.Printf("sections: wiring %d checks %.1fs; resolver %d scenarios %.1fs; upload stub %d checks %.1fs; "+
 		"desktop evidence %d checks %.1fs; %d negative controls (wiring-only re-runs) %.1fs; total %.1fs\n",
 		len(wiring), wiringElapsed.Seconds(),
 		len(resolver), resolverElapsed.Seconds(),
 		len(upload), uploadElapsed.Seconds(),
 		len(evidence), evidenceElapsed.Seconds(),
-		len(negativeControls), controlsElapsed.Seconds(),
+		len(negativeControls)+len(resolverNegativeControls), controlsElapsed.Seconds(),
 		time.Since(started).Seconds())
 }

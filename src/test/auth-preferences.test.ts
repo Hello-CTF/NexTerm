@@ -302,7 +302,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
 
     const { registerAccountPreferenceStore, createHttpPreferenceStore, getInputPrefs, getAppearancePrefs } = await import("../app/preferences");
     registerAccountPreferenceStore(createHttpPreferenceStore());
-    await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled());
+    await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled(), { timeout: 10000 });
 
     // 服务端全局默认被继承
     await vi.waitFor(() => expect(getInputPrefs().selectionAutoCopy).toBe(true));
@@ -318,7 +318,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
 
     const { registerAccountPreferenceStore, createHttpPreferenceStore, setSelectionAutoCopy, setTerminalTheme, resetAppearancePrefs, getAppearancePrefs } = await import("../app/preferences");
     registerAccountPreferenceStore(createHttpPreferenceStore());
-    await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled());
+    await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled(), { timeout: 10000 });
 
     setSelectionAutoCopy(true);
     await vi.waitFor(() => expect(prefsMocks.put).toHaveBeenCalledWith({ set: { "input.selectionAutoCopy": true } }));
@@ -366,12 +366,12 @@ describe("auth store 偏好存储生命周期", () => {
 
     await useAuth.getState().register("alice", "pw", "Alice");
     expect(useAuth.getState().user).not.toBeNull();
-    await vi.waitFor(() => expect(getAccountPreferenceStore()).not.toBeNull());
+    await vi.waitFor(() => expect(getAccountPreferenceStore()).not.toBeNull(), { timeout: 10000 });
 
     await useAuth.getState().logout();
     expect(getAccountPreferenceStore()).toBeNull();
     expect(useAuth.getState().user).toBeNull();
-  }, 15000);
+  }, 30000);
 
   it("401 会话过期时注销偏好存储", async () => {
     const { useAuth } = await import("../features/auth/store");

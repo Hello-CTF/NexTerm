@@ -46,6 +46,7 @@ func insertStepBefore(job map[string]interface{}, namePrefix string, step map[st
 			return
 		}
 	}
+	panic(fmt.Sprintf("step not found before %s", namePrefix))
 }
 
 var skipFrontendRestore = regexp.MustCompile(`&& '--consume-dist=[^']*'`)
@@ -116,14 +117,14 @@ var negativeControls = []negativeControl{
 	{"standalone pnpm typecheck re-addition is caught",
 		"quality has no standalone pnpm typecheck step",
 		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Frontend lint and tests",
+			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
 				map[string]interface{}{"name": "Frontend typecheck", "run": "pnpm typecheck"})
 			return packText
 		}},
 	{"plain go test re-addition is caught",
 		"quality runs the Go suite once without -race",
 		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Go tests",
+			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
 				map[string]interface{}{"name": "Go tests", "run": "go test -mod=readonly ./..."})
 			return packText
 		}},
@@ -132,8 +133,8 @@ var negativeControls = []negativeControl{
 		func(ci, release map[string]interface{}, packText string) string {
 			for _, rawStep := range qualitySteps(ci) {
 				step := asMap(rawStep)
-				if strings.HasPrefix(stepName(step), "Go tests") {
-					step["run"] = strings.Replace(stepRun(step), "go test -mod=readonly", "go test -mod=readonly -race", 1)
+				if strings.Contains(stepRun(step), "go test -mod=readonly ./...") {
+					step["run"] = strings.Replace(stepRun(step), "go test -mod=readonly ./...", "go test -mod=readonly -race ./...", 1)
 					return packText
 				}
 			}
@@ -196,7 +197,7 @@ var negativeControls = []negativeControl{
 	{"minimumReleaseAge install flag re-addition is caught",
 		"ci.yml carries no pnpm minimumReleaseAge bypass",
 		func(ci, release map[string]interface{}, packText string) string {
-			for _, rawStep := range qualitySteps(ci) {
+			for _, rawStep := range asList(asMap(jobsOf(ci)["frontend-quality"])["steps"]) {
 				step := asMap(rawStep)
 				if strings.Contains(stepRun(step), "pnpm install") {
 					step["run"] = stepRun(step) + " --config.minimumReleaseAge=0"
@@ -243,18 +244,18 @@ var negativeControls = []negativeControl{
 					break
 				}
 			}
-			step := steps[index]
-			rest := append(steps[:index], steps[index+1:]...)
-			setupGoIndex := -1
-			for i, rawStep := range rest {
+			cacheStep := steps[index]
+			reordered := make([]interface{}, 0, len(steps))
+			for i, rawStep := range steps {
+				if i == index {
+					continue
+				}
+				reordered = append(reordered, rawStep)
 				if strings.HasPrefix(str(asMap(rawStep)["uses"]), "actions/setup-go") {
-					setupGoIndex = i
-					break
+					reordered = append(reordered, cacheStep)
 				}
 			}
-			reordered := append(rest[:setupGoIndex+1], step)
-			reordered = append(reordered, rest[setupGoIndex+1:]...)
-			jobsOf(release)["desktop"].(map[string]interface{})["steps"] = reordered
+			asMap(jobsOf(release)["desktop"])["steps"] = reordered
 			return packText
 		}},
 	{"setup-go cache-hit skip re-addition is caught",
@@ -268,15 +269,230 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
+	{"setup-go module cache re-enable is caught",
+		"desktop setup-go disables the actions module cache",
+		func(ci, release map[string]interface{}, packText string) string {
+			for _, rawStep := range releaseDesktopSteps(release) {
+				step := asMap(rawStep)
+				if strings.HasPrefix(str(step["uses"]), "actions/setup-go") {
+					asMap(step["with"])["cache"] = true
+				}
+			}
+			return packText
+		}},
+	{"quality-source expected ref drift is caught",
+		"quality-source locks reusable quality evidence to master",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["quality-source"]), "Resolve reusable quality evidence")
+			asMap(step["env"])["CI_REUSE_EXPECTED_REF"] = "main"
+			return packText
+		}},
+	{"quality-source tag guard inversion is caught",
+		"quality-source calls the resolver only for tags",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["quality-source"]), "Resolve reusable quality evidence")
+			step["run"] = strings.Replace(stepRun(step), `if [ "$GITHUB_REF_TYPE" != "tag" ]; then`, `if [ "$GITHUB_REF_TYPE" = "tag" ]; then`, 1)
+			return packText
+		}},
+	{"quality-source non-tag fallback removal is caught",
+		"quality-source calls the resolver only for tags",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["quality-source"]), "Resolve reusable quality evidence")
+			step["run"] = strings.Replace(stepRun(step), `echo "reused=false" >> "$GITHUB_OUTPUT"`, `echo "reused=true" >> "$GITHUB_OUTPUT"`, 1)
+			return packText
+		}},
+	{"unguarded quality-source resolver call is caught",
+		"quality-source calls the resolver only for tags",
+		func(ci, release map[string]interface{}, packText string) string {
+			insertStepBefore(asMap(jobsOf(ci)["quality-source"]), "Resolve reusable quality evidence",
+				map[string]interface{}{"name": "Unguarded resolver", "run": "bash .github/scripts/resolve-ci-reuse.sh"})
+			return packText
+		}},
+	{"quality reused-evidence condition removal is caught",
+		"quality runs only when reusable master quality evidence is absent",
+		func(ci, release map[string]interface{}, packText string) string {
+			delete(asMap(jobsOf(ci)["quality"]), "if")
+			return packText
+		}},
+	{"postgres reused-evidence condition removal is caught",
+		"postgres runs only when reusable master quality evidence is absent",
+		func(ci, release map[string]interface{}, packText string) string {
+			delete(asMap(jobsOf(ci)["postgres"]), "if")
+			return packText
+		}},
+	{"native frontend dependency removal is caught",
+		"native depends only on frontend and version",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["native"])["needs"] = "version"
+			return packText
+		}},
+	{"mobile frontend dependency removal is caught",
+		"mobile depends only on frontend and version",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["mobile"])["needs"] = "version"
+			return packText
+		}},
+	{"ios-dist success-only gate is caught",
+		"ios-dist continues past skipped quality",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["ios-dist"])["if"] = "${{ success() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}"
+			return packText
+		}},
+	{"ios-dist failure guard removal is caught",
+		"ios-dist continues past skipped quality",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["ios-dist"])["if"] = "${{ !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}"
+			return packText
+		}},
+	{"second frontend repro producer is caught",
+		"frontend job is the only build.mjs frontend --repro-check producer",
+		func(ci, release map[string]interface{}, packText string) string {
+			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
+				map[string]interface{}{"name": "Duplicate frontend repro", "run": "node scripts/build.mjs frontend --repro-check"})
+			return packText
+		}},
+	{"frontend dist manifest upload removal is caught",
+		"frontend job is the only frontend-dist uploader",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["frontend"]), "Upload the verified frontend dist")
+			asMap(step["with"])["path"] = "dist/"
+			return packText
+		}},
+	{"frontend-quality lint removal is caught",
+		"frontend-quality runs pnpm lint exactly once",
+		func(ci, release map[string]interface{}, packText string) string {
+			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend lint")["run"] = "true"
+			return packText
+		}},
+	{"frontend-quality test removal is caught",
+		"frontend-quality runs the full pnpm test suite exactly once without maxWorkers",
+		func(ci, release map[string]interface{}, packText string) string {
+			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend tests")["run"] = "true"
+			return packText
+		}},
+	{"frontend-quality reused-evidence condition removal is caught",
+		"frontend-quality runs only when reusable master quality evidence is absent",
+		func(ci, release map[string]interface{}, packText string) string {
+			delete(asMap(jobsOf(ci)["frontend-quality"]), "if")
+			return packText
+		}},
+	{"ios-dist frontend-quality dependency drift is caught",
+		"ios-dist keeps the reused-quality dependency graph",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["ios-dist"])["needs"] = []interface{}{"quality-source", "quality", "frontend", "version"}
+			return packText
+		}},
+	{"release download outside resolver required artifacts is caught",
+		"release downloads are a subset of resolver required artifacts",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(release)["mobile"]), "Download the verified mobile package")
+			asMap(step["with"])["name"] = "mobile-ios-dist"
+			return packText
+		}},
+	{"mobile packaging gate if removal is caught",
+		"job graph: reuse: successful ci-source",
+		func(ci, release map[string]interface{}, packText string) string {
+			popJobIf(release, "mobile")
+			return packText
+		}},
+	{"publish mobile dependency removal is caught",
+		"job graph: reuse: mobile packaging failure",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(release)["publish"])["needs"] = []interface{}{"desktop", "server", "agent"}
+			return packText
+		}},
+	{"native warm-cache master condition removal is caught",
+		"native warm caches and tool setup pin master, Windows and desktop",
+		func(ci, release map[string]interface{}, packText string) string {
+			findStepByID(asMap(jobsOf(ci)["native"]), "wails-cache")["if"] = "matrix.os == 'windows' && matrix.kind == 'desktop'"
+			return packText
+		}},
+	{"native NSIS cache key drift is caught",
+		"native warm caches use exact Wails and NSIS keys",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStepByID(asMap(jobsOf(ci)["native"]), "nsis-cache")
+			asMap(step["with"])["key"] = "nsis-latest"
+			return packText
+		}},
+	{"native NSIS cache-miss guard inversion is caught",
+		"native warm caches install only on misses",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["native"]), "Install and verify the Windows release tools")
+			step["run"] = strings.Replace(stepRun(step),
+				`if [ "${{ steps.nsis-cache.outputs.cache-hit }}" != "true" ]; then`,
+				`if [ "${{ steps.nsis-cache.outputs.cache-hit }}" = "true" ]; then`, 1)
+			return packText
+		}},
+	{"native Wails version verification removal is caught",
+		"native warm caches install only on misses",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(ci)["native"]), "Install and verify the Windows release tools")
+			step["run"] = strings.Replace(stepRun(step), "wails3 version", "", 1)
+			return packText
+		}},
+	{"release NSIS cache key drift is caught",
+		"release desktop uses exact Windows Wails and NSIS cache entries",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStepByID(asMap(jobsOf(release)["desktop"]), "nsis-cache")
+			asMap(step["with"])["key"] = "nsis-latest"
+			return packText
+		}},
+	{"release NSIS cache-miss guard inversion is caught",
+		"release desktop installs Wails and NSIS only on cache misses",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(release)["desktop"]), "Install NSIS")
+			step["run"] = strings.Replace(stepRun(step),
+				`if [ "${{ steps.nsis-cache.outputs.cache-hit }}" != "true" ]; then`,
+				`if [ "${{ steps.nsis-cache.outputs.cache-hit }}" = "true" ]; then`, 1)
+			return packText
+		}},
+	{"release NSIS version verification removal is caught",
+		"release desktop installs Wails and NSIS only on cache misses",
+		func(ci, release map[string]interface{}, packText string) string {
+			step := findStep(asMap(jobsOf(release)["desktop"]), "Install NSIS")
+			step["run"] = strings.Replace(stepRun(step), `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`, "", 1)
+			return packText
+		}},
+}
+
+type resolverNegativeControl struct {
+	label    string
+	expected string
+	mutate   func(resolverText string) string
+}
+
+var resolverNegativeControls = []resolverNegativeControl{
+	{"agent required artifact deletion is caught by expanded release downloads",
+		"release downloads are a subset of resolver required artifacts",
+		func(resolverText string) string {
+			return strings.Replace(resolverText, " native-linux-amd64-agent", "", 1)
+		}},
 }
 
 func runNegativeControls(ciRaw, releaseRaw []byte, in inputs) []string {
 	var missed []string
+	report := func(label, expected string, results []checkResult) {
+		caught := false
+		for _, result := range results {
+			if strings.Contains(result.name, expected) && !result.ok {
+				caught = true
+				break
+			}
+		}
+		if caught {
+			fmt.Printf("ok - negative control: %s\n", label)
+		} else {
+			fmt.Printf("FAIL - negative control: %s\n", label)
+		}
+		if !caught {
+			missed = append(missed, fmt.Sprintf("negative control: %s: mutation not detected by %q", label, expected))
+		}
+	}
 	for _, control := range negativeControls {
 		ci := parseYAML(ciRaw)
 		release := parseYAML(releaseRaw)
 		mutatedPack := control.mutate(ci, release, in.packText)
-		results := runWiringChecks(inputs{
+		report(control.label, control.expected, runWiringChecks(inputs{
 			ci:           ci,
 			release:      release,
 			resolverText: in.resolverText,
@@ -284,22 +500,12 @@ func runNegativeControls(ciRaw, releaseRaw []byte, in inputs) []string {
 			uploadText:   in.uploadText,
 			evidenceText: in.evidenceText,
 			root:         in.root,
-		})
-		caught := false
-		for _, result := range results {
-			if strings.Contains(result.name, control.expected) && !result.ok {
-				caught = true
-				break
-			}
-		}
-		if caught {
-			fmt.Printf("ok - negative control: %s\n", control.label)
-		} else {
-			fmt.Printf("FAIL - negative control: %s\n", control.label)
-		}
-		if !caught {
-			missed = append(missed, fmt.Sprintf("negative control: %s: mutation not detected by %q", control.label, control.expected))
-		}
+		}))
+	}
+	for _, control := range resolverNegativeControls {
+		mutated := in
+		mutated.resolverText = control.mutate(in.resolverText)
+		report(control.label, control.expected, runWiringChecks(mutated))
 	}
 	return missed
 }
