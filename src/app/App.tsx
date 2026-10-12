@@ -2054,6 +2054,7 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
+  const bindings = useKeybindings();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">
       <Logo size={52} />
@@ -2086,6 +2087,22 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
             命令面板
           </button>
         )}
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
+        {(
+          [
+            ["newTerminal", "新建终端"],
+            ["quickConnect", "快速连接"],
+            ["commandPalette", "命令面板"],
+            ["toggleSidebar", "资产树"],
+            ["toggleAiSidebar", "AI 侧栏"],
+          ] as const
+        ).map(([id, label]) => (
+          <span key={id} className="inline-flex items-center gap-1">
+            <span className="nx-kbd">{formatBinding(bindings[id])}</span>
+            {label}
+          </span>
+        ))}
       </div>
       <div className="nx-hint max-w-md text-center">
         双击左栏「当前设备」可打开本机终端和文件树；SSH / WinRM 资产打开终端标签，容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。

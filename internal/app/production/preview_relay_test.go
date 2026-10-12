@@ -472,3 +472,22 @@ func TestPreviewRelayCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// TestPreviewShareCommandArgsRejected 钉住 preview_share_create/active 的参数校验:
+// 嵌套 args 缺字段或为空时返回 bad_param, 不触达中继 (缺整个 args 信封时输入
+// 解码为零值, 走同一拒绝)。
+func TestPreviewShareCommandArgsRejected(t *testing.T) {
+	production := newUpdateTestProduction(t, true, nil)
+	response := dispatchHostKeyTest(t, production, "preview_share_create", `{"args":{"tabId":"","ttlMs":0}}`)
+	if response.OK || response.Error == nil || response.Error.Code != "bad_param" || response.Error.Message != "tabId/ttlMs 不能为空" {
+		t.Fatalf("empty create args = %+v, want bad_param tabId/ttlMs", response.Error)
+	}
+	response = dispatchHostKeyTest(t, production, "preview_share_create", `{"tabId":"tab-1","ttlMs":3600000}`)
+	if response.OK || response.Error == nil || response.Error.Code != "bad_param" {
+		t.Fatalf("flat args = %+v, want bad_param (nested envelope required)", response.Error)
+	}
+	response = dispatchHostKeyTest(t, production, "preview_share_active", `{"args":{"tabId":""}}`)
+	if response.OK || response.Error == nil || response.Error.Code != "bad_param" || response.Error.Message != "tabId 不能为空" {
+		t.Fatalf("empty active args = %+v, want bad_param tabId", response.Error)
+	}
+}
