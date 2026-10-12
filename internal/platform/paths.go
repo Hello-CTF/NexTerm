@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type Paths struct {
@@ -28,14 +29,39 @@ func DesktopPaths(override string) (Paths, error) {
 		return NewPaths(override), nil
 	}
 	home, err := os.UserHomeDir()
-	if err != nil {
+	if err != nil && runtime.GOOS != "android" {
 		return Paths{}, err
+	}
+	if runtime.GOOS == "android" {
+		if filesDir, ok := androidFilesDir(); ok {
+			home = filesDir
+		}
 	}
 	dataDir, err := desktopDataDir(runtime.GOOS, home)
 	if err != nil {
 		return Paths{}, err
 	}
 	return NewPaths(dataDir), nil
+}
+
+// Android 应用进程没有 HOME，包名即进程名，私有目录路径可确定拼出。
+func androidFilesDir() (string, bool) {
+	raw, err := os.ReadFile("/proc/self/cmdline")
+	if err != nil {
+		return "", false
+	}
+	name := string(raw)
+	if i := strings.IndexByte(name, 0); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.IndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return "/data/data/" + name + "/files", true
 }
 
 func ServerPaths(override string) (Paths, error) {
@@ -66,9 +92,17 @@ func (p Paths) Prepare() error {
 
 func desktopDataDir(goos, home string) (string, error) {
 	switch goos {
-	case "darwin", "linux", "windows":
+	case "android":
 		if home == "" {
 			return "", fmt.Errorf("home directory is empty")
+		}
+		return filepath.Join(home, "nexterm"), nil
+	case "darwin", "linux", "windows", "ios":
+		if home == "" {
+			return "", fmt.Errorf("home directory is empty")
+		}
+		if goos == "ios" {
+			return filepath.Join(home, "Library", "Application Support", "nexterm"), nil
 		}
 		return filepath.Join(home, ".config", "nexterm"), nil
 	default:

@@ -17,10 +17,24 @@ func TestDesktopDataDirDefaultsToConfigHome(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", goos, got, want)
 		}
 	}
+	got, err := desktopDataDir("ios", home)
+	if err != nil {
+		t.Fatalf("ios: %v", err)
+	}
+	if want := filepath.Join(home, "Library", "Application Support", "nexterm"); got != want {
+		t.Fatalf("ios = %q, want %q", got, want)
+	}
+	got, err = desktopDataDir("android", home)
+	if err != nil {
+		t.Fatalf("android: %v", err)
+	}
+	if want := filepath.Join(home, "nexterm"); got != want {
+		t.Fatalf("android = %q, want %q", got, want)
+	}
 }
 
 func TestDesktopDataDirRequiresHome(t *testing.T) {
-	for _, goos := range []string{"darwin", "linux", "windows"} {
+	for _, goos := range []string{"darwin", "linux", "windows", "ios", "android"} {
 		if _, err := desktopDataDir(goos, ""); err == nil {
 			t.Fatalf("%s: expected error for empty home", goos)
 		}

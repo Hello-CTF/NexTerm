@@ -709,10 +709,10 @@ export function TerminalPane({
     if (error) {
       const name = (error as { name?: string } | null)?.name;
       const reason = name === "NotAllowedError" ? "剪贴板权限被拒绝" : describeError(error);
-      pushToast("error", `自动复制选中内容失败：${reason}`);
+      pushToast("error", `复制选中内容失败：${reason}`);
       return;
     }
-    pushToast("success", `已自动复制 ${text.length} 个字符`);
+    pushToast("success", `已复制 ${text.length} 个字符`);
   };
 
   const disconnectSession = async () => {
@@ -1296,6 +1296,7 @@ export function TerminalPane({
                 handleRef.current = h;
               }}
               onSelectionCopy={handleSelectionCopy}
+              onRequestPaste={() => void pasteIntoTerminal()}
               registerSearch={(api) => {
                 searchApi.current = api;
               }}

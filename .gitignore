@@ -42,3 +42,4 @@ build/ios/xcode/
 build/ios/DerivedData/
 build/ios/*.app
 build/ios/*.ipa
+build/android/build/

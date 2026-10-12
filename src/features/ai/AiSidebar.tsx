@@ -2377,7 +2377,7 @@ function AiChatTab({
           }}
         />
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        <div className="nx-ai-composer-actions mt-1.5 flex flex-nowrap items-center gap-1 overflow-x-auto">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
           <input
             ref={imageInputRef}

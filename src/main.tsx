@@ -12,6 +12,7 @@ import { openDeepLink } from "./app/deepLink";
 import { useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
+import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { PublicShareApp } from "./features/sharing/PublicShareApp";
 import { PublicPreviewApp } from "./features/sharing/PublicPreviewApp";
@@ -95,10 +96,12 @@ function wireDesktopShell(): void {
     if (inEditable && !inTerminal) return;
     e.preventDefault();
   });
+  installLongPressContextMenu();
 }
 
 async function bootstrapApp(): Promise<void> {
   wireDesktopShell();
+  wireMobileInsets();
   try {
     const [os, mountReason] = await Promise.all([
       systemApi.platform(),
@@ -115,6 +118,25 @@ async function bootstrapApp(): Promise<void> {
       <App />
     </QueryClientProvider>,
   );
+}
+
+async function wireMobileInsets(): Promise<void> {
+  if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) return;
+  const apply = async () => {
+    try {
+      const insets = await systemApi.insets();
+      const style = document.documentElement.style;
+      style.setProperty("--nx-inset-top", `${insets.top}px`);
+      style.setProperty("--nx-inset-right", `${insets.right}px`);
+      style.setProperty("--nx-inset-bottom", `${insets.bottom}px`);
+      style.setProperty("--nx-inset-left", `${insets.left}px`);
+    } catch {
+      // system_insets 不可用(server/web)时保持 env()/0 值
+    }
+  };
+  await apply();
+  window.addEventListener("resize", () => void apply());
+  window.addEventListener("orientationchange", () => void apply());
 }
 
 const publicShareToken =

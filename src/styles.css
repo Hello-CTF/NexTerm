@@ -1378,7 +1378,7 @@
     position: fixed;
     z-index: 80;
     min-width: 188px;
-    max-width: 340px;
+    max-width: min(340px, calc(100vw - 16px));
     padding: 4px;
     border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-md);
@@ -2109,7 +2109,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+  padding: 4px 6px;
   overflow-x: auto;
   z-index: 20;
   transform: translateY(calc(-1 * var(--nx-kb-inset, 0px)));
@@ -2123,6 +2123,9 @@
 }
 
 .nx-terminal-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: 34px;
   height: 29px;
   flex: 0 0 auto;
@@ -2338,6 +2341,12 @@
     row-gap: 4px;
   }
 
+  .nx-tab,
+  .nx-row {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
   .nx-row-actions {
     flex-basis: 100%;
     flex-wrap: wrap;
@@ -2445,6 +2454,47 @@
       height: 44px;
     }
   }
+
+  body {
+    -webkit-touch-callout: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"],
+  .xterm {
+    -webkit-touch-callout: default;
+  }
+
+  .nx-ai-composer-actions .nx-icon-btn-sm,
+  .nx-ai-composer-actions .nx-send-btn {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+
+  .nx-ai-composer-actions .nx-icon-btn-sm::after,
+  .nx-ai-composer-actions .nx-send-btn::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+  }
+
+  .nx-settings-view .nx-btn,
+  .nx-settings-view .nx-btn-sm,
+  .nx-settings-view .nx-btn-xs {
+    position: relative;
+    min-height: 36px;
+  }
+
+  .nx-settings-view .nx-btn::after,
+  .nx-settings-view .nx-btn-sm::after,
+  .nx-settings-view .nx-btn-xs::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2519,3 +2569,30 @@
     from { opacity: 0; }
     to { opacity: 1; }
   }
+
+.nx-app[data-nx-landscape-full="true"] .nx-rail,
+.nx-app[data-nx-landscape-full="true"] .nx-app-header {
+  display: none;
+}
+
+/* 圆角屏/刘海适配: 背景延伸进弧区, 交互内容避开状态栏与手势条。
+   --nx-inset-* 由原生侧注入(安卓 env() 不含手势条), 未注入时退回 iOS 的 env() 值 */
+.nx-app-header {
+  height: auto;
+  min-height: 36px;
+  padding-top: var(--nx-inset-top, env(safe-area-inset-top));
+  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
+}
+
+.nx-rail {
+  width: calc(48px + var(--nx-inset-left, env(safe-area-inset-left)));
+  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
+}
+
+.nx-statusbar {
+  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
+}
+
+.nx-app[data-nx-landscape-full="true"] .nx-statusbar {
+  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
+}

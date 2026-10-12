@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -77,6 +78,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
 		HttpOnly: true,
 		Secure:   requestTLS(r),
 		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(account.SessionAbsoluteTTL / time.Second),
 	}
 	http.SetCookie(w, cookie)
 }

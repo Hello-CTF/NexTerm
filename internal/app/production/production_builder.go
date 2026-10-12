@@ -43,6 +43,8 @@ type ProductionConfig struct {
 	// RestartFunc 由桌面端注入: 启动新进程并退出当前 wails 应用; server 为 nil,
 	// app_restart 降级为不可用原因。
 	RestartFunc func(context.Context, string) error
+	// ScreenInsets 由桌面端注入 wails Screen API 实现; server 为 nil。
+	ScreenInsets func(context.Context) (ScreenInsets, error)
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -184,6 +186,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,
 	}
+	services.ScreenInsets = config.ScreenInsets
 	if executableErr == nil {
 		services.Update = &update.Manager{
 			CurrentVersion: config.Config.Version,

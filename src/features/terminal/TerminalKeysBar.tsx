@@ -266,23 +266,23 @@ export function TerminalKeysBar({ onSend, onFocus, broadcastCount }: TerminalKey
           {key.label}
         </button>
       ))}
+      <button
+        type="button"
+        className="nx-terminal-key"
+        title="配置终端按键"
+        aria-label="配置终端按键"
+        aria-haspopup="dialog"
+        aria-expanded={configOpen}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true });
+          clearModifiers();
+          setConfigOpen((open) => !open);
+        }}
+      >
+        <IconSettings size={13} />
+      </button>
       <div className="sticky right-0 ml-auto flex shrink-0 items-center gap-1 bg-[var(--nx-bg-canvas)] pl-1">
-        <button
-          type="button"
-          className="nx-terminal-key"
-          title="配置终端按键"
-          aria-label="配置终端按键"
-          aria-haspopup="dialog"
-          aria-expanded={configOpen}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={(event) => {
-            event.currentTarget.focus({ preventScroll: true });
-            clearModifiers();
-            setConfigOpen((open) => !open);
-          }}
-        >
-          <IconSettings size={13} />
-        </button>
         <button
           type="button"
           className="nx-terminal-key nx-terminal-keyboard"

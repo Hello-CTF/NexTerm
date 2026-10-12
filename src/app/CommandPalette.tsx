@@ -10,6 +10,7 @@ import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybin
 import { assetApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
+import { isMobile } from "./platform";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { insertSnippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
@@ -133,21 +134,25 @@ export function CommandPalette({
         icon: IconZap,
         run: () => onQuickConnect?.(),
       },
-      {
-        id: "local-terminal",
-        label: "打开本地终端",
-        hint: "当前设备",
-        icon: IconTerminal,
-        run: () => {
-          void sessionApi
-            .connectLocal()
-            .then((session) => {
-              setSessions([...sessions.filter((item) => item.id !== session.id), session]);
-              return openTerminalTab(session);
-            })
-            .catch((error) => pushToast("error", describeError(error)));
-        },
-      },
+      ...(isMobile()
+        ? []
+        : [
+            {
+              id: "local-terminal",
+              label: "打开本地终端",
+              hint: "当前设备",
+              icon: IconTerminal,
+              run: () => {
+                void sessionApi
+                  .connectLocal()
+                  .then((session) => {
+                    setSessions([...sessions.filter((item) => item.id !== session.id), session]);
+                    return openTerminalTab(session);
+                  })
+                  .catch((error) => pushToast("error", describeError(error)));
+              },
+            } satisfies Action,
+          ]),
       {
         id: "split-pane",
         label: "上下分屏 / 取消分屏",

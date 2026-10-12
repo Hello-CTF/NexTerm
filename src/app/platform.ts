@@ -28,6 +28,35 @@ export function isMac(): boolean {
   return macPlatform;
 }
 
+const mobileUA =
+  typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
+
+export function isMobile(): boolean {
+  return mobileUA;
+}
+
+export function isLandscapeFullScreen(): boolean {
+  if (!isCoarsePointer()) return false;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  return Math.min(w, h) < 500 && w > h;
+}
+
+function subscribeLandscapeFull(callback: () => void): () => void {
+  window.addEventListener("resize", callback);
+  window.addEventListener("orientationchange", callback);
+  window.visualViewport?.addEventListener("resize", callback);
+  return () => {
+    window.removeEventListener("resize", callback);
+    window.removeEventListener("orientationchange", callback);
+    window.visualViewport?.removeEventListener("resize", callback);
+  };
+}
+
+export function useLandscapeFullScreen(): boolean {
+  return useSyncExternalStore(subscribeLandscapeFull, isLandscapeFullScreen);
+}
+
 export function modHint(): string {
   return macPlatform ? "⌘" : "Ctrl";
 }

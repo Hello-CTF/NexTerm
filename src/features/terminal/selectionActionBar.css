@@ -1,0 +1,31 @@
+.nx-selection-bar {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--nx-border-strong);
+  border-radius: 9px;
+  background: var(--nx-bg-pane);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.5);
+}
+
+.nx-selection-bar button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nx-fg);
+  font-size: calc(12.5px * var(--nx-ui-text-factor));
+  white-space: nowrap;
+}
+
+.nx-selection-bar button:hover,
+.nx-selection-bar button:active {
+  background: var(--nx-bg-hover);
+}

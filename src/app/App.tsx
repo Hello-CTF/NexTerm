@@ -47,6 +47,7 @@ import {
 } from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { startUnreadTracking } from "./unread";
+import { useEdgeGestures } from "./edgeGestures";
 import {
   applyLayoutPreset,
   saveLayoutPresetFromWorkspace,
@@ -65,7 +66,9 @@ import {
   coarsePointerMedia,
   isCoarsePointer,
   isMac,
+  isMobile,
   isWailsDragRegionTarget,
+  useLandscapeFullScreen,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
 } from "./platform";
@@ -165,7 +168,7 @@ const TAB_ICON = {
 } as const;
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
-  if (TRANSPORT !== "desktop") return;
+  if (TRANSPORT !== "desktop" || isMobile()) return;
   if (isWailsDragRegionTarget(event.target)) {
     void toggleMaximiseWindow();
   }
@@ -635,37 +638,64 @@ function AppShell() {
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
+  const landscapeFull = useLandscapeFullScreen();
+  // 横屏全屏时宽度往往大于 overlay 阈值, 强制侧栏走 overlay, 避免挤压全屏终端。
+  const overlaySidebars = viewport.overlaySidebars || landscapeFull;
   const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
-  const leftDockOpen = viewport.overlaySidebars
-    ? overlayDock === "left" && leftOpen
-    : leftOpen;
-  const rightDockOpen = viewport.overlaySidebars
-    ? overlayDock === "right" && rightOpen
-    : rightOpen;
+  const leftDockOpen = overlaySidebars ? overlayDock === "left" && leftOpen : leftOpen;
+  const rightDockOpen = overlaySidebars ? overlayDock === "right" && rightOpen : rightOpen;
   useAiToastInset(rightDockOpen);
 
   const setLeftOpen = useCallback(
     (open: boolean) => {
       setLeftOpenStore(open);
-      setOverlayDock(viewport.overlaySidebars && open ? "left" : null);
+      setOverlayDock(overlaySidebars && open ? "left" : null);
     },
-    [setLeftOpenStore, viewport.overlaySidebars],
+    [setLeftOpenStore, overlaySidebars],
   );
   const setRightOpen = useCallback(
     (open: boolean) => {
       setRightOpenStore(open);
-      setOverlayDock(viewport.overlaySidebars && open ? "right" : null);
+      setOverlayDock(overlaySidebars && open ? "right" : null);
     },
-    [setRightOpenStore, viewport.overlaySidebars],
+    [setRightOpenStore, overlaySidebars],
   );
 
   useEffect(() => {
-    if (!viewport.overlaySidebars) return;
+    if (!overlaySidebars) return;
     setOverlayDock(null);
-  }, [connectFocusRevision, viewport.overlaySidebars]);
+  }, [connectFocusRevision, overlaySidebars]);
+
+  useEdgeGestures({
+    overlayDock,
+    openLeft: () => setLeftOpen(true),
+    openRight: () => setRightOpen(true),
+    closeOverlay: () => setOverlayDock(null),
+  });
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
+
+  // 手机上进终端标签自动收起侧栏, 切回非终端标签恢复。只动会话级 overlayDock:
+  // leftOpen/rightOpen 按用户持久化并跨端同步, 写它会丢偏好还会联动对端。
+  const rememberedOverlayDock = useRef<"left" | "right" | null>(null);
+  const prevActiveKind = useRef<string | null>(null);
+  const activeTabKind = active?.kind ?? null;
+  const isTerminalPaneKind = activeTabKind === "terminal" || activeTabKind === "deviceTerminal";
+  useEffect(() => {
+    if (!isMobile() || !overlaySidebars) return;
+    const prev = prevActiveKind.current;
+    prevActiveKind.current = activeTabKind;
+    if (activeTabKind === prev) return;
+    if (isTerminalPaneKind) {
+      rememberedOverlayDock.current = overlayDock;
+      if (overlayDock) setOverlayDock(null);
+    } else if (rememberedOverlayDock.current) {
+      const mem = rememberedOverlayDock.current;
+      rememberedOverlayDock.current = null;
+      setOverlayDock(mem);
+    }
+  }, [activeTabKind, isTerminalPaneKind, overlaySidebars, overlayDock]);
   const terminalKeysVisible =
     viewport.terminalKeys &&
     (ws?.panes.some((p) => {
@@ -684,6 +714,10 @@ function AppShell() {
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
+    if (isMobile()) {
+      pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
+      return;
+    }
     try {
       const s = await sessionApi.connectLocal();
       const list = useUi.getState().sessions;
@@ -853,6 +887,10 @@ function AppShell() {
       } catch (e) {
         pushToast("error", `重新连接失败：${describeError(e)}`);
       }
+      return;
+    }
+    if (isMobile()) {
+      pushToast("info", "移动端不支持本地终端，请双击左侧资产连接远程主机");
       return;
     }
     void openLocalTerminal();
@@ -1260,7 +1298,7 @@ function AppShell() {
 
   const aiToast = aiToastPlacement(
     viewport.width,
-    viewport.overlaySidebars,
+    overlaySidebars,
     rightDockOpen,
     rightWidth,
   );
@@ -1270,6 +1308,7 @@ function AppShell() {
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
       data-nx-keys={terminalKeysVisible ? "true" : undefined}
       data-nx-ai={aiToast ?? undefined}
+      data-nx-landscape-full={landscapeFull ? "true" : undefined}
       style={{ "--nx-right-w": `${rightWidth}px` } as CSSProperties}
       onDoubleClick={onDragRegionDoubleClick}
     >
@@ -1338,7 +1377,7 @@ function AppShell() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header
-            className={`flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
+            className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
               TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : "pl-3.5"
             }`}
             data-wails-drag-region style={wailsDragRegionStyle}
@@ -1406,7 +1445,7 @@ function AppShell() {
             >
               <IconCommand size={15} />
             </button>
-            {TRANSPORT === "desktop" && !isMac() && (
+            {TRANSPORT === "desktop" && !isMac() && !isMobile() && (
               <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
@@ -1437,7 +1476,7 @@ function AppShell() {
           </header>
 
         <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
-          {viewport.overlaySidebars && (leftDockOpen || rightDockOpen) && (
+          {overlaySidebars && (leftDockOpen || rightDockOpen) && (
             <button
               type="button"
               className="nx-dock-backdrop"
@@ -2152,22 +2191,24 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          className="nx-btn nx-btn-primary"
-          onClick={() => {
-            if (onLocal) {
-              onLocal();
-              return;
-            }
-            void sessionApi.connectLocal().then((s) => {
-              setSessions([...sessions.filter((x) => x.id !== s.id), s]);
-              void openTerminalTab(s);
-            });
-          }}
-        >
-          <IconTerminal size={14} />
-          打开本地终端
-        </button>
+        {!isMobile() && (
+          <button
+            className="nx-btn nx-btn-primary"
+            onClick={() => {
+              if (onLocal) {
+                onLocal();
+                return;
+              }
+              void sessionApi.connectLocal().then((s) => {
+                setSessions([...sessions.filter((x) => x.id !== s.id), s]);
+                void openTerminalTab(s);
+              });
+            }}
+          >
+            <IconTerminal size={14} />
+            打开本地终端
+          </button>
+        )}
         {onPalette && (
           <button className="nx-btn nx-btn-outline" onClick={onPalette}>
             <IconCommand size={14} />
