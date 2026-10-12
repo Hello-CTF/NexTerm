@@ -233,13 +233,14 @@ func productionModules(services ProductionServices) []Module {
 	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 		return registerBiometricCommands(dispatcher, platformBiometric{}, biometricVaultState(services))
 	}})
-	if services.ScreenInsets != nil {
-		modules = append(modules, Module{Name: "system-insets", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-			return ipc.Register(dispatcher, "system_insets", func(ctx context.Context, _ *ipc.Call, _ struct{}) (ScreenInsets, error) {
-				return services.ScreenInsets(ctx)
-			})
-		}})
-	}
+	modules = append(modules, Module{Name: "system-insets", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+		return ipc.Register(dispatcher, "system_insets", func(ctx context.Context, _ *ipc.Call, _ struct{}) (ScreenInsets, error) {
+			if services.ScreenInsets == nil {
+				return ScreenInsets{}, nil
+			}
+			return services.ScreenInsets(ctx)
+		})
+	}})
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})
 	}

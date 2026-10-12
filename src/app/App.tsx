@@ -677,7 +677,7 @@ function AppShell() {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
 
   // 手机上进终端标签自动收起侧栏, 切回非终端标签恢复。只动会话级 overlayDock:
-  // leftOpen/rightOpen 按用户持久化并跨端同步, 写它会丢偏好还会联动对端(评审 B1)。
+  // leftOpen/rightOpen 按用户持久化并跨端同步, 写它会丢偏好还会联动对端。
   const rememberedOverlayDock = useRef<"left" | "right" | null>(null);
   const prevActiveKind = useRef<string | null>(null);
   const activeTabKind = active?.kind ?? null;
