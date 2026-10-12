@@ -92,10 +92,6 @@ export const remoteFleetApi = {
 
   revoke: (id: string) => call<{ ok: boolean }>("remote_fleet_device_revoke", { args: { deviceId: id } }),
 
-  approve: (id: string) => call<{ ok: boolean }>("remote_fleet_device_approve", { args: { deviceId: id } }),
-
-  reject: (id: string) => call<{ ok: boolean }>("remote_fleet_device_reject", { args: { deviceId: id } }),
-
   setAutostart: (id: string, desired: boolean) =>
     call<{ ok: boolean; desired_autostart: boolean }>("remote_fleet_device_autostart", { args: { deviceId: id, desired } }),
 

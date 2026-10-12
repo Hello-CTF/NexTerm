@@ -64,8 +64,6 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 	mux.Handle("GET /fleet/devices", fixture.session(http.HandlerFunc(fixture.serveFleetDevices)))
 	mux.Handle("GET /fleet/devices/{id}/metrics", fixture.session(http.HandlerFunc(fixture.serveFleetMetrics)))
 	mux.Handle("POST /fleet/devices/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetRevoke))))
-	mux.Handle("POST /fleet/devices/{id}/approve", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
-	mux.Handle("POST /fleet/devices/{id}/reject", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveOK))))
 	mux.Handle("POST /fleet/devices/{id}/autostart", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetAutostart))))
 	mux.Handle("POST /device/enroll-codes", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveEnrollCode))))
 	mux.Handle("GET /fleet/base-urls", fixture.session(http.HandlerFunc(fixture.serveBaseURLsGet)))
@@ -685,12 +683,6 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 	requireCode(t, client.RevokeMyDevice(ctx, "missing"), ipc.CodeNotFound)
 	requireCode(t, client.RevokeDevice(ctx, "missing"), ipc.CodeNotFound)
 	if err := client.SetDeviceAutostart(ctx, "d-1", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.ApproveDevice(ctx, "d-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.RejectDevice(ctx, "d-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.RevokeHostShare(ctx, "hs-1"); err != nil {

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 // 桌面端设备管理 · 已登录: 数据全部走 remote* 代理 (remote_fleet_* / remote_healthz),
-// 列表/签发/吊销/审批/自启/指标/接入地址与 WEB 同视图; 桌面无 /ws/events 通道,
+// 列表/签发/吊销/自启/指标/接入地址与 WEB 同视图; 桌面无 /ws/events 通道,
 // 在线状态只靠 30 秒轮询刷新, 不订阅 device://status。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
@@ -13,8 +13,6 @@ const mocks = vi.hoisted(() => {
     devices: vi.fn(),
     issueEnrollCode: vi.fn(),
     revoke: vi.fn(),
-    approve: vi.fn(),
-    reject: vi.fn(),
     setAutostart: vi.fn(),
     metrics: vi.fn(),
     baseUrls: vi.fn(),
@@ -42,8 +40,6 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       devices: mocks.devices,
       issueEnrollCode: mocks.issueEnrollCode,
       revoke: mocks.revoke,
-      approve: mocks.approve,
-      reject: mocks.reject,
       setAutostart: mocks.setAutostart,
       metrics: mocks.metrics,
       baseUrls: mocks.baseUrls,
@@ -113,26 +109,6 @@ const OFFLINE_DEVICE = {
   },
 };
 
-const PENDING_DEVICE = {
-  id: "d-5",
-  name: "gpu-03",
-  kind: "agent",
-  state: "pending" as const,
-  created_at: NOW - 600_000,
-  last_seen_at: 0,
-  revoked_at: 0,
-  owner: { id: "u-2", username: "bob" },
-  agent: {
-    platform: "linux",
-    app_version: "1.2.3",
-    desired_autostart: true,
-    terminal_enabled: true,
-    current_url: "",
-    service_state: {},
-    last_seen_at: 0,
-  },
-};
-
 const BASE_URLS = [{ url: "https://nexterm.example.com" }];
 
 const METRICS_SAMPLES = [
@@ -173,8 +149,6 @@ function seedFleet(devices: unknown[] = [AGENT_DEVICE, OFFLINE_DEVICE]) {
   mocks.serverVersion.mockResolvedValue("1.2.3");
   mocks.issueEnrollCode.mockResolvedValue({ code: "desk-code-1", expires_at: NOW + 900_000 });
   mocks.revoke.mockResolvedValue({ ok: true });
-  mocks.approve.mockResolvedValue({ ok: true });
-  mocks.reject.mockResolvedValue({ ok: true });
   mocks.setAutostart.mockImplementation((_id: string, desired: boolean) =>
     Promise.resolve({ ok: true, desired_autostart: desired }),
   );
@@ -280,33 +254,6 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.devices.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("超管批准待审批设备走 remote approve, 徽章与横幅随状态消失", async () => {
-    seedLoggedIn();
-    seedFleet([AGENT_DEVICE, PENDING_DEVICE]);
-    mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
-    expect(document.body.textContent).toContain("1 台设备待审批");
-
-    click([...(cardOf("gpu-03")?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "批准") as HTMLButtonElement);
-    await flushUntil(() => mocks.approve.mock.calls.length === 1);
-    expect(mocks.approve).toHaveBeenCalledWith("d-5");
-    await flushUntil(() => !(cardOf("gpu-03")?.textContent ?? "").includes("待审批"));
-    expect(document.body.textContent).not.toContain("台设备待审批");
-  });
-
-  it("超管拒绝待审批设备需确认, 确认后走 remote reject 且卡片移除", async () => {
-    seedLoggedIn();
-    seedFleet([AGENT_DEVICE, PENDING_DEVICE]);
-    mocks.ask.mockResolvedValue(true);
-    mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
-
-    click([...(cardOf("gpu-03")?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "拒绝") as HTMLButtonElement);
-    await flushUntil(() => mocks.reject.mock.calls.length === 1);
-    expect(mocks.reject).toHaveBeenCalledWith("d-5");
-    await flushUntil(() => cardOf("gpu-03") === undefined);
-  });
-
   it("切换期望自启动走 remote autostart", async () => {
     seedLoggedIn();
     seedFleet();
@@ -335,17 +282,11 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.putBaseUrls).toHaveBeenCalledWith([{ url: "https://nexterm.example.com" }, { url: "https://b.example.com" }]);
   });
 
-  it("普通用户 (adminUsers 探测失败) 无审批按钮与接入地址编辑, 不显示 owner 徽章", async () => {
+  it("普通用户 (adminUsers 探测失败) 无接入地址编辑, 不显示 owner 徽章", async () => {
     seedLoggedIn(false);
-    seedFleet([AGENT_DEVICE, PENDING_DEVICE]);
+    seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("gpu-03") ?? false);
-
-    const card = cardOf("gpu-03") as HTMLElement;
-    expect(card.textContent).toContain("待审批");
-    expect([...card.querySelectorAll("button")].some((b) => b.textContent?.trim() === "批准")).toBe(false);
-    expect([...card.querySelectorAll("button")].some((b) => b.textContent?.trim() === "拒绝")).toBe(false);
-    expect(document.body.textContent).not.toContain("台设备待审批：批准后才能上线");
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("仅超级管理员可修改") ?? false);

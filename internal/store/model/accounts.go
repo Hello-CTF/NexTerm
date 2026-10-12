@@ -34,7 +34,6 @@ type UserDevice struct {
 	UserID     string  `gorm:"column:user_id;not null;index:idx_user_device_user" json:"userId"`
 	Name       string  `gorm:"column:name;not null" json:"name"`
 	Kind       string  `gorm:"column:kind;not null;default:'desktop'" json:"kind"`
-	State      string  `gorm:"column:state;not null;default:'active';check:chk_user_device_state,state IN ('pending','active')" json:"state"`
 	CreatedAt  int64   `gorm:"column:created_at;not null" json:"createdAt"`
 	LastSeenAt *int64  `gorm:"column:last_seen_at" json:"lastSeenAt"`
 	RevokedAt  *int64  `gorm:"column:revoked_at" json:"revokedAt"`

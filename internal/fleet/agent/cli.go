@@ -163,9 +163,6 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	fmt.Fprintf(stdout, "注册成功: device_id=%s name=%s base_urls=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
 		config.DeviceID, config.Name, len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
 	fmt.Fprintf(stdout, "配置已写入 %s (0600)\n", store.Path())
-	if response.State == "pending" {
-		fmt.Fprintln(stdout, "设备待审批：管理员批准前不会上线或同步数据；agent 运行后会自动等待，无需重新接入")
-	}
 	return ExitOK
 }
 

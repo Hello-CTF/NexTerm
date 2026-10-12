@@ -31,7 +31,6 @@ func newUserDevice(db *gorm.DB, opts ...gen.DOOption) userDevice {
 	_userDevice.UserID = field.NewString(tableName, "user_id")
 	_userDevice.Name = field.NewString(tableName, "name")
 	_userDevice.Kind = field.NewString(tableName, "kind")
-	_userDevice.State = field.NewString(tableName, "state")
 	_userDevice.CreatedAt = field.NewInt64(tableName, "created_at")
 	_userDevice.LastSeenAt = field.NewInt64(tableName, "last_seen_at")
 	_userDevice.RevokedAt = field.NewInt64(tableName, "revoked_at")
@@ -54,7 +53,6 @@ type userDevice struct {
 	UserID     field.String
 	Name       field.String
 	Kind       field.String
-	State      field.String
 	CreatedAt  field.Int64
 	LastSeenAt field.Int64
 	RevokedAt  field.Int64
@@ -79,7 +77,6 @@ func (u *userDevice) updateTableName(table string) *userDevice {
 	u.UserID = field.NewString(table, "user_id")
 	u.Name = field.NewString(table, "name")
 	u.Kind = field.NewString(table, "kind")
-	u.State = field.NewString(table, "state")
 	u.CreatedAt = field.NewInt64(table, "created_at")
 	u.LastSeenAt = field.NewInt64(table, "last_seen_at")
 	u.RevokedAt = field.NewInt64(table, "revoked_at")
@@ -109,12 +106,11 @@ func (u *userDevice) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *userDevice) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 9)
+	u.fieldMap = make(map[string]field.Expr, 8)
 	u.fieldMap["id"] = u.ID
 	u.fieldMap["user_id"] = u.UserID
 	u.fieldMap["name"] = u.Name
 	u.fieldMap["kind"] = u.Kind
-	u.fieldMap["state"] = u.State
 	u.fieldMap["created_at"] = u.CreatedAt
 	u.fieldMap["last_seen_at"] = u.LastSeenAt
 	u.fieldMap["revoked_at"] = u.RevokedAt

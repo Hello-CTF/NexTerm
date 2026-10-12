@@ -88,20 +88,6 @@ func (p *RemoteProxy) RevokeDevice(ctx context.Context, deviceID string) (Remote
 	return RemoteOK{OK: err == nil}, err
 }
 
-func (p *RemoteProxy) ApproveDevice(ctx context.Context, deviceID string) (RemoteOK, error) {
-	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		return client.ApproveDevice(ctx, deviceID)
-	})
-	return RemoteOK{OK: err == nil}, err
-}
-
-func (p *RemoteProxy) RejectDevice(ctx context.Context, deviceID string) (RemoteOK, error) {
-	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		return client.RejectDevice(ctx, deviceID)
-	})
-	return RemoteOK{OK: err == nil}, err
-}
-
 func (p *RemoteProxy) SetDeviceAutostart(ctx context.Context, deviceID string, desired bool) (RemoteAutostartResult, error) {
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
 		return client.SetDeviceAutostart(ctx, deviceID, desired)

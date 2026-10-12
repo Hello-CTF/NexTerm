@@ -225,14 +225,6 @@ func (c *remoteClient) RevokeDevice(ctx context.Context, deviceID string) error 
 	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/revoke", nil, nil)
 }
 
-func (c *remoteClient) ApproveDevice(ctx context.Context, deviceID string) error {
-	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/approve", nil, nil)
-}
-
-func (c *remoteClient) RejectDevice(ctx context.Context, deviceID string) error {
-	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/reject", nil, nil)
-}
-
 func (c *remoteClient) SetDeviceAutostart(ctx context.Context, deviceID string, desired bool) error {
 	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/autostart", map[string]bool{"desired": desired}, nil)
 }
