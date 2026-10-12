@@ -1786,7 +1786,12 @@ async function runConnectAsset(
       existing.kind === "db" ||
       (session !== undefined && LIVE_SESSION_STATUSES.has(session.status));
     if (live) {
-      useUi.getState().setActiveWorkspace(existing.id);
+      const hasTerminal = existing.panes.some((p) => p.tabs.some((t) => t.kind === "terminal"));
+      if (session && !hasTerminal) {
+        void openTerminalTab(session);
+      } else {
+        useUi.getState().setActiveWorkspace(existing.id);
+      }
       return { ok: true };
     }
     if (session) {

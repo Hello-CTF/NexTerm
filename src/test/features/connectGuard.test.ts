@@ -169,7 +169,10 @@ describe("connectAsset in-flight guard", () => {
 });
 
 describe("connectAsset 资产工作区去重", () => {
-  function seedSessionWorkspace(sessionStatus: SessionInfo["status"]) {
+  function seedSessionWorkspace(sessionStatus: SessionInfo["status"], withTerminalTab = false) {
+    const tabs = withTerminalTab
+      ? [{ id: "t1", kind: "terminal" as const, title: "终端 1", sessionId: "s1", closable: true }]
+      : [];
     useUi.setState({
       sessions: [{ ...SESSION, status: sessionStatus }],
       workspaces: [
@@ -180,7 +183,7 @@ describe("connectAsset 资产工作区去重", () => {
           title: "web-01",
           assetId: "asset-1",
           assetKind: "ssh",
-          panes: [{ id: "p1", tabs: [], activeTabId: null }],
+          panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
           activePaneId: "p1",
           splitRatio: 0.5,
           closable: true,
@@ -191,13 +194,25 @@ describe("connectAsset 资产工作区去重", () => {
   }
 
   it("资产已有活会话工作区时再次连接直接跳转，不发起新连接", async () => {
-    seedSessionWorkspace("connected");
+    seedSessionWorkspace("connected", true);
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
     const { workspaces, activeWorkspaceId } = useUi.getState();
     expect(workspaces).toHaveLength(1);
     expect(activeWorkspaceId).toBe("ws-1");
+    expect(workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
+  });
+
+  it("工作区还在但终端标签已关闭时，再次连接补开终端标签", async () => {
+    seedSessionWorkspace("connected");
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    const { workspaces, activeWorkspaceId } = useUi.getState();
+    expect(activeWorkspaceId).toBe("ws-1");
+    const tabs = workspaces[0]?.panes.flatMap((p) => p.tabs) ?? [];
+    expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s1")).toBe(true);
   });
 
   it("资产工作区会话已断开时直接重连，终端标签原地接管", async () => {
