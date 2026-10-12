@@ -221,6 +221,8 @@ describe("web 命令行为保持", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { systemApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
 
     await expect(systemApi.platform()).resolves.toBe("linux");
     const [url, init] = fetchMock.mock.calls[0] as [string, { body: string }];
@@ -237,6 +239,8 @@ describe("web 命令行为保持", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { aiApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
 
     await aiApi.takeoverRun({
       tabId: "tab-1",
@@ -264,6 +268,8 @@ describe("web 命令行为保持", () => {
       }),
     );
     const { terminalApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
 
     await expect(terminalApi.write("tab-1", new Uint8Array([1]))).rejects.toEqual(error);
   });

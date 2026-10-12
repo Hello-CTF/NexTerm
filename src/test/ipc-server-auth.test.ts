@@ -79,6 +79,8 @@ describe("callWeb 经 401 直接失败", () => {
       .mockResolvedValueOnce(jsonResponse(200, { ok: true, data: "linux" }));
     vi.stubGlobal("fetch", fetchMock);
     const { systemApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
 
     await expect(systemApi.platform()).rejects.toMatchObject({ code: "forbidden" });
     expect(fetchMock).toHaveBeenCalledTimes(1);

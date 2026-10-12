@@ -57,6 +57,20 @@ function postRpc(payload: string, csrf: string | null): Promise<Response> {
   });
 }
 
+// 冷启动 csrf_token 尚未经 /auth/me 取回时, 并发首刷 /rpc 裸发会全部 403 再各自补救。
+// token 缺失时先共享一次 me(): 所有等待者共用同一 promise, me 只并发一次;
+// 成败都只试这一次, 失败(未登录 401 / auth=off 恒失败)由下方 403 重试路径兜底,
+// 避免无会话部署形态下每个 /rpc 都重复预取。token 已存在时不进此分支。
+let csrfBootstrap: Promise<unknown> | null = null;
+
+function bootstrapCsrfToken(): Promise<unknown> {
+  if (!csrfBootstrap) {
+    // 与 callWeb 一样动态加载 authApi, 避免静态环。
+    csrfBootstrap = import("./authApi").then(({ authApi }) => authApi.me().catch(() => null));
+  }
+  return csrfBootstrap;
+}
+
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
   const requestPayload = JSON.stringify({
@@ -67,6 +81,9 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   });
   // 延迟加载 authApi: commands 与 authApi 互相引用, 动态加载避免静态环。
   const { authApi, getCsrfToken } = await import("./authApi");
+  if (getCsrfToken() === null) {
+    await bootstrapCsrfToken();
+  }
   let res = await postRpc(requestPayload, getCsrfToken());
   let text = await res.text();
   if (isCsrfRejection(res.status, text)) {
