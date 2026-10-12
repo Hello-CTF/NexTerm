@@ -2480,6 +2480,21 @@
     position: absolute;
     inset: -5px;
   }
+
+  .nx-settings-view .nx-btn,
+  .nx-settings-view .nx-btn-sm,
+  .nx-settings-view .nx-btn-xs {
+    position: relative;
+    min-height: 36px;
+  }
+
+  .nx-settings-view .nx-btn::after,
+  .nx-settings-view .nx-btn-sm::after,
+  .nx-settings-view .nx-btn-xs::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

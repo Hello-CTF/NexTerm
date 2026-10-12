@@ -349,7 +349,7 @@ export function SettingsView() {
     : "";
 
   return (
-    <div className="nx-pane h-full">
+    <div className="nx-pane nx-settings-view h-full">
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
