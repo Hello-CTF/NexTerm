@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -111,6 +112,9 @@ func captureSession(t *testing.T, call accountCall) *accountTestSession {
 	}
 	if session.cookie == nil {
 		t.Fatal("响应缺少会话 cookie")
+	}
+	if want := int(account.SessionAbsoluteTTL / time.Second); session.cookie.MaxAge != want {
+		t.Fatalf("会话 cookie MaxAge = %d, 期望 %d(与绝对 TTL 对齐, 重启客户端不掉线)", session.cookie.MaxAge, want)
 	}
 	return session
 }
