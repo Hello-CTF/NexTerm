@@ -65,9 +65,9 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 			legacy, lerr := hasLegacySchemaMarker(ctx, s)
 			if lerr != nil {
 				_ = s.Close()
-				return nil, dbError(lerr)
-			}
-			if legacy {
+				s = nil
+				err = dbError(lerr)
+			} else if legacy {
 				_ = s.Close()
 				s = nil
 				legacyBackup, err = backupLegacyDatabase(path)
@@ -75,11 +75,12 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 					return nil, err
 				}
 				continue
-			}
-			err = s.migrate(ctx)
-			if err != nil {
-				_ = s.Close()
-				s = nil
+			} else {
+				err = s.migrate(ctx)
+				if err != nil {
+					_ = s.Close()
+					s = nil
+				}
 			}
 		}
 		if err == nil {
@@ -190,10 +191,19 @@ func hasLegacySchemaMarker(ctx context.Context, s *Store) (bool, error) {
 
 func backupLegacyDatabase(path string) (string, error) {
 	backup := fmt.Sprintf("%s.legacy-%s", path, time.Now().Format("20060102-150405"))
+	moved := []string{}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Rename(path+suffix, backup+suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+		err := os.Rename(path+suffix, backup+suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			for i := len(moved) - 1; i >= 0; i-- {
+				_ = os.Rename(backup+moved[i], path+moved[i])
+			}
 			return "", ipc.WrapError(ipc.CodeIO, "备份旧版数据库失败: "+err.Error(), err)
 		}
+		moved = append(moved, suffix)
 	}
 	return backup, nil
 }
