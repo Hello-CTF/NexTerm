@@ -660,7 +660,9 @@ function AppShell() {
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
   const connectedList = sessions.filter((s) => s.status === "connected");
   const connectedSessions = connectedList.length;
-  const idleSessions = connectedList.filter((s) => s.kind !== "remote" && s.tabs.length === 0).length;
+  const idleSessions = connectedList.filter(
+    (s) => s.kind !== "remote" && (s.tabs?.length ?? 0) === 0,
+  ).length;
 
   const needSession = useCallback(() => {
     pushToast("info", "先连接一台主机（双击左侧资产）");
