@@ -33,3 +33,23 @@ func TestTranscriptAppendChunksDurableOffsetPostgres(t *testing.T) {
 		t.Fatalf("offset after conflict accumulate = %d, %v", offset, err)
 	}
 }
+
+func TestTranscriptHostsGroupByPostgres(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	row := store.TranscriptRow{ID: "pg-hosts-transcript", SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
+	if err := db.TranscriptStart(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptEnd(ctx, row.ID, 2000, false); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := db.TranscriptHosts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 1 || hosts[0].AssetID != "asset-1" || !hosts[0].AssetDeleted || hosts[0].Transcripts != 1 {
+		t.Fatalf("hosts = %+v", hosts)
+	}
+}

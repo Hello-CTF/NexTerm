@@ -193,7 +193,7 @@ func (s *Store) TranscriptHosts(ctx context.Context) ([]TranscriptHostRow, error
 		LeftJoin(asset, transcript.AssetID.EqCol(asset.ID)).
 		Where(ownerConditions(ctx, "t")...).
 		UnderlyingDB().
-		Select(`t.asset_id, MAX(t.asset_name) AS asset_name, MAX(t.asset_kind) AS asset_kind, COUNT(*) AS transcripts, MAX(t.started_at) AS last_started_at, CASE WHEN a.id IS NULL OR a.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS asset_deleted`).
+		Select(`t.asset_id, MAX(t.asset_name) AS asset_name, MAX(t.asset_kind) AS asset_kind, COUNT(*) AS transcripts, MAX(t.started_at) AS last_started_at, MAX(CASE WHEN a.id IS NULL OR a.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS asset_deleted`).
 		Group("t.asset_id").
 		Order("MAX(t.started_at) DESC").
 		Limit(500).
