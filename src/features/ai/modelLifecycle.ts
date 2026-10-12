@@ -108,7 +108,7 @@ export function fallbackModelLabel(profile: ModelProfile): string {
 
 export const MODEL_PARAM_DEFAULTS = {
   temperature: 0.3,
-  contextWindow: 32768,
+  contextWindow: 262144,
   proxy: null,
   stream: true,
   fallbackModel: null,

@@ -58,6 +58,7 @@ const MODEL_PRESETS: ModelPreset[] = [
 ];
 
 const REASONING_EFFORT_PRESETS = ["minimal", "low", "medium", "high"] as const;
+const CONTEXT_WINDOW_PRESETS = [131072, 262144, 524288, 1048576] as const;
 
 type ModelDraft = Omit<ModelProfile, "temperature" | "contextWindow"> & {
   temperature: number | null;
@@ -581,12 +582,20 @@ export function ModelManager({
                             max={2000000}
                             step={1000}
                             placeholder="默认不传"
+                            list={`${fieldId}-context-presets`}
                             value={draft.contextWindow ?? ""}
                             onChange={(e) =>
                               patch({ contextWindow: e.target.value === "" ? null : Number(e.target.value) })
                             }
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，按默认值 32K 估算。</div>
+                          <datalist id={`${fieldId}-context-presets`}>
+                            {CONTEXT_WINDOW_PRESETS.map((value) => (
+                              <option key={value} value={value}>
+                                {value === 1048576 ? "1M" : `${value / 1024}K`}
+                              </option>
+                            ))}
+                          </datalist>
+                          <div className="nx-hint mt-1 text-[10.5px]">留空则不传，按默认值 256K 估算；可选 128K / 256K / 512K / 1M 预设。</div>
                         </Field>
                       </div>
                     </div>

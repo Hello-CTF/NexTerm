@@ -206,7 +206,7 @@ describe("ModelManager 高级参数折叠", () => {
     await flush();
 
     expect(inputFor("温度").value).toBe("0.3");
-    expect(inputFor("上下文窗口").value).toBe("32768");
+    expect(inputFor("上下文窗口").value).toBe("262144");
     expect(inputFor("回退模型").value).toBe("");
   });
 

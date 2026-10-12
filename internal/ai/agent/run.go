@@ -239,7 +239,7 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	if contextWindow == 0 {
-		contextWindow = 32768
+		contextWindow = 262144
 	}
 	runtime := &einoRuntime{contextWindow: contextWindow}
 	compaction := newCompactionHandler(chatModel, contextWindow, func() {
