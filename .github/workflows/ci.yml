@@ -415,17 +415,13 @@ jobs:
         if: matrix.platform == 'android'
         id: android-sdk-root
         run: echo "home=$ANDROID_HOME" >> "$GITHUB_OUTPUT"
-      - name: Restore the Android SDK and NDK cache
+      - name: Restore the Android NDK cache
         if: matrix.platform == 'android'
         id: android-sdk-cache
         uses: actions/cache@v6
         with:
-          path: |
-            ${{ steps.android-sdk-root.outputs.home }}/ndk
-            ${{ steps.android-sdk-root.outputs.home }}/platforms
-            ${{ steps.android-sdk-root.outputs.home }}/build-tools
-            ${{ steps.android-sdk-root.outputs.home }}/platform-tools
-          key: android-sdk-v1-android-35-build-tools-35.0.0-ndk-26.3.11579264
+          path: ${{ steps.android-sdk-root.outputs.home }}/ndk/26.3.11579264
+          key: android-sdk-v1-ndk-26.3.11579264
       - name: Install the Android SDK
         if: matrix.platform == 'android' && steps.android-sdk-cache.outputs.cache-hit != 'true'
         run: |
@@ -446,6 +442,11 @@ jobs:
       - name: Verify the iOS toolchain
         if: matrix.platform == 'ios'
         run: xcodebuild -version
+      - name: Install Linux Wails cgo prerequisites
+        if: matrix.platform == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Restore the pinned Wails CLI
         id: wails-cache
         uses: actions/cache@v6
