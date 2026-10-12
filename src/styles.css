@@ -1087,6 +1087,18 @@
     color: var(--color-red-300);
   }
 
+  .nx-drag-source {
+    opacity: 0.45;
+  }
+  .nx-drop-before,
+  .is-drop-before {
+    box-shadow: inset 2px 0 0 0 var(--color-accent);
+  }
+  .nx-drop-after,
+  .is-drop-after {
+    box-shadow: inset -2px 0 0 0 var(--color-accent);
+  }
+
   .nx-badge {
     display: inline-flex;
     flex: 0 0 auto;
