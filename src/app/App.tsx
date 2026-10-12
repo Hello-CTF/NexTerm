@@ -113,6 +113,7 @@ import {
   IconBox,
   IconCheckCircle,
   IconChevronLeft,
+  IconChevronRight,
   IconChevronDown,
   IconClock,
   IconClose,
@@ -212,10 +213,19 @@ function handleTablistKeyDown(
   ids: string[],
   currentId: string,
   activate: (id: string) => void,
+  moveTab: (fromIndex: number, toIndex: number) => void,
 ): void {
   if (event.target !== event.currentTarget) return;
   const index = ids.indexOf(currentId);
   if (index < 0) return;
+  if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.ctrlKey && event.shiftKey) {
+    const to = event.key === "ArrowLeft" ? index - 1 : index + 1;
+    if (to < 0 || to >= ids.length) return;
+    event.preventDefault();
+    moveTab(index, to);
+    focusTab(event.currentTarget.closest("[role='tablist']"), currentId);
+    return;
+  }
   let next = -1;
   if (event.key === "ArrowRight") next = (index + 1) % ids.length;
   else if (event.key === "ArrowLeft") next = (index - 1 + ids.length) % ids.length;
@@ -229,10 +239,15 @@ function handleTablistKeyDown(
   event.preventDefault();
   const nextId = ids[next];
   activate(nextId);
-  const tab = event.currentTarget
-    .closest("[role='tablist']")
-    ?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(nextId)}"]`);
-  tab?.focus();
+  focusTab(event.currentTarget.closest("[role='tablist']"), nextId);
+}
+
+const TAB_DRAG_MIME = "application/x-nexterm-tab";
+
+let tabDragSource: { tabId: string; paneId: string } | null = null;
+
+function focusTab(tablist: Element | null, id: string): void {
+  tablist?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.focus();
 }
 
 let bootLocalTried = false;
@@ -1655,8 +1670,13 @@ function PaneGroup({
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
   const updateTab = useUi((s) => s.updateTab);
+  const moveTabInPane = useUi((s) => s.moveTabInPane);
+  const moveTab = (fromIndex: number, toIndex: number) =>
+    moveTabInPane(pane.id, fromIndex, toIndex);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; edge: "before" | "after" } | null>(null);
   const bindings = useKeybindings();
   const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
 
@@ -1686,6 +1706,22 @@ function PaneGroup({
       onSelect: () => void requestCloseTab(t.id),
     });
     const tabIndex = pane.tabs.findIndex((candidate) => candidate.id === t.id);
+    items.push({
+      kind: "item",
+      label: "左移标签",
+      icon: <IconChevronLeft size={12} />,
+      accel: "Ctrl+Shift+←",
+      disabled: tabIndex <= 0,
+      onSelect: () => moveTab(tabIndex, tabIndex - 1),
+    });
+    items.push({
+      kind: "item",
+      label: "右移标签",
+      icon: <IconChevronRight size={12} />,
+      accel: "Ctrl+Shift+→",
+      disabled: tabIndex < 0 || tabIndex >= pane.tabs.length - 1,
+      onSelect: () => moveTab(tabIndex, tabIndex + 1),
+    });
     const closableLeft = pane.tabs.slice(0, Math.max(0, tabIndex)).filter((candidate) => candidate.closable);
     const closableRight = pane.tabs.slice(tabIndex + 1).filter((candidate) => candidate.closable);
     items.push({
@@ -1745,8 +1781,51 @@ function PaneGroup({
                 aria-selected={isActive}
                 aria-controls={`nx-tab-panel-${idPrefix}-${t.id}`}
                 tabIndex={isActive ? 0 : -1}
-                className={`nx-tab ${isActive ? "is-active" : ""}`}
-                onClick={() => setActiveTab(t.id)}
+                draggable
+                className={`nx-tab ${isActive ? "is-active" : ""}${
+                  dropHint?.id === t.id ? ` nx-drop-${dropHint.edge}` : ""
+                }${draggingId === t.id ? " nx-drag-source" : ""}`}
+                onClick={() => {
+                  if (draggingId === t.id) return;
+                  setActiveTab(t.id);
+                }}
+                onDragStart={(e) => {
+                  tabDragSource = { tabId: t.id, paneId: pane.id };
+                  setDraggingId(t.id);
+                  e.dataTransfer.setData(TAB_DRAG_MIME, t.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={() => {
+                  tabDragSource = null;
+                  setDraggingId(null);
+                  setDropHint(null);
+                }}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
+                  if (tabDragSource?.paneId !== pane.id || draggingId === t.id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const edge = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                  setDropHint((hint) => (hint?.id === t.id && hint.edge === edge ? hint : { id: t.id, edge }));
+                }}
+                onDragLeave={() => {
+                  setDropHint((hint) => (hint?.id === t.id ? null : hint));
+                }}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
+                  if (tabDragSource?.paneId !== pane.id) return;
+                  e.preventDefault();
+                  setDropHint(null);
+                  const dragId = e.dataTransfer.getData(TAB_DRAG_MIME);
+                  if (!dragId || dragId === t.id) return;
+                  const from = pane.tabs.findIndex((x) => x.id === dragId);
+                  const over = pane.tabs.findIndex((x) => x.id === t.id);
+                  if (from < 0 || over < 0) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const before = e.clientX < rect.left + rect.width / 2;
+                  moveTab(from, before ? (from < over ? over - 1 : over) : from < over ? over : over + 1);
+                }}
                 onKeyDown={(e) => {
                   if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
                     e.preventDefault();
@@ -1759,6 +1838,7 @@ function PaneGroup({
                     pane.tabs.map((x) => x.id),
                     t.id,
                     setActiveTab,
+                    moveTab,
                   );
                 }}
                 onContextMenu={(e) => {

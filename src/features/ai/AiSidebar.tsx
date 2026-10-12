@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent } from "react";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { aiApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
@@ -156,6 +156,8 @@ function subscribeAiTabBusy(listener: () => void): () => void {
 
 const getAiTabBusyVersion = (): number => aiTabBusyVersion;
 
+const DRAG_AI_TAB = "application/x-nexterm-ai-tab";
+
 export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null {
   if (runs.some((run) => run.status === "running")) return "running";
   if (runs.some((run) => run.status === "interrupted" && run.finishedAt == null)) return "interrupted";
@@ -174,12 +176,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const closeAiTab = useUi((s) => s.closeAiTab);
   const setActiveAiTab = useUi((s) => s.setActiveAiTab);
   const updateAiTab = useUi((s) => s.updateAiTab);
+  const moveAiTab = useUi((s) => s.moveAiTab);
   const bindings = useKeybindings();
   const aiSidebarKeyLabel = formatBinding(bindings.toggleAiSidebar);
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   useSyncExternalStore(subscribeAiTabBusy, getAiTabBusyVersion);
   const [tabMenu, setTabMenu] = useState<ContextMenuState | null>(null);
   const [retitlingTabId, setRetitlingTabId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ tabId: string; before: boolean } | null>(null);
 
   const boardKey =
     activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.id : GLOBAL_AI_BOARD_KEY;
@@ -245,6 +249,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     })();
   };
 
+  const dropBefore = (e: ReactDragEvent<HTMLElement>): boolean => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientX < rect.left + rect.width / 2;
+  };
+
+  const dropMoveFor = (
+    e: ReactDragEvent<HTMLElement>,
+    targetId: string,
+  ): { from: number; to: number } | null => {
+    const dragId = e.dataTransfer.getData(DRAG_AI_TAB);
+    if (!dragId || dragId === targetId) return null;
+    const from = tabs.findIndex((t) => t.id === dragId);
+    const to = tabs.findIndex((t) => t.id === targetId);
+    if (from < 0 || to < 0) return null;
+    let insert = dropBefore(e) ? to : to + 1;
+    if (from < insert) insert -= 1;
+    return { from, to: insert };
+  };
+
   const scopeLabel =
     activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.title : "本机 / 全局";
 
@@ -296,15 +319,55 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
-                className={`nx-tab h-6 max-w-[140px] gap-1 px-2 text-[11px] ${isActive ? "is-active" : ""}`}
+                draggable
+                className={`nx-tab h-6 max-w-[140px] gap-1 px-2 text-[11px] ${isActive ? "is-active" : ""} ${
+                  dropTarget?.tabId === t.id
+                    ? dropTarget.before
+                      ? "is-drop-before"
+                      : "is-drop-after"
+                    : ""
+                }`}
                 title={t.title}
                 onClick={() => setActiveAiTab(boardKey, t.id)}
                 onKeyDown={(e) => {
+                  if (e.ctrlKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                    e.preventDefault();
+                    const tabIndex = tabs.findIndex((candidate) => candidate.id === t.id);
+                    moveAiTab(boardKey, tabIndex, tabIndex + (e.key === "ArrowLeft" ? -1 : 1));
+                    return;
+                  }
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     setActiveAiTab(boardKey, t.id);
                   }
                 }}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(DRAG_AI_TAB, t.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes(DRAG_AI_TAB)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const before = dropBefore(e);
+                  setDropTarget((current) =>
+                    current?.tabId === t.id && current.before === before
+                      ? current
+                      : { tabId: t.id, before },
+                  );
+                }}
+                onDragLeave={() => {
+                  setDropTarget((current) => (current?.tabId === t.id ? null : current));
+                }}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.types.includes(DRAG_AI_TAB)) return;
+                  e.preventDefault();
+                  setDropTarget(null);
+                  const move = dropMoveFor(e, t.id);
+                  if (!move) return;
+                  moveAiTab(boardKey, move.from, move.to);
+                }}
+                onDragEnd={() => setDropTarget(null)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   const tabIndex = tabs.findIndex((candidate) => candidate.id === t.id);
@@ -321,6 +384,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                           aiTabBusyIds.has(t.id) ||
                           retitlingTabId === t.id,
                         onSelect: () => void retitleTab(t),
+                      },
+                      {
+                        kind: "item",
+                        label: "左移标签",
+                        disabled: tabIndex <= 0,
+                        onSelect: () => moveAiTab(boardKey, tabIndex, tabIndex - 1),
+                      },
+                      {
+                        kind: "item",
+                        label: "右移标签",
+                        disabled: tabIndex < 0 || tabIndex >= tabs.length - 1,
+                        onSelect: () => moveAiTab(boardKey, tabIndex, tabIndex + 1),
                       },
                       { kind: "separator" },
                       { kind: "item", label: "关闭", onSelect: () => requestCloseTab(t) },

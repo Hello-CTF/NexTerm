@@ -23,6 +23,7 @@ import {
   setTerminalCloseAction,
   type TerminalCloseAction,
 } from "./preferences";
+import { moveItem } from "./tabReorder";
 import type { LayoutPreset } from "./layoutPresets";
 
 export type PaneKind =
@@ -197,6 +198,7 @@ interface UiState {
   addAiTab: (key: string) => string;
   closeAiTab: (key: string, tabId: string) => void;
   setActiveAiTab: (key: string, tabId: string) => void;
+  moveAiTab: (key: string, fromIndex: number, toIndex: number) => void;
   updateAiTab: (key: string, tabId: string, patch: Partial<AiDockTab>) => void;
   broadcast: BroadcastState | null;
   setBroadcast: (b: BroadcastState | null) => void;
@@ -243,6 +245,7 @@ interface UiState {
   addTab: (tab: AppTab, paneId?: string) => void;
   closeTab: (id: string, mode?: "kill" | "detach") => Promise<boolean>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
+  moveTabInPane: (paneId: string, fromIndex: number, toIndex: number) => void;
   updateWorkspaceSession: (workspaceId: string, sessionId: string) => void;
 
   setSessions: (s: SessionInfo[]) => void;
@@ -827,6 +830,24 @@ export const useUi = create<UiState>((set, get) => ({
       };
     }),
 
+  moveTabInPane: (paneId, fromIndex, toIndex) =>
+    set((st) => {
+      for (const w of st.workspaces) {
+        const pane = w.panes.find((p) => p.id === paneId);
+        if (!pane) continue;
+        const tabs = moveItem(pane.tabs, fromIndex, toIndex);
+        if (tabs === pane.tabs) return {};
+        return {
+          workspaces: st.workspaces.map((x) =>
+            x.id === w.id
+              ? { ...x, panes: x.panes.map((q) => (q.id === paneId ? { ...q, tabs } : q)) }
+              : x,
+          ),
+        };
+      }
+      return {};
+    }),
+
   updateWorkspaceSession: (workspaceId, sessionId) =>
     set((st) => ({
       workspaces: st.workspaces.map((w) => (w.id === workspaceId ? { ...w, sessionId } : w)),
@@ -899,6 +920,14 @@ export const useUi = create<UiState>((set, get) => ({
       const board = s.aiBoards[key];
       if (!board || !board.tabs.some((t) => t.id === tabId)) return s;
       return { aiBoards: { ...s.aiBoards, [key]: { ...board, activeTabId: tabId } } };
+    }),
+  moveAiTab: (key, fromIndex, toIndex) =>
+    set((s) => {
+      const board = s.aiBoards[key];
+      if (!board) return s;
+      const tabs = moveItem(board.tabs, fromIndex, toIndex);
+      if (tabs === board.tabs) return s;
+      return { aiBoards: { ...s.aiBoards, [key]: { ...board, tabs } } };
     }),
   updateAiTab: (key, tabId, patch) =>
     set((s) => {
