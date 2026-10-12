@@ -793,6 +793,7 @@ export const useUi = create<UiState>((set, get) => ({
         ...broadcastPatch,
       };
     });
+    void get().resyncSessions({ silent: true });
     return true;
   },
 
@@ -1157,6 +1158,7 @@ async function reclaimTerminals(
     ...blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
     ...cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
+  void useUi.getState().resyncSessions({ silent: true });
   const failed = results.filter((r) => r.status === "rejected");
   const { pushToast } = useUi.getState();
   if (failed.length) {
@@ -1269,6 +1271,7 @@ async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<Wo
     ...summary.cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
   const dbResults = await Promise.allSettled(summary.dbConnIds.map((connId) => dbApi.disconnect(connId)));
+  void useUi.getState().resyncSessions({ silent: true });
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
   const dbFailed = dbResults.filter((r): r is PromiseRejectedResult => r.status === "rejected");
   const killStart = summary.detachable.length;
@@ -1514,6 +1517,7 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   live.forEach((t, i) => {
     if (results[i].status === "fulfilled") st.updateTab(t.id, { exited: true });
   });
+  void st.resyncSessions({ silent: true });
 }
 
 export function takePendingCommand(storeTabId: string): string | null {

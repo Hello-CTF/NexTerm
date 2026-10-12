@@ -1241,6 +1241,7 @@ export function TerminalPane({
                 setThrottle(null);
                 resumeAttemptedRef.current = false;
                 useUi.getState().updateTab(storeTabId, { tabId: id, exited: false });
+                void useUi.getState().resyncSessions({ silent: true });
                 if (isStoreTabDead(storeTabId)) {
                   useUi.getState().updateTab(storeTabId, { dead: false });
                 }

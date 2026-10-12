@@ -213,7 +213,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (!attached) return;
     const { tabId, channel } = attached;
     return () => {
-      void terminalApi.closeTab(tabId, "kill").catch(() => undefined);
+      void terminalApi
+        .closeTab(tabId, "kill")
+        .then(() => useUi.getState().resyncSessions({ silent: true }))
+        .catch(() => undefined);
       disposeChannel(channel);
     };
   }, [attached]);

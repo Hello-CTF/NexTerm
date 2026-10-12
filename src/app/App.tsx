@@ -658,7 +658,9 @@ function AppShell() {
       return current?.kind === "terminal";
     }) ?? false);
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
-  const connectedSessions = sessions.filter((s) => s.status === "connected").length;
+  const connectedList = sessions.filter((s) => s.status === "connected");
+  const connectedSessions = connectedList.length;
+  const idleSessions = connectedList.filter((s) => s.kind !== "remote" && s.tabs.length === 0).length;
 
   const needSession = useCallback(() => {
     pushToast("info", "先连接一台主机（双击左侧资产）");
@@ -1525,6 +1527,9 @@ function AppShell() {
               >
                 <span className="nx-dot" />
                 <strong className="font-medium">{connectedSessions}</strong> 已连接
+                {idleSessions > 0 ? (
+                  <span className="text-neutral-500">（{idleSessions} 空闲）</span>
+                ) : null}
               </span>
             </span>
             <span className="text-neutral-700">|</span>

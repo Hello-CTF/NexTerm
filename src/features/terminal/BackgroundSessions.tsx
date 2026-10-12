@@ -110,6 +110,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
     setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
     try {
       await terminalApi.closeTab(info.tabId, "kill");
+      void useUi.getState().resyncSessions({ silent: true });
       pushToast("success", "已结束进程");
     } catch (e) {
       setItems(snapshot);
