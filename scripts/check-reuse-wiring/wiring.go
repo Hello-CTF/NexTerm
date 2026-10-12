@@ -211,6 +211,10 @@ func runWiringChecks(in inputs) []checkResult {
 	check("quality runs only when reusable master quality evidence is absent",
 		strings.Join(jobNeeds(qualityJob), ",") == "version,quality-source" && normalizedStepIf(qualityJob) == "needs.quality-source.outputs.reused!='true'",
 		fmt.Sprintf("needs=%v if=%q", jobNeeds(qualityJob), str(qualityJob["if"])))
+	frontendQualityJob := asMap(jobsOf(ci)["frontend-quality"])
+	check("frontend-quality runs only when reusable master quality evidence is absent",
+		strings.Join(jobNeeds(frontendQualityJob), ",") == "version,quality-source" && normalizedStepIf(frontendQualityJob) == "needs.quality-source.outputs.reused!='true'",
+		fmt.Sprintf("needs=%v if=%q", jobNeeds(frontendQualityJob), str(frontendQualityJob["if"])))
 	postgresJob := asMap(jobsOf(ci)["postgres"])
 	check("postgres runs only when reusable master quality evidence is absent",
 		strings.Join(jobNeeds(postgresJob), ",") == "quality-source" && normalizedStepIf(postgresJob) == "needs.quality-source.outputs.reused!='true'",
@@ -223,7 +227,7 @@ func runWiringChecks(in inputs) []checkResult {
 	}
 	iosDistJob := asMap(jobsOf(ci)["ios-dist"])
 	check("ios-dist keeps the reused-quality dependency graph",
-		strings.Join(jobNeeds(iosDistJob), ",") == "quality-source,quality,frontend,version",
+		strings.Join(jobNeeds(iosDistJob), ",") == "quality-source,quality,frontend-quality,frontend,version",
 		fmt.Sprintf("needs=%v", jobNeeds(iosDistJob)))
 	check("ios-dist continues past skipped quality but failure and cancellation still gate it",
 		normalizedStepIf(iosDistJob) == "${{!failure()&&!cancelled()&&github.event_name=='push'&&vars.NEXTERM_IOS_SIGNING=='true'}}",
@@ -279,30 +283,49 @@ func runWiringChecks(in inputs) []checkResult {
 		}
 	}
 	qualityRun := strings.Join(qualityRuns, "\n")
-	check("quality has no standalone pnpm typecheck step", len(typecheckOffenders) == 0,
+	frontendQualitySteps := asList(frontendQualityJob["steps"])
+	installIndex, lintIndex, testIndex := -1, -1, -1
+	installRun, lintRun, testRun := "", "", ""
+	var frontendQualityRuns []string
+	for index, rawStep := range frontendQualitySteps {
+		step := asMap(rawStep)
+		run := stepRun(step)
+		frontendQualityRuns = append(frontendQualityRuns, run)
+		if strings.Contains(run, "pnpm typecheck") {
+			typecheckOffenders = append(typecheckOffenders, "frontend-quality/"+stepName(step))
+		}
+		switch stepName(step) {
+		case "Install frontend dependencies":
+			installIndex, installRun = index, run
+		case "Frontend lint":
+			lintIndex, lintRun = index, run
+		case "Frontend tests":
+			testIndex, testRun = index, run
+		}
+	}
+	frontendQualityRun := strings.Join(frontendQualityRuns, "\n")
+	qualityJobsRun := qualityRun + "\n" + frontendQualityRun
+	check("quality has no standalone pnpm typecheck step across quality and frontend-quality", len(typecheckOffenders) == 0,
 		fmt.Sprintf("offenders=%v", typecheckOffenders))
 	check("quality does not run the moved reproducible frontend build",
 		!strings.Contains(qualityRun, "build.mjs frontend --repro-check"), "")
-	goTestInvocations := len(regexp.MustCompile(`\bgo\s+test\b`).FindAllString(qualityRun, -1))
-	exactGoTests := strings.Count(qualityRun, "go test -mod=readonly ./...")
+	goTestInvocations := len(regexp.MustCompile(`\bgo\s+test\b`).FindAllString(qualityJobsRun, -1))
+	exactGoTests := strings.Count(qualityJobsRun, "go test -mod=readonly ./...")
 	check("quality runs the Go suite once without -race",
-		goTestInvocations == 1 && exactGoTests == 1 && !strings.Contains(qualityRun, "-race"),
+		goTestInvocations == 1 && exactGoTests == 1 && !strings.Contains(qualityJobsRun, "-race"),
 		fmt.Sprintf("invocations=%d exact=%d", goTestInvocations, exactGoTests))
-	parallelRun := stepRun(findStep(qualityJob, "Go tests and frontend lint/tests"))
-	check("quality runs Go and pnpm lint && pnpm test as background branches",
-		strings.Contains(parallelRun, `go test -mod=readonly ./... >"$go_log" 2>&1 &`) &&
-			strings.Contains(parallelRun, `(pnpm lint && pnpm test --maxWorkers=4) >"$frontend_log" 2>&1 &`) &&
-			strings.Contains(parallelRun, "go_pid=$!") && strings.Contains(parallelRun, "frontend_pid=$!"),
-		fmt.Sprintf("run=%q", parallelRun))
-	check("quality waits for both background PIDs",
-		strings.Contains(parallelRun, `wait "$go_pid" || go_status=$?`) &&
-			strings.Contains(parallelRun, `wait "$frontend_pid" || frontend_status=$?`),
-		fmt.Sprintf("run=%q", parallelRun))
-	check("quality fails when either background branch exits nonzero",
-		strings.Contains(parallelRun, "go_status=0") && strings.Contains(parallelRun, "frontend_status=0") &&
-			strings.Contains(parallelRun, `if [ "$go_status" -ne 0 ] || [ "$frontend_status" -ne 0 ]; then`) &&
-			strings.Contains(parallelRun, "exit 1"),
-		fmt.Sprintf("run=%q", parallelRun))
+	check("frontend-quality installs, lints and tests sequentially",
+		installIndex >= 0 && lintIndex > installIndex && testIndex > lintIndex && strings.TrimSpace(installRun) == "pnpm install --frozen-lockfile",
+		fmt.Sprintf("install=%d lint=%d test=%d", installIndex, lintIndex, testIndex))
+	lintInvocations := len(regexp.MustCompile(`\bpnpm\s+lint\b`).FindAllString(qualityJobsRun, -1))
+	check("frontend-quality runs pnpm lint exactly once",
+		lintInvocations == 1 && strings.TrimSpace(lintRun) == "pnpm lint",
+		fmt.Sprintf("invocations=%d run=%q", lintInvocations, lintRun))
+	testInvocations := len(regexp.MustCompile(`\bpnpm\s+test\b`).FindAllString(qualityJobsRun, -1))
+	check("frontend-quality runs the full pnpm test suite exactly once without maxWorkers",
+		testInvocations == 1 && strings.TrimSpace(testRun) == "pnpm test" &&
+			!strings.Contains(qualityJobsRun, "maxWorkers") && !strings.Contains(qualityJobsRun, "max-workers"),
+		fmt.Sprintf("invocations=%d run=%q", testInvocations, testRun))
 	check("quality runs no production-tagged Go suite", len(productionSuiteSteps) == 0,
 		fmt.Sprintf("steps=%v", productionSuiteSteps))
 	check("quality runs no build harness unit tests", len(harnessTestSteps) == 0,

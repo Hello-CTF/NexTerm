@@ -197,7 +197,7 @@ var negativeControls = []negativeControl{
 	{"minimumReleaseAge install flag re-addition is caught",
 		"ci.yml carries no pnpm minimumReleaseAge bypass",
 		func(ci, release map[string]interface{}, packText string) string {
-			for _, rawStep := range qualitySteps(ci) {
+			for _, rawStep := range asList(asMap(jobsOf(ci)["frontend-quality"])["steps"]) {
 				step := asMap(rawStep)
 				if strings.Contains(stepRun(step), "pnpm install") {
 					step["run"] = stepRun(step) + " --config.minimumReleaseAge=0"
@@ -358,27 +358,28 @@ var negativeControls = []negativeControl{
 			asMap(step["with"])["path"] = "dist/"
 			return packText
 		}},
-	{"parallel frontend test chain removal is caught",
-		"quality runs Go and pnpm lint && pnpm test as background branches",
+	{"frontend-quality lint removal is caught",
+		"frontend-quality runs pnpm lint exactly once",
 		func(ci, release map[string]interface{}, packText string) string {
-			step := findStep(asMap(jobsOf(ci)["quality"]), "Go tests and frontend lint/tests")
-			step["run"] = strings.Replace(stepRun(step), "(pnpm lint && pnpm test --maxWorkers=4)", "(pnpm lint)", 1)
+			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend lint")["run"] = "true"
 			return packText
 		}},
-	{"parallel Go wait removal is caught",
-		"quality waits for both background PIDs",
+	{"frontend-quality test removal is caught",
+		"frontend-quality runs the full pnpm test suite exactly once without maxWorkers",
 		func(ci, release map[string]interface{}, packText string) string {
-			step := findStep(asMap(jobsOf(ci)["quality"]), "Go tests and frontend lint/tests")
-			step["run"] = strings.Replace(stepRun(step), `wait "$go_pid" || go_status=$?`, "", 1)
+			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend tests")["run"] = "true"
 			return packText
 		}},
-	{"parallel failure disjunction removal is caught",
-		"quality fails when either background branch exits nonzero",
+	{"frontend-quality reused-evidence condition removal is caught",
+		"frontend-quality runs only when reusable master quality evidence is absent",
 		func(ci, release map[string]interface{}, packText string) string {
-			step := findStep(asMap(jobsOf(ci)["quality"]), "Go tests and frontend lint/tests")
-			step["run"] = strings.Replace(stepRun(step),
-				`if [ "$go_status" -ne 0 ] || [ "$frontend_status" -ne 0 ]; then`,
-				`if [ "$go_status" -ne 0 ] && [ "$frontend_status" -ne 0 ]; then`, 1)
+			delete(asMap(jobsOf(ci)["frontend-quality"]), "if")
+			return packText
+		}},
+	{"ios-dist frontend-quality dependency drift is caught",
+		"ios-dist keeps the reused-quality dependency graph",
+		func(ci, release map[string]interface{}, packText string) string {
+			asMap(jobsOf(ci)["ios-dist"])["needs"] = []interface{}{"quality-source", "quality", "frontend", "version"}
 			return packText
 		}},
 	{"release download outside resolver required artifacts is caught",

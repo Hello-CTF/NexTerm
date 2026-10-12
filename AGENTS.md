@@ -5,9 +5,9 @@
 ## 分支基线
 
 - `master` 是唯一工作基线与发布基线：新分支一律从 `master` 最新提交切出，完成后合回 `master`。Pages 部署随 `master` push 触发，属既有流程。
-- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master` 以及 `v*` tag push 时运行，`quality` job 除 Go/前端门禁外还包含 manifest injects 与 workflow 复用接线检查（命令见"质量命令"）。
+- 发布从 `master` 打 `v*` 标签触发 release workflow；CI 在 push/PR 到 `master` 以及 `v*` tag push 时运行，`quality` job 除 Go 门禁外还包含 manifest injects 与 workflow 复用接线检查，前端 lint/tests 由独立 `frontend-quality` job 执行（命令见"质量命令"）。
 - 版本号唯一来源是发布 tag：`wails.json`、`package.json`、`lazycat/package.yml` 恒为 `0.0.0` 占位，tag push 触发的 CI 从 ref 解析 `NEXTERM_RELEASE_VERSION` 烙进二进制与 dist manifest（master/PR 构建用占位版本）；release workflow 复用同 tag、同 SHA 的绿色 CI run 及其版本化产物（`CI_REUSE_EXPECTED_REF` 锁定），本地/懒猫构建可经 `NEXTERM_RELEASE_VERSION` 或恰好落在 tag 上获得真实版本。
-- `master` push 与 PR 的 `quality`/`postgres` 仍真实执行；tag CI 可用 resolver 验证同 SHA 的绿色 master run 后复用其质量检查结果，`quality`/`postgres` 无需重复执行，但 tag 的 versioned frontend/native/mobile 必须全部重新生产，绝不复用 master 的 `0.0.0` 产物。`frontend-dist` 仅由独立 `frontend` job 生产。
+- `master` push 与 PR 的 `quality`/`frontend-quality`/`postgres` 仍真实执行；tag CI 可用 resolver 验证同 SHA 的绿色 master run 后复用其质量检查结果，`quality`/`frontend-quality`/`postgres` 无需重复执行，但 tag 的 versioned frontend/native/mobile 必须全部重新生产，绝不复用 master 的 `0.0.0` 产物。`frontend-dist` 仅由独立 `frontend` job 生产。
 - 默认分支的 Windows Wails/NSIS 精确 key 缓存用于加速 Release 构建，不放宽版本或证据要求。
 - macOS 签名可选增强：仓库 variables 设 `NEXTERM_MACOS_SIGNING=true` 后，desktop job 自动导入 `NEXTERM_MACOS_P12_BASE64`/`NEXTERM_MACOS_P12_PASSWORD`(secret)并用 `NEXTERM_MACOS_SIGN_IDENTITY`(variable)签名（hardened runtime + timestamp）；再配 `NEXTERM_MACOS_NOTARY_KEY_BASE64`(secret)与 `NEXTERM_MACOS_NOTARY_KEY_ID`/`NEXTERM_MACOS_NOTARY_ISSUER`(variable)即自动公证+ stapler。未配置时保持 ad-hoc 分发；自签证书无法通过公证，公证必须 Developer ID。
 - 推送 `master` 仅限评审通过且门禁全绿后的 fast-forward；禁止未评审直推与 force push。

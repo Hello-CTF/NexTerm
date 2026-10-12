@@ -108,13 +108,9 @@ jobs:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
       - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
@@ -136,8 +132,6 @@ jobs:
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
       - name: Verify the selected toolchain and modules
         run: |
           test "$(go env GOVERSION)" = "go1.26.8"
@@ -149,27 +143,8 @@ jobs:
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go vet
         run: go vet -mod=readonly ./...
-      - name: Go tests and frontend lint/tests
-        shell: bash
-        run: |
-          go_log="$RUNNER_TEMP/go-tests.log"
-          frontend_log="$RUNNER_TEMP/frontend-lint-tests.log"
-          go test -mod=readonly ./... >"$go_log" 2>&1 &
-          go_pid=$!
-          (pnpm lint && pnpm test --maxWorkers=4) >"$frontend_log" 2>&1 &
-          frontend_pid=$!
-          go_status=0
-          frontend_status=0
-          wait "$go_pid" || go_status=$?
-          wait "$frontend_pid" || frontend_status=$?
-          printf '\nGo tests output:\n'
-          cat "$go_log"
-          printf '\nFrontend lint/tests output:\n'
-          cat "$frontend_log"
-          if [ "$go_status" -ne 0 ] || [ "$frontend_status" -ne 0 ]; then
-            printf 'Go tests exit code: %s\nFrontend lint/tests exit code: %s\n' "$go_status" "$frontend_status" >&2
-            exit 1
-          fi
+      - name: Go tests
+        run: go test -mod=readonly ./...
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
       - name: LazyCat manifest injects
@@ -180,6 +155,29 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "1"
         run: go run ./scripts/check-reuse-wiring
+
+  frontend-quality:
+    name: Frontend lint and tests
+    needs: [version, quality-source]
+    if: needs.quality-source.outputs.reused != 'true'
+    runs-on: ubuntu-latest
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend lint
+        run: pnpm lint
+      - name: Frontend tests
+        run: pnpm test
 
   postgres:
     name: Real PostgreSQL 16 gated tests
@@ -441,7 +439,7 @@ jobs:
 
   ios-dist:
     name: iOS TestFlight distribution
-    needs: [quality-source, quality, frontend, version]
+    needs: [quality-source, quality, frontend-quality, frontend, version]
     if: ${{ !failure() && !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}
     runs-on: macos-15
     env:
