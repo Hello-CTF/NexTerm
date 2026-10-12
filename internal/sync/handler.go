@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,11 +71,15 @@ type IDsResponse struct {
 
 // ObjectHandler 是服务端盲存储的 HTTP 入口: 只认会话身份, 不解读对象内容, 不记录对象明细。
 type ObjectHandler struct {
-	store *objectStore
+	store  *objectStore
+	logger *slog.Logger
 }
 
-func NewObjectHandler(db *gorm.DB, backend store.Backend) *ObjectHandler {
-	return &ObjectHandler{store: &objectStore{db: db, backend: backend}}
+func NewObjectHandler(db *gorm.DB, backend store.Backend, logger *slog.Logger) *ObjectHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &ObjectHandler{store: &objectStore{db: db, backend: backend}, logger: logger}
 }
 
 func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -106,20 +111,25 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		err := ipc.NewError(ipc.CodeUnsupported,
+			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		h.logger.Warn("sync push failed", "user", userID, "error", err)
+		writeSyncError(w, http.StatusBadRequest, err)
 		return
 	}
 	applied, skipped, head, maxSeq, err := h.store.push(r.Context(), userID, request.KnownHead, request.Objects)
 	if errors.Is(err, errHeadMismatch) {
+		h.logger.Warn("sync push head conflict", "user", userID, "known_head", shortSyncHead(request.KnownHead))
 		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
 			"同步头不一致：远端已被其他设备更新或发生回滚，请先拉取合并后再推送"))
 		return
 	}
 	if err != nil {
+		h.logger.Warn("sync push failed", "user", userID, "error", err)
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
 	}
+	h.logger.Info("sync push", "user", userID, "received", len(request.Objects), "applied", applied, "skipped", skipped, "max_seq", maxSeq)
 	writeSyncJSON(w, http.StatusOK, PushResponse{
 		Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Applied: applied, Skipped: skipped,
 	})
@@ -131,14 +141,20 @@ func (h *ObjectHandler) servePull(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		err := ipc.NewError(ipc.CodeUnsupported,
+			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		h.logger.Warn("sync pull failed", "user", userID, "error", err)
+		writeSyncError(w, http.StatusBadRequest, err)
 		return
 	}
 	objects, head, maxSeq, nextSeq, cursorDone, err := h.store.pull(r.Context(), userID, request.SinceSeq, request.IDs, request.MaxBytes)
 	if err != nil {
+		h.logger.Warn("sync pull failed", "user", userID, "error", err)
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
+	}
+	if len(objects) > 0 {
+		h.logger.Info("sync pull", "user", userID, "since_seq", request.SinceSeq, "returned", len(objects), "next_seq", nextSeq, "cursor_done", cursorDone)
 	}
 	writeSyncJSON(w, http.StatusOK, PullResponse{
 		Protocol: ProtocolVersion, Objects: objects, Head: head, MaxSeq: maxSeq, NextSeq: nextSeq, CursorDone: cursorDone,
@@ -151,17 +167,21 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 	if request.Protocol != ProtocolVersion {
-		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeUnsupported,
-			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
+		err := ipc.NewError(ipc.CodeUnsupported,
+			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion))
+		h.logger.Warn("sync ids failed", "user", userID, "error", err)
+		writeSyncError(w, http.StatusBadRequest, err)
 		return
 	}
 	head, err := h.store.currentHead(r.Context(), userID)
 	if err != nil {
+		h.logger.Warn("sync ids failed", "user", userID, "error", err)
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
 	}
 	maxSeq, err := h.store.maxSeq(r.Context(), userID)
 	if err != nil {
+		h.logger.Warn("sync ids failed", "user", userID, "error", err)
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
 	}
@@ -171,12 +191,22 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 	}
 	entries, head, maxSeq, err := h.store.idList(r.Context(), userID)
 	if err != nil {
+		h.logger.Warn("sync ids failed", "user", userID, "error", err)
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
 	}
+	h.logger.Info("sync ids", "user", userID, "entries", len(entries), "max_seq", maxSeq)
 	writeSyncJSON(w, http.StatusOK, IDsResponse{
 		Protocol: ProtocolVersion, Entries: entries, Head: head, MaxSeq: maxSeq,
 	})
+}
+
+// shortSyncHead 只留同步头前 8 位用于日志定位, 完整头不进日志。
+func shortSyncHead(head string) string {
+	if len(head) > 8 {
+		return head[:8]
+	}
+	return head
 }
 
 func decodeSyncRequest(w http.ResponseWriter, r *http.Request, dst any) bool {

@@ -210,6 +210,7 @@ func (s *Server) requireAccountCSRF(next http.Handler) http.Handler {
 			return
 		}
 		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+			s.logger.Warn("account csrf rejected", "path", r.URL.Path, "remote", clientIP(r))
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return
 		}

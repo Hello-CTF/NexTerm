@@ -160,6 +160,8 @@ export type SyncStatus = {
   seq: number,
   verifiedAt: number,
   lastError: string,
+  lastAttemptAt?: string,
+  lastSuccessAt?: string,
 };
 
 export type SyncReport = {

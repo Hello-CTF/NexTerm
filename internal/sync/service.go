@@ -42,6 +42,12 @@ func WithEvents(events ipc.Emitter) Option {
 	}
 }
 
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Service) {
+		s.logger = logger
+	}
+}
+
 func WithProfilesReload(reload func(context.Context) error) Option {
 	return func(s *Service) {
 		s.profilesReload = reload
@@ -62,6 +68,7 @@ type Service struct {
 	desktop           bool
 	gatewayAuthKey    string
 	events            ipc.Emitter
+	logger            *slog.Logger
 	profilesReload    func(context.Context) error
 	permissionsReload func(context.Context) error
 	syncPeriod        time.Duration
@@ -72,6 +79,16 @@ type Service struct {
 	done        chan struct{}
 	wakeCh      chan struct{}
 	stopping    bool
+
+	roundMu     stdsync.RWMutex
+	roundStatus syncRoundStatus
+}
+
+// syncRoundStatus 是最近一轮 Service.Sync 的内存态三件套, 形状照 store.RetentionStatus。
+type syncRoundStatus struct {
+	LastAttemptAt time.Time `json:"lastAttemptAt"`
+	LastSuccessAt time.Time `json:"lastSuccessAt"`
+	LastError     string    `json:"lastError,omitempty"`
 }
 
 func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
@@ -85,7 +102,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	for _, option := range options {
 		option(s)
 	}
-	s.engine = NewEngine(db, credentialVault, slog.Default())
+	s.engine = NewEngine(db, credentialVault, s.logger)
 	return s
 }
 
@@ -174,7 +191,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 
 // ObjectHandler 暴露服务端盲存储入口, 由服务端挂载到会话中间件之后。
 func (s *Service) ObjectHandler() *ObjectHandler {
-	return NewObjectHandler(s.store.GORM(), s.store.Backend())
+	return NewObjectHandler(s.store.GORM(), s.store.Backend(), s.engine.logger)
 }
 
 type Link struct {
@@ -447,9 +464,22 @@ func syncReportChanged(report SyncReport) bool {
 }
 
 // Sync 用已保存的链接执行一轮完整同步(对账 → 拉取合并 → 推送)。
-func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
+func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
+	s.roundMu.Lock()
+	s.roundStatus.LastAttemptAt = time.Now()
+	s.roundMu.Unlock()
+	defer func() {
+		s.roundMu.Lock()
+		defer s.roundMu.Unlock()
+		if returnErr != nil {
+			s.roundStatus.LastError = returnErr.Error()
+			return
+		}
+		s.roundStatus.LastSuccessAt = time.Now()
+		s.roundStatus.LastError = ""
+	}()
 	secret, err := s.linkSecret(ctx)
 	if err != nil {
 		return SyncReport{}, err
@@ -478,14 +508,16 @@ func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
 }
 
 type Status struct {
-	Configured bool   `json:"configured"`
-	LoggedIn   bool   `json:"loggedIn"`
-	Username   string `json:"username,omitempty"`
-	UserID     string `json:"userId,omitempty"`
-	Head       string `json:"head,omitempty"`
-	Seq        int64  `json:"seq"`
-	VerifiedAt int64  `json:"verifiedAt"`
-	LastError  string `json:"lastError"`
+	Configured    bool      `json:"configured"`
+	LoggedIn      bool      `json:"loggedIn"`
+	Username      string    `json:"username,omitempty"`
+	UserID        string    `json:"userId,omitempty"`
+	Head          string    `json:"head,omitempty"`
+	Seq           int64     `json:"seq"`
+	VerifiedAt    int64     `json:"verifiedAt"`
+	LastError     string    `json:"lastError"`
+	LastAttemptAt time.Time `json:"lastAttemptAt"`
+	LastSuccessAt time.Time `json:"lastSuccessAt"`
 }
 
 func (s *Service) Status(ctx context.Context) (Status, error) {
@@ -497,6 +529,13 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Configured: link.IsConfigured(), Username: link.Username,
 		VerifiedAt: link.VerifiedAt, LastError: link.LastError,
 	}
+	s.roundMu.RLock()
+	status.LastAttemptAt = s.roundStatus.LastAttemptAt
+	status.LastSuccessAt = s.roundStatus.LastSuccessAt
+	if s.roundStatus.LastError != "" {
+		status.LastError = s.roundStatus.LastError
+	}
+	s.roundMu.RUnlock()
 	s.engine.sessionMu.Lock()
 	session := s.engine.session
 	s.engine.sessionMu.Unlock()

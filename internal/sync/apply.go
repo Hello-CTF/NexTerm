@@ -54,7 +54,20 @@ type ApplyObjectsResult struct {
 func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest) (ApplyObjectsResult, error) {
 	userID, _ := UserIDFromContext(ctx)
 	result, err := s.engine.applyPlainObjects(ctx, request, userID)
-	if err == nil && result.Applied > 0 {
+	if err != nil {
+		s.engine.logger.Warn("sync apply failed", "user", userID, "received", len(request.Objects), "error", err)
+		return result, err
+	}
+	if len(request.Objects) > 0 {
+		attrs := []any{"user", userID, "received", len(request.Objects),
+			"applied", result.Applied, "identical", result.Identical, "skipped", result.Skipped}
+		if result.Skipped > 0 {
+			s.engine.logger.Warn("sync apply", append(attrs, "kinds", skippedApplyKinds(result))...)
+		} else {
+			s.engine.logger.Info("sync apply", attrs...)
+		}
+	}
+	if result.Applied > 0 {
 		if s.profilesReload != nil {
 			if err := s.profilesReload(ctx); err != nil {
 				s.engine.logger.Warn("reload synced AI profiles failed", "error", err)
@@ -67,7 +80,17 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 		}
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
 	}
-	return result, err
+	return result, nil
+}
+
+func skippedApplyKinds(result ApplyObjectsResult) map[string]int {
+	kinds := map[string]int{}
+	for _, object := range result.Objects {
+		if object.Result == ApplyResultSkipped {
+			kinds[object.Kind]++
+		}
+	}
+	return kinds
 }
 
 func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequest, userIDs ...string) (ApplyObjectsResult, error) {

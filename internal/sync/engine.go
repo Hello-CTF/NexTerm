@@ -132,25 +132,53 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 	report := SyncReport{}
+	userID := ""
 	for attempt := 0; attempt < maxSyncAttempts; attempt++ {
 		session, err := e.ensureSession(ctx, config)
 		if err != nil {
+			e.logSyncRound(userID, report, err)
 			return report, err
 		}
+		userID = session.userID
 		conflict, err := e.syncOnce(ctx, session, &report)
 		if errors.Is(err, errSessionExpired) {
 			e.dropSession(session.key)
 			continue
 		}
 		if err != nil {
+			e.logSyncRound(userID, report, err)
 			return report, err
 		}
 		if !conflict {
+			e.logSyncRound(userID, report, nil)
 			return report, nil
 		}
 		report.Conflicts++
 	}
-	return report, ipc.NewError(ipc.CodeForbidden, "同步冲突次数过多，请稍后重试")
+	err := ipc.NewError(ipc.CodeForbidden, "同步冲突次数过多，请稍后重试")
+	e.logSyncRound(userID, report, err)
+	return report, err
+}
+
+// logSyncRound 每轮同步至多一行汇总: 空轮静默, 有变更 Info, 失败 Warn;
+// 警告只记数量, 警告原文含对象 ID 不进日志。
+func (e *Engine) logSyncRound(userID string, report SyncReport, syncErr error) {
+	attrs := []any{
+		"user", userID, "pulled", report.Pulled, "applied", report.Applied, "skipped", report.PullSkipped,
+		"decrypt_failed", report.DecryptFailed, "pushed", report.Pushed, "conflicts", report.Conflicts,
+		"warnings", len(report.Warnings),
+	}
+	if syncErr != nil {
+		e.logger.Warn("sync round failed", append(attrs, "error", syncErr)...)
+		return
+	}
+	if report.Pulled > 0 || report.Applied > 0 || report.PullSkipped > 0 ||
+		report.DecryptFailed > 0 || report.Pushed > 0 || report.Conflicts > 0 {
+		e.logger.Info("sync round complete", attrs...)
+	}
+	if len(report.Warnings) > 0 {
+		e.logger.Warn("sync round warnings", "user", userID, "warnings", len(report.Warnings))
+	}
 }
 
 func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remoteSession, error) {
