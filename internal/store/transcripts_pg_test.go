@@ -53,3 +53,27 @@ func TestTranscriptHostsGroupByPostgres(t *testing.T) {
 		t.Fatalf("hosts = %+v", hosts)
 	}
 }
+
+func TestTranscriptInsertSyncedConflictBranchPostgres(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	ended := int64(2000)
+	row := store.TranscriptRow{ID: "pg-synced-transcript", SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000, EndedAt: &ended, Bytes: 4, Chunks: 1}
+	chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: 1001, Data: []byte("abcd")}}
+	if err := db.TranscriptInsertSynced(ctx, row, chunks); err != nil {
+		t.Fatal(err)
+	}
+	row.Bytes = 8
+	row.Chunks = 2
+	if err := db.TranscriptInsertSynced(ctx, row, chunks); err != nil {
+		t.Fatalf("conflict upsert: %v", err)
+	}
+	got, err := db.TranscriptGet(ctx, row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bytes != 8 || got.Chunks != 2 || !got.SyncOptIn {
+		t.Fatalf("after conflict upsert = %+v", got)
+	}
+}

@@ -51,7 +51,7 @@ tasks:
           echo "NEXTERM_TEST_PG_DSN is not set; refusing to count SKIP as a pass" >&2
           exit 1
         fi
-      - go test -count=1 ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron
+      - go test -count=1 ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server
 
   check:
     summary: Run Go, frontend, generated-bindings and reproducibility quality gates
@@ -64,6 +64,7 @@ tasks:
       - node scripts/build.mjs bindings
       - node scripts/build.mjs frontend --repro-check
       - go run ./scripts/verify-manifest-injects
+      - go run ./scripts/check-conflict-columns
 
   verify:wiring:
     summary: Check CI/release reuse wiring, resolver scenarios and negative controls

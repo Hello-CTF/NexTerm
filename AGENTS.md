@@ -50,7 +50,7 @@
 - Go：`gofmt -l ./cmd ./internal ./scripts` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
-- 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）。
+- 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）；upsert 冲突列-目标表一致性 `go run ./scripts/check-conflict-columns`。
 - 已安装 task 时 `task check` 一次跑完上述常规项（`verify-manifest-injects` 在其中，复用接线检查不在其中，改动相关文件时以 `task verify:wiring` 单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
 - CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
 - 真实 Chromium 验收缺口：原 `task acceptance:browser`（`.github/scripts/browser-acceptance.mjs`）随演示模式一并移除——它完全依赖 `?demo=1` 启动应用。真实浏览器行为（焦点与纯键盘导航、窄宽溢出、触摸命中、WebSocket 早期帧/重连、真实服务端 reload 恢复等）当前没有任何自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
@@ -76,9 +76,9 @@
 
 ## PostgreSQL 真实测试
 
-- PG 门控测试位于 `internal/dbtest`、`internal/store`、`internal/account`、`internal/sync`、`internal/ai/cron`，统一经 `internal/dbtest` harness 读取 `NEXTERM_TEST_PG_DSN`；未设置时逐测试 SKIP，SKIP 不算已验证。
-- 本地聚焦复跑：`NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`（等价于对同五个包 `go test -count=1`）；该 task 在 DSN 缺失时直接失败，不把 SKIP 当通过。
-- 远程 CI 的 `postgres` job 真实启动 PostgreSQL 16 服务并携带 DSN 跑上述五个包，日志出现任何 harness SKIP 即判 job 失败；DSN 经 `add-mask` 脱敏，不写入日志。
+- PG 门控测试位于 `internal/dbtest`、`internal/store`、`internal/account`、`internal/sync`、`internal/ai/cron`、`internal/fleet/server`，统一经 `internal/dbtest` harness 读取 `NEXTERM_TEST_PG_DSN`；未设置时逐测试 SKIP，SKIP 不算已验证。
+- 本地聚焦复跑：`NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`（等价于对同六个包 `go test -count=1`）；该 task 在 DSN 缺失时直接失败，不把 SKIP 当通过。
+- 远程 CI 的 `postgres` job 真实启动 PostgreSQL 16 服务并携带 DSN 跑上述六个包，日志出现任何 harness SKIP 即判 job 失败；DSN 经 `add-mask` 脱敏，不写入日志。
 
 ## 多 agent 协作
 

@@ -426,7 +426,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "chunks", "truncated", "content_omitted"}),
-			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_transcript_offset", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("transcript", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).Create(&row).Error; err != nil {
 			return err
 		}

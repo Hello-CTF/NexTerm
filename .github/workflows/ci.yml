@@ -110,6 +110,8 @@ jobs:
         run: node scripts/build.mjs frontend --repro-check
       - name: LazyCat manifest injects
         run: go run ./scripts/verify-manifest-injects
+      - name: Upsert conflict column check
+        run: go run ./scripts/check-conflict-columns
       - name: Workflow reuse wiring checks
         env:
           SOURCE_DATE_EPOCH: "1"
@@ -155,7 +157,7 @@ jobs:
       - name: Run the PostgreSQL-gated dbtest, store, account, sync and cron suites
         run: |
           set -o pipefail
-          go test -mod=readonly -count=1 -v ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron | tee "$RUNNER_TEMP/pg-gated.log"
+          go test -mod=readonly -count=1 -v ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron ./internal/fleet/server | tee "$RUNNER_TEMP/pg-gated.log"
       - name: Reject skipped PostgreSQL tests
         run: |
           if grep -E '^(--- SKIP: .*Postgres|.*set NEXTERM_TEST_PG_DSN)' "$RUNNER_TEMP/pg-gated.log"; then
