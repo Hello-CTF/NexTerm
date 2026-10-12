@@ -464,10 +464,11 @@ describe("设备管理视图 · 接入码签发", () => {
     const copyCommand = command?.parentElement?.querySelector("button");
     expect(copyCommand).toBeTruthy();
     click(copyCommand as HTMLButtonElement);
+    await flush();
 
     expect(toast).toHaveBeenCalledTimes(2);
-    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败：剪贴板不可用，请手动复制");
-    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败：剪贴板不可用，请手动复制");
+    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败，请手动复制");
+    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败，请手动复制");
   });
 
   it("接入地址 loading/error/ready 控制签发与覆盖保存, 失败可重试", async () => {

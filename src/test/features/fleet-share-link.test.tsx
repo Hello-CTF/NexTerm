@@ -395,9 +395,10 @@ describe("DeviceTerminalView 公开链接创建", () => {
     const copy = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制链接");
     expect(copy).toBeTruthy();
     click(copy as HTMLButtonElement);
+    await flush();
 
     expect(useUi.getState().toasts).toEqual([
-      expect.objectContaining({ kind: "error", text: "复制失败：剪贴板不可用，请手动复制" }),
+      expect.objectContaining({ kind: "error", text: "复制失败，请手动复制" }),
     ]);
   });
 
