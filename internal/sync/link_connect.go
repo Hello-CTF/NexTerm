@@ -23,6 +23,13 @@ type LinkConnectResult struct {
 	RecoveryKey  string
 }
 
+// 需要人工重新交互登录的两种如实状态: 自动探测(启动探测与 401 重登)无法完成,
+// 记入 LastError 由设置页引导用户走 LinkSet 的分步入职。
+var (
+	errReloginMFA   = ipc.NewError(ipc.CodeForbidden, "账号已开启两步验证：请先在同步设置中完成验证")
+	errReloginReset = ipc.NewError(ipc.CodeForbidden, "账号密码已被管理员重置：请先在同步设置中完成密码重置")
+)
+
 // pendingLinkLogin 是密码已通过、待第二因子或强制改密的中间态: 客户端已按
 // 服务端合同持有票据(MFA)或受限会话 cookie+CSRF(reset_required)。
 type pendingLinkLogin struct {

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
 import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
-import { remoteLinkApi } from "../../ipc/remoteApi";
+import { remoteLinkApi, syncCompareApi } from "../../ipc/remoteApi";
 import { useAuth } from "../auth/store";
 import {
   base64ToBytes,
@@ -30,11 +30,13 @@ import {
 } from "../auth/syncPayload";
 import { useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
+import { listenEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
 import { SYNC_AUTO_BADGE, SYNC_CONSOLE_TITLE, SYNC_INTERVAL_LABEL, SYNC_MERGE_GUIDE, SyncOptInSection } from "./syncOptIns";
+import { COMPARE_KIND_LABELS, CompareDetails, type CompareRowView } from "./syncCompareRows";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -119,6 +121,12 @@ function DesktopLinkCard() {
 
   useEffect(() => {
     void load();
+    // 后台自动同步建立会话或记录探测失败时经 sync://status 广播, 卡片随之自动刷新。
+    let unlisten: (() => void) | undefined;
+    void listenEvent("sync://status", () => void load()).then((off) => {
+      unlisten = off;
+    });
+    return () => unlisten?.();
   }, [load]);
 
   const finishLogin = async () => {
@@ -503,8 +511,8 @@ function DesktopLinkCard() {
 // ---------- 桌面端:账号同步 ----------
 
 // DesktopSyncConsole 桌面登录 (link 已建立) 后展示: 同步内容开关 (kindOptInGet/Set)、
-// 同步状态 (账号验证时间/已应用云端序号/最近错误) 与手动触发 (sync_wake 唤醒后台同步循环)。
-// 逐条对比详情依赖浏览器端的 DEK 内存态与 runWebSync, 桌面端不做。
+// 同步状态 (账号验证时间/已应用云端序号/最近错误)、手动触发 (sync_wake 唤醒后台同步循环)
+// 与逐条对比详情 (sync_compare: Go 侧用引擎会话 DEK 解云端对象, 与网页版同一套判定)。
 function DesktopSyncConsole() {
   const { pushToast } = useUi();
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -512,6 +520,12 @@ function DesktopSyncConsole() {
   const [optInBusy, setOptInBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [compareRows, setCompareRows] = useState<CompareRowView[] | null>(null);
+  const [compareRemote, setCompareRemote] = useState<number | null>(null);
+  const [compareWarnings, setCompareWarnings] = useState<string[]>([]);
+  const [compareBusy, setCompareBusy] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const compareSeqRef = useRef(0);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -520,9 +534,30 @@ function DesktopSyncConsole() {
     ]).catch((e: unknown) => setError(describeError(e)));
   }, []);
 
+  const loadCompare = useCallback(() => {
+    const seq = ++compareSeqRef.current;
+    setCompareBusy(true);
+    setCompareError(null);
+    return syncCompareApi
+      .compare()
+      .then((result) => {
+        if (seq !== compareSeqRef.current) return;
+        setCompareRows(result.rows as CompareRowView[]);
+        setCompareRemote(result.remote);
+        setCompareWarnings(result.warnings ?? []);
+      })
+      .catch((e: unknown) => {
+        if (seq === compareSeqRef.current) setCompareError(describeError(e));
+      })
+      .finally(() => {
+        if (seq === compareSeqRef.current) setCompareBusy(false);
+      });
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadCompare();
+  }, [load, loadCompare]);
 
   const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     setOptInBusy(true);
@@ -542,8 +577,11 @@ function DesktopSyncConsole() {
     try {
       await syncApi.wake();
       pushToast("success", "已触发一轮后台同步");
-      // 同步在后台循环里异步执行, 稍后重取状态反映结果。
-      window.setTimeout(() => void load(), 2000);
+      // 同步在后台循环里异步执行, 稍后重取状态与对比反映结果。
+      window.setTimeout(() => {
+        void load();
+        void loadCompare();
+      }, 2000);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -557,8 +595,17 @@ function DesktopSyncConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
+        {compareRemote !== null && <span className="nx-hint">云端 {compareRemote} 个对象</span>}
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
+        <button
+          className="nx-btn nx-btn-outline nx-btn-sm"
+          disabled={compareBusy}
+          onClick={() => void loadCompare()}
+        >
+          <IconRefresh size={12} className={compareBusy ? "animate-spin" : ""} />
+          刷新对比
+        </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
           disabled={syncBusy}
@@ -591,10 +638,36 @@ function DesktopSyncConsole() {
         </div>
       )}
 
-      <div className="nx-alert nx-alert-info flex items-start gap-2">
+      {compareError && (
+        <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">对比读取失败：{compareError}</span>
+          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadCompare()}>
+            <IconRefresh size={12} />
+            重试
+          </button>
+        </div>
+      )}
+
+      {compareWarnings.length > 0 && (
+        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
+          <IconInfo size={13} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1 text-amber-300">
+            {compareWarnings.map((warning, index) => (
+              <div key={index} className="break-words">
+                {warning}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <CompareDetails rows={compareRows} error={compareError !== null} />
+
+      <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确。本机与云端的逐条对比详情在浏览器模式的「账号同步」卡提供。
+          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>
@@ -837,7 +910,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     if (t.targetKind === "preference" && !optIn.preferences) continue;
     const live = byId.get(t.id);
     if (live && revisionOf(live.updatedAt, live.deletedAt) > t.deletedAt) continue;
-    const label = KIND_LABELS[t.targetKind] ?? t.targetKind;
+    const label = COMPARE_KIND_LABELS[t.targetKind] ?? t.targetKind;
     byId.set(t.id, await localEntity(t.id, "tombstone", `${label} ${t.id}`, t.deletedAt, t.deletedAt, tombstonePayload(t)));
   }
   for (const tr of transcripts) {
@@ -1163,38 +1236,6 @@ export async function runWebSync(
   return { ...snapshot, warnings: [...new Set([...snapshot.warnings, ...operationWarnings])], applied, pushed };
 }
 
-function rowLabel(r: Row): { text: string; tone: string; hint: string } {
-  switch (r.state) {
-    case "local-only":
-      return { text: "仅本机", tone: "", hint: "云端还没有这条。推送会新建。" };
-    case "remote-only":
-      return { text: "仅云端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
-    case "same":
-      return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
-    case "local-newer":
-      return { text: "本机较新", tone: "nx-badge-amber", hint: "本机版本较新，推送会覆盖云端。" };
-    case "remote-newer":
-      return { text: "云端较新", tone: "nx-badge-amber", hint: "云端版本较新，拉取并应用会覆盖本机。" };
-    case "local-deleted":
-      return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
-    case "remote-deleted":
-      return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已被删除。" };
-  }
-}
-
-const KIND_LABELS: Record<string, string> = {
-  group: "分组",
-  asset: "资产",
-  snippet: "片段",
-  credential: "凭据",
-  tombstone: "删除标记",
-  transcript: "会话记录",
-  known_host: "已知主机",
-  ai_profile: "AI 模型档案",
-  ai_permission: "AI 权限",
-  preference: "偏好设置",
-};
-
 function WebSyncConsole() {
   const user = useAuth((s) => s.user);
   const dek = useAuth((s) => s.dek);
@@ -1280,9 +1321,6 @@ function CompareConsole() {
   const optInEpochRef = useRef(0);
   const loadSeqRef = useRef(0);
   const kindOptInRef = useRef<SyncKindOptIn | null>(null);
-
-  const detailsPanelId = useId();
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const load = useCallback((view: SyncKindOptIn, epoch: number) => {
     const seq = ++loadSeqRef.current;
@@ -1379,13 +1417,6 @@ function CompareConsole() {
 
 
   const pushCount = winners.length;
-  const sameCount = rows?.filter((r) => r.state === "same").length ?? 0;
-  const detailsSummary = !rows
-    ? "读取中…"
-    : rows.length === 0
-      ? "本机与云端都还没有可同步的内容"
-      : `共 ${rows.length} 条 · 一致 ${sameCount} 条` +
-        (sameCount < rows.length ? ` · 差异 ${rows.length - sameCount} 条` : "");
 
   return (
     <section className="nx-card">
@@ -1415,55 +1446,17 @@ function CompareConsole() {
       {collectWarnings.length > 0 && (
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words text-amber-300">{collectWarnings.join(";")}</span>
+          <div className="min-w-0 flex-1 text-amber-300">
+            {collectWarnings.map((warning, index) => (
+              <div key={index} className="break-words">
+                {warning}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      <div className="mb-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
-            aria-expanded={detailsOpen}
-            aria-controls={detailsPanelId}
-            onClick={() => setDetailsOpen((v) => !v)}
-          >
-            {detailsOpen ? (
-              <IconChevronDown size={12} className="shrink-0" />
-            ) : (
-              <IconChevronRight size={12} className="shrink-0" />
-            )}
-            对比详情
-          </button>
-          <span className="nx-hint text-[11px]">{detailsSummary}</span>
-        </div>
-        {detailsOpen && (
-          <div id={detailsPanelId} className="mt-2">
-            {rows && (
-              <div className="max-h-[320px] overflow-y-auto rounded border border-neutral-800/60">
-                {rows.length === 0 && <div className="nx-hint px-2.5 py-3 text-[12px]">本机与云端都还没有可同步的内容。</div>}
-                {rows.map((r) => {
-                  const label = rowLabel(r);
-                  return (
-                    <div
-                      key={r.id}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0"
-                      title={label.hint}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={r.name}>
-                        {r.name}
-                      </span>
-                      <span className="nx-hint shrink-0 text-[11px]">{KIND_LABELS[r.kind] ?? r.kind}</span>
-                      <span className={`nx-badge shrink-0 ${label.tone}`}>{label.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {!rows && !error && <div className="nx-hint py-3 text-[12px]">正在读取本机与云端数据…</div>}
-          </div>
-        )}
-      </div>
+      <CompareDetails rows={rows} error={error !== null} />
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />

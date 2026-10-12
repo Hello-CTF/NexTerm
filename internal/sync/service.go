@@ -80,8 +80,9 @@ type Service struct {
 	wakeCh      chan struct{}
 	stopping    bool
 
-	roundMu     stdsync.RWMutex
-	roundStatus syncRoundStatus
+	roundMu        stdsync.RWMutex
+	roundStatus    syncRoundStatus
+	blockedNoticed bool
 }
 
 // syncRoundStatus 是最近一轮 Service.Sync 的内存态三件套, 形状照 store.RetentionStatus。
@@ -103,6 +104,10 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 		option(s)
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
+	if credentialVault != nil {
+		// 凭据库解锁后立即唤醒一轮后台同步: 启动时锁定的库在解锁后不必等下一个周期。
+		credentialVault.AddUnlockListener(s.wake)
+	}
 	return s
 }
 
@@ -126,6 +131,7 @@ func (s *Service) Start(ctx context.Context) error {
 		defer close(done)
 		ticker := time.NewTicker(s.syncPeriod)
 		defer ticker.Stop()
+		s.probeSavedLink(runCtx)
 		for {
 			s.syncBackground(runCtx)
 			select {
@@ -145,17 +151,86 @@ func (s *Service) syncBackground(ctx context.Context) {
 	if err != nil {
 		var appErr *ipc.Error
 		if errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit) {
+			s.noteSyncBlocked(appErr)
 			return
 		}
 		s.engine.logger.Warn("background sync link read failed", "error", err)
 		return
 	}
+	s.clearSyncBlocked()
 	if !link.IsConfigured() {
 		return
 	}
+	wasLoggedIn := s.engine.hasSession()
 	if _, err := s.Sync(ctx); err != nil && ctx.Err() == nil {
 		s.engine.logger.Warn("background sync failed", "error", err)
 	}
+	// 后台轮新建立会话(解锁唤醒/故障恢复)时广播状态, 已挂载的设置页才能自动刷新为已登录。
+	if !wasLoggedIn && s.engine.hasSession() {
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+	}
+}
+
+// noteSyncBlocked 记录凭据库锁定/未初始化导致的后台同步暂停: 写入轮次状态使 Status 可见
+// (此前静默跳过, 用户无从得知同步停摆), 且每段连续暂停期只记一行 Warn, 解锁恢复后
+// roundStatus.LastError 由下一轮成功同步的 defer 清除。
+func (s *Service) noteSyncBlocked(err error) {
+	s.roundMu.Lock()
+	s.roundStatus.LastAttemptAt = time.Now()
+	s.roundStatus.LastError = err.Error()
+	noticed := s.blockedNoticed
+	s.blockedNoticed = true
+	s.roundMu.Unlock()
+	if !noticed {
+		s.engine.logger.Warn("background sync paused: credential vault locked or not initialized", "error", err)
+	}
+}
+
+// clearSyncBlocked 在链接可读(凭据库可用)后复位暂停闩锁: 下次进入暂停态会重新记日志。
+func (s *Service) clearSyncBlocked() {
+	s.roundMu.Lock()
+	s.blockedNoticed = false
+	s.roundMu.Unlock()
+}
+
+// probeSavedLink 启动时对已保存的链接做一次连接探测(与 LinkSet 的探测同路径):
+// connected 即建立会话并刷新 VerifiedAt; mfa_required/reset_required 无法自动完成,
+// 如实记入 LastError 引导重新交互登录; 探测失败只记 LastError, 不阻塞启动。
+// 未配置或凭据库不可用(锁定/未初始化)时静默跳过, 由后台循环与解锁唤醒接手。
+func (s *Service) probeSavedLink(ctx context.Context) {
+	ctx = vault.WithBackground(ctx)
+	link, err := s.LinkGet(ctx)
+	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit) {
+			return
+		}
+		s.engine.logger.Warn("startup link probe read failed", "error", err)
+		return
+	}
+	if !link.IsConfigured() {
+		return
+	}
+	secret, err := s.linkSecret(ctx)
+	if err != nil {
+		return
+	}
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
+	if err != nil {
+		s.recordProbe(ctx, err)
+	} else {
+		switch connect.State {
+		case LinkConnectConnected:
+			s.recordProbe(ctx, nil)
+		case LinkConnectMFARequired:
+			s.recordProbe(ctx, errReloginMFA)
+		case LinkConnectResetRequired:
+			s.recordProbe(ctx, errReloginReset)
+		}
+	}
+	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
