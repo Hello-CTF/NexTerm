@@ -78,7 +78,7 @@
 ## schema 与数据层（GORM）
 
 - 数据层统一使用 GORM + GORM Gen：模型在 `internal/store/model/`，生成查询代码在 `internal/store/query/*.gen.go`（生成物，禁止手改）；改动模型后运行 `go run ./scripts/gen-gorm` 重新生成并随改动一起提交。
-- schema 由 `Store.migrate` 的 `AutoMigrate` 在启动时建立，不再有 SQL migration 文件，也没有 `schema_migrations` 表；允许 breaking change，不做旧库兼容。
+- schema 由 `Store.migrate` 的 `AutoMigrate` 在启动时建立，不再有 SQL migration 文件，也没有 `schema_migrations` 表；允许 breaking change，不做旧库兼容。含 `schema_migrations` 表的旧版 SQLite 库在打开时整体改名备份为 `<db>.legacy-<时间戳>`（含 -wal/-shm 旁车文件），随后以全新库启动，不做数据迁移。
 - 业务查询一律走 gen query API（`query.Use(db).<Model>`），不再新增手写 SQL；判断记录不存在用 `errors.Is(err, gorm.ErrRecordNotFound)`。
 - SQLite 驱动用纯 Go 的 `github.com/glebarez/sqlite`（替代 CGO 的 `mattn/go-sqlite3`）；PostgreSQL 用 `gorm.io/driver/postgres`，同一套模型与查询代码两个方言共用。
 

@@ -57,6 +57,7 @@ li { margin: 4px 0; }
 }
 
 func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logger) int {
+	logger.Error("startup failed", "error", startupErr)
 	app := application.New(application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm startup error",
