@@ -114,7 +114,8 @@ describe("两个控制台渲染同一份开关文案(防分叉)", () => {
     expect(SYNC_MERGE_GUIDE).toBe("登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。");
   });
 
-  it("云端对象计数只有网页版一处(桌面拿不到计数时如实不显示, 不另写近似文案)", () => {
-    expect(syncCardSource.match(/个对象/g)?.length).toBe(1);
+  it("云端对象计数两端同文案(桌面经 sync_compare 获取计数, 与网页版措辞一致)", () => {
+    expect(syncCardSource.match(/云端 \{/g)?.length).toBe(2);
+    expect(syncCardSource.match(/个对象/g)?.length).toBe(2);
   });
 });

@@ -141,6 +141,9 @@ func productionModules(services ProductionServices) []Module {
 			if err := registerSyncApplyCommands(dispatcher, services.Sync); err != nil {
 				return err
 			}
+			if err := registerSyncCompareCommands(dispatcher, services.Sync); err != nil {
+				return err
+			}
 			if err := registerRemoteCommands(dispatcher, services.Sync); err != nil {
 				return err
 			}
