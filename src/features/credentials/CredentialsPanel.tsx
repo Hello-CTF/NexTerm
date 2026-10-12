@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { vaultApi, type Credential, type CredentialSource, type RevealedCredential } from "../../ipc/commands";
 import { ask } from "../../ui/dialogs";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
@@ -43,8 +43,23 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   const st = status.data;
   const locked = !!st?.initialized && !st.unlocked;
   const protectionOn = st?.mode === "master" && !st.passwordless;
+  const passwordlessLocked =
+    !!st?.initialized && !st.unlocked && st?.mode === "master" && !!st?.passwordless;
   const list = credentials.data ?? [];
   const selected = list.find((c) => c.id === credId) ?? null;
+
+  const qc = useQueryClient();
+  // 空密码库没有锁定概念: 直接静默解锁, 不展示锁定横幅。
+  useEffect(() => {
+    if (!passwordlessLocked) return;
+    vaultApi
+      .unlock("")
+      .then(() => {
+        void qc.invalidateQueries({ queryKey: ["vault-status"] });
+        void qc.invalidateQueries({ queryKey: ["credentials"] });
+      })
+      .catch(() => undefined);
+  }, [passwordlessLocked, qc]);
 
   return (
     <div className="flex h-full flex-col bg-neutral-900">
@@ -60,6 +75,10 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             ) : (
               <span className="nx-badge nx-badge-green hidden sm:inline-flex">已解锁</span>
             )
+          ) : st.mode === "not_init" ? (
+            <span className="nx-badge nx-badge-amber hidden sm:inline-flex">未初始化</span>
+          ) : st.mode === "master" ? (
+            <span className="nx-badge nx-badge-amber hidden sm:inline-flex">已启用 · 未设密码</span>
           ) : (
             <span className="nx-badge hidden sm:inline-flex">未启用密码保护</span>
           ))}
@@ -81,7 +100,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         </button>
       </div>
 
-      {locked && (
+      {locked && protectionOn && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300/90">
           <IconLock size={13} />
           <span>凭据库已锁定 · 解锁后可查看与使用</span>

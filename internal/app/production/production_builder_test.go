@@ -116,3 +116,55 @@ func TestConcreteProductionNormalizesRelativeDataDir(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConcreteProductionAutoInitializesVault(t *testing.T) {
+	dataDir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := production.Services.Vault.Status()
+	if !status.Initialized || !status.Unlocked || !status.Passwordless {
+		t.Fatalf("fresh desktop vault = %+v, want initialized, unlocked, passwordless", status)
+	}
+	response := dispatchStoreTest(production.Dispatcher, "vault_set_credential", `{"args":{"name":"auto","kind":"password","secret":"s3cret"}}`)
+	var created map[string]string
+	requireStoreTestResponse(t, response, &created)
+	if created["id"] == "" {
+		t.Fatalf("vault_set_credential = %+v", created)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{Logger: logger}, DataDir: dataDir, Desktop: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status = reopened.Services.Vault.Status()
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("reopened desktop vault = %+v, want initialized and unlocked", status)
+	}
+	response = dispatchStoreTest(reopened.Dispatcher, "vault_reveal_credential", `{"id":"`+created["id"]+`"}`)
+	var revealed struct {
+		Value string `json:"value"`
+	}
+	requireStoreTestResponse(t, response, &revealed)
+	if revealed.Value != "s3cret" {
+		t.Fatalf("revealed credential = %q", revealed.Value)
+	}
+	if err := reopened.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

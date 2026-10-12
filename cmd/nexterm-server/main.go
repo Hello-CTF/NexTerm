@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -104,6 +106,13 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 2
+	}
+	if masterKey == "" {
+		masterKey, err = ensureVaultMasterKey(paths.DataDir, logger.Logger)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 2
+		}
 	}
 	dbBackend, err := store.ParseBackend(invocation.DB)
 	if err != nil {
@@ -273,18 +282,13 @@ func run(args []string) int {
 			_ = rollupRunner.Shutdown(shutdownCtx)
 		}()
 	}
-	switch {
-	case invocation.RequireVault:
+	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
 			logger.Error("vault is required but unavailable", "error", err)
 			return 1
 		}
-	case masterKey == "":
-		logger.Warn("no vault master key provided; credential synchronization may be unavailable")
-	default:
-		if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
-			logger.Error("vault bootstrap failed", "error", err)
-		}
+	} else if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
+		logger.Error("vault bootstrap failed", "error", err)
 	}
 	if err := application.Serve(ctx, core.ServeConfig{
 		Listen:         invocation.Listen,
@@ -299,6 +303,29 @@ func run(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// ensureVaultMasterKey 在未显式配置主密钥时保证数据目录内有一把: 已存在 master.key
+// 则读出复用(重启幂等, 覆盖成新 key 会让旧密文全部无法解密), 否则生成 32 字节随机 hex 以 0600 写入。
+func ensureVaultMasterKey(dataDir string, logger *slog.Logger) (string, error) {
+	keyPath := filepath.Join(dataDir, "master.key")
+	if data, err := os.ReadFile(keyPath); err == nil {
+		if key := strings.TrimSpace(string(data)); key != "" {
+			return key, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read vault master key: %w", err)
+	}
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate vault master key: %w", err)
+	}
+	key := hex.EncodeToString(random)
+	if err := os.WriteFile(keyPath, []byte(key), 0o600); err != nil {
+		return "", fmt.Errorf("write vault master key: %w", err)
+	}
+	logger.Info("generated vault master key", "file", keyPath)
+	return key, nil
 }
 
 func serverRetentionConfig(runner *core.RetentionRunner) *server.RetentionConfig {

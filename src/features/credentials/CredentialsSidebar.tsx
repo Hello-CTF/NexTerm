@@ -225,7 +225,17 @@ export function CredentialsSidebar() {
               <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} 条未被使用</span>
             )}
             <div className="nx-spacer" />
-            <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
+            <span className="truncate">
+              {protectionOn
+                ? locked
+                  ? "已锁定"
+                  : "已解锁"
+                : st?.mode === "not_init"
+                  ? "未初始化"
+                  : st?.mode === "master"
+                    ? "已启用 · 未设密码"
+                    : "未启用密码保护"}
+            </span>
           </div>
         )}
         {list.length > pageSize && (

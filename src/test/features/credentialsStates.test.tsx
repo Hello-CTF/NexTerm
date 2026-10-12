@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listCredentials: vi.fn(),
   assetList: vi.fn(),
   setCredential: vi.fn(),
+  unlock: vi.fn(),
   toast: vi.fn(),
 }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -23,7 +24,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       listCredentials: mocks.listCredentials,
       setCredential: mocks.setCredential,
       lock: vi.fn(),
-      unlock: vi.fn(),
+      unlock: mocks.unlock,
       revealCredential: vi.fn(),
       updateCredential: vi.fn(),
       deleteCredential: vi.fn(),
@@ -57,6 +58,7 @@ beforeEach(() => {
   mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false, mode: "off" });
   mocks.listCredentials.mockResolvedValue([]);
   mocks.assetList.mockResolvedValue([]);
+  mocks.unlock.mockResolvedValue(undefined);
   useUi.setState({
     pushToast: mocks.toast,
     sessions: [],
@@ -185,6 +187,51 @@ describe("CredentialsPanel 状态", () => {
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
     expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("凭据加载中");
+  });
+});
+
+describe("CredentialsPanel 凭据库状态徽标", () => {
+  it("未初始化显示「未初始化」而不是「未启用密码保护」", async () => {
+    mocks.vaultStatus.mockResolvedValue({
+      initialized: false,
+      mode: "not_init",
+      unlocked: false,
+      autoLockMinutes: 30,
+      passwordless: false,
+    });
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => text().includes("未初始化"));
+    expect(text()).not.toContain("未启用密码保护");
+  });
+
+  it("空密码库显示「已启用 · 未设密码」，锁定态不出现横幅并自动静默解锁", async () => {
+    mocks.vaultStatus.mockResolvedValue({
+      initialized: true,
+      mode: "master",
+      unlocked: false,
+      autoLockMinutes: 30,
+      passwordless: true,
+    });
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => text().includes("已启用 · 未设密码"));
+    expect(text()).not.toContain("凭据库已锁定");
+    expect(text()).not.toContain("未启用密码保护");
+    await flushUntil(() => mocks.unlock.mock.calls.length > 0);
+    expect(mocks.unlock).toHaveBeenCalledWith("");
+  });
+
+  it("主密码库锁定时显示「已锁定」徽标与解锁横幅，不自动解锁", async () => {
+    mocks.vaultStatus.mockResolvedValue({
+      initialized: true,
+      mode: "master",
+      unlocked: false,
+      autoLockMinutes: 30,
+      passwordless: false,
+    });
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => text().includes("凭据库已锁定"));
+    expect(text()).toContain("已锁定");
+    expect(mocks.unlock).not.toHaveBeenCalled();
   });
 });
 

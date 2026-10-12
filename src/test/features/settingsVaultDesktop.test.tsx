@@ -57,6 +57,14 @@ const MASTER_VAULT = {
   systemProtection: true,
 };
 const MASTER_VAULT_NO_SYSTEM = { ...MASTER_VAULT, systemProtection: false };
+const PASSWORDLESS_SYSTEM_VAULT = {
+  initialized: true,
+  mode: "master" as const,
+  unlocked: true,
+  autoLockMinutes: 30,
+  passwordless: true,
+  systemProtection: true,
+};
 
 let mounted: MountedView | undefined;
 
@@ -189,5 +197,81 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
     expect(text).not.toContain("不会上传");
+  });
+});
+
+describe("桌面端空密码凭据库", () => {
+  it("显示「加密已启用 · 未设密码」，主操作设置密码、次级关闭加密", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+
+    const buttons = Array.from(vaultCard()?.querySelectorAll("button") ?? []).map(
+      (b) => b.textContent,
+    );
+    expect(buttons).toContain("设置密码");
+    expect(buttons).toContain("关闭加密");
+    expect(buttons).not.toContain("修改密码");
+    expect(protectionToggle()!.checked).toBe(false);
+    expect(vaultCard()?.textContent).not.toContain("闲置自动锁定");
+  });
+
+  it("点「设置密码」不询问旧密码，直接以空旧密码设置新密码", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText).mockResolvedValue("brand-new-password");
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+
+    const setButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
+      (b) => b.textContent === "设置密码",
+    )!;
+    setButton.click();
+    await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
+
+    expect(promptText).toHaveBeenCalledTimes(1);
+    expect(mocks.unlock).toHaveBeenCalledWith("");
+    expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
+    expect(mocks.initDpapi).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护 · 凭据不受影响");
+  });
+
+  it("点「关闭加密」确认后以空密码迁移到系统级密钥保护", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
+    const { ask, promptText } = await import("../../ui/dialogs");
+    vi.mocked(ask).mockResolvedValue(true);
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+
+    const offButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
+      (b) => b.textContent === "关闭加密",
+    )!;
+    offButton.click();
+    await flushUntil(() => mocks.initDpapi.mock.calls.length > 0);
+
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("系统级密钥保护"));
+    expect(mocks.initDpapi).toHaveBeenCalledWith("");
+    expect(mocks.changePassword).not.toHaveBeenCalled();
+    expect(promptText).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭加密 · 凭据改由系统级密钥保护");
+  });
+
+  it("「关闭加密」取消确认则不调用任何接口", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
+    const { ask } = await import("../../ui/dialogs");
+    vi.mocked(ask).mockResolvedValue(false);
+    mounted = withClient(createElement(SettingsView));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+
+    const offButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
+      (b) => b.textContent === "关闭加密",
+    )!;
+    offButton.click();
+    await flushUntil(() => vi.mocked(ask).mock.calls.length > 0);
+
+    expect(mocks.initDpapi).not.toHaveBeenCalled();
+    expect(mocks.changePassword).not.toHaveBeenCalled();
   });
 });

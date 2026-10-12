@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     vaultStatus: vi.fn(),
     initMaster: vi.fn(),
     initDpapi: vi.fn(),
+    unlock: vi.fn(),
     changePassword: vi.fn(),
     toast: vi.fn(),
   };
@@ -29,6 +30,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       status: mocks.vaultStatus,
       initDpapi: mocks.initDpapi,
       initMaster: mocks.initMaster,
+      unlock: mocks.unlock,
       changePassword: mocks.changePassword,
       setAutoLock: vi.fn(),
     },
@@ -68,6 +70,7 @@ const PASSWORDLESS_VAULT = {
   unlocked: true,
   autoLockMinutes: 30,
   passwordless: true,
+  systemProtection: false,
 };
 
 let mounted: MountedView | undefined;
@@ -103,6 +106,7 @@ beforeEach(() => {
   mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
   mocks.vaultStatus.mockResolvedValue(NOT_INIT_VAULT);
   mocks.initMaster.mockResolvedValue(undefined);
+  mocks.unlock.mockResolvedValue(undefined);
   mocks.changePassword.mockResolvedValue(undefined);
 });
 
@@ -186,15 +190,77 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
   });
 
-  it("无密码凭据库显示未开启，且不展示自动锁定", async () => {
+  it("无密码凭据库显示「加密已启用 · 未设密码」与设置密码入口，且不展示自动锁定", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await waitForVaultText("未开启");
+    await waitForVaultText("加密已启用 · 未设密码");
 
     const text = vaultCard()?.textContent ?? "";
-    expect(text).toContain("未设置保护密码，凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密");
+    expect(text).toContain("凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密");
+    expect(text).not.toContain("未开启");
+    expect(text).not.toContain("尚未初始化");
     expect(text).not.toContain("闲置自动锁定");
+    expect(text).not.toContain("锁定与解锁在「凭据」页");
     expect(protectionToggle()!.checked).toBe(false);
+    const buttons = Array.from(vaultCard()!.querySelectorAll("button")).map((b) => b.textContent);
+    expect(buttons).toContain("设置密码");
+    expect(buttons).not.toContain("修改密码");
+  });
+
+  it("无密码凭据库点「设置密码」走改密码流程，旧密码自动用空", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText).mockResolvedValue("brand-new-password");
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("加密已启用 · 未设密码");
+
+    const setButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
+      (b) => b.textContent === "设置密码",
+    )!;
+    setButton.click();
+    await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
+
+    expect(promptText).toHaveBeenCalledTimes(1);
+    expect(promptText).toHaveBeenCalledWith("设置保护密码（至少 8 位）：", "", { secret: true });
+    expect(mocks.unlock).toHaveBeenCalledWith("");
+    expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
+    expect(mocks.initMaster).not.toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护 · 凭据不受影响");
+    await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
+  });
+
+  it("无密码凭据库拨动开关同样进入设置密码流程，而不是重复初始化", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText).mockResolvedValue("brand-new-password");
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("加密已启用 · 未设密码");
+
+    protectionToggle()!.click();
+    await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
+
+    expect(mocks.initMaster).not.toHaveBeenCalled();
+    expect(passwordInput()).toBeNull();
+    expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
+  });
+
+  it("设置密码时留空新密码视为取消，不调用改密码", async () => {
+    mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
+    const { promptText } = await import("../../ui/dialogs");
+    vi.mocked(promptText).mockResolvedValue("");
+    mounted = withClient(createElement(SettingsView));
+    await waitForVaultText("加密已启用 · 未设密码");
+
+    const setButton = Array.from(vaultCard()!.querySelectorAll("button")).find(
+      (b) => b.textContent === "设置密码",
+    )!;
+    setButton.click();
+    await flushUntil(() => vi.mocked(promptText).mock.calls.length > 0);
+    await flush();
+
+    expect(mocks.changePassword).not.toHaveBeenCalled();
+    expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
   it("取消勾选开关时改空密码关闭保护", async () => {

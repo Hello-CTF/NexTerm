@@ -582,6 +582,9 @@ func serveConnectorTestAgent(t *testing.T, private ed25519.PrivateKey) string {
 
 func initConnectorTestVault(t *testing.T, production *Production) {
 	t.Helper()
+	if production.Services.Vault.Status().Unlocked {
+		return
+	}
 	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "vault_init_master", `{"password":"connector-test-master"}`))
 }
 

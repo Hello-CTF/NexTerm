@@ -19,7 +19,7 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
-import { DESKTOP, WEB } from "../../ipc/env";
+import { DESKTOP } from "../../ipc/env";
 import {
   IconArchive,
   IconBot,
@@ -60,7 +60,6 @@ const SETTINGS_SECTIONS = [
   { id: "settings-shortcuts", label: "快捷键", icon: IconCommand },
   { id: "settings-update", label: "软件更新", icon: IconDownload },
 ].filter((section) => {
-  if (section.id === "settings-share") return WEB;
   if (section.id === "settings-update") return DESKTOP;
   return true;
 }) as readonly { id: string; label: string; icon: typeof IconMonitor }[];
@@ -122,6 +121,7 @@ export function SettingsView() {
     refetchOnWindowFocus: false,
   }).data ?? null;
   const vaultPasswordProtected = vault?.mode === "master" && !vault.passwordless;
+  const vaultPasswordless = vault?.mode === "master" && !!vault?.passwordless;
   const systemProtection = DESKTOP && !!vault?.systemProtection;
   const refreshVault = () => void qc.invalidateQueries({ queryKey: ["vault-status"] });
   useEffect(() => {
@@ -182,6 +182,63 @@ export function SettingsView() {
         void qc.invalidateQueries({ queryKey: ["vault-status"] });
       })
       .catch((e) => pushToast("error", describeError(e)));
+  };
+
+  const changeVaultPassword = async () => {
+    const old = vaultPasswordless
+      ? ""
+      : await promptText("输入当前保护密码：", "", { secret: true });
+    if (old === null) return;
+    try {
+      await vaultApi.unlock(old);
+    } catch (e) {
+      pushToast("error", describeError(e));
+      return;
+    }
+    const next = await promptText(
+      vaultPasswordless
+        ? "设置保护密码（至少 8 位）："
+        : "输入新密码（至少 8 位，留空则关闭密码保护）：",
+      "",
+      { secret: true },
+    );
+    if (next === null) return;
+    if (vaultPasswordless && next === "") return;
+    if (next.length > 0 && next.length < 8) {
+      pushToast("error", "新密码至少 8 位");
+      return;
+    }
+    try {
+      if (next === "" && systemProtection) {
+        await vaultApi.initDpapi(old);
+        pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
+      } else {
+        await vaultApi.changePassword(old, next);
+        pushToast(
+          "success",
+          next === ""
+            ? "已关闭密码保护 · 凭据不受影响"
+            : vaultPasswordless
+              ? "已开启密码保护 · 凭据不受影响"
+              : "密码已修改 · 凭据不受影响",
+        );
+      }
+      refreshVault();
+    } catch (e) {
+      pushToast("error", describeError(e));
+    }
+  };
+
+  const disableVaultEncryption = async () => {
+    const ok = await ask("关闭加密？\n关闭后凭据改由系统级密钥保护，无需密码即可使用。");
+    if (!ok) return;
+    try {
+      await vaultApi.initDpapi("");
+      pushToast("success", "已关闭加密 · 凭据改由系统级密钥保护");
+      refreshVault();
+    } catch (e) {
+      pushToast("error", describeError(e));
+    }
   };
 
   const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
@@ -602,6 +659,8 @@ export function SettingsView() {
                 <span className="nx-badge nx-badge-green">已开启</span>
               ) : vault.mode === "not_init" ? (
                 <span className="nx-badge nx-badge-amber">未初始化</span>
+              ) : vaultPasswordless ? (
+                <span className="nx-badge nx-badge-amber">加密已启用 · 未设密码</span>
               ) : (
                 <span className="nx-badge">未开启</span>
               ))}
@@ -615,8 +674,8 @@ export function SettingsView() {
                   ? "开启：每次启动需输入密码后方可使用凭据。"
                   : vault?.mode === "not_init"
                     ? "尚未初始化：启用保护后才能保存密码或私钥。"
-                    : vault?.mode === "master"
-                      ? "关闭：未设置保护密码，凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密。"
+                    : vaultPasswordless
+                      ? "已启用：凭据加密保存、无需密码即可使用，但任何拿到数据目录的人都能解密；设置密码后，每次启动需输入密码。"
                       : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
               </p>
             </div>
@@ -640,6 +699,8 @@ export function SettingsView() {
                       })
                       .catch((e) => pushToast("error", describeError(e)));
                   });
+                } else if (vaultPasswordless) {
+                  void changeVaultPassword();
                 } else {
                   setProtPwd("");
                   setPendingEnable(true);
@@ -687,47 +748,22 @@ export function SettingsView() {
           )}
 
           {vault?.mode === "master" && (
-            <div className="mt-3 flex items-center gap-2">
-              <span className="nx-hint">锁定与解锁在「凭据」页</span>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {!vaultPasswordless && <span className="nx-hint">锁定与解锁在「凭据」页</span>}
               <button
-                className="nx-btn nx-btn-outline nx-btn-sm"
-                onClick={() =>
-                  void (async () => {
-                    const old = vault?.passwordless
-                      ? ""
-                      : await promptText("输入当前保护密码：", "", { secret: true });
-                    if (old === null) return;
-                    try {
-                      await vaultApi.unlock(old);
-                    } catch (e) {
-                      pushToast("error", describeError(e));
-                      return;
-                    }
-                    const next = await promptText("输入新密码（至少 8 位，留空则关闭密码保护）：", "", { secret: true });
-                    if (next === null) return;
-                    if (next.length > 0 && next.length < 8) {
-                      pushToast("error", "新密码至少 8 位");
-                      return;
-                    }
-                    try {
-                      if (next === "" && systemProtection) {
-                        await vaultApi.initDpapi(old);
-                        pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
-                      } else {
-                        await vaultApi.changePassword(old, next);
-                        pushToast(
-                          "success",
-                          next === "" ? "已关闭密码保护 · 凭据不受影响" : "密码已修改 · 凭据不受影响",
-                        );
-                      }
-                    } catch (e) {
-                      pushToast("error", describeError(e));
-                    }
-                  })()
-                }
+                className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
+                onClick={() => void changeVaultPassword()}
               >
-                修改密码
+                {vaultPasswordless ? "设置密码" : "修改密码"}
               </button>
+              {vaultPasswordless && systemProtection && (
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-sm"
+                  onClick={() => void disableVaultEncryption()}
+                >
+                  关闭加密
+                </button>
+              )}
             </div>
           )}
 
@@ -768,11 +804,9 @@ export function SettingsView() {
           <SyncBundleCard />
         </div>
 
-        {WEB && (
-          <div id="settings-share" className="scroll-mt-12">
-            <ShareCard />
-          </div>
-        )}
+        <div id="settings-share" className="scroll-mt-12">
+          <ShareCard />
+        </div>
 
         <div id="settings-shortcuts" className="scroll-mt-12">
           <ShortcutsCard />

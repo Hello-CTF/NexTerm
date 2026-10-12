@@ -319,8 +319,20 @@ func TestServerProcessLoopbackUninitializedLoginFree(t *testing.T) {
 
 func TestServerProcessRequireVault(t *testing.T) {
 	binary := buildServerBinary(t)
-	dataDir := t.TempDir()
 
+	// 未配置 key 时 --require-vault 复用数据目录自动生成的主密钥, 不再拒绝启动。
+	generatedDir := t.TempDir()
+	process, address := startServerProcess(t, binary, generatedDir, false, "--require-vault", "--auth=loopback")
+	status := vaultStatusFromHealth(t, waitForHealth(t, process, address))
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("require-vault without explicit key = %+v, want generated key bootstrap", status)
+	}
+	if _, err := os.Stat(filepath.Join(generatedDir, "master.key")); err != nil {
+		t.Fatalf("require-vault did not generate master.key: %v", err)
+	}
+	process.stop(t)
+
+	dataDir := t.TempDir()
 	exitCode := func(args ...string) (int, string) {
 		t.Helper()
 		cmd := exec.Command(binary, args...)
@@ -336,28 +348,12 @@ func TestServerProcessRequireVault(t *testing.T) {
 		return exitErr.ExitCode(), string(output)
 	}
 
-	code, output := exitCode("--listen", "127.0.0.1:0", "--data-dir", dataDir, "--require-vault")
-	if code != 1 || !strings.Contains(output, "vault") {
-		t.Fatalf("require-vault without key = code %d, output %q", code, output)
-	}
-
 	keyFile := filepath.Join(t.TempDir(), "master.key")
 	if err := os.WriteFile(keyFile, []byte("first-master-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	process, address := startServerProcess(t, binary, dataDir, false, "--require-vault", "--master-key-file", keyFile)
-	health := waitForHealth(t, process, address)
-	encoded, err := json.Marshal(health.Vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var status struct {
-		Initialized bool `json:"initialized"`
-		Unlocked    bool `json:"unlocked"`
-	}
-	if err := json.Unmarshal(encoded, &status); err != nil {
-		t.Fatal(err)
-	}
+	process, address = startServerProcess(t, binary, dataDir, false, "--require-vault", "--master-key-file", keyFile)
+	status = vaultStatusFromHealth(t, waitForHealth(t, process, address))
 	if !status.Initialized || !status.Unlocked {
 		t.Fatalf("vault status = %+v", status)
 	}
@@ -366,24 +362,97 @@ func TestServerProcessRequireVault(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("second-master-key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	code, output = exitCode("--listen", "127.0.0.1:0", "--data-dir", dataDir, "--require-vault", "--master-key-file", keyFile)
+	code, output := exitCode("--listen", "127.0.0.1:0", "--data-dir", dataDir, "--require-vault", "--master-key-file", keyFile)
 	if code != 1 || !strings.Contains(output, "vault") {
 		t.Fatalf("require-vault with wrong key = code %d, output %q", code, output)
 	}
 
 	process, address = startServerProcess(t, binary, dataDir, false, "--master-key-file", keyFile)
 	defer process.stop(t)
-	health = waitForHealth(t, process, address)
-	encoded, err = json.Marshal(health.Vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(encoded, &status); err != nil {
-		t.Fatal(err)
-	}
+	status = vaultStatusFromHealth(t, waitForHealth(t, process, address))
 	if !status.Initialized || status.Unlocked {
 		t.Fatalf("wrong key without require-vault = %+v, want locked vault still serving", status)
 	}
+}
+
+// TestServerProcessAutoGeneratesMasterKey 守住无显式 key 时的开箱即用合同:
+// 首次启动在数据目录生成 0600 的 64 字符 hex master.key 并把凭据库初始化解锁;
+// 重启复用同一把 key(不重新生成), 旧密文仍可解密。
+func TestServerProcessAutoGeneratesMasterKey(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	keyPath := filepath.Join(dataDir, "master.key")
+	readKey := func() string {
+		t.Helper()
+		data, err := os.ReadFile(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := strings.TrimSpace(string(data))
+		if len(key) != 64 {
+			t.Fatalf("generated master key length = %d, want 64 hex chars", len(key))
+		}
+		if _, err := hex.DecodeString(key); err != nil {
+			t.Fatalf("generated master key is not hex: %v", err)
+		}
+		return key
+	}
+
+	process, address := startServerProcess(t, binary, dataDir, false, "--auth=loopback")
+	status := vaultStatusFromHealth(t, waitForHealth(t, process, address))
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("vault status with generated key = %+v", status)
+	}
+	firstKey := readKey()
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("master.key mode = %04o, want 0600", info.Mode().Perm())
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	created := requestFullRPC(t, client, address, "vault_set_credential", map[string]any{"args": map[string]any{"name": "generated", "kind": "password", "secret": "s3cret"}})
+	var createdData map[string]string
+	decodeRPCData(t, created, &createdData)
+	if createdData["id"] == "" {
+		t.Fatalf("vault_set_credential data = %+v", createdData)
+	}
+	process.stop(t)
+
+	process, address = startServerProcess(t, binary, dataDir, false, "--auth=loopback")
+	defer process.stop(t)
+	status = vaultStatusFromHealth(t, waitForHealth(t, process, address))
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("vault status after restart = %+v, want reused key unlock", status)
+	}
+	if key := readKey(); key != firstKey {
+		t.Fatal("master.key was regenerated on restart")
+	}
+	revealed := requestFullRPC(t, client, address, "vault_reveal_credential", map[string]any{"id": createdData["id"]})
+	var revealedData struct {
+		Value string `json:"value"`
+	}
+	decodeRPCData(t, revealed, &revealedData)
+	if revealedData.Value != "s3cret" {
+		t.Fatalf("credential after restart = %q", revealedData.Value)
+	}
+}
+
+func vaultStatusFromHealth(t *testing.T, health core.Health) vault.Status {
+	t.Helper()
+	if health.Vault == nil {
+		t.Fatal("health has no vault status")
+	}
+	encoded, err := json.Marshal(health.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status vault.Status
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		t.Fatal(err)
+	}
+	return status
 }
 
 func TestSystemdUnitsEnforceAuthOn(t *testing.T) {
