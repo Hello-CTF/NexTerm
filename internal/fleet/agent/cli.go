@@ -22,11 +22,14 @@ const cliTimeout = 30 * time.Second
 
 var (
 	cliNewManager = func(getenv func(string) string) ServiceManager {
-		return NewServiceManager(runtime.GOOS, nil, getenv, mustHomeDir())
+		return NewServiceManagerWithPrefix(runtime.GOOS, nil, getenv, mustHomeDir(), cliServicePrefix)
 	}
 	cliRuntimeFactory = func(store *Store, dataDir string, prober *Prober, manager ServiceManager) (*Runtime, error) {
 		return New(Options{Store: store, DataDir: dataDir, Prober: prober, Manager: manager})
 	}
+	// cliServicePrefix 由 RunCLIWithServicePrefix 设置: 内嵌分发 (如 nexterm-server
+	// 的 agent 子命令) 生成的服务命令需带子命令前缀; 独立 nexterm-agent 恒为空。
+	cliServicePrefix []string
 )
 
 // RunCLI executes the device agent subcommands (enroll, run, install,
@@ -60,6 +63,17 @@ func RunCLI(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		printCLIUsage(stderr)
 		return ExitUsage
 	}
+}
+
+// RunCLIWithServicePrefix 与 RunCLI 相同, 但 install 与运行期自启修复生成的服务
+// 命令在可执行文件与 run 之间插入 servicePrefix: nexterm-server 内嵌分发传
+// ["agent"], 服务执行 `<server> agent run --data-dir ...`; 独立 nexterm-agent
+// 走 RunCLI, 服务执行 `<agent> run --data-dir ...`。
+func RunCLIWithServicePrefix(args []string, servicePrefix []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	previous := cliServicePrefix
+	cliServicePrefix = servicePrefix
+	defer func() { cliServicePrefix = previous }()
+	return RunCLI(args, getenv, stdout, stderr)
 }
 
 func printCLIUsage(stderr io.Writer) {

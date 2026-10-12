@@ -11,17 +11,22 @@ import (
 const windowsServiceName = "NexTermAgent"
 
 type windowsManager struct {
-	runner CommandRunner
+	runner        CommandRunner
+	commandPrefix []string
 }
 
-func newWindowsManager(runner CommandRunner) ServiceManager {
-	return &windowsManager{runner: runner}
+func newWindowsManager(runner CommandRunner, commandPrefix ...string) ServiceManager {
+	return &windowsManager{runner: runner, commandPrefix: commandPrefix}
 }
 
 func (m *windowsManager) Install(ctx context.Context, executable, dataDir string) error {
 	_, _ = m.runner.Run(ctx, "sc.exe", "stop", windowsServiceName)
 	_, _ = m.runner.Run(ctx, "sc.exe", "delete", windowsServiceName)
-	binPath := "\"" + executable + "\" run --data-dir \"" + dataDir + "\""
+	binPath := "\"" + executable + "\""
+	if len(m.commandPrefix) > 0 {
+		binPath += " " + strings.Join(m.commandPrefix, " ")
+	}
+	binPath += " run --data-dir \"" + dataDir + "\""
 	output, err := m.runner.Run(ctx, "sc.exe", "create", windowsServiceName, "binPath=", binPath, "start=", "auto")
 	if err != nil {
 		return fmt.Errorf("sc create: %w", scHint(output, err))

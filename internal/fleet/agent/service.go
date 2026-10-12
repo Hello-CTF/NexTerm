@@ -39,6 +39,13 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) (string,
 }
 
 func NewServiceManager(goos string, runner CommandRunner, getenv func(string) string, homeDir string) ServiceManager {
+	return NewServiceManagerWithPrefix(goos, runner, getenv, homeDir, nil)
+}
+
+// NewServiceManagerWithPrefix 与 NewServiceManager 相同, 但 install 生成的服务
+// 命令在可执行文件与 run 之间插入 commandPrefix (如 nexterm-server 内嵌分发传
+// ["agent"], 服务执行 `<server> agent run --data-dir ...`)。
+func NewServiceManagerWithPrefix(goos string, runner CommandRunner, getenv func(string) string, homeDir string, commandPrefix []string) ServiceManager {
 	if runner == nil {
 		runner = execRunner{}
 	}
@@ -47,11 +54,11 @@ func NewServiceManager(goos string, runner CommandRunner, getenv func(string) st
 	}
 	switch goos {
 	case "linux":
-		return newSystemdManager(runner, getenv, homeDir)
+		return newSystemdManager(runner, getenv, homeDir, commandPrefix...)
 	case "darwin":
-		return newLaunchdManager(runner, homeDir, launchdUID())
+		return newLaunchdManager(runner, homeDir, launchdUID(), commandPrefix...)
 	case "windows":
-		return newWindowsManager(runner)
+		return newWindowsManager(runner, commandPrefix...)
 	default:
 		return unsupportedManager{}
 	}

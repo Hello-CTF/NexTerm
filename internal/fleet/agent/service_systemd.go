@@ -13,20 +13,25 @@ import (
 const systemdUnitName = "nexterm-agent.service"
 
 type systemdManager struct {
-	runner   CommandRunner
-	unitPath string
+	runner        CommandRunner
+	unitPath      string
+	commandPrefix []string
 }
 
-func newSystemdManager(runner CommandRunner, getenv func(string) string, homeDir string) ServiceManager {
+func newSystemdManager(runner CommandRunner, getenv func(string) string, homeDir string, commandPrefix ...string) ServiceManager {
 	configHome := getenv("XDG_CONFIG_HOME")
 	if configHome == "" && homeDir != "" {
 		configHome = filepath.Join(homeDir, ".config")
 	}
-	return &systemdManager{runner: runner, unitPath: filepath.Join(configHome, "systemd", "user", systemdUnitName)}
+	return &systemdManager{
+		runner:        runner,
+		unitPath:      filepath.Join(configHome, "systemd", "user", systemdUnitName),
+		commandPrefix: commandPrefix,
+	}
 }
 
 func (m *systemdManager) Install(ctx context.Context, executable, dataDir string) error {
-	unit := renderSystemdUnit(executable, dataDir)
+	unit := renderSystemdUnit(executable, dataDir, m.commandPrefix...)
 	if err := os.MkdirAll(filepath.Dir(m.unitPath), 0o755); err != nil {
 		return fmt.Errorf("create systemd user directory: %w", err)
 	}
@@ -108,13 +113,18 @@ func systemdQuery(output string, err error) (string, string) {
 	return "", state
 }
 
-func renderSystemdUnit(executable, dataDir string) string {
+func renderSystemdUnit(executable, dataDir string, commandPrefix ...string) string {
+	command := systemdEscape(executable)
+	if len(commandPrefix) > 0 {
+		command += " " + strings.Join(commandPrefix, " ")
+	}
+	command += " run --data-dir " + systemdEscape(dataDir)
 	return "[Unit]\n" +
 		"Description=NexTerm Device Agent\n" +
 		"After=network-online.target\n" +
 		"\n" +
 		"[Service]\n" +
-		"ExecStart=" + systemdEscape(executable) + " agent run --data-dir " + systemdEscape(dataDir) + "\n" +
+		"ExecStart=" + command + "\n" +
 		"Restart=on-failure\n" +
 		"RestartSec=5\n" +
 		"RestartPreventExitStatus=" + fmt.Sprintf("%d %d", ExitRevoked, ExitProtocol) + "\n" +
