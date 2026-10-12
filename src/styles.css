@@ -2465,6 +2465,21 @@
   .xterm {
     -webkit-touch-callout: default;
   }
+
+  .nx-ai-composer-actions .nx-icon-btn-sm,
+  .nx-ai-composer-actions .nx-send-btn {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+
+  .nx-ai-composer-actions .nx-icon-btn-sm::after,
+  .nx-ai-composer-actions .nx-send-btn::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
