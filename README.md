@@ -69,17 +69,8 @@ go build ./...   # 编译全部 Go 包
 常规本地质量门禁，装好 task 后一次跑完：
 
 ```bash
-task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint + pnpm test + bindings 校验 + 前端产物可复现校验 + LazyCat manifest injects 校验
+task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint
 ```
-
-workflow 复用接线检查与 PostgreSQL 真实测试使用单独入口：
-
-```bash
-task verify:wiring
-NEXTERM_TEST_PG_DSN='<dsn>' task test:pg
-```
-
-PostgreSQL 门控测试直接经 Go 运行时，未设置 `NEXTERM_TEST_PG_DSN` 会跳过；`task test:pg` 在 DSN 缺失时直接失败，不把 SKIP 当作通过。桌面端与服务端安装包的完整打包见 `node scripts/build.mjs --help`。
 
 ## License
 
