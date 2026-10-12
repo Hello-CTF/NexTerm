@@ -52,6 +52,9 @@ func RunCLI(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return cliUninstall(rest, getenv, stdout, stderr)
 	case "status":
 		return cliStatus(rest, getenv, stdout, stderr)
+	case "version":
+		fmt.Fprintln(stdout, version.Version)
+		return 0
 	default:
 		fmt.Fprintf(stderr, "agent: 未知子命令 %q\n", command)
 		printCLIUsage(stderr)
@@ -60,7 +63,7 @@ func RunCLI(args []string, getenv func(string) string, stdout, stderr io.Writer)
 }
 
 func printCLIUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "用法: agent <enroll|run|install|uninstall|status> [选项]")
+	fmt.Fprintln(stderr, "用法: agent <enroll|run|install|uninstall|status|version> [选项]")
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {

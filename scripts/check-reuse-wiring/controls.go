@@ -93,7 +93,7 @@ var negativeControls = []negativeControl{
 	{"packaging gate if removal is caught",
 		"job graph: reuse: successful ci-source",
 		func(ci, release map[string]interface{}, packText string) string {
-			popJobIf(release, "desktop", "server", "publish")
+			popJobIf(release, "desktop", "server", "agent", "publish")
 			return packText
 		}},
 	{"publish gate if removal is caught",

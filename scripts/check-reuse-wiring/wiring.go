@@ -79,27 +79,30 @@ func runWiringChecks(in inputs) []checkResult {
 	}{
 		{"reuse: successful ci-source + skipped ci proceeds to packaging and publish",
 			map[string]string{"ci-source": "success", "reused": "true", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "success", "publish": "success"}},
 		{"fallback: full CI success and release proceeds",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "success", "desktop": "success", "server": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "success", "desktop": "success", "server": "success", "agent": "success", "publish": "success"}},
 		{"fallback: CI failure gates the release",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "failure"},
-			map[string]string{"ci-source": "success", "ci": "failure", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "failure", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
 		{"reuse: desktop packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "desktop": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "failure", "server": "success", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "failure", "server": "success", "agent": "success", "publish": "skipped"}},
 		{"reuse: server packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "server": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "failure", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "failure", "agent": "success", "publish": "skipped"}},
+		{"reuse: agent packaging failure still gates publish",
+			map[string]string{"ci-source": "success", "reused": "true", "agent": "failure"},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "failure", "publish": "skipped"}},
 		{"ci-source failure gates the release",
 			map[string]string{"ci-source": "failure", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "failure", "ci": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "failure", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
 		{"ci-source cancellation gates the release",
 			map[string]string{"ci-source": "cancelled", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "cancelled", "ci": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "cancelled", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
 	}
-	jobOrder := []string{"ci-source", "ci", "desktop", "server", "publish"}
+	jobOrder := []string{"ci-source", "ci", "desktop", "server", "agent", "publish"}
 	for _, s := range scenarios {
 		actual := evaluateRelease(release, s.scenario)
 		equal := len(actual) == len(s.expected)
@@ -114,7 +117,7 @@ func runWiringChecks(in inputs) []checkResult {
 		check(fmt.Sprintf("job graph: %s", s.name), equal, fmt.Sprintf("actual=%s", pyMap(actual, jobOrder)))
 	}
 
-	for _, jobKey := range []string{"desktop", "server", "publish"} {
+	for _, jobKey := range []string{"desktop", "server", "agent", "publish"} {
 		jobIf := strings.ReplaceAll(str(asMap(jobsOf(release)[jobKey])["if"]), " ", "")
 		check(fmt.Sprintf("%s continues past a skipped reused CI without hiding failures", jobKey),
 			jobIf == "${{!failure()&&!cancelled()}}",
@@ -192,6 +195,31 @@ func runWiringChecks(in inputs) []checkResult {
 		normalizedStepIf(e2eExerciseStep) == "needs.ci-source.outputs.reused!='true'",
 		fmt.Sprintf("if=%q", str(e2eExerciseStep["if"])))
 
+	agentJob := asMap(jobsOf(release)["agent"])
+	agentDownloadWith := map[string]interface{}{}
+	agentDownloadFound := false
+	for _, rawStep := range asList(agentJob["steps"]) {
+		step := asMap(rawStep)
+		with := asMap(step["with"])
+		if with != nil && strings.HasPrefix(str(step["uses"]), "actions/download-artifact") && str(with["pattern"]) == "native-*-agent" {
+			agentDownloadFound = true
+			agentDownloadWith = with
+		}
+	}
+	check("release agent job downloads the reused CI run agent artifacts",
+		agentDownloadFound &&
+			str(agentDownloadWith["run-id"]) == "${{ needs.ci-source.outputs.artifact-run-id }}" &&
+			str(agentDownloadWith["merge-multiple"]) == "true",
+		fmt.Sprintf("with=%v", sortedKeys(agentDownloadWith)))
+	publishNeeds := jobNeeds(asMap(jobsOf(release)["publish"]))
+	publishNeedsAgent := false
+	for _, need := range publishNeeds {
+		if need == "agent" {
+			publishNeedsAgent = true
+		}
+	}
+	check("publish collects the agent packaging job", publishNeedsAgent, fmt.Sprintf("needs=%v", publishNeeds))
+
 	publishStep := findStep(asMap(jobsOf(release)["publish"]), "Create or update the draft release")
 	publishRun := stepRun(publishStep)
 	check("release publish uploads through release-upload.mjs",
@@ -210,6 +238,9 @@ func runWiringChecks(in inputs) []checkResult {
 		"NexTerm_${version}_x86_64.dmg",
 		"NexTerm-desktop_${version}_linux_${arch}.deb",
 		"NexTerm-server_${version}_linux_${arch}.tar.gz",
+		"NexTerm-agent_${version}_linux_${arch}.tar.gz",
+		"NexTerm-agent_${version}_darwin_${arch}.tar.gz",
+		"NexTerm-agent_${version}_windows_amd64.zip",
 	}
 	var drifted []string
 	for _, template := range assetTemplates {
@@ -217,7 +248,7 @@ func runWiringChecks(in inputs) []checkResult {
 			drifted = append(drifted, template)
 		}
 	}
-	check("release-upload expects the same 8 packages as the evidence gate", len(drifted) == 0,
+	check("release-upload expects the same 13 packages as the evidence gate", len(drifted) == 0,
 		fmt.Sprintf("drifted=%v", drifted))
 	check("release-upload expects SHA256SUMS", strings.Contains(in.uploadText, "SHA256SUMS"), "")
 	for _, envName := range []string{"GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"} {

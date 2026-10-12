@@ -204,6 +204,26 @@ jobs:
             os: linux
             arch: arm64
             kind: server
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+            kind: agent
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            kind: agent
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            kind: agent
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            kind: agent
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+            kind: agent
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7

@@ -274,6 +274,52 @@ jobs:
           path: target/e2e-sync/
           if-no-files-found: error
 
+  agent:
+    name: Device agent archives (linux/darwin tar.gz, windows zip)
+    needs: [ci-source, ci]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve the release version from the tag
+        shell: bash
+        run: echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Download the CI production agent binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-*-agent
+          path: agent-native
+          merge-multiple: true
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage and verify the reused production agent binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/go-build
+          for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+            os="${spec%-*}"
+            arch="${spec#*-}"
+            suffix=""
+            if [ "$os" = "windows" ]; then suffix=".exe"; fi
+            binary="nexterm-agent-${os}-${arch}${suffix}"
+            cp "agent-native/go-build/${binary}" "agent-native/go-build/${binary}.manifest.json" target/go-build/
+            if [ "$os" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
+            node .github/scripts/verify-reused-binary.mjs "target/go-build/${binary}" "agent-${os}-${arch}" "$os" "$arch" 0
+          done
+      - name: Produce and validate the agent archives with final evidence gates
+        run: bash scripts/pack-agent.sh --require-evidence
+      - name: Upload candidates and raw/final reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-agent
+          path: target/release-assets/
+          if-no-files-found: error
+
   mobile:
     name: ${{ matrix.platform }} mobile package
     needs: [ci-source, ci]
@@ -336,7 +382,7 @@ jobs:
 
   publish:
     name: Verify complete release evidence and upload a draft
-    needs: [desktop, server, mobile]
+    needs: [desktop, server, mobile, agent]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:

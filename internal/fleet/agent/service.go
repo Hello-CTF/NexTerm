@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// ServiceManager installs and inspects the per-user autostart unit for the
-// agent. Implementations must report honestly when the service manager is
+// ServiceManager installs and inspects the autostart service for the agent:
+// a per-user systemd unit, a launchd agent, or a Windows system service.
+// Implementations must report honestly when the service manager is
 // unavailable (for example no user systemd bus): Installed reflects the unit
 // file on disk while Enabled/Active stay false and LastError explains why.
 type ServiceManager interface {
@@ -49,6 +50,8 @@ func NewServiceManager(goos string, runner CommandRunner, getenv func(string) st
 		return newSystemdManager(runner, getenv, homeDir)
 	case "darwin":
 		return newLaunchdManager(runner, homeDir, launchdUID())
+	case "windows":
+		return newWindowsManager(runner)
 	default:
 		return unsupportedManager{}
 	}

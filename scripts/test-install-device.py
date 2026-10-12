@@ -3,14 +3,16 @@
 
 被测脚本的全部外部效应都经过 PATH 里的 stub: fake curl/wget 只从本地
 fixture 目录取文件并记录 URL, fake id/uname 由环境变量控制, 下载包内的
-nexterm-server 是记录 argv 的假二进制 (enroll/install 不触网、不调
-systemctl), 接入码是哑字符串且断言不出现在脚本输出里。覆盖:
+nexterm-agent 是记录 argv 的假二进制 (enroll/install 不触网、不调
+systemctl/launchctl), 接入码是哑字符串且断言不出现在脚本输出里。覆盖:
 
-  1. URL/版本/架构选择 (amd64/arm64 资产名与 release 基址)
-  2. SHA256SUMS 校验成功/失败/缺条目/非 hex (失败时不得安装或 enroll)
-  3. 命令顺序: 下载 -> 校验 -> 装二进制 -> --version -> enroll -> install
+  1. 平台/架构选择 (linux/darwin x amd64/arm64 资产名与 release 基址)
+  2. SHA256SUMS 校验成功/失败/缺条目/非 hex (失败时不得安装或 enroll),
+     sha256sum 缺失时回退 shasum -a 256
+  3. 命令顺序: 下载 -> 校验 -> 装二进制 -> enroll -> install; tar 根必须
+     直接含 nexterm-agent, 套目录的旧布局明确报错
   4. 数据目录 NEXTERM_DATA_DIR > XDG_DATA_HOME > HOME 展开与带空格值的单 argv 引用
-  5. 拒绝 root / 非 Linux / 不支持架构 / 缺 curl 与 wget 的明确报错
+  5. 拒绝 root / 非 Linux/macOS / 不支持架构 / 缺 curl 与 wget 的明确报错
   6. enroll 失败不得继续 install; 接入码与 device secret 不回显
 
     python3 scripts/test-install-device.py
@@ -43,11 +45,7 @@ AGENT_BINARY = """#!/bin/sh
   printf '==\\n'
   for arg in "$@"; do printf '%s\\n' "$arg"; done
 } >> "$FAKE_AGENT_LOG"
-if [ "${1:-}" = "--version" ]; then
-  printf '%s\\n' "${FAKE_AGENT_VERSION:-}"
-  exit 0
-fi
-if [ "${1:-}" = "agent" ] && [ "${2:-}" = "enroll" ]; then
+if [ "${1:-}" = "enroll" ]; then
   if [ "${FAKE_ENROLL_FAIL:-}" = "1" ]; then
     printf 'agent enroll: stub 注册失败\\n' >&2
     exit 1
@@ -55,7 +53,7 @@ if [ "${1:-}" = "agent" ] && [ "${2:-}" = "enroll" ]; then
   printf '注册成功: device_id=dev-stub name=stub base_urls=1 metrics_interval=30s desired_autostart=true terminal=开启\\n'
   exit 0
 fi
-if [ "${1:-}" = "agent" ] && [ "${2:-}" = "install" ]; then
+if [ "${1:-}" = "install" ]; then
   if [ "${FAKE_INSTALL_FAIL:-}" = "1" ]; then
     printf 'agent install: stub 安装失败\\n' >&2
     exit 1
@@ -131,14 +129,17 @@ def check(name: str, ok: bool, detail: object = "") -> None:
         print(f"  FAIL {name}: {detail}", flush=True)
 
 
-def asset_name(version: str, arch: str) -> str:
-    return f"NexTerm-server_{version}_linux_{arch}.tar.gz"
+def asset_name(version: str, os_name: str, arch: str) -> str:
+    return f"NexTerm-agent_{version}_{os_name}_{arch}.tar.gz"
+
+
+ALL_ASSETS = [(os_name, arch) for os_name in ("linux", "darwin") for arch in ("amd64", "arm64")]
 
 
 class Harness:
     """一个 hermetic 沙箱: stub PATH + 假 HOME + 本地 fixture release。"""
 
-    def __init__(self, with_curl: bool = True, with_wget: bool = False, sums_builder=None):
+    def __init__(self, with_curl: bool = True, with_wget: bool = False, sums_builder=None, with_sha256sum: bool = True, bad_layout: bool = False):
         # 沙箱放 /var/tmp (磁盘): /tmp 常是容量受限的 tmpfs, 装不下下载演练。
         self._tmp = tempfile.TemporaryDirectory(prefix="install-device-test-", dir=os.environ.get("TMPDIR") or "/var/tmp")
         base = pathlib.Path(self._tmp.name)
@@ -151,8 +152,8 @@ class Harness:
             directory.mkdir()
         self.curl_log = base / "curl.log"
         self.agent_log = base / "agent.log"
-        self._write_stubs(with_curl, with_wget)
-        self._write_fixtures(sums_builder)
+        self._write_stubs(with_curl, with_wget, with_sha256sum)
+        self._write_fixtures(sums_builder, bad_layout)
 
     def cleanup(self) -> None:
         self._tmp.cleanup()
@@ -162,12 +163,20 @@ class Harness:
         path.write_text(content)
         path.chmod(0o755)
 
-    def _write_stubs(self, with_curl: bool, with_wget: bool) -> None:
-        for name in ("mktemp", "awk", "sha256sum", "tar", "gzip", "install", "mkdir", "rm", "cp"):
+    def _write_stubs(self, with_curl: bool, with_wget: bool, with_sha256sum: bool) -> None:
+        tools = ["mktemp", "awk", "tar", "gzip", "install", "mkdir", "rm", "cp"]
+        if with_sha256sum:
+            tools.append("sha256sum")
+        for name in tools:
             real = shutil.which(name)
             if real is None:
                 raise RuntimeError(f"验收需要系统工具: {name}")
             self._stub(name, f'#!/bin/sh\nexec {real} "$@"\n')
+        if not with_sha256sum:
+            real_sha256sum = shutil.which("sha256sum")
+            if real_sha256sum is None:
+                raise RuntimeError("验收需要系统工具: sha256sum (用于模拟 shasum)")
+            self._stub("shasum", f'#!/bin/sh\n[ "${{1:-}}" = "-a" ] && shift 2\nexec {real_sha256sum} "$@"\n')
         self._stub("id", FAKE_ID.replace("@REAL@", shutil.which("id")))
         self._stub("uname", FAKE_UNAME.replace("@REAL@", shutil.which("uname")))
         if with_curl:
@@ -175,12 +184,14 @@ class Harness:
         if with_wget:
             self._stub("wget", FAKE_WGET)
 
-    def _write_fixtures(self, sums_builder) -> None:
+    def _write_fixtures(self, sums_builder, bad_layout: bool) -> None:
         binary = AGENT_BINARY.encode()
         hashes = {}
-        for arch in ("amd64", "arm64"):
-            name = asset_name(VERSION, arch)
-            info = tarfile.TarInfo(f"NexTerm-server_{VERSION}_linux_{arch}/nexterm-server")
+        for os_name, arch in ALL_ASSETS:
+            name = asset_name(VERSION, os_name, arch)
+            # 契约: tar 根仅含 nexterm-agent; bad_layout 模拟套目录的旧布局, 必须被拒。
+            member = f"NexTerm-agent_{VERSION}_{os_name}_{arch}/nexterm-agent" if bad_layout and (os_name, arch) == ("linux", "amd64") else "nexterm-agent"
+            info = tarfile.TarInfo(member)
             info.size = len(binary)
             info.mode = 0o755
             info.mtime = 0
@@ -188,7 +199,7 @@ class Harness:
                 tar.addfile(info, io.BytesIO(binary))
             hashes[name] = hashlib.sha256((self.release / name).read_bytes()).hexdigest()
         if sums_builder is None:
-            lines = [f"{hashes[asset_name(VERSION, arch)]}  {asset_name(VERSION, arch)}" for arch in ("amd64", "arm64")]
+            lines = [f"{hashes[asset_name(VERSION, os_name, arch)]}  {asset_name(VERSION, os_name, arch)}" for os_name, arch in ALL_ASSETS]
             lines.append(f"{'0' * 64}  NexTerm-desktop_{VERSION}_linux_amd64.deb")
             sums_text = "\n".join(lines) + "\n"
         else:
@@ -204,7 +215,6 @@ class Harness:
             "FAKE_RELEASE_DIR": str(self.release),
             "FAKE_CURL_LOG": str(self.curl_log),
             "FAKE_AGENT_LOG": str(self.agent_log),
-            "FAKE_AGENT_VERSION": VERSION,
         }
         if env_extra:
             env.update(env_extra)
@@ -241,15 +251,15 @@ class Harness:
         return records
 
     def installed_binary(self) -> pathlib.Path:
-        return self.home / ".local" / "bin" / "nexterm-server"
+        return self.home / ".local" / "bin" / "nexterm-agent"
 
 
-def enroll_call(data_dir: str, insecure: bool = False) -> list[str]:
-    call = ["agent", "enroll", "--server", SERVER_URL, "--code", ENROLL_CODE]
+def expected_calls(data_dir: str, insecure: bool = False) -> list[list[str]]:
+    enroll = ["enroll", "--server", SERVER_URL, "--code", ENROLL_CODE]
     if insecure:
-        call.append("--insecure")
-    call += ["--data-dir", data_dir]
-    return call
+        enroll.append("--insecure")
+    enroll += ["--data-dir", data_dir]
+    return [enroll, ["install", "--data-dir", data_dir]]
 
 
 def test_help() -> None:
@@ -292,9 +302,9 @@ def test_root_refused() -> None:
 def test_unsupported_os() -> None:
     harness = Harness()
     try:
-        result = harness.run(*harness.base_args(), env_extra={"FAKE_UNAME_S": "Darwin"})
-        check("非 Linux 明确报错", result.returncode == 1 and "仅支持 Linux" in result.stderr, result.stderr)
-        check("非 Linux 时不发生下载", harness.urls() == [], harness.urls())
+        result = harness.run(*harness.base_args(), env_extra={"FAKE_UNAME_S": "FreeBSD"})
+        check("非 Linux/macOS 明确报错", result.returncode == 1 and "仅支持 Linux/macOS" in result.stderr, result.stderr)
+        check("非 Linux/macOS 时不发生下载", harness.urls() == [], harness.urls())
     finally:
         harness.cleanup()
 
@@ -323,11 +333,22 @@ def test_wget_fallback() -> None:
     try:
         result = harness.run(*harness.base_args())
         expected = [
-            f"{RELEASE_BASE}/v{VERSION}/{asset_name(VERSION, 'amd64')}",
+            f"{RELEASE_BASE}/v{VERSION}/{asset_name(VERSION, 'linux', 'amd64')}",
             f"{RELEASE_BASE}/v{VERSION}/SHA256SUMS",
         ]
         check("wget 回退可完成安装", result.returncode == 0, result.stderr)
         check("wget 下载 URL 正确", harness.urls() == expected, harness.urls())
+    finally:
+        harness.cleanup()
+
+
+def test_shasum_fallback() -> None:
+    harness = Harness(with_sha256sum=False)
+    try:
+        result = harness.run(*harness.base_args())
+        data_dir = f"{harness.home}/.local/share/NexTerm"
+        check("sha256sum 缺失时回退 shasum 完成安装", result.returncode == 0, result.stderr)
+        check("shasum 回退下命令序列不变", harness.calls() == expected_calls(data_dir), harness.calls())
     finally:
         harness.cleanup()
 
@@ -343,7 +364,7 @@ def test_download_failure() -> None:
 
 
 def test_checksum_mismatch() -> None:
-    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  {asset_name(VERSION, 'amd64')}\n")
+    harness = Harness(sums_builder=lambda hashes: f"{'a' * 64}  {asset_name(VERSION, 'linux', 'amd64')}\n")
     try:
         result = harness.run(*harness.base_args())
         check("校验失败明确报错", result.returncode == 1 and "校验失败" in result.stderr, result.stderr)
@@ -363,7 +384,7 @@ def test_checksum_missing_entry() -> None:
 
 
 def test_checksum_not_hex() -> None:
-    harness = Harness(sums_builder=lambda hashes: f"{'z' * 64}  {asset_name(VERSION, 'amd64')}\n")
+    harness = Harness(sums_builder=lambda hashes: f"{'z' * 64}  {asset_name(VERSION, 'linux', 'amd64')}\n")
     try:
         result = harness.run(*harness.base_args())
         check("非 hex 校验和明确报错", result.returncode == 1 and "不是合法 sha256" in result.stderr, result.stderr)
@@ -371,19 +392,28 @@ def test_checksum_not_hex() -> None:
         harness.cleanup()
 
 
-def assert_success(harness: Harness, result: subprocess.CompletedProcess, arch: str, data_dir: str, insecure: bool = False) -> None:
-    check(f"{arch} 安装成功", result.returncode == 0, result.stderr)
+def test_bad_tar_layout_refused() -> None:
+    harness = Harness(bad_layout=True)
+    try:
+        result = harness.run(*harness.base_args())
+        check("tar 根缺 nexterm-agent 明确报错", result.returncode == 1 and "缺少 nexterm-agent" in result.stderr, result.stderr)
+        check("布局错误时不安装不注册", harness.calls() == [] and not harness.installed_binary().exists(), harness.calls())
+    finally:
+        harness.cleanup()
+
+
+def assert_success(harness: Harness, result: subprocess.CompletedProcess, os_name: str, arch: str, data_dir: str, insecure: bool = False) -> None:
+    check(f"{os_name}/{arch} 安装成功", result.returncode == 0, result.stderr)
     expected_urls = [
-        f"{RELEASE_BASE}/v{VERSION}/{asset_name(VERSION, arch)}",
+        f"{RELEASE_BASE}/v{VERSION}/{asset_name(VERSION, os_name, arch)}",
         f"{RELEASE_BASE}/v{VERSION}/SHA256SUMS",
     ]
-    check(f"{arch} 下载 URL 与顺序正确", harness.urls() == expected_urls, harness.urls())
+    check(f"{os_name}/{arch} 下载 URL 与顺序正确", harness.urls() == expected_urls, harness.urls())
     binary = harness.installed_binary()
     check("二进制安装到用户 bin 目录", binary.exists() and binary.read_text() == AGENT_BINARY, binary)
     if binary.exists():
         check("二进制权限 0755", binary.stat().st_mode & 0o777 == 0o755, oct(binary.stat().st_mode))
-    expected_calls = [["--version"], enroll_call(data_dir, insecure), ["agent", "install", "--data-dir", data_dir]]
-    check("命令顺序: --version -> enroll -> install 且参数精确", harness.calls() == expected_calls, harness.calls())
+    check("命令顺序: enroll -> install 且参数精确", harness.calls() == expected_calls(data_dir, insecure), harness.calls())
     output = result.stdout + result.stderr
     check("接入码不回显", ENROLL_CODE not in output, output)
     check("日志以 ******** 遮蔽接入码", "--code ********" in result.stdout, result.stdout)
@@ -393,20 +423,40 @@ def test_success_amd64() -> None:
     harness = Harness()
     try:
         result = harness.run(*harness.base_args())
-        assert_success(harness, result, "amd64", f"{harness.home}/.local/share/NexTerm")
+        assert_success(harness, result, "linux", "amd64", f"{harness.home}/.local/share/NexTerm")
+        check("linux 提示 systemd --user", "systemd --user" in result.stdout, result.stdout)
     finally:
         harness.cleanup()
 
 
 def test_success_arm64_selects_exact_sum() -> None:
     def sums(hashes: dict) -> str:
-        arm64 = asset_name(VERSION, "arm64")
-        return f"{hashes[arm64]}  {arm64}\n" + f"{'b' * 64}  {asset_name(VERSION, 'amd64')}\n"
+        arm64 = asset_name(VERSION, "linux", "arm64")
+        return f"{hashes[arm64]}  {arm64}\n" + f"{'b' * 64}  {asset_name(VERSION, 'linux', 'amd64')}\n"
 
     harness = Harness(sums_builder=sums)
     try:
         result = harness.run(*harness.base_args(), env_extra={"FAKE_UNAME_M": "aarch64"})
-        assert_success(harness, result, "arm64", f"{harness.home}/.local/share/NexTerm")
+        assert_success(harness, result, "linux", "arm64", f"{harness.home}/.local/share/NexTerm")
+    finally:
+        harness.cleanup()
+
+
+def test_success_darwin() -> None:
+    harness = Harness()
+    try:
+        result = harness.run(*harness.base_args(), env_extra={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+        assert_success(harness, result, "darwin", "arm64", f"{harness.home}/.local/share/NexTerm")
+        check("darwin 提示 launchd", "launchd" in result.stdout, result.stdout)
+    finally:
+        harness.cleanup()
+
+
+def test_success_darwin_amd64() -> None:
+    harness = Harness()
+    try:
+        result = harness.run(*harness.base_args(), env_extra={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "x86_64"})
+        assert_success(harness, result, "darwin", "amd64", f"{harness.home}/.local/share/NexTerm")
     finally:
         harness.cleanup()
 
@@ -416,7 +466,7 @@ def test_insecure_flag() -> None:
     try:
         result = harness.run(*harness.base_args(), "--insecure")
         data_dir = f"{harness.home}/.local/share/NexTerm"
-        check("--insecure 透传到 enroll", harness.calls() == [["--version"], enroll_call(data_dir, True), ["agent", "install", "--data-dir", data_dir]], harness.calls())
+        check("--insecure 透传到 enroll", harness.calls() == expected_calls(data_dir, True), harness.calls())
         check("--insecure 运行成功", result.returncode == 0, result.stderr)
     finally:
         harness.cleanup()
@@ -427,24 +477,21 @@ def test_data_dir_env_precedence() -> None:
     try:
         spaced = "/tmp/fake data dir"
         result = harness.run(*harness.base_args(), env_extra={"NEXTERM_DATA_DIR": spaced})
-        expected = [["--version"], enroll_call(spaced), ["agent", "install", "--data-dir", spaced]]
-        check("NEXTERM_DATA_DIR 最优先且原样使用, 带空格仍是单 argv", result.returncode == 0 and harness.calls() == expected, (result.stderr, harness.calls()))
+        check("NEXTERM_DATA_DIR 最优先且原样使用, 带空格仍是单 argv", result.returncode == 0 and harness.calls() == expected_calls(spaced), (result.stderr, harness.calls()))
     finally:
         harness.cleanup()
     harness = Harness()
     try:
         xdg = "/tmp/fake-xdg"
         result = harness.run(*harness.base_args(), env_extra={"XDG_DATA_HOME": xdg})
-        expected = [["--version"], enroll_call(f"{xdg}/NexTerm"), ["agent", "install", "--data-dir", f"{xdg}/NexTerm"]]
-        check("XDG_DATA_HOME 次之且拼 /NexTerm", result.returncode == 0 and harness.calls() == expected, (result.stderr, harness.calls()))
+        check("XDG_DATA_HOME 次之且拼 /NexTerm", result.returncode == 0 and harness.calls() == expected_calls(f"{xdg}/NexTerm"), (result.stderr, harness.calls()))
     finally:
         harness.cleanup()
     harness = Harness()
     try:
         custom = "/tmp/custom-agent-data"
         result = harness.run(*harness.base_args(), "--data-dir", custom, env_extra={"NEXTERM_DATA_DIR": "/tmp/ignored"})
-        expected = [["--version"], enroll_call(custom), ["agent", "install", "--data-dir", custom]]
-        check("--data-dir flag 覆盖 env 且原样使用", result.returncode == 0 and harness.calls() == expected, (result.stderr, harness.calls()))
+        check("--data-dir flag 覆盖 env 且原样使用", result.returncode == 0 and harness.calls() == expected_calls(custom), (result.stderr, harness.calls()))
     finally:
         harness.cleanup()
 
@@ -455,7 +502,7 @@ def test_enroll_failure_blocks_install() -> None:
         result = harness.run(*harness.base_args(), env_extra={"FAKE_ENROLL_FAIL": "1"})
         calls = harness.calls()
         check("enroll 失败时脚本非零退出", result.returncode == 1, result.stdout + result.stderr)
-        check("enroll 失败时不执行 install", len(calls) == 2 and calls[1][:2] == ["agent", "enroll"], calls)
+        check("enroll 失败时不执行 install", len(calls) == 1 and calls[0][0] == "enroll", calls)
     finally:
         harness.cleanup()
 
@@ -466,18 +513,7 @@ def test_install_failure_reported() -> None:
         result = harness.run(*harness.base_args(), env_extra={"FAKE_INSTALL_FAIL": "1"})
         calls = harness.calls()
         check("install 失败时脚本非零退出", result.returncode == 1, result.stdout + result.stderr)
-        check("install 失败前 enroll 已执行", len(calls) == 3 and calls[1][:2] == ["agent", "enroll"] and calls[2][:2] == ["agent", "install"], calls)
-    finally:
-        harness.cleanup()
-
-
-def test_version_mismatch() -> None:
-    harness = Harness()
-    try:
-        result = harness.run(*harness.base_args(), env_extra={"FAKE_AGENT_VERSION": "0.0.0-wrong"})
-        calls = harness.calls()
-        check("二进制版本不一致明确报错", result.returncode == 1 and "不一致" in result.stderr, result.stderr)
-        check("版本不一致时不 enroll 不 install", calls == [["--version"]], calls)
+        check("install 失败前 enroll 已执行", len(calls) == 2 and calls[0][0] == "enroll" and calls[1][0] == "install", calls)
     finally:
         harness.cleanup()
 
@@ -494,17 +530,20 @@ def main() -> int:
         test_unsupported_arch,
         test_no_downloader,
         test_wget_fallback,
+        test_shasum_fallback,
         test_download_failure,
         test_checksum_mismatch,
         test_checksum_missing_entry,
         test_checksum_not_hex,
+        test_bad_tar_layout_refused,
         test_success_amd64,
         test_success_arm64_selects_exact_sum,
+        test_success_darwin,
+        test_success_darwin_amd64,
         test_insecure_flag,
         test_data_dir_env_precedence,
         test_enroll_failure_blocks_install,
         test_install_failure_reported,
-        test_version_mismatch,
     ]
     for test in tests:
         print(f"== {test.__name__}", flush=True)

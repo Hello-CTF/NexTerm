@@ -14,9 +14,12 @@ const expected = [
   `NexTerm_${version}_x86_64.dmg`,
   `NexTerm_${version}_android.apk`,
   `NexTerm_${version}_ios.ipa`,
+  `NexTerm-agent_${version}_windows_amd64.zip`,
   ...["amd64", "arm64"].flatMap((arch) => [
     `NexTerm-desktop_${version}_linux_${arch}.deb`,
     `NexTerm-server_${version}_linux_${arch}.tar.gz`,
+    `NexTerm-agent_${version}_linux_${arch}.tar.gz`,
+    `NexTerm-agent_${version}_darwin_${arch}.tar.gz`,
   ]),
 ];
 const reportIDs = new Map([
@@ -26,9 +29,12 @@ const reportIDs = new Map([
   [`NexTerm_${version}_x86_64.dmg`, "desktop-dmg-darwin-amd64"],
   [`NexTerm_${version}_android.apk`, "mobile-android"],
   [`NexTerm_${version}_ios.ipa`, "mobile-ios"],
+  [`NexTerm-agent_${version}_windows_amd64.zip`, "agent-zip-windows-amd64"],
   ...["amd64", "arm64"].flatMap((arch) => [
     [`NexTerm-desktop_${version}_linux_${arch}.deb`, `desktop-linux-deb-linux-${arch}`],
     [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-linux-${arch}`],
+    [`NexTerm-agent_${version}_linux_${arch}.tar.gz`, `agent-archive-linux-${arch}`],
+    [`NexTerm-agent_${version}_darwin_${arch}.tar.gz`, `agent-archive-darwin-${arch}`],
   ]),
 ]);
 function gatesPassed(report) {
@@ -67,7 +73,7 @@ for (const name of fs.readdirSync(directory)) {
   const report = JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
   if (!gatesPassed(report) || report.version !== version) failed = true;
 }
-const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|deb|tar\.gz|apk|ipa)$/.test(name) && !expected.includes(name));
+const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|deb|tar\.gz|apk|ipa|zip)$/.test(name) && !expected.includes(name));
 if (unexpected.length) failed = true;
 fs.writeFileSync(path.join(directory, "SHA256SUMS"), `${artifacts.filter((item) => item.sha256).map((item) => `${item.sha256}  ${item.name}`).join("\n")}\n`);
 console.warn(`release evidence: ${failed ? "failed" : "passed"}; ${artifacts.filter((item) => item.status === "passed").length}/${expected.length} final artifacts passed`);

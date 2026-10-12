@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}" "${GITHUB_SHA:?GITHUB_SHA is required}" "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
-required=(frontend-dist native-windows-amd64-desktop native-windows-arm64-desktop native-darwin-arm64-desktop native-darwin-amd64-desktop native-linux-amd64-desktop native-linux-arm64-desktop native-linux-amd64-server native-linux-arm64-server)
+required=(frontend-dist native-windows-amd64-desktop native-windows-arm64-desktop native-darwin-arm64-desktop native-darwin-amd64-desktop native-linux-amd64-desktop native-linux-arm64-desktop native-linux-amd64-server native-linux-arm64-server native-linux-amd64-agent native-linux-arm64-agent native-darwin-arm64-agent native-darwin-amd64-agent native-windows-amd64-agent)
 WAIT_TIMEOUT="${CI_REUSE_WAIT_TIMEOUT:-1500}"
 POLL_INTERVAL="${CI_REUSE_POLL_INTERVAL:-20}"
 

@@ -319,7 +319,7 @@ func TestLaunchdPlistKeepsFatalExitsDead(t *testing.T) {
 }
 
 func TestUnsupportedPlatformManagerIsHonest(t *testing.T) {
-	manager := NewServiceManager("windows", &fakeRunner{}, func(string) string { return "" }, t.TempDir())
+	manager := NewServiceManager("plan9", &fakeRunner{}, func(string) string { return "" }, t.TempDir())
 	if err := manager.Install(context.Background(), "exe", "dir"); !errors.Is(err, ErrServiceUnsupported) {
 		t.Fatalf("Install = %v", err)
 	}

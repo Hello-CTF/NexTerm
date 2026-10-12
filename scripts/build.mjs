@@ -31,6 +31,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *   node scripts/build.mjs desktop --release --package --package-only --consume-dist=DIR \\
  *     --os=darwin --arch=arm64 --require-evidence
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
+ *   node scripts/build.mjs agent --release --os=linux --arch=amd64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
  *     --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
  `;
@@ -122,15 +123,15 @@ function targetArch() {
 
 function assertTarget(kind, goos, goarch) {
   const allowed = {
-    "windows/amd64": ["desktop", "server"],
-    "windows/arm64": ["desktop"],
-    "darwin/amd64": ["desktop", "server"],
-    "darwin/arm64": ["desktop", "server"],
-    "linux/amd64": ["desktop", "server"],
-    "linux/arm64": ["desktop", "server"],
+    "windows/amd64": ["desktop", "server", "agent"],
+    "windows/arm64": ["desktop", "agent"],
+    "darwin/amd64": ["desktop", "server", "agent"],
+    "darwin/arm64": ["desktop", "server", "agent"],
+    "linux/amd64": ["desktop", "server", "agent"],
+    "linux/arm64": ["desktop", "server", "agent"],
   };
   if (!allowed[`${goos}/${goarch}`]?.includes(kind)) {
-    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64 and server is Linux amd64+arm64`);
+    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64, server is Linux amd64+arm64 and agent is Windows/macOS/Linux amd64+arm64`);
   }
 }
 
@@ -352,7 +353,7 @@ function buildBinary(kind) {
   if (packageOnly) {
     if (!flag("package")) die("--package-only requires --package");
     if (!release) die("--package-only requires --release");
-    if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
+    if (kind !== "desktop") die("server and agent packages are produced by scripts/pack-linux-server.sh and scripts/pack-agent.sh");
     if (flag("repro-check")) die("--package-only performs no compilation; --repro-check belongs to the producing job");
     if (!option("consume-dist")) die("--package-only requires --consume-dist=DIR so embedded-asset assertions run against the verified frontend");
   }
@@ -419,7 +420,7 @@ function buildBinary(kind) {
   });
   if (flag("package")) {
     if (!release) die("--package requires --release");
-    if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
+    if (kind !== "desktop") die("server and agent packages are produced by scripts/pack-linux-server.sh and scripts/pack-agent.sh");
     const packaged = packageDesktop(outputPath, goos, goarch);
     const packageKind = { darwin: "desktop-dmg", windows: "desktop-nsis", linux: "desktop-linux-deb" }[goos];
     writeArtifactReport({
@@ -489,7 +490,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-format", inspected.format === ({ windows: "pe", darwin: "mach-o", linux: "elf" })[goos], JSON.stringify(inspected)));
     result.push(assertion("binary-architecture", inspected.architecture === goarch, `expected ${goos}/${goarch}; actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
-    if (kind === "server" && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if ((kind === "server" || kind === "agent") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
   }
@@ -555,7 +556,55 @@ function packageAssertions(kind, file, goos, goarch) {
     return checks;
   }
   if (kind === "desktop-dmg") return [assertion("dmg-container", data.length > 512, "DMG was already validated with hdiutil")];
+  if (kind === "agent-archive") {
+    const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "agent archive is not gzip compressed")];
+    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const members = listing?.split(/\r?\n/).filter((name) => name !== "") || [];
+    checks.push(assertion(
+        "agent-archive-members",
+        (goos === "linux" || goos === "darwin") && listing !== null && members.length === 1 && members[0] === "nexterm-agent",
+        `tar root must contain only nexterm-agent; members: ${members.join(", ")}`,
+    ));
+    return checks;
+  }
+  if (kind === "agent-zip") {
+    const members = zipMembers(data);
+    return [
+      assertion("zip-container", data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04, "agent package is not a zip archive"),
+      assertion(
+          "agent-zip-members",
+          goos === "windows" && members !== null && members.length === 1 && members[0] === "nexterm-agent.exe",
+          `zip root must contain only nexterm-agent.exe; members: ${members === null ? "unreadable central directory" : members.join(", ")}`,
+      ),
+    ];
+  }
   return [];
+}
+
+function zipMembers(data) {
+  const eocdMin = 22;
+  if (data.length < eocdMin) return null;
+  const searchFloor = Math.max(0, data.length - (eocdMin + 0xffff));
+  let eocd = -1;
+  for (let index = data.length - eocdMin; index >= searchFloor; index -= 1) {
+    if (data.readUInt32LE(index) === 0x06054b50) {
+      eocd = index;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const count = data.readUInt16LE(eocd + 10);
+  let offset = data.readUInt32LE(eocd + 16);
+  const names = [];
+  for (let index = 0; index < count; index += 1) {
+    if (offset + 46 > data.length || data.readUInt32LE(offset) !== 0x02014b50) return null;
+    const nameLength = data.readUInt16LE(offset + 28);
+    const extraLength = data.readUInt16LE(offset + 30);
+    const commentLength = data.readUInt16LE(offset + 32);
+    names.push(data.toString("utf8", offset + 46, offset + 46 + nameLength));
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return names;
 }
 
 function sha256(file) {
@@ -565,7 +614,7 @@ function sha256(file) {
 function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped = true, requireEmbedded = false, requireEvidence = false }) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) die(`artifact does not exist: ${file}`);
   const bytes = fs.statSync(file).size;
-  const rawBinary = kind === "desktop" || kind === "server";
+  const rawBinary = kind === "desktop" || kind === "server" || kind === "agent";
   const inspected = rawBinary
       ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
       : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
@@ -760,6 +809,7 @@ switch (command) {
     break;
   case "desktop":
   case "server":
+  case "agent":
     buildBinary(command);
     break;
   case "report":
@@ -794,5 +844,5 @@ switch (command) {
     console.log(HELP_TEXT);
     break;
   default:
-    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, report, or help`);
+    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, report, or help`);
 }
