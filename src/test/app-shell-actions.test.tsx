@@ -220,7 +220,7 @@ describe("App workspace actions", () => {
     const databaseButton = mounted.container.querySelector<HTMLButtonElement>(
       'button[aria-label="数据库"]',
     );
-    expect(databaseButton?.title).toContain("MySQL / PostgreSQL / Redis");
+    expect(databaseButton?.getAttribute("data-tip")).toContain("MySQL / PostgreSQL / Redis");
     if (!databaseButton) throw new Error("Database button not found");
     click(databaseButton);
     await flush();

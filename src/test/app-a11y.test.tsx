@@ -123,7 +123,7 @@ describe("地标与跳转链接", () => {
 });
 
 describe("主导航悬浮说明", () => {
-  it("每个 rail 按钮的 title 都是比短标签更长的用途说明", async () => {
+  it("每个 rail 按钮的悬浮提示都是比短标签更长的用途说明", async () => {
     mounted = mountApp();
     await flush();
 
@@ -131,7 +131,7 @@ describe("主导航悬浮说明", () => {
     expect(buttons.length).toBeGreaterThan(0);
     for (const button of buttons) {
       const label = button.getAttribute("aria-label");
-      const title = button.getAttribute("title");
+      const title = button.getAttribute("data-tip");
       expect(label, title ?? undefined).toBeTruthy();
       expect(title, label ?? undefined).toBeTruthy();
       expect(title!.length, `${label} 的悬浮说明应比标签长`).toBeGreaterThan(label!.length);
@@ -143,7 +143,7 @@ describe("主导航悬浮说明", () => {
     await flush();
 
     const button = document.querySelector<HTMLButtonElement>('.nx-rail button[aria-label="新建终端"]');
-    const title = button?.getAttribute("title") ?? "";
+    const title = button?.getAttribute("data-tip") ?? "";
     expect(title).toContain("已连接");
     expect(title).toContain("重连");
     expect(title).toContain("本机终端");

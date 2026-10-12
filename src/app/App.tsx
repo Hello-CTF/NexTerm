@@ -98,6 +98,7 @@ import { CommandPalette } from "./CommandPalette";
 import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
+import { DekUnlockBanner } from "./DekUnlockBanner";
 import { getUpdateState } from "./useUpdate";
 import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
@@ -1261,20 +1262,21 @@ function AppShell() {
       </a>
       <TakeoverBanner />
       <UpdateBanner onOpenSettings={openSettings} />
+      <DekUnlockBanner />
 
       <div className="flex min-h-0 flex-1">
         <nav
           className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}
           aria-label="主导航"
         >
-          <div className="mb-2 flex items-center justify-center" title="NexTerm">
+          <div className="mb-2 flex items-center justify-center nx-rail-btn" data-tip="NexTerm">
             <Logo size={26} />
           </div>
           {railPanels.map((it) => (
             <button
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
-              title={it.hint}
+              data-tip={it.hint}
               aria-label={it.label}
               aria-current={railActive === it.key ? "true" : undefined}
               onClick={it.onClick}
@@ -1288,7 +1290,7 @@ function AppShell() {
             <button
               key={it.key}
               className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
-              title={
+              data-tip={
                 it.unavailableReason ? `${it.hint}（暂不可用：${it.unavailableReason}）` : it.hint
               }
               aria-label={
@@ -1306,7 +1308,7 @@ function AppShell() {
             <button
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
-              title={it.hint}
+              data-tip={it.hint}
               aria-label={it.label}
               onClick={it.onClick}
             >
@@ -2052,14 +2054,6 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
-  const bindings = useKeybindings();
-  const shortcuts: [KeybindingActionId, string, string][] = [
-    ["newTerminal", formatBinding(bindings.newTerminal), "新建终端"],
-    ["quickConnect", formatBinding(bindings.quickConnect), "快速连接"],
-    ["commandPalette", formatBinding(bindings.commandPalette), "命令面板"],
-    ["toggleSidebar", formatBinding(bindings.toggleSidebar), "资产树"],
-    ["toggleAiSidebar", formatBinding(bindings.toggleAiSidebar), "AI 侧栏"],
-  ];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">
       <Logo size={52} />
@@ -2068,14 +2062,6 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         <div className="mt-1 text-xs text-neutral-500">
           SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台
         </div>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        {shortcuts.map(([id, k, label]) => (
-          <span key={id} className="nx-chip">
-            <span className="nx-kbd">{k}</span>
-            {label}
-          </span>
-        ))}
       </div>
       <div className="flex items-center gap-2">
         <button

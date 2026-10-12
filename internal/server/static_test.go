@@ -87,6 +87,61 @@ func TestStaticSPAMarkerCacheAndHead(t *testing.T) {
 	}
 }
 
+func TestStaticCacheControlByAssetsDir(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "assets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<html><head></head><body>app</body></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{
+		filepath.Join("assets", "index-BUwzQYmM.js"),
+		filepath.Join("assets", "a.png"),
+		"icon.png",
+		"install-device.sh",
+		"install-device.ps1",
+		"app-123456789012345678901234.js",
+	}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := testConfig(t, false)
+	config.Options.WebRoot = root
+	_, httpServer := newTestHTTP(t, config)
+
+	immutable := "public, max-age=31536000, immutable"
+	cases := []struct {
+		path         string
+		cacheControl string
+	}{
+		{"/assets/index-BUwzQYmM.js", immutable},
+		{"/assets/a.png", immutable},
+		{"/", "no-cache"},
+		{"/index.html", "no-cache"},
+		{"/icon.png", ""},
+		{"/install-device.sh", ""},
+		{"/install-device.ps1", ""},
+		{"/app-123456789012345678901234.js", ""},
+	}
+	for _, tc := range cases {
+		response, err := httpServer.Client().Get(httpServer.URL + tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d", tc.path, response.StatusCode)
+		}
+		if got := response.Header.Get("Cache-Control"); got != tc.cacheControl {
+			t.Errorf("GET %s Cache-Control = %q, want %q", tc.path, got, tc.cacheControl)
+		}
+	}
+}
+
 func TestStaticRejectsTraversalAndMissingIndex(t *testing.T) {
 	root := t.TempDir()
 	handler := NewStaticHandler(root)

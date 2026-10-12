@@ -35,7 +35,7 @@ func (s *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isIndex := relative == "" || relative == "index.html"
 	if !isIndex {
 		if info, statErr := os.Stat(candidate); statErr == nil && info.Mode().IsRegular() {
-			s.serveFile(w, r, candidate, info)
+			s.serveFile(w, r, candidate, relative, info)
 			return
 		}
 	}
@@ -45,10 +45,10 @@ func (s *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index.html not found; check the web root", http.StatusNotFound)
 		return
 	}
-	s.serveFile(w, r, index, info)
+	s.serveFile(w, r, index, "index.html", info)
 }
 
-func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path string, info os.FileInfo) {
+func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path, relative string, info os.FileInfo) {
 	contentType := staticContentType(path)
 	if strings.HasPrefix(contentType, "text/html") {
 		data, err := os.ReadFile(path)
@@ -71,7 +71,7 @@ func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path str
 	defer file.Close()
 	w.Header().Set("Content-Type", contentType)
 	name := filepath.Base(path)
-	if len(name) > 24 && strings.Contains(name, "-") {
+	if strings.HasPrefix(filepath.ToSlash(relative), "assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, name, info.ModTime(), file)

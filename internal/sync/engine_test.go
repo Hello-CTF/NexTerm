@@ -56,9 +56,9 @@ func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	mux.HandleFunc("POST /auth/login", server.serveLogin)
 	mux.Handle("GET /auth/me", server.requireSession(http.HandlerFunc(server.serveMe)))
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
-	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.GORM(), db.Backend())))))
-	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.GORM(), db.Backend())))
-	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.GORM(), db.Backend()))))
+	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.GORM(), db.Backend(), nil)))))
+	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.GORM(), db.Backend(), nil)))
+	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.GORM(), db.Backend(), nil))))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server

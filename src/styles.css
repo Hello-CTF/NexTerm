@@ -2474,3 +2474,32 @@
 .text-\[17px\] {
   font-size: calc(17px * var(--nx-ui-text-factor));
 }
+
+  .nx-rail-btn[data-tip]:hover::after,
+  .nx-rail-btn[data-tip]:focus-visible::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: calc(100% + 9px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 90;
+    width: max-content;
+    max-width: 260px;
+    padding: 4px 8px;
+    border: 1px solid var(--nx-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--nx-bg-pane);
+    box-shadow: var(--shadow-pop);
+    color: var(--nx-fg-emphasis);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.4;
+    white-space: normal;
+    text-align: left;
+    pointer-events: none;
+    animation: nx-rail-tip-in 0.12s ease-out 0.18s both;
+  }
+  @keyframes nx-rail-tip-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
