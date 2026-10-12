@@ -21,9 +21,9 @@ import { sessionApi, terminalApi, fsApi, assetApi, syncApi } from "../../ipc/com
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi, type Workspace } from "../../app/store";
+import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, reconnectSessionAndWait, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
-import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
+import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
@@ -617,11 +617,26 @@ export function TerminalPane({
   const handleAttachDead = useCallback(
     (code: string) => {
       if (code !== "not_found") return;
-      useUi.getState().updateTab(storeTabId, { dead: true });
+      const st = useUi.getState();
+      const tab = st.workspaces
+        .flatMap((w) => w.panes)
+        .flatMap((p) => p.tabs)
+        .find((t) => t.id === storeTabId);
+      const session = st.sessions.find((x) => x.id === tab?.sessionId);
+      if (!containerId && !effectiveWinrm && tab?.tabId !== undefined && session?.status === "connected") {
+        resumeAttemptedRef.current = false;
+        resumeRef.current = undefined;
+        st.updateTab(storeTabId, { tabId: undefined });
+        setKernelTabId(null);
+        setEpoch((n) => n + 1);
+        pushToast("info", "原终端在服务端已不存在，已打开新终端");
+        return;
+      }
+      st.updateTab(storeTabId, { dead: true });
       setKernelTabId(null);
       setAttachDead(true);
     },
-    [storeTabId],
+    [storeTabId, containerId, effectiveWinrm],
   );
 
   const reconnectNow = useCallback(async () => {
@@ -657,7 +672,7 @@ export function TerminalPane({
       setAttachDead(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
-      pushToast("info", resumeId ? "已重新连接，正在恢复原终端" : "已重新连接，正在打开新终端");
+      pushToast("info", "已重新连接");
     } catch (e) {
       pushToast("error", `重新连接失败：${describeError(e)}`);
     } finally {
@@ -705,16 +720,35 @@ export function TerminalPane({
   };
 
   const reconnectSession = async () => {
+    const session = useUi.getState().sessions.find((x) => x.id === sessionId);
+    if (!session) {
+      pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");
+      return;
+    }
+    if (isSessionReconnectPending(sessionId)) return;
     try {
-      if (!(await confirmHostKeyIfNeeded(sessionAssetId ?? "", sessionKind))) {
+      const fresh = await reconnectSessionAndWait(session);
+      if (!fresh) {
         pushToast("info", "已取消重连");
         return;
       }
-      const started = await sessionApi.reconnect(sessionId);
-      pushToast(
-        started ? "info" : "error",
-        started ? "正在重连…结果会显示在工具栏的状态徽标上" : "重连未能启动：服务正在关闭",
-      );
+      const list = useUi.getState().sessions;
+      useUi.getState().setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
+      const current = useUi
+        .getState()
+        .workspaces.flatMap((w) => w.panes)
+        .flatMap((p) => p.tabs)
+        .find((t) => t.id === storeTabId);
+      const resumeId = resumeAttemptedRef.current ? undefined : current?.tabId;
+      resumeAttemptedRef.current = resumeId !== undefined;
+      useUi.getState().updateTab(storeTabId, { tabId: resumeId, dead: false, exited: false });
+      resumeRef.current = resumeId;
+      setControl(null);
+      setRemoteGrid(null);
+      setAttachDead(false);
+      setKernelTabId(null);
+      setEpoch((n) => n + 1);
+      pushToast("info", "已重新连接");
     } catch (e) {
       if ((e as { code?: string } | null)?.code === "not_found") {
         pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");

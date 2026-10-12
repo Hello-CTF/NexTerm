@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   knownHostAccept: vi.fn(),
   ask: vi.fn(),
   listLive: vi.fn(),
+  listSessions: vi.fn(),
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -30,6 +31,7 @@ vi.mock("../../ipc/commands", () => ({
     connect: mocks.connect,
     reconnect: mocks.reconnect,
     disconnect: mocks.disconnect,
+    list: mocks.listSessions,
     probeHostKey: vi.fn().mockResolvedValue({ state: "known" }),
   },
   terminalApi: {
@@ -275,10 +277,10 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.sessionId).toBe("s2");
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
     expect(storeTab()?.tabId).toBe("kernel-1");
-    expect(toastTexts()).toContain("正在恢复原终端");
+    expect(toastTexts()).toContain("已重新连接");
   });
 
-  it("falls back to a fresh terminal when the resumed id is still not found", async () => {
+  it("opens a fresh terminal in one click when the resumed id is still not found", async () => {
     seedTab();
     mounted = mountPane();
     await flush();
@@ -290,16 +292,80 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
 
     failAttach("not_found");
-    await waitFor(() => expect(overlay()).not.toBeNull());
 
-    clickButton(mounted.container, "重新连接这台主机");
-    await flush();
-    await waitFor(() => expect(overlay()).toBeNull());
-    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(overlay()).toBeNull();
     expect(storeTab()?.dead).toBe(false);
     expect(storeTab()?.tabId).toBeUndefined();
-    await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
-    expect(toastTexts()).toContain("正在打开新终端");
+    expect(toastTexts()).not.toContain("正在恢复原终端");
+  });
+
+  it("keeps the overlay for a container exec tab even when the session is connected", async () => {
+    seedTab({ containerId: "c1" });
+    useUi.setState({
+      sessions: [
+        {
+          id: "s1",
+          assetId: "asset-1",
+          name: "web-01",
+          kind: "ssh",
+          status: "connected",
+          tabs: [],
+          createdAt: 0,
+        },
+      ],
+    });
+    mounted = mount(
+      createElement(TerminalPane, {
+        sessionId: "s1",
+        title: "web-01",
+        storeTabId: "t1",
+        resumeTabId: "kernel-1",
+        containerId: "c1",
+      }),
+    );
+    await flush();
+
+    failAttach("not_found");
+
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    expect(storeTab()?.dead).toBe(true);
+    expect(storeTab()?.tabId).toBe("kernel-1");
+  });
+
+  it("does not open a fresh terminal when the host key confirmation is cancelled", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+    mocks.connect.mockRejectedValue({
+      code: "host_key_pending",
+      message: "unknown SSH host key for 127.0.0.1:22",
+      detail: {
+        host: "127.0.0.1",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:new",
+        changed: false,
+      },
+    });
+
+    clickButton(mounted.container, "重新连接这台主机");
+
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("首次连接 127.0.0.1:22");
+    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+
+    failAttach("not_found");
+    await flush();
+
+    expect(storeTab()?.tabId).toBe("kernel-1");
+    expect(storeTab()?.dead).toBe(true);
+    expect(overlay()).not.toBeNull();
   });
 
   it("never auto-trusts a changed host key during reconnect", async () => {
@@ -378,6 +444,40 @@ describe("terminal dead-tab context menu reconnect", () => {
     expect(storeTab()?.sessionId).toBe("s2");
     expect(storeTab()?.dead).toBe(false);
     expect(toastTexts()).toContain("已重新连接");
+  });
+
+  it("restores the terminal after the session reconnects from the menu", async () => {
+    seedTab();
+    mocks.reconnect.mockResolvedValue(true);
+    mocks.listSessions.mockResolvedValue([
+      {
+        id: "s1",
+        assetId: "asset-1",
+        name: "web-01",
+        kind: "ssh",
+        status: "connected",
+        tabs: [],
+        createdAt: 1,
+      },
+    ]);
+    mounted = mountPane();
+    await flush();
+
+    await openTerminalMenu();
+    expect(menuLabels().some((t) => t.includes("重连会话"))).toBe(true);
+    await clickMenuItem("重连会话");
+
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
+    expect(storeTab()?.tabId).toBe("kernel-1");
+    expect(useUi.getState().sessions.find((s) => s.id === "s1")?.status).toBe("connected");
+    expect(toastTexts()).toContain("已重新连接");
+
+    failAttach("not_found");
+
+    await waitFor(() => expect(harness.props?.resumeTabId).toBeUndefined());
+    expect(storeTab()?.tabId).toBeUndefined();
+    expect(overlay()).toBeNull();
   });
 
   it("cancelling the changed host key confirmation neither trusts nor retries", async () => {
