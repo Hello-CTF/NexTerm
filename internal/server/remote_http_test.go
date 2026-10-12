@@ -124,6 +124,12 @@ func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("hello-remote\r\n$ ")); err != nil {
 		t.Fatal(err)
 	}
+	// 推流帧经服务端读循环异步喂入屏幕模型; viewer 首帧快照在 attach 时生成,
+	// 必须等输出落进模型再打开 viewer, 否则快照可能为空。
+	waitFor(t, func() bool {
+		snapshot, err := f.manager.TerminalSnapshot(id)
+		return err == nil && strings.Contains(strings.Join(snapshot.Lines, "\n"), "hello-remote")
+	})
 
 	viewer := dialPreviewViewer(t, f.http.URL, token)
 	ready := readPreviewJSON(t, viewer, 10*time.Second)
