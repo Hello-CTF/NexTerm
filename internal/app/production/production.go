@@ -34,6 +34,15 @@ type RetentionConfig = core.RetentionConfig
 var NewRetentionRunner = core.NewRetentionRunner
 var StoreRetentionPolicy = core.StoreRetentionPolicy
 
+// ScreenInsets 是系统栏(状态栏/导航条/刘海)在四边的占用, 单位 dp。
+// 由桌面端以 wails Screen API 注入实现, server 为 nil 时 system_insets 命令不注册。
+type ScreenInsets struct {
+	Top    int `json:"top"`
+	Bottom int `json:"bottom"`
+	Left   int `json:"left"`
+	Right  int `json:"right"`
+}
+
 type ProductionServices struct {
 	Store            *store.Store
 	Vault            *vault.Vault
@@ -51,6 +60,7 @@ type ProductionServices struct {
 	Takeover         *takeover.Manager
 	Events           ipc.Emitter
 	Update           *update.Manager
+	ScreenInsets     func(context.Context) (ScreenInsets, error)
 	channelBridge    *terminalBridge
 	previewRelay     *previewRelayManager
 	terminalCommands *terminalCommandService
@@ -223,6 +233,13 @@ func productionModules(services ProductionServices) []Module {
 	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 		return registerBiometricCommands(dispatcher, platformBiometric{}, biometricVaultState(services))
 	}})
+	if services.ScreenInsets != nil {
+		modules = append(modules, Module{Name: "system-insets", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return ipc.Register(dispatcher, "system_insets", func(ctx context.Context, _ *ipc.Call, _ struct{}) (ScreenInsets, error) {
+				return services.ScreenInsets(ctx)
+			})
+		}})
+	}
 	if services.aiRelease != nil {
 		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})
 	}

@@ -96,6 +96,18 @@ func run(args []string) int {
 			wailsApp.Quit()
 			return nil
 		},
+		ScreenInsets: func(context.Context) (production.ScreenInsets, error) {
+			screen := application.Get().Screen.GetPrimary()
+			if screen == nil {
+				return production.ScreenInsets{}, nil
+			}
+			return production.ScreenInsets{
+				Top:    screen.WorkArea.Y - screen.Bounds.Y,
+				Bottom: screen.Bounds.Height - screen.WorkArea.Y - screen.WorkArea.Height,
+				Left:   screen.WorkArea.X - screen.Bounds.X,
+				Right:  screen.Bounds.Width - screen.WorkArea.X - screen.WorkArea.Width,
+			}, nil
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)

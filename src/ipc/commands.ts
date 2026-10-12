@@ -110,6 +110,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 
 export const systemApi = {
   platform: () => call<string>("app_platform"),
+  insets: () => call<{ top: number; right: number; bottom: number; left: number }>("system_insets"),
 };
 
 export interface BiometricStatus {
