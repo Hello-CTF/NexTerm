@@ -27,13 +27,48 @@ func stepName(step map[string]interface{}) string {
 	return str(step["name"])
 }
 
+func findStepByID(job map[string]interface{}, id string) map[string]interface{} {
+	for _, rawStep := range asList(job["steps"]) {
+		step := asMap(rawStep)
+		if str(step["id"]) == id {
+			return step
+		}
+	}
+	panic(fmt.Sprintf("step id not found: %s", id))
+}
+
+func cacheStepMatches(step map[string]interface{}, id, condition, path, key string) bool {
+	with := asMap(step["with"])
+	return str(step["id"]) == id &&
+		strings.HasPrefix(str(step["uses"]), "actions/cache") &&
+		normalizedStepIf(step) == condition &&
+		str(with["path"]) == path &&
+		str(with["key"]) == key
+}
+
+func cacheMissInstallAndAlwaysVerify(script, cacheID, install, verify string) bool {
+	guard := `if [ "${{ steps.` + cacheID + `.outputs.cache-hit }}" != "true" ]; then`
+	guardIndex := strings.Index(script, guard)
+	if guardIndex < 0 || strings.Count(script, install) != 1 || strings.Count(script, verify) != 1 {
+		return false
+	}
+	blockEndOffset := strings.Index(script[guardIndex:], "\nfi")
+	if blockEndOffset < 0 {
+		return false
+	}
+	blockEnd := guardIndex + blockEndOffset
+	installIndex := strings.Index(script, install)
+	verifyIndex := strings.Index(script, verify)
+	return installIndex > guardIndex && installIndex < blockEnd && verifyIndex > strings.LastIndex(script, "\nfi")
+}
+
 func runWiringChecks(in inputs) []checkResult {
 	c := &collector{}
 	check := c.check
 	ci := in.ci
 	release := in.release
 
-	produced := artifactStepNames(ci, "actions/upload-artifact")
+	produced := artifactStepNames(ci, "actions/upload-artifact", nil)
 	required := resolverRequiredArtifacts(in.resolverText)
 	missing := []string{}
 	for name := range required {
@@ -44,7 +79,7 @@ func runWiringChecks(in inputs) []checkResult {
 	check("resolver required artifacts are all produced by CI", len(missing) == 0,
 		fmt.Sprintf("missing from CI: %v", sortedStringSlice(missing)))
 
-	downloads := artifactStepNames(release, "actions/download-artifact")
+	downloads := artifactStepNames(release, "actions/download-artifact", produced)
 	downloadMissing := []string{}
 	for name := range downloads {
 		if !produced[name] {
@@ -53,6 +88,36 @@ func runWiringChecks(in inputs) []checkResult {
 	}
 	check("release downloads are a subset of CI producers", len(downloadMissing) == 0,
 		fmt.Sprintf("downloads=%v", sortedStringSlice(downloadMissing)))
+	downloadOutsideRequired := []string{}
+	for name := range downloads {
+		if !required[name] {
+			downloadOutsideRequired = append(downloadOutsideRequired, name)
+		}
+	}
+	check("release downloads are a subset of resolver required artifacts", len(downloadOutsideRequired) == 0,
+		fmt.Sprintf("downloads=%v", sortedStringSlice(downloadOutsideRequired)))
+	expectedAgentDownloads := []string{
+		"native-linux-amd64-agent",
+		"native-linux-arm64-agent",
+		"native-darwin-arm64-agent",
+		"native-darwin-amd64-agent",
+		"native-windows-amd64-agent",
+	}
+	missingAgentDownloads := []string{}
+	for _, name := range expectedAgentDownloads {
+		if !downloads[name] {
+			missingAgentDownloads = append(missingAgentDownloads, name)
+		}
+	}
+	agentDownloadCount := 0
+	for name := range downloads {
+		if strings.HasPrefix(name, "native-") && strings.HasSuffix(name, "-agent") {
+			agentDownloadCount++
+		}
+	}
+	check("release agent pattern expands to all five agent artifact downloads",
+		agentDownloadCount == len(expectedAgentDownloads) && len(missingAgentDownloads) == 0,
+		fmt.Sprintf("count=%d missing=%v", agentDownloadCount, missingAgentDownloads))
 
 	ciSourceSteps := asList(asMap(jobsOf(release)["ci-source"])["steps"])
 	checkout := false
@@ -79,30 +144,33 @@ func runWiringChecks(in inputs) []checkResult {
 	}{
 		{"reuse: successful ci-source + skipped ci proceeds to packaging and publish",
 			map[string]string{"ci-source": "success", "reused": "true", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "success", "mobile": "success", "publish": "success"}},
 		{"fallback: full CI success and release proceeds",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "success", "ci": "success", "desktop": "success", "server": "success", "agent": "success", "publish": "success"}},
+			map[string]string{"ci-source": "success", "ci": "success", "desktop": "success", "server": "success", "agent": "success", "mobile": "success", "publish": "success"}},
 		{"fallback: CI failure gates the release",
 			map[string]string{"ci-source": "success", "reused": "false", "ci": "failure"},
-			map[string]string{"ci-source": "success", "ci": "failure", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "failure", "desktop": "skipped", "server": "skipped", "agent": "skipped", "mobile": "skipped", "publish": "skipped"}},
 		{"reuse: desktop packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "desktop": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "failure", "server": "success", "agent": "success", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "failure", "server": "success", "agent": "success", "mobile": "success", "publish": "skipped"}},
 		{"reuse: server packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "server": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "failure", "agent": "success", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "failure", "agent": "success", "mobile": "success", "publish": "skipped"}},
 		{"reuse: agent packaging failure still gates publish",
 			map[string]string{"ci-source": "success", "reused": "true", "agent": "failure"},
-			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "failure", "publish": "skipped"}},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "failure", "mobile": "success", "publish": "skipped"}},
+		{"reuse: mobile packaging failure still gates publish",
+			map[string]string{"ci-source": "success", "reused": "true", "mobile": "failure"},
+			map[string]string{"ci-source": "success", "ci": "skipped", "desktop": "success", "server": "success", "agent": "success", "mobile": "failure", "publish": "skipped"}},
 		{"ci-source failure gates the release",
 			map[string]string{"ci-source": "failure", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "failure", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "failure", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "mobile": "skipped", "publish": "skipped"}},
 		{"ci-source cancellation gates the release",
 			map[string]string{"ci-source": "cancelled", "reused": "false", "ci": "success"},
-			map[string]string{"ci-source": "cancelled", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "publish": "skipped"}},
+			map[string]string{"ci-source": "cancelled", "ci": "skipped", "desktop": "skipped", "server": "skipped", "agent": "skipped", "mobile": "skipped", "publish": "skipped"}},
 	}
-	jobOrder := []string{"ci-source", "ci", "desktop", "server", "agent", "publish"}
+	jobOrder := []string{"ci-source", "ci", "desktop", "server", "agent", "mobile", "publish"}
 	for _, s := range scenarios {
 		actual := evaluateRelease(release, s.scenario)
 		equal := len(actual) == len(s.expected)
@@ -117,30 +185,91 @@ func runWiringChecks(in inputs) []checkResult {
 		check(fmt.Sprintf("job graph: %s", s.name), equal, fmt.Sprintf("actual=%s", pyMap(actual, jobOrder)))
 	}
 
-	for _, jobKey := range []string{"desktop", "server", "agent", "publish"} {
+	for _, jobKey := range []string{"desktop", "server", "agent", "mobile", "publish"} {
 		jobIf := strings.ReplaceAll(str(asMap(jobsOf(release)[jobKey])["if"]), " ", "")
 		check(fmt.Sprintf("%s continues past a skipped reused CI without hiding failures", jobKey),
 			jobIf == "${{!failure()&&!cancelled()}}",
 			fmt.Sprintf("if=%q", str(asMap(jobsOf(release)[jobKey])["if"])))
 	}
 
-	qualitySteps := asList(asMap(jobsOf(ci)["quality"])["steps"])
+	qualitySource := asMap(jobsOf(ci)["quality-source"])
+	qualitySourceResolve := findStep(qualitySource, "Resolve reusable quality evidence")
+	qualitySourceRun := stepRun(qualitySourceResolve)
+	qualitySourceResolverCalls := 0
+	for _, rawStep := range asList(qualitySource["steps"]) {
+		qualitySourceResolverCalls += strings.Count(stepRun(asMap(rawStep)), "bash .github/scripts/resolve-ci-reuse.sh")
+	}
+	qualitySourceResolverGate := regexp.MustCompile(`(?s)if \[ "\$GITHUB_REF_TYPE" != "tag" \]; then\s+echo "reused=false" >> "\$GITHUB_OUTPUT"\s+exit 0\s+fi\s+bash \.github/scripts/resolve-ci-reuse\.sh >> "\$GITHUB_OUTPUT"`)
+	check("quality-source calls the resolver only for tags and defaults non-tag reuse to false",
+		qualitySourceResolverCalls == 1 && qualitySourceResolverGate.MatchString(qualitySourceRun),
+		fmt.Sprintf("calls=%d run=%q", qualitySourceResolverCalls, qualitySourceRun))
+	check("quality-source locks reusable quality evidence to master",
+		str(asMap(qualitySourceResolve["env"])["CI_REUSE_EXPECTED_REF"]) == "master",
+		fmt.Sprintf("env=%v", sortedKeys(asMap(qualitySourceResolve["env"]))))
+
+	qualityJob := asMap(jobsOf(ci)["quality"])
+	check("quality runs only when reusable master quality evidence is absent",
+		strings.Join(jobNeeds(qualityJob), ",") == "version,quality-source" && normalizedStepIf(qualityJob) == "needs.quality-source.outputs.reused!='true'",
+		fmt.Sprintf("needs=%v if=%q", jobNeeds(qualityJob), str(qualityJob["if"])))
+	postgresJob := asMap(jobsOf(ci)["postgres"])
+	check("postgres runs only when reusable master quality evidence is absent",
+		strings.Join(jobNeeds(postgresJob), ",") == "quality-source" && normalizedStepIf(postgresJob) == "needs.quality-source.outputs.reused!='true'",
+		fmt.Sprintf("needs=%v if=%q", jobNeeds(postgresJob), str(postgresJob["if"])))
+	for _, jobKey := range []string{"native", "mobile"} {
+		job := asMap(jobsOf(ci)[jobKey])
+		check(fmt.Sprintf("%s depends only on frontend and version", jobKey),
+			strings.Join(jobNeeds(job), ",") == "frontend,version",
+			fmt.Sprintf("needs=%v", jobNeeds(job)))
+	}
+	iosDistJob := asMap(jobsOf(ci)["ios-dist"])
+	check("ios-dist keeps the reused-quality dependency graph",
+		strings.Join(jobNeeds(iosDistJob), ",") == "quality-source,quality,frontend,version",
+		fmt.Sprintf("needs=%v", jobNeeds(iosDistJob)))
+	check("ios-dist continues past skipped quality but failure and cancellation still gate it",
+		normalizedStepIf(iosDistJob) == "${{!failure()&&!cancelled()&&github.event_name=='push'&&vars.NEXTERM_IOS_SIGNING=='true'}}",
+		fmt.Sprintf("if=%q", str(iosDistJob["if"])))
+
+	var reproProducerJobs []string
+	var reproProducerRuns []string
+	var frontendDistUploadJobs []string
+	frontendDistUpload := map[string]interface{}{}
+	for _, jobKey := range sortedKeys(jobsOf(ci)) {
+		job := asMap(jobsOf(ci)[jobKey])
+		for _, rawStep := range asList(job["steps"]) {
+			step := asMap(rawStep)
+			if strings.Contains(stepRun(step), "build.mjs frontend --repro-check") {
+				reproProducerJobs = append(reproProducerJobs, jobKey)
+				reproProducerRuns = append(reproProducerRuns, stepRun(step))
+			}
+			with := asMap(step["with"])
+			if strings.HasPrefix(str(step["uses"]), "actions/upload-artifact") && str(with["name"]) == "frontend-dist" {
+				frontendDistUploadJobs = append(frontendDistUploadJobs, jobKey)
+				frontendDistUpload = step
+			}
+		}
+	}
+	check("frontend job is the only build.mjs frontend --repro-check producer",
+		len(reproProducerJobs) == 1 && reproProducerJobs[0] == "frontend" && strings.TrimSpace(reproProducerRuns[0]) == "node scripts/build.mjs frontend --repro-check",
+		fmt.Sprintf("jobs=%v", reproProducerJobs))
+	frontendDistWith := asMap(frontendDistUpload["with"])
+	frontendDistPath := str(frontendDistWith["path"])
+	check("frontend job is the only frontend-dist uploader and includes dist plus its manifest",
+		len(frontendDistUploadJobs) == 1 && frontendDistUploadJobs[0] == "frontend" &&
+			strings.Contains(frontendDistPath, "dist/") && strings.Contains(frontendDistPath, "target/dist-manifest.json") &&
+			str(frontendDistWith["if-no-files-found"]) == "error",
+		fmt.Sprintf("jobs=%v path=%q", frontendDistUploadJobs, frontendDistPath))
+
+	qualitySteps := asList(qualityJob["steps"])
 	var typecheckOffenders []string
-	var reproSteps []map[string]interface{}
-	var goTestSteps []map[string]interface{}
 	var productionSuiteSteps []string
 	var harnessTestSteps []string
+	var qualityRuns []string
 	for _, rawStep := range qualitySteps {
 		step := asMap(rawStep)
 		run := stepRun(step)
+		qualityRuns = append(qualityRuns, run)
 		if strings.Contains(run, "pnpm typecheck") {
 			typecheckOffenders = append(typecheckOffenders, stepName(step))
-		}
-		if strings.Contains(run, "build.mjs frontend --repro-check") {
-			reproSteps = append(reproSteps, step)
-		}
-		if strings.HasPrefix(strings.TrimSpace(run), "go test ") && !strings.Contains(run, "-tags") {
-			goTestSteps = append(goTestSteps, step)
 		}
 		if strings.Contains(run, "-tags production") {
 			productionSuiteSteps = append(productionSuiteSteps, stepName(step))
@@ -149,19 +278,31 @@ func runWiringChecks(in inputs) []checkResult {
 			harnessTestSteps = append(harnessTestSteps, stepName(step))
 		}
 	}
+	qualityRun := strings.Join(qualityRuns, "\n")
 	check("quality has no standalone pnpm typecheck step", len(typecheckOffenders) == 0,
 		fmt.Sprintf("offenders=%v", typecheckOffenders))
-	check("quality runs the reproducible frontend build that carries tsc", len(reproSteps) == 1,
-		fmt.Sprintf("count=%d", len(reproSteps)))
-	goSuiteOK := len(goTestSteps) == 1 &&
-		!strings.Contains(stepRun(goTestSteps[0]), "-race") &&
-		strings.Contains(stepRun(goTestSteps[0]), "./...")
-	var goTestNames []string
-	for _, step := range goTestSteps {
-		goTestNames = append(goTestNames, stepName(step))
-	}
-	check("quality runs the Go suite once without -race", goSuiteOK,
-		fmt.Sprintf("steps=%v", goTestNames))
+	check("quality does not run the moved reproducible frontend build",
+		!strings.Contains(qualityRun, "build.mjs frontend --repro-check"), "")
+	goTestInvocations := len(regexp.MustCompile(`\bgo\s+test\b`).FindAllString(qualityRun, -1))
+	exactGoTests := strings.Count(qualityRun, "go test -mod=readonly ./...")
+	check("quality runs the Go suite once without -race",
+		goTestInvocations == 1 && exactGoTests == 1 && !strings.Contains(qualityRun, "-race"),
+		fmt.Sprintf("invocations=%d exact=%d", goTestInvocations, exactGoTests))
+	parallelRun := stepRun(findStep(qualityJob, "Go tests and frontend lint/tests"))
+	check("quality runs Go and pnpm lint && pnpm test as background branches",
+		strings.Contains(parallelRun, `go test -mod=readonly ./... >"$go_log" 2>&1 &`) &&
+			strings.Contains(parallelRun, `(pnpm lint && pnpm test) >"$frontend_log" 2>&1 &`) &&
+			strings.Contains(parallelRun, "go_pid=$!") && strings.Contains(parallelRun, "frontend_pid=$!"),
+		fmt.Sprintf("run=%q", parallelRun))
+	check("quality waits for both background PIDs",
+		strings.Contains(parallelRun, `wait "$go_pid" || go_status=$?`) &&
+			strings.Contains(parallelRun, `wait "$frontend_pid" || frontend_status=$?`),
+		fmt.Sprintf("run=%q", parallelRun))
+	check("quality fails when either background branch exits nonzero",
+		strings.Contains(parallelRun, "go_status=0") && strings.Contains(parallelRun, "frontend_status=0") &&
+			strings.Contains(parallelRun, `if [ "$go_status" -ne 0 ] || [ "$frontend_status" -ne 0 ]; then`) &&
+			strings.Contains(parallelRun, "exit 1"),
+		fmt.Sprintf("run=%q", parallelRun))
 	check("quality runs no production-tagged Go suite", len(productionSuiteSteps) == 0,
 		fmt.Sprintf("steps=%v", productionSuiteSteps))
 	check("quality runs no build harness unit tests", len(harnessTestSteps) == 0,
@@ -219,6 +360,13 @@ func runWiringChecks(in inputs) []checkResult {
 		}
 	}
 	check("publish collects the agent packaging job", publishNeedsAgent, fmt.Sprintf("needs=%v", publishNeeds))
+	publishNeedsMobile := false
+	for _, need := range publishNeeds {
+		if need == "mobile" {
+			publishNeedsMobile = true
+		}
+	}
+	check("publish collects the mobile packaging job", publishNeedsMobile, fmt.Sprintf("needs=%v", publishNeeds))
 
 	publishStep := findStep(asMap(jobsOf(release)["publish"]), "Create or update the draft release")
 	publishRun := stepRun(publishStep)
@@ -236,6 +384,8 @@ func runWiringChecks(in inputs) []checkResult {
 		"NexTerm_${version}_arm64-setup.exe",
 		"NexTerm_${version}_aarch64.dmg",
 		"NexTerm_${version}_x86_64.dmg",
+		"NexTerm_${version}_android.apk",
+		"NexTerm_${version}_ios.ipa",
 		"NexTerm-desktop_${version}_linux_${arch}.deb",
 		"NexTerm-server_${version}_linux_${arch}.tar.gz",
 		"NexTerm-agent_${version}_linux_${arch}.tar.gz",
@@ -248,9 +398,10 @@ func runWiringChecks(in inputs) []checkResult {
 			drifted = append(drifted, template)
 		}
 	}
-	check("release-upload expects the same 13 packages as the evidence gate", len(drifted) == 0,
+	check("release-upload expects the same 15 packages as the evidence gate", len(drifted) == 0,
 		fmt.Sprintf("drifted=%v", drifted))
 	check("release-upload expects SHA256SUMS", strings.Contains(in.uploadText, "SHA256SUMS"), "")
+	check("release-evidence writes SHA256SUMS for the 16-asset release", strings.Contains(in.evidenceText, "SHA256SUMS"), "")
 	for _, envName := range []string{"GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"} {
 		check(fmt.Sprintf("release-upload.mjs reads %s", envName), strings.Contains(in.uploadText, envName), "")
 	}
@@ -258,7 +409,8 @@ func runWiringChecks(in inputs) []checkResult {
 		!strings.Contains(in.uploadText, "releases/tags/") && strings.Contains(in.uploadText, "releases?per_page="),
 		"drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
 
-	desktopSteps := asList(asMap(jobsOf(release)["desktop"])["steps"])
+	desktopJob := asMap(jobsOf(release)["desktop"])
+	desktopSteps := asList(desktopJob["steps"])
 	cacheIndex := -1
 	setupGoIndex := -1
 	for i, rawStep := range desktopSteps {
@@ -274,14 +426,48 @@ func runWiringChecks(in inputs) []checkResult {
 		cacheIndex >= 0 && setupGoIndex >= 0 && cacheIndex < setupGoIndex,
 		fmt.Sprintf("cache_index=%d setup_go_index=%d", cacheIndex, setupGoIndex))
 	setupGoCondition := ""
+	setupGoCacheDisabled := false
 	if setupGoIndex >= 0 {
-		setupGoCondition = str(asMap(desktopSteps[setupGoIndex])["if"])
+		setupGoStep := asMap(desktopSteps[setupGoIndex])
+		setupGoCondition = str(setupGoStep["if"])
+		cacheValue, isBool := asMap(setupGoStep["with"])["cache"].(bool)
+		setupGoCacheDisabled = isBool && !cacheValue
 	}
 	check("desktop setup-go is never skipped by the wails cache hit",
-		!strings.Contains(setupGoCondition, "wails-cache"),
+		setupGoCondition == "",
 		fmt.Sprintf("if=%q", setupGoCondition))
+	check("desktop setup-go disables the actions module cache", setupGoCacheDisabled, "")
+	wailsCacheKey := "wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8"
+	nsisCacheKey := "nsis-3.12-${{ runner.os }}-${{ runner.arch }}"
+	check("release desktop uses exact Windows Wails and NSIS cache entries",
+		cacheStepMatches(findStepByID(desktopJob, "wails-cache"), "wails-cache", "matrix.os=='windows'", "~/go/bin", wailsCacheKey) &&
+			cacheStepMatches(findStepByID(desktopJob, "nsis-cache"), "nsis-cache", "matrix.os=='windows'", "C:/Program Files (x86)/NSIS", nsisCacheKey),
+		"")
+	releaseWailsInstall := findStep(desktopJob, "Install the pinned Wails CLI")
+	releaseNSISInstall := findStep(desktopJob, "Install NSIS")
+	check("release desktop installs Wails and NSIS only on cache misses and always verifies them",
+		normalizedStepIf(releaseWailsInstall) == "matrix.os=='windows'" && normalizedStepIf(releaseNSISInstall) == "matrix.os=='windows'" &&
+			cacheMissInstallAndAlwaysVerify(stepRun(releaseWailsInstall), "wails-cache", "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27", "wails3 version") &&
+			cacheMissInstallAndAlwaysVerify(stepRun(releaseNSISInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
+		"")
 
 	nativeJob := asMap(jobsOf(ci)["native"])
+	nativeWarmCondition := "github.ref=='refs/heads/master'&&matrix.os=='windows'&&matrix.kind=='desktop'"
+	nativeWailsCache := findStepByID(nativeJob, "wails-cache")
+	nativeNSISCache := findStepByID(nativeJob, "nsis-cache")
+	nativeToolInstall := findStep(nativeJob, "Install and verify the Windows release tools")
+	check("native warm caches and tool setup pin master, Windows and desktop",
+		normalizedStepIf(nativeWailsCache) == nativeWarmCondition && normalizedStepIf(nativeNSISCache) == nativeWarmCondition &&
+			normalizedStepIf(nativeToolInstall) == nativeWarmCondition,
+		"")
+	check("native warm caches use exact Wails and NSIS keys",
+		cacheStepMatches(nativeWailsCache, "wails-cache", nativeWarmCondition, "~/go/bin", wailsCacheKey) &&
+			cacheStepMatches(nativeNSISCache, "nsis-cache", nativeWarmCondition, "C:/Program Files (x86)/NSIS", nsisCacheKey),
+		"")
+	check("native warm caches install only on misses and always verify Wails and NSIS",
+		cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "wails-cache", "go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27", "wails3 version") &&
+			cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
+		"")
 	nativeSteps := asList(nativeJob["steps"])
 	uploadStep := findStep(nativeJob, "Upload native runtime")
 	var uploadPaths []string

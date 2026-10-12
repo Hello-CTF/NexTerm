@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -49,9 +50,59 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  quality-source:
+    name: Resolve reusable master quality evidence
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      reused: ${{ steps.resolve.outputs.reused }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.ref_type == 'tag'
+      - name: Resolve reusable quality evidence
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_REUSE_EXPECTED_REF: master
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
+
+  frontend:
+    name: Reproducible frontend
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Reproducible real frontend
+        run: node scripts/build.mjs frontend --repro-check
+      - name: Upload the verified frontend dist and manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: |
+            dist/
+            target/dist-manifest.json
+          if-no-files-found: error
+
   quality:
     name: Go/Wails quality gates
-    needs: version
+    needs: [version, quality-source]
+    if: needs.quality-source.outputs.reused != 'true'
     runs-on: ubuntu-latest
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -98,16 +149,29 @@ jobs:
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go vet
         run: go vet -mod=readonly ./...
-      - name: Go tests
-        run: go test -mod=readonly ./...
-      - name: Frontend lint and tests
+      - name: Go tests and frontend lint/tests
+        shell: bash
         run: |
-          pnpm lint
-          pnpm test
+          go_log="$RUNNER_TEMP/go-tests.log"
+          frontend_log="$RUNNER_TEMP/frontend-lint-tests.log"
+          go test -mod=readonly ./... >"$go_log" 2>&1 &
+          go_pid=$!
+          (pnpm lint && pnpm test) >"$frontend_log" 2>&1 &
+          frontend_pid=$!
+          go_status=0
+          frontend_status=0
+          wait "$go_pid" || go_status=$?
+          wait "$frontend_pid" || frontend_status=$?
+          printf '\nGo tests output:\n'
+          cat "$go_log"
+          printf '\nFrontend lint/tests output:\n'
+          cat "$frontend_log"
+          if [ "$go_status" -ne 0 ] || [ "$frontend_status" -ne 0 ]; then
+            printf 'Go tests exit code: %s\nFrontend lint/tests exit code: %s\n' "$go_status" "$frontend_status" >&2
+            exit 1
+          fi
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
-      - name: Reproducible real frontend
-        run: node scripts/build.mjs frontend --repro-check
       - name: LazyCat manifest injects
         run: go run ./scripts/verify-manifest-injects
       - name: Upsert conflict column check
@@ -116,17 +180,11 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "1"
         run: go run ./scripts/check-reuse-wiring
-      - name: Upload the verified frontend dist and manifest
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-dist
-          path: |
-            dist/
-            target/dist-manifest.json
-          if-no-files-found: error
 
   postgres:
     name: Real PostgreSQL 16 gated tests
+    needs: quality-source
+    if: needs.quality-source.outputs.reused != 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -167,7 +225,7 @@ jobs:
 
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
-    needs: [quality, version]
+    needs: [frontend, version]
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     strategy:
@@ -232,10 +290,38 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - name: Restore the pinned Wails CLI
+        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
+        id: wails-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+      - name: Restore the pinned NSIS
+        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
+        id: nsis-cache
+        uses: actions/cache@v6
+        with:
+          path: C:/Program Files (x86)/NSIS
+          key: nsis-3.12-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
+      - name: Install and verify the Windows release tools
+        if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
+        shell: bash
+        run: |
+          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
+          fi
+          if [ "${{ steps.nsis-cache.outputs.cache-hit }}" != "true" ]; then
+            choco install nsis --version=3.12 --yes --no-progress
+          fi
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          wails3 version
+          "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
       - name: Download the verified frontend dist
         if: matrix.kind == 'desktop'
         uses: actions/download-artifact@v8
@@ -267,7 +353,7 @@ jobs:
 
   mobile:
     name: ${{ matrix.platform }} mobile
-    needs: [quality, version]
+    needs: [frontend, version]
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     strategy:
@@ -355,8 +441,8 @@ jobs:
 
   ios-dist:
     name: iOS TestFlight distribution
-    needs: [quality, version]
-    if: github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true'
+    needs: [quality-source, quality, frontend, version]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}
     runs-on: macos-15
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
