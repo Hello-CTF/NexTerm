@@ -21,7 +21,7 @@ import { sessionApi, terminalApi, fsApi, assetApi, syncApi } from "../../ipc/com
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, reconnectSessionAndWait, useUi, type Workspace } from "../../app/store";
+import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, reconnectSessionAndWait, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
@@ -629,6 +629,7 @@ export function TerminalPane({
         st.updateTab(storeTabId, { tabId: undefined });
         setKernelTabId(null);
         setEpoch((n) => n + 1);
+        pushToast("info", "原终端在服务端已不存在，已打开新终端");
         return;
       }
       st.updateTab(storeTabId, { dead: true });
@@ -724,6 +725,7 @@ export function TerminalPane({
       pushToast("error", "会话已在服务端删除，请改用「重新连接这台主机」新建连接");
       return;
     }
+    if (isSessionReconnectPending(sessionId)) return;
     try {
       const fresh = await reconnectSessionAndWait(session);
       if (!fresh) {
