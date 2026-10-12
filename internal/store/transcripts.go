@@ -431,6 +431,9 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 			return err
 		}
 		chunk := query.Use(tx).TranscriptChunkRow
+		if _, err := chunk.WithContext(ctx).Where(chunk.TranscriptID.Eq(row.ID)).Delete(); err != nil {
+			return err
+		}
 		for _, item := range chunks {
 			item.TranscriptID = row.ID
 			item.OwnerID = ipc.OwnerID(ctx)

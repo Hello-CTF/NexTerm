@@ -251,3 +251,24 @@ func TestTranscriptReplaceContentRejectsCompleteRecord(t *testing.T) {
 		t.Fatalf("complete record chunks changed after rejected replace: %+v, err=%v", chunks, err)
 	}
 }
+
+func TestTranscriptInsertSyncedIdempotentChunks(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	ended := ids.NowMS() - 1000
+	row := TranscriptRow{
+		ID: ids.New(), SessionID: ids.New(), AssetID: "asset-9", AssetName: "db-01", AssetKind: "ssh",
+		StartedAt: ended - 500, EndedAt: &ended, Bytes: 11, Chunks: 1,
+	}
+	chunks := []TranscriptChunkRow{{Seq: 0, TabID: "tab-1", TS: ended - 400, Data: []byte("hello world")}}
+	if err := db.TranscriptInsertSynced(ctx, row, chunks); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptInsertSynced(ctx, row, chunks); err != nil {
+		t.Fatalf("repeat insert must be idempotent: %v", err)
+	}
+	got, err := db.TranscriptChunks(ctx, row.ID, 0, 1<<20)
+	if err != nil || len(got) != 1 || string(got[0].Data) != "hello world" {
+		t.Fatalf("chunks after repeat insert: %+v, err=%v", got, err)
+	}
+}
