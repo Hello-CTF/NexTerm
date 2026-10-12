@@ -1401,6 +1401,14 @@ async function requestCloseTabWithAction(
       );
       if (!result) return;
       action = result.key === "kill" ? "kill" : "detach";
+      if (action === "kill") {
+        const { ask } = await import("../ui/dialogs");
+        const ok = await ask(`直接关闭「${target.title}」？\n\n进程会被终止，无法恢复。`, {
+          title: `关闭「${target.title}」`,
+          kind: "warning",
+        });
+        if (!ok) return;
+      }
       if (result.remember) setTerminalCloseAction(action);
     }
   }
@@ -1440,6 +1448,14 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
         { title: "关闭终端标签", choices: CLOSE_CHOICE_OPTIONS },
       );
       decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
+      if (decided === "kill") {
+        const { ask } = await import("../ui/dialogs");
+        const ok = await ask(`直接关闭 ${pending.length} 个终端？\n\n进程会被终止，无法恢复。`, {
+          title: "关闭终端标签",
+          kind: "warning",
+        });
+        if (!ok) decided = null;
+      }
     }
   }
   for (const id of ids) {
