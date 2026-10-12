@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
@@ -78,6 +79,40 @@ func TestSetUserDisabledRevokesSessions(t *testing.T) {
 
 	if err := a.SetUserDisabled(ctx, "missing", true); err == nil || ipc.NormalizeError(err).Code != ipc.CodeNotFound {
 		t.Fatalf("disable missing user: %v", err)
+	}
+}
+
+func TestSetUserDisabledKeepsSyncState(t *testing.T) {
+	ctx := context.Background()
+	a, _ := testAccounts(t)
+	user, err := a.CreateUser(ctx, "carol", "", "password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, testEnvelopes(t)); err != nil {
+		t.Fatal(err)
+	}
+	seedSyncRowsForTest(t, a, user.ID)
+	if err := a.SetUserDisabled(ctx, user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []struct {
+		name   string
+		model  any
+		column string
+	}{
+		{"user_sync_object", &store.UserSyncObject{}, "user_id"},
+		{"user_sync_head", &store.UserSyncHead{}, "user_id"},
+		{"sync_state", &store.SyncState{}, "user_id"},
+		{"credential_tombstone", &store.CredentialTombstone{}, "owner_id"},
+		{"sync_tombstone", &store.SyncTombstone{}, "owner_id"},
+	} {
+		if n := countUserRows(t, a, table.model, table.column, user.ID); n != 1 {
+			t.Fatalf("%s rows after disable: %d", table.name, n)
+		}
+	}
+	if _, err := a.GetUserDEKEnvelopes(ctx, user.ID); err != nil {
+		t.Fatalf("disabled user envelopes removed: %v", err)
 	}
 }
 

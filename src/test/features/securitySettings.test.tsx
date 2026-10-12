@@ -364,7 +364,7 @@ describe("KnownHostsCard", () => {
   });
 });
 
-describe("SyncCard（Web 同步台）", () => {
+describe("SyncCard（Web 账号同步）", () => {
   let mounted: MountedView | undefined;
 
   afterEach(() => {
@@ -372,7 +372,7 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = undefined;
   });
 
-  it("未登录时只有账号卡一个登录入口,同步台不重复渲染", async () => {
+  it("未登录时只有账号卡一个登录入口,同步控制台不重复渲染", async () => {
     seedLoggedOut();
     mounted = mountSyncCard();
     await flush();

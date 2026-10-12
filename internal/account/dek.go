@@ -223,6 +223,21 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 		if _, err := query.Use(tx).UserTOTPRecoveryCode.WithContext(ctx).Where(query.Use(tx).UserTOTPRecoveryCode.UserID.Eq(userID)).Delete(); err != nil {
 			return dbError(err)
 		}
+		if _, err := query.Use(tx).UserSyncObject.WithContext(ctx).Where(query.Use(tx).UserSyncObject.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).UserSyncHead.WithContext(ctx).Where(query.Use(tx).UserSyncHead.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).SyncState.WithContext(ctx).Where(query.Use(tx).SyncState.UserID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).CredentialTombstone.WithContext(ctx).Where(query.Use(tx).CredentialTombstone.OwnerID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
+		if _, err := query.Use(tx).SyncTombstone.WithContext(ctx).Where(query.Use(tx).SyncTombstone.OwnerID.Eq(userID)).Delete(); err != nil {
+			return dbError(err)
+		}
 		userSession := query.Use(tx).UserSession
 		if _, err := userSession.WithContext(ctx).
 			Where(userSession.UserID.Eq(userID), userSession.RevokedAt.IsNull()).

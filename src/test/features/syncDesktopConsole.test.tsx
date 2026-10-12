@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 桌面端同步台: 登录 (link 已建立) 后展示同步状态/同步内容开关/立即同步;
-// 未登录只有登录卡, 不出现同步台也不读 opt-in。
+// 桌面端账号同步控制台: 登录 (link 已建立) 后展示同步状态/同步内容开关/立即同步;
+// 未登录只有登录卡, 不出现同步控制台也不读 opt-in。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -76,21 +76,21 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面端同步台", () => {
-  it("未登录只渲染登录卡: 无同步台, 不读 opt-in", async () => {
+describe("桌面端账号同步控制台", () => {
+  it("未登录只渲染登录卡: 无同步控制台, 不读 opt-in", async () => {
     mocks.linkGet.mockResolvedValue({ url: "", username: "", insecure: false, hasPassword: false, verifiedAt: 0, lastError: "" });
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => document.body.textContent?.includes("账号同步") ?? false);
 
-    expect(document.body.textContent).not.toContain("同步台");
+    expect(document.body.textContent).not.toContain("立即同步");
     expect(mocks.kindOptInGet).not.toHaveBeenCalled();
   });
 
-  it("登录后展示同步台: 状态/开关摘要与勾选来自真实 IPC", async () => {
+  it("登录后展示同步控制台: 标题/状态行/引导句与网页版同一份, 开关摘要与勾选来自真实 IPC", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("自动同步");
@@ -99,6 +99,13 @@ describe("桌面端同步台", () => {
     expect(text).toContain("账号验证于");
     expect(text).toContain("已知主机 已开启");
     expect(text).toContain("AI 模型档案 已关闭");
+
+    const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
+    expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
+    expect(consoleCard?.textContent).toContain("登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。");
+    expect(consoleCard?.textContent).toContain("「立即同步」立刻触发一轮，不等下一分钟。");
+    // 桌面数据通道拿不到云端对象计数: 如实不显示该行
+    expect(consoleCard?.textContent).not.toContain("个对象");
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
@@ -114,7 +121,7 @@ describe("桌面端同步台", () => {
     seedLoggedIn();
     mocks.kindOptInSet.mockResolvedValue({ ...OPT_IN, knownHost: false });
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
@@ -128,7 +135,7 @@ describe("桌面端同步台", () => {
   it("「立即同步」触发 sync_wake 并提示", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement);
     await flushUntil(() => mocks.wake.mock.calls.length === 1);

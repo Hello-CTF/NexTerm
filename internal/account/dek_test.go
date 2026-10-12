@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
@@ -288,6 +289,71 @@ func TestAdminResetUser(t *testing.T) {
 	}
 	if _, err := a.ValidateSession(ctx, restoredToken); err != nil {
 		t.Fatalf("validate session after restore: %v", err)
+	}
+}
+
+func seedSyncRowsForTest(t *testing.T, a *Accounts, userID string) {
+	t.Helper()
+	rows := []any{
+		&store.UserSyncObject{UserID: userID, ID: "obj-1", Seq: 1, Blob: []byte("blob"), BlobHash: []byte("obj-hash")},
+		&store.UserSyncHead{UserID: userID, HeadHash: "head-1"},
+		&store.SyncState{UserID: userID, ObjectID: "obj-1", PayloadHash: []byte("payload-hash"), BlobHash: []byte("obj-hash")},
+		&store.CredentialTombstone{ID: "cred-1", DeletedAt: 1, OwnerID: userID},
+		&store.SyncTombstone{ID: "obj-2", Kind: "asset", DeletedAt: 1, OwnerID: userID},
+		&store.AuditRow{TS: 1, Source: "test", Kind: "admin.reset", PayloadJSON: "{}", OwnerID: userID},
+	}
+	for _, row := range rows {
+		if err := a.db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func countUserRows(t *testing.T, a *Accounts, model any, column, userID string) int64 {
+	t.Helper()
+	var n int64
+	if err := a.db.Model(model).Where(column+" = ?", userID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAdminResetUserPurgesSyncState(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "tara", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
+		t.Fatal(err)
+	}
+	seedSyncRowsForTest(t, a, user.ID)
+	if err := a.AdminResetUser(ctx, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []struct {
+		name   string
+		model  any
+		column string
+	}{
+		{"user_sync_object", &store.UserSyncObject{}, "user_id"},
+		{"user_sync_head", &store.UserSyncHead{}, "user_id"},
+		{"sync_state", &store.SyncState{}, "user_id"},
+		{"credential_tombstone", &store.CredentialTombstone{}, "owner_id"},
+		{"sync_tombstone", &store.SyncTombstone{}, "owner_id"},
+	} {
+		if n := countUserRows(t, a, table.model, table.column, user.ID); n != 0 {
+			t.Fatalf("%s rows remain after admin reset: %d", table.name, n)
+		}
+	}
+	requireCode(t, getEnvErr(a, ctx, user.ID), ipc.CodeNotFound)
+	if n := countUserRows(t, a, &store.AuditRow{}, "owner_id", user.ID); n != 1 {
+		t.Fatalf("audit rows after admin reset: %d", n)
 	}
 }
 

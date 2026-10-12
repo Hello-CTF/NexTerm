@@ -34,6 +34,7 @@ import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
+import { SYNC_AUTO_BADGE, SYNC_CONSOLE_TITLE, SYNC_INTERVAL_LABEL, SYNC_MERGE_GUIDE, SyncOptInSection } from "./syncOptIns";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -499,7 +500,7 @@ function DesktopLinkCard() {
   );
 }
 
-// ---------- 桌面端:同步台 ----------
+// ---------- 桌面端:账号同步 ----------
 
 // DesktopSyncConsole 桌面登录 (link 已建立) 后展示: 同步内容开关 (kindOptInGet/Set)、
 // 同步状态 (账号验证时间/已应用云端序号/最近错误) 与手动触发 (sync_wake 唤醒后台同步循环)。
@@ -511,8 +512,6 @@ function DesktopSyncConsole() {
   const [optInBusy, setOptInBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const optInPanelId = useId();
-  const [optInOpen, setOptInOpen] = useState(false);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -524,13 +523,6 @@ function DesktopSyncConsole() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  const anyOptIn =
-    !!kindOptIn &&
-    (kindOptIn.knownHost || kindOptIn.aiProfile || !!kindOptIn.aiPermission || !!kindOptIn.preferences);
-  useEffect(() => {
-    if (anyOptIn) setOptInOpen(true);
-  }, [anyOptIn]);
 
   const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     setOptInBusy(true);
@@ -563,9 +555,9 @@ function DesktopSyncConsole() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
-        <span className="nx-card-title">同步台</span>
-        <span className="nx-badge nx-badge-green">自动同步</span>
-        <span className="nx-hint">每 60 秒</span>
+        <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
+        <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
+        <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -578,90 +570,12 @@ function DesktopSyncConsole() {
       </div>
 
       <p className="nx-hint mb-3">
-        每轮先拉取并合并云端内容，再推送本机变更；「立即同步」立刻触发一轮，不等下一分钟。
+        {SYNC_MERGE_GUIDE}「立即同步」立刻触发一轮，不等下一分钟。
         {status && status.verifiedAt > 0 && `账号验证于 ${formatTime(status.verifiedAt)}。`}
         {status && status.seq > 0 && `已应用云端第 ${status.seq} 号。`}
       </p>
 
-      {kindOptIn && (
-        <div className="mb-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
-              aria-expanded={optInOpen}
-              aria-controls={optInPanelId}
-              onClick={() => setOptInOpen((v) => !v)}
-            >
-              {optInOpen ? (
-                <IconChevronDown size={12} className="shrink-0" />
-              ) : (
-                <IconChevronRight size={12} className="shrink-0" />
-              )}
-              同步内容开关
-            </button>
-            <span className="nx-hint text-[11px]">
-              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"} · AI 权限 {kindOptIn.aiPermission ? "已开启" : "已关闭"} · 外观快捷键 {kindOptIn.preferences ? "已开启" : "已关闭"}
-            </span>
-          </div>
-          {optInOpen && (
-            <div id={optInPanelId} className="mt-2 flex flex-col gap-2">
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={kindOptIn.knownHost}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步已知主机（主机信任）
-                  <span className="nx-hint block">默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={kindOptIn.aiProfile}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步 AI 模型档案
-                  <span className="nx-hint block">默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={!!kindOptIn.aiPermission}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ aiPermission: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步 AI 权限与拦截规则
-                  <span className="nx-hint block">默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={!!kindOptIn.preferences}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ preferences: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步外观与快捷键
-                  <span className="nx-hint block">默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。</span>
-                </span>
-              </label>
-            </div>
-          )}
-        </div>
-      )}
+      {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
 
       {status?.lastError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
@@ -680,14 +594,14 @@ function DesktopSyncConsole() {
       <div className="nx-alert nx-alert-info flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确。本机与云端的逐条对比详情目前在浏览器模式的账号同步台提供。
+          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确。本机与云端的逐条对比详情在浏览器模式的「账号同步」卡提供。
         </div>
       </div>
     </section>
   );
 }
 
-// ---------- Web 端:账号同步台 ----------
+// ---------- Web 端:账号同步 ----------
 
 interface LocalEntity {
   id: string;
@@ -1285,7 +1199,7 @@ function WebSyncConsole() {
   const user = useAuth((s) => s.user);
   const dek = useAuth((s) => s.dek);
 
-  // 未登录时整卡不渲染:设置页只有 AuthCard「账号」一个登录入口,不在同步台重复放登录按钮。
+  // 未登录时整卡不渲染:设置页只有 AuthCard「账号」一个登录入口,不在同步卡重复放登录按钮。
   if (!user) return null;
   if (!dek) return <UnlockDEKCard />;
   return <CompareConsole />;
@@ -1367,13 +1281,7 @@ function CompareConsole() {
   const loadSeqRef = useRef(0);
   const kindOptInRef = useRef<SyncKindOptIn | null>(null);
 
-  const optInPanelId = useId();
   const detailsPanelId = useId();
-  const [optInOpen, setOptInOpen] = useState(false);
-  const anyOptIn = !!kindOptIn && (kindOptIn.knownHost || kindOptIn.aiProfile || !!kindOptIn.aiPermission || !!kindOptIn.preferences);
-  useEffect(() => {
-    if (anyOptIn) setOptInOpen(true);
-  }, [anyOptIn]);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const load = useCallback((view: SyncKindOptIn, epoch: number) => {
@@ -1483,97 +1391,19 @@ function CompareConsole() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
-        <span className="nx-card-title">账号同步</span>
-        <span className="nx-badge nx-badge-green">自动同步</span>
+        <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
+        <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
         <span className="nx-hint">云端 {remote?.length ?? "…"} 个对象</span>
         <div className="nx-spacer" />
-        <span className="nx-hint">每 60 秒</span>
+        <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
       </div>
 
       <p className="nx-hint mb-3">
-        登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。
+        {SYNC_MERGE_GUIDE}
         {refreshBusy ? "正在读取本机与云端数据…" : `当前待应用 ${applySet.length} 项，待推送 ${pushCount} 项。`}
       </p>
 
-      {kindOptIn && (
-        <div className="mb-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
-              aria-expanded={optInOpen}
-              aria-controls={optInPanelId}
-              onClick={() => setOptInOpen((v) => !v)}
-            >
-              {optInOpen ? (
-                <IconChevronDown size={12} className="shrink-0" />
-              ) : (
-                <IconChevronRight size={12} className="shrink-0" />
-              )}
-              同步内容开关
-            </button>
-            <span className="nx-hint text-[11px]">
-              已知主机 {kindOptIn.knownHost ? "已开启" : "已关闭"} · AI 模型档案 {kindOptIn.aiProfile ? "已开启" : "已关闭"} · AI 权限 {kindOptIn.aiPermission ? "已开启" : "已关闭"} · 外观快捷键 {kindOptIn.preferences ? "已开启" : "已关闭"}
-            </span>
-          </div>
-          {optInOpen && (
-            <div id={optInPanelId} className="mt-2 flex flex-col gap-2">
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={kindOptIn.knownHost}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步已知主机（主机信任）
-                  <span className="nx-hint block">默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={kindOptIn.aiProfile}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步 AI 模型档案
-                  <span className="nx-hint block">默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={!!kindOptIn.aiPermission}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ aiPermission: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步 AI 权限与拦截规则
-                  <span className="nx-hint block">默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={!!kindOptIn.preferences}
-                  disabled={optInBusy}
-                  onChange={(e) => void updateKindOptIn({ preferences: e.target.checked })}
-                />
-                <span className="text-[12px] text-neutral-300">
-                  同步外观与快捷键
-                  <span className="nx-hint block">默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。</span>
-                </span>
-              </label>
-            </div>
-          )}
-        </div>
-      )}
+      {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
 
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">

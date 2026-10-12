@@ -93,14 +93,14 @@ afterEach(() => {
 });
 
 describe("桌面端登录 · 直连成功", () => {
-  it("linkSet 返回 connected: 不进分步, 直接完成登录并展示同步台", async () => {
+  it("linkSet 返回 connected: 不进分步, 直接完成登录并展示同步控制台", async () => {
     seedForm();
     mocks.linkSet.mockImplementation(() => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected" });
     });
     await mountAndLogin();
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
 
     expect(document.body.textContent).not.toContain("两步验证");
     expect(document.body.textContent).not.toContain("设置新密码");
@@ -127,7 +127,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
 
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "123456");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
 
     expect(mocks.mfa).toHaveBeenCalledWith("123456");
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
@@ -146,7 +146,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "000000");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("动态码错误") ?? false);
-    expect(document.body.textContent).not.toContain("同步台");
+    expect(document.body.textContent).not.toContain("立即同步");
 
     // 「返回」回主表单后可重新登录
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "返回") as HTMLButtonElement);
@@ -158,7 +158,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
     await flushUntil(() => document.body.textContent?.includes("两步验证") ?? false);
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "123456");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
   });
 });
 
@@ -219,7 +219,7 @@ describe("桌面端登录 · reset_required 分支", () => {
     );
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
   });
@@ -247,7 +247,7 @@ describe("桌面端登录 · reset_required 分支", () => {
           .disabled,
     );
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("同步台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
   });
 
   it("改密失败内联展示, 停留改密步可重试", async () => {
