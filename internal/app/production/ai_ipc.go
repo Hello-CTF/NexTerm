@@ -265,7 +265,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 }
 
 func resolveMaskedProfileKey(ctx context.Context, database *store.Store, id string) (string, error) {
-	raw, found, err := database.SettingGet(ctx, profiles.SettingKey)
+	raw, found, err := database.SettingGet(ctx, store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))
 	if err != nil {
 		return "", err
 	}
