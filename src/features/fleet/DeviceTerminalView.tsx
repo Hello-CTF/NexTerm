@@ -111,6 +111,7 @@ function describeSessionError(error: unknown): { message: string; canRestart: bo
 // openAccountSyncSettings 跳转「设置 → 账号同步」卡 (与 DevicesView 同一实现,
 // 此处独立副本避免 features 内交叉引用); 桌面降级卡的登录入口。
 function openAccountSyncSettings(attempt = 0): void {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
   if (attempt === 0) {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }
