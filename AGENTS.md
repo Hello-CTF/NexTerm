@@ -20,6 +20,12 @@
 - 不加无关 docstring 与类型注解；不写不可能分支的错误处理（调用方已保证、类型系统已排除的状态不防御）。
 - 小重复优于过早抽象：相似代码第三次出现前保持重复。
 
+## 会话状态与关闭路径
+
+- 状态栏会话口径：`已连接` 按 `sessions` 里 `status === "connected"` 计；其中 `tabs` 为空且 `kind !== "remote"` 的会话另计为「空闲」。`tabs` 由后端实时维护，前端不本地臆测，关闭/附加终端后以 `resyncSessions({ silent: true })` 刷新为准。
+- 每个 `terminalApi.closeTab` 调用点（单个关闭、批量、后台会话结束进程、Docker exec 清理）完成后必须调 `resyncSessions({ silent: true })`；新增调用点遗漏会被 `src/test/features/closeTabResync.test.ts` 的静态守卫拦下。
+- 破坏性的 kill 选择必须经 `ask` warning 确认；`detach`（转后台）可逆，不加确认；用户已记住「直接关闭」偏好时不再确认，设置里可改回。
+
 ## 评审与调试
 
 - 评审只陈述问题与修复：指出 bug 即给修法，不恭维、不扩展范围。
