@@ -43,6 +43,7 @@ import {
 } from "../../ui/icons";
 import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
+import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
 
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
@@ -196,6 +197,13 @@ export function AssetTree() {
     }
     return map;
   }, [visible]);
+
+  // 设备分区锚定在「当前设备/本地终端」(内置 local 资产) 之后、其他资产/分组之前;
+  // 设备不纳入资产搜索, 搜索时不渲染分区。内置资产缺失时退化为渲染在首位。
+  const ungrouped = byGroup.get(null) ?? [];
+  const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
+  const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
+  const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
 
   const onClone = async (a: Asset) => {
     try {
@@ -469,7 +477,22 @@ export function AssetTree() {
           </div>
         ) : (
           <>
-            {(byGroup.get(null) ?? []).map((a) => (
+            {headAssets.map((a) => (
+              <AssetRow
+                key={a.id}
+                asset={a}
+                level={1}
+                hidden={isHidden(a.id)}
+                onDelete={() => void onDelete(a)}
+                onEdit={() => setEditingAsset(a)}
+                onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
+                error={assetError?.id === a.id ? assetError.message : null}
+                onRetry={() => void runDeleteAsset(a)}
+                onDismissError={() => setAssetError(null)}
+              />
+            ))}
+            {!query.trim() && <DeviceTreeSection />}
+            {restAssets.map((a) => (
               <AssetRow
                 key={a.id}
                 asset={a}
