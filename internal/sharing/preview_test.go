@@ -17,12 +17,15 @@ func TestPreviewCreateDefaultsAndTokenHashed(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	sessionID := ids.New()
 
-	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, 0)
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if link.OwnerID != owner.ID || link.SessionID != sessionID {
 		t.Fatalf("link not bound to owner/session: %+v", link)
+	}
+	if link.Permission != PermissionRead {
+		t.Fatalf("default permission = %q, want %q", link.Permission, PermissionRead)
 	}
 	if link.ExpiresAt != fixture.now+defaultLinkTTL.Milliseconds() {
 		t.Fatalf("expiresAt = %d, want default TTL", link.ExpiresAt)
@@ -38,12 +41,57 @@ func TestPreviewCreateDefaultsAndTokenHashed(t *testing.T) {
 	if row.TokenHash == token || row.TokenHash == "" {
 		t.Fatal("raw token must not be stored")
 	}
+	if row.Permission != string(PermissionRead) {
+		t.Fatalf("stored permission = %q, want %q", row.Permission, PermissionRead)
+	}
 
-	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), "", 0); err == nil {
+	writeLink, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeLink.Permission != PermissionReadWrite {
+		t.Fatalf("write permission = %q, want %q", writeLink.Permission, PermissionReadWrite)
+	}
+	row, err = sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(writeLink.ID)).First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Permission != string(PermissionReadWrite) {
+		t.Fatalf("stored permission = %q, want %q", row.Permission, PermissionReadWrite)
+	}
+
+	rows := fixture.auditRows(t, auditKindPreviewCreate)
+	if len(rows) != 2 || rows[0]["permission"] != string(PermissionRead) || rows[1]["permission"] != string(PermissionReadWrite) {
+		t.Fatalf("create audits = %+v", rows)
+	}
+
+	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), "", false, 0); err == nil {
 		t.Fatal("empty session id accepted")
 	}
-	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), 30*time.Second); err == nil {
+	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), false, 30*time.Second); err == nil {
 		t.Fatal("ttl below minimum accepted")
+	}
+}
+
+func TestPreviewCreateAuditFailureRollsBackLink(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+
+	// 让 create 审计写入失败: 审计表被删后插入必败, 链接行必须随同事务回滚,
+	// 不留下无审计的匿名链接。
+	if err := fixture.db.Exec("DROP TABLE audit_log").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, 0); err == nil {
+		t.Fatal("create must fail when the audit write fails")
+	}
+	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
+	count, err := sharePreviewLink.WithContext(context.Background()).Count()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("link row survived audit failure, want transactional rollback (%d rows)", count)
 	}
 }
 
@@ -55,7 +103,7 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 		t.Fatalf("unknown token err = %v, want ErrTokenNotFound", err)
 	}
 
-	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), time.Hour)
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), false, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +114,22 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 	if grant.ShareID != link.ID || grant.SessionID != link.SessionID || grant.ExpiresAt != link.ExpiresAt {
 		t.Fatalf("grant = %+v, link = %+v", grant, link)
 	}
+	if grant.Permission != PermissionRead {
+		t.Fatalf("grant permission = %q, want %q", grant.Permission, PermissionRead)
+	}
+
+	_, writeToken, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeGrant, err := fixture.service.ResolvePreview(context.Background(), writeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeGrant.Permission != PermissionReadWrite {
+		t.Fatalf("write grant permission = %q, want %q", writeGrant.Permission, PermissionReadWrite)
+	}
+
 	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
 	row, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).First()
 	if err != nil {
@@ -98,9 +162,12 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 		reason, _ := row["reason"].(string)
 		outcomes = append(outcomes, outcome+":"+reason)
 	}
-	want := []string{"deny:not_found", "allow:", "deny:expired", "deny:revoked"}
+	want := []string{"deny:not_found", "allow:", "allow:", "deny:expired", "deny:revoked"}
 	if strings.Join(outcomes, ",") != strings.Join(want, ",") {
 		t.Fatalf("access audits = %v, want %v", outcomes, want)
+	}
+	if rows[1]["permission"] != string(PermissionRead) || rows[2]["permission"] != string(PermissionReadWrite) {
+		t.Fatalf("access audit permissions = %q, %q", rows[1]["permission"], rows[2]["permission"])
 	}
 }
 
@@ -111,7 +178,7 @@ func TestPreviewRevokeAuthorization(t *testing.T) {
 	other := fixture.createUser(t, "bob")
 	sessionID := ids.New()
 
-	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, 0)
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +219,7 @@ func TestPreviewListScoping(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	other := fixture.createUser(t, "bob")
 
-	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), 0); err != nil {
+	if _, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, 0); err != nil {
 		t.Fatal(err)
 	}
 	links, err := fixture.service.ListPreviewLinks(context.Background(), fixture.identity(other))
@@ -169,6 +236,9 @@ func TestPreviewListScoping(t *testing.T) {
 	if len(links) != 1 || links[0].OwnerID != owner.ID {
 		t.Fatalf("owner list = %v", links)
 	}
+	if links[0].Permission != PermissionReadWrite {
+		t.Fatalf("listed permission = %q, want %q", links[0].Permission, PermissionReadWrite)
+	}
 	links, err = fixture.service.ListPreviewLinks(context.Background(), fixture.identity(admin))
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +253,7 @@ func TestPreviewRevalidate(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	sessionID := ids.New()
 
-	link, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, time.Hour)
+	link, _, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, true, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +264,9 @@ func TestPreviewRevalidate(t *testing.T) {
 	}
 	if refreshed.ExpiresAt != link.ExpiresAt {
 		t.Fatalf("refreshed grant = %+v", refreshed)
+	}
+	if refreshed.Permission != PermissionReadWrite {
+		t.Fatalf("refreshed permission = %q, want %q", refreshed.Permission, PermissionReadWrite)
 	}
 
 	if _, err := fixture.service.RevalidatePreview(context.Background(), &PreviewGrant{ShareID: link.ID, SessionID: ids.New()}); err == nil {
@@ -213,5 +286,224 @@ func TestPreviewRevalidate(t *testing.T) {
 
 	if _, err := fixture.service.RevalidatePreview(context.Background(), nil); err == nil {
 		t.Fatal("nil grant revalidated")
+	}
+}
+
+func TestPreviewInputRevalidation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+
+	readLink, readToken, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readGrant, err := fixture.service.ResolvePreview(context.Background(), readToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), readGrant); err == nil {
+		t.Fatal("read-only grant must reject input")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	writeLink, writeToken, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeGrant, err := fixture.service.ResolvePreview(context.Background(), writeToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := fixture.service.RevalidatePreviewInput(context.Background(), writeGrant)
+	if err != nil {
+		t.Fatalf("read-write grant must allow input: %v", err)
+	}
+	if refreshed.Permission != PermissionReadWrite || refreshed.ExpiresAt != writeGrant.ExpiresAt {
+		t.Fatalf("refreshed grant = %+v", refreshed)
+	}
+
+	fixture.now = writeGrant.ExpiresAt
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), writeGrant); err == nil {
+		t.Fatal("expired grant must reject input")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	rows := fixture.auditRows(t, auditKindPreviewInput)
+	if len(rows) != 3 {
+		t.Fatalf("input audits = %+v", rows)
+	}
+	if rows[0]["outcome"] != "deny" || rows[0]["reason"] != "read_only" || rows[0]["share_id"] != readLink.ID {
+		t.Fatalf("read-only input audit = %+v", rows[0])
+	}
+	if rows[1]["outcome"] != "allow" || rows[1]["share_id"] != writeLink.ID || rows[1]["permission"] != string(PermissionReadWrite) {
+		t.Fatalf("read-write input audit = %+v", rows[1])
+	}
+	if rows[2]["outcome"] != "deny" || rows[2]["reason"] != "expired" {
+		t.Fatalf("expired input audit = %+v", rows[2])
+	}
+}
+
+func TestPreviewPermissionShrinkStopsInput(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	sessionID := ids.New()
+
+	_, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolvePreview(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err != nil {
+		t.Fatalf("input must flow before shrink: %v", err)
+	}
+
+	// 权限收缩 (read_write -> read) 按当前行即时生效: 输入停止, 输出授权仍在。
+	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
+	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(grant.ShareID)).UpdateColumns(map[string]any{"permission": string(PermissionRead)}); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := fixture.service.RevalidatePreview(context.Background(), grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Permission != PermissionRead {
+		t.Fatalf("refreshed permission = %q, want read", refreshed.Permission)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err == nil {
+		t.Fatal("shrunk grant must reject input")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	rows := fixture.auditRows(t, auditKindPreviewInput)
+	if last := rows[len(rows)-1]; last["outcome"] != "deny" || last["reason"] != "read_only" || last["share_id"] != grant.ShareID {
+		t.Fatalf("input audits = %+v", rows)
+	}
+}
+
+func TestPreviewInputStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolvePreview(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err != nil {
+		t.Fatalf("input must flow before revocation: %v", err)
+	}
+
+	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err == nil {
+		t.Fatal("revoked link must reject input even with a pre-revocation grant")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	rows := fixture.auditRows(t, auditKindPreviewInput)
+	if last := rows[len(rows)-1]; last["outcome"] != "deny" || last["reason"] != "revoked" || last["share_id"] != link.ID {
+		t.Fatalf("input audits = %+v", rows)
+	}
+}
+
+func TestPreviewInputAuditAggregatedBySessionWindow(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	sessionID := ids.New()
+
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolvePreview(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 5 {
+		if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := fixture.auditRows(t, auditKindPreviewInput)
+	if len(rows) != 1 || rows[0]["outcome"] != "allow" {
+		t.Fatalf("input audits within one window = %+v, want a single allow row", rows)
+	}
+
+	fixture.now += linkInputAuditWindow.Milliseconds() + 1
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	rows = fixture.auditRows(t, auditKindPreviewInput)
+	if len(rows) != 2 {
+		t.Fatalf("input audits after window = %+v", rows)
+	}
+	if suppressed, _ := rows[1]["suppressed"].(float64); suppressed != 5 {
+		t.Fatalf("aggregated row suppressed = %v, want 5 (%+v)", rows[1]["suppressed"], rows[1])
+	}
+
+	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err == nil {
+		t.Fatal("revoked link must reject input")
+	}
+	rows = fixture.auditRows(t, auditKindPreviewInput)
+	if len(rows) != 3 || rows[2]["outcome"] != "deny" || rows[2]["reason"] != "revoked" {
+		t.Fatalf("deny audit must not be delayed by aggregation: %+v", rows)
+	}
+}
+
+// 库中权限档出现协议外取值 (脏数据/手改) 时一律按只读处理: 解析与复查归一到
+// read, 输入强制点拒绝, 绝不把未知档位当下发或放行写。
+func TestPreviewUnknownDBPermissionFailsSafe(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	sessionID := ids.New()
+
+	link, token, err := fixture.service.CreatePreviewLink(context.Background(), fixture.identity(owner), sessionID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
+	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"permission": "admin"}); err != nil {
+		t.Fatal(err)
+	}
+
+	grant, err := fixture.service.ResolvePreview(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Permission != PermissionRead {
+		t.Fatalf("unknown permission must normalize to read, got %q", grant.Permission)
+	}
+	if _, err := fixture.service.RevalidatePreviewInput(context.Background(), grant); err == nil {
+		t.Fatal("unknown DB permission must not allow input")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	links, err := fixture.service.ListPreviewLinks(context.Background(), fixture.identity(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].Permission != PermissionRead {
+		t.Fatalf("listed links = %+v", links)
+	}
+
+	rows := fixture.auditRows(t, auditKindPreviewInput)
+	if last := rows[len(rows)-1]; last["outcome"] != "deny" || last["reason"] != "read_only" {
+		t.Fatalf("input audits = %+v", rows)
 	}
 }

@@ -46,17 +46,21 @@ type Tab struct {
 	subscribers  map[string]subscriber
 	controller   string
 	controlled   bool
-	hidden       bool
-	exited       bool
-	closed       bool
-	destroying   bool
-	cancelPump   context.CancelFunc
-	cwdTracker   *shellintegr.Tracker
-	cwd          string
-	commandTrack *shellintegr.CommandTracker
-	commandState shellintegr.CommandState
-	pendingCmd   *pendingCommand
-	durableFed   int64
+	// guestLease/guestLeaseUntil 记录预览访客控制的租约持有者与到期时刻:
+	// controller 因断线被 orphan 清理后租约仍保留至到期 (断线宽限), 到期惰性清理。
+	guestLease      string
+	guestLeaseUntil time.Time
+	hidden          bool
+	exited          bool
+	closed          bool
+	destroying      bool
+	cancelPump      context.CancelFunc
+	cwdTracker      *shellintegr.Tracker
+	cwd             string
+	commandTrack    *shellintegr.CommandTracker
+	commandState    shellintegr.CommandState
+	pendingCmd      *pendingCommand
+	durableFed      int64
 
 	catchUpRemaining int64
 
@@ -611,6 +615,7 @@ func (m *Manager) Claim(tabID, client string) (string, error) {
 	}
 	tab.controller = clientID(client)
 	tab.controlled = true
+	tab.clearGuestLeaseLocked()
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalControl, event)

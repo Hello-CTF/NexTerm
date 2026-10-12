@@ -48,7 +48,7 @@ describe("main.tsx public preview route", () => {
 
   it("mounts the anonymous preview at /share/preview/{token} without dialing any account channel", async () => {
     await importMainAt("/share/preview/route-token-1");
-    expect(document.body.textContent).toContain("NexTerm 只读预览");
+    expect(document.body.textContent).toContain("NexTerm 预览");
     expect(document.body.textContent).toContain("正在连接预览终端");
     expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
     for (const socket of FakeWebSocket.instances) {

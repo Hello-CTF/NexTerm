@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// PreviewShareMenu 创建入口: 创建只读预览链接、当场展示并复制公开 URL、
-// 列出进行中的预览并吊销。token 只在创建响应里出现一次。
+// PreviewShareMenu 创建入口: 创建预览链接、当场展示并复制公开 URL、列出进行中的
+// 预览并吊销。默认只读 (说明文案明示); token 只在创建响应里出现一次。
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flush, clickButton, type MountedView } from "./reactTestUtils";
@@ -34,7 +34,7 @@ import { setCsrfToken } from "../../ipc/authApi";
 async function mountMenu(): Promise<MountedView> {
   const view = mount(createElement(PreviewShareMenu, { tabId: TAB_ID, sessionName: "prod" }));
   await flush();
-  clickButton(view.container, "只读预览");
+  clickButton(view.container, "预览链接");
   await flush();
   return view;
 }
@@ -50,13 +50,14 @@ afterEach(() => {
 });
 
 describe("PreviewShareMenu", () => {
-  it("creates a read-only preview link and shows the public URL once", async () => {
+  it("creates a preview link and shows the public URL once", async () => {
     const bodies = queueResponses(
       { links: [] },
       { id: "lnk-1", session_id: TAB_ID, token: "one-shot-token", created_at: 1, expires_at: Date.now() + 3_600_000 },
       { links: [] },
     );
     const view = await mountMenu();
+    expect(view.container.textContent).toContain("默认只读");
     expect(view.container.textContent).toContain("不能输入");
     clickButton(view.container, "创建链接");
     await flush();

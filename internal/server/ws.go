@@ -173,7 +173,15 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pumpSocket 见 pumpSocketWithRead; 无上行处理 (读循环丢弃全部上行字节)。
 func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, func(), error)) {
+	s.pumpSocketWithRead(ctx, connection, next, nil)
+}
+
+// pumpSocketWithRead 把 next 产生的帧串行写给对端, 读循环只用于观察断开与应答
+// 控制帧; onRead 非空时每个上行数据帧同步回调 (仍在读 goroutine 内, 不得直接写
+// 连接, 回写须经由 next 的帧源排队)。onRead 为 nil 时上行字节全部丢弃。
+func (s *Server) pumpSocketWithRead(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, func(), error), onRead func(context.Context, websocket.MessageType, []byte)) {
 	ctx, cancel := context.WithCancel(ctx)
 	readDone := make(chan struct{})
 	go func() {
@@ -183,8 +191,12 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 			s.readGate()
 		}
 		for {
-			if _, _, err := connection.Read(ctx); err != nil {
+			messageType, data, err := connection.Read(ctx)
+			if err != nil {
 				return
+			}
+			if onRead != nil {
+				onRead(ctx, messageType, data)
 			}
 		}
 	}()

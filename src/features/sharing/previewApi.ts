@@ -1,16 +1,22 @@
-// 只读远程预览 (只读预览链接): 为服务端托管的终端标签页创建匿名可开的只读
-// 预览。合同对齐 internal/server/preview_http.go: 创建响应是唯一携带一次性
-// token 的入口 (列表/吊销响应不含 token), token 只用于当场拼公开 URL, 不写
-// 日志、不持久化、不进 web storage。预览恒只读; ttl_ms 总是显式携带且必须
-// 落在服务端 minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内。
+// 远程预览 (预览链接): 为服务端托管的终端标签页创建匿名可开的预览, 只读或
+// 可写由创建时的 write 决定 (链接视图 permission: "read"|"read_write")。合同
+// 对齐 internal/server/preview_http.go: 创建响应是唯一携带一次性 token 的
+// 入口 (列表/吊销响应不含 token), token 只用于当场拼公开 URL, 不写日志、不
+// 持久化、不进 web storage。ttl_ms 总是显式携带且必须落在服务端
+// minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内。
 
 import { request } from "../../ipc/authApi";
 import { apiBase, wsUrl } from "../../ipc/env";
+
+export type PreviewPermission = "read" | "read_write";
 
 export interface PreviewLinkView {
   id: string;
   owner_id: string;
   session_id: string;
+  // WEB 服务端总是下发; 桌面远程中继的链接视图 (RemotePreviewLinkView) 没有该
+  // 字段, 消费方对缺失/未知值一律按只读处理。
+  permission?: PreviewPermission;
   created_at: number;
   expires_at: number;
   revoked_at?: number;
@@ -21,11 +27,11 @@ export interface PreviewLinkCreateResponse extends PreviewLinkView {
   token: string;
 }
 
-export function createPreviewLink(input: { sessionId: string; ttlMs: number }): Promise<PreviewLinkCreateResponse> {
+export function createPreviewLink(input: { sessionId: string; ttlMs: number; write?: boolean }): Promise<PreviewLinkCreateResponse> {
   return request<PreviewLinkCreateResponse>(
     "POST",
     "/share/previews",
-    { session_id: input.sessionId, ttl_ms: input.ttlMs },
+    { session_id: input.sessionId, ttl_ms: input.ttlMs, write: input.write ?? false },
     { csrf: true },
   );
 }
@@ -47,8 +53,16 @@ export function previewPublicUrl(token: string): string {
 
 export interface PreviewReady {
   sessionId: string;
-  permission: "read";
+  permission: PreviewPermission;
   expiresAt: number;
+  leaseMs?: number;
+}
+
+export type PreviewControlState = "guest" | "owner" | "busy";
+
+export interface PreviewControl {
+  state: PreviewControlState;
+  leaseUntil?: number;
 }
 
 // PreviewSnapshot 是订阅通道的首帧: 当前屏幕的纯文本行与光标位置, 不含滚动
@@ -78,14 +92,21 @@ export interface PreviewHandlers {
   onOutput: (bytes: Uint8Array) => void;
   onError: (failure: PreviewFailure) => void;
   onClose: (info: PreviewCloseInfo) => void;
+  onControl?: (control: PreviewControl) => void;
 }
 
 export function previewWsUrl(token: string): string {
   return wsUrl(`/share/preview/${encodeURIComponent(token)}`);
 }
 
-// PreviewConnection 是只读预览的 WS 客户端: 合同里没有输入帧类型, 因此连
-// send 方法都不存在 — 不能输入不是前端禁用, 是协议层就没有这个方向。
+// 输入方向只对显式 read_write 放行; 合同里任何其他值一律按只读处理。
+function parsePermission(value: unknown): PreviewPermission {
+  return value === "read_write" ? "read_write" : "read";
+}
+
+// PreviewConnection 是预览的 WS 客户端: 下行是 ready/snapshot/control/error
+// 文本帧与输出二进制帧, 上行输入是二进制帧 (sendInput), 是否放行由 ready 的
+// permission 与服务端 control 帧的租约状态决定, 协议层两个方向都存在。
 export class PreviewConnection {
   private readonly socket: WebSocket;
 
@@ -103,6 +124,11 @@ export class PreviewConnection {
       this.handlers.onClose({ code: event.code, reason: event.reason, wasClean: event.wasClean });
     });
     this.socket = socket;
+  }
+
+  sendInput(data: string | Uint8Array): void {
+    if (this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
   }
 
   close(): void {
@@ -124,8 +150,9 @@ export class PreviewConnection {
     if (raw.type === "ready") {
       this.handlers.onReady({
         sessionId: typeof raw.session_id === "string" ? raw.session_id : "",
-        permission: "read",
+        permission: parsePermission(raw.permission),
         expiresAt: typeof raw.expires_at === "number" ? raw.expires_at : 0,
+        ...(typeof raw.lease_ms === "number" ? { leaseMs: raw.lease_ms } : {}),
       });
     } else if (raw.type === "snapshot") {
       this.handlers.onSnapshot({
@@ -134,6 +161,11 @@ export class PreviewConnection {
         cursorCol: typeof raw.cursor_col === "number" ? raw.cursor_col : 0,
         cols: typeof raw.cols === "number" ? raw.cols : 0,
         rows: typeof raw.rows === "number" ? raw.rows : 0,
+      });
+    } else if (raw.type === "control") {
+      this.handlers.onControl?.({
+        state: raw.state === "owner" || raw.state === "busy" ? raw.state : "guest",
+        ...(typeof raw.lease_until === "number" ? { leaseUntil: raw.lease_until } : {}),
       });
     } else if (raw.type === "error") {
       this.handlers.onError({

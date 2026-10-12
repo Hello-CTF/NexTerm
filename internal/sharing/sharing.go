@@ -7,25 +7,30 @@
 // link opens a fresh terminal through the host agent at any time while the
 // link is valid, instead of attaching to one existing session. Registered-
 // user host shares let a recipient open new terminals through the host agent
-// at any time while the share is valid. Preview links are the read-only
-// counterpart for server-hosted terminal tabs: an anonymous visitor watches
-// the current screen and live output of one tab in the server's session
-// manager, with no input direction in the contract at all; they share the
-// same token-hash storage, expiry and revocation semantics as public share
-// links. All kinds bind owner, permission and expiry, and none ever reads or
-// returns stored host passwords, private keys or sync payloads: the package
-// touches no credential, asset or sync table, and only SHA-256 token hashes
-// are stored.
+// at any time while the share is valid. Preview links do the same for
+// server-hosted terminal tabs: an anonymous visitor watches the current
+// screen and live output of one tab in the server's session manager;
+// read-only by default, the owner can opt into read_write at creation,
+// which additionally lets the visitor send binary input frames that are
+// enforced per input against the current row and arbitrated through the
+// session manager's guest-control lease. They share the same token-hash
+// storage, expiry and revocation semantics as public share links. All
+// kinds bind owner, permission and expiry, and none ever reads or returns
+// stored host passwords, private keys or sync payloads: the package
+// touches no credential, asset or sync table, and only SHA-256 token
+// hashes are stored.
 //
 // Grants are snapshots, not authority: data paths must be built through
 // NewLinkGate / NewHostGate, whose per-chunk rechecks revalidate current
 // rows (including device ownership and revocation) and swap the refreshed
 // Grant into every subsequent decision, so permission shrink and
 // revocation stop input immediately and stop output once no valid row
-// remains. Preview grants carry no input direction, so the preview data
-// path revalidates on a fixed interval with RevalidatePreview instead of
-// per-chunk: revocation and expiry terminate the stream within that
-// interval regardless of traffic.
+// remains. Preview output has no chunks to ride on, so it revalidates on
+// a fixed interval with RevalidatePreview: revocation and expiry
+// terminate the stream within that interval regardless of traffic.
+// Preview input is enforced per frame with RevalidatePreviewInput, which
+// re-reads the current row and requires read_write, so revocation,
+// expiry and permission shrink take effect on the very next input.
 //
 // Server-side HTTP mounting and fleet route integration are a separate
 // slice; this package is verified with explicit fakes. Relay-capable hosts

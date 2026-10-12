@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
-// 桌面端只读预览: PreviewShareMenu 按 TRANSPORT 分流 — 创建走 preview_share_create
+// 桌面端预览链接: PreviewShareMenu 按 TRANSPORT 分流 — 创建走 preview_share_create
 // 中继 (展示后端拼好的 url), 列表/吊销走 remoteSharingApi 并按当前 tab 活跃中继
-// 的壳 id 过滤; TerminalPane 入口的登录门控 hook 在未登录桌面返回 false (隐藏入口)。
+// 的壳 id 过滤; 「允许控制」勾选在桌面禁用 (桌面中继创建的预览第一期暂不支持控制),
+// 创建签名保持 (tabId, ttlMs); TerminalPane 入口的登录门控 hook 在未登录桌面返回
+// false (隐藏入口)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -81,7 +83,7 @@ afterEach(() => {
 
 function mountMenu(): HTMLDivElement {
   mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
-  clickButton(mounted.container, "只读预览");
+  clickButton(mounted.container, "预览链接");
   return mounted.container;
 }
 
@@ -92,6 +94,19 @@ describe("PreviewShareMenu 桌面分流", () => {
     clickButton(container, "创建链接");
     await flushUntil(() => container.textContent?.includes("https://sync.example.com/share/preview/tok-1") === true);
     expect(mocks.create).toHaveBeenCalledWith("tab-1", 3_600_000);
+  });
+
+  it("允许控制勾选禁用并提示第一期暂不支持控制", async () => {
+    const container = mountMenu();
+    await flushUntil(() => mocks.active.mock.calls.length >= 1);
+    await flush();
+    const checkbox = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((candidate) =>
+      candidate.closest("label")?.textContent?.includes("允许控制"),
+    );
+    expect(checkbox).toBeDefined();
+    expect(checkbox!.disabled).toBe(true);
+    expect(checkbox!.checked).toBe(false);
+    expect(container.textContent).toContain("桌面中继创建的预览第一期暂不支持控制");
   });
 
   it("列表按当前 tab 活跃中继的壳 id 过滤, 吊销走 remoteSharingApi", async () => {
