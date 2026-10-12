@@ -30,6 +30,23 @@ export const remoteLinkApi = {
     call<RemoteLinkResult>("sync_link_reset_password", { args: { newPassword } }),
 };
 
+// SyncCompareRow 是 sync_compare 的逐条对比行: state 取值与网页版对比详情一致,
+// remote-undecryptable 表示云端对象用当前数据密钥解不开(如实呈现, 非错误)。
+export interface SyncCompareRow {
+  id: string;
+  kind: string;
+  name: string;
+  state: string;
+  updatedAtLocal?: number;
+  updatedAtRemote?: number;
+}
+
+// syncCompareApi 是桌面端账号同步的逐条对比入口: Go 侧用引擎会话 DEK 解云端对象,
+// 与本机收集结果按网页版同一套 LWW 规则判定状态(见 internal/sync/compare.go)。
+export const syncCompareApi = {
+  compare: () => call<{ rows: SyncCompareRow[]; warnings?: string[]; remote: number }>("sync_compare"),
+};
+
 // RemotePreviewLinkView 对齐 src/features/sharing/previewApi.ts 的 PreviewLinkView
 // (此处独立声明, 避免 ipc 层反向依赖 features 层)。
 export interface RemotePreviewLinkView {
@@ -62,56 +79,55 @@ export interface RemotePreviewCreateResult {
 // 壳 id。列表/吊销复用 remoteSharingApi.previewLinks / revokePreviewLink。
 export const remotePreviewApi = {
   create: (tabId: string, ttlMs: number) =>
-    call<RemotePreviewCreateResult>("preview_share_create", { tabId, ttlMs }),
+    call<RemotePreviewCreateResult>("preview_share_create", { args: { tabId, ttlMs } }),
 
-  active: (tabId: string) => call<{ sessionId?: string }>("preview_share_active", { tabId }),
+  active: (tabId: string) => call<{ sessionId?: string }>("preview_share_active", { args: { tabId } }),
 };
 
 export const remoteFleetApi = {
   devices: () => call<{ devices: FleetDevice[] }>("remote_fleet_devices"),
 
   issueEnrollCode: (ttlMs: number, userId?: string) =>
-    call<FleetEnrollCode>("remote_fleet_enroll_code", { ttlMs, ...(userId ? { userId } : {}) }),
+    call<FleetEnrollCode>("remote_fleet_enroll_code", { args: { ttlMs, ...(userId ? { userId } : {}) } }),
 
-  revoke: (id: string) => call<{ ok: boolean }>("remote_fleet_device_revoke", { deviceId: id }),
+  revoke: (id: string) => call<{ ok: boolean }>("remote_fleet_device_revoke", { args: { deviceId: id } }),
 
-  approve: (id: string) => call<{ ok: boolean }>("remote_fleet_device_approve", { deviceId: id }),
+  approve: (id: string) => call<{ ok: boolean }>("remote_fleet_device_approve", { args: { deviceId: id } }),
 
-  reject: (id: string) => call<{ ok: boolean }>("remote_fleet_device_reject", { deviceId: id }),
+  reject: (id: string) => call<{ ok: boolean }>("remote_fleet_device_reject", { args: { deviceId: id } }),
 
   setAutostart: (id: string, desired: boolean) =>
-    call<{ ok: boolean; desired_autostart: boolean }>("remote_fleet_device_autostart", { deviceId: id, desired }),
+    call<{ ok: boolean; desired_autostart: boolean }>("remote_fleet_device_autostart", { args: { deviceId: id, desired } }),
 
   metrics: (id: string, sinceMs?: number) =>
     call<{ samples: FleetMetricsSample[] }>("remote_fleet_device_metrics", {
-      deviceId: id,
-      ...(sinceMs ? { sinceMs } : {}),
+      args: { deviceId: id, ...(sinceMs ? { sinceMs } : {}) },
     }),
 
   baseUrls: () => call<{ base_urls: FleetBaseURLEntry[] }>("remote_fleet_base_urls_get"),
 
   putBaseUrls: (entries: FleetBaseURLEntry[]) =>
-    call<{ base_urls: FleetBaseURLEntry[] }>("remote_fleet_base_urls_put", { entries }),
+    call<{ base_urls: FleetBaseURLEntry[] }>("remote_fleet_base_urls_put", { args: { entries } }),
 };
 
 export const remoteSharingApi = {
   hostShares: () => call<{ shares: HostShareView[] }>("remote_share_host_list"),
 
   createHostShare: (input: { deviceId: string; recipientUsername: string; write: boolean; ttlMs: number }) =>
-    call<HostShareView>("remote_share_host_create", input),
+    call<HostShareView>("remote_share_host_create", { args: input }),
 
-  revokeHostShare: (id: string) => call<{ ok: boolean }>("remote_share_host_revoke", { id }),
+  revokeHostShare: (id: string) => call<{ ok: boolean }>("remote_share_host_revoke", { args: { id } }),
 
   links: () => call<{ links: ShareLinkView[] }>("remote_share_link_list"),
 
   createLink: (input: { deviceId: string; sessionId: string; write: boolean; ttlMs: number }) =>
-    call<RemoteShareLinkCreateResult>("remote_share_link_create", input),
+    call<RemoteShareLinkCreateResult>("remote_share_link_create", { args: input }),
 
-  revokeLink: (id: string) => call<{ ok: boolean }>("remote_share_link_revoke", { id }),
+  revokeLink: (id: string) => call<{ ok: boolean }>("remote_share_link_revoke", { args: { id } }),
 
   previewLinks: () => call<{ links: RemotePreviewLinkView[] }>("remote_share_preview_list"),
 
-  revokePreviewLink: (id: string) => call<{ ok: boolean }>("remote_share_preview_revoke", { id }),
+  revokePreviewLink: (id: string) => call<{ ok: boolean }>("remote_share_preview_revoke", { args: { id } }),
 };
 
 export const remoteAccountApi = {
@@ -119,20 +135,20 @@ export const remoteAccountApi = {
 
   devices: () => call<{ devices: AccountDevice[] }>("remote_account_devices"),
 
-  deviceRevoke: (id: string) => call<{ ok: boolean }>("remote_account_device_revoke", { deviceId: id }),
+  deviceRevoke: (id: string) => call<{ ok: boolean }>("remote_account_device_revoke", { args: { deviceId: id } }),
 
   adminUsers: () => call<{ users: AccountUser[] }>("remote_account_admin_users"),
 
   adminCreateUser: (username: string, password: string, displayName: string) =>
-    call<{ user: AccountUser }>("remote_account_admin_create_user", { username, password, displayName }),
+    call<{ user: AccountUser }>("remote_account_admin_create_user", { args: { username, password, displayName } }),
 
   // state 仅支持 disabled(禁用) 与 reset_required(强制改密), 与服务端仅有的两个状态动作对应。
   adminSetUserState: (userId: string, state: "disabled" | "reset_required") =>
-    call<{ ok: boolean }>("remote_account_admin_set_user_state", { userId, state }),
+    call<{ ok: boolean }>("remote_account_admin_set_user_state", { args: { userId, state } }),
 
   // changePassword 返回一次性恢复密钥(仅本次响应下发), 视图层必须当场展示。
   changePassword: (oldPassword: string, newPassword: string) =>
-    call<{ ok: boolean; recoveryKey?: string }>("remote_account_change_password", { oldPassword, newPassword }),
+    call<{ ok: boolean; recoveryKey?: string }>("remote_account_change_password", { args: { oldPassword, newPassword } }),
 };
 
 export const remoteHealthApi = {
