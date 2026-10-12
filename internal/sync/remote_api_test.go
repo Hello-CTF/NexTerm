@@ -384,7 +384,7 @@ func (f *remoteAPIFixture) serveFleetDevices(w http.ResponseWriter, _ *http.Requ
 		return
 	}
 	writeSyncJSON(w, http.StatusOK, map[string]any{"devices": []map[string]any{
-		{"id": "d-1", "name": "edge-01", "kind": "agent", "state": "active", "created_at": 1, "last_seen_at": 2, "revoked_at": 0,
+		{"id": "d-1", "name": "edge-01", "kind": "agent", "created_at": 1, "last_seen_at": 2, "revoked_at": 0,
 			"owner": map[string]any{"id": "u-1", "username": "alice"},
 			"agent": map[string]any{"platform": "linux/amd64", "app_version": "1.0.0", "desired_autostart": true,
 				"terminal_enabled": true, "current_url": "https://edge-01", "service_state": map[string]any{"installed": true, "enabled": true, "active": true},

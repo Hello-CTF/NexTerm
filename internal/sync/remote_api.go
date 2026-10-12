@@ -42,7 +42,6 @@ type RemoteFleetDevice struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
 	Kind       string            `json:"kind"`
-	State      string            `json:"state,omitempty"`
 	CreatedAt  int64             `json:"created_at"`
 	LastSeenAt int64             `json:"last_seen_at"`
 	RevokedAt  int64             `json:"revoked_at"`
