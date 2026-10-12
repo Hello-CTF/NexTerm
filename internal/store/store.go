@@ -57,14 +57,30 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 		return nil, ipc.WrapError(ipc.CodeIO, "准备数据库文件失败: "+err.Error(), err)
 	}
 	var s *Store
+	var legacyBackup string
 	for attempt := 0; ; attempt++ {
 		db, err := openDB(sqliteDSN(path), 8)
 		if err == nil {
 			s = newStore(db, options.Logger, Dialect{backend: BackendSQLite})
-			err = s.migrate(ctx)
-			if err != nil {
+			legacy, lerr := hasLegacySchemaMarker(ctx, s)
+			if lerr != nil {
 				_ = s.Close()
 				s = nil
+				err = dbError(lerr)
+			} else if legacy {
+				_ = s.Close()
+				s = nil
+				legacyBackup, err = backupLegacyDatabase(path)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			} else {
+				err = s.migrate(ctx)
+				if err != nil {
+					_ = s.Close()
+					s = nil
+				}
 			}
 		}
 		if err == nil {
@@ -78,6 +94,9 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 			return nil, ctx.Err()
 		case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
 		}
+	}
+	if legacyBackup != "" {
+		s.logger.Info("检测到旧版数据库,已备份并重建", "backup", legacyBackup)
 	}
 	if err := hardenDatabaseFiles(path); err != nil {
 		_ = s.Close()
@@ -155,6 +174,38 @@ func pragmaQuery(memory bool) string {
 		query += "&_pragma=journal_mode(WAL)"
 	}
 	return query
+}
+
+func hasLegacySchemaMarker(ctx context.Context, s *Store) (bool, error) {
+	var name string
+	err := s.sqlDB.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func backupLegacyDatabase(path string) (string, error) {
+	backup := fmt.Sprintf("%s.legacy-%s", path, time.Now().Format("20060102-150405"))
+	moved := []string{}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		err := os.Rename(path+suffix, backup+suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			for i := len(moved) - 1; i >= 0; i-- {
+				_ = os.Rename(backup+moved[i], path+moved[i])
+			}
+			return "", ipc.WrapError(ipc.CodeIO, "备份旧版数据库失败: "+err.Error(), err)
+		}
+		moved = append(moved, suffix)
+	}
+	return backup, nil
 }
 
 func (s *Store) DB() *sql.DB {
