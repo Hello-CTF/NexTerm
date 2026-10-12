@@ -237,6 +237,21 @@ describe("terminal overlay accessibility", () => {
       await flush();
     });
     act(() => {
+      useUi.setState({
+        sessions: [
+          {
+            id: "s1",
+            assetId: "a1",
+            name: "web-01",
+            kind: "ssh",
+            status: "disconnected",
+            tabs: [],
+            createdAt: 0,
+          },
+        ],
+      });
+    });
+    act(() => {
       (harness.xtermProps?.onAttachFailed as ((code: string) => void) | undefined)?.("not_found");
     });
     await act(async () => {
@@ -283,6 +298,21 @@ describe("terminal overlay accessibility", () => {
     document.body.append(input);
     act(() => input.focus());
 
+    act(() => {
+      useUi.setState({
+        sessions: [
+          {
+            id: "s1",
+            assetId: "a1",
+            name: "web-01",
+            kind: "ssh",
+            status: "disconnected",
+            tabs: [],
+            createdAt: 0,
+          },
+        ],
+      });
+    });
     act(() => {
       (harness.xtermProps?.onAttachFailed as ((code: string) => void) | undefined)?.("not_found");
     });
