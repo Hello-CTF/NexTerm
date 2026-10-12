@@ -6,7 +6,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
-import { clientId } from "../../ipc/env";
+import { clientId, WEB } from "../../ipc/env";
+import { openExternalURL } from "../../ipc/wails";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
@@ -132,7 +133,17 @@ export function XtermView(props: XtermViewProps) {
     });
     const search = new SearchAddon();
     term.loadAddon(search);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault();
+        if (!/^https?:\/\//i.test(uri)) return;
+        if (WEB) {
+          window.open(uri, "_blank", "noopener,noreferrer");
+        } else {
+          void openExternalURL(uri);
+        }
+      }),
+    );
     termRef.current = term;
     term.open(hostRef.current);
     // xterm 对处理的按键一律 preventDefault + stopPropagation, 终端聚焦时 window 级监听

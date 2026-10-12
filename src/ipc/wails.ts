@@ -54,6 +54,11 @@ export async function consumeDeepLinks(): Promise<string[]> {
   return links ?? [];
 }
 
+export async function openExternalURL(url: string): Promise<void> {
+  const { Browser } = await runtime();
+  await Browser.OpenURL(url);
+}
+
 export class WailsChannel {
   readonly id: string;
   onmessage: (message: unknown) => void = () => {};

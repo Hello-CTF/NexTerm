@@ -69,8 +69,6 @@ export interface TerminalPaneProps {
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
-const AUTO_OPEN_BLOCKS = 3;
-
 function isStoreTabDead(id: string): boolean {
   return useUi
     .getState()
@@ -202,7 +200,6 @@ export function TerminalPane({
   const controlRefreshGen = useRef(0);
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
-  const userClosedBlocks = useRef(false);
   const searchApi = useRef<{
     findNext: (t: string) => void;
     findPrevious: (t: string) => void;
@@ -312,11 +309,6 @@ export function TerminalPane({
     },
     [storeTabId],
   );
-
-  useEffect(() => {
-    if (!blocksSupported || userClosedBlocks.current) return;
-    if (blocks.length >= AUTO_OPEN_BLOCKS) setBlocksOpen(true);
-  }, [blocks.length, blocksSupported]);
 
   const controlSupported = !containerId && !effectiveWinrm;
   const isObserver = controlSupported && control !== null && control.controller !== me;
@@ -828,9 +820,7 @@ export function TerminalPane({
   };
 
   const toggleBlocksPanel = () => {
-    const next = !blocksOpen;
-    setBlocksOpen(next);
-    userClosedBlocks.current = !next;
+    setBlocksOpen(!blocksOpen);
   };
 
   const buildToolbarOverflowMenu = (): MenuItem[] => [
