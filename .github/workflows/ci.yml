@@ -9,6 +9,10 @@ on:
       - ".github/workflows/pages.yml"
       - "**.md"
   pull_request:
+    paths-ignore:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+      - "**.md"
   workflow_call:
     inputs:
       release_version:
@@ -141,10 +145,10 @@ jobs:
         run: |
           files="$(gofmt -l ./cmd ./internal ./scripts)"
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
-      - name: Go vet
-        run: go vet -mod=readonly ./...
       - name: Go tests
         run: go test -mod=readonly ./...
+      - name: Go vet
+        run: go vet -mod=readonly ./...
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
       - name: LazyCat manifest injects
@@ -305,7 +309,22 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
-          cache: true
+          cache: false
+      - name: Resolve the Go cache paths
+        id: go-cache-paths
+        shell: bash
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Restore the per-arch Go build and module cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.gocache }}
+            ${{ steps.go-cache-paths.outputs.gomodcache }}
+          key: gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-
       - name: Install and verify the Windows release tools
         if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
         shell: bash
@@ -371,14 +390,44 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
-          cache: true
+          cache: false
+      - name: Resolve the Go cache paths
+        id: go-cache-paths
+        shell: bash
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Restore the per-platform Go build and module cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.gocache }}
+            ${{ steps.go-cache-paths.outputs.gomodcache }}
+          key: gocache-v1-mobile-${{ matrix.platform }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            gocache-v1-mobile-${{ matrix.platform }}-
       - name: Download the verified frontend dist
         uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: verified-dist
-      - name: Install the Android SDK
+      - name: Resolve the Android SDK root
         if: matrix.platform == 'android'
+        id: android-sdk-root
+        run: echo "home=$ANDROID_HOME" >> "$GITHUB_OUTPUT"
+      - name: Restore the Android SDK and NDK cache
+        if: matrix.platform == 'android'
+        id: android-sdk-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ steps.android-sdk-root.outputs.home }}/ndk
+            ${{ steps.android-sdk-root.outputs.home }}/platforms
+            ${{ steps.android-sdk-root.outputs.home }}/build-tools
+            ${{ steps.android-sdk-root.outputs.home }}/platform-tools
+          key: android-sdk-v1-android-35-build-tools-35.0.0-ndk-26.3.11579264
+      - name: Install the Android SDK
+        if: matrix.platform == 'android' && steps.android-sdk-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)"
@@ -393,14 +442,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+          cache: gradle
       - name: Verify the iOS toolchain
         if: matrix.platform == 'ios'
         run: xcodebuild -version
-      - name: Install Linux Wails cgo prerequisites
-        if: matrix.platform == 'android'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Restore the pinned Wails CLI
         id: wails-cache
         uses: actions/cache@v6

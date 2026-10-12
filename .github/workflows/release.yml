@@ -44,6 +44,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_REUSE_EXPECTED_REF: ${{ github.ref_name }}
+          CI_REUSE_WAIT_TIMEOUT: "2700"
+          CI_REUSE_POLL_INTERVAL: "10"
         run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
 
   ci:
