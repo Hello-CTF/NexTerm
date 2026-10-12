@@ -357,7 +357,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 
-  it("创建表单默认折叠高级设置;编辑非默认时区/超时的任务时自动展开", async () => {
+  it("创建表单默认折叠高级设置;编辑非默认时区/超时的任务也默认折叠,手动展开后可见", async () => {
     mounted = mountPanel();
     await flush();
 
@@ -380,6 +380,9 @@ describe("CronPanel", () => {
     await flush();
 
     clickRowButton(mounted.container, "自定义时区", "编辑");
+    expect(mounted.container.querySelector('input[aria-label="时区"]')).toBeNull();
+
+    clickButton(mounted.container, "高级设置");
     const tz = mounted.container.querySelector<HTMLInputElement>('input[aria-label="时区"]');
     expect(tz?.value).toBe("Asia/Shanghai");
   });

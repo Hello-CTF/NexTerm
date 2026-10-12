@@ -185,14 +185,19 @@ describe("shortcuts editor", () => {
     expect(after?.checked).toBe(true);
   });
 
-  it("选中自动复制已开启时高级设置挂载即展开", () => {
+  it("选中自动复制已开启时高级设置仍默认折叠,手动展开后可见", () => {
     mounted?.unmount();
     act(() => setSelectionAutoCopy(true));
     mounted = mount(createElement(ShortcutsCard));
     const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
       (b) => b.textContent?.trim() === "高级设置",
     );
-    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
+    ).toBeNull();
+
+    click(toggle as HTMLButtonElement);
     const checkbox = mounted?.container.querySelector<HTMLInputElement>(
       'input[aria-label="选中自动复制"]',
     );

@@ -105,10 +105,6 @@ function modelDraftParamsAtDefaults(p: ModelDraft): boolean {
   );
 }
 
-function hasAdvancedModelParams(p: ModelDraft): boolean {
-  return !modelDraftParamsAtDefaults(p);
-}
-
 export function ModelManager({
   onRequestClose,
   onDirtyChange,
@@ -142,7 +138,7 @@ export function ModelManager({
   const advancedPanelId = useId();
   const [advancedState, setAdvancedState] = useState<{ id: string; open: boolean }>({ id: "", open: false });
   if (draft && advancedState.id !== draft.id) {
-    setAdvancedState({ id: draft.id, open: hasAdvancedModelParams(draft) });
+    setAdvancedState({ id: draft.id, open: false });
   }
   const advancedOpen = !!draft && advancedState.id === draft.id && advancedState.open;
 

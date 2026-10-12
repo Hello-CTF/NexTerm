@@ -202,6 +202,7 @@ describe("AssetEditor SSH 连接能力", () => {
       { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
     ]);
     mountEditor(initial);
+    expandAdvanced();
     await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
     const jumpSelect = findSelect("不使用跳板机");
     expect(jumpSelect.value).toBe("j1");
@@ -319,7 +320,7 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     expect(hasJumpSelect).toBe(false);
   });
 
-  it("编辑含跳板机配置的资产时自动展开", async () => {
+  it("编辑含跳板机配置的资产时默认折叠,手动展开后可见", async () => {
     const initial = { ...baseAsset, options: { jumpAssetId: "j1" } };
     mocks.listAssets.mockResolvedValue([
       { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
@@ -327,17 +328,22 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     mountEditor(initial);
     await flush();
     const toggle = advancedToggle();
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeNull();
+
+    expandAdvanced();
     await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
     expect(findSelect("不使用跳板机").value).toBe("j1");
   });
 
-  it("编辑含 Agent 转发的资产时自动展开", async () => {
+  it("编辑含 Agent 转发的资产时默认折叠,手动展开后可见", async () => {
     const initial = { ...baseAsset, options: { forwardAgent: true } };
     mountEditor(initial);
     await flush();
-    expect(advancedToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
+
+    expandAdvanced();
+    await flush();
     const checkbox = mounted!.container.querySelector(
       'input[aria-label="Agent 转发"]',
     ) as HTMLInputElement;

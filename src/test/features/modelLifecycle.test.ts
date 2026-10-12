@@ -139,6 +139,8 @@ describe("ModelManager fallback editing", () => {
     useUi.setState({ pushToast: mocks.toast });
     view2 = mount(createElement(ModelManager));
     await flush();
+    clickButton(view2!.container, "高级参数");
+    await flush();
   });
 
   afterEach(() => {
@@ -244,6 +246,8 @@ describe("ModelManager timeouts and connectivity testing", () => {
     mocks.refresh.mockResolvedValue({ models: ["m1"], malformed: 0 });
     useUi.setState({ pushToast: mocks.toast });
     view3 = mount(createElement(ModelManager));
+    await flush();
+    clickButton(view3!.container, "高级参数");
     await flush();
   });
 

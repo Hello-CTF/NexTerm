@@ -196,7 +196,7 @@ describe("AssetEditor SSH 启动配置", () => {
     expect(mounted!.container.textContent).toContain("不是有效的 KEY=VALUE");
   });
 
-  it("编辑含启动命令/编码/环境变量的资产时自动展开", async () => {
+  it("编辑含启动命令/编码/环境变量的资产时默认折叠,手动展开后可见", async () => {
     const initial = {
       ...baseAsset,
       options: { startupCommand: "echo hi", encoding: "gbk", env: { A: "1" } },
@@ -206,13 +206,16 @@ describe("AssetEditor SSH 启动配置", () => {
     const toggle = mounted!.container.querySelector<HTMLButtonElement>(
       "button[aria-expanded][aria-controls]",
     )!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    expandAdvanced();
+    await flush();
     expect(findInput("连接成功后在该终端自动执行").value).toBe("echo hi");
     expect(findSelect("gb18030").value).toBe("gbk");
     expect(envTextarea().value).toBe("A=1");
   });
 
-  it("编辑含启动命令的资产自动展开，清空后保存会删除对应 key", async () => {
+  it("编辑含启动命令的资产默认折叠,清空后保存会删除对应 key", async () => {
     const initial = {
       ...baseAsset,
       options: { startupCommand: "echo hi", encoding: "utf-8", env: { A: "1" } },
@@ -222,7 +225,10 @@ describe("AssetEditor SSH 启动配置", () => {
     const toggle = mounted!.container.querySelector<HTMLButtonElement>(
       "button[aria-expanded][aria-controls]",
     )!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    expandAdvanced();
+    await flush();
 
     setInputValue(findInput("连接成功后在该终端自动执行"), "");
     setInputValue(envTextarea(), "");

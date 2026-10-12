@@ -71,6 +71,8 @@ async function mountManager(profile: ModelProfile): Promise<void> {
   mocks.overview.mockResolvedValue({ profiles: [profile], activeId: profile.id });
   view = mount(createElement(ModelManager));
   await flush();
+  clickButton(view!.container, "高级参数");
+  await flush();
 }
 
 function savedPayload(): ModelProfile {
@@ -318,10 +320,14 @@ describe("ModelManager circuit runtime status", () => {
     });
     view = mount(createElement(ModelManager));
     await flush();
+    clickButton(view!.container, "高级参数");
+    await flush();
 
     expect(view!.container.textContent).toContain("已暂停：连续失败 5 次，300 秒后自动恢复");
 
     click(view!.container.querySelector('button[title="glm-4-plus"]')!);
+    await flush();
+    clickButton(view!.container, "高级参数");
     await flush();
 
     expect(mocks.circuitStatus).toHaveBeenLastCalledWith("m-glm");

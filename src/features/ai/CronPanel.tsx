@@ -224,7 +224,7 @@ export function CronPanel({
     const open = () => {
       setRegisterError(null);
       setEditingJob(job);
-      setAdvancedOpen((job.timezone.trim() || "UTC") !== "UTC" || job.timeout > 0);
+      setAdvancedOpen(false);
       const nextDraft = {
         name: job.name ?? "",
         prompt: job.prompt,

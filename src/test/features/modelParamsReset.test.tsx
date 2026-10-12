@@ -118,6 +118,8 @@ describe("ModelManager 恢复默认参数", () => {
   it("重置参数但保留密钥与身份字段，且不触发保存", async () => {
     await mountManager(SAVED);
 
+    clickButton(view!.container, "高级参数");
+    await flush();
     clickButton(view!.container, "恢复默认参数");
     await flush();
 
@@ -151,6 +153,8 @@ describe("ModelManager 恢复默认参数", () => {
   it("重置后点保存把清空结果写入档案，温度与上下文窗口不传", async () => {
     await mountManager(SAVED);
 
+    clickButton(view!.container, "高级参数");
+    await flush();
     clickButton(view!.container, "恢复默认参数");
     await flush();
     clickButton(view!.container, "保存");
@@ -206,18 +210,23 @@ describe("ModelManager 高级参数折叠", () => {
     expect(inputFor("回退模型").value).toBe("");
   });
 
-  it("任一高级参数非默认时自动展开", async () => {
+  it("任一高级参数非默认时也默认折叠,手动展开后可见", async () => {
     await mountManager(SAVED);
 
     const toggle = [...view!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "高级参数",
     ) as HTMLButtonElement;
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(() => inputFor("温度")).toThrow();
+
+    clickButton(view!.container, "高级参数");
+    await flush();
+
     expect(inputFor("温度").value).toBe("1.2");
     expect(inputFor("回退模型").value).toBe("fb-1");
   });
 
-  it("最大输出/超时/熔断任一非空也自动展开", async () => {
+  it("最大输出/超时/熔断任一非空时也默认折叠,手动展开后可见", async () => {
     await mountManager({
       ...SAVED,
       ...MODEL_PARAM_DEFAULTS,
@@ -225,10 +234,19 @@ describe("ModelManager 高级参数折叠", () => {
       maxTokens: 4096,
     });
 
+    const toggle = [...view!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级参数",
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(() => inputFor("最大输出")).toThrow();
+
+    clickButton(view!.container, "高级参数");
+    await flush();
+
     expect(inputFor("最大输出").value).toBe("4096");
   });
 
-  it("切换到参数全默认的档案后回到折叠", async () => {
+  it("切换档案后高级参数回到折叠", async () => {
     const plain: ModelProfile = {
       ...SAVED,
       id: "p2",
@@ -240,6 +258,8 @@ describe("ModelManager 高级参数折叠", () => {
     view = mount(createElement(ModelManager));
     await flush();
 
+    clickButton(view!.container, "高级参数");
+    await flush();
     expect(inputFor("温度").value).toBe("1.2");
 
     clickButton(view!.container, "默认档案");

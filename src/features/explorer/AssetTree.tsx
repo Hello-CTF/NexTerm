@@ -99,22 +99,6 @@ function parseEnvText(text: string): { ok: true; env: Record<string, string> } |
   return { ok: true, env };
 }
 
-function hasAdvancedSshOptions(asset?: Asset): boolean {
-  const options = asset?.options;
-  if (!options) return false;
-  const env = options.env;
-  return (
-    (typeof options.jumpAssetId === "string" && options.jumpAssetId.trim() !== "") ||
-    (typeof options.proxyCommand === "string" && options.proxyCommand.trim() !== "") ||
-    options.forwardAgent === true ||
-    (typeof options.agentSocket === "string" && options.agentSocket.trim() !== "") ||
-    (typeof options.certPath === "string" && options.certPath.trim() !== "") ||
-    (typeof options.startupCommand === "string" && options.startupCommand.trim() !== "") ||
-    isNonDefaultEncoding(options.encoding) ||
-    (!!env && typeof env === "object" && !Array.isArray(env) && Object.keys(env).length > 0)
-  );
-}
-
 function treeRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   const tree = event.currentTarget.closest("[role='tree']");
@@ -1213,7 +1197,7 @@ export function AssetEditor({
     typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
   );
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedSshOptions(initial));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);

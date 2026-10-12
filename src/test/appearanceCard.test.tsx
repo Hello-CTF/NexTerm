@@ -215,7 +215,7 @@ describe("AppearanceCard 外观偏好", () => {
     expect(getAppearancePrefs().uiFontScale).toBe(1);
   });
 
-  it("高级设置默认折叠可手动切换；非默认只在挂载时自动展开一次", () => {
+  it("高级设置默认折叠可手动切换；非默认偏好也不再自动展开", () => {
     act(() => resetAppearancePrefs());
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;
@@ -237,6 +237,12 @@ describe("AppearanceCard 外观偏好", () => {
 
     mounted.unmount();
     mounted = mount(createElement(AppearanceCard));
-    expect(advancedToggle(mounted.container).getAttribute("aria-expanded")).toBe("true");
+    const remountedToggle = advancedToggle(mounted.container);
+    expect(remountedToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(mounted.container.querySelector('[aria-label="界面字号"]')).toBeNull();
+
+    click(remountedToggle);
+    expect(remountedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(groupButton(mounted.container, "界面字号", "14.5").getAttribute("aria-pressed")).toBe("true");
   });
 });

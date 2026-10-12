@@ -51,7 +51,7 @@ export function AppearanceCard() {
     prefs.terminalFontSize === 13 &&
     prefs.terminalTheme === "dark";
   const advancedPanelId = useId();
-  const [advancedOpen, setAdvancedOpen] = useState(() => !appearanceIsDefault);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [customFontOpen, setCustomFontOpen] = useState(false);
   const [customFontDraft, setCustomFontDraft] = useState("");

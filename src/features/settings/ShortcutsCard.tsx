@@ -21,7 +21,7 @@ export function ShortcutsCard() {
   const [captureFor, setCaptureFor] = useState<KeybindingActionId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const advancedPanelId = useId();
-  const [advancedOpen, setAdvancedOpen] = useState(() => prefs.selectionAutoCopy);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const conflicts = bindingConflicts(bindings);
   const conflictPeers = new Map<string, string>();
