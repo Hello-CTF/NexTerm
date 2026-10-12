@@ -2,6 +2,7 @@ import { useId, useRef, useState } from "react";
 import { vaultApi } from "../../ipc/commands";
 import type { GeneratedKeyDto } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconCopy, IconKey } from "../../ui/icons";
@@ -60,7 +61,7 @@ export function GenerateKeyModal({
 
   const copy = async (value: string, label: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       pushToast("success", label);
     } catch (e) {
       pushToast("error", `复制失败：${describeError(e)}`);

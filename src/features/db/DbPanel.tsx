@@ -9,6 +9,7 @@ import { nxHighlight } from "../../ui/editorTheme";
 import { dbApi, type QueryResult, type TableDescribe } from "../../ipc/commands";
 import { useUi, type DbKind } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import {
   IconChevronUp,
   IconDatabase,
@@ -485,7 +486,7 @@ async function copyAsCsv(result: QueryResult) {
       r.map((c) => (c === null ? "" : `"${String(c).replace(/"/g, '""')}"`)).join(","),
     ),
   ];
-  await navigator.clipboard.writeText(lines.join("\n"));
+  await copyText(lines.join("\n"));
 }
 
 const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {

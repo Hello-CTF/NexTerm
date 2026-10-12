@@ -36,6 +36,7 @@ import {
 } from "./terminalThrottle";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
@@ -275,7 +276,7 @@ export function TerminalPane({
   const osc52Handler = useRef(
     createOsc52Handler({
       enabled: () => useUi.getState().terminalOsc52,
-      writeText: async (text) => navigator.clipboard.writeText(text),
+      writeText: async (text) => copyText(text),
       authorize: async () => {
         const choice = await askChoice(
           `「${sessionNameRef.current}」请求写入剪贴板（OSC 52）。允许该会话写剪贴板？`,
@@ -931,7 +932,7 @@ export function TerminalPane({
         label: "复制",
         icon: <IconCopy size={13} />,
         disabled: !hasSel,
-        onSelect: () => void navigator.clipboard.writeText(selected).catch(() => undefined),
+        onSelect: () => void copyText(selected).catch(() => undefined),
       },
       {
         kind: "item",

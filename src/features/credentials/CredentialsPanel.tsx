@@ -4,6 +4,7 @@ import { vaultApi, type Credential, type CredentialSource, type RevealedCredenti
 import { ask } from "../../ui/dialogs";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { GenerateKeyModal } from "./GenerateKeyModal";
 import { kindMeta, formatTime } from "./meta";
@@ -228,7 +229,7 @@ function CredentialDetail({
       const value = await resolveCredentialCopy(cred, field, revealed, () =>
         vaultApi.revealCredential(cred.id),
       );
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       pushToast("success", label);
     } catch (e) {
       pushToast("error", `复制失败：${describeError(e)}`);

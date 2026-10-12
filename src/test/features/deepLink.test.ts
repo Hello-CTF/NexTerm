@@ -121,9 +121,11 @@ describe("copyAssetDeepLink", () => {
     );
   });
 
-  it("剪贴板不可用时提示失败", () => {
+  it("复制失败时提示重试", async () => {
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
     copyAssetDeepLink("a-1");
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("剪贴板不可用"));
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败，请重试"),
+    );
   });
 });

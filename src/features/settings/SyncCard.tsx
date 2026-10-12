@@ -45,6 +45,7 @@ import {
   IconShield,
   IconXCircle,
 } from "../../ui/icons";
+import { copyText } from "../../ui/clipboard";
 
 export function SyncCard() {
   return (
@@ -213,7 +214,7 @@ function DesktopLinkCard() {
     setKeyCopyError(null);
     try {
       if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
-      await navigator.clipboard.writeText(recoveryKey);
+      await copyText(recoveryKey);
       setKeyCopied(true);
       setKeyConfirmed(true);
     } catch {

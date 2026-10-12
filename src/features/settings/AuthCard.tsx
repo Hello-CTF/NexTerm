@@ -12,6 +12,7 @@ import { useAuth } from "../auth/store";
 import { useDesktopAccount } from "../auth/desktopAccount";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
+import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import {
@@ -356,8 +357,7 @@ export function AuthCard() {
                 onClick={() =>
                   void (async () => {
                     try {
-                      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
-                      await navigator.clipboard.writeText(pendingRecoveryKey.formatted);
+                      await copyToClipboard(pendingRecoveryKey.formatted);
                       pushToast("success", "恢复密钥已复制");
                     } catch {
                       pushToast("error", "复制失败，请手动复制");
@@ -410,8 +410,7 @@ export function AuthCard() {
               <button
                 className="nx-btn nx-btn-outline nx-btn-sm"
                 onClick={() => {
-                  void navigator.clipboard
-                    ?.writeText(enrollCode.code)
+                  void copyToClipboard(enrollCode.code)
                     .then(() => pushToast("success", "配对码已复制"))
                     .catch(() => pushToast("error", "复制失败，请手动复制"));
                 }}
@@ -514,8 +513,7 @@ function TotpCard() {
 
   const copyText = async (text: string, label: string): Promise<boolean> => {
     try {
-      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       pushToast("success", `${label}已复制`);
       return true;
     } catch {

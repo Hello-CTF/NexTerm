@@ -1,3 +1,5 @@
+import { copyText } from "../../ui/clipboard";
+
 export interface SelectionAutoCopyOptions {
   isEnabled: () => boolean;
   getSelection: () => string;
@@ -12,10 +14,8 @@ export interface SelectionAutoCopy {
   dispose: () => void;
 }
 
-function defaultWriteText(text: string): Promise<void> | null {
-  const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
-  if (!clipboard || typeof clipboard.writeText !== "function") return null;
-  return clipboard.writeText(text);
+function defaultWriteText(text: string): Promise<void> {
+  return copyText(text);
 }
 
 export function createSelectionAutoCopy(options: SelectionAutoCopyOptions): SelectionAutoCopy {
@@ -34,12 +34,7 @@ export function createSelectionAutoCopy(options: SelectionAutoCopyOptions): Sele
     }
     if (text === lastCopied) return;
     const write = options.writeText ?? defaultWriteText;
-    const pending = write(text);
-    if (pending === null) {
-      options.onError(new Error("当前环境不支持剪贴板 API"));
-      return;
-    }
-    pending.then(
+    write(text).then(
       () => {
         if (disposed) return;
         lastCopied = text;

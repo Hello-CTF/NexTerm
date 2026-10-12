@@ -4,6 +4,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth, type RecoveryKeyIssue } from "./store";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { authApi, type AccountDevice, type TotpSetup } from "../../ipc/authApi";
 import {
   IconCheckCircle,
@@ -350,8 +351,7 @@ function MfaEnrollForm() {
     setCopied(false);
     setError(null);
     try {
-      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
-      await navigator.clipboard.writeText(recoveryCodes?.join("\n") ?? "");
+      await copyText(recoveryCodes?.join("\n") ?? "");
       setCopied(true);
       setConfirmed(true);
     } catch {
@@ -737,8 +737,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
     setCopied(false);
     setCopyError(null);
     try {
-      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
-      await navigator.clipboard.writeText(issue.formatted);
+      await copyText(issue.formatted);
       setCopied(true);
       setConfirmed(true);
     } catch {

@@ -17,6 +17,7 @@ import {
 import { WEB } from "../../ipc/env";
 import { remotePreviewApi, remoteSharingApi } from "../../ipc/remoteApi";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { IconGlobe } from "../../ui/icons";
 
 // 有效期选项全部落在服务端 minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内;
@@ -152,7 +153,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   const copyUrl = useCallback(async (url: string) => {
     if (copyHintTimerRef.current !== null) window.clearTimeout(copyHintTimerRef.current);
     try {
-      await navigator.clipboard.writeText(url);
+      await copyText(url);
       setCopyHint("链接已复制");
     } catch {
       setCopyHint("复制失败，请手动复制链接");

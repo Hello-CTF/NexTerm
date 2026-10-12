@@ -9,6 +9,7 @@ import { copyAssetDeepLink } from "../../app/deepLink";
 import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
+import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
@@ -220,7 +221,7 @@ export function AssetTree() {
   const onCopySshCommand = async (a: Asset) => {
     const command = formatSshCommand(a);
     try {
-      await navigator.clipboard.writeText(command);
+      await copyText(command);
       pushToast("success", `已复制 SSH 命令：${command}`);
     } catch (e) {
       pushToast("error", `复制失败：${describeError(e)}`);

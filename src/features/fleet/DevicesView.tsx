@@ -13,6 +13,7 @@ import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import {
@@ -51,13 +52,7 @@ function installCommand(): string {
 }
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
-  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-  if (!clipboard || typeof clipboard.writeText !== "function") {
-    pushToast("error", "复制失败：剪贴板不可用，请手动复制");
-    return;
-  }
-  void clipboard
-    .writeText(text)
+  void copyToClipboard(text)
     .then(() => pushToast("success", `${what}已复制`))
     .catch(() => pushToast("error", "复制失败，请手动复制"));
 }

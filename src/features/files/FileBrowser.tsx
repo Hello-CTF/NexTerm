@@ -31,6 +31,7 @@ import {
 import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useCoarsePointer } from "../../app/platform";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { copyText } from "../../ui/clipboard";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
@@ -287,7 +288,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
   const copyPath = async (p: string) => {
     try {
-      await navigator.clipboard.writeText(p);
+      await copyText(p);
       pushToast("success", "路径已复制");
     } catch (e) {
       pushToast("error", `复制失败：${describeError(e)}`);

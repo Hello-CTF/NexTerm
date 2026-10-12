@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StreamParser } from "@codemirror/language";
 import { IconCopy } from "../../ui/icons";
+import { copyText } from "../../ui/clipboard";
 import { useUi } from "../../app/store";
 import { safeWebUrl } from "./urlSafety";
 import {
@@ -270,7 +271,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
           className="nx-icon-btn nx-icon-btn-sm"
           title="复制代码"
           onClick={() => {
-            void navigator.clipboard.writeText(code).then(
+            void copyText(code).then(
               () => pushToast("success", "已复制到剪贴板"),
               () => pushToast("error", "复制失败：剪贴板不可用"),
             );

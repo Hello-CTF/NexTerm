@@ -34,6 +34,7 @@ import { xtermThemeFor } from "../terminal/xtermTheme";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import { IconGlobe, IconPlay, IconRefresh, IconStop, IconTerminal } from "../../ui/icons";
 
 // 公开链接有效期选项 (FLEET168): 全部落在服务端 minShareTTL(1 分钟)-
@@ -394,13 +395,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
   const copyShareUrl = useCallback(() => {
     if (!shareCreated) return;
-    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-    if (!clipboard || typeof clipboard.writeText !== "function") {
-      pushToast("error", "复制失败：剪贴板不可用，请手动复制");
-      return;
-    }
-    void clipboard
-      .writeText(shareCreated.url)
+    void copyText(shareCreated.url)
       .then(() => pushToast("success", "公开链接已复制"))
       .catch(() => pushToast("error", "复制失败，请手动复制"));
   }, [pushToast, shareCreated]);
