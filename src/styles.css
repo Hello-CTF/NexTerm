@@ -2109,7 +2109,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+  padding: 4px 6px;
   overflow-x: auto;
   z-index: 20;
   transform: translateY(calc(-1 * var(--nx-kb-inset, 0px)));
@@ -2552,13 +2552,11 @@
 
 .nx-rail {
   width: calc(48px + env(safe-area-inset-left));
-  padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
 }
 
 .nx-statusbar {
   padding-right: env(safe-area-inset-right);
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .nx-app[data-nx-landscape-full="true"] .nx-statusbar {
