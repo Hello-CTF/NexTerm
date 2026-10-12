@@ -94,9 +94,9 @@ tasks:
         sh: xcrun --sdk {{.IOS_SDK}} --show-sdk-path
     cmds:
       - |
-        MAIN_M=build/ios/xcode/main/main.m
+        MAIN_M=build/ios/main.m
         if [ ! -f "$MAIN_M" ]; then
-          MAIN_M=build/ios/main.m
+          MAIN_M=build/ios/xcode/main/main.m
         fi
         xcrun -sdk {{.IOS_SDK}} clang \
           -target {{.IOS_TARGET}} \

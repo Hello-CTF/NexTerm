@@ -66,9 +66,12 @@ func (p Paths) Prepare() error {
 
 func desktopDataDir(goos, home string) (string, error) {
 	switch goos {
-	case "darwin", "linux", "windows":
+	case "darwin", "linux", "windows", "ios":
 		if home == "" {
 			return "", fmt.Errorf("home directory is empty")
+		}
+		if goos == "ios" {
+			return filepath.Join(home, "Library", "Application Support", "nexterm"), nil
 		}
 		return filepath.Join(home, ".config", "nexterm"), nil
 	default:
