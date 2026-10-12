@@ -60,7 +60,7 @@ type Config struct {
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
-	// Previews 与 Spectator 一起启用只读远程预览 (公开预览链接): 管理端点
+	// Previews 与 Spectator 一起启用远程预览 (公开预览链接): 管理端点
 	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。Spectator 若同时
 	// 实现 RemoteSessionRegistry (生产注入的 *session.Manager 即如此), 额外
 	// 挂载 /share/remote-sessions 远程会话壳管理面。
@@ -304,8 +304,8 @@ func (s *Server) routes(config Config) http.Handler {
 		s.fleet.Mount(mux)
 	}
 	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
-		// 只读远程预览的公开数据面: 普通 GET 与公开分享页同一静态入口,
-		// WS upgrade 才走 token 把关。
+		// 远程预览的公开数据面: 普通 GET 与公开分享页同一静态入口,
+		// WS upgrade 才走 token 把关; 只读/可写由链接权限决定。
 		mux.HandleFunc("GET /share/preview/{token}", s.serveSharePreview(staticHandler))
 	}
 

@@ -122,8 +122,8 @@ class FakeWebSocket {
 
 const TOKEN = "test-preview-token";
 
-function readyFrame() {
-  return { type: "ready", session_id: "tab-1", permission: "read", expires_at: 1790000000000 };
+function readyFrame(permission: "read" | "read_write" = "read") {
+  return { type: "ready", session_id: "tab-1", permission, expires_at: 1790000000000 };
 }
 
 function snapshotFrame() {
@@ -155,12 +155,16 @@ function lastTerminal() {
   return terminal;
 }
 
-async function goLive(): Promise<FakeWebSocket> {
+async function goLive(permission: "read" | "read_write" = "read"): Promise<FakeWebSocket> {
   const socket = lastSocket();
-  socket.emitText(readyFrame());
+  socket.emitText(readyFrame(permission));
   socket.emitText(snapshotFrame());
   await flush();
   return socket;
+}
+
+function badgeText(view: MountedView): string | null | undefined {
+  return view.container.querySelector("header .rounded-full")?.textContent;
 }
 
 function decodeWrite(write: unknown): string {
@@ -188,10 +192,10 @@ describe("PublicPreviewApp", () => {
     expect(lastSocket().url).toContain("/share/preview/test-preview-token");
   });
 
-  it("shows the spectate badge and expiry once ready", async () => {
+  it("shows the read-only badge and expiry once ready", async () => {
     const view = await mountViewer();
     await goLive();
-    expect(view.container.textContent).toContain("只读预览，不能输入");
+    expect(badgeText(view)).toBe("只读");
     expect(view.container.textContent).toContain("有效期至");
   });
 
@@ -214,13 +218,87 @@ describe("PublicPreviewApp", () => {
     expect(decodeWrite(terminal.writes[1])).toBe("live-output");
   });
 
-  it("has no input path at all: keystrokes never reach the socket", async () => {
+  it("read permission: keystrokes never reach the socket", async () => {
     await mountViewer();
     await goLive();
     const terminal = lastTerminal();
     terminal.dataCallbacks.forEach((callback) => callback("ls\r"));
     await flush();
     expect(lastSocket().sent).toEqual([]);
+  });
+
+  it("read_write shows the controllable badge and sends keystrokes as binary frames", async () => {
+    const view = await mountViewer();
+    const socket = await goLive("read_write");
+    expect(badgeText(view)).toBe("可控制");
+    lastTerminal().dataCallbacks.forEach((callback) => callback("ls\r"));
+    await flush();
+    expect(socket.sent).toHaveLength(1);
+    expect(typeof socket.sent[0]).not.toBe("string");
+    expect(new TextDecoder().decode(socket.sent[0] as Uint8Array)).toBe("ls\r");
+  });
+
+  it("shows a persistent hint while the sharer controls but still forwards input", async () => {
+    const view = await mountViewer();
+    const socket = await goLive("read_write");
+    socket.emitText({ type: "control", state: "owner", lease_until: 1790000060000 });
+    await flush();
+    expect(badgeText(view)).toBe("分享者控制中");
+    expect(view.container.textContent).toContain("分享者正在控制终端，控制权归还前你只能观看");
+    lastTerminal().dataCallbacks.forEach((callback) => callback("ls\r"));
+    await flush();
+    expect(socket.sent).toHaveLength(1);
+  });
+
+  it("shows a persistent hint while another guest controls but still forwards input", async () => {
+    const view = await mountViewer();
+    const socket = await goLive("read_write");
+    socket.emitText({ type: "control", state: "busy" });
+    await flush();
+    expect(badgeText(view)).toBe("另一访客控制中");
+    expect(view.container.textContent).toContain("另一位访客正在控制终端，控制权归还前你只能观看");
+    lastTerminal().dataCallbacks.forEach((callback) => callback("ls\r"));
+    await flush();
+    expect(socket.sent).toHaveLength(1);
+  });
+
+  it("keeps forwarding input after busy and restores the controllable badge on guest control", async () => {
+    const view = await mountViewer();
+    const socket = await goLive("read_write");
+    socket.emitText({ type: "control", state: "busy" });
+    await flush();
+    expect(badgeText(view)).toBe("另一访客控制中");
+    lastTerminal().dataCallbacks.forEach((callback) => callback("a"));
+    await flush();
+    expect(socket.sent).toHaveLength(1);
+    socket.emitText({ type: "control", state: "guest" });
+    await flush();
+    expect(badgeText(view)).toBe("可控制");
+    expect(view.container.textContent).not.toContain("控制权归还前");
+    lastTerminal().dataCallbacks.forEach((callback) => callback("b"));
+    await flush();
+    expect(socket.sent).toHaveLength(2);
+  });
+
+  it("shows a one-shot warning for read_only errors without leaving live", async () => {
+    const view = await mountViewer();
+    const socket = await goLive("read_write");
+    socket.emitText({ type: "error", code: "read_only", message: "当前没有控制权" });
+    await flush();
+    expect(view.container.textContent).toContain("当前没有控制权");
+    expect(badgeText(view)).toBe("可控制");
+    const terminal = lastTerminal();
+    socket.emitBinary(new TextEncoder().encode("still-live"));
+    await flush();
+    expect(decodeWrite(terminal.writes[terminal.writes.length - 1])).toBe("still-live");
+    socket.emitText({ type: "error", code: "read_only", message: "再来一次" });
+    await flush();
+    expect(view.container.textContent).not.toContain("再来一次");
+    socket.emitText({ type: "control", state: "guest" });
+    await flush();
+    socket.emitText({ type: "error", code: "read_only", message: "再次没有控制权" });
+    await flush();
+    expect(view.container.textContent).toContain("再次没有控制权");
   });
 
   it("maps an expired error frame to plain copy without retry", async () => {

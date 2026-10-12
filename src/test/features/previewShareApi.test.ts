@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 只读预览 API 线上契约: 路径/方法/CSRF/蛇形 JSON 字段对齐
+// 预览 API 线上契约: 路径/方法/CSRF/蛇形 JSON 字段对齐
 // internal/server/preview_http.go 的真实路由; 创建响应是唯一携带一次性 token
-// 的入口, token 只用于当场拼公开 URL。
+// 的入口, token 只用于当场拼公开 URL。创建 body 恒显式携带 write 决定是否可写。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe("previewApi 线上契约", () => {
-  it("创建预览链接走 POST /share/previews, 蛇形字段 + CSRF", async () => {
+  it("创建预览链接走 POST /share/previews, 蛇形字段 + CSRF, 默认 write:false", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -59,9 +59,19 @@ describe("previewApi 线上契约", () => {
     expect(calls[0]).toMatchObject({
       url: "/share/previews",
       method: "POST",
-      body: { session_id: "tab-1", ttl_ms: 3_600_000 },
+      body: { session_id: "tab-1", ttl_ms: 3_600_000, write: false },
     });
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
+  });
+
+  it("创建可写预览链接在 body 里携带 write:true", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+    setCsrfToken("csrf-9");
+
+    await createPreviewLink({ sessionId: "tab-1", ttlMs: 3_600_000, write: true });
+
+    expect(calls[0]?.body).toMatchObject({ session_id: "tab-1", ttl_ms: 3_600_000, write: true });
   });
 
   it("预览列表走 GET /share/previews 且不带 CSRF 头", async () => {

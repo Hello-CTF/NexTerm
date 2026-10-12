@@ -31,6 +31,7 @@ func newSharePreviewLink(db *gorm.DB, opts ...gen.DOOption) sharePreviewLink {
 	_sharePreviewLink.OwnerID = field.NewString(tableName, "owner_id")
 	_sharePreviewLink.SessionID = field.NewString(tableName, "session_id")
 	_sharePreviewLink.TokenHash = field.NewString(tableName, "token_hash")
+	_sharePreviewLink.Permission = field.NewString(tableName, "permission")
 	_sharePreviewLink.CreatedAt = field.NewInt64(tableName, "created_at")
 	_sharePreviewLink.ExpiresAt = field.NewInt64(tableName, "expires_at")
 	_sharePreviewLink.RevokedAt = field.NewInt64(tableName, "revoked_at")
@@ -54,6 +55,7 @@ type sharePreviewLink struct {
 	OwnerID        field.String
 	SessionID      field.String
 	TokenHash      field.String
+	Permission     field.String
 	CreatedAt      field.Int64
 	ExpiresAt      field.Int64
 	RevokedAt      field.Int64
@@ -79,6 +81,7 @@ func (s *sharePreviewLink) updateTableName(table string) *sharePreviewLink {
 	s.OwnerID = field.NewString(table, "owner_id")
 	s.SessionID = field.NewString(table, "session_id")
 	s.TokenHash = field.NewString(table, "token_hash")
+	s.Permission = field.NewString(table, "permission")
 	s.CreatedAt = field.NewInt64(table, "created_at")
 	s.ExpiresAt = field.NewInt64(table, "expires_at")
 	s.RevokedAt = field.NewInt64(table, "revoked_at")
@@ -111,11 +114,12 @@ func (s *sharePreviewLink) GetFieldByName(fieldName string) (field.OrderExpr, bo
 }
 
 func (s *sharePreviewLink) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 9)
+	s.fieldMap = make(map[string]field.Expr, 10)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["owner_id"] = s.OwnerID
 	s.fieldMap["session_id"] = s.SessionID
 	s.fieldMap["token_hash"] = s.TokenHash
+	s.fieldMap["permission"] = s.Permission
 	s.fieldMap["created_at"] = s.CreatedAt
 	s.fieldMap["expires_at"] = s.ExpiresAt
 	s.fieldMap["revoked_at"] = s.RevokedAt

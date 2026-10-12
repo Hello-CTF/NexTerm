@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
-// WEB 端只读预览: PreviewShareMenu 分流保持 previewApi 直连 — 创建经
-// createPreviewLink (sessionId 即 tabId), URL 用 previewPublicUrl 拼, 列表按
-// tabId 直接过滤, 吊销走 revokePreviewLink; 不触桌面中继入口。
+// WEB 端预览链接: PreviewShareMenu 分流保持 previewApi 直连 — 创建经
+// createPreviewLink (sessionId 即 tabId, 默认 write:false 只读, 勾选「允许控制」
+// 发 write:true, 成功后勾选重置), URL 用 previewPublicUrl 拼, 列表按 tabId 直接
+// 过滤并按 permission 显示只读/可控制徽章, 吊销走 revokePreviewLink; 不触桌面中继入口。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   createPreviewLink: vi.fn(),
@@ -57,17 +58,69 @@ afterEach(() => {
 });
 
 describe("PreviewShareMenu WEB 分流", () => {
-  it("创建经 previewApi 直连并用 previewPublicUrl 拼公开 URL", async () => {
+  it("创建经 previewApi 直连并用 previewPublicUrl 拼公开 URL, 默认 write:false", async () => {
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "只读预览");
+    clickButton(container, "预览链接");
     await flushUntil(() => container.querySelector("select") !== null);
     clickButton(container, "创建链接");
     await flushUntil(
       () => container.textContent?.includes(`${window.location.origin}/share/preview/tok-web`) === true,
     );
-    expect(mocks.createPreviewLink).toHaveBeenCalledWith({ sessionId: "tab-1", ttlMs: 3_600_000 });
+    expect(mocks.createPreviewLink).toHaveBeenCalledWith({ sessionId: "tab-1", ttlMs: 3_600_000, write: false });
     expect(mocks.remoteCreate).not.toHaveBeenCalled();
+  });
+
+  it("勾选允许控制后创建传 write:true, 成功后勾选重置为未选", async () => {
+    mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
+    const container = mounted.container;
+    clickButton(container, "预览链接");
+    await flushUntil(() => container.querySelector("select") !== null);
+    const checkbox = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((candidate) =>
+      candidate.closest("label")?.textContent?.includes("允许控制"),
+    );
+    expect(checkbox).toBeDefined();
+    expect(checkbox!.disabled).toBe(false);
+    expect(checkbox!.checked).toBe(false);
+    click(checkbox!);
+    expect(checkbox!.checked).toBe(true);
+    clickButton(container, "创建链接");
+    await flushUntil(
+      () => container.textContent?.includes(`${window.location.origin}/share/preview/tok-web`) === true,
+    );
+    expect(mocks.createPreviewLink).toHaveBeenCalledWith({ sessionId: "tab-1", ttlMs: 3_600_000, write: true });
+    expect(checkbox!.checked).toBe(false);
+  });
+
+  it("进行中的链接按 permission 显示只读/可控制徽章, 缺失或未知值按只读", async () => {
+    mocks.listPreviewLinks.mockResolvedValue({
+      links: [
+        {
+          id: "l-1",
+          owner_id: "u-1",
+          session_id: "tab-1",
+          created_at: NOW - 60_000,
+          expires_at: NOW + 3_600_000,
+          permission: "read_write",
+        },
+        { id: "l-2", owner_id: "u-1", session_id: "tab-1", created_at: NOW - 60_000, expires_at: NOW + 3_600_000 },
+        {
+          id: "l-3",
+          owner_id: "u-1",
+          session_id: "tab-1",
+          created_at: NOW - 60_000,
+          expires_at: NOW + 3_600_000,
+          permission: "owner",
+        },
+      ],
+    });
+    mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
+    const container = mounted.container;
+    clickButton(container, "预览链接");
+    await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
+    const badges = [...container.querySelectorAll("span")].map((span) => span.textContent?.trim());
+    expect(badges.filter((text) => text === "可控制")).toHaveLength(1);
+    expect(badges.filter((text) => text === "只读")).toHaveLength(2);
   });
 
   it("列表按 tabId 直接过滤, 不查桌面中继状态", async () => {
@@ -79,7 +132,7 @@ describe("PreviewShareMenu WEB 分流", () => {
     });
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
-    clickButton(container, "只读预览");
+    clickButton(container, "预览链接");
     await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
     const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "吊销");
     expect(revokes).toHaveLength(1);

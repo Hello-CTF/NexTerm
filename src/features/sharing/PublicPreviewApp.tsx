@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PreviewConnection,
+  type PreviewControlState,
   type PreviewFailure,
   type PreviewReady,
   type PreviewSnapshot,
@@ -61,15 +62,36 @@ function snapshotEscape(snapshot: PreviewSnapshot): string {
   return `${text}\x1b[${row};${col}H`;
 }
 
+function controlBadge(writable: boolean, controlState: PreviewControlState): { text: string; tone: string } {
+  if (!writable) return { text: "只读", tone: "bg-sky-900/60 text-sky-300" };
+  if (controlState === "guest") return { text: "可控制", tone: "bg-emerald-900/60 text-emerald-300" };
+  if (controlState === "owner") return { text: "分享者控制中", tone: "bg-amber-900/60 text-amber-300" };
+  return { text: "另一访客控制中", tone: "bg-amber-900/60 text-amber-300" };
+}
+
 export function PublicPreviewApp({ token }: { token: string }) {
   const [phase, setPhase] = useState<PreviewPhase>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [controlState, setControlState] = useState<PreviewControlState>("guest");
+  const [readOnlyHint, setReadOnlyHint] = useState<string | null>(null);
   const terminalRef = useRef<PublicShareTerminalHandle | null>(null);
   const connectionRef = useRef<PreviewConnection | null>(null);
   const phaseRef = useRef<PreviewPhase>(phase);
   phaseRef.current = phase;
   const copyHintTimerRef = useRef<number | null>(null);
+  const readOnlyHintedRef = useRef(false);
+  const readOnlyHintTimerRef = useRef<number | null>(null);
+
+  const showReadOnlyHint = useCallback((message: string) => {
+    if (readOnlyHintedRef.current) return;
+    readOnlyHintedRef.current = true;
+    setReadOnlyHint(message || "输入未被接受：当前没有控制权");
+    readOnlyHintTimerRef.current = window.setTimeout(() => {
+      readOnlyHintTimerRef.current = null;
+      setReadOnlyHint(null);
+    }, 3000);
+  }, []);
 
   useEffect(() => {
     let ready = false;
@@ -77,6 +99,8 @@ export function PublicPreviewApp({ token }: { token: string }) {
     const connection = new PreviewConnection(token, {
       onReady: (info) => {
         ready = true;
+        readOnlyHintedRef.current = false;
+        setControlState("guest");
         setPhase({ kind: "live", ready: info });
       },
       onSnapshot: (snapshot) => {
@@ -84,7 +108,17 @@ export function PublicPreviewApp({ token }: { token: string }) {
         terminalRef.current?.write(new TextEncoder().encode(snapshotEscape(snapshot)));
       },
       onOutput: (bytes) => terminalRef.current?.write(bytes),
-      onError: (failure) => setPhase({ kind: "error", ...errorCopy(failure) }),
+      onControl: (control) => {
+        if (control.state === "guest") readOnlyHintedRef.current = false;
+        setControlState(control.state);
+      },
+      onError: (failure) => {
+        if (failure.code === "read_only") {
+          showReadOnlyHint(failure.message);
+          return;
+        }
+        setPhase({ kind: "error", ...errorCopy(failure) });
+      },
       onClose: (info) => {
         if (disposed) return;
         if (ready) {
@@ -103,17 +137,25 @@ export function PublicPreviewApp({ token }: { token: string }) {
       connectionRef.current = null;
       connection.close();
     };
-  }, [token, attempt]);
+  }, [token, attempt, showReadOnlyHint]);
 
   useEffect(() => {
     return () => {
       if (copyHintTimerRef.current !== null) window.clearTimeout(copyHintTimerRef.current);
+      if (readOnlyHintTimerRef.current !== null) window.clearTimeout(readOnlyHintTimerRef.current);
     };
   }, []);
 
-  // 只读预览: 终端按键不进入任何发送路径 (合同里没有输入帧), 这里只是让
-  // xterm 的 onData 有处可去。
-  const handleInput = useCallback((_data: string) => {}, []);
+  // 输入只按权限门控: live 且 read_write 时按键总是经 sendInput 以二进制帧
+  // 发出, 由服务端逐帧仲裁并用 control 帧刷新徽章与提示; read 权限的按键
+  // 就地丢弃, 不进入任何发送路径。
+  const handleInput = useCallback((data: string) => {
+    const connection = connectionRef.current;
+    const current = phaseRef.current;
+    if (!connection) return;
+    if (current.kind !== "live" || current.ready.permission !== "read_write") return;
+    connection.sendInput(new TextEncoder().encode(data));
+  }, []);
 
   const handleSelectionCopy = useCallback((text: string, error: unknown | null) => {
     if (copyHintTimerRef.current !== null) window.clearTimeout(copyHintTimerRef.current);
@@ -133,17 +175,24 @@ export function PublicPreviewApp({ token }: { token: string }) {
     setAttempt((value) => value + 1);
   }, []);
 
+  const writable = phase.kind === "live" && phase.ready.permission === "read_write";
+  const badge = phase.kind === "live" ? controlBadge(writable, controlState) : null;
   const expiry = phase.kind === "live" ? formatExpiry(phase.ready.expiresAt) : null;
 
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-[#101217] text-neutral-200">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800 px-3 py-2">
-        <span className="text-sm font-medium text-neutral-100">NexTerm 只读预览</span>
-        {phase.kind === "live" && (
-          <span className="rounded-full bg-sky-900/60 px-2 py-0.5 text-xs text-sky-300">只读预览，不能输入</span>
-        )}
+        <span className="text-sm font-medium text-neutral-100">NexTerm 预览</span>
+        {badge && <span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.text}</span>}
         {expiry && <span className="text-xs text-neutral-500">{expiry}</span>}
       </header>
+      {phase.kind === "live" && writable && controlState !== "guest" && (
+        <div className="border-b border-amber-900/50 bg-amber-950/70 px-3 py-1.5 text-xs text-amber-200">
+          {controlState === "owner"
+            ? "分享者正在控制终端，控制权归还前你只能观看"
+            : "另一位访客正在控制终端，控制权归还前你只能观看"}
+        </div>
+      )}
       <main className="relative min-h-0 flex-1">
         <PublicShareTerminal
           onInput={handleInput}
@@ -194,6 +243,11 @@ export function PublicPreviewApp({ token }: { token: string }) {
                 </>
               )}
             </div>
+          </div>
+        )}
+        {readOnlyHint && (
+          <div className="pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 rounded-full bg-amber-900/95 px-3 py-1 text-xs text-amber-100 shadow-lg">
+            {readOnlyHint}
           </div>
         )}
         {copyHint && (
