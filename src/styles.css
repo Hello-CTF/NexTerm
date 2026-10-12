@@ -2123,6 +2123,9 @@
 }
 
 .nx-terminal-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: 34px;
   height: 29px;
   flex: 0 0 auto;
@@ -2542,23 +2545,24 @@
   display: none;
 }
 
-/* 圆角屏/刘海适配: 背景延伸进弧区, 交互内容避开状态栏与手势条 */
+/* 圆角屏/刘海适配: 背景延伸进弧区, 交互内容避开状态栏与手势条。
+   --nx-inset-* 由原生侧注入(安卓 env() 不含手势条), 未注入时退回 iOS 的 env() 值 */
 .nx-app-header {
   height: auto;
   min-height: 36px;
-  padding-top: env(safe-area-inset-top);
-  padding-right: env(safe-area-inset-right);
+  padding-top: var(--nx-inset-top, env(safe-area-inset-top));
+  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
 }
 
 .nx-rail {
-  width: calc(48px + env(safe-area-inset-left));
-  padding-left: env(safe-area-inset-left);
+  width: calc(48px + var(--nx-inset-left, env(safe-area-inset-left)));
+  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
 }
 
 .nx-statusbar {
-  padding-right: env(safe-area-inset-right);
+  padding-right: var(--nx-inset-right, env(safe-area-inset-right));
 }
 
 .nx-app[data-nx-landscape-full="true"] .nx-statusbar {
-  padding-left: env(safe-area-inset-left);
+  padding-left: var(--nx-inset-left, env(safe-area-inset-left));
 }
