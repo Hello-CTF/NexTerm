@@ -17,6 +17,7 @@ import {
 } from "../../ipc/authApi";
 import {
   base64ToBytes,
+  bytesToBase64,
   generateDEK,
   generateRecoveryKey,
   recoveryKeyHash,
@@ -89,6 +90,35 @@ interface AuthState {
 
 function zeroize(data: Uint8Array | null): void {
   if (data) data.fill(0);
+}
+
+// DEK 随浏览器标签会话持久化(sessionStorage): 页面刷新后自动恢复解锁,
+// 关闭标签/浏览器即失效, 避免每次刷新都要求重新输入密码。
+const DEK_SESSION_PREFIX = "nexterm.sessionDek.v1.";
+
+function persistDek(userId: string, dek: Uint8Array): void {
+  try {
+    sessionStorage.setItem(DEK_SESSION_PREFIX + userId, bytesToBase64(dek));
+  } catch {
+    // sessionStorage 不可用时仅内存持有
+  }
+}
+
+function restoreDek(userId: string): Uint8Array | null {
+  try {
+    const raw = sessionStorage.getItem(DEK_SESSION_PREFIX + userId);
+    return raw ? base64ToBytes(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedDek(userId: string): void {
+  try {
+    sessionStorage.removeItem(DEK_SESSION_PREFIX + userId);
+  } catch {
+    // 忽略
+  }
 }
 
 function isNotFoundError(e: unknown): boolean {
@@ -169,6 +199,7 @@ async function finishPasswordLogin(set: AuthSet, session: AccountSession, passwo
     recovery = built.recovery;
   }
   set({ dek, gate: "ready", ...(recovery ? { pendingRecoveryKey: recovery } : {}) });
+  persistDek(session.user.id, dek);
   syncPreferenceStore(true);
 }
 
@@ -210,7 +241,8 @@ export const useAuth = create<AuthState>((set, get) => ({
         } else if (!session.user.mfa_enabled && session.mfa_required) {
           set({ gate: "mfa_enroll" });
         } else {
-          set({ gate: "ready" });
+          const savedDek = restoreDek(session.user.id);
+          set({ gate: "ready", ...(savedDek ? { dek: savedDek } : {}) });
         }
         syncPreferenceStore(true);
       } catch {
@@ -303,6 +335,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     } catch {
       // 会话可能已失效;本地状态照样清除
     }
+    const logoutUserId = get().user?.id;
+    if (logoutUserId) clearPersistedDek(logoutUserId);
     zeroize(get().dek);
     setCsrfToken(null);
     set({ user: null, dek: null, gate: get().status?.auth === "on" ? "login" : "ready", pendingRecoveryKey: null, pendingMfa: null, mfaEnrollmentPassword: null });
@@ -386,6 +420,8 @@ export const useAuth = create<AuthState>((set, get) => ({
       const { fields, recovery } = await buildEnvelopes(newPassword, dek);
       await authApi.changePassword({ oldPassword, newPassword, ...fields });
       set({ dek, pendingRecoveryKey: recovery });
+      const userId = get().user?.id;
+      if (userId) persistDek(userId, dek);
       return recovery;
     } catch (e) {
       set({ error: toAppError(e) });
@@ -428,6 +464,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       const dek = await fetchAndUnwrapDEK(password);
       set({ dek });
+      const userId = get().user?.id;
+      if (userId) persistDek(userId, dek);
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -448,6 +486,7 @@ if (typeof window !== "undefined") {
   window.addEventListener(SESSION_EXPIRED_EVENT, () => {
     const state = useAuth.getState();
     if (state.user) {
+      clearPersistedDek(state.user.id);
       zeroize(state.dek);
       setCsrfToken(null);
       useAuth.setState({ user: null, dek: null, gate: state.status?.auth === "on" ? "login" : "ready", pendingMfa: null, mfaEnrollmentPassword: null });
