@@ -7,6 +7,8 @@ import (
 	stdsync "sync"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -409,5 +411,92 @@ func TestApplyObjectsNonCanonicalTombstone(t *testing.T) {
 	var deletedAt int64
 	if err := instance.db.DB().QueryRowContext(ctx, "SELECT deleted_at FROM sync_tombstone WHERE id=?", groupID).Scan(&deletedAt); err != nil || deletedAt != 200 {
 		t.Fatalf("tombstone deleted_at=%d err=%v", deletedAt, err)
+	}
+}
+
+func applyPreference(t *testing.T, key string, value json.RawMessage, updatedAt int64) ApplyObject {
+	t.Helper()
+	id := preferenceObjectPrefix + key
+	return ApplyObject{ID: id, Kind: KindPreference, Payload: applyPayload(t, preferenceObject{
+		ID: id, Key: key, Value: value, UpdatedAt: updatedAt,
+	})}
+}
+
+func TestApplyObjectsPreferenceDottedIDs(t *testing.T) {
+	instance := newTestInstance(t, false)
+	userID := ids.New()
+	ctx := WithUserID(context.Background(), userID)
+
+	fontSize := applyPreference(t, "appearance.terminalFontSize", json.RawMessage("13"), 100)
+	theme := applyPreference(t, "appearance.terminalTheme", json.RawMessage(`"light"`), 100)
+	permission := ApplyObject{ID: "global", Kind: KindAIPermission, Payload: applyPayload(t, aiPermissionObject{
+		ID: "global", Mode: "silent", DangerRules: []string{"rm -rf /"}, UpdatedAt: 100,
+	})}
+
+	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize, theme, permission}})
+	if err != nil {
+		t.Fatalf("apply objects: %v", err)
+	}
+	if result.Applied != 3 || result.Skipped != 0 {
+		t.Fatalf("result=%+v objects=%+v", result, result.Objects)
+	}
+	for _, entry := range result.Objects {
+		requireApplyResult(t, entry, ApplyResultApplied)
+	}
+
+	prefix := account.PreferenceUserKeyPrefix(userID)
+	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalFontSize"); err != nil || !found || value != "13" {
+		t.Fatalf("font size setting=%q found=%v err=%v", value, found, err)
+	}
+	if value, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalTheme"); err != nil || !found || value != `"light"` {
+		t.Fatalf("theme setting=%q found=%v err=%v", value, found, err)
+	}
+	if value, found, err := instance.db.SettingGet(ctx, guard.PermissionSettingKeyForUser(ctx)); err != nil || !found || !strings.Contains(value, `"silent"`) {
+		t.Fatalf("permission setting=%q found=%v err=%v", value, found, err)
+	}
+
+	replay, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{fontSize}})
+	if err != nil {
+		t.Fatalf("replay apply: %v", err)
+	}
+	requireApplyResult(t, replay.Objects[0], ApplyResultIdentical)
+
+	tombstone := ApplyObject{ID: preferenceObjectPrefix + "appearance.terminalTheme", Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{
+		TargetKind: KindPreference, DeletedAt: 200,
+	})}
+	removed, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{tombstone}})
+	if err != nil {
+		t.Fatalf("tombstone apply: %v", err)
+	}
+	requireApplyResult(t, removed.Objects[0], ApplyResultApplied)
+	if _, found, err := instance.db.SettingGet(ctx, prefix+"appearance.terminalTheme"); err != nil || found {
+		t.Fatalf("theme setting must be deleted: found=%v err=%v", found, err)
+	}
+	requireSyncTombstone(t, instance, preferenceObjectPrefix+"appearance.terminalTheme", KindPreference, 200)
+}
+
+func TestApplyObjectsIDValidationByKind(t *testing.T) {
+	instance := newTestInstance(t, false)
+	ctx := WithUserID(context.Background(), ids.New())
+
+	dottedID := preferenceObjectPrefix + "appearance.terminalFontSize"
+	dottedGroup := ApplyObject{ID: dottedID, Kind: KindGroup, Payload: applyPayload(t, groupObject{
+		ID: dottedID, Name: "x", UpdatedAt: 1,
+	})}
+	spacedID := " " + dottedID
+	spacedPreference := ApplyObject{ID: spacedID, Kind: KindPreference, Payload: applyPayload(t, preferenceObject{
+		ID: spacedID, Key: "appearance.terminalFontSize", Value: json.RawMessage("13"), UpdatedAt: 100,
+	})}
+	result, err := instance.service.ApplyObjects(ctx, ApplyObjectsRequest{Objects: []ApplyObject{dottedGroup, spacedPreference}})
+	if err != nil {
+		t.Fatalf("apply objects: %v", err)
+	}
+	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
+	if !strings.Contains(result.Objects[0].Warning, "ID 格式不正确") {
+		t.Fatalf("ULID kinds must keep EnsureID: warning=%q", result.Objects[0].Warning)
+	}
+	requireApplyResult(t, result.Objects[1], ApplyResultSkipped)
+	if !strings.Contains(result.Objects[1].Warning, "同步对象 ID 不合法") {
+		t.Fatalf("preference objects must keep sanity validation: warning=%q", result.Objects[1].Warning)
 	}
 }

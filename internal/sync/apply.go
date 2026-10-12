@@ -123,11 +123,15 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 		entry.Warning = fmt.Sprintf(format, args...)
 		return entry
 	}
-	if err := store.EnsureID(object.ID); err != nil {
-		return reject("%v", err)
-	}
 	switch object.Kind {
-	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindPreference:
+	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTranscript, KindKnownHost, KindAIProfile:
+		if err := store.EnsureID(object.ID); err != nil {
+			return reject("%v", err)
+		}
+	case KindTombstone, KindAIPermission, KindPreference:
+		if !validObjectID(object.ID) {
+			return reject("%v", ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法"))
+		}
 	default:
 		return reject("不支持的同步对象种类 %q", object.Kind)
 	}
