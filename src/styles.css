@@ -1296,7 +1296,7 @@
     align-items: center;
     gap: 3px;
     padding: 9px 0;
-    overflow-y: auto;
+    overflow-y: clip;
     min-height: 0;
     border-right: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
@@ -2297,6 +2297,10 @@
   :root {
     --nx-keys-h: 53px;
     --nx-header-stack: 47px;
+  }
+
+  .nx-rail {
+    overflow-y: auto;
   }
 
   .nx-rail-btn {

@@ -135,7 +135,7 @@ const ASSET: Asset = {
 };
 const CRED = { id: "c-1", name: "db-prod", kind: "password", usedBy: [], createdAt: 1, updatedAt: 1 };
 const SNIPPET = { id: "sn-1", name: "uptime", command: "uptime", createdAt: 1, updatedAt: 1 };
-const SESSION = { id: "s-1", name: "web-01", kind: "ssh", status: "connected", assetId: "a-1" };
+const SESSION = { id: "s-1", name: "web-01", kind: "ssh", status: "connected", assetId: "a-1", tabs: [], createdAt: 0 };
 const UNAUTH = { code: "unauthorized", message: "访问令牌无效或缺失", status: 401 };
 
 let authed = false;

@@ -793,6 +793,7 @@ export const useUi = create<UiState>((set, get) => ({
         ...broadcastPatch,
       };
     });
+    void get().resyncSessions({ silent: true });
     return true;
   },
 
@@ -1157,6 +1158,7 @@ async function reclaimTerminals(
     ...blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
     ...cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
+  void useUi.getState().resyncSessions({ silent: true });
   const failed = results.filter((r) => r.status === "rejected");
   const { pushToast } = useUi.getState();
   if (failed.length) {
@@ -1269,6 +1271,7 @@ async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<Wo
     ...summary.cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
   const dbResults = await Promise.allSettled(summary.dbConnIds.map((connId) => dbApi.disconnect(connId)));
+  void useUi.getState().resyncSessions({ silent: true });
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
   const dbFailed = dbResults.filter((r): r is PromiseRejectedResult => r.status === "rejected");
   const killStart = summary.detachable.length;
@@ -1401,6 +1404,14 @@ async function requestCloseTabWithAction(
       );
       if (!result) return;
       action = result.key === "kill" ? "kill" : "detach";
+      if (action === "kill") {
+        const { ask } = await import("../ui/dialogs");
+        const ok = await ask(`直接关闭「${target.title}」？\n\n进程会被终止，无法恢复。`, {
+          title: `关闭「${target.title}」`,
+          kind: "warning",
+        });
+        if (!ok) return;
+      }
       if (result.remember) setTerminalCloseAction(action);
     }
   }
@@ -1440,6 +1451,14 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
         { title: "关闭终端标签", choices: CLOSE_CHOICE_OPTIONS },
       );
       decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
+      if (decided === "kill") {
+        const { ask } = await import("../ui/dialogs");
+        const ok = await ask(`直接关闭 ${pending.length} 个终端？\n\n进程会被终止，无法恢复。`, {
+          title: "关闭终端标签",
+          kind: "warning",
+        });
+        if (!ok) decided = null;
+      }
     }
   }
   for (const id of ids) {
@@ -1498,6 +1517,7 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   live.forEach((t, i) => {
     if (results[i].status === "fulfilled") st.updateTab(t.id, { exited: true });
   });
+  void st.resyncSessions({ silent: true });
 }
 
 export function takePendingCommand(storeTabId: string): string | null {
@@ -1786,7 +1806,12 @@ async function runConnectAsset(
       existing.kind === "db" ||
       (session !== undefined && LIVE_SESSION_STATUSES.has(session.status));
     if (live) {
-      useUi.getState().setActiveWorkspace(existing.id);
+      const hasTerminal = existing.panes.some((p) => p.tabs.some((t) => t.kind === "terminal"));
+      if (session && !hasTerminal) {
+        void openTerminalTab(session);
+      } else {
+        useUi.getState().setActiveWorkspace(existing.id);
+      }
       return { ok: true };
     }
     if (session) {

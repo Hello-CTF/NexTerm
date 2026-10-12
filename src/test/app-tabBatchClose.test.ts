@@ -157,4 +157,24 @@ describe("批量关闭部分失败", () => {
       "1 个标签未能关闭，已保留并在标签上标出原因",
     );
   });
+
+  it("批量选直接关闭但二次确认取消时终端保留,不算失败", async () => {
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }])],
+      activeWorkspaceId: "ws",
+    });
+    setTerminalCloseAction("ask");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await requestCloseTabs(["t1", "t2"]);
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabById("t1")).toBeDefined();
+    expect(tabById("t2")).toBeDefined();
+    expect(tabById("t1")?.closeError).toBeUndefined();
+    expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
+      "2 个标签未能关闭，已保留并在标签上标出原因",
+    );
+  });
 });

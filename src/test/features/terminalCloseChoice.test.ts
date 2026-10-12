@@ -106,9 +106,25 @@ describe("终端关闭偏好分派", () => {
 
     await requestCloseTab(tab.id);
 
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask.mock.calls[0][0]).toContain("「terminal」");
+    expect(mocks.ask.mock.calls[0][0]).toContain("无法恢复");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
     expect(tabsRemaining()).toEqual([]);
     expect(toastText()).not.toContain("已转入后台");
+  });
+
+  it("ask 弹窗选直接关闭但二次确认取消则保留标签，不写偏好", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: true });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toEqual([tab]);
+    expect(getTerminalPrefs().closeAction).toBe("ask");
   });
 
   it("ask 弹窗取消则保留标签，无任何 IPC", async () => {
@@ -199,6 +215,8 @@ describe("批量关闭合并弹窗", () => {
     expect(message).toContain("3 个终端");
     expect(message).toContain("后台会话");
     expect(options.rememberLabel).toBeUndefined();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask.mock.calls[0][0]).toContain("3 个终端");
     expect(mocks.closeTab).toHaveBeenCalledTimes(3);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
@@ -211,6 +229,19 @@ describe("批量关闭合并弹窗", () => {
     const files: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce(null);
+
+    await requestCloseTabs(["t1", "t2", "f1"]);
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(toastText()).not.toContain("未能关闭");
+  });
+
+  it("批量选直接关闭但二次确认取消：终端保留，非终端标签照常关闭", async () => {
+    const files: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
+    seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), files], activeTabId: "t1" }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
+    mocks.ask.mockResolvedValueOnce(false);
 
     await requestCloseTabs(["t1", "t2", "f1"]);
 
