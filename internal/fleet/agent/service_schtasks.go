@@ -68,6 +68,12 @@ func (m *windowsManager) Uninstall(ctx context.Context) error {
 	_, _ = m.runner.Run(ctx, "schtasks.exe", "/End", "/TN", windowsTaskName)
 	output, err := m.runner.Run(ctx, "schtasks.exe", "/Delete", "/TN", windowsTaskName, "/F")
 	if err != nil && !windowsTaskMissing(trimOutput(output)) {
+		// 非中英语言区域下"任务不存在"的文案不可枚举, /Delete 失败后复查:
+		// 任务已不存在 (退出码失败) 即视为删除成功; schtasks 本身不可用
+		// (非退出码错误) 不适用此兜底。
+		if _, queryErr := m.runner.Run(ctx, "schtasks.exe", "/Query", "/TN", windowsTaskName, "/FO", "CSV", "/NH"); queryErr != nil && isExitError(queryErr) {
+			return m.removeLegacyService(ctx)
+		}
 		return fmt.Errorf("删除计划任务失败: %w", schtasksHint(trimOutput(output), err))
 	}
 	return m.removeLegacyService(ctx)
