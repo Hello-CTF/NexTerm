@@ -290,7 +290,13 @@ tasks:
       - build/ios/xcode/main/Assets.xcassets/**/*
       - build/ios/xcode/project.pbxproj
     cmds:
-      - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
+      # The launch screen must not show the product description: blank
+      # info.description so the generated storyboard omits the subtitle label.
+      - |
+        TMP_CONFIG=$(mktemp)
+        sed -E 's/^([[:space:]]*)description:.*/\1description: ""/' build/config.yml > "$TMP_CONFIG"
+        wails3 ios xcode:gen -outdir build/ios/xcode -config "$TMP_CONFIG"
+        rm -f "$TMP_CONFIG"
 
   run:
     summary: Run the application in iOS Simulator
