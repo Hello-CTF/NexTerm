@@ -72,6 +72,13 @@ go build ./...   # 编译全部 Go 包
 task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint
 ```
 
+## 贡献与提交规范
+
+- 分支从 `master` 最新提交切出，完成后经 PR 合回 `master`；PR 标题与提交消息用 Conventional Commits（`feat` / `fix` / `docs` / `refactor` / `test` / `ci` / `build` / `perf` / `chore`）。
+- PR 描述写清三要素：解决什么问题、改了什么、怎么验证的；用户可感知的变化与行为变化要具名声明。
+- 提交前本地门禁全绿（`task check`，完整清单见 [AGENTS.md](AGENTS.md) 的质量命令）；CI 在 PR 上运行同一套检查。
+- 开发约定、评审规则与多 agent 协作约定见 [AGENTS.md](AGENTS.md)。
+
 ## License
 
 [MIT](LICENSE)
