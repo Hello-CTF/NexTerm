@@ -10,7 +10,6 @@ import {
   setCsrfToken,
   MFA_ENROLLMENT_REQUIRED_EVENT,
   SESSION_EXPIRED_EVENT,
-  type AccountDevice,
   type AccountSession,
   type AccountStatus,
   type AccountUser,
@@ -80,8 +79,6 @@ interface AuthState {
   completeResetRequired: (tempPassword: string, newPassword: string) => Promise<void>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<RecoveryKeyIssue>;
   recoveryReset: (username: string, recoveryKey: string, newPassword: string) => Promise<void>;
-  // Enroll a device with a pairing code (public route, no session created); returns the device for the subsequent login to bind the session via device_id.
-  enrollDevice: (code: string, name: string) => Promise<AccountDevice>;
   unlockDEK: (password: string) => Promise<void>;
   lockDEK: () => void;
   clearPendingRecoveryKey: () => void;
@@ -442,18 +439,6 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ pendingRecoveryKey: recovery });
     } catch (e) {
       zeroize(dek);
-      set({ error: toAppError(e) });
-      throw e;
-    }
-  },
-
-  // Enroll a device with a pairing code: public route, registers only without creating a session; on success the UI uses the returned device id to bind the session via the unified login.
-  enrollDevice: async (code, name) => {
-    set({ error: null });
-    try {
-      const r = await authApi.enroll(code, name, "web");
-      return r.device;
-    } catch (e) {
       set({ error: toAppError(e) });
       throw e;
     }

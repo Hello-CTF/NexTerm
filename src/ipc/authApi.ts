@@ -286,9 +286,6 @@ export const authApi = {
   enrollCode: () => request<{ code: string; expires_at: number }>("POST", "/auth/devices/enroll-code", {}, { csrf: true }),
 
   deviceRevoke: (id: string) => request<{ ok: boolean }>("DELETE", `/auth/devices/${encodeURIComponent(id)}`, undefined, { csrf: true }),
-
-  enroll: (code: string, name: string, kind: string) =>
-    request<{ device: AccountDevice }>("POST", "/auth/devices/enroll", { code, name, kind }),
 };
 
 export const adminApi = {

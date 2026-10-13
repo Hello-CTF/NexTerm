@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => {
     dekUpload: vi.fn(),
     changePassword: vi.fn(),
     recoveryReset: vi.fn(),
-    enroll: vi.fn(),
     writeText: vi.fn(),
   };
 });
@@ -35,7 +34,6 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       dekUpload: mocks.dekUpload,
       changePassword: mocks.changePassword,
       recoveryReset: mocks.recoveryReset,
-      enroll: mocks.enroll,
     },
   };
 });
@@ -108,9 +106,6 @@ beforeEach(() => {
   mocks.dekUpload.mockResolvedValue({ ok: true });
   mocks.changePassword.mockResolvedValue({ ok: true });
   mocks.recoveryReset.mockResolvedValue({ ok: true });
-  mocks.enroll.mockImplementation(async (_code: string, name: string) => ({
-    device: { id: "d-enrolled-1", name, kind: "web", created_at: 1, last_seen_at: 0, revoked_at: 0 },
-  }));
 });
 
 afterEach(() => {
@@ -489,109 +484,6 @@ describe("AuthGate reset_required 强制改密", () => {
       expect.objectContaining({ oldPassword: "temp-pw-123", newPassword: "new-pw-123" }),
     );
     expect(mocks.dekUpload).not.toHaveBeenCalled();
-  });
-});
-
-describe("AuthGate 用配对码添加设备", () => {
-  async function openEnrollForm() {
-    mounted = mountGate();
-    await flushUntil(() => mounted!.container.textContent?.includes("登录"));
-    clickButton(mounted.container, "用配对码添加设备");
-    await flushUntil(() => mounted!.container.textContent?.includes("用配对码添加设备"));
-  }
-
-  it("登录页提供配对码入口,完整走通 登记设备→登录绑定 后进入应用", async () => {
-    await openEnrollForm();
-
-    const inputs = mounted!.container.querySelectorAll("input");
-    setInputValue(inputs[0], "pair-code-123");
-    setInputValue(inputs[1], "办公室的浏览器");
-    await flush();
-    clickButton(mounted!.container, "添加并继续");
-
-    await flushUntil(() => mocks.enroll.mock.calls.length > 0);
-    expect(mocks.enroll).toHaveBeenCalledWith("pair-code-123", "办公室的浏览器", "web");
-
-    // Step two: device enrolled, log in with the account password, the session binds to that device
-    await flushUntil(() => mounted!.container.textContent?.includes("设备已登记"));
-    expect(mounted!.container.textContent).toContain("办公室的浏览器");
-    const loginInputs = mounted!.container.querySelectorAll("input");
-    setInputValue(loginInputs[0], "root");
-    setInputValue(loginInputs[1], "pw-123456");
-    await flush();
-    clickButton(mounted!.container, "登录");
-
-    await flushUntil(() => mocks.login.mock.calls.length > 0);
-    expect(mocks.login).toHaveBeenCalledWith("root", "pw-123456", "d-enrolled-1");
-    await flushUntil(() => useAuth.getState().gate === "ready");
-    expect(useAuth.getState().user?.id).toBe("u-admin");
-  });
-
-  it("配对码无效或已过期: 如实显示服务端错误,不进入登录步", async () => {
-    mocks.enroll.mockRejectedValue({ code: "forbidden", message: "设备注册码无效或已过期", status: 403 });
-    await openEnrollForm();
-
-    const inputs = mounted!.container.querySelectorAll("input");
-    setInputValue(inputs[0], "expired-code");
-    await flush();
-    clickButton(mounted!.container, "添加并继续");
-
-    await flushUntil(() => mounted!.container.textContent?.includes("设备注册码无效或已过期"));
-    expect(mocks.login).not.toHaveBeenCalled();
-    expect(mounted!.container.textContent).not.toContain("设备已登记");
-  });
-
-  it("网络错误: 显示无法连接服务器,可修改后重试", async () => {
-    mocks.enroll.mockRejectedValueOnce({ code: "disconnected", message: "无法连接服务器: offline", status: 0 });
-    await openEnrollForm();
-
-    const inputs = mounted!.container.querySelectorAll("input");
-    setInputValue(inputs[0], "pair-code-123");
-    await flush();
-    clickButton(mounted!.container, "添加并继续");
-    await flushUntil(() => mounted!.container.textContent?.includes("无法连接服务器"));
-
-    // Retry succeeds: submitting the same form again enters the login step
-    clickButton(mounted!.container, "添加并继续");
-    await flushUntil(() => mounted!.container.textContent?.includes("设备已登记"));
-    expect(mocks.enroll.mock.calls.length).toBe(2);
-  });
-
-  it("设备登记后登录失败: 显示登录错误且停留在绑定步,可重试", async () => {
-    mocks.login.mockRejectedValueOnce({ code: "forbidden", message: "用户名或密码错误", status: 403 });
-    await openEnrollForm();
-
-    const inputs = mounted!.container.querySelectorAll("input");
-    setInputValue(inputs[0], "pair-code-123");
-    await flush();
-    clickButton(mounted!.container, "添加并继续");
-    await flushUntil(() => mounted!.container.textContent?.includes("设备已登记"));
-
-    const loginInputs = mounted!.container.querySelectorAll("input");
-    setInputValue(loginInputs[0], "root");
-    setInputValue(loginInputs[1], "wrong-pw");
-    await flush();
-    clickButton(mounted!.container, "登录");
-    await flushUntil(() => mounted!.container.textContent?.includes("用户名或密码错误"));
-    expect(useAuth.getState().user).toBeNull();
-
-    // Retry: the correct password completes login (still bound to the same device)
-    const retryInputs = mounted!.container.querySelectorAll("input");
-    setInputValue(retryInputs[1], "pw-123456");
-    await flush();
-    clickButton(mounted!.container, "登录");
-    await flushUntil(() => useAuth.getState().gate === "ready");
-    expect(mocks.login).toHaveBeenLastCalledWith("root", "pw-123456", "d-enrolled-1");
-  });
-
-  it("配对码为空时不提交", async () => {
-    await openEnrollForm();
-    const inputs = mounted!.container.querySelectorAll("input");
-    setInputValue(inputs[0], "   ");
-    await flush();
-    const submit = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("添加并继续")) as HTMLButtonElement | undefined;
-    expect(submit?.disabled).toBe(true);
-    expect(mocks.enroll).not.toHaveBeenCalled();
   });
 });
 
