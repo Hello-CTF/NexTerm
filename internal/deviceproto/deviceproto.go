@@ -13,6 +13,11 @@ const (
 	PurposeFile = "file"
 	// PurposeForward dials a TCP/unix target from the device and pipes bytes.
 	PurposeForward = "forward"
+	// PurposeListen binds one TCP/unix listener on the device per bridge and
+	// announces inbound connections on the listen bridge.
+	PurposeListen = "listen"
+	// PurposeAccept carries one claimed inbound connection per bridge.
+	PurposeAccept = "accept"
 	// PurposeTerminal is the supervisor terminal bridge; it predates this
 	// package and is restated here so the transport passes one vocabulary.
 	PurposeTerminal = "terminal"

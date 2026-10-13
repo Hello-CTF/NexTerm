@@ -13,14 +13,22 @@ import (
 
 // Client runs one operation on its connection. Unary operations leave conn
 // ownership with the caller; the stream constructors (OpenRead, OpenWrite,
-// Dial) take ownership of conn in every outcome, closing it on failure and
-// handing it to the returned stream on success.
+// Dial, Listen) take ownership of conn in every outcome, closing it on
+// failure and handing it to the returned stream on success.
 type Client struct {
 	conn net.Conn
+	dial func(ctx context.Context, purpose string) (net.Conn, error)
 }
 
-func NewClient(conn net.Conn) *Client {
-	return &Client{conn: conn}
+// NewClient builds the operation client for one bridge conn. dial is the
+// bridge dialer the other operations use, and only Listen needs it: each
+// Accept claims its inbound connection on a fresh accept-purpose bridge.
+func NewClient(conn net.Conn, dial ...func(ctx context.Context, purpose string) (net.Conn, error)) *Client {
+	c := &Client{conn: conn}
+	if len(dial) > 0 {
+		c.dial = dial[0]
+	}
+	return c
 }
 
 // exchange tracks one in-flight operation: the ctx-cancel escape closes the
@@ -45,7 +53,9 @@ func (c *Client) begin(ctx context.Context, kind FrameType, message any) (*excha
 }
 
 func (ex *exchange) finish() {
-	ex.stop()
+	if ex.stop != nil {
+		ex.stop()
+	}
 }
 
 // err prefers the context error: after a cancel the conn close surfaces as a
@@ -644,3 +654,104 @@ func (s *DialStream) Close() error {
 }
 
 var _ base.WriteCloseStream = (*DialStream)(nil)
+
+// Listen requests a remote listener on the device; on any outcome the client
+// owns the conn. The agent answers FrameListenAck with the bound address,
+// announces each inbound connection with a FrameInbound on the same bridge,
+// and the client claims one per Accept on a fresh accept-purpose bridge, so
+// the client must have been built with the bridge dialer.
+func (c *Client) Listen(ctx context.Context, network, address string) (*Listener, error) {
+	ex, err := c.begin(ctx, FrameListen, ListenMsg{Network: network, Address: address})
+	if err != nil {
+		_ = c.conn.Close()
+		return nil, err
+	}
+	fail := func(err error) (*Listener, error) {
+		ex.finish()
+		_ = c.conn.Close()
+		return nil, err
+	}
+	kind, payload, err := ex.next()
+	if err != nil {
+		return fail(err)
+	}
+	if kind != FrameListenAck {
+		return fail(ex.unexpected(kind))
+	}
+	var ack ListenAckMsg
+	if err := UnmarshalPayload(payload, &ack); err != nil {
+		return fail(err)
+	}
+	// Like Dial, the ctx governs the handshake only: the forward service's
+	// create ctx ends right after ListenRemote returns, and the remote
+	// listener must survive until Close, mirroring SSH tcpip-forward
+	// semantics. Disarm the cancel hook and decouple the listener.
+	ex.stop()
+	ex.ctx = context.Background()
+	return &Listener{exchange: ex, dial: c.dial, addr: listenAddr{network: network, address: ack.Address}}, nil
+}
+
+// Listener is the client half of a remote listen operation, owning the
+// listen bridge. Accept runs as a sequential loop; a pending Accept unblocks
+// with an error when Close shuts the bridge.
+type Listener struct {
+	*exchange
+	dial      func(ctx context.Context, purpose string) (net.Conn, error)
+	addr      listenAddr
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Addr is the bound address reported by the agent's listen ack.
+func (l *Listener) Addr() net.Addr {
+	return l.addr
+}
+
+// Accept claims the next inbound connection announced by a FrameInbound: it
+// dials a fresh accept bridge, writes the FrameAccept with the agent-issued
+// conn ID as the first frame, and from then on the bridge carries the dial
+// data plane.
+func (l *Listener) Accept() (net.Conn, error) {
+	kind, payload, err := l.next()
+	if err != nil {
+		return nil, err
+	}
+	if kind != FrameInbound {
+		return nil, l.unexpected(kind)
+	}
+	var inbound InboundMsg
+	if err := UnmarshalPayload(payload, &inbound); err != nil {
+		return nil, err
+	}
+	conn, err := l.dial(l.ctx, PurposeAccept)
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteMessage(conn, FrameAccept, AcceptMsg{ConnID: inbound.ConnID}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	stream := &DialStream{exchange: &exchange{ctx: l.ctx, conn: conn}}
+	remote := listenAddr{network: l.addr.network, address: inbound.Address}
+	return base.NewStreamConn(stream, l.addr, remote), nil
+}
+
+// Close shuts the listen bridge; the agent tears the remote listener and its
+// pending accepts down.
+func (l *Listener) Close() error {
+	l.closeOnce.Do(func() {
+		l.finish()
+		l.closeErr = l.conn.Close()
+	})
+	return l.closeErr
+}
+
+var _ net.Listener = (*Listener)(nil)
+
+type listenAddr struct {
+	network string
+	address string
+}
+
+func (a listenAddr) Network() string { return a.network }
+func (a listenAddr) String() string  { return a.address }
