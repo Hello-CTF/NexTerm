@@ -79,7 +79,7 @@ func (report *SyncReport) warnf(format string, args ...any) {
 }
 
 // collectLocalObjects scans the full local replica and produces deterministic payloads; the local replica stays identical before and after login.
-// Known hosts, AI profiles, AI permissions, and preferences are collected per the session user's opt-in: when off, the corresponding objects and their tombstones are not collected
+// Known hosts, AI profiles, AI permissions, AI grants, and preferences are collected per the session user's opt-in: when off, the corresponding objects and their tombstones are not collected
 // (disabling sync must not delete remote objects).
 func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn, userIDs ...string) (map[string]localObject, error) {
 	objects := map[string]localObject{}
@@ -229,6 +229,9 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			continue
 		}
 		if tombstone.Kind == KindAIPermission && !optIn.aiPermission {
+			continue
+		}
+		if tombstone.Kind == KindAIGrant && !optIn.aiGrant {
 			continue
 		}
 		if tombstone.Kind == KindPreference && !optIn.preferences {
@@ -727,6 +730,8 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 		return e.applyAIProfileTombstone(ctx, objectID, payload.DeletedAt, report)
 	case KindAIPermission:
 		return e.applyAIPermissionTombstone(ctx, objectID, payload.DeletedAt, report)
+	case KindAIGrant:
+		return e.applyAIGrantTombstone(ctx, objectID, payload.DeletedAt, report)
 	case KindPreference:
 		return e.applyPreferenceTombstone(ctx, objectID, payload.DeletedAt, report, firstUserID(userIDs))
 	default:
@@ -1154,14 +1159,16 @@ func objectKindRank(kind string) int {
 		return 5
 	case KindAIPermission:
 		return 6
-	case KindPreference:
+	case KindAIGrant:
 		return 7
-	case KindTombstone:
+	case KindPreference:
 		return 8
-	case KindTranscript:
+	case KindTombstone:
 		return 9
-	default:
+	case KindTranscript:
 		return 10
+	default:
+		return 11
 	}
 }
 

@@ -92,6 +92,25 @@ func compareName(id, kind string, plaintext []byte) string {
 		}
 	case KindAIPermission:
 		return "全局 AI 权限"
+	case KindAIGrant:
+		var payload struct {
+			DeviceID string `json:"deviceId"`
+			Action   string `json:"action"`
+			Path     string `json:"path"`
+			Mode     string `json:"mode"`
+		}
+		if err := json.Unmarshal(plaintext, &payload); err == nil && payload.DeviceID != "" {
+			switch {
+			case payload.Action != "" && payload.Path != "":
+				return payload.DeviceID + " " + payload.Action + " " + payload.Path
+			case payload.Action != "":
+				return payload.DeviceID + " " + payload.Action
+			case payload.Mode != "":
+				return payload.DeviceID + " " + payload.Mode
+			default:
+				return payload.DeviceID
+			}
+		}
 	default:
 		var payload struct {
 			Name string `json:"name"`

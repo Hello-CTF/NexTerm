@@ -176,7 +176,7 @@ export type SyncReport = {
   warnings?: string[],
 };
 
-export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "preference";
+export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "ai_grant" | "preference";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 
@@ -219,9 +219,13 @@ export type SyncCollectKnownHostsResult = { knownHosts: SyncCollectKnownHost[], 
 export type SyncCollectAIProfilesResult = { profiles: SyncCollectAIProfile[], hasMore: boolean, nextAfterId?: string, };
 
 // Per-account-user sync opt-in (default on); user identity is injected by the server session, not reported by the client.
-export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, preferences: boolean, };
+export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, aiGrant: boolean, preferences: boolean, };
 
 export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };
+export type SyncCollectAIGrantDevice = { id: string, deviceId: string, kinds: string[], updatedAt: number, };
+export type SyncCollectAIGrantRule = { id: string, deviceId: string, action: string, path?: string, expiresAt?: number, createdAt: number, updatedAt: number, };
+export type SyncCollectAIGrantMode = { id: string, deviceId: string, mode: string, updatedAt: number, };
+export type SyncCollectAIGrants = { grants: SyncCollectAIGrantDevice[], rules: SyncCollectAIGrantRule[], modes: SyncCollectAIGrantMode[], };
 export type SyncCollectPreference = { id: string, key: string, value: unknown, updatedAt: number, };
 export type PreferenceScopeView = { defaults: Record<string, unknown>, overrides: Record<string, unknown>, effective: Record<string, unknown>, };
 

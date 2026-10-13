@@ -78,6 +78,11 @@ func (s *Service) ApplyObjects(ctx context.Context, request ApplyObjectsRequest)
 				s.engine.logger.Warn("reload synced AI permission failed", "error", err)
 			}
 		}
+		if s.grantsReload != nil {
+			if err := s.grantsReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
+			}
+		}
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
 	}
 	return result, nil
@@ -128,7 +133,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 		if err := store.EnsureID(object.ID); err != nil {
 			return reject("%v", err)
 		}
-	case KindTombstone, KindAIPermission, KindPreference:
+	case KindTombstone, KindAIPermission, KindAIGrant, KindPreference:
 		if !validObjectID(object.ID) {
 			return reject("%v", ipc.NewError(ipc.CodeBadParam, "同步对象 ID 不合法"))
 		}
@@ -179,6 +184,17 @@ func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 		decoded = &aiProfileObject{}
 	case KindAIPermission:
 		decoded = &aiPermissionObject{}
+	case KindAIGrant:
+		switch {
+		case strings.HasPrefix(object.ID, aiGrantDevicePrefix):
+			decoded = &aiGrantDeviceObject{}
+		case strings.HasPrefix(object.ID, aiGrantRulePrefix):
+			decoded = &aiGrantRuleObject{}
+		case strings.HasPrefix(object.ID, aiGrantModePrefix):
+			decoded = &aiGrantModeObject{}
+		default:
+			return nil, ipc.NewError(ipc.CodeBadParam, "AI 授权对象 ID 不受支持")
+		}
 	case KindPreference:
 		decoded = &preferenceObject{}
 	default:
@@ -216,6 +232,12 @@ func applyPayloadID(decoded any) string {
 		return payload.ID
 	case *aiPermissionObject:
 		return payload.ID
+	case *aiGrantDeviceObject:
+		return payload.ID
+	case *aiGrantRuleObject:
+		return payload.ID
+	case *aiGrantModeObject:
+		return payload.ID
 	case *preferenceObject:
 		return payload.ID
 	}
@@ -250,6 +272,8 @@ func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string
 		return e.applyAIProfileObject(ctx, plaintext, report)
 	case KindAIPermission:
 		return e.applyAIPermissionObject(ctx, plaintext, report)
+	case KindAIGrant:
+		return e.applyAIGrantObject(ctx, objectID, plaintext, report)
 	case KindPreference:
 		return e.applyPreferenceObject(ctx, plaintext, report, firstUserID(userIDs))
 	}

@@ -100,6 +100,7 @@ type kindOptIn struct {
 	knownHost    bool
 	aiProfile    bool
 	aiPermission bool
+	aiGrant      bool
 	preferences  bool
 }
 
@@ -120,11 +121,15 @@ func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, e
 	if err != nil {
 		return kindOptIn{}, err
 	}
+	aiGrant, err := e.store.AIGrantSyncOptIn(ctx, userID)
+	if err != nil {
+		return kindOptIn{}, err
+	}
 	preferences, err := e.store.PreferencesSyncOptIn(ctx, userID)
 	if err != nil {
 		return kindOptIn{}, err
 	}
-	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, preferences: preferences}, nil
+	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, aiGrant: aiGrant, preferences: preferences}, nil
 }
 
 // allowsRemote decides whether a remote object (including tombstones) may be applied this round; hard-off kinds are neither applied nor reconciled,
@@ -137,6 +142,8 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 		return o.aiProfile
 	case KindAIPermission:
 		return o.aiPermission
+	case KindAIGrant:
+		return o.aiGrant
 	case KindPreference:
 		return o.preferences
 	case KindTombstone:
@@ -151,6 +158,8 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 			return o.aiProfile
 		case KindAIPermission:
 			return o.aiPermission
+		case KindAIGrant:
+			return o.aiGrant
 		case KindPreference:
 			return o.preferences
 		}

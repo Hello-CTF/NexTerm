@@ -1,5 +1,5 @@
 import type { AssetGroup, TranscriptChunk, TranscriptSummary } from "../../ipc/commands";
-import type { SnippetDto, SyncCollectAIPermission, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectPreference, SyncCollectTombstone } from "../../ipc/types";
+import type { SnippetDto, SyncCollectAIGrantDevice, SyncCollectAIGrantMode, SyncCollectAIGrantRule, SyncCollectAIPermission, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectPreference, SyncCollectTombstone } from "../../ipc/types";
 
 // Payload construction in this file aligns field by field with the Go structs in internal/sync/object.go (field order + omitempty semantics),
 // and marshalSyncPayload produces text byte-identical to Go json.Marshal; cross-side payload hashes match,
@@ -100,6 +100,25 @@ export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
 
 export function aiPermissionPayload(p: SyncCollectAIPermission): unknown {
   return { id: p.id, mode: p.mode, dangerRules: p.dangerRules, updatedAt: p.updatedAt };
+}
+
+// aiGrant*Payload mirror aiGrantDeviceObject/aiGrantRuleObject/aiGrantModeObject: field order matches the Go structs;
+// rule path/expiresAt are omitted via omitempty when empty/zero, kinds has no omitempty (always an array).
+export function aiGrantDevicePayload(g: SyncCollectAIGrantDevice): unknown {
+  return { id: g.id, deviceId: g.deviceId, kinds: g.kinds, updatedAt: g.updatedAt };
+}
+
+export function aiGrantRulePayload(r: SyncCollectAIGrantRule): unknown {
+  const o: Record<string, unknown> = { id: r.id, deviceId: r.deviceId, action: r.action };
+  if (r.path) o.path = r.path;
+  if (r.expiresAt) o.expiresAt = r.expiresAt;
+  o.createdAt = r.createdAt;
+  o.updatedAt = r.updatedAt;
+  return o;
+}
+
+export function aiGrantModePayload(m: SyncCollectAIGrantMode): unknown {
+  return { id: m.id, deviceId: m.deviceId, mode: m.mode, updatedAt: m.updatedAt };
 }
 
 export function preferencePayload(p: SyncCollectPreference): unknown {

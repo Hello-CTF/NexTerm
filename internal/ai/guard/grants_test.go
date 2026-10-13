@@ -5,6 +5,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type grantAuditRecorder struct {
@@ -216,5 +219,120 @@ func TestDeviceGrantCorruptSettingsRejected(t *testing.T) {
 	settings := &memorySettings{values: map[string]string{DeviceGrantsSettingKey: "{"}}
 	if _, err := NewGrants(context.Background(), settings, nil); err == nil {
 		t.Fatal("corrupt settings accepted")
+	}
+}
+
+// grantSyncSettings layers the sync opt-in reader and tombstone recorder interfaces onto memorySettings,
+// with the same shapes as the production store (an explicit opt-out is exercised via optIn=false).
+type grantSyncSettings struct {
+	*memorySettings
+	optIn      bool
+	tombstones []string
+}
+
+func (s *grantSyncSettings) AIGrantSyncOptIn(_ context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, errors.New("missing user identity")
+	}
+	return s.optIn, nil
+}
+
+func (s *grantSyncSettings) SyncTombstoneRecord(_ context.Context, id, _ string, _ int64) error {
+	s.tombstones = append(s.tombstones, id)
+	return nil
+}
+
+func TestGrantsReloadPicksUpExternalWrites(t *testing.T) {
+	grants, settings := newTestGrants(t, nil)
+	ruling := Confirm(KindProcess, "终端控制键可能中断或改变程序")
+	ctx := context.Background()
+	if decision := grants.Evaluate(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionAsk {
+		t.Fatalf("pre-sync decision = %+v", decision)
+	}
+	external, err := NewGrants(ctx, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := external.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := external.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	// The live instance keeps its cached state until Reload (the sync reload hook's contract).
+	if decision := grants.Evaluate(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionAsk {
+		t.Fatalf("stale decision = %+v", decision)
+	}
+	if err := grants.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.Evaluate(ctx, Config{Mode: ReadWrite}, ruling, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionAllow {
+		t.Fatalf("post-reload decision = %+v", decision)
+	}
+	fileRuling := Confirm(KindWriteFS, "写入文件")
+	decision := grants.EvaluateResource(ctx, Config{Mode: ReadWrite}, fileRuling, nil, "device-a", "write_file", "run-2", Resource{Action: "write_file", Path: "/var/log/app.log"})
+	if decision.Action != ActionAllow {
+		t.Fatalf("post-reload rule decision = %+v", decision)
+	}
+}
+
+func TestDeviceGrantRevokeRecordsSyncTombstone(t *testing.T) {
+	settings := &grantSyncSettings{memorySettings: &memorySettings{values: make(map[string]string)}, optIn: true}
+	ctx := ipc.WithUserID(context.Background(), "u-1")
+	grants, err := NewGrants(ctx, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grants.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.Revoke(ctx, "device-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 || settings.tombstones[0] != AIGrantSyncDevicePrefix+"device-a" {
+		t.Fatalf("tombstones = %v", settings.tombstones)
+	}
+
+	// Opt-in off: revoking deletes only locally, no tombstone (the remote copy must survive).
+	settings.optIn = false
+	if _, err := grants.Grant(ctx, "device-b", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.Revoke(ctx, "device-b"); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 {
+		t.Fatalf("opt-out revocation must not tombstone: %v", settings.tombstones)
+	}
+
+	// Anonymous context (no account identity): no tombstone either.
+	settings.optIn = true
+	if _, err := grants.Grant(context.Background(), "device-c", []GrantKind{GrantKindTerminalWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.Revoke(context.Background(), "device-c"); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 {
+		t.Fatalf("anonymous revocation must not tombstone: %v", settings.tombstones)
+	}
+}
+
+func TestGrantRuleRevokeRecordsSyncTombstone(t *testing.T) {
+	settings := &grantSyncSettings{memorySettings: &memorySettings{values: make(map[string]string)}, optIn: true}
+	ctx := ipc.WithUserID(context.Background(), "u-1")
+	grants, err := NewGrants(ctx, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := grants.RevokeRule(ctx, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 || settings.tombstones[0] != AIGrantSyncRulePrefix+rule.ID {
+		t.Fatalf("tombstones = %v", settings.tombstones)
 	}
 }

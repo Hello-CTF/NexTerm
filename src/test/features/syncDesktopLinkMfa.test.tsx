@@ -69,7 +69,7 @@ function withClient(node: React.ReactElement): MountedView {
 function seedForm() {
   mocks.linkGet.mockResolvedValue({ ...LINK });
   mocks.status.mockImplementation(() => Promise.resolve(statusPayload()));
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, preferences: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
 }
 
 async function mountAndLogin() {

@@ -4,8 +4,11 @@
 // <>& HTML escaping, U+2028/U+2029 and multilingual text; not self-proven with JS logic.
 import { describe, expect, it } from "vitest";
 import type { TranscriptChunk, TranscriptSummary } from "../ipc/commands";
-import type { SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../ipc/types";
+import type { SyncCollectAIGrantDevice, SyncCollectAIGrantMode, SyncCollectAIGrantRule, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../ipc/types";
 import {
+  aiGrantDevicePayload,
+  aiGrantModePayload,
+  aiGrantRulePayload,
   aiProfilePayload,
   collectAssetPayload,
   credentialPayload,
@@ -177,5 +180,34 @@ describe("M165 known_host/AI 档案载荷与 Go 逐字节一致", () => {
       updatedAt: 1700000002000, apiKeySet: false, apiKeyState: "revealed",
     };
     expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfileMinimal"));
+  });
+});
+
+describe("ai_grant 载荷与 Go 逐字节一致", () => {
+  it("device: 设备授权全字段无 omitempty", () => {
+    const g: SyncCollectAIGrantDevice = {
+      id: "device/dev-1", deviceId: "dev-1", kinds: ["terminal_write", "session_exec"], updatedAt: 1700000000000,
+    };
+    expect(marshalSyncPayload(aiGrantDevicePayload(g))).toBe(fixtureText("aiGrantDevice"));
+  });
+
+  it("rule: 全字段(含 path/expiresAt), 路径含 <>& 触发 HTML 转义", () => {
+    const r: SyncCollectAIGrantRule = {
+      id: "rule/r-1", deviceId: "dev-1", action: "write_file", path: "/var/log/<app>&/**",
+      expiresAt: 1800000000000, createdAt: 1700000000000, updatedAt: 1700000001000,
+    };
+    expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(fixtureText("aiGrantRuleFull"));
+  });
+
+  it("rule: 缺省字段省略(空 path、零 expiresAt)", () => {
+    const r: SyncCollectAIGrantRule = {
+      id: "rule/r-2", deviceId: "dev-2", action: "exec_commands", createdAt: 1700000000000, updatedAt: 1700000002000,
+    };
+    expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(fixtureText("aiGrantRuleMinimal"));
+  });
+
+  it("mode: 设备权限模式全字段无 omitempty", () => {
+    const m: SyncCollectAIGrantMode = { id: "mode/dev-1", deviceId: "dev-1", mode: "read_only", updatedAt: 1700000000000 };
+    expect(marshalSyncPayload(aiGrantModePayload(m))).toBe(fixtureText("aiGrantMode"));
   });
 });

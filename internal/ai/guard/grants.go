@@ -96,25 +96,43 @@ type Grants struct {
 
 func NewGrants(ctx context.Context, settings Settings, audit GrantAuditor) (*Grants, error) {
 	manager := &Grants{settings: settings, audit: audit, now: time.Now, newID: ids.New, grants: make(map[string]DeviceGrant)}
-	raw, found, err := settings.SettingGet(ctx, DeviceGrantsSettingKey)
-	if err != nil {
+	if err := manager.load(ctx); err != nil {
 		return nil, err
-	}
-	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &manager.grants); err != nil {
-			return nil, err
-		}
-	}
-	raw, found, err = settings.SettingGet(ctx, GrantRulesSettingKey)
-	if err != nil {
-		return nil, err
-	}
-	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &manager.rules); err != nil {
-			return nil, err
-		}
 	}
 	return manager, nil
+}
+
+func (g *Grants) load(ctx context.Context) error {
+	raw, found, err := g.settings.SettingGet(ctx, DeviceGrantsSettingKey)
+	if err != nil {
+		return err
+	}
+	grants := make(map[string]DeviceGrant)
+	if found && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &grants); err != nil {
+			return err
+		}
+	}
+	raw, found, err = g.settings.SettingGet(ctx, GrantRulesSettingKey)
+	if err != nil {
+		return err
+	}
+	var rules []GrantRule
+	if found && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+			return err
+		}
+	}
+	g.grants = grants
+	g.rules = rules
+	return nil
+}
+
+// Reload refreshes the in-memory grants and rules from settings after an out-of-band write (e.g. a sync apply).
+func (g *Grants) Reload(ctx context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.load(ctx)
 }
 
 func (g *Grants) Grant(ctx context.Context, deviceID string, kinds []GrantKind) (DeviceGrant, error) {
@@ -176,6 +194,9 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	}
 	g.mu.Unlock()
 	if err != nil {
+		return err
+	}
+	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncDevicePrefix+deviceID); err != nil {
 		return err
 	}
 	g.emitAudit(ctx, GrantAuditEvent{Action: "revoke", DeviceID: deviceID})
@@ -264,6 +285,9 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	}
 	g.mu.Unlock()
 	if err != nil {
+		return err
+	}
+	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncRulePrefix+ruleID); err != nil {
 		return err
 	}
 	g.emitAudit(ctx, GrantAuditEvent{Action: "rule_revoke", DeviceID: previous.DeviceID, Operation: previous.Action, RuleID: previous.ID, RulePath: previous.Path})

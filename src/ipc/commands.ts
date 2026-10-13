@@ -944,6 +944,8 @@ export const syncApi = {
 
   collectAIPermission: () => call<import("./types").SyncCollectAIPermission>("sync_collect_ai_permission"),
 
+  collectAIGrants: () => call<import("./types").SyncCollectAIGrants>("sync_collect_ai_grants"),
+
   collectPreferences: () => call<import("./types").SyncCollectPreference[]>("sync_collect_preferences"),
 
   preferencesGet: () => call<import("./types").PreferenceScopeView>("sync_preferences_get"),

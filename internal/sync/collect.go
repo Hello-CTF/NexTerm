@@ -14,6 +14,7 @@ const (
 	CommandCollectKnownHosts   = "sync_collect_known_hosts"
 	CommandCollectAIProfiles   = "sync_collect_ai_profiles"
 	CommandCollectAIPermission = "sync_collect_ai_permission"
+	CommandCollectAIGrants     = "sync_collect_ai_grants"
 	CommandCollectPreferences  = "sync_collect_preferences"
 )
 
