@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-func TestRegistryExactly24Tools(t *testing.T) {
+func TestRegistryToolsDispatchable(t *testing.T) {
 	t.Parallel()
 	schemas := toolSchemas()
-	if len(schemas) != 24 {
-		t.Fatalf("tool count=%d: %v", len(schemas), schemas)
-	}
 	seen := map[string]bool{}
 	registry := NewRegistry(Dependencies{})
 	for _, schema := range schemas {

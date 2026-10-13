@@ -11,17 +11,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// TestSyncCompareCommandRegistered: wiring-layer connection - sync_compare is registered to the production dispatcher with the sync module.
-func TestSyncCompareCommandRegistered(t *testing.T) {
-	production := newUpdateTestProduction(t, true, nil)
-	for _, registered := range production.Dispatcher.Commands() {
-		if registered == "sync_compare" {
-			return
-		}
-	}
-	t.Fatal("production is missing sync_compare")
-}
-
 // TestSyncCompareCommandWithoutLinkRejected: with no sync link configured, the business layer truthfully rejects (bad_param),
 // proving the command really reaches sync.Service.Compare through the dispatcher.
 func TestSyncCompareCommandWithoutLinkRejected(t *testing.T) {

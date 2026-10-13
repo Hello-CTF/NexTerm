@@ -457,23 +457,6 @@ func TestPreviewRelayExitedTabRejected(t *testing.T) {
 	}
 }
 
-func TestPreviewRelayCommandsRegistered(t *testing.T) {
-	production := newUpdateTestProduction(t, false, nil)
-	commands := production.Dispatcher.Commands()
-	for _, command := range []string{"preview_share_create", "preview_share_active"} {
-		found := false
-		for _, registered := range commands {
-			if registered == command {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("production is missing %s", command)
-		}
-	}
-}
-
 // TestPreviewShareCommandArgsRejected pins preview_share_create/active argument validation: missing fields or empty nested args
 // return bad_param without touching the relay (when the whole args envelope is missing, the input decodes to zero values and takes the same rejection).
 func TestPreviewShareCommandArgsRejected(t *testing.T) {

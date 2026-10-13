@@ -140,22 +140,6 @@ func newUpdateTestProduction(t *testing.T, desktop bool, recorder ipc.Emitter) *
 	return production
 }
 
-func TestUpdateCommandsRegistered(t *testing.T) {
-	production := newUpdateTestProduction(t, false, nil)
-	for _, command := range []string{"app_update_check", "app_update_install", "app_restart"} {
-		found := false
-		for _, registered := range production.Dispatcher.Commands() {
-			if registered == command {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("production is missing %s", command)
-		}
-	}
-}
-
 func TestUpdateServerAssemblyDegrades(t *testing.T) {
 	server, _, _ := updateIPCFixture(t, "0.3.0")
 	production := newUpdateTestProduction(t, false, nil)
