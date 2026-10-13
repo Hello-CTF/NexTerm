@@ -59,6 +59,14 @@ func buildZip(t *testing.T, name string, content []byte) []byte {
 	return buf.Bytes()
 }
 
+func buildReleaseArchive(t *testing.T, goos string, content []byte) []byte {
+	t.Helper()
+	if goos == "windows" {
+		return buildZip(t, agentBinaryName(goos), content)
+	}
+	return buildTarGz(t, agentBinaryName(goos), content)
+}
+
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
@@ -163,7 +171,7 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	version := "1.2.3"
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	binary := []byte("#!/bin/sh\necho new-agent\n")
-	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), binary)
+	archive := buildReleaseArchive(t, runtime.GOOS, binary)
 	sums := fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)
 	server := newReleaseServer(t, map[string][]byte{
 		"/v" + version + "/" + asset:             archive,

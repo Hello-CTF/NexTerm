@@ -207,7 +207,7 @@ func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
 	server := newFakeFleetServer(t)
 	server.setWSControl(mismatchControl(version))
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
-	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), []byte("new-agent"))
+	archive := buildReleaseArchive(t, runtime.GOOS, []byte("new-agent"))
 	release := newReleaseServer(t, map[string][]byte{
 		"/v" + version + "/" + asset:             archive,
 		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),

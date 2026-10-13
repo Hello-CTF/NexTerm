@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
 
@@ -494,7 +495,7 @@ func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
 	server.setWSControl(mismatchControl(version))
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	binary := []byte("new-agent-binary")
-	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), binary)
+	archive := buildReleaseArchive(t, runtime.GOOS, binary)
 	release := newReleaseServer(t, map[string][]byte{
 		"/v" + version + "/" + asset:             archive,
 		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
@@ -558,6 +559,90 @@ func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
 	}
 	if got := release.requestCount("/v" + version + "/"); got != 3 {
 		t.Fatalf("upgrade attempts = %d, want 3", got)
+	}
+}
+
+func TestRuntimeSelfUpgradeCancelDuringDownloadStopsCleanly(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("1.2.3"))
+	downloadStarted := make(chan struct{})
+	var startOnce sync.Once
+	release := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(downloadStarted) })
+		<-r.Context().Done()
+	}))
+	t.Cleanup(release.Close)
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 1, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+	select {
+	case <-downloadStarted:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the upgrade download to start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run = %v, want clean stop on cancel during the self-upgrade download", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for Run to stop after cancel")
+	}
+}
+
+func TestRuntimeEmbeddedDistributionSkipsSelfUpgrade(t *testing.T) {
+	previous := cliServicePrefix
+	cliServicePrefix = []string{"agent"}
+	t.Cleanup(func() { cliServicePrefix = previous })
+
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("9.9.9"))
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, nil)
+	if agentRuntime.upgrader != nil {
+		t.Fatal("embedded distribution must not get a default upgrader")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+}
+
+func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version.Version))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+	if got := release.requestCount("/"); got != 0 {
+		t.Fatalf("same-version target must skip the download, got %d requests", got)
 	}
 }
 

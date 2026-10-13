@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
 
@@ -509,8 +510,10 @@ func mismatchServerVersion(err error) string {
 
 // selfUpgrade 在协议不匹配时尝试把本机 agent 升级到 server 上报的版本。
 // 升级暂存成功 -> fatal(errUpgradeStaged) 退出让替换脚本接管; 自升级不可用
-// (内嵌分发) 或 server 未上报版本 (旧 server) 或重试耗尽 -> fatal
-// (ErrProtocolMismatch) 停留在待人工状态, 日志明确区分两条路径。
+// (内嵌分发) 或 server 未上报版本 (旧 server) 或目标版本已等于当前版本
+// (升级后仍不匹配, 下载只会形成替换-拉起-再 mismatch 循环) 或重试耗尽 ->
+// fatal(ErrProtocolMismatch) 停留在待人工状态, 日志明确区分两条路径。
+// 下载期间 ctx 取消是用户主动停止, 直接返回走干净停止路径, 不记 fatal。
 func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	if r.upgrader == nil {
 		r.logger.Warn("control channel protocol mismatch; self-upgrade unavailable for this distribution, reinstall with install-device.sh")
@@ -522,8 +525,16 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 		r.fatal(ErrProtocolMismatch)
 		return
 	}
+	if serverVersion == version.Version {
+		r.logger.Error("control channel protocol mismatch but already at the server-reported version; refusing a replace-and-restart loop, manual intervention required", "target_version", serverVersion)
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
 	r.logger.Info("control channel protocol mismatch; attempting self-upgrade from the official release source", "target_version", serverVersion)
 	if err := r.upgrader.Upgrade(ctx, serverVersion); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		r.logger.Error("self-upgrade failed; staying on the current binary for manual intervention", "target_version", serverVersion, "error", err)
 		r.fatal(ErrProtocolMismatch)
 		return
