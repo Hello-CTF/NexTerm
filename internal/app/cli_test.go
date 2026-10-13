@@ -132,7 +132,7 @@ func TestParseCLIAuthMode(t *testing.T) {
 
 func TestUsageIncludesSharedServerFlags(t *testing.T) {
 	usage := Usage("nexterm-server", CommandServe)
-	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault"} {
+	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault", "--pprof-addr", "NEXTERM_PPROF_ADDR"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q: %q", want, usage)
 		}
@@ -140,6 +140,34 @@ func TestUsageIncludesSharedServerFlags(t *testing.T) {
 	for _, unwanted := range []string{"rotate-token", "--master-key "} {
 		if strings.Contains(usage, unwanted) {
 			t.Fatalf("usage contains removed option %q: %q", unwanted, usage)
+		}
+	}
+}
+
+func TestParseCLIPprofAddr(t *testing.T) {
+	invocation, err := ParseCLI([]string{"--pprof-addr", "127.0.0.1:6060"}, CommandServe, nil)
+	if err != nil || invocation.PprofAddr != "127.0.0.1:6060" {
+		t.Fatalf("flag = %+v, %v", invocation, err)
+	}
+	invocation, err = ParseCLI(nil, CommandDesktop, func(key string) string {
+		if key == "NEXTERM_PPROF_ADDR" {
+			return ":6061"
+		}
+		return ""
+	})
+	if err != nil || invocation.PprofAddr != ":6061" {
+		t.Fatalf("environment fallback = %+v, %v", invocation, err)
+	}
+	invocation, err = ParseCLI(nil, CommandServe, nil)
+	if err != nil || invocation.PprofAddr != "" {
+		t.Fatalf("default = %+v, %v", invocation, err)
+	}
+	for _, args := range [][]string{
+		{"--pprof-addr", "192.168.1.10:6060"},
+		{"--pprof-addr", "garbage"},
+	} {
+		if _, err := ParseCLI(args, CommandServe, nil); err == nil {
+			t.Fatalf("ParseCLI(%v) succeeded", args)
 		}
 	}
 }

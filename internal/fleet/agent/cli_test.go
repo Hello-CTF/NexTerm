@@ -112,6 +112,11 @@ func TestCLIUsageErrors(t *testing.T) {
 	if code := RunCLI([]string{"status"}, noEnv, &stdout, &stderr); code != ExitUsage {
 		t.Fatal("status without data dir must be usage error")
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"run", "-data-dir", t.TempDir(), "-pprof-addr", "192.168.1.10:6060"}, noEnv, &stdout, &stderr); code != ExitUsage {
+		t.Fatal("run with a non-loopback pprof address must be usage error")
+	}
 }
 
 func TestCLIRunLockBusyExitsCleanly(t *testing.T) {
@@ -120,7 +125,12 @@ func TestCLIRunLockBusyExitsCleanly(t *testing.T) {
 	}
 	server := newFakeFleetServer(t)
 	dataDir := t.TempDir()
-	getenv := func(string) string { return dataDir }
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}
 	var stdout, stderr bytes.Buffer
 	code := RunCLI([]string{"enroll", "--server", server.server.URL, "--code", "c"}, getenv, &stdout, &stderr)
 	if code != ExitOK {
@@ -146,7 +156,12 @@ func TestCLIRunRevokedExitCode(t *testing.T) {
 	server := newFakeFleetServer(t)
 	server.forbidSync()
 	dataDir := t.TempDir()
-	getenv := func(string) string { return dataDir }
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}
 	restoreFactory := cliRuntimeFactory
 	cliRuntimeFactory = func(store *Store, dataDir string, prober *Prober, manager ServiceManager) (*Runtime, error) {
 		return New(Options{

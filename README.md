@@ -72,6 +72,24 @@ go build ./...   # 编译全部 Go 包
 task check   # gofmt + go vet + go test ./... + go mod verify + pnpm typecheck + pnpm lint
 ```
 
+### pprof 调试
+
+三个进程默认都不开 pprof，按需用 flag 或环境变量开启（flag 优先）：
+
+```bash
+nexterm-server --pprof-addr 127.0.0.1:6060          # 或 NEXTERM_PPROF_ADDR=127.0.0.1:6060
+nexterm-desktop --pprof-addr 127.0.0.1:6061         # 同上，共用 NEXTERM_PPROF_ADDR
+nexterm-agent run -pprof-addr 127.0.0.1:6062        # 或 NEXTERM_PPROF_ADDR=127.0.0.1:6062
+```
+
+只接受回环地址（`:6060` 这类裸端口会绑到 127.0.0.1）；确需外部访问时显式传 `0.0.0.0`，其他非回环地址直接拒绝。开启时 block/mutex profile 采样率为 1。卡住时抓现场：
+
+```bash
+curl -o goroutine.txt 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2'
+go tool pprof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'
+curl -o trace.out 'http://127.0.0.1:6060/debug/pprof/trace?seconds=5'
+```
+
 ## 贡献与提交规范
 
 - 分支从 `master` 最新提交切出，完成后经 PR 合回 `master`；PR 标题与提交消息用 Conventional Commits（`feat` / `fix` / `docs` / `refactor` / `test` / `ci` / `build` / `perf` / `chore`）。

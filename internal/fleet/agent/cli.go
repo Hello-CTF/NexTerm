@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
@@ -169,11 +171,16 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("run", stderr)
 	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址 (默认 NEXTERM_PPROF_ADDR, 仅回环, 显式 0.0.0.0 除外)")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
+		fmt.Fprintln(stderr, "agent run:", err)
+		return ExitUsage
+	}
+	if _, err := pprof.NormalizeAddr(pprof.ResolveAddr(*pprofAddr, getenv)); err != nil {
 		fmt.Fprintln(stderr, "agent run:", err)
 		return ExitUsage
 	}
@@ -191,6 +198,16 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitError
 	}
 	defer unlock()
+	pprofServer, err := pprof.Start(slog.New(slog.NewTextHandler(stderr, nil)), pprof.ResolveAddr(*pprofAddr, getenv))
+	if err != nil {
+		fmt.Fprintln(stderr, "agent run:", err)
+		return ExitError
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = pprofServer.Close(shutdownCtx)
+	}()
 	store := StoreAt(dir)
 	config, err := store.Load()
 	if errors.Is(err, ErrNotEnrolled) {
