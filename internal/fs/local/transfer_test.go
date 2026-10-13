@@ -4,12 +4,147 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
+
+func TestUploadCreatesMissingRemoteParents(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(source, []byte("nested upload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destinations := map[string]base.FileSystem{
+		"mkdir-all":    New(),
+		"single-level": &singleLevelMkdirFS{FileSystem: New()},
+	}
+	for name, filesystem := range destinations {
+		t.Run(name, func(t *testing.T) {
+			remote := filepath.Join(dir, name, "a", "b", "remote.txt")
+			transferred, err := Upload(ctx, source, filesystem, remote, TransferOptions{})
+			if err != nil || transferred != int64(len("nested upload")) {
+				t.Fatalf("Upload = %d, %v", transferred, err)
+			}
+			assertBytes(t, remote, []byte("nested upload"))
+			sibling := filepath.Join(dir, name, "a", "b", "sibling.txt")
+			if _, err := Upload(ctx, source, filesystem, sibling, TransferOptions{Resume: true}); err != nil {
+				t.Fatalf("Upload into existing parents = %v", err)
+			}
+			assertBytes(t, sibling, []byte("nested upload"))
+		})
+	}
+}
+
+func TestUploadFailsWhenRemoteParentComponentIsFile(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(source, []byte("blocked upload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(dir, "occupied")
+	if err := os.WriteFile(blocker, []byte("a file sits where a directory is needed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destinations := map[string]base.FileSystem{
+		"mkdir-all":    New(),
+		"single-level": &singleLevelMkdirFS{FileSystem: New()},
+	}
+	for name, filesystem := range destinations {
+		t.Run(name, func(t *testing.T) {
+			remote := filepath.Join(blocker, "child", "remote.txt")
+			if _, err := Upload(ctx, source, filesystem, remote, TransferOptions{}); err == nil {
+				t.Fatal("upload through a file component unexpectedly succeeded")
+			}
+			if _, err := os.Stat(remote); err == nil {
+				t.Fatal("remote target was created through a file component")
+			}
+		})
+	}
+}
+
+func TestRemoteParentDir(t *testing.T) {
+	cases := map[string]string{
+		"/a/b/c.txt": "/a/b",
+		"/a":         "/",
+		"/":          "",
+		"~/a/b":      "~/a",
+		"~/a":        "~",
+		"~":          "",
+		"a/b":        "a",
+		"a":          "",
+		"file.txt":   "",
+		"/a/b/":      "/a",
+		`C:\a\b`:     `C:\a`,
+		`C:\a`:       `C:\`,
+		`C:\`:        "",
+	}
+	for path, want := range cases {
+		if got := parentDir(path); got != want {
+			t.Errorf("parentDir(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// singleLevelMkdirFS mimics sftp Mkdir semantics: one level only, and a bare
+// server status error (no fs.ErrExist sentinel) when the directory exists.
+type singleLevelMkdirFS struct {
+	*FileSystem
+}
+
+func (f *singleLevelMkdirFS) Mkdir(_ context.Context, path string) error {
+	resolved := real(path)
+	if _, err := os.Stat(resolved); err == nil {
+		return fmt.Errorf("mkdir %s: server failure", resolved)
+	}
+	if _, err := os.Stat(filepath.Dir(resolved)); err != nil {
+		return fmt.Errorf("mkdir %s: server failure", resolved)
+	}
+	return os.Mkdir(resolved, 0o755)
+}
+
+func TestEnsureRemoteDir(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	destinations := map[string]base.FileSystem{
+		"mkdir-all":    New(),
+		"single-level": &singleLevelMkdirFS{FileSystem: New()},
+	}
+	for name, filesystem := range destinations {
+		t.Run(name, func(t *testing.T) {
+			nested := filepath.Join(dir, name, "a", "b", "c")
+			if err := EnsureRemoteDir(ctx, filesystem, nested); err != nil {
+				t.Fatalf("EnsureRemoteDir nested = %v", err)
+			}
+			if info, err := os.Stat(nested); err != nil || !info.IsDir() {
+				t.Fatalf("nested dir stat = %v, %v", info, err)
+			}
+			if err := EnsureRemoteDir(ctx, filesystem, nested); err != nil {
+				t.Fatalf("EnsureRemoteDir existing dir = %v, want a no-op", err)
+			}
+			blocker := filepath.Join(dir, name+"-blocker")
+			if err := os.WriteFile(blocker, []byte("a file sits where a directory is needed"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := EnsureRemoteDir(ctx, filesystem, filepath.Join(blocker, "child")); err == nil {
+				t.Fatal("a file occupying a parent component unexpectedly succeeded")
+			}
+			if err := EnsureRemoteDir(ctx, filesystem, blocker); err == nil {
+				t.Fatal("a file occupying the target unexpectedly passed as a directory")
+			}
+			if err := EnsureRemoteDir(ctx, filesystem, ""); err == nil {
+				t.Fatal("empty directory path unexpectedly succeeded")
+			}
+		})
+	}
+}
 
 func TestUploadResumeAndRestart(t *testing.T) {
 	ctx := context.Background()

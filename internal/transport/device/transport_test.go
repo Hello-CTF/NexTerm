@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -461,6 +462,92 @@ func TestTransportFileSystemTransferHelpers(t *testing.T) {
 	for i := range content {
 		if downloaded[i] != content[i] {
 			t.Fatalf("byte %d = %d; want %d", i, downloaded[i], content[i])
+		}
+	}
+}
+
+func TestTransportFileSystemExtract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("device extract requires a POSIX shell and tar on the agent")
+	}
+	rig := newPurposeRig(t)
+	transport := New("dev-1", rig.digest, rig.dial, 1)
+	ctx := context.Background()
+	filesystem, err := transport.FileSystem(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extractor, ok := filesystem.(interface {
+		Extract(context.Context, string) (string, error)
+	})
+	if !ok {
+		t.Fatal("device filesystem must expose Extract for archive extraction")
+	}
+
+	staging := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(staging, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "inner", "note.txt"), []byte("extract me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(rig.root, "bundle.tar")
+	if output, err := exec.Command("tar", "-cf", archive, "-C", staging, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build fixture archive: %v: %s", err, output)
+	}
+
+	target, err := extractor.Extract(ctx, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != rig.root {
+		t.Fatalf("Extract target = %q, want the archive's own directory %q", target, rig.root)
+	}
+	if data, err := os.ReadFile(filepath.Join(rig.root, "inner", "note.txt")); err != nil || string(data) != "extract me" {
+		t.Fatalf("extracted content = %q, %v", data, err)
+	}
+
+	bogus := filepath.Join(rig.root, "bogus.tar")
+	if err := os.WriteFile(bogus, []byte("not a tar archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extractor.Extract(ctx, bogus); err == nil || !strings.Contains(err.Error(), "exited") {
+		t.Fatalf("corrupt archive error = %v, want the tar exit status", err)
+	}
+	if _, err := extractor.Extract(ctx, filepath.Join(rig.root, "missing.tar")); err == nil {
+		t.Fatal("missing archive must fail")
+	}
+	if _, err := extractor.Extract(ctx, ""); err == nil {
+		t.Fatal("empty archive path must fail")
+	}
+}
+
+func TestFileSystemExtractExpandsHome(t *testing.T) {
+	var commands []string
+	filesystem := &fileSystem{exec: func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
+		commands = append(commands, command)
+		code := 0
+		return base.ExecResult{ExitCode: &code}, nil
+	}}
+	for _, testCase := range []struct {
+		path    string
+		target  string
+		command string
+	}{
+		{"~/x.tar", "~", `tar -xf "$HOME"'/x.tar' -C "$HOME"`},
+		{"~/packs/x.tar", "~/packs", `tar -xf "$HOME"'/packs/x.tar' -C "$HOME"'/packs'`},
+		{"~", ".", `tar -xf "$HOME" -C '.'`},
+		{"/data/x.tar", "/data", `tar -xf '/data/x.tar' -C '/data'`},
+	} {
+		target, err := filesystem.Extract(context.Background(), testCase.path)
+		if err != nil {
+			t.Fatalf("Extract(%q) = %v", testCase.path, err)
+		}
+		if target != testCase.target {
+			t.Errorf("Extract(%q) target = %q, want %q", testCase.path, target, testCase.target)
+		}
+		if commands[len(commands)-1] != testCase.command {
+			t.Errorf("Extract(%q) command = %q, want %q", testCase.path, commands[len(commands)-1], testCase.command)
 		}
 	}
 }

@@ -234,3 +234,12 @@ func TestFailuresAndUnsupportedCapabilities(t *testing.T) {
 		t.Fatalf("OpenWrite = %v", err)
 	}
 }
+
+func TestMissingPathMapsToNotExist(t *testing.T) {
+	code := 1
+	executor := &fakeExecutor{result: base.ExecResult{Stderr: "Get-ChildItem: Cannot find path 'C:\\missing' because it does not exist.", ExitCode: &code}}
+	filesystem := New(executor)
+	if _, err := filesystem.List(context.Background(), `C:\missing`); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing-dir list = %v; want fs.ErrNotExist", err)
+	}
+}

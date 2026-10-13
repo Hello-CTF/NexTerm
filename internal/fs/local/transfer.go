@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -87,6 +88,9 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	if _, err := source.Seek(offset, io.SeekStart); err != nil {
 		return offset, err
 	}
+	if err := ensureRemoteParent(ctx, destination, remotePath); err != nil {
+		return offset, err
+	}
 	target, err := destination.OpenWrite(ctx, remotePath, offset > 0)
 	if err != nil {
 		return offset, err
@@ -96,6 +100,93 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 		return offset, err
 	}
 	return finishTransfer(ctx, source, target, offset, total, options)
+}
+
+func ensureRemoteParent(ctx context.Context, destination base.FileSystem, remotePath string) error {
+	_, err := ensureRemoteDirs(ctx, destination, parentDir(remotePath))
+	return err
+}
+
+// EnsureRemoteDir creates the full chain for a remote directory path with
+// single-level Mkdir calls. An existing directory is a no-op; a file occupying
+// the target or any parent component keeps its Mkdir failure.
+func EnsureRemoteDir(ctx context.Context, destination base.FileSystem, dir string) error {
+	if dir == "" {
+		return fmt.Errorf("remote directory path is empty")
+	}
+	trimmed := strings.TrimRight(dir, `/\`)
+	if trimmed == "" {
+		return nil
+	}
+	existed, err := ensureRemoteDirs(ctx, destination, trimmed)
+	if err != nil {
+		return err
+	}
+	if !existed {
+		return nil
+	}
+	return verifyRemoteDir(ctx, destination, trimmed)
+}
+
+func ensureRemoteDirs(ctx context.Context, destination base.FileSystem, dir string) (bool, error) {
+	var missing []string
+	for current := dir; current != ""; current = parentDir(current) {
+		exists, err := destination.Exists(ctx, current)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			break
+		}
+		missing = append(missing, current)
+	}
+	for index := len(missing) - 1; index >= 0; index-- {
+		component := missing[index]
+		if err := destination.Mkdir(ctx, component); err != nil {
+			if exists, statErr := destination.Exists(ctx, component); statErr == nil && exists {
+				continue
+			}
+			return false, err
+		}
+	}
+	return dir != "" && len(missing) == 0, nil
+}
+
+func verifyRemoteDir(ctx context.Context, destination base.FileSystem, dir string) error {
+	parent := parentDir(dir)
+	if parent == "" {
+		parent = "."
+	}
+	entries, err := destination.List(ctx, parent)
+	if err != nil {
+		return err
+	}
+	name := dir[strings.LastIndexAny(dir, `/\`)+1:]
+	for _, entry := range entries {
+		if entry.Name != name {
+			continue
+		}
+		if entry.Kind == base.FileDirectory || entry.Kind == base.FileSymlink {
+			return nil
+		}
+		return fmt.Errorf("remote path %s exists and is not a directory", dir)
+	}
+	return nil
+}
+
+func parentDir(remotePath string) string {
+	trimmed := strings.TrimRight(remotePath, `/\`)
+	if trimmed == "" {
+		return ""
+	}
+	index := strings.LastIndexAny(trimmed, `/\`)
+	if index < 0 {
+		return ""
+	}
+	if index == 0 || trimmed[index-1] == ':' {
+		return trimmed[:index+1]
+	}
+	return trimmed[:index]
 }
 
 func Download(ctx context.Context, source base.FileSystem, remotePath, localPath string, options TransferOptions) (transferred int64, err error) {

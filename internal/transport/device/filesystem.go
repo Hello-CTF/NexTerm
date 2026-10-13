@@ -3,18 +3,26 @@ package device
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
+	"path"
+	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+const extractExecTimeout = 10 * time.Minute
+
 // fileSystem serves the base filesystem surface through fresh file-purpose
 // bridge dials per operation, mirroring how the supervisor client dials per
 // call; streaming operations hold their bridge until the stream closes.
+// exec runs shell commands through the transport for archive extraction.
 type fileSystem struct {
 	dial func(ctx context.Context) (net.Conn, error)
+	exec func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error)
 }
 
 // FileSystem returns the device filesystem surface. It does not probe: each
@@ -24,9 +32,12 @@ func (t *Transport) FileSystem(ctx context.Context) (base.FileSystem, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &fileSystem{dial: func(ctx context.Context) (net.Conn, error) {
-		return t.dial(ctx, deviceproto.PurposeFile)
-	}}, nil
+	return &fileSystem{
+		dial: func(ctx context.Context) (net.Conn, error) {
+			return t.dial(ctx, deviceproto.PurposeFile)
+		},
+		exec: t.Exec,
+	}, nil
 }
 
 // client dials one operation bridge; done releases it.
@@ -158,6 +169,49 @@ func (f *fileSystem) OpenWrite(ctx context.Context, path string, appendMode bool
 		return nil, err
 	}
 	return deviceproto.NewClient(conn).OpenWrite(ctx, path, appendMode)
+}
+
+// Extract unpacks a tar archive into its own directory through the device
+// shell (agents are linux/darwin, so POSIX sh and tar are present) and
+// returns that directory; a non-zero tar exit surfaces its stderr.
+func (f *fileSystem) Extract(ctx context.Context, archivePath string) (string, error) {
+	if archivePath == "" || strings.ContainsRune(archivePath, 0) {
+		return "", fmt.Errorf("archive path is empty or contains NUL")
+	}
+	dir := path.Dir(archivePath)
+	command := "tar -xf " + shellQuoteHome(archivePath) + " -C " + shellQuoteHome(dir)
+	result, err := f.exec(ctx, command, base.ExecOptions{Timeout: extractExecTimeout})
+	if err != nil {
+		return "", fmt.Errorf("extract device archive: %w", err)
+	}
+	if result.ExitCode == nil {
+		return "", fmt.Errorf("extract device archive: %w", base.ErrExitStatusMissing)
+	}
+	if *result.ExitCode != 0 {
+		message := strings.TrimSpace(result.Stderr + result.Stdout)
+		return "", fmt.Errorf("extract device archive: remote command exited %d: %s", *result.ExitCode, message)
+	}
+	if result.Truncated {
+		return "", fmt.Errorf("extract device archive: command output exceeded safety limit")
+	}
+	return dir, nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+// shellQuoteHome expands a leading ~ through the shell's $HOME; a quoted tilde
+// is never expanded, so the home prefix stays unquoted and adjacent to the
+// quoted remainder.
+func shellQuoteHome(path string) string {
+	if path == "~" {
+		return `"$HOME"`
+	}
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		return `"$HOME"` + shellQuote("/"+rest)
+	}
+	return shellQuote(path)
 }
 
 var _ base.FileSystem = (*fileSystem)(nil)

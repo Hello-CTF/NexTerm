@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   dropStaged: vi.fn(),
   stageFile: vi.fn(),
   list: vi.fn(),
+  mkdir: vi.fn(),
   upload: vi.fn(),
   download: vi.fn(),
   packDownload: vi.fn(),
@@ -22,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   termWrite: vi.fn(),
   toast: vi.fn(),
   listenEvent: vi.fn(),
+  packSupported: vi.fn(),
+  packUpload: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
@@ -42,6 +45,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     fsApi: {
       list: mocks.list,
+      mkdir: mocks.mkdir,
       upload: mocks.upload,
       download: mocks.download,
       packDownload: mocks.packDownload,
@@ -63,6 +67,10 @@ vi.mock("../../ipc/webFiles", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/webFiles")>();
   return { ...actual, dropStaged: mocks.dropStaged, stageFile: mocks.stageFile };
 });
+vi.mock("../../features/files/folderPackUpload", () => ({
+  packExtractSupported: mocks.packSupported,
+  packUploadAndExtract: mocks.packUpload,
+}));
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
@@ -72,6 +80,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 
 import { useUi } from "../../app/store";
+import type { SessionInfo } from "../../ipc/commands";
 import type { FileEntryDto } from "../../ipc/types";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
@@ -136,6 +145,65 @@ function dropOn(element: Element, files: File[]): void {
   });
 }
 
+type FakeFsEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  file?: (cb: (f: File) => void) => void;
+  createReader?: () => { readEntries: (cb: (entries: FakeFsEntry[]) => void) => void };
+};
+
+function fakeFile(name: string, content = "x"): FakeFsEntry {
+  const f = new File([content], name);
+  return { name, isFile: true, isDirectory: false, file: (cb) => cb(f) };
+}
+
+function fakeDir(name: string, children: FakeFsEntry[]): FakeFsEntry {
+  return {
+    name,
+    isFile: false,
+    isDirectory: true,
+    createReader: () => {
+      let served = false;
+      return {
+        readEntries: (cb) => {
+          if (served) {
+            cb([]);
+          } else {
+            served = true;
+            cb(children);
+          }
+        },
+      };
+    },
+  };
+}
+
+function dropFoldersOn(element: Element, entries: FakeFsEntry[]): void {
+  const items = entries.map((e) => ({
+    kind: "file",
+    getAsFile: () => null,
+    webkitGetAsEntry: () => e,
+  }));
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: { types: ["Files"], items, files: [], dropEffect: "none" },
+  });
+  act(() => {
+    element.dispatchEvent(event);
+  });
+}
+
+function sessionOfKind(kind: string): SessionInfo {
+  return { id: SID, assetId: null, name: "host", kind, status: "connected", tabs: [], createdAt: 0 };
+}
+
+function modeDialogChoices(): string[] {
+  const call = mocks.askChoice.mock.calls.find(([msg]) => String(msg).includes("上传文件夹"));
+  const options = call?.[1] as { choices?: { key: string }[] } | undefined;
+  return (options?.choices ?? []).map((c) => c.key);
+}
+
 const progressHandlers: ((e: unknown) => void)[] = [];
 
 function emitProgress(event: unknown): void {
@@ -177,6 +245,9 @@ beforeEach(() => {
   }));
   mocks.upload.mockResolvedValue(100);
   mocks.download.mockResolvedValue(100);
+  mocks.mkdir.mockResolvedValue(undefined);
+  mocks.packSupported.mockImplementation((kind: string) => kind === "ssh" || kind === "device");
+  mocks.packUpload.mockResolvedValue("~/pics");
   mocks.listenEvent.mockImplementation((_t: string, cb: (e: unknown) => void) => {
     progressHandlers.push(cb);
     return Promise.resolve(() => {});
@@ -499,5 +570,192 @@ describe("拖拽上传（FileTree）", () => {
     expect(
       useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt"),
     ).toBe(true);
+  });
+});
+
+describe("文件夹上传（FileBrowser）", () => {
+  beforeEach(async () => {
+    remountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+  });
+
+  it("工具栏提供上传文件夹入口", () => {
+    expect(buttonByTitle(mounted!.container, "上传本地文件夹到当前目录")).toBeTruthy();
+  });
+
+  it("逐文件上传（默认）：遍历文件夹按相对路径入队，WEB 暂存与相对路径一一对应", async () => {
+    let seq = 0;
+    mocks.stageFile.mockImplementation(async (f: File) => {
+      seq += 1;
+      return { id: `st-${seq}`, path: `/staged/${seq}-${f.name}` };
+    });
+    mocks.askChoice.mockResolvedValueOnce("perFile");
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("a.jpg")])])]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/1-a.jpg", "~/pics/a.jpg", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(
+      2,
+      SID,
+      "/staged/2-a.jpg",
+      "~/pics/sub/a.jpg",
+      false,
+    );
+    expect(mocks.askChoice).toHaveBeenCalledTimes(1);
+    expect(mocks.askChoice).toHaveBeenCalledWith(
+      expect.stringContaining("「pics」"),
+      expect.objectContaining({ title: "上传文件夹" }),
+    );
+    expect(mocks.askChoice.mock.calls[0]?.[0]).toContain("共 2 个文件");
+    expect(modeDialogChoices()).toEqual(["perFile"]);
+  });
+
+  it("winrm 会话不提供打包上传选项", async () => {
+    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    mocks.askChoice.mockResolvedValueOnce("perFile");
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg")])]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    expect(modeDialogChoices()).toEqual(["perFile"]);
+    expect(mocks.packUpload).not.toHaveBeenCalled();
+  });
+
+  it("winrm 会话拒绝名称含反斜杠的条目：报错、清理暂存、不上传", async () => {
+    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeFile("a\\b.jpg")])]);
+
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("反斜杠")),
+    );
+    const errorText = mocks.toast.mock.calls.find((c) => c[0] === "error")?.[1] ?? "";
+    expect(errorText).toContain("a\\b.jpg");
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(mocks.mkdir).not.toHaveBeenCalled();
+    expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/a\\b.jpg");
+  });
+
+  it("ssh 会话可选择打包上传：调用 packUploadAndExtract 并清理暂存", async () => {
+    useUi.setState({ sessions: [sessionOfKind("ssh")] });
+    mocks.askChoice.mockResolvedValueOnce("pack");
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [
+      fakeDir("pics", [
+        fakeFile("a.jpg"),
+        fakeDir("sub", [fakeFile("b.jpg")]),
+        fakeDir("empty", []),
+      ]),
+    ]);
+
+    await waitFor(() => expect(mocks.packUpload).toHaveBeenCalledTimes(1));
+    expect(modeDialogChoices()).toEqual(["perFile", "pack"]);
+    const arg = mocks.packUpload.mock.calls[0]?.[0] as {
+      sessionId: string;
+      dir: string;
+      folderName: string;
+      files: { relativePath: string; localPath: string; size: number }[];
+      emptyDirs?: string[];
+      onProgress?: unknown;
+    };
+    expect(arg.sessionId).toBe(SID);
+    expect(arg.dir).toBe("~");
+    expect(arg.folderName).toBe("pics");
+    expect(arg.files.map((f) => [f.relativePath, f.localPath])).toEqual([
+      ["a.jpg", "/staged/a.jpg"],
+      ["sub/b.jpg", "/staged/b.jpg"],
+    ]);
+    expect(arg.emptyDirs).toEqual(["empty"]);
+    expect(typeof arg.onProgress).toBe("function");
+    expect(mocks.upload).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/a.jpg"));
+    expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/b.jpg");
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "success",
+      expect.stringContaining("已上传并解包"),
+    );
+  });
+
+  it("取消方式对话框则整批不上传并清理暂存", async () => {
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
+
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已取消上传")),
+    );
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(mocks.packUpload).not.toHaveBeenCalled();
+    expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/a.jpg");
+    expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/b.jpg");
+  });
+
+  it("空文件夹不弹方式对话框，直接创建远端目录", async () => {
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeDir("empty", [])])]);
+
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        "success",
+        expect.stringContaining("已创建空文件夹"),
+      ),
+    );
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+    expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/pics/empty");
+    expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/pics");
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("目标已有同名文件夹：选择跳过同名文件后只上传不冲突的文件", async () => {
+    mocks.list.mockImplementation((_s: string, p: string) => {
+      if (p === "~")
+        return Promise.resolve([entry("a.txt", "file"), entry("pics", "dir")]);
+      if (p === "~/pics")
+        return Promise.resolve([{ ...entry("a.jpg", "file"), path: "~/pics/a.jpg" }]);
+      return Promise.resolve([]);
+    });
+    remountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/pics")).toBeTruthy());
+
+    mocks.askChoice.mockResolvedValueOnce("perFile").mockResolvedValueOnce("skip");
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false);
+    expect(mocks.askChoice).toHaveBeenCalledTimes(2);
+    expect(mocks.askChoice).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("同名文件"),
+      expect.objectContaining({ title: "上传文件夹" }),
+    );
+    await waitFor(() => expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/a.jpg"));
+    await waitFor(() =>
+      expect(panelRows(mounted!.container).some((r) => r.textContent?.includes("已跳过"))).toBe(
+        true,
+      ),
+    );
+  });
+});
+
+describe("文件夹上传（FileTree）", () => {
+  beforeEach(async () => {
+    remountTree();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+  });
+
+  it("工具栏提供上传文件夹入口", () => {
+    expect(buttonByTitle(mounted!.container, "上传文件夹到当前目录")).toBeTruthy();
+  });
+
+  it("拖入文件夹遍历后按相对路径上传到当前目录", async () => {
+    mocks.askChoice.mockResolvedValueOnce("perFile");
+    const tree = mounted!.container.querySelector("[role='tree']")!;
+    dropFoldersOn(tree, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/a.jpg", "~/pics/a.jpg", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false);
   });
 });

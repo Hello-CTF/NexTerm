@@ -323,7 +323,7 @@ describe("FileBrowser 会话已删除", () => {
     mounted = mountFromStore();
     await waitFor(() => expect(panel()).not.toBeNull());
 
-    for (const label of ["上传", "新建"] as const) {
+    for (const label of ["上传", "文件夹", "新建"] as const) {
       const btn = toolbarButton(label);
       expect(btn?.disabled).toBe(true);
       expect(btn?.title).toBe("会话已在服务端删除，请重新连接这台主机");
@@ -331,7 +331,7 @@ describe("FileBrowser 会话已删除", () => {
     const goneTitled = [
       ...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
     ].filter((b) => b.title === "会话已在服务端删除，请重新连接这台主机");
-    expect(goneTitled).toHaveLength(3);
+    expect(goneTitled).toHaveLength(4);
     expect(goneTitled.every((b) => b.disabled)).toBe(true);
     expect(goneTitled.some((b) => b.textContent?.trim() === "")).toBe(true);
 
@@ -342,7 +342,7 @@ describe("FileBrowser 会话已删除", () => {
     act(() => more!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     const items = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-    for (const label of ["打包下载当前目录", "上传到当前目录", "新建目录", "刷新"]) {
+    for (const label of ["打包下载当前目录", "上传到当前目录", "上传文件夹到当前目录", "新建目录", "刷新"]) {
       const item = items.find((b) => b.textContent?.includes(label));
       expect(item?.disabled, label).toBe(true);
       expect(item?.textContent, label).toContain("会话已删除");

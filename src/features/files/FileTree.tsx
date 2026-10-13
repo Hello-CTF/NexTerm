@@ -39,7 +39,7 @@ import { useFileOps } from "./useFileOps";
 import { validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
-import { dropUploadFiles } from "./transferActions";
+import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
 import {
   IconArchive,
@@ -346,6 +346,16 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const uploadFolder = async () => {
+    const dir = targetDir();
+    await pickFolderUpload({
+      sessionId,
+      dir,
+      knownSiblings: dirMap.get(dir),
+      onSettled: refresh,
+    });
+  };
+
   const download = async (path: string) => {
     const target = await pickSavePath(baseName(path));
     if (!target) return;
@@ -358,11 +368,12 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     event.preventDefault();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? targetDir();
-    void dropUploadFiles({
+    void dropFolderUpload({
       sessionId,
       dir,
       dataTransfer: event.dataTransfer,
       knownSiblings: dirMap.get(dir),
+      onSettled: refresh,
     });
   };
 
@@ -652,6 +663,15 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           onClick={() => void upload()}
         >
           <IconUpload size={14} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title={sessionGone ? goneHint : "上传文件夹到当前目录"}
+          aria-label="上传文件夹到当前目录"
+          disabled={sessionGone}
+          onClick={() => void uploadFolder()}
+        >
+          <IconFolderPlus size={14} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"

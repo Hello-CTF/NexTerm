@@ -42,7 +42,7 @@ import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
 import { validateEntryName } from "./fileOps";
 import { useCwdFollow } from "./cwdFollow";
-import { dropUploadFiles } from "./transferActions";
+import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import {
   enqueueDownload,
   enqueueUploads,
@@ -246,16 +246,26 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     enqueueDownload(sessionId, { remotePath, localPath: target });
   };
 
+  const uploadFolderTo = async (dir: string) => {
+    await pickFolderUpload({
+      sessionId,
+      dir,
+      knownSiblings: dir === path ? entries.data : undefined,
+      onSettled: () => refreshDir(dir),
+    });
+  };
+
   const dropUpload = (event: ReactDragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? path;
-    void dropUploadFiles({
+    void dropFolderUpload({
       sessionId,
       dir,
       dataTransfer: event.dataTransfer,
       knownSiblings: dir === path ? entries.data : undefined,
+      onSettled: () => refreshDir(dir),
     });
   };
 
@@ -387,6 +397,12 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         },
         {
           kind: "item",
+          label: "上传文件夹到该目录",
+          icon: <IconFolderPlus size={13} />,
+          onSelect: () => void uploadFolderTo(entry.path),
+        },
+        {
+          kind: "item",
           label: "新建子目录",
           icon: <IconFolderPlus size={13} />,
           onSelect: () => void mkDirIn(entry.path),
@@ -501,6 +517,14 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         hint: sessionGone ? "会话已删除" : undefined,
         disabled: sessionGone,
         onSelect: () => void uploadTo(path),
+      },
+      {
+        kind: "item",
+        label: "上传文件夹到当前目录",
+        icon: <IconFolderPlus size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
+        onSelect: () => void uploadFolderTo(path),
       },
       {
         kind: "item",
@@ -631,6 +655,15 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
+          onClick={() => void uploadFolderTo(path)}
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "上传本地文件夹到当前目录"}
+        >
+          <IconFolderPlus size={13} />
+          文件夹
+        </button>
+        <button
+          className="nx-btn nx-btn-sm max-[560px]:hidden"
           disabled={!selectedFile}
           onClick={() => selectedFile && void downloadToLocal(selectedFile.path)}
           title={downloadTitle}
@@ -669,7 +702,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-icon-btn"
-          title="更多操作（打包下载 / 上传 / 新建目录 / 刷新）"
+          title="更多操作（打包下载 / 上传 / 上传文件夹 / 新建目录 / 刷新）"
           aria-label="更多操作"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
