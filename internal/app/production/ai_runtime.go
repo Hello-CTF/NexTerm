@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/takeover"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/cloudwego/eino/components/model"
 )
@@ -48,6 +49,9 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	toolsDeps = tools.WithStore(toolsDeps, services.Store, services.Database)
 	toolsDeps.Outcome = outcomeLedger
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler}
+	toolsDeps.Notify = func(ctx context.Context, text string) error {
+		return ipc.Emit(ctx, services.Events, ipc.TopicAINotification, ipc.AINotificationEvent{OwnerID: tools.NotifyOwnerID(ctx), Text: text})
+	}
 	if services.Docker != nil {
 		toolsDeps = tools.WithDocker(toolsDeps, services.Docker, "")
 	}

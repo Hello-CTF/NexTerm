@@ -28,6 +28,7 @@ export const EVENTS = {
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
+  aiNotification: "ai://notification",
   appError: "app://error",
   deepLink: "app://deep-link",
   deviceStatus: "device://status",
@@ -90,6 +91,12 @@ export interface TerminalThrottledEvent {
 export interface AppErrorEvent {
   code: string;
   message: string;
+}
+
+// AI notify 工具推送的应用内通知; ownerId 为会话属主, 服务端按身份过滤, 桌面端直接本地投递。
+export interface AINotificationEvent {
+  ownerId: string;
+  text: string;
 }
 
 // 设备控制通道上下线推送; 只含设备 ID 与在线状态, 可见范围仍由

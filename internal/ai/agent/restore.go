@@ -198,6 +198,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		}
 	}
 	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	jobContext = tools.WithNotifyOwner(jobContext, conversation.OwnerID)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	current := &job{
 		id:          jobID,

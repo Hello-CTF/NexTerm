@@ -103,7 +103,7 @@ var einoNames = []string{
 	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
 	"shell_history",
 	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
-	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool,
+	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool, NotifyTool,
 }
 
 var einoDescriptions = map[string]string{
@@ -130,6 +130,7 @@ var einoDescriptions = map[string]string{
 	"todo_write":     "替换当前任务的完整待办列表。",
 	"exit_plan_mode": "提交计划供用户审核，不自动执行。",
 	ReminderTool:     "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
+	NotifyTool:       "向用户发送应用内通知，用于长任务完成或需要用户立即注意的事项；message 为通知内容（不超过 200 字），内容必须同时写进当轮回复正文，弹窗可能被错过。",
 }
 
 func einoToolSchemas() []Schema {
@@ -202,6 +203,9 @@ func einoToolSchemas() []Schema {
 		},
 		ReminderTool: func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[SendReminderArgs](ReminderTool, einoDescriptions[ReminderTool])
+		},
+		NotifyTool: func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[NotifyArgs](NotifyTool, einoDescriptions[NotifyTool])
 		},
 	}
 	result := make([]Schema, 0, len(einoNames))
@@ -385,6 +389,11 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 				return e.run(ctx, ReminderTool, input)
 			})
 		},
+		func() (tool.InvokableTool, error) {
+			return utils.InferTool(NotifyTool, einoDescriptions[NotifyTool], func(ctx context.Context, input NotifyArgs) (Output, error) {
+				return e.run(ctx, NotifyTool, input)
+			})
+		},
 	}
 	result := make([]tool.BaseTool, 0, len(makers)+1)
 	for index, makeTool := range makers {
@@ -438,6 +447,8 @@ func (e *Execution) enabled(name string) bool {
 		return e.PlanMode
 	case ReminderTool:
 		return deps.Reminders != nil
+	case NotifyTool:
+		return deps.Notify != nil
 	case subagent.SpawnToolName:
 		return e.Subagents != nil
 	default:

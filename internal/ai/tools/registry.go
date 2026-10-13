@@ -29,7 +29,7 @@ func NewRegistry(deps Dependencies) *Registry {
 
 func PlanAllowed(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode":
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", NotifyTool:
 		return true
 	default:
 		return false
@@ -363,6 +363,8 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.todoWrite(jobID, call.Args)
 	case "exit_plan_mode":
 		return r.exitPlanMode(jobID, call.Args)
+	case NotifyTool:
+		return r.notify(ctx, call.Args)
 	default:
 		return Fail(fmt.Errorf("未知工具 %s", call.Name))
 	}

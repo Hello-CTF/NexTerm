@@ -48,6 +48,7 @@ describe("Wails events 与 channels", () => {
       "update://progress",
       "docker://stats",
       "ai://event",
+      "ai://notification",
       "app://error",
       "app://deep-link",
       "device://status",

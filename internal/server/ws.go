@@ -81,7 +81,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 	since, present, resync := parseEventCursor(r)
-	subscriber, unsubscribe, err := s.events.subscribe(since, present, resync, s.deviceStatusFilter(identity))
+	subscriber, unsubscribe, err := s.events.subscribe(since, present, resync, s.eventFilter(identity))
 	if err != nil {
 		_ = connection.CloseNow()
 		return
@@ -111,24 +111,34 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
-// deviceStatusFilter 按订阅者身份过滤 device://status: 无身份连接
-// (开放部署/网关)不做过滤; 普通登录用户只收到自己设备的上下线
-// 推送, 不广播全部设备 ID。设备归属查询失败一律不下发 (失败关闭)。
-func (s *Server) deviceStatusFilter(identity *account.Identity) func(ipc.Event) bool {
-	if identity == nil || s.fleet == nil {
+// eventFilter 按订阅者身份过滤事件: 无身份连接(开放部署/网关)不做过滤。
+// device://status 仅在配置 fleet 时按设备归属过滤, 普通登录用户只收到自己
+// 设备的上下线推送, 归属查询失败一律不下发 (失败关闭); 未配置 fleet 时不过滤。
+// ai://notification 只投递给通知属主, 与 fleet 无关; 属主为空或不匹配一律
+// 不下发 (失败关闭)。
+func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
+	if identity == nil {
 		return nil
 	}
 	userID := identity.UserID
 	return func(event ipc.Event) bool {
-		if event.Event != ipc.TopicDeviceStatus {
+		switch event.Event {
+		case ipc.TopicDeviceStatus:
+			if s.fleet == nil {
+				return true
+			}
+			status, ok := event.Payload.(ipc.DeviceStatusEvent)
+			if !ok {
+				return false
+			}
+			ownerID, err := s.fleet.DeviceOwnerID(context.Background(), status.DeviceID)
+			return err == nil && ownerID == userID
+		case ipc.TopicAINotification:
+			notification, ok := event.Payload.(ipc.AINotificationEvent)
+			return ok && notification.OwnerID != "" && notification.OwnerID == userID
+		default:
 			return true
 		}
-		status, ok := event.Payload.(ipc.DeviceStatusEvent)
-		if !ok {
-			return false
-		}
-		ownerID, err := s.fleet.DeviceOwnerID(context.Background(), status.DeviceID)
-		return err == nil && ownerID == userID
 	}
 }
 

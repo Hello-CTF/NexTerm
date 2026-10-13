@@ -58,4 +58,7 @@ func TestDangerRulesSkipInteractionTools(t *testing.T) {
 	if got := ClassifyTool("todo_write", json.RawMessage(`{"todos":["prod-secret"]}`), config); got.Risk != Safe {
 		t.Fatalf("todo_write should stay exempt: %+v", got)
 	}
+	if got := ClassifyTool("notify", json.RawMessage(`{"message":"prod-secret 部署完成"}`), config); got.Risk != Safe {
+		t.Fatalf("notify should stay exempt: %+v", got)
+	}
 }
