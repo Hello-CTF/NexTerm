@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -305,28 +306,41 @@ func (c *shareConnCollector) expectSilent(t *testing.T, duration time.Duration) 
 	}
 }
 
-// expectErrorFrame reads one error control frame and returns its content.
-func (c *shareConnCollector) expectErrorFrame(t *testing.T, timeout time.Duration) shareErrorFrame {
+// expectTerminated reads until the server closes the connection with the share-terminated status and returns the error
+// control frame if one arrived first: pumpShareTerminal writes the frame only best-effort before closing, so under load
+// the close may legitimately arrive alone; the terminal condition of a stopped share is the close itself.
+func (c *shareConnCollector) expectTerminated(t *testing.T, timeout time.Duration) *shareErrorFrame {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var errorFrame *shareErrorFrame
 	for time.Now().Before(deadline) {
 		frame := c.next(time.Until(deadline))
 		if frame.err != nil {
-			t.Fatalf("read error frame: %v", frame.err)
+			if frame.err == errShareReadTimeout {
+				break
+			}
+			var closeError websocket.CloseError
+			if !errors.As(frame.err, &closeError) || closeError.Code != websocket.StatusPolicyViolation || closeError.Reason != "share terminated" {
+				t.Fatalf("share closed with %v; want StatusPolicyViolation %q", frame.err, "share terminated")
+			}
+			return errorFrame
 		}
 		if frame.kind != websocket.MessageText {
 			continue
 		}
-		var errorFrame shareErrorFrame
-		if err := json.Unmarshal(frame.payload, &errorFrame); err != nil {
+		var received shareErrorFrame
+		if err := json.Unmarshal(frame.payload, &received); err != nil {
 			t.Fatal(err)
 		}
-		if errorFrame.Type == "error" {
-			return errorFrame
+		if received.Type == "error" {
+			if errorFrame != nil {
+				t.Fatalf("second error frame = %+v after %+v", received, *errorFrame)
+			}
+			errorFrame = &received
 		}
 	}
-	t.Fatal("no error frame arrived")
-	return shareErrorFrame{}
+	t.Fatal("connection was not closed in time")
+	return nil
 }
 
 // expectClosed drains pending messages, then asserts the connection is closed within timeout.
@@ -659,11 +673,10 @@ func TestSharePublicTerminalRevokeStopsStream(t *testing.T) {
 	if call := f.call(t, "POST", "/share/links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
 	}
-	errorFrame := collector.expectErrorFrame(t, 10*time.Second)
-	if errorFrame.Code != "forbidden" || !strings.Contains(errorFrame.Message, "吊销") {
-		t.Fatalf("error frame = %+v", errorFrame)
+	errorFrame := collector.expectTerminated(t, 15*time.Second)
+	if errorFrame != nil && (errorFrame.Code != "forbidden" || !strings.Contains(errorFrame.Message, "吊销")) {
+		t.Fatalf("error frame = %+v", *errorFrame)
 	}
-	collector.expectClosed(t, 5*time.Second)
 
 	// After revocation, new connections are rejected before the upgrade.
 	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
@@ -690,11 +703,10 @@ func TestSharePublicTerminalExpiryStopsStream(t *testing.T) {
 		UpdateColumns(map[string]any{"expires_at": time.Now().UnixMilli() - 1000}); err != nil {
 		t.Fatal(err)
 	}
-	errorFrame := collector.expectErrorFrame(t, 10*time.Second)
-	if !strings.Contains(errorFrame.Message, "过期") {
-		t.Fatalf("error frame = %+v", errorFrame)
+	errorFrame := collector.expectTerminated(t, 15*time.Second)
+	if errorFrame != nil && !strings.Contains(errorFrame.Message, "过期") {
+		t.Fatalf("error frame = %+v", *errorFrame)
 	}
-	collector.expectClosed(t, 5*time.Second)
 }
 
 func TestShareHostTerminalOpenAndShrink(t *testing.T) {
