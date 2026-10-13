@@ -126,11 +126,6 @@ tasks:
     cmds:
       - go run ./scripts/e2e-harness sync
 
-  smoke:browser:
-    summary: Run the real-Chromium smoke against a real loopback-auth server (no demo mode)
-    cmds:
-      - node .github/scripts/browser-smoke.mjs
-
   verify:
     summary: Run quality gates, then a reproducible host desktop production build consuming the verified dist
     deps: [check]
