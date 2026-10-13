@@ -9,6 +9,7 @@ type Topic string
 
 const (
 	TopicSessionStatus     Topic = "session://status"
+	TopicConnectProgress   Topic = "session://connect-progress"
 	TopicTerminalExit      Topic = "terminal://exit"
 	TopicTerminalThrottled Topic = "terminal://throttled"
 	TopicTerminalControl   Topic = "terminal://control"
@@ -39,6 +40,15 @@ type AINotificationEvent struct {
 type AppErrorEvent struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type ConnectProgressEvent struct {
+	AssetID string `json:"assetId"`
+	Stage   string `json:"stage"`
+	Hop     int    `json:"hop"`
+	Hops    int    `json:"hops"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
 }
 
 // DeviceStatusEvent 是设备控制通道上下线通知; 只带设备 ID 与在线状态,

@@ -49,6 +49,7 @@ type Config struct {
 	KeepAliveMax      int
 	ClientVersion     string
 	Env               map[string]string
+	Progress          func(ConnectProgress)
 }
 
 const maxJumpDepth = 16

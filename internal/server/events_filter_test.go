@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -114,8 +115,8 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 	if filter := (&Server{}).eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser}); filter == nil {
 		t.Fatal("signed-in connection must install the filter even without fleet service")
 	} else {
-		if !filter(ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}) {
-			t.Fatal("device events must pass through when no fleet service is configured")
+		if filter(ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}) {
+			t.Fatal("device events must be fail-closed when no fleet service is configured")
 		}
 		if filter(ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "x"}}) {
 			t.Fatal("AI notification must stay owner-scoped without fleet service")
@@ -145,5 +146,40 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		if got := filter(tc.event); got != tc.want {
 			t.Fatalf("%s: filter = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestEventFilterConnectProgressScopedToAssetOwner(t *testing.T) {
+	owners := map[string]string{"asset-1": "u-1", "asset-2": "u-2"}
+	server := &Server{assetOwner: func(_ context.Context, id string) (string, error) {
+		owner, ok := owners[id]
+		if !ok {
+			return "", errors.New("not found")
+		}
+		return owner, nil
+	}}
+	filter := server.eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser})
+	if filter == nil {
+		t.Fatal("plain user filter is nil")
+	}
+	cases := []struct {
+		name  string
+		event ipc.Event
+		want  bool
+	}{
+		{"own asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-1", Stage: "dial", Host: "bastion.internal", Port: 22}}, true},
+		{"other asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-2", Stage: "dial", Host: "bastion.internal", Port: 22}}, false},
+		{"unknown asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "missing", Stage: "dial"}}, false},
+		{"foreign payload", ipc.Event{Event: ipc.TopicConnectProgress, Payload: map[string]any{"assetId": "asset-1"}}, false},
+		{"other topic", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, true},
+	}
+	for _, tc := range cases {
+		if got := filter(tc.event); got != tc.want {
+			t.Fatalf("%s: filter = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if adminFilter := server.eventFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); adminFilter == nil ||
+		adminFilter(ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-1", Stage: "dial"}}) {
+		t.Fatal("superadmin must be scoped to owned assets")
 	}
 }

@@ -21,6 +21,7 @@ export interface IpcChannel<T = unknown> {
 
 export const EVENTS = {
   sessionStatus: "session://status",
+  connectProgress: "session://connect-progress",
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
@@ -68,6 +69,16 @@ export interface FsProgressEvent {
   total: number;
   done: boolean;
   error?: string;
+}
+
+// 与 Go ipc.ConnectProgressEvent 对齐; hop 0 表示目标主机, 1..hops 表示第几跳板。
+export interface ConnectProgressEvent {
+  assetId: string;
+  stage: string;
+  hop: number;
+  hops: number;
+  host: string;
+  port: number;
 }
 
 // 与 Go update.Progress 对齐; phase 区分 download 与 install 阶段。

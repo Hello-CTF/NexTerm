@@ -145,6 +145,18 @@ func (c *productionConnector) connectSSH(ctx context.Context, assetID string, op
 	if err != nil {
 		return nil, err
 	}
+	if assetID != "" {
+		config.Progress = func(progress ssh.ConnectProgress) {
+			_ = ipc.Emit(ctx, c.events, ipc.TopicConnectProgress, ipc.ConnectProgressEvent{
+				AssetID: assetID,
+				Stage:   string(progress.Stage),
+				Hop:     progress.Hop,
+				Hops:    progress.Hops,
+				Host:    progress.Host,
+				Port:    progress.Port,
+			})
+		}
+	}
 	return ssh.Connect(ctx, config)
 }
 

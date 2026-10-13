@@ -153,6 +153,7 @@ describe("IPC facade 静态契约", () => {
     ]);
     expect(entries).toEqual([
       ["sessionStatus", "session://status"],
+      ["connectProgress", "session://connect-progress"],
       ["terminalExit", "terminal://exit"],
       ["terminalThrottled", "terminal://throttled"],
       ["terminalControl", "terminal://control"],

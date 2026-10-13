@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
+import type { ConnectProgressEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
 import type { ChoiceOption } from "../ui/dialogs";
 import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
@@ -257,6 +258,9 @@ interface UiState {
   dismissToast: (id: number) => void;
 
   connectingAssetIds: string[];
+
+  connectProgress: Record<string, ConnectProgressEvent>;
+  setConnectProgress: (assetId: string, progress: ConnectProgressEvent | null) => void;
 }
 
 let toastSeq = 1;
@@ -943,6 +947,16 @@ export const useUi = create<UiState>((set, get) => ({
 
   connectingAssetIds: [],
 
+  connectProgress: {},
+  setConnectProgress: (assetId, progress) =>
+    set((st) => {
+      if (!assetId) return st;
+      const next = { ...st.connectProgress };
+      if (progress) next[assetId] = progress;
+      else delete next[assetId];
+      return { connectProgress: next };
+    }),
+
   pushToast: (kind, text) => {
     const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
     if (existing) get().dismissToast(existing.id);
@@ -1377,6 +1391,20 @@ export function sessionStatusText(status: SessionInfo["status"] | undefined): st
   return "已断开";
 }
 
+export function connectStageText(stage: string): string {
+  if (stage === "auth") return "准备认证";
+  if (stage === "dial") return "TCP 拨号";
+  if (stage === "channel") return "经跳板打开通道";
+  if (stage === "handshake") return "SSH 握手认证";
+  return stage;
+}
+
+export function connectProgressText(progress: ConnectProgressEvent): string {
+  const hop =
+    progress.hop > 0 ? `跳板 ${progress.hop}/${progress.hops}` : "目标主机";
+  return `${hop} · ${connectStageText(progress.stage)}`;
+}
+
 export function closeTabHint(t: AppTab): string {
   if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签";
   if (t.exited) return "关闭标签（进程已结束）";
@@ -1770,6 +1798,8 @@ export async function connectAssetSession(
     const err = e as { message?: string };
     pushToast("error", err.message || describeError(e));
     return null;
+  } finally {
+    useUi.getState().setConnectProgress(asset.id, null);
   }
 }
 
@@ -1814,6 +1844,7 @@ export async function connectAsset(
   const promise = runConnectAsset(asset, options).finally(() => {
     inflightConnects.delete(asset.id);
     setAssetConnecting(asset.id, false);
+    useUi.getState().setConnectProgress(asset.id, null);
   });
   inflightConnects.set(asset.id, promise);
   setAssetConnecting(asset.id, true);
