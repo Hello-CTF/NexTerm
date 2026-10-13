@@ -78,7 +78,6 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       devices: vi.fn().mockResolvedValue({ devices: [] }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
-      enrollCode: vi.fn().mockResolvedValue({ code: "e", expires_at: 1 }),
       totpStatus: vi.fn().mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 }),
       totpSetup: vi.fn(),
       totpConfirm: vi.fn(),

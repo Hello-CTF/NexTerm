@@ -283,8 +283,6 @@ export const authApi = {
 
   devices: () => request<{ devices: AccountDevice[] }>("GET", "/auth/devices"),
 
-  enrollCode: () => request<{ code: string; expires_at: number }>("POST", "/auth/devices/enroll-code", {}, { csrf: true }),
-
   deviceRevoke: (id: string) => request<{ ok: boolean }>("DELETE", `/auth/devices/${encodeURIComponent(id)}`, undefined, { csrf: true }),
 };
 

@@ -29,7 +29,6 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
       devices: vi.fn().mockResolvedValue({ devices: [] }),
       deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
-      enrollCode: vi.fn().mockResolvedValue({ code: "e", expires_at: 1 }),
     },
     adminApi: {
       users: mocks.users,

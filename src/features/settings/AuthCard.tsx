@@ -1,7 +1,7 @@
 // Personal account card: current user, change password (re-wrap DEK), two-factor auth (TOTP), recovery key, device management, logout.
 // Logged out, it is the settings page's only login entry (WEB); the desktop identity comes from the "account sync" link server session
 // (see ../auth/desktopAccount.ts); after login it renders account info/password change/device management (all via the remoteAccountApi proxy);
-// TOTP and pairing-code device add are not covered by the proxy, so they are honestly hidden with a browser-management note; renders nothing when logged out - the login entry is in SyncCard.
+// TOTP is not covered by the proxy, so it is honestly hidden with a browser-management note; renders nothing when logged out - the login entry is in SyncCard.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,7 +21,6 @@ import {
   IconInfo,
   IconKey,
   IconLock,
-  IconPlus,
   IconRefresh,
   IconShield,
   IconTrash,
@@ -47,7 +46,6 @@ export function AuthCard() {
 
   const [devices, setDevices] = useState<AccountDevice[] | null>(null);
   const [devicesError, setDevicesError] = useState<string | null>(null);
-  const [enrollCode, setEnrollCode] = useState<{ code: string; expiresAt: number } | null>(null);
 
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -115,15 +113,6 @@ export function AuthCard() {
       }
       pushToast("success", `已吊销「${device.name}」`);
       void loadDevices();
-    } catch (e) {
-      pushToast("error", describeError(e));
-    }
-  };
-
-  const issueEnrollCode = async () => {
-    try {
-      const r = await authApi.enrollCode();
-      setEnrollCode({ code: r.code, expiresAt: r.expires_at });
     } catch (e) {
       pushToast("error", describeError(e));
     }
@@ -385,45 +374,10 @@ export function AuthCard() {
             <IconRefresh size={12} />
             刷新
           </button>
-          {!DESKTOP && (
-            <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void issueEnrollCode()}>
-              <IconPlus size={12} />
-              添加设备
-            </button>
-          )}
         </div>
         <p className="nx-hint mb-3">
           已登录的设备可以随时吊销，吊销后该设备立即退出登录。
-          {DESKTOP && "配对码添加新设备请在浏览器中打开服务端 Web 界面操作。"}
         </p>
-
-        {enrollCode && (
-          <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
-            <div className="flex items-start gap-2">
-              <IconInfo size={14} className="mt-0.5 shrink-0" />
-              <div>
-                配对码 <b>15 分钟内有效</b>，仅显示一次。在新设备登录页选择「用配对码添加设备」，输入配对码完成添加。
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="nx-code font-mono text-[13px]">{enrollCode.code}</code>
-              <button
-                className="nx-btn nx-btn-outline nx-btn-sm"
-                onClick={() => {
-                  void copyToClipboard(enrollCode.code)
-                    .then(() => pushToast("success", "配对码已复制"))
-                    .catch(() => pushToast("error", "复制失败，请手动复制"));
-                }}
-              >
-                <IconCopy size={12} />
-                复制
-              </button>
-              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setEnrollCode(null)}>
-                完成
-              </button>
-            </div>
-          </div>
-        )}
 
         {devicesError && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">

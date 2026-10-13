@@ -40,6 +40,7 @@ const (
 	maxAppVersionLength   = 64
 	enrollCodeBytes       = 32
 	credentialSecretBytes = 32
+	defaultEnrollCodeTTL  = 15 * time.Minute
 	minEnrollCodeTTL      = time.Minute
 	maxEnrollCodeTTL      = time.Hour
 
@@ -384,7 +385,7 @@ func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identit
 		return "", 0, err
 	}
 	if ttl == 0 {
-		ttl = account.EnrollCodeTTL
+		ttl = defaultEnrollCodeTTL
 	}
 	if ttl < minEnrollCodeTTL || ttl > maxEnrollCodeTTL {
 		return "", 0, ipc.BadParam(fmt.Errorf("设备注册码有效期需在 %s-%s 之间", minEnrollCodeTTL, maxEnrollCodeTTL))

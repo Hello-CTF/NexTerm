@@ -121,7 +121,6 @@ type accountThrottles struct {
 	recovery *account.LoginThrottle
 	init     *account.LoginThrottle
 	register *account.LoginThrottle
-	enroll   *account.LoginThrottle
 	mfa      *account.LoginThrottle
 }
 
@@ -240,7 +239,7 @@ func New(config Config) (*Server, error) {
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
-			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(), enroll: account.NewLoginThrottle(),
+			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(),
 			mfa: account.NewLoginThrottle(),
 		},
 		mfaTickets:     newMFATicketStore(),

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
@@ -137,7 +136,6 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	public("POST /auth/totp/login", s.serveAccountTOTPLogin)
 	public("POST /auth/register", s.serveAccountRegister)
 	public("POST /auth/recovery/reset", s.serveAccountRecoveryReset)
-	public("POST /auth/devices/enroll", s.serveAccountDeviceEnroll)
 
 	session("GET /auth/me", s.serveAccountMe)
 	session("GET /auth/dek", s.serveAccountDEKGet)
@@ -147,7 +145,6 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	sessionCSRF("POST /auth/logout-all", s.serveAccountLogoutAll)
 	sessionCSRF("POST /auth/password", s.serveAccountPasswordChange)
 	sessionCSRF("POST /auth/dek", s.serveAccountDEKUpload)
-	sessionCSRF("POST /auth/devices/enroll-code", s.serveAccountEnrollCode)
 	sessionCSRF("POST /auth/totp/setup", s.serveAccountTOTPSetup)
 	sessionCSRF("POST /auth/totp/confirm", s.serveAccountTOTPConfirm)
 	sessionCSRF("DELETE /auth/totp", s.serveAccountTOTPDisable)
@@ -422,37 +419,6 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-type accountEnrollRequest struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-}
-
-func (s *Server) serveAccountDeviceEnroll(w http.ResponseWriter, r *http.Request) {
-	var request accountEnrollRequest
-	if err := decodeAccountJSON(w, r, &request); err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	key := ipThrottleKey(r, "enroll")
-	if !s.accountThrottle.enroll.Allow(key) {
-		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
-		return
-	}
-	userID, err := s.accounts.ConsumeEnrollCode(r.Context(), request.Code)
-	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	device, err := s.accounts.RegisterDevice(r.Context(), userID, request.Name, request.Kind)
-	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	s.accountThrottle.enroll.RecordSuccess(key)
-	writeAccountJSON(w, http.StatusOK, map[string]accountDeviceView{"device": newAccountDeviceView(device)})
-}
-
 func newAccountDeviceView(device *account.Device) accountDeviceView {
 	return accountDeviceView{
 		ID: device.ID, Name: device.Name, Kind: device.Kind,
@@ -574,21 +540,6 @@ func (s *Server) serveAccountDeviceList(w http.ResponseWriter, r *http.Request) 
 		views = append(views, newAccountDeviceView(device))
 	}
 	writeAccountJSON(w, http.StatusOK, map[string][]accountDeviceView{"devices": views})
-}
-
-type accountEnrollCodeView struct {
-	Code      string `json:"code"`
-	ExpiresAt int64  `json:"expires_at"`
-}
-
-func (s *Server) serveAccountEnrollCode(w http.ResponseWriter, r *http.Request) {
-	identity := accountIdentityFrom(r.Context())
-	code, err := s.accounts.IssueEnrollCode(r.Context(), identity.UserID)
-	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	writeAccountJSON(w, http.StatusOK, accountEnrollCodeView{Code: code, ExpiresAt: time.Now().Add(account.EnrollCodeTTL).UnixMilli()})
 }
 
 func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request) {

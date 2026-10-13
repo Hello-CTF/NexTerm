@@ -547,44 +547,31 @@ func TestAccountHTTPRecoveryReset(t *testing.T) {
 	}
 }
 
-func TestAccountHTTPDeviceEnrollment(t *testing.T) {
+func TestAccountHTTPDeviceListRevoke(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	session, _ := fixture.initSuperadmin(t, "root", "password-h1")
 
-	if call := fixture.call(t, http.MethodPost, "/auth/devices/enroll-code", nil, session, "", nil); call.status != http.StatusForbidden {
-		t.Fatalf("enroll-code without csrf status=%d", call.status)
-	}
-	call := fixture.call(t, http.MethodPost, "/auth/devices/enroll-code", nil, session, session.csrf, nil)
-	if call.status != http.StatusOK {
-		t.Fatalf("enroll-code status=%d body=%v", call.status, call.body)
-	}
-	enrollCode := call.body["code"].(string)
-
-	call = fixture.call(t, http.MethodPost, "/auth/devices/enroll", map[string]any{"code": enrollCode, "name": "laptop", "kind": "desktop"}, nil, "", nil)
-	if call.status != http.StatusOK {
-		t.Fatalf("enroll status=%d body=%v", call.status, call.body)
-	}
-	deviceID := call.body["device"].(map[string]any)["id"].(string)
-	if call := fixture.call(t, http.MethodPost, "/auth/devices/enroll", map[string]any{"code": enrollCode, "name": "again", "kind": "desktop"}, nil, "", nil); call.status != http.StatusForbidden {
-		t.Fatalf("enroll code reuse status=%d", call.status)
+	device, err := fixture.accounts.RegisterDevice(context.Background(), session.user["id"].(string), "laptop", "desktop")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	deviceSession := loginWithDevice(t, fixture, "root", "password-h1", deviceID)
+	deviceSession := loginWithDevice(t, fixture, "root", "password-h1", device.ID)
 	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, deviceSession, "", nil); call.status != http.StatusOK {
 		t.Fatalf("device session status=%d", call.status)
 	}
-	call = fixture.call(t, http.MethodGet, "/auth/devices", nil, session, "", nil)
+	call := fixture.call(t, http.MethodGet, "/auth/devices", nil, session, "", nil)
 	if call.status != http.StatusOK || len(call.body["devices"].([]any)) != 1 {
 		t.Fatalf("device list status=%d body=%v", call.status, call.body)
 	}
 
-	if call := fixture.call(t, http.MethodDelete, "/auth/devices/"+deviceID, nil, session, session.csrf, nil); call.status != http.StatusOK {
+	if call := fixture.call(t, http.MethodDelete, "/auth/devices/"+device.ID, nil, session, session.csrf, nil); call.status != http.StatusOK {
 		t.Fatalf("device revoke status=%d", call.status)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, deviceSession, "", nil); call.status != http.StatusUnauthorized {
 		t.Fatalf("session on revoked device status=%d", call.status)
 	}
-	if call := fixture.call(t, http.MethodDelete, "/auth/devices/"+deviceID, nil, session, session.csrf, nil); call.status != http.StatusForbidden {
+	if call := fixture.call(t, http.MethodDelete, "/auth/devices/"+device.ID, nil, session, session.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("double revoke status=%d", call.status)
 	}
 }

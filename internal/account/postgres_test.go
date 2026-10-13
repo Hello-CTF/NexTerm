@@ -21,7 +21,7 @@ func testPostgresAccounts(t *testing.T) (*Accounts, *int64) {
 }
 
 func TestPostgresAccountCoreFlows(t *testing.T) {
-	a, now := testPostgresAccounts(t)
+	a, _ := testPostgresAccounts(t)
 	ctx := context.Background()
 
 	alice, err := a.CreateUser(ctx, "Alice", "Alice A", "synthetic-password-1")
@@ -101,21 +101,6 @@ func TestPostgresAccountCoreFlows(t *testing.T) {
 	}
 	requireCode(t, validateErr(a, ctx, deviceToken), ipc.CodeForbidden)
 	requireCode(t, issueErr(a, ctx, alice.ID, device.ID), ipc.CodeForbidden)
-
-	code, err := a.IssueEnrollCode(ctx, alice.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if consumedBy, err := a.ConsumeEnrollCode(ctx, code); err != nil || consumedBy != alice.ID {
-		t.Fatalf("consume enroll code: %q, %v", consumedBy, err)
-	}
-	requireCode(t, consumeCodeErr(a, ctx, code), ipc.CodeForbidden)
-	expiring, err := a.IssueEnrollCode(ctx, alice.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	*now += EnrollCodeTTL.Milliseconds() + 1
-	requireCode(t, consumeCodeErr(a, ctx, expiring), ipc.CodeForbidden)
 
 	if enabled, err := a.RegistrationEnabled(ctx); err != nil || enabled {
 		t.Fatalf("default registration=%v err=%v", enabled, err)
@@ -409,55 +394,4 @@ func TestPostgresConcurrentDeviceRevoke(t *testing.T) {
 		t.Fatalf("concurrent device revoke succeeded %d times, want exactly 1", succeeded)
 	}
 	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
-}
-
-func TestPostgresConcurrentEnrollConsumeSingleUse(t *testing.T) {
-	a, _ := testPostgresAccounts(t)
-	ctx := context.Background()
-	alice, err := a.CreateUser(ctx, "alice-enroll", "", "synthetic-password-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob, err := a.CreateUser(ctx, "bob-enroll", "", "synthetic-password-2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	codeA, err := a.IssueEnrollCode(ctx, alice.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	codeB, err := a.IssueEnrollCode(ctx, bob.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const consumers = 8
-	var wg sync.WaitGroup
-	userIDs := make([]string, consumers)
-	errs := make([]error, consumers)
-	for i := 0; i < consumers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			userIDs[i], errs[i] = a.ConsumeEnrollCode(ctx, codeA)
-		}(i)
-	}
-	wg.Wait()
-	succeeded := 0
-	for i, err := range errs {
-		if err == nil {
-			succeeded++
-			if userIDs[i] != alice.ID {
-				t.Fatalf("code consumed by wrong user %q", userIDs[i])
-			}
-			continue
-		}
-		requireCode(t, err, ipc.CodeForbidden)
-	}
-	if succeeded != 1 {
-		t.Fatalf("concurrent consume succeeded %d times, want exactly 1", succeeded)
-	}
-	if consumedBy, err := a.ConsumeEnrollCode(ctx, codeB); err != nil || consumedBy != bob.ID {
-		t.Fatalf("alice code consumption must not affect bob code: %q, %v", consumedBy, err)
-	}
-	requireCode(t, consumeCodeErr(a, ctx, codeA), ipc.CodeForbidden)
 }

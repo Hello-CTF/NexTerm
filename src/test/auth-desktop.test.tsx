@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 // Desktop account card: identity comes from the server session of the "Account Sync" link (syncApi.status),
 // role is probed via remoteAccountApi.adminUsers; all account operations go through the remoteAccountApi proxy,
-// features not covered by the proxy (logout / TOTP / pairing codes / registration toggle) are hidden as-is with a note to manage in the browser.
+// features not covered by the proxy (logout / TOTP / registration toggle) are hidden as-is with a note to manage in the browser.
 import { act, createElement, Fragment } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -175,7 +175,6 @@ describe("桌面端账号卡·普通用户", () => {
     expect(buttonLabels).not.toContain("退出全部会话");
     expect(buttonLabels).not.toContain("添加设备");
     expect(text).toContain("两步验证的绑定、换绑与关闭暂未接入桌面端");
-    expect(text).toContain("配对码添加新设备请在浏览器中打开服务端 Web 界面操作");
     // Non-super-admin: the user management card is not rendered
     expect(text).not.toContain("用户管理");
     expect(text).not.toContain("开放注册");

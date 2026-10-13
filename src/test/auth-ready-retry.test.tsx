@@ -58,7 +58,6 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       dekUpload: vi.fn(),
       changePassword: vi.fn(),
       recoveryReset: vi.fn(),
-      enroll: vi.fn(),
       init: vi.fn(),
     },
   };
