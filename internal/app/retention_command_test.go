@@ -7,8 +7,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// TestStoreRetentionPolicyCommandFields 命令日志保留策略: 单独策略字段直接生效,
-// 默认 (未配置) 不开启任何清理。
+// TestStoreRetentionPolicyCommandFields: command log retention policy - the separate policy fields take effect directly,
+// and by default (unconfigured) no cleanup is enabled.
 func TestStoreRetentionPolicyCommandFields(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -41,8 +41,8 @@ func TestStoreRetentionPolicyCommandFields(t *testing.T) {
 	}
 }
 
-// TestStoreRetentionPolicyCommandFollowsTranscript commandFollowTranscript
-// 开启时命令保留镜像 transcript retention (含其默认值), 默认不开启同步。
+// TestStoreRetentionPolicyCommandFollowsTranscript: with commandFollowTranscript enabled, command retention mirrors
+// transcript retention (including its defaults), and syncing is off by default.
 func TestStoreRetentionPolicyCommandFollowsTranscript(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)

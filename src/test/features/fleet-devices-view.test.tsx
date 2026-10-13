@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// FLEET149 交互测试: 角色差异(超管看 owner/编辑接入地址, 普通用户只读)、
-// 一次性接入码签发与安装指令、吊销确认、期望/实际自启动(离线语义)、指标展示、
-// device://status 上下线事件实时翻转在线状态。
+// FLEET149 interaction tests: role differences (super admin sees owner / edits enrollment URLs, regular users read-only),
+// one-time enrollment code issuance and install command, revoke confirmation, desired/actual autostart (offline semantics), metrics display,
+// device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
@@ -409,8 +409,8 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(text).toContain("不会执行安装");
     expect(text).not.toContain("/var/lib");
 
-    // enroll 与 install 使用同一数据目录; 目录为双引号单参数, 展开优先级
-    // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (与文案的覆盖承诺一致)。
+    // enroll and install use the same data directory; the directory is a double-quoted single argument, expansion priority
+    // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (matches the override promise in the copy).
     const commandElements = [...document.querySelectorAll("code")];
     const commands = commandElements.map((c) => c.textContent ?? "");
     const details = document.querySelector<HTMLDetailsElement>("details");
@@ -688,7 +688,7 @@ describe("设备管理视图 · 账号切换隔离", () => {
     click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("old-admin-code") ?? false);
 
-    // 模拟 AuthGate 场景: 超管会话过期后改登普通用户, pane 不重挂载。
+    // Simulate the AuthGate scenario: the super-admin session expires and a regular user logs in, the pane is not remounted.
     switched = true;
     useAuth.setState({ user: PLAIN_USER });
     await flushUntil(() => document.body.textContent?.includes("user-device") ?? false);
@@ -696,7 +696,7 @@ describe("设备管理视图 · 账号切换隔离", () => {
     expect(document.body.textContent).not.toContain("old-admin-code");
     expect(document.body.textContent).not.toContain("web-01");
 
-    // 旧账号的晚到响应此时才到达: 不得覆盖新账号列表。
+    // The old account's late response arrives only now: it must not overwrite the new account's list.
     lateAdminDevices.resolve({
       ok: true,
       status: 200,
@@ -742,11 +742,11 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
     await flushUntil(() => issueCalls === 1);
 
-    // 签发在途时改登普通用户: 渲染期重置已清空接入面板与 issuing。
+    // Switching to a regular user while issuance is in flight: the render-time reset has already cleared the enrollment panel and issuing.
     useAuth.setState({ user: PLAIN_USER });
     await flush();
 
-    // 旧账号的签发响应此时才到达: 不得写入新账号视图。
+    // The old account's issuance response arrives only now: it must not be written into the new account's view.
     lateIssue.resolve({
       ok: true,
       status: 200,
@@ -757,7 +757,7 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
     expect(document.body.textContent).not.toContain("old-admin-code");
     expect(document.body.textContent).not.toContain("签发中");
 
-    // 新账号重新打开接入面板可正常签发, issuing 未被旧 finally 卡死。
+    // The new account can reopen the enrollment panel and issue normally; issuing is not stuck by the old finally.
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
@@ -781,19 +781,19 @@ describe("设备管理视图 · 上下线实时事件", () => {
     if (!handler) throw new Error("device://status 未订阅");
     const fetchesBefore = calls.length;
 
-    // 未知设备 ID (他人设备): 忽略, 不污染任何卡片。
+    // Unknown device ID (someone else's device): ignored, no card is polluted.
     act(() => handler({ deviceId: "d-x", online: true }));
     await flush();
     expect(cardOf("db-02")?.textContent).toContain("离线");
 
-    // db-02 上线: 徽章立即翻转, 离线提示消失, 不发列表请求。
+    // db-02 comes online: the badge flips immediately, the offline hint disappears, no list request is fired.
     act(() => handler({ deviceId: "d-2", online: true }));
     await flush();
     expect(cardOf("db-02")?.textContent).toContain("在线");
     expect(cardOf("db-02")?.textContent).not.toContain("设备离线: 修改只会保存为期望状态");
     expect(calls.length).toBe(fetchesBefore);
 
-    // web-01 下线: 徽章变离线, 终端按钮禁用, 同样不发列表请求。
+    // web-01 goes offline: the badge turns offline, the terminal button is disabled, and again no list request is fired.
     act(() => handler({ deviceId: "d-1", online: false }));
     await flush();
     const webCard = cardOf("web-01");

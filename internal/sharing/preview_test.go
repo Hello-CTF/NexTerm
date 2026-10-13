@@ -77,8 +77,8 @@ func TestPreviewCreateAuditFailureRollsBackLink(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")
 
-	// 让 create 审计写入失败: 审计表被删后插入必败, 链接行必须随同事务回滚,
-	// 不留下无审计的匿名链接。
+	// Make the create audit write fail: with the audit table dropped the insert must fail, and the link row must roll back
+	// with the same transaction, leaving no anonymous link without an audit.
 	if err := fixture.db.Exec("DROP TABLE audit_log").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 		t.Fatal("last_accessed_at not updated on allow")
 	}
 
-	// 过期: 直接把 expires_at 拨到过去, resolve 拒绝且审计 reason=expired。
+	// Expired: wind expires_at directly into the past; resolve denies with audit reason=expired.
 	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"expires_at": fixture.now - 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestPreviewResolveAccessDenyAndAudit(t *testing.T) {
 		t.Fatal("expired token resolved")
 	}
 
-	// 吊销: resolve 拒绝且审计 reason=revoked。
+	// Revoked: resolve denies with audit reason=revoked.
 	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(link.ID)).UpdateColumns(map[string]any{"expires_at": fixture.now + time.Hour.Milliseconds(), "revoked_at": fixture.now}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestPreviewRevokeAuthorization(t *testing.T) {
 	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
 		t.Fatalf("owner revoke: %v", err)
 	}
-	// 重复吊销不报错。
+	// Repeated revocation does not error.
 	if err := fixture.service.RevokePreviewLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
 		t.Fatalf("repeat revoke: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestPreviewPermissionShrinkStopsInput(t *testing.T) {
 		t.Fatalf("input must flow before shrink: %v", err)
 	}
 
-	// 权限收缩 (read_write -> read) 按当前行即时生效: 输入停止, 输出授权仍在。
+	// Permission shrinkage (read_write -> read) takes effect immediately from the current row: input stops, output authorization remains.
 	sharePreviewLink := query.Use(fixture.db).SharePreviewLink
 	if _, err := sharePreviewLink.WithContext(context.Background()).Where(sharePreviewLink.ID.Eq(grant.ShareID)).UpdateColumns(map[string]any{"permission": string(PermissionRead)}); err != nil {
 		t.Fatal(err)
@@ -465,8 +465,8 @@ func TestPreviewInputAuditAggregatedBySessionWindow(t *testing.T) {
 	}
 }
 
-// 库中权限档出现协议外取值 (脏数据/手改) 时一律按只读处理: 解析与复查归一到
-// read, 输入强制点拒绝, 绝不把未知档位当下发或放行写。
+// An out-of-protocol permission level in the database (dirty data/manual edit) is always treated as read-only: parsing and revalidation normalize to
+// read, the input enforcement point denies, and an unknown level is never delivered or allowed to write.
 func TestPreviewUnknownDBPermissionFailsSafe(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")

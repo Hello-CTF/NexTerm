@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// syncTranscriptMaxContentBytes 超过该大小的会话记录只同步元数据(与本地 64MiB 会话上限一致)。
+	// syncTranscriptMaxContentBytes: transcript records larger than this only sync metadata (matches the local 64MiB transcript limit).
 	syncTranscriptMaxContentBytes = 64 << 20
 	maxSyncWarnings               = 100
 )
@@ -27,7 +27,7 @@ type localObject struct {
 	plaintext []byte
 }
 
-// objectRevision 返回记录的有效修订号: 删除时间参与比较, 删除即一次修订。
+// objectRevision returns the record's effective revision: the deletion time participates in the comparison, so deleting counts as one revision.
 func objectRevision(updatedAt int64, deletedAt *int64) int64 {
 	if deletedAt != nil && *deletedAt > updatedAt {
 		return *deletedAt
@@ -63,7 +63,7 @@ func localRevision(kind string, plaintext []byte) int64 {
 	return payload.UpdatedAt
 }
 
-// remoteWins LWW 裁决: 修订号大者胜; 平手按载荷 sha256 字典序决胜, 双向同步无需协商即可收敛。
+// remoteWins decides LWW: the higher revision wins; ties break by payload sha256 lexicographic order, so bidirectional sync converges without negotiation.
 func remoteWins(remoteRevision, localRevision int64, remotePlaintext, localPlaintext []byte) bool {
 	if remoteRevision != localRevision {
 		return remoteRevision > localRevision
@@ -78,9 +78,9 @@ func (report *SyncReport) warnf(format string, args ...any) {
 	report.Warnings = append(report.Warnings, fmt.Sprintf(format, args...))
 }
 
-// collectLocalObjects 全量扫描本地副本产出确定性载荷; 本地副本未登录与登录后保持一致。
-// 主机信任、AI 档案、AI 权限和偏好按会话用户 opt-in 收集: 关闭时不收集对应对象, 也不传播其墓碑
-// (禁用同步不得删除远端对象)。
+// collectLocalObjects scans the full local replica and produces deterministic payloads; the local replica stays identical before and after login.
+// Known hosts, AI profiles, AI permissions, and preferences are collected per the session user's opt-in: when off, the corresponding objects and their tombstones are not collected
+// (disabling sync must not delete remote objects).
 func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn, userIDs ...string) (map[string]localObject, error) {
 	objects := map[string]localObject{}
 	groups, err := e.store.GroupList(ctx)
@@ -102,8 +102,8 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		return nil, err
 	}
 	if len(credentials) > 0 {
-		// 凭据库锁定/未初始化时凭据本轮不同步(与带密钥 AI 档案同款延迟语义), 其余对象照常收集;
-		// 凭据不进 objects 即不写对账状态, 解锁后的下一轮自动补推。
+		// Credentials are not synced this round while the vault is locked/uninitialized (same deferred semantics as keyed AI profiles); other objects are collected as usual.
+		// Credentials stay out of objects, so no reconciliation state is written; the next round after unlock pushes them automatically.
 		if err := e.requireVault(ctx); err != nil {
 			report.warnf("%d 条凭据因凭据库未解锁本次不同步, 其余对象正常同步: %v", len(credentials), err)
 			credentials = nil
@@ -312,9 +312,9 @@ func (e *Engine) transcriptChunksAll(ctx context.Context, transcriptID string) (
 	}
 }
 
-// applyRemoteObject 解密并 LWW 应用一个远端对象; 应用失败隔离为警告, 不阻断整轮同步。
-// identical 表示远端与本机内容一致, 视为已对账; 本地胜出时 payload_hash 置空, 由 blob 哈希差异驱动回推。
-// opt-in 硬关闭的 known_host/AI 档案(含其墓碑)只计数跳过: 不应用也不记对账, 保持未对账供日后开启再拉取。
+// applyRemoteObject decrypts and LWW-applies one remote object; apply failures are isolated as warnings and do not block the whole sync round.
+// identical means remote and local content match, counted as reconciled; when local wins, payload_hash is left empty so the blob hash difference drives the re-push.
+// known_host/AI profiles (including their tombstones) with opt-in hard-off are only counted and skipped: not applied and not reconciled, staying unreconciled for a later re-pull once enabled.
 func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object WireObjectSeq, dek []byte, report *SyncReport, optIn kindOptIn) {
 	report.Pulled++
 	kind, plaintext, err := tryOpenObject(dek, object.Blob, object.ID)
@@ -328,8 +328,8 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		report.PullSkipped++
 		return
 	}
-	// 凭据应用需要解锁的凭据库: 锁定时不应用也不记对账(与 opt-in 硬关闭同款语义),
-	// 保持未对账状态, 解锁后的下一轮自动重拉应用; 记了 blob 哈希会被误判已收敛而永久跳过。
+	// Applying credentials requires an unlocked vault: while locked, neither apply nor reconcile (same semantics as opt-in hard-off),
+	// staying unreconciled so the next round after unlock re-pulls and applies automatically; recording the blob hash would be mistaken for convergence and skip forever.
 	if kind == KindCredential {
 		if err := e.requireVault(ctx); err != nil {
 			report.PullSkipped++
@@ -346,7 +346,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	}
 	switch {
 	case report.hasUnresolvedRef(object.ID):
-		// 引用降级应用: 不记对账, 依赖对象到达后下一轮重拉恢复。
+		// Reference-degraded apply: not reconciled; the next round re-pulls and recovers once the dependency arrives.
 	case applied || identical:
 		e.syncStatePut(ctx, userID, object.ID, &payloadHash, hashBlob(object.Blob))
 	default:
@@ -354,7 +354,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	}
 }
 
-// quarantineObject 记录不可解密对象的 blob 哈希, 避免每轮重复拉取; 本地有对应内容时推送会自然覆盖。
+// quarantineObject records the blob hash of an undecryptable object to avoid re-pulling it every round; a push from local content naturally overwrites it.
 func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, blobHash [32]byte) {
 	if err := e.syncStatePut(ctx, userID, objectID, nil, blobHash); err != nil {
 		e.logger.Warn("sync quarantine record failed", "error", err)
@@ -429,8 +429,8 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 	return true, false
 }
 
-// groupUpsert 与 store.GroupUpsert 同款语义, 并在同一事务清除同 ID 的删除墓碑:
-// 较新分组胜过旧墓碑后不得留下可回滚对象的墓碑。
+// groupUpsert mirrors store.GroupUpsert semantics and clears the same-ID deletion tombstone in the same transaction:
+// once a newer group beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID *string) error {
 	if err := store.EnsureID(payload.ID); err != nil {
 		return err
@@ -443,7 +443,7 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 	})
 }
 
-// groupUpsertTx 是 groupUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+// groupUpsertTx is the in-transaction version of groupUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) groupUpsertTx(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string) error {
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
@@ -508,8 +508,8 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		if bytes.Equal(plaintext, localPayload) {
 			return false, true
 		}
-		// 本地是对端载荷的引用降级形态(此前凭据未到被暂时清除): 凭据仍未到则不动不写、保持未对账,
-		// 下轮重拉再判; 已到达则绕过 LWW 直接恢复——降级形态不是用户编辑, 不参与修订号决胜。
+		// Local is the reference-degraded form of the remote payload (reference cleared earlier because the credential had not arrived): if the credential is still missing, leave everything untouched and stay unreconciled,
+		// re-deciding on the next round's re-pull; if it has arrived, bypass LWW and restore directly - the degraded form is not a user edit and does not participate in the revision contest.
 		degraded := payload
 		degraded.CredID = nil
 		degradedPayload, err := marshalObject(degraded)
@@ -551,8 +551,8 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		if *row.CredID == "" {
 			row.CredID = nil
 		} else if _, err := e.store.CredentialGetRow(ctx, *row.CredID); isNotFound(err) {
-			// cred_id 有外键约束(OnDelete:SET NULL), 悬空引用写不进库, 只能降级清除;
-			// 标记未决引用后引擎不记对账, 凭据到达后的下一轮重拉经降级形态判定自动恢复引用。
+			// cred_id has an FK constraint (OnDelete:SET NULL); a dangling reference cannot be written to the database and can only be cleared by degradation;
+			// after marking the unresolved reference the engine does not reconcile, and the next round's re-pull restores the reference automatically via the degraded-form check once the credential arrives.
 			report.warnf("资产 %s 引用的凭据 %s 尚未同步到本机, 已暂时清除该引用, 凭据同步后自动恢复", payload.ID, *row.CredID)
 			row.CredID = nil
 			report.markUnresolvedRef(payload.ID)
@@ -622,16 +622,16 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 	return true, false
 }
 
-// credentialUpsert 与 store.CredentialPut 同款, 但保留对端修订号: store 层按本机时钟写 updated_at,
-// 同步载荷哈希以修订号为准, 必须原样保留才能幂等对账。
-// 写入与删除墓碑清除在同一事务: 较新凭据胜过旧墓碑后不得留下可回滚对象的墓碑。
+// credentialUpsert mirrors store.CredentialPut but preserves the peer revision: the store layer writes updated_at with the local clock,
+// while sync payload hashing goes by the revision, which must be preserved verbatim for idempotent reconciliation.
+// The write and the deletion-tombstone clearing share one transaction: once a newer credential beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return e.credentialUpsertTx(ctx, tx, payload, nonce, blob)
 	})
 }
 
-// credentialUpsertTx 是 credentialUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+// credentialUpsertTx is the in-transaction version of credentialUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload credentialObject, nonce, blob []byte) error {
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
@@ -812,7 +812,7 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 		return false, false
 	}
 	if exists && !local.SyncOptIn {
-		// 本机 opt-out 记录保留: 视为已与远端墓碑对账, 本地副本不参与推送。
+		// Local opt-out record is kept: treated as reconciled with the remote tombstone; the local copy does not participate in pushes.
 		return false, true
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindTranscript, deletedAt); err != nil {
@@ -862,7 +862,7 @@ func (e *Engine) applyTranscriptObject(ctx context.Context, plaintext []byte, re
 			}
 			return true, false
 		}
-		// 会话记录内容不可变: 本地已有即视为一致。
+		// Transcript content is immutable: an existing local copy counts as identical.
 		return false, true
 	}
 	row := store.TranscriptRow{
@@ -928,8 +928,8 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 			return false, false
 		}
 	}
-	// 同一 (host, port, keyType) 只能有一行: 不同 ID 的同行记录按 LWW 决胜,
-	// 败者行删除并以胜者修订号立碑, 保证多设备对同一主机收敛到同一对象。
+	// Only one row may exist per (host, port, keyType): same-triple rows with different IDs are decided by LWW,
+	// the loser row is deleted and tombstoned at the winner's revision, so multiple devices converge on one object per host.
 	displacedID := ""
 	if conflict, found, err := e.store.KnownHostGet(ctx, payload.Host, payload.Port, payload.KeyType); err != nil {
 		report.warnf("无法检查已知主机 %s 的三元组冲突: %v", payload.ID, err)
@@ -944,9 +944,9 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 			return false, false
 		}
 		if !remoteWins(payload.AddedAt, conflict.AddedAt, plaintext, conflictPayload) {
-			// 本地胜者保住三元组, 但对端败者对象仍留在服务端: 按胜者修订号为败者立碑,
-			// 本轮 collect/push 即以墓碑覆盖之, 否则胜者日后被删除时旧指纹会在新设备复活。
-			// 同 ID 的本地存活行(不同三元组的化身)与败者墓碑不能共存, 先让出原 ID 再立碑。
+			// The local winner keeps the triple, but the remote loser object still lives on the server: tombstone the loser at the winner's revision so this
+			// round's collect/push overwrites it with the tombstone, otherwise the old fingerprint would revive on new devices when the winner is deleted later.
+			// A local live row with the same ID (an incarnation with a different triple) cannot coexist with the loser tombstone; yield the original ID before tombstoning.
 			var incarnation *store.KnownHostRow
 			if exists {
 				incarnation = &local
@@ -966,9 +966,10 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 	return true, false
 }
 
-// applyKnownHostTombstone 区分冲突墓碑与用户主动删除: 冲突墓碑携带原败者三元组,
-// 本地同 ID 不同三元组且修订号不新的行是胜出的化身, 不得按用户删除清掉——安全 re-ID
-// 并随本轮 collect/push 传播, 冲突墓碑只清原槽位。同三元组败者行与用户删除按 ID 清除。
+// applyKnownHostTombstone distinguishes conflict tombstones from user-initiated deletions: a conflict tombstone carries the original loser triple,
+// and a local row with the same ID but a different triple whose revision is not newer is the winning incarnation, which must not be cleared as a user
+// deletion - it is safely re-IDed and propagated with this round's collect/push, while the conflict tombstone only clears the original slot.
+// Same-triple loser rows and user deletions are cleared by ID.
 func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, payload tombstoneObject, report *SyncReport) (bool, bool) {
 	local, exists, err := e.knownHostByID(ctx, objectID)
 	if err != nil {
@@ -1078,7 +1079,7 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 	}
 	state.upsert(record)
 	state.ensureActive()
-	// 档案共享一个 LWW 时钟: 修订号只增不减, 本地较新编辑不得被较旧对端对象回滚。
+	// Profiles share one LWW clock: revisions only increase, and newer local edits must not be rolled back by older remote objects.
 	if payload.UpdatedAt > revision {
 		revision = payload.UpdatedAt
 	}
@@ -1135,8 +1136,8 @@ func (e *Engine) requireVault(ctx context.Context) error {
 	return nil
 }
 
-// objectKindRank 保证同一批推送内被依赖对象先于依赖者: 拉取端按 seq 顺序应用, 引用必须在应用前已存在。
-// 普通墓碑排在内容对象之后、会话记录之前, 与浏览器推送顺序一致。
+// objectKindRank ensures that within one push batch, depended-on objects precede their dependents: the pull side applies in seq order, so references must exist before they are applied.
+// Plain tombstones rank after content objects but before session records, matching the browser push order.
 func objectKindRank(kind string) int {
 	switch kind {
 	case KindGroup:

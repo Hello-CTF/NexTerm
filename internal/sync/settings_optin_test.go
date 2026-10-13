@@ -25,7 +25,7 @@ func TestKindOptInSetWithoutIdentityForbidden(t *testing.T) {
 	} else if appErr, ok := err.(*ipc.Error); !ok || appErr.Code != ipc.CodeForbidden {
 		t.Fatalf("set err = %v", err)
 	}
-	// 匿名不得留下任何写入
+	// Anonymous callers must not leave any write behind.
 	view, err := instance.service.KindOptInGet(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if !view.KnownHost || !view.AIProfile {
 		t.Fatalf("set view = %+v", view)
 	}
-	// A 的开关不影响 B 的默认开启状态
+	// A's toggle does not affect B's default-on state.
 	viewB, err := instance.service.KindOptInGet(ctxB)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if !viewB.KnownHost || !viewB.AIProfile {
 		t.Fatalf("u-b 应保持默认开启: %+v", viewB)
 	}
-	// 底层键按用户隔离, 全局键不存在
+	// The underlying keys are isolated per user; no global key exists.
 	var globalRows int
 	if err := instance.db.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM setting WHERE key IN ('sync.optin.known_host', 'sync.optin.known_host.')").Scan(&globalRows); err != nil {
@@ -64,7 +64,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 	if globalRows != 0 {
 		t.Fatal("不得写全局 opt-in 键")
 	}
-	// 关闭 known_host 不影响 AI 档案的默认开启状态
+	// Disabling known_host does not affect the AI profile default-on state.
 	if _, err := instance.service.KindOptInSet(ctxA, KindOptInPatch{KnownHost: boolPtr(false)}); err != nil {
 		t.Fatal(err)
 	}

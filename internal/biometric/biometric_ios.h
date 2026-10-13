@@ -6,7 +6,7 @@
 bool nx_biometric_can_evaluate(void);
 bool nx_biometric_evaluate(const char *reason, char **err_msg);
 
-// 材料状态: 0 不存在, 1 存量(无访问控制), 2 受 SecAccessControl 保护
+// Material state: 0 absent, 1 legacy (no access control), 2 protected by SecAccessControl
 int nx_keychain_state(const char *account, char **err_msg);
 bool nx_keychain_set(const char *account, const char *value, char **err_msg);
 bool nx_keychain_get(const char *account, const char *prompt, char **out_value, char **err_msg);

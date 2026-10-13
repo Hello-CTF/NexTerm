@@ -39,8 +39,8 @@ type Result struct {
 	UnavailableReason string `json:"unavailableReason"`
 }
 
-// Manager 的应用内更新入口; 所有检查失败一律降级为 Status.UnavailableReason,
-// 不向调用方抛错。RestartFunc 由装配层注入 (桌面端重启 wails 应用), server 为 nil。
+// Manager is the in-app update entry point; every check failure degrades to Status.UnavailableReason
+// instead of returning an error to the caller. RestartFunc is injected by the wiring layer (desktop restarts the wails app); it is nil on the server.
 type Manager struct {
 	CurrentVersion string
 	GOOS           string
@@ -260,9 +260,9 @@ func (m *Manager) Restart(ctx context.Context) Result {
 	return Result{Restarted: true}
 }
 
-// installTargetFor 决定安装完成后新 exe 的位置: 注册表登记的安装目标优先,
-// 否则退回 NSIS 默认目录; inPlace 为 true 表示当前运行的就是安装目标本身,
-// 可以改名替换; false 表示当前是散装副本, 不动它, 装完重启到安装版。
+// installTargetFor decides where the new exe lands after install: the registry-registered install target wins,
+// otherwise the NSIS default directory; inPlace true means the currently running exe is the install target itself
+// and can be replaced by renaming; false means it is a loose copy, left alone, with a restart into the installed version after install.
 func installTargetFor(exePath, registered, fallbackDir, exeName string) (target string, inPlace bool) {
 	target = registered
 	if target == "" && fallbackDir != "" {

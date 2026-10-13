@@ -131,7 +131,7 @@ function extractUrls(text: string): string[] {
   return [...new Set(found)];
 }
 
-// 各 AI 标签的忙状态登记处: 全局 aiBusy = 任一标签忙; 标签页圆点经同一登记处刷新。
+// Busy-state registry for AI tabs: global aiBusy = any tab busy; tab dots refresh through the same registry.
 const aiTabBusyIds = new Set<string>();
 const aiTabBusyJobIds = new Map<string, string>();
 const aiTabBusyListeners = new Set<() => void>();
@@ -1042,7 +1042,7 @@ function AiChatTab({
     [stream],
   );
 
-  // 外部绑定(持久化看板)驱动的会话恢复; 标签内部主动切换已同步过 ref, 不会重复恢复。
+  // Conversation restore driven by the external binding (persisted board); proactive in-tab switches already synced the ref and do not restore again.
   useEffect(() => {
     if (boundConversationId === undefined) {
       conversationIdRef.current = undefined;

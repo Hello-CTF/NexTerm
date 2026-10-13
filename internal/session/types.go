@@ -268,8 +268,8 @@ type Session struct {
 	durableGen       uint64
 	durableTransport *transportHandle
 
-	// 远程会话壳 (KindRemote) 的空闲回收状态: remoteActivity 是上次推流/管理
-	// 操作时刻, remoteFeeds 是活跃推流连接数 (>0 时回收挂起); 普通会话不用。
+	// Idle-reap state for remote session shells (KindRemote): remoteActivity is the last feed/management
+	// operation time, remoteFeeds is the active feed connection count (reaping suspends while >0); unused by normal sessions.
 	remoteActivity time.Time
 	remoteFeeds    int
 }
@@ -324,10 +324,10 @@ type AttachOptions struct {
 	ClientID    string
 	ChannelID   string
 	ReplayBytes int
-	// FromSeq/FromEpoch 是客户端已消费输出流的锚点: FromSeq 为 ring 字节序号,
-	// FromEpoch 为上次 attach 锚点帧下发的流纪元。两者都提供时服务端尝试从
-	// FromSeq 偏移续传 (不清屏); 锚点过期或纪元不符则回退全量清屏重放并在
-	// 锚点帧里显式标记 expired。零值保持既有全量重放行为。
+	// FromSeq/FromEpoch are the client's anchors into the consumed output stream: FromSeq is a ring byte sequence number,
+	// FromEpoch is the stream epoch delivered with the last attach's anchor frame. With both provided, the server attempts
+	// to resume from the FromSeq offset (no clear screen); if the anchor is stale or the epoch mismatches, it falls back
+	// to a full clear-screen replay and marks expired explicitly in the anchor frame. Zero values keep the existing full-replay behavior.
 	FromSeq   uint64
 	FromEpoch string
 }
@@ -374,9 +374,9 @@ func userIDFromContext(ctx context.Context) string {
 	return userID
 }
 
-// sessionOwnerAllowed 报告请求者是否可访问会话: 设备伪资产 ID 是确定性的,
-// 无属主闸则跨用户零授权可达, 设备会话必须按属主隔离; 双端皆空 (桌面/后台)
-// 行为不变。调用方须持有 session.mu。
+// sessionOwnerAllowed reports whether the requester may access the session: device pseudo-asset IDs are deterministic,
+// so without an owner gate they would be reachable cross-user with zero authorization; device sessions must be isolated by owner.
+// Behavior is unchanged when both sides are empty (desktop/background). The caller must hold session.mu.
 func sessionOwnerAllowed(session *Session, requester string) bool {
 	if session.asset.Kind != KindDevice {
 		return true

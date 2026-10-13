@@ -11,8 +11,8 @@ import (
 	"strings"
 )
 
-// applyInstall 挂载 dmg, 把 .app 复制到 /Applications 后卸载; 重启目标切换到
-// 新安装的 bundle 可执行文件。
+// applyInstall mounts the dmg, copies the .app to /Applications, then unmounts; the restart target switches to
+// the newly installed bundle executable.
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	mountpoint := filepath.Join(filepath.Dir(archive), "mnt")
 	if err := os.Mkdir(mountpoint, 0o700); err != nil {

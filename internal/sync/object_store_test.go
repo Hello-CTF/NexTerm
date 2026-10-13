@@ -40,7 +40,7 @@ func TestObjectStoreGenesisHeadAndIdempotentPush(t *testing.T) {
 	if head == genesisHead(userID) {
 		t.Fatal("head did not advance")
 	}
-	// 同内容重复推送: 幂等跳过, head 与 seq 不变。
+	// Re-pushing the same content: idempotent skip, head and seq unchanged.
 	applied, skipped, head2, maxSeq2, err := store.push(ctx, userID, head, objects)
 	if err != nil || applied != 0 || skipped != 2 || head2 != head || maxSeq2 != maxSeq {
 		t.Fatalf("idempotent push applied=%d skipped=%d head=%v seq=%d err=%v", applied, skipped, head2 == head, maxSeq2, err)
@@ -53,11 +53,11 @@ func TestObjectStoreHeadMismatchDetectsFork(t *testing.T) {
 	if _, _, _, _, err := store.push(ctx, userID, genesis, []WireObject{{ID: "obj-a", Blob: []byte("v1")}}); err != nil {
 		t.Fatal(err)
 	}
-	// 基于过期 head 的推送必须被拒绝(回滚/分叉检测)。
+	// A push based on a stale head must be rejected (rollback/fork detection).
 	if _, _, _, _, err := store.push(ctx, userID, genesis, []WireObject{{ID: "obj-a", Blob: []byte("v2")}}); err != errHeadMismatch {
 		t.Fatalf("stale head push err=%v, want errHeadMismatch", err)
 	}
-	// 对象内容被覆盖后 seq 单调递增。
+	// Seq increases monotonically after object content is overwritten.
 	if _, _, _, _, err := store.push(ctx, userID, mustHead(t, store, ctx, userID), []WireObject{{ID: "obj-a", Blob: []byte("v2")}}); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestObjectStorePullCursorAndIDLookup(t *testing.T) {
 	if len(pulled) != 2 || pulled[0].ID != "obj-b" || pulled[1].ID != "obj-c" || !done || maxSeq != 3 {
 		t.Fatalf("pulled=%+v done=%v maxSeq=%d", pulled, done, maxSeq)
 	}
-	// 按 id 补拉返回游标之外的对象。
+	// Catch-up by id returns objects beyond the cursor.
 	pulled, _, _, _, _, err = store.pull(ctx, userID, 3, []string{"obj-a"}, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestObjectStorePullCursorAndIDLookup(t *testing.T) {
 	if len(pulled) != 1 || pulled[0].ID != "obj-a" {
 		t.Fatalf("id lookup pulled=%+v", pulled)
 	}
-	// 字节预算: 单对象必完整返回。
+	// Byte budget: a single object is always returned in full.
 	pulled, _, _, _, done, err = store.pull(ctx, userID, 0, nil, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestObjectStoreMultiUserIsolation(t *testing.T) {
 	}
 }
 
-// 两条接近 64MiB 的 transcript(密文约 87MiB)必须被线上成本预算分页, 单条响应不超上限。
+// Two near-64MiB transcripts (ciphertext about 87MiB) must be paginated by the wire-cost budget, with no single response over the limit.
 func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
 	ctx, store, userID := newObjectStoreUser(t)
 	big := make([]byte, 87<<20)

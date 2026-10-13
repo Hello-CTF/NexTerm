@@ -205,7 +205,7 @@ describe("XtermView 应用级快捷键放行", () => {
 
     expect(handledByXterm({ key: "x", code: "KeyX" })).toBe(true);
     expect(handledByXterm({ key: "Enter", code: "Enter" })).toBe(true);
-    // terminalSearch(Primary+f)不在应用级键位里, 由 TerminalPane 捕获层单独处理。
+    // terminalSearch (Primary+f) is not in the app-level keymap; it is handled separately by the TerminalPane capture layer.
     expect(handledByXterm({ key: "f", code: "KeyF", ctrlKey: true })).toBe(true);
     expect(handledByXterm({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
   });

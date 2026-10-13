@@ -12,8 +12,8 @@ export function DekUnlockBanner() {
   return <NativeVaultUnlockBanner />;
 }
 
-// 浏览器刷新后会话经 cookie 恢复但 DEK 已随内存清空,自动同步静默停摆;
-// 这条常驻横幅是设置页 SyncCard 之外的主界面解锁入口,解锁成功或 dismiss 前不消失。
+// After a browser refresh, the session is restored via cookie but the DEK is gone with the cleared memory, so auto sync stalls silently;
+// this persistent banner is the main-UI unlock entry besides the settings SyncCard, and stays until unlocked or dismissed.
 function WebDekUnlockBanner() {
   const user = useAuth((s) => s.user);
   const dek = useAuth((s) => s.dek);
@@ -93,11 +93,11 @@ function WebDekUnlockBanner() {
   );
 }
 
-// 原生端(桌面与移动端)凭据库锁定横幅: 凭据库主密码保护同步链接口令与凭据, 锁定即同步停摆;
-// 解锁成功后既有 fireUnlocked → wake 链路自动恢复同步。
-// 生物识别快捷解锁仅 iOS/Android: 解锁材料为该主密码(iOS 存 Keychain 并绑定当前面容集,
-// Android 存 Keystore 加密的 EncryptedSharedPreferences), 验证走系统生物识别弹窗,
-// 通过后仍调 vault_unlock 既有路径; 验证取消/失败保持密码输入。桌面端只有密码解锁分支。
+// Native (desktop and mobile) vault-locked banner: the vault master password protects sync link secrets and credentials; locked means sync stalls;
+// after a successful unlock, the existing fireUnlocked → wake chain resumes sync automatically.
+// Biometric quick unlock is iOS/Android only: the unlock material is that master password (iOS stores it in the Keychain bound to the current Face ID set,
+// Android in Keystore-encrypted EncryptedSharedPreferences), verification goes through the system biometric prompt,
+// and success still takes the existing vault_unlock path; cancel/failure keeps the password input. Desktop has only the password unlock branch.
 const DONT_ASK_KEY = "nexterm.biometricUnlock.dontAsk";
 
 function dontAskBiometricAgain(): boolean {
@@ -260,7 +260,7 @@ function NativeVaultUnlockBanner() {
             try {
               window.localStorage.setItem(DONT_ASK_KEY, "1");
             } catch {
-              // 忽略
+              // Ignore
             }
             setOfferEnable(null);
           }}

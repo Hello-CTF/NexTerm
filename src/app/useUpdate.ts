@@ -85,8 +85,8 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
 
   installUpdate: async () => {
     if (get().install.active) return;
-    // 进度监听只在安装期间持有: WEB 下 subscribeEvent 会拉起 events 长连接,
-    // 平时不订阅; 安装结果以 install() 返回值为准, 不依赖事件收尾。
+    // The progress listener is held only during install: on WEB, subscribeEvent spins up the events long connection,
+    // so no subscription in normal times; the install result follows the install() return value, not event delivery.
     const releaseProgress = acquireProgressListener();
     set({ install: { ...idleInstall, active: true }, restartError: null });
     try {
@@ -146,9 +146,9 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   },
 }));
 
-// 检查结论三态与「有更新但不可安装」分开: available 只看有没有新版本,
-// canInstall 决定能不能在应用内安装; 后端把检查失败降级进 unavailableReason,
-// 传输层抛错进 checkError, 两者都呈现为检查失败。
+// The three-state check verdict is separate from "update available but not installable": available only reflects whether a new version exists,
+// canInstall decides whether in-app install is possible; the backend degrades check failures into unavailableReason,
+// transport errors go into checkError, and both surface as check failed.
 export function updateVerdict(
   s: Pick<UpdateState, "status" | "checking" | "checkError">,
 ): UpdateVerdict {

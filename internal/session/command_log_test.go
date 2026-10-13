@@ -48,8 +48,8 @@ func openCommandTestTab(t *testing.T, sink CommandSink, userID string) (*Manager
 	return manager, tab, connector.transport(0).channel(0), connected
 }
 
-// TestCommandLogRecordsLifecycleDrivesAStructuredRecord 走完 OSC 133 全生命
-// 周期: 屏幕上的命令行 + 退出码 + 会话/标签/资产/用户归因齐全。
+// TestCommandLogRecordsLifecycleDrivesAStructuredRecord walks the full OSC 133 lifecycle:
+// the on-screen command line + exit code + session/tab/asset/user attribution are all present.
 func TestCommandLogRecordsLifecycleDrivesAStructuredRecord(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, tab, channel, connected := openCommandTestTab(t, sink, "u-1")
@@ -94,8 +94,8 @@ func TestCommandLogRecordsLifecycleDrivesAStructuredRecord(t *testing.T) {
 	}
 }
 
-// TestCommandLogIgnores133FreeStream 无 OSC 133 的 shell 不产生任何命令
-// 记录, 也不记录纯输出。
+// TestCommandLogIgnores133FreeStream: a shell without OSC 133 produces no command
+// records and does not record plain output either.
 func TestCommandLogIgnores133FreeStream(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, tab, channel, _ := openCommandTestTab(t, sink, "")
@@ -109,8 +109,8 @@ func TestCommandLogIgnores133FreeStream(t *testing.T) {
 	}
 }
 
-// TestCommandLogSkipsTerminalWithoutSnapshot 终端不支持屏幕快照时命令观察
-// 保持静默, 不编造命令文本。
+// TestCommandLogSkipsTerminalWithoutSnapshot: when the terminal does not support screen snapshots, command observation
+// stays silent and does not fabricate command text.
 func TestCommandLogSkipsTerminalWithoutSnapshot(t *testing.T) {
 	connector := newFakeConnector()
 	sink := &fakeCommandSink{}
@@ -140,8 +140,8 @@ func TestCommandLogSkipsTerminalWithoutSnapshot(t *testing.T) {
 	}
 }
 
-// TestCommandLogClosesPreviousWithoutExitOnNewStart 上一条命令丢失结束报告
-// 时, 以下一个提示符/命令边界诚实收尾 (退出码未知), 而不是丢弃或张冠李戴。
+// TestCommandLogClosesPreviousWithoutExitOnNewStart: when the previous command loses its finish report,
+// it is closed honestly at the next prompt/command boundary (exit code unknown), rather than dropped or misattributed.
 func TestCommandLogClosesPreviousWithoutExitOnNewStart(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, tab, channel, _ := openCommandTestTab(t, sink, "")
@@ -164,8 +164,8 @@ func TestCommandLogClosesPreviousWithoutExitOnNewStart(t *testing.T) {
 	}
 }
 
-// TestCommandLogStartupFinishProducesNoRecord shell 启动提示符自带的
-// 133;D 没有对应命令, 不能记成一条命令。
+// TestCommandLogStartupFinishProducesNoRecord: the 133;D that comes with the shell startup prompt has no
+// corresponding command and must not be recorded as one.
 func TestCommandLogStartupFinishProducesNoRecord(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, tab, channel, _ := openCommandTestTab(t, sink, "")
@@ -179,8 +179,8 @@ func TestCommandLogStartupFinishProducesNoRecord(t *testing.T) {
 	}
 }
 
-// TestCommandLogFlushesPendingOnTabClose 标签关闭时仍在运行的命令以未知
-// 退出码收尾, 长尾命令不丢。
+// TestCommandLogFlushesPendingOnTabClose: a command still running at tab close is finished with an unknown
+// exit code, so long-tail commands are not lost.
 func TestCommandLogFlushesPendingOnTabClose(t *testing.T) {
 	sink := &fakeCommandSink{}
 	manager, tab, channel, _ := openCommandTestTab(t, sink, "")
@@ -199,8 +199,8 @@ func TestCommandLogFlushesPendingOnTabClose(t *testing.T) {
 	}
 }
 
-// TestCommandLogEmptyCommandLineIsNotRecorded 空命令行 (回车即执行) 不产生
-// 记录, 避免把纯提示符写进审计。
+// TestCommandLogEmptyCommandLineIsNotRecorded: an empty command line (executed on a bare Enter) produces no
+// record, avoiding writing bare prompts into the audit log.
 func TestCommandLogEmptyCommandLineIsNotRecorded(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, tab, channel, _ := openCommandTestTab(t, sink, "")
@@ -214,7 +214,7 @@ func TestCommandLogEmptyCommandLineIsNotRecorded(t *testing.T) {
 	}
 }
 
-// TestExecLineRecordsExactCommand WinRM 行模式命令带精确文本与退出码落库。
+// TestExecLineRecordsExactCommand: WinRM line-mode commands are persisted with exact text and exit code.
 func TestExecLineRecordsExactCommand(t *testing.T) {
 	connector := newFakeConnector()
 	sink := &fakeCommandSink{}
@@ -253,7 +253,7 @@ func TestExecLineRecordsExactCommand(t *testing.T) {
 	}
 }
 
-// TestCommandLogWrappedCommandJoinsRows 跨行折行的长命令按屏幕行拼接还原。
+// TestCommandLogWrappedCommandJoinsRows: a long command wrapped across lines is reassembled from screen rows.
 func TestCommandLogWrappedCommandJoinsRows(t *testing.T) {
 	sink := &fakeCommandSink{}
 	_, _, channel, _ := openCommandTestTab(t, sink, "")

@@ -8,24 +8,25 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// syncOptInReader 由 store 实现: 按账号用户读取 AI 模型档案同步 opt-in(默认开启)。
+// syncOptInReader is implemented by the store: reads the AI profile sync opt-in (default on) for the account user.
 type syncOptInReader interface {
 	AIProfileSyncOptIn(ctx context.Context, userID string) (bool, error)
 }
 
-// syncTombstoneRecorder 由 store 实现: 记录用户主动删除产生的同步墓碑。
+// syncTombstoneRecorder is implemented by the store: records sync tombstones produced by user-initiated deletes.
 type syncTombstoneRecorder interface {
 	SyncTombstoneRecord(ctx context.Context, id, kind string, deletedAt int64) error
 }
 
-// aiProfileSyncDeleter 由 store 实现: 同一事务内写回档案状态并按 opt-in 记录删除墓碑(原子删除)。
+// aiProfileSyncDeleter is implemented by the store: writes back profile state and records the delete tombstone by opt-in within one transaction (atomic delete).
 type aiProfileSyncDeleter interface {
 	AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error
 }
 
-// recordDeleteTombstone 在档案删除落盘后按删除者的 opt-in 补记用户删除墓碑(不带冲突三元组)。
-// opt-in 按账号用户隔离且默认开启: 拿不到删除者身份(桌面直连/匿名模式)或 opt-in 未开启时不立碑,
-// 从未同步或已禁用同步的档案删除不得删除远端副本。
+// recordDeleteTombstone records the user delete tombstone by the deleter's opt-in after the profile
+// delete is persisted (without the conflict triple). Opt-in is isolated per account user and defaults on:
+// no tombstone when the deleter's identity is unavailable (desktop direct / anonymous mode) or opt-in is off;
+// deleting a never-synced or sync-disabled profile must not delete the remote copy.
 func (m *Manager) recordDeleteTombstone(ctx context.Context, id string) error {
 	userID, ok := ipc.UserIDFromContext(ctx)
 	if !ok {

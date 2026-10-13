@@ -1,7 +1,7 @@
 #!/bin/sh
-# NexTerm 设备 agent 一键接入 (Linux / macOS)。
-# 用法: curl -fsSL https://<server>/install-device.sh | sh -s -- --server <接入地址> --code <接入码> --version <版本> [--insecure] [--data-dir <目录>]
-# 仅支持 Linux/macOS x86_64/aarch64 (arm64)。二进制与同 release 的 SHA256SUMS 校验通过后才安装并 enroll, 最后装 per-user 后台服务 (Linux=systemd --user, macOS=launchd), 全程不需要 root。
+# NexTerm device agent one-line installer (Linux / macOS).
+# Usage: curl -fsSL https://<server>/install-device.sh | sh -s -- --server <server URL> --code <enrollment code> --version <version> [--insecure] [--data-dir <dir>]
+# Supports Linux/macOS x86_64/aarch64 (arm64) only. The binary is installed only after verification against the same release's SHA256SUMS, then the device is enrolled and a per-user background service is installed (Linux=systemd --user, macOS=launchd); no root required.
 set -eu
 
 RELEASE_BASE="https://github.com/Hello-CTF/NexTerm/releases/download"

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { acceptanceWatchIgnored } from "./acceptance-watch-ignores.mjs";
 
-// 锚定规则的匹配模型:去掉结尾的 /** 后做前缀匹配(裸规则为精确目录本身)。
+// Matching model for anchored rules: strip the trailing /** then prefix-match (a bare rule matches the exact directory itself).
 function matchesAnchored(pattern: string, target: string): boolean {
   const prefix = pattern.endsWith("/**") ? pattern.slice(0, -3) : pattern;
   return target === prefix || target.startsWith(`${prefix}/`);

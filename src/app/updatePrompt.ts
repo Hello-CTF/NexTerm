@@ -2,8 +2,8 @@ import { DESKTOP } from "../ipc/env";
 import { askChoice } from "../ui/dialogs";
 import { getUpdateState, useUpdateStore } from "./useUpdate";
 
-// 当前版本不可信时一律不弹: dev 构建(Version="dev")与 CI 占位(0.0.0)下
-// 后端 isNewerVersion 恒 true, 不挡就会每次启动都弹。
+// Never prompt when the current version is not trustworthy: for dev builds (Version="dev") and the CI placeholder (0.0.0),
+// the backend isNewerVersion is always true, so without this guard every startup would prompt.
 export function isReleaseVersion(version: string): boolean {
   const value = version.trim().replace(/^v/, "");
   if (!value || value === "dev" || value === "0.0.0") return false;
@@ -20,7 +20,7 @@ export async function promptUpdateIfNeeded(): Promise<void> {
   if (!isReleaseVersion(status.currentVersion)) return;
   if (status.version === state.skippedVersion) return;
   if (status.version === state.remindedVersion) return;
-  // 先记再弹: await 期间重入不会对同一版本弹第二次; 一次启动只弹一次。
+  // Record before prompting: re-entry during await will not prompt twice for the same version; only one prompt per launch.
   useUpdateStore.setState({ remindedVersion: status.version });
   const choice = await askChoice(
     `发现新版本 v${status.version}（当前 v${status.currentVersion}）`,
@@ -34,7 +34,7 @@ export async function promptUpdateIfNeeded(): Promise<void> {
       ],
     },
   );
-  // "later" 与 null(Esc/取消) 同等: 仅本次关闭, 不写任何偏好。
+  // "later" is equivalent to null (Esc/cancel): closes only this time, writes no preference.
   if (choice === "update") void getUpdateState().installUpdate();
   else if (choice === "skip") getUpdateState().skipVersion(status.version);
 }

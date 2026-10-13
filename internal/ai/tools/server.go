@@ -135,8 +135,8 @@ func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw 
 	return Output{OK: true, Text: text, Truncated: truncated}
 }
 
-// ReadRefFile 为 @ 引用注入读取文件内容，复用 read_file 的读取守卫（默认 120 KiB 上限），
-// 不做版本登记；展示层截断由调用方负责。
+// ReadRefFile reads file content for @-reference injection, reusing read_file's read guard
+// (default 120 KiB limit); no version registration. Display-layer truncation is the caller's job.
 func (r *Registry) ReadRefFile(ctx context.Context, scope Scope, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", invalid("path 不能为空")

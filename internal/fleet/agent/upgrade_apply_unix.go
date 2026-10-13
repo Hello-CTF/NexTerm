@@ -10,11 +10,10 @@ import (
 	"syscall"
 )
 
-// scheduleDeferredReplace 以独立会话启动延迟替换脚本: 脚本等待本进程退出后
-// 完成二进制切换, 失败路径自动回滚旧二进制。setsid 让脚本逃脱 launchd 对
-// 同进程组残留进程的清理; systemd 按 cgroup 清理, setsid 无效, 故 linux 且
-// 运行于 systemd 下 (INVOCATION_ID 存在) 时经 systemd-run --scope 把脚本放进
-// 独立的 scope cgroup, 保证 agent 单元停止后脚本仍能完成替换并拉起服务。
+// scheduleDeferredReplace starts the deferred replacement script in an independent session: the script waits for this process to exit, then
+// completes the binary switch, and automatically rolls back to the old binary on failure. setsid lets the script escape launchd's cleanup of
+// leftover processes in the same process group; systemd cleans up by cgroup, where setsid has no effect, so on linux under
+// systemd (INVOCATION_ID present) the script is placed in a separate scope cgroup via systemd-run --scope, ensuring it can still finish the replacement and restart the service after the agent unit stops.
 func scheduleDeferredReplace(newPath, targetPath string) error {
 	script, err := os.CreateTemp(filepath.Dir(newPath), ".nexterm-replace-*.sh")
 	if err != nil {

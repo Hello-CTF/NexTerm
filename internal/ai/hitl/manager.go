@@ -350,9 +350,9 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	params := &adk.ResumeParams{Targets: map[string]any{request.interrupt.TargetID: value}}
 	options := append([]adk.AgentRunOption(nil), opts...)
 	options = append(options, cancelOption, adk.WithCheckPointID(run.checkpointID))
-	// 恢复执行的 ctx: 携带调用方任务值 (修复重启恢复后值丢失), 不随传输取消
-	// (WithoutCancel); 取消经 run.execCancel 在 finish/Close 同步触发, run.ctx
-	// 身份不变, Done() 观察者不受影响。
+	// ctx for resumed execution: carries the caller's task values (fixes value loss after restart
+	// recovery) and is not canceled with the transport (WithoutCancel); cancellation fires via
+	// run.execCancel synchronously in finish/Close; run.ctx identity is unchanged, Done() observers unaffected.
 	resumeCtx := run.ctx
 	if ctx != nil {
 		execCtx, execCancel := context.WithCancel(context.WithoutCancel(ctx))

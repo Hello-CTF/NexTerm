@@ -50,7 +50,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 	var buf bytes.Buffer
 	handler, ctx, userID := newLogTestHandler(t, &buf)
 
-	// 空拉取: 空轮静默。
+	// Empty pull: an empty round stays silent.
 	response := postSync(t, handler, ctx, "/sync/v2/pull", PullRequest{Protocol: ProtocolVersion, SinceSeq: 0})
 	if response.Code != http.StatusOK {
 		t.Fatalf("empty pull status=%d", response.Code)
@@ -59,7 +59,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 		t.Fatalf("empty pull must stay silent, got %q", buf.String())
 	}
 
-	// 无身份 401 不记。
+	// An unauthenticated 401 is not logged.
 	request := httptest.NewRequest(http.MethodPost, "/sync/v2/pull", bytes.NewReader([]byte(`{"protocol":2}`)))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -96,7 +96,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 		}
 	}
 
-	// 空页不记。
+	// Empty pages are not logged.
 	buf.Reset()
 	response = postSync(t, handler, ctx, "/sync/v2/pull", PullRequest{Protocol: ProtocolVersion, SinceSeq: pushed.MaxSeq})
 	if response.Code != http.StatusOK {
@@ -106,7 +106,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 		t.Fatalf("empty pull page must stay silent, got %q", buf.String())
 	}
 
-	// ids unchanged 不记; 有变更才记。
+	// ids unchanged is not logged; only changes are logged.
 	buf.Reset()
 	response = postSync(t, handler, ctx, "/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion, KnownHead: pushed.Head})
 	if response.Code != http.StatusOK {
@@ -127,7 +127,7 @@ func TestObjectHandlerSyncDataPlaneLogging(t *testing.T) {
 		}
 	}
 
-	// head 冲突 Warn, known_head 只留前 8 位。
+	// Head conflict logs Warn with known_head keeping only the first 8 characters.
 	buf.Reset()
 	staleHead := "stale-head-1234567890abcdef"
 	response = postSync(t, handler, ctx, "/sync/v2/push", PushRequest{
@@ -200,14 +200,14 @@ func TestEngineSyncRoundSummaryLogging(t *testing.T) {
 		}
 	}
 
-	// 空轮静默。
+	// Empty rounds stay silent.
 	buf.Reset()
 	syncDevice(t, device, server, "alice", "alice-pw-123")
 	if strings.Contains(buf.String(), "sync round") {
 		t.Fatalf("idle round must stay silent, got %q", buf.String())
 	}
 
-	// 失败 Warn 带 error。
+	// Failures log Warn with error.
 	buf.Reset()
 	server.Server.Close()
 	if _, err := device.engine.Sync(context.Background(), device.config(server, "alice", "alice-pw-123")); err == nil {

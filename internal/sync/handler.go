@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// WithUserID/UserIDFromContext 委托 ipc 包的同一实现: /rpc(账号会话)与 /sync/v2 两条链路共享同一身份 key。
+// WithUserID/UserIDFromContext delegate to the same implementation in the ipc package: /rpc (account session) and /sync/v2 share the same identity key.
 func WithUserID(ctx context.Context, userID string) context.Context {
 	return ipc.WithUserID(ctx, userID)
 }
@@ -69,7 +69,7 @@ type IDsResponse struct {
 	Unchanged bool      `json:"unchanged,omitempty"`
 }
 
-// ObjectHandler 是服务端盲存储的 HTTP 入口: 只认会话身份, 不解读对象内容, 不记录对象明细。
+// ObjectHandler is the HTTP entry of the server-side blind store: it only recognizes the session identity, never interprets object content, and never records object details.
 type ObjectHandler struct {
 	store  *objectStore
 	logger *slog.Logger
@@ -201,7 +201,7 @@ func (h *ObjectHandler) serveIDs(w http.ResponseWriter, r *http.Request, userID 
 	})
 }
 
-// shortSyncHead 只留同步头前 8 位用于日志定位, 完整头不进日志。
+// shortSyncHead keeps only the first 8 characters of the sync head for log correlation; the full head never goes into logs.
 func shortSyncHead(head string) string {
 	if len(head) > 8 {
 		return head[:8]

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// DekUnlockBanner 桌面分支: 凭据库锁定时桌面端(darwin/windows/linux)显示主密码解锁引导,
-// 解锁成功 toast+横幅消失, 密码错误内联可重试, dismiss 后不再显示;
-// 生物识别分支只在移动端, 桌面不查询也不展示。
+// DekUnlockBanner desktop branch: when the vault is locked, desktop (darwin/windows/linux) shows the master-password unlock guidance,
+// unlock success shows a toast and the banner disappears, wrong password is inline retryable, no re-show after dismiss;
+// the biometric branch is mobile-only, desktop neither queries nor displays it.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import {

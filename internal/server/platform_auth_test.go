@@ -13,8 +13,8 @@ import (
 
 const testGatewayKey = "gateway-secret"
 
-// newPlatformFixture 装配一个平台托管模式实例(带网关头), 与懒猫上的部署同构:
-// 监听非回环地址、访问控制交给网关头、账号库为空。
+// newPlatformFixture assembles a platform-managed mode instance (with a gateway header), isomorphic to a Lazycat deployment:
+// listening on a non-loopback address, access control delegated to the gateway header, empty account database.
 func newPlatformFixture(t *testing.T) *accountFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
@@ -44,8 +44,8 @@ func TestPlatformModeRequiresGatewayKey(t *testing.T) {
 	}
 }
 
-// TestPlatformSessionEstablishesOwner 覆盖懒猫上的完整免码路径:
-// 网关头 => 自动成为平台所有者 => 拿到会话 => 前端不见登录/初始化界面。
+// TestPlatformSessionEstablishesOwner covers the full code-free path on Lazycat:
+// gateway header => automatically becomes the platform owner => gets a session => the frontend never shows login/init UI.
 func TestPlatformSessionEstablishesOwner(t *testing.T) {
 	fixture := newPlatformFixture(t)
 	gateway := map[string]string{GatewayAuthHeader: testGatewayKey}
@@ -119,8 +119,8 @@ func TestPlatformSessionEstablishesOwner(t *testing.T) {
 	}
 }
 
-// TestPlatformModeStillRefusesForeignGatewayKey 确认网关头仍是硬门:
-// 换了密钥的请求既拿不到会话, 也读不到需要会话的路由。
+// TestPlatformModeStillRefusesForeignGatewayKey confirms the gateway header is still a hard gate:
+// a request with a different key gets neither a session nor access to session-requiring routes.
 func TestPlatformModeStillRefusesForeignGatewayKey(t *testing.T) {
 	fixture := newPlatformFixture(t)
 	forged := map[string]string{GatewayAuthHeader: "not-the-key"}

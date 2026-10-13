@@ -329,8 +329,8 @@ func TestApplyObjectsConcurrent(t *testing.T) {
 	}
 }
 
-// 浏览器 JSON.stringify 不是 Go 规范编码(键序/空白/<>& 转义差异);
-// 同一逻辑对象的非规范载荷重复应用必须 identical, 不得反复 applied 或 skipped。
+// Browser JSON.stringify is not Go canonical encoding (key order, whitespace, <>& escaping differ);
+// repeated application of a non-canonical payload of the same logical object must be identical, never applied or skipped over and over.
 func TestApplyObjectsNonCanonicalDuplicateIdentical(t *testing.T) {
 	instance := newTestInstance(t, false)
 	groupID := ids.New()
@@ -353,8 +353,8 @@ func TestApplyObjectsNonCanonicalDuplicateIdentical(t *testing.T) {
 	}
 }
 
-// 同修订不同内容的 equal-revision LWW 必须以规范载荷哈希决胜:
-// 两种编码、两种应用顺序收敛到同一终态, 与编码和顺序无关。
+// Equal-revision LWW with different content must decide by canonical payload hash:
+// both encodings and both application orders converge to the same final state, independent of encoding and order.
 func TestApplyObjectsEqualRevisionEncodingIndependentConvergence(t *testing.T) {
 	groupID := ids.New()
 	canonicalX := applyGroupObject(t, groupID, "内容X", 100)
@@ -387,7 +387,7 @@ func TestApplyObjectsEqualRevisionEncodingIndependentConvergence(t *testing.T) {
 	if group.Name != nameXY {
 		t.Fatalf("converged name=%q, want %q", group.Name, nameXY)
 	}
-	// 胜者重放 identical, 败者重放 skipped, 已收敛终态不得再被改写。
+	// Replaying the winner is identical, replaying the loser is skipped; the converged final state must not be rewritten.
 	winner, loser := canonicalX, nonCanonicalY
 	if nameXY == "内容Y" {
 		winner, loser = nonCanonicalY, canonicalX

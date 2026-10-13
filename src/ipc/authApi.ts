@@ -1,6 +1,6 @@
-// /auth/* 与 /admin/* 的浏览器端 HTTP 客户端:HttpOnly cookie 会话 + 每会话 CSRF 头。
-// 仅 WEB 传输可用;桌面端无账号体系(本地优先)。
-// 错误一律规整为 AppError 形状({ code, message }),与 /rpc 的 toAppError 对齐。
+// Browser-side HTTP client for /auth/* and /admin/*: HttpOnly cookie session + per-session CSRF header.
+// WEB transport only; the desktop has no account system (local-first).
+// Errors are always normalized to the AppError shape ({ code, message }), aligned with toAppError in /rpc.
 
 import { WEB } from "./env";
 import { httpUrl } from "./env";
@@ -31,11 +31,11 @@ export interface AccountStatus {
 export interface AccountSession {
   user: AccountUser;
   csrf_token: string;
-  /** mfa_required 策略: 开启且 user.mfa_enabled 为 false 时会话被锁到只能完成 TOTP 绑定。 */
+  /** mfa_required policy: when enabled and user.mfa_enabled is false, the session is locked to completing TOTP enrollment only. */
   mfa_required: boolean;
 }
 
-// MfaChallenge 是已绑定 TOTP 的账号在密码通过后拿到的中间态: 凭 ticket 换会话。
+// MfaChallenge is the intermediate state an account with TOTP bound gets after the password passes: exchange the ticket for a session.
 export interface MfaChallenge {
   mfa_required: true;
   ticket: string;
@@ -119,7 +119,7 @@ export interface SyncPushResponse {
 
 export const SYNC_PROTOCOL_VERSION = 2;
 export const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
-// 服务端在 mfa_required 策略下拒绝未绑定会话时广播, 门据此切入强制绑定页(覆盖策略中途开启的场景)。
+// Broadcast when the server rejects an unenrolled session under the mfa_required policy; the gate switches to the forced enrollment page (covers the policy being enabled mid-session).
 export const MFA_ENROLLMENT_REQUIRED_EVENT = "nexterm:mfa-enrollment-required";
 
 let csrfToken: string | null = null;
@@ -227,13 +227,13 @@ export const authApi = {
       ...(deviceId ? { device_id: deviceId } : {}),
     }),
 
-  // totpLogin 用登录票据 + 动态码(或一次性恢复码)换会话; 与 login 一样建立 cookie 会话。
+  // totpLogin exchanges the login ticket + dynamic code (or a one-time recovery code) for a session; establishes a cookie session like login.
   totpLogin: (ticket: string, code: string) =>
     request<AccountSession>("POST", "/auth/totp/login", { ticket, code }).then(rememberSession),
 
   totpStatus: () => request<TotpStatus>("GET", "/auth/totp"),
 
-  // totpSetup 开启或换绑 TOTP; 已绑定用户必须带 reverify(当前动态码、恢复码或登录密码)。
+  // totpSetup enables or rebinds TOTP; users already bound must pass reverify (current dynamic code, recovery code, or login password).
   totpSetup: (reverify?: string) =>
     request<TotpSetup>("POST", "/auth/totp/setup", reverify ? { reverify } : {}, { csrf: true }),
 
@@ -253,8 +253,8 @@ export const authApi = {
 
   me: () => request<AccountSession>("GET", "/auth/me").then(rememberSession),
 
-  // 平台托管模式（--auth=platform）下的握手。前置网关已经完成认证, 这里只需换取
-  // 「平台所有者」会话; 没有这一步, 用户会看到初始化/登录界面, 而懒猫上两者都不该出现。
+  // Handshake under platform-hosted mode (--auth=platform). The front gateway has already authenticated; only the
+  // "platform owner" session needs to be exchanged here. Without this, users would see the init/login screens, neither of which should appear on Lazycat.
   platformSession: () => request<AccountSession>("POST", "/auth/platform-session").then(rememberSession),
 
   logout: () => request<{ ok: boolean }>("POST", "/auth/logout", {}, { csrf: true }),
@@ -335,7 +335,7 @@ export const syncV2Api = {
     }, { csrf: true }),
 };
 
-// PreferenceScopeView 是 /auth/preferences 的三层视图(默认+覆盖+生效)。
+// PreferenceScopeView is the three-layer view of /auth/preferences (defaults + overrides + effective).
 export interface PreferenceScopeView {
   defaults: Record<string, unknown>;
   overrides: Record<string, unknown>;

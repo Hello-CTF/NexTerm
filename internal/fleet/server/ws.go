@@ -19,10 +19,10 @@ const (
 	helloReadLimit = 10 * time.Second
 )
 
-// controlMessage 是服务端 -> agent 的控制通道帧, 字段语义与
-// internal/fleet/agent 的 serverMessage 一一对应 (该类型未导出, 此处镜像)。
-// ServerVersion 只在 version_mismatch 帧出现: agent 以此为目标版本从固定官方
-// release 源自升级; 旧 agent 解析时忽略未知字段。
+// controlMessage is the server -> agent control channel frame; its field semantics correspond one-to-one with
+// internal/fleet/agent's serverMessage (that type is unexported, mirrored here).
+// ServerVersion appears only in version_mismatch frames: the agent uses it as the target version to self-upgrade from the fixed official
+// release source; old agents ignore the unknown field when parsing.
 type controlMessage struct {
 	Type              string `json:"type"`
 	Code              string `json:"code,omitempty"`
@@ -42,9 +42,9 @@ func writeControlJSON(ctx context.Context, conn *websocket.Conn, message control
 	return conn.Write(ctx, websocket.MessageText, payload)
 }
 
-// serveDeviceWS 处理 GET /ws/device: agent 出站控制通道与桥接共用入口。
-// 首帧必须是 hello; protocol 不匹配回 version_mismatch, 凭证无效回 forbidden,
-// 两种错误帧都会让 agent 按合同停止 (协议错误退出 / 视同吊销)。
+// serveDeviceWS handles GET /ws/device: the shared entry for the agent's outbound control channel and bridges.
+// The first frame must be hello; a protocol mismatch gets version_mismatch, bad credentials get forbidden,
+// and both error frames make the agent stop per the contract (exit on protocol error / treat as revoked).
 func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
@@ -98,10 +98,10 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 	return hello, nil
 }
 
-// serveDeviceControl 注册控制通道并回复 hello_ok, 随后阻塞读直到连接结束;
-// 读只是保活探测 (ping 由 websocket 层自动应答), agent 合同里不再上行数据帧。
-// hello_ok 写出后才记上线 (握手失败不产生上线); 注销只在 conn 仍是当前注册
-// 连接时记离线 (顶替的旧连接与服务关停换表后的注销都会被 Registry 拒绝)。
+// serveDeviceControl registers the control channel and replies hello_ok, then blocks reading until the connection ends;
+// the read is only a keepalive probe (pings are answered automatically by the websocket layer), and the agent contract has no more upstream data frames.
+// Online is recorded only after hello_ok is written (a failed handshake produces no online); offline is recorded only when the conn is still the currently registered
+// connection (unregistration of a replaced old connection, or after service shutdown swapped the table, is rejected by the Registry).
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
 	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest)
 	defer func() {
@@ -122,10 +122,10 @@ func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMess
 	}
 }
 
-// serveDeviceBridge 把 agent 出站桥接按 bridge_id 配对给 pending 请求,
-// 配对成功后回 hello_ok 并阻塞到连接关闭 (字节流由消费方经 wsConn 驱动)。
-// hello_ok 是文本控制帧: wsConn.Read 只认二进制帧, 消费方不会把它读进
-// supervisor 字节流。
+// serveDeviceBridge pairs the agent's outbound bridge to a pending request by bridge_id,
+// replies hello_ok after successful pairing, and blocks until the connection closes (the byte stream is driven by the consumer via wsConn).
+// hello_ok is a text control frame: wsConn.Read only accepts binary frames, so consumers never read it into the
+// supervisor byte stream.
 func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessage) {
 	bridge := newWSConn(conn)
 	deliver, err := s.registry.PairBridge(hello.DeviceID, hello.BridgeID, bridge)
@@ -136,8 +136,8 @@ func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessa
 		_ = conn.Close(websocket.StatusPolicyViolation, "unknown bridge")
 		return
 	}
-	// 登记后立即挂注销: hello_ok 写失败时 deliver 不会被调用, 注销必须
-	// 仍然发生, 否则 conn 永久留在 bridges 表里。
+	// Unregister immediately after registration: if the hello_ok write fails, deliver is never called, so unregistration must
+	// still happen, otherwise the conn stays in the bridges table forever.
 	defer s.registry.UnregisterBridge(bridge)
 	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok"}); err != nil {
 		_ = bridge.Close()
@@ -147,8 +147,8 @@ func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessa
 	<-bridge.closed
 }
 
-// wsConn 把一条 websocket 连接适配为 net.Conn 字节流: 每个二进制消息是
-// 字节流的一段, 字节透明 (supervisor 协议帧原样穿过, resume 语义不变)。
+// wsConn adapts one websocket connection into a net.Conn byte stream: each binary message is a
+// segment of the byte stream, byte-transparent (supervisor protocol frames pass through as-is, resume semantics unchanged).
 type wsConn struct {
 	conn     *websocket.Conn
 	deviceID string
@@ -178,8 +178,8 @@ func (c *wsConn) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		// 桥接字节流只承载二进制帧 (supervisor 协议); 文本控制帧 (hello_ok
-		// 等) 不进入字节流。
+		// The bridge byte stream carries only binary frames (supervisor protocol); text control frames (hello_ok
+		// and friends) never enter the byte stream.
 		if messageType != websocket.MessageBinary {
 			continue
 		}
@@ -212,15 +212,15 @@ func (wsAddr) String() string  { return "websocket" }
 func (c *wsConn) LocalAddr() net.Addr  { return wsAddr{} }
 func (c *wsConn) RemoteAddr() net.Addr { return wsAddr{} }
 
-// SetDeadline/SetReadDeadline/SetWriteDeadline 是 no-op: supervisor 客户端以
-// context 控制单次请求超时, 桥接层不引入第二套时限语义。
+// SetDeadline/SetReadDeadline/SetWriteDeadline are no-ops: the supervisor client controls per-request timeouts with
+// contexts, and the bridge layer introduces no second set of deadline semantics.
 func (c *wsConn) SetDeadline(time.Time) error      { return nil }
 func (c *wsConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *wsConn) SetWriteDeadline(time.Time) error { return nil }
 
 var _ net.Conn = (*wsConn)(nil)
 
-// pipeBridge 在用户侧 websocket 与 agent 桥接字节流之间双向搬运, 直到任一侧结束。
+// pipeBridge shuttles bytes bidirectionally between the user-side websocket and the agent bridge byte stream until either side ends.
 func pipeBridge(user *websocket.Conn, bridge *wsConn) {
 	done := make(chan struct{}, 2)
 	go func() {

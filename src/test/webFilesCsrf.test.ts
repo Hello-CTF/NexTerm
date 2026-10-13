@@ -2,11 +2,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-// 非 mock HTTP 契约: 用真实 node http 服务复刻 requireAuth 的会话/CSRF 语义
-// (cookie 会话的 POST/DELETE 缺/错 X-NexTerm-CSRF 时 403 + "CSRF 校验失败",
-// 且拒绝发生在中间件、handler 不执行), 验证 stageFile/reserveTarget/deleteBlob
-// 携带 M125 账号会话 CSRF 头, 精确 CSRF 403 时经 /auth/me 刷新并重试同一请求一次,
-// 其他 403 不重试, 上传/删除不因重试重复执行。
+// Non-mock HTTP contract: replicate requireAuth session/CSRF semantics with a real node http server
+// (POST/DELETE with a cookie session but a missing/wrong X-NexTerm-CSRF get 403 + "CSRF 校验失败",
+// and the rejection happens in middleware, the handler never runs), verifying stageFile/reserveTarget/deleteBlob
+// carry the M125 account-session CSRF header, that an exact CSRF 403 refreshes via /auth/me and retries the same request once,
+// other 403s are not retried, and uploads/deletes are not duplicated by the retry.
 vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
 });
@@ -29,7 +29,7 @@ interface BlobRecord {
 }
 
 const observed: ObservedRequest[] = [];
-// handler 执行次数与中间件拒绝分开计数: CSRF 拒绝不得触达 handler。
+// Handler execution count is tracked separately from middleware rejections: a CSRF rejection must never reach the handler.
 const handled = { stage: 0, reserve: 0, remove: 0 };
 const stagedBlobs = new Map<string, BlobRecord>();
 let server: Server;
@@ -59,8 +59,8 @@ function firstHeader(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-// 复刻 requireAuth: 无 cookie 视为 loopback/auth=off 放行; 有 cookie 的
-// POST/DELETE 必须携带与会话一致的 CSRF 头, 否则 403 且不触达 handler。
+// Replicates requireAuth: no cookie is treated as loopback/auth=off and allowed through; with a cookie,
+// POST/DELETE must carry a CSRF header matching the session, otherwise 403 without reaching the handler.
 function sessionRejected(req: IncomingMessage, cookie: string | null, csrf: string | null): boolean {
   if (!cookie) return false;
   if (req.method !== "POST" && req.method !== "DELETE") return false;
@@ -97,7 +97,7 @@ beforeAll(async () => {
         handled.reserve += 1;
         blobSeq += 1;
         const name = new URL(path, "http://x").searchParams.get("name") || "target.bin";
-        // 服务端契约: path 是不含目录布局的相对 id/name, 不泄露服务器绝对路径。
+        // Server contract: path is a relative id/name without directory layout, leaking no server absolute path.
         const record: BlobRecord = { id: `blob-${blobSeq}`, path: `blob-${blobSeq}/${name}`, body: "" };
         stagedBlobs.set(record.id, record);
         sendJSON(res, 200, { data: { id: record.id, path: record.path } });
@@ -158,7 +158,7 @@ afterAll(async () => {
   );
 });
 
-// vitest 配置 unstubGlobals: true 会在每个测试前自动 unstub, 所以 cookie jar 包装放在 beforeEach。
+// vitest config unstubGlobals: true auto-unstubs before each test, so the cookie jar wrapper goes in beforeEach.
 beforeEach(() => {
   observed.length = 0;
   handled.stage = 0;
@@ -214,7 +214,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
   it("authApi.login 建立会话后可直接暂存(复用 M125 登录 API)", async () => {
     const session = await authApi.login("u", "p");
     if (isMfaChallenge(session)) throw new Error("unexpected MFA challenge");
-    // 会话建立后由调用方记住 CSRF 令牌(login 可能返回 MFA 挑战,不能代记)
+    // The caller remembers the CSRF token once the session is established (login may return an MFA challenge, so it cannot be remembered on the caller's behalf)
     setCsrfToken(session.csrf_token);
 
     expect(session.user.username).toBe("u");
@@ -252,7 +252,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(uploads[0]?.csrf).toBe("csrf-stale");
     expect(uploads[1]?.csrf).toBe("csrf-2");
     expect(uploads[1]?.body).toBe(uploads[0]?.body);
-    // 首次请求被中间件拒绝, handler 只执行一次, 不产生重复暂存。
+    // The first request was rejected by middleware, the handler ran only once, no duplicate staging.
     expect(handled.stage).toBe(1);
     expect(getCsrfToken()).toBe("csrf-2");
   });
@@ -294,7 +294,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     const ref = await stageFile(new File([pngBytes()], "g.png", { type: "image/png" }), { persist: true });
     expect(ref.id.length).toBeGreaterThan(0);
 
-    // requestSaveTarget 在无 showSaveFilePicker 的环境下先预留落点再返回 path。
+    // requestSaveTarget reserves the landing spot first and returns the path in environments without showSaveFilePicker.
     const reservedPath = await requestSaveTarget("target.bin");
     expect(reservedPath).toContain("target.bin");
     const reserve = observed.filter((entry) => entry.path.startsWith("/files/blob/reserve"));
@@ -325,7 +325,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(meCalls()).toHaveLength(1);
     expect(deletions[0]?.csrf).toBe("csrf-stale");
     expect(deletions[1]?.csrf).toBe("csrf-2");
-    // 首次删除被中间件拒绝, 实际删除只发生一次。
+    // The first delete was rejected by middleware, the actual delete happened only once.
     expect(handled.remove).toBe(1);
     expect(stagedBlobs.has(ref.id)).toBe(false);
   });
@@ -335,7 +335,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     setCsrfToken("csrf-1");
 
     const ref = await stageFile(new File([pngBytes()], "i.png", { type: "image/png" }));
-    // 直接删掉服务端记录, 让随后的 DELETE 命中 404(非 CSRF 失败)。
+    // Delete the server record directly, so the following DELETE hits a 404 (not a CSRF failure).
     stagedBlobs.delete(ref.id);
 
     await expect(dropStaged(ref.path)).resolves.toBeUndefined();
@@ -362,10 +362,10 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     win.showSaveFilePicker = vi.fn(async () => handle);
     try {
       const target = await requestSaveTarget("report.txt");
-      // 服务端契约: 响应 path 是相对 id/name, 不含服务器目录布局。
+      // Server contract: the response path is a relative id/name, no server directory layout.
       expect(target).toBe("blob-1/report.txt");
 
-      // 服务端 fs_download 按暂存引用解析后把内容写进预留落点。
+      // Server fs_download resolves the staged reference and writes the content into the reserved landing spot.
       const record = stagedBlobs.get("blob-1");
       if (!record) throw new Error("reserved blob missing");
       record.body = "downloaded-bytes";

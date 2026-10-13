@@ -25,10 +25,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// remoteTestAccounts 为远程代理 IPC 测试提供真实账号面: 会话签发/吊销、TOTP、
-// 强制改密全部走真实 account.Accounts + 真实 internal/server 账号路由;
-// fleet/share 路由是外层 mux 上的 canned 复刻(契约保真由 internal/sync 的
-// remote_api_test 与 internal/server 自身测试共同覆盖)。
+// remoteTestAccounts provides a real account surface for remote proxy IPC tests: session issuing/revocation, TOTP,
+// and forced password change all go through the real account.Accounts + real internal/server account routes;
+// fleet/share routes are canned replicas on the outer mux (contract fidelity is jointly covered by internal/sync's
+// remote_api_test and internal/server's own tests).
 type remoteTestAccounts struct {
 	accounts *account.Accounts
 }
@@ -115,7 +115,7 @@ func remoteTestTOTPCode(t *testing.T, secretBase32 string, at time.Time) string 
 	return fmt.Sprintf("%06d", value%1_000_000)
 }
 
-// remoteTestCSRF 与 internal/server account_session.go 的派生算法一致。
+// remoteTestCSRF matches the derivation algorithm of internal/server account_session.go.
 func remoteTestCSRF(sessionID string) string {
 	mac := hmac.New(sha256.New, []byte(sessionID))
 	mac.Write([]byte("nexterm-csrf-v1"))
@@ -134,7 +134,7 @@ func remoteTestWriteError(w http.ResponseWriter, status int, code ipc.Code, mess
 	remoteTestWriteJSON(w, status, ipc.Failure(ipc.NewError(code, message)))
 }
 
-// newRemoteTestMux 返回真实 server.Handler() 之上叠加 canned fleet 路由的 mux。
+// newRemoteTestMux returns a mux layering canned fleet routes on top of the real server.Handler().
 func newRemoteTestMux(t *testing.T, f *remoteTestAccounts) http.Handler {
 	t.Helper()
 	realServer, err := server.New(server.Config{

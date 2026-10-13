@@ -1,6 +1,6 @@
-// 超管卡片:用户管理(创建 / 禁用 / 重置)与开放注册开关。仅超管可见。
-// 桌面端身份来自「账号同步」link 会话(../auth/desktopAccount.ts),用户管理走
-// remoteAccountApi 代理;注册开关/MFA 策略代理未覆盖,如实隐藏并注明浏览器管理。
+// Superadmin card: user management (create / disable / reset) and the open-registration switch. Visible to superadmins only.
+// The desktop identity comes from the "account sync" link session (../auth/desktopAccount.ts); user management goes through the
+// remoteAccountApi proxy; the registration switch and MFA policy are not covered by the proxy, so they are honestly hidden with a browser-management note.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { adminApi, authApi, type AccountUser, type AdminSettings } from "../../ipc/authApi";
@@ -30,7 +30,7 @@ function stateBadge(user: AccountUser): { text: string; tone: string } {
 export function AccountCard() {
   const { pushToast } = useUi();
   const sessionUser = useAuth((s) => s.user);
-  // 桌面端身份来自「账号同步」link 的服务端会话(useAuth 在桌面不持有用户)。
+  // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
   const desktopAccount = useDesktopAccount();
   const user = DESKTOP ? desktopAccount : sessionUser;
 
@@ -50,7 +50,7 @@ export function AccountCard() {
 
   const load = useCallback(() => {
     setListError(null);
-    // 桌面: 注册开关/MFA 策略无代理通道, 只取用户列表。
+    // Desktop: the registration switch and MFA policy have no proxy channel; only the user list is fetched.
     if (DESKTOP) {
       return remoteAccountApi
         .adminUsers()
@@ -148,7 +148,7 @@ export function AccountCard() {
       setRegistrationDraft(next.registration_open);
       setMfaDraft(next.mfa_required);
       pushToast("success", "设置已保存");
-      // /auth/status 的注册开关变了,刷新门状态缓存
+      // The registration switch in /auth/status changed; refresh the gate status cache
       void authApi.status().then((s) => useAuth.setState({ status: s })).catch(() => undefined);
     } catch (e) {
       pushToast("error", describeError(e));

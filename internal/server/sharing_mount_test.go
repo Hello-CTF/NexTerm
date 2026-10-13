@@ -12,17 +12,17 @@ import (
 	"github.com/coder/websocket"
 )
 
-// 分享路由经 fleet.Mount 挂上真实 server: 管理路由要会话; 公开 token URL 的
-// 普通 GET 复用配置的静态入口服务既有 SPA (不校验 token, 响应 no-store;
-// token 路径撞上真实静态文件或编码 dot-segment 时同样回落 index), WS
-// upgrade 仍走 token 把关 (无效 token 403 而不是 101)。
+// Share routes are mounted on a real server via fleet.Mount: management routes require a session; a plain GET of a public
+// token URL reuses the configured static entry to serve the existing SPA (no token check, response no-store;
+// token paths hitting real static files or encoded dot-segments likewise fall back to index), and the WS
+// upgrade still goes through token checks (invalid token 403 instead of 101).
 func TestSharingRoutesMounted(t *testing.T) {
 	root := t.TempDir()
 	index := "<html><head><title>NexTerm</title></head><body>app</body></html>"
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte(index), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// 与 token 路径同形的真实静态文件: 普通 GET 也必须拿到 index 而不是它。
+	// A real static file shaped like a token path: a plain GET must still get the index, not the file.
 	if err := os.MkdirAll(filepath.Join(root, "share", "public"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -57,9 +57,9 @@ func TestSharingRoutesMounted(t *testing.T) {
 		t.Fatalf("GET / = %d %q", indexResponse.StatusCode, indexBody)
 	}
 
-	// 普通 GET /share/public/{token} 服务既有 SPA/index (与 "/" 同一响应体),
-	// 不做 token 校验, 响应 no-store; token 路径撞上真实静态文件或编码
-	// dot-segment 时同样直接拿到 index (不跟随任何重定向)。
+	// A plain GET /share/public/{token} serves the existing SPA/index (same response body as "/"),
+	// with no token check and a no-store response; token paths hitting real static files or encoded
+	// dot-segments likewise get the index directly (no redirects followed).
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	plainGets := []struct {
@@ -88,7 +88,7 @@ func TestSharingRoutesMounted(t *testing.T) {
 		}
 	}
 
-	// WS upgrade 仍走 token 把关: 无效 token 403 而不是 101。
+	// The WS upgrade still goes through token checks: invalid token 403 instead of 101.
 	conn, handshake, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/share/public/invalid-token", nil)
 	if err == nil {
 		_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -114,7 +114,7 @@ func TestSharingRoutesAbsentInSyncOnly(t *testing.T) {
 	_, httpServer := newTestHTTP(t, config)
 	client := httpServer.Client()
 
-	// 同步模式不挂 fleet/分享: 路由不存在 (404, 而不是 401/403)。
+	// Sync mode does not mount fleet/sharing: the routes do not exist (404, not 401/403).
 	for _, path := range []string{"/share/links", "/share/public/x", "/share/host-shares"} {
 		response, err := client.Get(httpServer.URL + path)
 		if err != nil {

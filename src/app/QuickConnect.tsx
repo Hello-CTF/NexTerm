@@ -91,7 +91,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     const list: QuickConnectRow[] = [];
     if (quickTarget) {
       const label = formatQuickConnectTarget(quickTarget);
-      // 服务端装配禁用了 session_connect_quick (防借服务器 pivot), web 模式只提供"保存为资产"。
+      // The server assembly disabled session_connect_quick (prevent pivoting through the server); web mode only offers "save as asset".
       if (!WEB) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
       list.push({ kind: "quick", mode: "save", target: quickTarget, label });
     }

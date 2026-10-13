@@ -82,7 +82,7 @@ func TestKnownHostRemoveWithOptInWritesUserTombstone(t *testing.T) {
 	if !found || kind != SyncTombstoneKindKnownHost || deletedAt <= 0 {
 		t.Fatalf("tombstone = %q %d %v", kind, deletedAt, found)
 	}
-	// 用户删除墓碑不得携带 known_host 冲突三元组元数据(M163 冲突墓碑路径保持独立)
+	// User deletion tombstones must not carry known_host conflict triple metadata (the M163 conflict tombstone path stays independent).
 	var metas int
 	if err := db.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM setting WHERE key = ?", "sync.kh_tombstone."+row.ID).Scan(&metas); err != nil {
@@ -95,7 +95,7 @@ func TestKnownHostRemoveWithOptInWritesUserTombstone(t *testing.T) {
 
 func TestKnownHostRemoveWithoutIdentityWritesNoTombstone(t *testing.T) {
 	db := testStore(t)
-	// 即使某用户已开启 opt-in, 无身份的删除路径(桌面直连/匿名)也不立碑, 不得退化为全局设置
+	// Even when a user has enabled opt-in, the identity-less deletion path (desktop direct/anonymous) writes no tombstone and must not degrade to a global setting.
 	if err := db.SetKnownHostSyncOptIn(context.Background(), "u-a", true); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestKnownHostRemoveOptInIsolatedPerUser(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("seed known host: found=%v err=%v", found, err)
 	}
-	// A 开 B 关: B 的删除走 B 自己的 opt-in(关), 不立碑
+	// A on, B off: B's deletion goes through B's own opt-in (off), so no tombstone is written.
 	ctxB := ipc.WithUserID(context.Background(), "u-b")
 	if err := db.SetKnownHostSyncOptIn(ctxB, "u-b", false); err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestAIProfilesDeleteTxAtomic(t *testing.T) {
 	userCtx := ipc.WithUserID(ctx, "u-a")
 	state := `{"version":1,"profiles":[],"activeId":null}`
 
-	// opt-in 开: 状态与墓碑同一事务提交
+	// opt-in on: state and tombstone commit in the same transaction.
 	if err := db.SetAIProfileSyncOptIn(ctx, "u-a", true); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestAIProfilesDeleteTxAtomic(t *testing.T) {
 		t.Fatalf("tombstone = %q %d %v", kind, deletedAt, found)
 	}
 
-	// opt-in 关: 只写状态不立碑
+	// opt-in off: only the state is written, no tombstone.
 	if err := db.SetAIProfileSyncOptIn(ctx, "u-a", false); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestAIProfilesDeleteTxAtomic(t *testing.T) {
 		t.Fatal("opt-in 关闭时不得立碑")
 	}
 
-	// 无身份: 只写状态不立碑
+	// No identity: only the state is written, no tombstone.
 	if err := db.AIProfilesDeleteTx(ctx, state, "p-3", 300); err != nil {
 		t.Fatal(err)
 	}

@@ -190,7 +190,7 @@ func splitTitlePrefix(title string) (prefix, topic string) {
 		}
 		after := []rune(title[idx+sepLen:])
 		before := []rune(title[:idx])
-		// 数字夹冒号(12:30 这类时间)不是前缀分隔符。
+		// A colon between digits (times like 12:30) is not a prefix separator.
 		if len(before) > 0 && len(after) > 0 && unicode.IsDigit(before[len(before)-1]) && unicode.IsDigit(after[0]) {
 			return "", title
 		}

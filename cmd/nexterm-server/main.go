@@ -32,15 +32,20 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
-// allowedOrigins 读入本实例对外的域名，并进同源白名单（逗号分隔）。
+// allowedOrigins reads the public domain names of this instance and adds them
+// to the same-origin allowlist (comma-separated).
 //
-// 反代部署下网关会把 Host 改写成上游地址（实测 nexterm-server:8080），而浏览器的请求
-// 带的是对外域名的 Origin；上游的同源判定只比对 r.Host，于是整站被判跨源、连入口 JS
-// 都拿不到（网页白屏）。这里把域名交给 server.Options.AllowedOrigins —— 该切片同时
-// 喂给 transportGuard 与 WebSocket 的 OriginPatterns，一处配置两条路径都生效。
+// Behind a reverse proxy the gateway rewrites Host to the upstream address
+// (observed: nexterm-server:8080), while browser requests carry an Origin with
+// the public domain; the upstream same-origin check only compares r.Host, so
+// the whole site is judged cross-origin and even the entry JS is blocked
+// (blank page). Here the domains are handed to server.Options.AllowedOrigins,
+// which feeds both transportGuard and the WebSocket OriginPatterns, so one
+// setting takes effect on both paths.
 //
-// 未配置时返回 nil，让 Server 沿用上游的 localhost 默认值（`allowedOrigins == nil`
-// 才回落；返回空切片会把默认值顶掉）。
+// When unset it returns nil so the Server keeps the upstream localhost default
+// (fallback happens only when `allowedOrigins == nil`; returning an empty
+// slice would override the default).
 func allowedOrigins() []string {
 	var origins []string
 	for _, item := range strings.Split(os.Getenv("NEXTERM_ALLOWED_ORIGINS"), ",") {
@@ -165,8 +170,9 @@ func run(args []string) int {
 	} else if limit > 0 {
 		logger.Info("open file limit ensured", "limit", limit)
 	}
-	// 同一个 BlobStore 实例同时供 /files/blob HTTP 面与服务端 IPC 暂存解析,
-	// 保证属主元数据与暂存根布局只有一份事实来源。
+	// The same BlobStore instance serves both the /files/blob HTTP surface and
+	// the server-side IPC staging resolution, so owner metadata and the staging
+	// root layout have a single source of truth.
 	var blobs *server.BlobStore
 	if paths.DataDir != "" {
 		blobs = server.NewBlobStore(paths.DataDir, logger.Logger)
@@ -201,7 +207,8 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	// 平台托管模式下账号随平台登录自动建立, 不存在需要抄写的一次性初始化码。
+	// In platform-managed mode accounts are created automatically with platform
+	// login, so there is no one-time init code to copy down.
 	if accounts != nil && invocation.Auth != core.AuthOff && invocation.Auth != core.AuthPlatform {
 		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -229,8 +236,10 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1
 		}
-		// 设备会话经 fleet 授权面接入会话体系: 每次 (重)连做 owner/吊销/终端开关
-		// 校验并写 terminal_open 审计, 桥与状态摘要直取 registry。
+		// Device sessions join the session system through the fleet authorization
+		// surface: each (re)connect validates owner/revocation/terminal switch and
+		// writes a terminal_open audit; bridge and state digest come straight from
+		// the registry.
 		application.Services.SetDeviceConnector(&production.DeviceConnectorConfig{
 			Dial: fleetService.RequestDeviceBridge,
 			Digest: func(_ context.Context, deviceID string) (string, error) {
@@ -331,8 +340,11 @@ func run(args []string) int {
 	return 0
 }
 
-// ensureVaultMasterKey 在未显式配置主密钥时保证数据目录内有一把: 已存在 master.key
-// 则读出复用(重启幂等, 覆盖成新 key 会让旧密文全部无法解密), 否则生成 32 字节随机 hex 以 0600 写入。
+// ensureVaultMasterKey guarantees a master key in the data dir when none is
+// configured explicitly: reuse the existing master.key if present (idempotent
+// across restarts; overwriting with a new key would make all old ciphertext
+// undecryptable), otherwise generate 32 random bytes as hex and write with
+// 0600.
 func ensureVaultMasterKey(dataDir string, logger *slog.Logger) (string, error) {
 	keyPath := filepath.Join(dataDir, "master.key")
 	if data, err := os.ReadFile(keyPath); err == nil {
@@ -374,8 +386,10 @@ func serverRetentionConfig(runner *core.RetentionRunner) *server.RetentionConfig
 	}
 }
 
-// printAccountInitCode 在账号系统未初始化时于控制台输出一次性初始化码。
-// 码只在首次生成时打印; 重启后若码遗失, 需清除 setting 表 auth.init_code 后重启重新生成。
+// printAccountInitCode prints the one-time init code to the console when the
+// account system is not initialized.
+// The code is printed only on first generation; if lost after a restart,
+// clear auth.init_code in the setting table and restart to regenerate.
 func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stderr io.Writer, logger *slog.Logger) error {
 	count, err := accounts.CountUsers(ctx)
 	if err != nil {

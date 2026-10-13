@@ -9,20 +9,19 @@ import (
 )
 
 var (
-	// ErrGuestControlOwner 拒绝访客写入: 标签页控制器被他人 (所有者或另一访客) 占有。
+	// ErrGuestControlOwner rejects a guest write: the tab controller is held by someone else (the owner or another guest).
 	ErrGuestControlOwner = errors.New("guest control: owner active")
-	// ErrGuestControlBusy 拒绝访客写入: 另一访客的租约仍在有效期 (断线宽限窗内)。
+	// ErrGuestControlBusy rejects a guest write: another guest's lease is still valid (within the disconnect grace window).
 	ErrGuestControlBusy = errors.New("guest control: another guest lease active")
 )
 
-// WriteGuest 以预览访客身份写入终端并按租约仲裁控制权: 判定与占领在 tab.mu 内
-// 原子完成 (取锁顺序与 Write 一致: writeMu -> mu -> 解锁后 session.mu), 成功后
-// 访客成为 controller 并持有 leaseTTL 的租约, 同一访客每次调用续租。所有者活跃
-// (controller 被他人占有) 返回 ErrGuestControlOwner; 另一访客租约未过期返回
-// ErrGuestControlBusy, 过期租约在判定时惰性清理。访客的 clientID 与其只读订阅
-// 相同 ("preview-<shareID>"), 因此订阅断开时既有 orphan 清理会摘掉 controller,
-// 租约则保留至到期, 同访客重连可立即恢复, 其他访客须等租约过期或被 ReleaseGuest
-// 显式释放。KindRemote/非 ptyBacked 标签页不支持访客控制 (ErrUnsupported)。
+// WriteGuest writes to the terminal as a preview guest and arbitrates control by lease: the decision and the takeover complete atomically
+// inside tab.mu (lock order matches Write: writeMu -> mu -> session.mu after unlocking); on success the guest becomes the controller and
+// holds a leaseTTL lease, renewed on each call from the same guest. An active owner (controller held by someone else) returns
+// ErrGuestControlOwner; another guest's unexpired lease returns ErrGuestControlBusy, and expired leases are lazily cleared during the check.
+// The guest's clientID is the same as its read-only subscription ("preview-<shareID>"), so the existing orphan cleanup removes the controller
+// when the subscription drops, while the lease is kept until expiry: the same guest can resume immediately after reconnecting, and other guests
+// must wait for lease expiry or an explicit ReleaseGuest. KindRemote/non-ptyBacked tabs do not support guest control (ErrUnsupported).
 func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []byte, leaseTTL time.Duration) error {
 	m.notifyUserInput(tabID)
 	tab, err := m.Tab(tabID)
@@ -95,9 +94,9 @@ func (m *Manager) WriteGuest(ctx context.Context, tabID, guest string, data []by
 	return nil
 }
 
-// ReleaseGuest 释放访客的控制权与租约, grid 语义与 Release 一致 (交还观察者
-// 模式) 并发控制事件; 幂等 — 访客不再占有控制权时调用为 no-op。租约随释放即
-// 失效, 其他访客可立即接管。
+// ReleaseGuest releases the guest's control and lease, with grid semantics matching Release (hand back to observer
+// mode) and emits a control event; it is idempotent - calling it when the guest no longer holds control is a no-op.
+// The lease expires with the release, and other guests can take over immediately.
 func (m *Manager) ReleaseGuest(tabID, guest string) error {
 	tab, err := m.Tab(tabID)
 	if err != nil {

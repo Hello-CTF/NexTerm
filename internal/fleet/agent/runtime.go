@@ -117,8 +117,8 @@ func New(options Options) (*Runtime, error) {
 	if bridge == nil {
 		bridge = SubprocessBridge(executable)
 	}
-	// 内嵌分发 (nexterm-server agent, cliServicePrefix 非空) 不做自升级:
-	// 替换会拿 agent 资产覆盖 server 二进制。该路径保持 ErrProtocolMismatch。
+	// Embedded distributions (nexterm-server agent, non-empty cliServicePrefix) do not self-upgrade:
+	// replacing would overwrite the server binary with the agent asset. This path keeps ErrProtocolMismatch.
 	upgrader := options.Upgrader
 	if upgrader == nil && len(cliServicePrefix) == 0 {
 		upgrader = defaultUpgrader(executable)
@@ -231,8 +231,8 @@ func (r *Runtime) hello(bridgeID string) HelloMessage {
 	}
 }
 
-// computeStateDigest 计算并缓存设备端 supervisor 状态摘要, 供控制通道 hello
-// 上报; 失败只降级分享代管能力, 不影响 agent 主流程。
+// computeStateDigest computes and caches the device-side supervisor state digest for the control channel hello
+// report; failure only degrades the managed-share capability and does not affect the agent's main flow.
 func (r *Runtime) computeStateDigest() {
 	identity, err := currentIdentity()
 	if err != nil {
@@ -508,12 +508,12 @@ func mismatchServerVersion(err error) string {
 	return ""
 }
 
-// selfUpgrade 在协议不匹配时尝试把本机 agent 升级到 server 上报的版本。
-// 升级暂存成功 -> fatal(errUpgradeStaged) 退出让替换脚本接管; 自升级不可用
-// (内嵌分发) 或 server 未上报版本 (旧 server) 或目标版本已等于当前版本
-// (升级后仍不匹配, 下载只会形成替换-拉起-再 mismatch 循环) 或重试耗尽 ->
-// fatal(ErrProtocolMismatch) 停留在待人工状态, 日志明确区分两条路径。
-// 下载期间 ctx 取消是用户主动停止, 直接返回走干净停止路径, 不记 fatal。
+// selfUpgrade tries to upgrade the local agent to the version reported by the server when the protocol mismatches.
+// Successful staging -> fatal(errUpgradeStaged) exits so the replacement script takes over; self-upgrade unavailable
+// (embedded distribution), or the server did not report a version (old server), or the target version already equals the current version
+// (a mismatch would persist after upgrading, and downloading would only form a replace-restart-mismatch loop), or retries exhausted ->
+// fatal(ErrProtocolMismatch) stays in the pending-manual state; the log clearly distinguishes the two paths.
+// A ctx cancellation during download is an intentional user stop: return directly and take the clean stop path, not recorded as fatal.
 func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	if r.upgrader == nil {
 		r.logger.Warn("control channel protocol mismatch; self-upgrade unavailable for this distribution, reinstall with install-device.sh")

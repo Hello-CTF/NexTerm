@@ -86,10 +86,10 @@ function CommandSkeletonRows() {
   );
 }
 
-// 命令审计轨道: 结构化记录会话里执行过的命令 (设备/用户/会话/退出码),
-// 数据来自 OSC 133 shell 集成观察, 纯输出与其他来源不在其中。
+// Command audit track: structured records of commands executed in sessions (device/user/session/exit code);
+// data comes from OSC 133 shell integration observation; plain output and other sources are not included.
 export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
-  // 服务端多用户模式下, 非超管只能读自己的命令记录 (服务端强制), 用户过滤入口不再提供。
+  // In server multi-user mode, non-superadmins can only read their own command records (server-enforced), so the user filter entry is not offered.
   const account = useAuth((s) => s.user);
   const userFilterLocked = WEB && account !== null && account.role !== "superadmin";
   const [entries, setEntries] = useState<CommandEntry[]>([]);

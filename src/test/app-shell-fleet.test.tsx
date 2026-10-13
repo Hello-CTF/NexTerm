@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-// FLEET149 app 壳: 桌面端也显示「设备管理」入口(点进去是登录引导视图), 仅入口展示不发 HTTP。
+// FLEET149 app shell: desktop also shows the "Device Management" entry (leading to the login onboarding view); entry display only, no HTTP.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

@@ -95,11 +95,11 @@ func TestSendKeysWaitFirstCommandWithZeroSequence(t *testing.T) {
 }
 
 func TestSendKeysWaitTimeoutDoesNotBorrowPreviousExitCode(t *testing.T) {
-	// 上一命令 exit 7；本次命令仍在运行即截止：不能冒用旧码。
+	// Previous command exited 7; this command is cut off while still running: the stale code must not be borrowed.
 	terminal := &fakeTerminal{screen: Screen{Text: "$ sleep 9\r\n"}}
 	terminal.commandState = CommandState{Sequence: 3, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3}
 	terminal.onWrite = func() {
-		// tracker 语义：退出码仍绑定在序号 3 上，与正在运行的序号 4 无关
+		// tracker semantics: the exit code stays bound to sequence 3, unrelated to running sequence 4
 		terminal.setCommandState(CommandState{Sequence: 4, Running: true, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
 	}
 	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
@@ -116,14 +116,14 @@ func TestSendKeysWaitTimeoutDoesNotBorrowPreviousExitCode(t *testing.T) {
 }
 
 func TestSendKeysWaitBareFinishDoesNotBorrowPreviousExitCode(t *testing.T) {
-	// 上一命令 exit 7；本次命令 bare D（无退出码）：不能冒用旧码。
+	// Previous command exited 7; this command ends with bare D (no exit code): the stale code must not be borrowed.
 	terminal := &fakeTerminal{screen: Screen{Text: "$ true\r\n$ "}}
 	terminal.commandState = CommandState{Sequence: 3, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3}
 	terminal.onWrite = func() {
 		terminal.setCommandState(CommandState{Sequence: 4, Running: true, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
 		go func() {
 			time.Sleep(5 * time.Millisecond)
-			// bare D：退出码保持绑定在序号 3，不借给序号 4
+			// bare D: the exit code stays bound to sequence 3, not lent to sequence 4
 			terminal.setCommandState(CommandState{Sequence: 4, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
 		}()
 	}
@@ -252,7 +252,7 @@ func TestReadScreenIncludesCommandStateWhenTracked(t *testing.T) {
 }
 
 func TestSendKeysWaitUnknownOutcomeRecordedAsUnknown(t *testing.T) {
-	// 仍在运行即截止：结果必须结构化为 exit-unknown，outcome 记 unknown 而非 exit 0。
+	// Cut off while still running: the result must be structured as exit-unknown, with the outcome recorded as unknown, not exit 0.
 	_, ledger, sqliteStore := outcomeFixture(t)
 	terminal := &fakeTerminal{screen: Screen{Text: "$ sleep 9\r\n"}}
 	terminal.commandState = CommandState{Sequence: 3}
@@ -275,7 +275,7 @@ func TestSendKeysWaitUnknownOutcomeRecordedAsUnknown(t *testing.T) {
 }
 
 func TestSendKeysWaitZeroExitRecordedAsAccepted(t *testing.T) {
-	// 本次 D 真实携带 exit 0：必须保留为 Accepted/exit 0，不得标 unknown。
+	// This D genuinely carries exit 0: it must be kept as Accepted/exit 0, not marked unknown.
 	_, ledger, sqliteStore := outcomeFixture(t)
 	terminal := &fakeTerminal{screen: Screen{Text: "$ true\r\n$ "}}
 	terminal.commandState = CommandState{Sequence: 3}

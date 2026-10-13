@@ -13,11 +13,10 @@ const (
 	outputCoalesceMax      = 64 << 10
 )
 
-// outCoalescer 是 subscriber 侧的输出合并缓冲: 首块达到上限直接发, 否则短窗
-// 追加, 窗口到点或缓冲到上限整批发, 超限的批次不截断。所有发送路径 (feed
-// 同步发, 定时器 flush) 都在 feedGate 下进行, 保证与 attach 重放/快照帧的
-// 相对顺序; teardown 的兜底 flush 用 TrySend 不阻塞, 有在途发送时放弃兜底,
-// 避免与在途批次乱序。
+// outCoalescer is the subscriber-side output coalescing buffer: a first chunk at the limit is sent directly, otherwise a short window
+// accumulates; when the window fires or the buffer reaches the limit, the whole batch goes out, and oversized batches are never truncated.
+// All send paths (synchronous feed sends, timer flush) go through feedGate, preserving relative order with attach replay/snapshot frames;
+// teardown's fallback flush uses TrySend and never blocks, giving up the fallback when a send is in flight to avoid reordering with it.
 type outCoalescer struct {
 	mu      sync.Mutex
 	buf     []byte
@@ -31,8 +30,8 @@ func newOutCoalescer(onTimer func()) *outCoalescer {
 	return &outCoalescer{onTimer: onTimer}
 }
 
-// add 追加 data; 返回需要立即发送的批次 (首块超限直发或缓冲到上限整批),
-// 未达上限时缓冲并起窗口计时, 返回 sendNow=false。
+// add appends data and returns the batch to send immediately (first chunk over the limit, or the whole buffer at the limit);
+// below the limit it buffers and starts the window timer, returning sendNow=false.
 func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -60,7 +59,7 @@ func (c *outCoalescer) add(data []byte) (batch []byte, sendNow bool) {
 	return nil, false
 }
 
-// take 取走窗口到点时的缓冲批次供定时器 flush 发送。
+// take removes the buffered batch when the window fires, for the timer flush to send.
 func (c *outCoalescer) take() []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -80,8 +79,8 @@ func (c *outCoalescer) sent() {
 	c.mu.Unlock()
 }
 
-// teardown 停窗并标记移除; 无在途发送时把残余缓冲 TrySend 兜底 (尽力而为,
-// 队满或通道已替换即丢弃, 与 producer.Close 丢弃队列的既有语义一致)。
+// teardown stops the window and marks the coalescer removed; with no send in flight, the residual buffer is TrySent as a best-effort fallback
+// (dropped if the queue is full or the channel was already replaced, consistent with producer.Close's existing queue-drop semantics).
 func (c *outCoalescer) teardown(producer *hub.Producer) {
 	c.mu.Lock()
 	c.gone = true

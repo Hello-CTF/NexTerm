@@ -205,7 +205,7 @@ func TestSyncResponseWriterSkipsGzipWhenLarger(t *testing.T) {
 	}
 }
 
-// M165: /sync/v2 链路的 cursor 身份注入(WithUserID)与 /rpc 链路共享同一 ipc key, 行为不变。
+// M165: cursor identity injection on the /sync/v2 link (WithUserID) shares the same ipc key as the /rpc link, with unchanged behavior.
 func TestWithUserIDSharesIPCKey(t *testing.T) {
 	ctx := WithUserID(context.Background(), "u-1")
 	if userID, ok := UserIDFromContext(ctx); !ok || userID != "u-1" {

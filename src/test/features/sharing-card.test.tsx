@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-// SHARE158 交互测试: 普通 owner 与超管同一创建路径 (recipient_username 精确用户名,
-// 不访问 /admin/users)、主机分享与公开链接的状态渲染、创建 (只读默认/显式读写/
-// 有界 TTL/用户名 trim/无效与禁用接收者内联错误)、吊销确认、公开链接无创建入口,
-// 以及账号切换隔离 (晚到响应不写入新账号)。
+// SHARE158 interaction tests: regular owner and super admin share the same creation path (recipient_username exact username,
+// no /admin/users access), state rendering for host shares and public links, creation (read-only default / explicit read-write /
+// bounded TTL / username trim / inline errors for invalid and disabled recipients), revoke confirmation, no creation entry for public links,
+// and account-switch isolation (late responses never write into the new account).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
@@ -242,13 +242,13 @@ describe("分享卡片 · 创建入口与角色", () => {
 
     const deviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]');
     expect(deviceSelect).not.toBeNull();
-    // 只有接入设备 (装有设备 agent 且终端开启、未吊销) 可分享
+    // Only enrolled devices (device agent installed, terminal enabled, not revoked) can be shared
     expect([...(deviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-01", "web-02"]);
     expect(recipientInput()).toBeDefined();
     expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
     mounted.unmount();
 
-    // 普通用户: 同样的创建入口 (服务端按角色过滤设备列表, 这里只返回 alice 的设备)
+    // Regular user: the same creation entry (the server filters the device list by role; here only alice's devices are returned)
     const plainCalls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
     seedUser(ALICE);
     mounted = mountWithClient(createElement(ShareCard));
@@ -349,7 +349,7 @@ describe("分享卡片 · 列表与状态", () => {
     expect(text).toContain("有效");
     expect(text).toContain("已吊销");
     expect(text).toContain("已过期");
-    // 会话 id 截断展示, 完整 id 进 title
+    // Session id is displayed truncated, the full id goes into title
     const sessionSpan = [...document.querySelectorAll("span[title]")].find((s) =>
       (s.getAttribute("title") || "").includes("01J4Z8Y7K2M8N3P6Q9R1T5V9X2"),
     );
@@ -394,7 +394,7 @@ describe("分享卡片 · 创建主机分享", () => {
     setInputValue(recipientInput(), "  alice  ");
     const ttlSelect = document.querySelector('select[aria-label="分享有效期"]') as HTMLSelectElement;
     expect(ttlSelect.value).toBe(String(24 * 60 * 60_000));
-    // TTL 选项全部落在服务端 1 分钟-30 天边界内
+    // All TTL options fall within the server-side 1 minute - 30 day bounds
     for (const option of [...ttlSelect.options]) {
       const ms = Number(option.value);
       expect(ms).toBeGreaterThanOrEqual(60_000);
@@ -511,7 +511,7 @@ describe("分享卡片 · 吊销", () => {
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("alice");
     await flushUntil(() => calls.filter((c) => c.url === "/share/host-shares" && c.method === "GET").length >= 2);
 
-    // hs-4 已吊销: 行内不再有吊销按钮
+    // hs-4 is revoked: no revoke button in the row anymore
     const revokedRow = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && d.textContent?.includes("已吊销"));
     expect(revokedRow).toBeDefined();
     expect([...(revokedRow?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "吊销")).toBe(false);
@@ -586,7 +586,7 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
     click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
-    // 确认框仍开着: 改登普通用户, 随后才确认 — 旧账号的吊销不得发出。
+    // The confirm dialog is still open: switch to a regular user, confirm only afterwards - the old account's revoke must not be fired.
     seedUser(ALICE);
     await flush();
     dialog.resolve(true);
@@ -630,12 +630,12 @@ describe("分享卡片 · 公开链接只有列表与吊销", () => {
 
     const card = shareCard();
     expect(card).toBeDefined();
-    // 公开链接区域没有创建类按钮, 不展示任何 token (列表合同不含 token)
+    // The public links area has no creation-type buttons and shows no tokens (the list contract carries no token)
     const buttons = [...(card?.querySelectorAll("button") ?? [])].map((b) => b.textContent ?? "");
     expect(buttons.some((t) => t.includes("创建链接") || t.includes("新建链接") || t.includes("生成链接"))).toBe(false);
     expect(card?.textContent?.toLowerCase()).not.toContain("token");
 
-    // 打开创建表单后, 卡片里唯一的自由文本输入是接收者用户名 (无伪造 session_id 入口)
+    // With the creation form open, the only free-text input in the card is the recipient username (no forged session_id entry)
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     const freeText = [...(card?.querySelectorAll<HTMLInputElement>("input:not([type=checkbox])") ?? [])];
     expect(freeText.length).toBe(1);
@@ -671,12 +671,12 @@ describe("分享卡片 · 账号切换隔离", () => {
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") !== null);
 
-    // 切换前旧账号的列表还在途中: 模拟 AuthGate 场景改登普通用户, 卡片不重挂载。
+    // The old account's list is still in flight before the switch: simulate the AuthGate scenario switching to a regular user, the card is not remounted.
     switched = true;
     seedUser(ALICE);
     await flushUntil(() => document.body.textContent?.includes("分享给 carol") ?? false);
 
-    // 旧账号的晚到响应此时才到达: 不得覆盖新账号列表。
+    // The old account's late response arrives only now: it must not overwrite the new account's list.
     lateAdminShares.resolve({
       ok: true,
       status: 200,
@@ -721,22 +721,22 @@ describe("分享卡片 · 账号切换隔离", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => createCalls === 1);
 
-    // 创建在途时改登普通用户: 渲染期重置已清空表单与 creating。
+    // Switching to a regular user while creation is in flight: the render-time reset has already cleared the form and creating.
     seedUser(ALICE);
     await flush();
     expect(document.body.textContent).not.toContain("创建中");
 
-    // 旧账号的创建响应此时才到达: 不得触发旧账号刷新或写入。
+    // The old account's creation response arrives only now: it must not trigger the old account's refresh or any write.
     lateCreate.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ id: "hs-old" }) });
     await flush();
     await flush();
     expect(document.body.textContent).not.toContain("hs-old");
 
-    // 切回超管重新创建: creating 未被旧 finally 卡死。
+    // Switching back to super admin and creating again: creating is not stuck by the old finally.
     seedUser(SUPERADMIN);
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    // 等设备列表就绪后再选择, 避免空选项吞掉 setSelectValue。
+    // Wait for the device list to be ready before selecting, so empty options do not swallow setSelectValue.
     await flushUntil(
       () => document.querySelector('select[aria-label="分享主机"] option[value="d-1"]') !== null,
     );

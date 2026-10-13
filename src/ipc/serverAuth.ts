@@ -1,4 +1,4 @@
-// 与 src/ipc/authApi.ts 的 SESSION_EXPIRED_EVENT 保持一致:401 时通知账号门重新登录。
+// Keep in sync with SESSION_EXPIRED_EVENT in src/ipc/authApi.ts: notify the auth gate to re-login on 401.
 const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
 
 function notifySessionExpired(): void {

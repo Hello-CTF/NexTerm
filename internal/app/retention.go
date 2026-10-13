@@ -16,8 +16,8 @@ import (
 
 const RetentionSettingKey = "retention.policy"
 
-// TranscriptRetentionSettingKey 是 transcript retention 设置键 (生产 transcript
-// writer 拥有该设置); 命令日志保留策略可选择镜像它。
+// TranscriptRetentionSettingKey is the transcript retention setting key (owned by the production transcript
+// writer); the command log retention policy may optionally mirror it.
 const TranscriptRetentionSettingKey = "transcript.retention"
 
 const (
@@ -82,8 +82,7 @@ type retentionSettings struct {
 	CommandFollowTranscript bool  `json:"commandFollowTranscript"`
 }
 
-// TranscriptRetentionPolicy 读取 transcript retention 设置; 未设置或字段为 0
-// 时回落到默认保留 (与生产 transcript writer 的生效语义一致)。
+// TranscriptRetentionPolicy reads the transcript retention setting; unset or zero fields fall back to the default retention (consistent with the production transcript writer's effective semantics).
 func TranscriptRetentionPolicy(ctx context.Context, database *store.Store) (store.TranscriptRetentionPolicy, error) {
 	policy := store.TranscriptRetentionPolicy{
 		MaxAge:   TranscriptDefaultRetentionMaxAge,

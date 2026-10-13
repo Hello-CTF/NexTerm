@@ -50,7 +50,7 @@ func TestWarnIfExposedEnabledModesRetainAccurateWarnings(t *testing.T) {
 		t.Fatalf("auth=on sync-only warning = %q", stderr)
 	}
 
-	// loopback 模式监听非回环地址等同 on, 必须保留 on 口径而不是谎称免登录。
+	// Loopback mode listening on a non-loopback address equals on; the on wording must be kept, not falsely claimed login-free.
 	_, stderr = warnIfExposedOutput(t, "0.0.0.0:8080", false, AuthLoopback)
 	if !strings.Contains(stderr, "完整版已启用访问控制") || !strings.Contains(stderr, "要求账号会话") {
 		t.Fatalf("auth=loopback exposed full warning = %q", stderr)

@@ -1,9 +1,9 @@
-// 远程预览 (预览链接): 为服务端托管的终端标签页创建匿名可开的预览, 只读或
-// 可写由创建时的 write 决定 (链接视图 permission: "read"|"read_write")。合同
-// 对齐 internal/server/preview_http.go: 创建响应是唯一携带一次性 token 的
-// 入口 (列表/吊销响应不含 token), token 只用于当场拼公开 URL, 不写日志、不
-// 持久化、不进 web storage。ttl_ms 总是显式携带且必须落在服务端
-// minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内。
+// Remote preview (preview links): creates anonymously openable previews of server-hosted terminal tabs; read-only or
+// writable is decided by write at creation time (link view permission: "read"|"read_write"). Contract
+// aligned with internal/server/preview_http.go: the create response is the only entry carrying the one-time token
+// (list/revoke responses carry no token); the token is used only to assemble the public URL on the spot - never logged,
+// persisted, or put into web storage. ttl_ms is always sent explicitly and must fall within the server-side
+// minShareTTL(1 minute)-maxShareTTL(30 days) bounds.
 
 import { request } from "../../ipc/authApi";
 import { apiBase, wsUrl } from "../../ipc/env";
@@ -14,8 +14,8 @@ export interface PreviewLinkView {
   id: string;
   owner_id: string;
   session_id: string;
-  // WEB 服务端总是下发; 桌面远程中继的链接视图 (RemotePreviewLinkView) 没有该
-  // 字段, 消费方对缺失/未知值一律按只读处理。
+  // The WEB server always sends this; the desktop remote relay's link view (RemotePreviewLinkView) lacks the
+  // field, and consumers treat missing/unknown values as read-only.
   permission?: PreviewPermission;
   created_at: number;
   expires_at: number;
@@ -44,8 +44,8 @@ export function revokePreviewLink(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>("POST", `/share/previews/${encodeURIComponent(id)}/revoke`, undefined, { csrf: true });
 }
 
-// previewPublicUrl 拼公开观看地址: GET /share/preview/{token} 由服务器直接
-// 服务 SPA 入口 (匿名可开, token URL 一律 no-store)。token 只做这一次 URL 拼接。
+// previewPublicUrl assembles the public viewing address: GET /share/preview/{token} is served directly by the server
+// as the SPA entry (anonymously openable, token URLs are always no-store). The token is used only for this one URL assembly.
 export function previewPublicUrl(token: string): string {
   const base = apiBase() || window.location.origin;
   return `${base}/share/preview/${token}`;
@@ -65,8 +65,8 @@ export interface PreviewControl {
   leaseUntil?: number;
 }
 
-// PreviewSnapshot 是订阅通道的首帧: 当前屏幕的纯文本行与光标位置, 不含滚动
-// 历史与字符属性。
+// PreviewSnapshot is the first frame of the subscription channel: the current screen's plain text lines and cursor position, without scroll
+// history or character attributes.
 export interface PreviewSnapshot {
   lines: string[];
   cursorRow: number;
@@ -99,14 +99,14 @@ export function previewWsUrl(token: string): string {
   return wsUrl(`/share/preview/${encodeURIComponent(token)}`);
 }
 
-// 输入方向只对显式 read_write 放行; 合同里任何其他值一律按只读处理。
+// Input direction is allowed only for explicit read_write; any other value in the contract is treated as read-only.
 function parsePermission(value: unknown): PreviewPermission {
   return value === "read_write" ? "read_write" : "read";
 }
 
-// PreviewConnection 是预览的 WS 客户端: 下行是 ready/snapshot/control/error
-// 文本帧与输出二进制帧, 上行输入是二进制帧 (sendInput), 是否放行由 ready 的
-// permission 与服务端 control 帧的租约状态决定, 协议层两个方向都存在。
+// PreviewConnection is the preview WS client: downstream carries ready/snapshot/control/error
+// text frames and output binary frames; upstream input is binary frames (sendInput); whether input is allowed is decided by ready's
+// permission and the server control frame's lease state; both directions exist at the protocol layer.
 export class PreviewConnection {
   private readonly socket: WebSocket;
 

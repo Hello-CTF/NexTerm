@@ -19,7 +19,7 @@ type biometricEnableRequest struct {
 	Password string `json:"password"`
 }
 
-// biometricBackend 隔离平台相关实现, 测试以假实现替换。
+// biometricBackend isolates platform-specific implementations; tests swap in fakes.
 type biometricBackend interface {
 	Current() (biometric.Status, error)
 	Unlock() (string, error)
@@ -34,7 +34,7 @@ func (platformBiometric) Unlock() (string, error)            { return biometric.
 func (platformBiometric) Enable(password string) error       { return biometric.Enable(password) }
 func (platformBiometric) Disable() error                     { return biometric.Disable() }
 
-// enable 前要求凭据库处于解锁态, 避免任何已认证客户端向 Keychain 植入错误材料。
+// enable requires the vault to be unlocked first, keeping any authenticated client from planting wrong material into the Keychain.
 type vaultUnlockState interface {
 	Status() vault.Status
 }
@@ -47,7 +47,7 @@ func registerBiometricCommands(dispatcher *ipc.Dispatcher, backend biometricBack
 			})
 		},
 		func() error {
-			// 取消/失败不视为系统错误: ok=false 带消息, 前端保持密码输入。
+			// Cancel/failure is not a system error: ok=false carries a message, and the frontend keeps the password prompt.
 			return ipc.Register(dispatcher, "biometric_unlock", func(_ context.Context, _ *ipc.Call, _ struct{}) (biometricUnlockResult, error) {
 				password, err := backend.Unlock()
 				if err != nil {

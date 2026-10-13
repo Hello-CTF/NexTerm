@@ -13,7 +13,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// wsPair 建一条真实 websocket 对: 返回客户端侧与服务端侧连接。
+// wsPair builds a real websocket pair: it returns the client-side and server-side connections.
 func wsPair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
 	t.Helper()
 	accepted := make(chan *websocket.Conn, 1)
@@ -42,8 +42,8 @@ type bridgeOutcome struct {
 	err  error
 }
 
-// startBridgeRequest 注册控制通道并发起 RequestBridge, 返回取消函数、结果通道
-// 与控制通道上读到的 bridgeID。
+// startBridgeRequest registers the control channel and starts a RequestBridge, returning the cancel function, the result channel,
+// and the bridgeID read from the control channel.
 func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.CancelFunc, chan bridgeOutcome, string) {
 	t.Helper()
 	controlClient, controlServer := wsPair(t)
@@ -82,7 +82,7 @@ func pendingIDs(r *Registry) int {
 	return len(r.pending)
 }
 
-// 放弃先于配对: 等待方取消后, 同一 bridgeID 的配对必须被拒绝, 且不登记 conn。
+// Abandon before pairing: after the waiter cancels, pairing with the same bridgeID must be rejected and the conn must not be registered.
 func TestRegistryAbandonBeforePair(t *testing.T) {
 	r := NewRegistry()
 	cancel, result, bridgeID := startBridgeRequest(t, r, "dev-abandon-pair")
@@ -102,8 +102,8 @@ func TestRegistryAbandonBeforePair(t *testing.T) {
 	}
 }
 
-// 放弃先于交付: 已配对但等待方已取消时, deliver 必须关闭 conn 并从活动表移除,
-// 不能送进无人消费的 channel。
+// Abandon before delivery: when already paired but the waiter has canceled, deliver must close the conn and remove it from the active table,
+// never sending it into a channel nobody consumes.
 func TestRegistryAbandonBeforeDeliverClosesConn(t *testing.T) {
 	r := NewRegistry()
 	cancel, result, bridgeID := startBridgeRequest(t, r, "dev-abandon-deliver")
@@ -130,7 +130,7 @@ func TestRegistryAbandonBeforeDeliverClosesConn(t *testing.T) {
 	}
 }
 
-// 交付先于放弃: conn 被等待方正常取走; 关闭并注销后活动表清空。
+// Delivery before abandon: the conn is taken by the waiter normally; after close and unregistration the active table is empty.
 func TestRegistryDeliverBeforeAbandon(t *testing.T) {
 	r := NewRegistry()
 	cancel, result, bridgeID := startBridgeRequest(t, r, "dev-deliver-first")
@@ -149,7 +149,7 @@ func TestRegistryDeliverBeforeAbandon(t *testing.T) {
 	if outcome.conn != net.Conn(conn) {
 		t.Fatal("RequestBridge returned a different conn")
 	}
-	// 调用方关闭 conn (等同 relay 断开) 后注销, 活动表必须清空。
+	// After the caller closes the conn (as if the relay dropped), unregistration must leave the active table empty.
 	_ = conn.Close()
 	r.UnregisterBridge(conn)
 	if count := bridgeIDs(r); count != 0 {
@@ -165,8 +165,8 @@ func TestRegistryDeliverBeforeAbandon(t *testing.T) {
 	}
 }
 
-// 双就绪交错: deliver 与取消并发, 无论 select 选中哪边都不得泄漏 conn——
-// 要么 conn 交给调用方 (测试负责关闭并注销), 要么被放弃方 drain 关闭。
+// Double-ready interleave: deliver and cancel race concurrently; whichever side select picks, the conn must never leak -
+// either the conn goes to the caller (the test closes it and unregisters), or the abandoning party drains and closes it.
 func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 	for iteration := 0; iteration < 30; iteration++ {
 		r := NewRegistry()
@@ -182,11 +182,11 @@ func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 		cancel()
 		outcome := <-result
 		if outcome.conn != nil {
-			// select 选中交付: 调用方接管所有权并关闭。
+			// select picked delivery: the caller takes over ownership and closes it.
 			_ = outcome.conn.Close()
 		}
-		// 生产路径里 serveDeviceBridge 在 conn 关闭后注销 (defer UnregisterBridge);
-		// 这里由测试扮演 handler 角色, 两种交错下 conn 此时都必须已关闭。
+		// In the production path serveDeviceBridge unregisters after the conn closes (defer UnregisterBridge);
+		// here the test plays the handler role, and under both interleavings the conn must already be closed at this point.
 		r.UnregisterBridge(conn)
 		if count := bridgeIDs(r); count != 0 {
 			t.Fatalf("iteration %d: bridges = %d, want 0", iteration, count)

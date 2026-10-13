@@ -52,8 +52,8 @@ func TestAuthorizeDeviceTerminal(t *testing.T) {
 	if err := fixture.service.AuthorizeDeviceTerminal(ctx, owner.ID, result.DeviceID); !errors.As(err, &appErr) || appErr.Code != ipc.CodeForbidden {
 		t.Fatalf("revoked authorize = %v; want forbidden", err)
 	}
-	// 与桥端点同语义: 授权判定 (owner/吊销) 每次都写审计, 终端开关检查在审计之后,
-	// 所以终端关闭的 owner 也是一条 allow; 空 userID 在进入授权前拒绝, 不落审计。
+	// Same semantics as the bridge endpoint: the authorization decision (owner/revocation) writes an audit every time, and the terminal switch check comes after the audit,
+	// so an owner with the terminal off also produces an allow; an empty userID is rejected before authorization and writes no audit.
 	audits := fixture.auditRows(t, auditKindDeviceTerminal)
 	outcomes := make([]any, 0, len(audits))
 	for _, row := range audits {

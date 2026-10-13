@@ -6,7 +6,7 @@ function detect(): Transport {
   const w = window as unknown as Record<string, unknown>;
   const marker = w.__NEXTERM_TRANSPORT__;
   if (marker === "desktop" || w.wails !== undefined) return "desktop";
-  // 无 marker 的普通浏览器一律按 web 处理: 静态托管 fail-fast 到真实 API 错误。
+  // Plain browsers without the marker are always treated as web: static hosting fail-fasts to real API errors.
   return "web";
 }
 

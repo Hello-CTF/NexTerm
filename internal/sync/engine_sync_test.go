@@ -71,7 +71,7 @@ func TestEngineSyncRoundtripConverges(t *testing.T) {
 		t.Fatalf("deviceB chunks=%+v err=%v", chunks, err)
 	}
 
-	// B 的新增对象回流到 A。
+	// B's new object flows back to A.
 	assetB := ids.New()
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: assetB, Kind: "ssh", Name: "db-01", CreatedAt: 300, UpdatedAt: 300})
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
@@ -80,7 +80,7 @@ func TestEngineSyncRoundtripConverges(t *testing.T) {
 		t.Fatalf("deviceA missing asset from B: %v", names)
 	}
 
-	// 幂等: 双方再同步一轮不应产生任何变更。
+	// Idempotent: one more sync round on both sides must produce no changes.
 	reportA := syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	reportB := syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if reportA.Pulled+reportA.Applied+reportA.Pushed != 0 || reportB.Pulled+reportB.Applied+reportB.Pushed != 0 {
@@ -109,7 +109,7 @@ func TestEngineLWWConflictConverges(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// 双方各自离线编辑同一资产, B 的修订号更高。
+	// Both sides edit the same asset offline; B's revision is higher.
 	putDeviceAsset(t, deviceA, store.AssetRow{ID: assetID, Kind: "ssh", Name: "A 的编辑", CreatedAt: 100, UpdatedAt: 200})
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: assetID, Kind: "ssh", Name: "B 的编辑", CreatedAt: 100, UpdatedAt: 300})
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
@@ -141,7 +141,7 @@ func TestEngineTombstonePreventsResurrection(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 删除凭据与片段, 墓碑随同步传播。
+	// A deletes the credential and snippet; tombstones propagate with sync.
 	if err := deviceA.db.CredentialDelete(ctx, credentialID); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestEngineTombstonePreventsResurrection(t *testing.T) {
 		t.Fatalf("snippet resurrected on B: %+v err=%v", snippets, err)
 	}
 
-	// B 的本地墓碑记忆使旧对象无法借任何后续同步复活。
+	// B's local tombstone memory keeps old objects from reviving via any later sync.
 	report := syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if report.Applied != 0 {
 		t.Fatalf("tombstone re-applied: %+v", report)
@@ -205,7 +205,7 @@ func TestEngineTranscriptSelectiveSync(t *testing.T) {
 		t.Fatalf("deviceB chunks=%+v err=%v", chunks, err)
 	}
 
-	// 超限记录只同步元数据。
+	// Oversized records sync metadata only.
 	huge := ids.New()
 	putDeviceTranscript(t, deviceA, huge, 130, &endedAt, []byte("x"), true)
 	if _, err := deviceA.db.DB().ExecContext(ctx, "UPDATE transcript SET bytes=? WHERE id=?", syncTranscriptMaxContentBytes+1, huge); err != nil {
@@ -221,7 +221,7 @@ func TestEngineTranscriptSelectiveSync(t *testing.T) {
 		t.Fatalf("oversized transcript should sync metadata only: %+v", row)
 	}
 
-	// 删除 opt-in 记录: 墓碑传播, B 端副本被清除且不复活。
+	// Delete the opted-in record: the tombstone propagates and B's copy is cleared without revival.
 	if err := deviceA.db.TranscriptDelete(ctx, optedIn); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestEngineTranscriptSelectiveSync(t *testing.T) {
 		t.Fatalf("transcript resurrected on B after idle sync: %v", err)
 	}
 
-	// opt-out: 本地保留, 服务端副本被墓碑清除。
+	// opt-out: kept locally, the server-side copy is cleared by the tombstone.
 	stayLocal := ids.New()
 	putDeviceTranscript(t, deviceA, stayLocal, 140, &endedAt, []byte("keep me"), true)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
@@ -271,7 +271,7 @@ func TestEngineMultiUserIsolationAndPlaintextScan(t *testing.T) {
 	putDeviceCredential(t, deviceA, ids.New(), "canary-cred-2m9n", "canary-secret-1q2w", 100)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 
-	// bob 同步: 看不到 alice 的任何对象。
+	// bob syncs: he must not see any of alice's objects.
 	syncDevice(t, deviceB, server, "bob", "bob-pw-123")
 	assets, err := deviceB.db.AssetList(ctx, true)
 	if err != nil {
@@ -283,7 +283,7 @@ func TestEngineMultiUserIsolationAndPlaintextScan(t *testing.T) {
 		}
 	}
 
-	// 服务端行与日志不含明文同步内容。
+	// Server-side rows and logs carry no plaintext sync content.
 	rows, err := server.db.DB().QueryContext(ctx, "SELECT blob FROM user_sync_object")
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestEngineMultiUserIsolationAndPlaintextScan(t *testing.T) {
 		t.Fatal("no objects stored server-side")
 	}
 
-	// bob 拿到 alice 的 blob 也无法解密(错误密钥隔离)。
+	// Even with alice's blob in hand, bob cannot decrypt it (wrong-key isolation).
 	aliceBlob := []byte(nil)
 	if err := server.db.DB().QueryRowContext(ctx,
 		"SELECT blob FROM user_sync_object WHERE id = ?", assetID).Scan(&aliceBlob); err != nil {
@@ -349,7 +349,7 @@ func TestEngineWrongDEKQuarantineAndHeal(t *testing.T) {
 	putDeviceAsset(t, deviceA, store.AssetRow{ID: assetID, Kind: "ssh", Name: "旧密钥资产", CreatedAt: 100, UpdatedAt: 100})
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 
-	// 账号 DEK 被重置(管理员重置后用户用新信封登录): 旧对象不可解密, 被隔离并告警。
+	// The account DEK was reset (admin reset, user logged in with a new envelope): old objects cannot be decrypted and are quarantined with a warning.
 	resetDEK(t, server, "alice", "alice-pw-123")
 	report, err := deviceB.engine.Sync(ctx, deviceB.config(server, "alice", "alice-pw-123"))
 	if err != nil {
@@ -362,7 +362,7 @@ func TestEngineWrongDEKQuarantineAndHeal(t *testing.T) {
 		t.Fatal("expected quarantine warnings")
 	}
 
-	// 新 DEK 下的本地对象推送后覆盖旧密文, 同步自愈。
+	// Local objects under the new DEK are pushed and overwrite the old ciphertext; sync heals itself.
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: assetID, Kind: "ssh", Name: "新密钥资产", CreatedAt: 100, UpdatedAt: 200})
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	deviceC := newTestDevice(t)
@@ -381,7 +381,7 @@ func TestEngineConcurrentPushConflictRecovers(t *testing.T) {
 
 	putDeviceGroup(t, deviceA, ids.New(), nil, "A 分组", 100)
 	putDeviceGroup(t, deviceB, ids.New(), nil, "B 分组", 100)
-	// 两个设备基于同一 head 先后推送; 后推者必须经冲突恢复收敛, 而不是覆盖。
+	// Two devices push in turn based on the same head; the later pusher must converge via conflict recovery, not overwrite.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")

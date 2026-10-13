@@ -15,9 +15,9 @@ type durableGridSource interface {
 	DurableGrid() (cols, rows uint32, ok bool)
 }
 
-// durableOffsetAttacher 是 durable provider 的可选扩展: 支持按 recording
-// 绝对偏移续传的 provider 实现它, 重连时免去从字节 0 全量重放再在客户端
-// 丢弃已消费前缀。不实现的 provider 回退 Attach + prefixSkipChannel。
+// durableOffsetAttacher is an optional extension for durable providers: providers supporting resume by absolute recording
+// offset implement it, so reconnects skip the full replay from byte 0 and the client-side dropping of the consumed prefix.
+// Providers without it fall back to Attach + prefixSkipChannel.
 type durableOffsetAttacher interface {
 	AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error)
 }

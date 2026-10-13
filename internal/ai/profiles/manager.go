@@ -316,7 +316,7 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	next.Profiles = profiles
 	next.ensureActive()
 	if deleter, ok := m.settings.(aiProfileSyncDeleter); ok {
-		// 原子删除: 状态写回与删除墓碑同一事务, 失败整体回滚(档案仍在, 重试即收敛)
+		// Atomic delete: state write-back and delete tombstone in one transaction; on failure the whole tx rolls back (profile remains, retry converges)
 		saved, encoded, err := encodeState(ctx, m.protector, next)
 		if err != nil {
 			return m.state.overview(), err
@@ -383,7 +383,7 @@ func save(ctx context.Context, settings Settings, protector store.SecretProtecto
 	return saved, nil
 }
 
-// encodeState 规范化并加密档案状态后编码为落盘 JSON(不写库); save 与原子删除路径共用同一形态。
+// encodeState normalizes and encrypts the profile state, then encodes it as on-disk JSON (no DB write); save and the atomic delete path share the same form.
 func encodeState(ctx context.Context, protector store.SecretProtector, value state) (state, []byte, error) {
 	value = value.normalized()
 	if protector != nil {

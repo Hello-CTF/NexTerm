@@ -22,8 +22,8 @@ import (
 	"time"
 )
 
-// ReleaseBaseURL 是自升级唯一的官方发布源: 域名硬编码, server 只在
-// version_mismatch 帧里上报版本号, 下载地址绝不由 server 下发 (供应链红线)。
+// ReleaseBaseURL is the only official release source for self-upgrade: the domain is hardcoded, the server only reports
+// the version number in version_mismatch frames, and download URLs are never delivered by the server (supply-chain red line).
 const ReleaseBaseURL = "https://github.com/Hello-CTF/NexTerm/releases/download"
 
 const (
@@ -35,14 +35,14 @@ const (
 	replaceScriptDelaySeconds = 3
 )
 
-// errUpgradeStaged 表示新二进制已下载校验并安排了延迟替换: 进程退出后由
-// 替换脚本完成二进制切换并拉起服务, cli 层据此以 ExitOK 结束本进程。
+// errUpgradeStaged means the new binary has been downloaded, verified, and a deferred replacement scheduled: after the process exits,
+// the replacement script completes the binary switch and restarts the service, and the cli layer ends this process with ExitOK accordingly.
 var errUpgradeStaged = errors.New("agent self-upgrade staged")
 
-// Upgrader 把运行中的 agent 自升级到 server 上报的版本: 从固定官方 release
-// 源下载对应平台资产, 用同 release 的 SHA256SUMS 校验 (与 install-device.sh
-// 同一校验链语义), 解包后安排延迟替换。下载/校验/暂存失败由 Upgrade 按指数
-// 退避重试, 重试耗尽快照原样保留旧二进制。
+// Upgrader self-upgrades the running agent to the version reported by the server: it downloads the platform asset from the fixed official release
+// source, verifies it against the same release's SHA256SUMS (same verification-chain semantics as install-device.sh),
+// and schedules a deferred replacement after unpacking. Download/verify/staging failures are retried by Upgrade with exponential
+// backoff; once retries are exhausted the old binary is kept exactly as-is.
 type Upgrader struct {
 	BaseURL     string
 	Executable  string
@@ -62,8 +62,8 @@ func defaultUpgrader(executable string) *Upgrader {
 	return &Upgrader{BaseURL: ReleaseBaseURL, Executable: executable}
 }
 
-// Upgrade 下载并暂存 targetVersion 对应的 agent 二进制, 成功后安排延迟替换
-// 脚本并返回 nil; 重试耗尽返回带尝试次数的错误, 旧二进制始终原样可运行。
+// Upgrade downloads and stages the agent binary for targetVersion, schedules the deferred replacement
+// script on success, and returns nil; once retries are exhausted it returns an error carrying the attempt count, and the old binary always stays runnable as-is.
 func (u *Upgrader) Upgrade(ctx context.Context, targetVersion string) error {
 	if err := validateReleaseVersion(targetVersion); err != nil {
 		return err
@@ -245,9 +245,9 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractAgentBinary 从发布包解出根目录唯一的 agent 二进制到 destPath
-// (0755): tar.gz 对应 linux/darwin 资产, zip 对应 windows 资产, 与
-// scripts/pack-agent.sh 的产物布局一致。
+// extractAgentBinary extracts the single agent binary at the archive root to destPath
+// (0755): tar.gz corresponds to linux/darwin assets, zip to windows assets, matching the
+// output layout of scripts/pack-agent.sh.
 func extractAgentBinary(archivePath, destPath, innerName string) error {
 	switch {
 	case strings.HasSuffix(archivePath, ".zip"):
@@ -330,10 +330,10 @@ func psQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-// unixRestartCommand 是替换成功后由脚本显式拉起服务的命令 (darwin=launchctl
-// kickstart, linux=systemctl --user restart); 回滚路径不拉起, 停留在待人工
-// 状态, 服务管理器不会形成重启循环。未装服务时命令静默失败, 下次手动启动即
-// 新二进制。
+// unixRestartCommand is the command the script runs explicitly to restart the service after a successful replacement (darwin=launchctl
+// kickstart, linux=systemctl --user restart); the rollback path does not restart, staying in the pending-manual state,
+// so the service manager never forms a restart loop. When the service is not installed the command fails silently, and the next manual start is the
+// new binary.
 func unixRestartCommand(goos string) string {
 	if goos == "darwin" {
 		return `launchctl kickstart "gui/$(id -u)/` + launchdLabel + `" 2>/dev/null || true`
@@ -341,10 +341,10 @@ func unixRestartCommand(goos string) string {
 	return "systemctl --user restart " + systemdUnitName + " 2>/dev/null || true"
 }
 
-// renderReplaceScriptUnix 生成延迟替换脚本: 运行中的进程不能覆盖自身, 脚本
-// 在进程退出后 (sleep) 把新二进制换入目标路径。target->backup 与 new->target
-// 都是同目录 rename; 换入失败即用 backup 回滚, 任何路径都不留无二进制状态。
-// restartCmd 只在换入成功后执行 (见 unixRestartCommand)。
+// renderReplaceScriptUnix generates the deferred replacement script: a running process cannot overwrite itself, so the script
+// swaps the new binary into the target path after the process exits (sleep). target->backup and new->target
+// are both same-directory renames; if the swap-in fails it rolls back from backup, and no path is ever left without a binary.
+// restartCmd runs only after a successful swap-in (see unixRestartCommand).
 func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, restartCmd string) string {
 	backup := targetPath + ".nexterm-old"
 	var b strings.Builder
@@ -362,9 +362,9 @@ func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, resta
 	return b.String()
 }
 
-// renderReplaceScriptWindows 是 renderReplaceScriptUnix 的 windows 对应物:
-// powershell 延迟替换, 失败回滚旧二进制; 替换成功后若存在 NexTermAgent 服务
-// 则 sc.exe start 拉起 (服务未装或启动失败均静默, 不构成循环)。
+// renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
+// powershell deferred replacement, rolling back to the old binary on failure; after a successful replacement, if the NexTermAgent service
+// exists it is started via sc.exe start (service missing or start failure are both silent, forming no loop).
 func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) string {
 	var b strings.Builder
 	b.WriteString("Start-Sleep -Seconds " + strconv.Itoa(delaySeconds) + "\n")

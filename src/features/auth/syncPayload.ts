@@ -1,12 +1,12 @@
 import type { AssetGroup, TranscriptChunk, TranscriptSummary } from "../../ipc/commands";
 import type { SnippetDto, SyncCollectAIPermission, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectPreference, SyncCollectTombstone } from "../../ipc/types";
 
-// 本文件的载荷构造与 internal/sync/object.go 的 Go 结构体逐字段对齐(字段顺序 + omitempty 语义),
-// 并经 marshalSyncPayload 产出与 Go json.Marshal 逐字节一致的文本;跨端 payload hash 相同,
-// 已一致的对象才不会被反复推送/应用。字节级 fixtures 见 src/test/auth-sync-fixtures.ts(真实 Go 产出)。
+// Payload construction in this file aligns field by field with the Go structs in internal/sync/object.go (field order + omitempty semantics),
+// and marshalSyncPayload produces text byte-identical to Go json.Marshal; cross-side payload hashes match,
+// so already-identical objects are not repeatedly pushed/applied. Byte-level fixtures live in src/test/auth-sync-fixtures.ts (real Go output).
 
-// marshalSyncPayload 复刻 Go json.Marshal 的默认 HTML 转义(< > & 与 U+2028/U+2029);
-// 这些字符只会出现在 JSON 字符串字面量里,全局替换不会碰到结构字符或既有转义序列。
+// marshalSyncPayload replicates Go json.Marshal's default HTML escaping (< > & and U+2028/U+2029);
+// these characters only appear inside JSON string literals, so a global replace never touches structural characters or existing escape sequences.
 export function marshalSyncPayload(payload: unknown): string {
   return JSON.stringify(payload)
     .replace(/&/g, "\\u0026")
@@ -16,7 +16,7 @@ export function marshalSyncPayload(payload: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-// groupPayload 对齐 groupObject: id, parentId(omitempty), name, sort, createdAt, updatedAt。
+// groupPayload mirrors groupObject: id, parentId(omitempty), name, sort, createdAt, updatedAt.
 export function groupPayload(g: AssetGroup): unknown {
   const o: Record<string, unknown> = { id: g.id };
   if (g.parentId !== null) o.parentId = g.parentId;
@@ -27,7 +27,7 @@ export function groupPayload(g: AssetGroup): unknown {
   return o;
 }
 
-// collectAssetPayload 对齐 assetObject(M141 collect 输出与 Go 结构同字段同序)。
+// collectAssetPayload mirrors assetObject (M141 collect output has the same fields in the same order as the Go struct).
 export function collectAssetPayload(a: SyncCollectAsset): unknown {
   const o: Record<string, unknown> = { id: a.id };
   if (a.groupId !== undefined) o.groupId = a.groupId;
@@ -49,7 +49,7 @@ export function collectAssetPayload(a: SyncCollectAsset): unknown {
   return o;
 }
 
-// snippetPayload 对齐 snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt。
+// snippetPayload mirrors snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt.
 export function snippetPayload(s: SnippetDto): unknown {
   const o: Record<string, unknown> = { id: s.id };
   if (s.groupId !== null) o.groupId = s.groupId;
@@ -61,9 +61,9 @@ export function snippetPayload(s: SnippetDto): unknown {
   return o;
 }
 
-// tombstonePayload 对齐 tombstoneObject: 与目标对象同 ID, deletedAt 即修订号。
-// known_host 冲突墓碑必须原样携带败者三元组(host/port/keyType, omitempty), 否则再传播的墓碑退化为
-// 用户删除语义, 下游设备会把胜出的较新化身误删(M163 R4 语义); 用户主动删除墓碑不带三元组。
+// tombstonePayload mirrors tombstoneObject: same ID as the target object, deletedAt is the revision number.
+// A known_host conflict tombstone must carry the loser triple (host/port/keyType, omitempty) as-is; otherwise the re-propagated tombstone degrades into
+// user-delete semantics and downstream devices would wrongly delete the winning newer incarnation (M163 R4 semantics); user-initiated delete tombstones carry no triple.
 export function tombstonePayload(t: SyncCollectTombstone): unknown {
   const o: Record<string, unknown> = { targetKind: t.targetKind, deletedAt: t.deletedAt };
   if (t.host) o.host = t.host;
@@ -72,15 +72,15 @@ export function tombstonePayload(t: SyncCollectTombstone): unknown {
   return o;
 }
 
-// knownHostPayload 对齐 knownHostObject: id, host, port, keyType, fingerprint, addedAt(全部必填, 无 omitempty);
-// addedAt 即 LWW 修订号(重新接受主机密钥会刷新)。
+// knownHostPayload mirrors knownHostObject: id, host, port, keyType, fingerprint, addedAt (all required, no omitempty);
+// addedAt is the LWW revision number (re-accepting a host key refreshes it).
 export function knownHostPayload(k: SyncCollectKnownHost): unknown {
   return { id: k.id, host: k.host, port: k.port, keyType: k.keyType, fingerprint: k.fingerprint, addedAt: k.addedAt };
 }
 
-// aiProfilePayload 对齐 aiProfileObject: 字段顺序与 Go 结构体一致; fallbackModel 空串与 maxTokens/
-// 各超时空指针走 omitempty 省略, proxy/apiKey 无 omitempty(缺省输出 null/空串)。apiKey 恒为明文
-// (整体经 DEK 端到端加密), 只有 collect 以 revealed 状态给出明文时才构造载荷。
+// aiProfilePayload mirrors aiProfileObject: field order matches the Go struct; empty fallbackModel and maxTokens/
+// timeout pointers are omitted via omitempty, proxy/apiKey have no omitempty (default output null/empty string). apiKey is always plaintext
+// (the whole thing is end-to-end encrypted with the DEK), and the payload is only built when collect yields plaintext in revealed state.
 export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   const o: Record<string, unknown> = { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKey ?? "", model: p.model };
   if (p.fallbackModel) o.fallbackModel = p.fallbackModel;
@@ -106,13 +106,13 @@ export function preferencePayload(p: SyncCollectPreference): unknown {
   return { id: p.id, key: p.key, value: p.value, updatedAt: p.updatedAt };
 }
 
-// credentialPayload 对齐 credentialObject; secret 缺失的凭据不会走到这里(收集期已 warning)。
+// credentialPayload mirrors credentialObject; credentials missing a secret never reach this point (already warned during collect).
 export function credentialPayload(c: SyncCollectCredential): unknown {
   return { id: c.id, name: c.name, kind: c.kind, secret: c.secret ?? "", updatedAt: c.updatedAt };
 }
 
-// transcriptPayload 对齐 transcriptObject 的字段顺序(id, sessionId 紧随其后)与 omitempty:
-// 空内容不输出 content 字段(与 Go 空切片一致),contentOmitted 只在省略时输出。
+// transcriptPayload mirrors transcriptObject's field order (id, sessionId right after) and omitempty:
+// empty content omits the content field (matching a Go empty slice); contentOmitted is output only when omitted.
 export function transcriptPayload(t: TranscriptSummary, content: TranscriptChunk[] | null): unknown {
   const o: Record<string, unknown> = { id: t.id };
   if (t.sessionId) o.sessionId = t.sessionId;

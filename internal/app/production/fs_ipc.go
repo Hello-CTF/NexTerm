@@ -23,16 +23,16 @@ const (
 	fsRangeReadMaxBytes        = 4 << 20
 )
 
-// StagedBlobResolver 把 blob Stage/Reserve 响应里的相对 path (id/name) 解析为服务器
-// 暂存文件路径; 由 *server.BlobStore 满足, 只在服务端装配注入。桌面端为 nil,
-// fs_upload/fs_download 等的 localPath 是用户经系统对话框选定的真实本地路径, 原样使用。
+// StagedBlobResolver resolves the relative path (id/name) in a blob Stage/Reserve response to a server-side staged
+// file path; satisfied by *server.BlobStore and injected only in the server-side assembly. On desktop it is nil,
+// and localPath values of fs_upload/fs_download etc. are real local paths chosen by the user via system dialogs, used as-is.
 type StagedBlobResolver interface {
 	ResolveStagedPath(rel, userID string) (string, error)
 }
 
-// resolveStagedLocalPath 在服务端装配下把 localPath 按暂存引用解析为服务器暂存文件。
-// 浏览器侧不存在真实本地路径, 拒绝绝对路径, 避免 /rpc 成为任意服务器文件读写通道;
-// 解析失败按不存在处理, 不回退为相对 CWD 的路径。
+// resolveStagedLocalPath resolves localPath as a staged reference to a server staged file in the server-side assembly.
+// No real local paths exist on the browser side, so absolute paths are refused, keeping /rpc from becoming an arbitrary
+// server file read/write channel; resolution failures are treated as nonexistent, never falling back to CWD-relative paths.
 func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path string) (string, error) {
 	if staged == nil {
 		return path, nil

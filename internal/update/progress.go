@@ -1,6 +1,6 @@
 package update
 
-// Progress 与 fs://progress 载荷同形, 额外带 phase 区分下载与安装阶段。
+// Progress has the same shape as the fs://progress payload, plus a phase distinguishing the download and install stages.
 type Progress struct {
 	TaskID      string `json:"taskId"`
 	Phase       string `json:"phase,omitempty"`

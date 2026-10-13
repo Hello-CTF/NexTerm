@@ -10,8 +10,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// 服务端装配(ServerMode)下, 设备授权与授权规则的变更仅超管可用; 无身份的
-// 开放部署(auth=off / loopback 免登录)与桌面端(ServerMode=false)保持原行为。
+// Under server assembly (ServerMode), device grant and grant rule mutations are superadmin-only;
+// identity-less open deployments (auth=off / loopback login-exempt) and desktop (ServerMode=false) keep the original behavior.
 func TestGrantMutationsRequireSuperadminInServerMode(t *testing.T) {
 	grants, err := guard.NewGrants(context.Background(), &grantSettings{values: make(map[string]string)}, nil)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestGrantMutationsRequireSuperadminInServerMode(t *testing.T) {
 		t.Fatalf("rules after mutations = %+v", rules)
 	}
 
-	// 桌面端(ServerMode=false)带身份也不受限。
+	// Desktop (ServerMode=false) is unrestricted even with an identity.
 	desktop := newGrantDispatcher(t, Config{Grants: grants})
 	response := desktop.Dispatch(plain, ipc.Request{Command: "ai_grant_rule_set", Args: json.RawMessage(`{"deviceId":"asset-b","action":"send_keys"}`)}, ipc.Environment{})
 	if !response.OK {

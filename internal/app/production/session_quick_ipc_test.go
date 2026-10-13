@@ -123,8 +123,8 @@ func TestQuickConnectSessionAssetDefaults(t *testing.T) {
 	}
 }
 
-// 服务端装配(Desktop=false)下快速连接一律拒绝: 任意登录用户不能借服务器
-// pivot 到任意 host:port; 桌面单用户模式不受影响 (见上文连接流程测试)。
+// Quick connect is always refused in the server-side assembly (Desktop=false): no logged-in user can pivot the server
+// to arbitrary host:ports; desktop single-user mode is unaffected (see the connection flow tests above).
 func TestProductionSessionConnectQuickDisabledOnServerAssembly(t *testing.T) {
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{

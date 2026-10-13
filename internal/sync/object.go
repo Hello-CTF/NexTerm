@@ -12,10 +12,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// ProtocolVersion 2: 全量载荷 E2E 对象协议。破坏性替换 v1, 不做旧版本兼容。
+// ProtocolVersion 2: full-payload E2E object protocol. A breaking replacement of v1; no old-version compatibility.
 const ProtocolVersion = 2
 
-// 同步对象种类。tombstone 与目标对象共用同一对象 id, 覆盖存储, 由客户端 LWW 裁决。
+// Sync object kinds. Tombstones share the object id of their target, overwrite it in storage, and are decided by client-side LWW.
 const (
 	KindGroup        = "group"
 	KindAsset        = "asset"
@@ -29,7 +29,7 @@ const (
 	KindPreference   = "preference"
 )
 
-// objectKinds 是尝试解密时的固定枚举顺序; AAD 绑定 kind, 错误 kind 必然解不开。
+// objectKinds is the fixed enumeration order for decryption attempts; AAD binds kind, so a wrong kind can never decrypt.
 var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindPreference}
 
 const (
@@ -37,7 +37,7 @@ const (
 	objectNonceSize = 12
 )
 
-// maxSyncObjectBytes 单对象密文上限(64MiB 内容 + JSON/base64 余量)。
+// maxSyncObjectBytes caps a single object's ciphertext (64MiB content + JSON/base64 headroom).
 const maxSyncObjectBytes = 96 << 20
 
 func objectAAD(id, kind string) []byte {
@@ -85,7 +85,7 @@ func openObject(dek, blob []byte, id, kind string) ([]byte, error) {
 	return plaintext, nil
 }
 
-// tryOpenObject 用固定 kind 枚举尝试解密; 全部失败说明密钥不匹配或数据被篡改。
+// tryOpenObject attempts decryption with the fixed kind enumeration; if all fail, the key does not match or the data was tampered with.
 func tryOpenObject(dek, blob []byte, id string) (string, []byte, error) {
 	for _, kind := range objectKinds {
 		plaintext, err := openObject(dek, blob, id, kind)
@@ -146,14 +146,14 @@ type snippetObject struct {
 type tombstoneObject struct {
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
-	// 冲突墓碑(仅 known_host)携带原败者三元组, 与用户主动删除墓碑区分:
-	// 吸收方据此识别同 ID 不同三元组的胜出化身并安全 re-ID, 而不是按用户删除清掉。
+	// Conflict tombstones (known_host only) carry the original loser triple, distinguishing them from user-initiated deletion tombstones:
+	// the absorbing side uses this to recognize a winning incarnation with the same ID but a different triple and safely re-ID it instead of clearing it as a user deletion.
 	Host    string `json:"host,omitempty"`
 	Port    int32  `json:"port,omitempty"`
 	KeyType string `json:"keyType,omitempty"`
 }
 
-// knownHostObject 的修订号即 addedAt(重新接受主机密钥会刷新); 三元组 (host, port, keyType) 全局唯一。
+// knownHostObject's revision is addedAt (re-accepting a host key refreshes it); the (host, port, keyType) triple is globally unique.
 type knownHostObject struct {
 	ID          string `json:"id"`
 	Host        string `json:"host"`
@@ -163,8 +163,8 @@ type knownHostObject struct {
 	AddedAt     int64  `json:"addedAt"`
 }
 
-// aiProfileObject 字段与 internal/ai/profiles.Profile 持久化形态一一对应, 另加修订号 updatedAt。
-// apiKey 在载荷中恒为明文(整体经 DEK 端到端加密), 落盘前必须转为 enc:v1: 信封。
+// aiProfileObject fields correspond one-to-one with the internal/ai/profiles.Profile persisted form, plus the updatedAt revision.
+// apiKey is always plaintext in the payload (the whole payload is E2E-encrypted with the DEK) and must become an enc:v1: envelope before persisting.
 type aiProfileObject struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -225,7 +225,7 @@ type transcriptObject struct {
 	Content        []transcriptChunkObject `json:"content,omitempty"`
 }
 
-// marshalObject 产出确定性 JSON 作为载荷明文; 同一内容永远得到同一字节, 供 LWW 决胜与增量对账。
+// marshalObject produces deterministic JSON as the payload plaintext; the same content always yields the same bytes, for LWW tiebreaks and incremental reconciliation.
 func marshalObject(payload any) ([]byte, error) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {

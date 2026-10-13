@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// M165 端到端验收: known_host/AI 档案同步开关显式关闭，以及开启后 collect/compare/push/apply 接入
-// M163 对象(revealed/masked 密钥处理、vault-locked 警告、墓碑按开关过滤、冲突三元组保留、二次同步收敛)。
-// 全部经真实 SyncCard 交互与真实加解密; 远端载荷是真实 Go json.Marshal fixture 字节(src/test/auth-sync-fixtures.ts)。
+// M165 end-to-end acceptance: known_host / AI profile sync toggles explicitly off, and collect/compare/push/apply wiring once on
+// for M163 objects (revealed/masked secret handling, vault-locked warning, tombstones filtered by toggle, conflict triples kept, second sync converges).
+// All through real SyncCard interaction and real encryption; remote payloads are real Go json.Marshal fixture bytes (src/test/auth-sync-fixtures.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -192,7 +192,7 @@ function button(label: string): HTMLButtonElement | undefined {
   ) as HTMLButtonElement | undefined;
 }
 
-// 开关复选框: 第一个为 known_host, 第二个为 AI 档案
+// Toggle checkboxes: the first is known_host, the second is the AI profile
 function optInCheckbox(index: number): HTMLInputElement {
   const boxes = [...(mounted?.container.querySelectorAll('input[type="checkbox"]') ?? [])] as HTMLInputElement[];
   const box = boxes[index];
@@ -200,7 +200,7 @@ function optInCheckbox(index: number): HTMLInputElement {
   return box;
 }
 
-// opt-in 开关经 kindOptInGet 异步到达后才渲染; 默认折叠,未自动展开(有开启项)时点开「同步内容开关」
+// Opt-in toggles render only after kindOptInGet arrives asynchronously; collapsed by default, click "同步内容开关" when not auto-expanded (nothing enabled)
 async function flushUntilOptInRendered(): Promise<void> {
   await flushUntil(() => button("同步内容开关") !== undefined);
   if ((mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) < 2) {
@@ -279,7 +279,7 @@ describe("M165 opt-in 默认关", () => {
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
     openDetails();
-    // 远端 known_host/AI 档案被 opt-in 过滤: 不进应用集合, 也不出现在对比行
+    // Remote known_host / AI profiles are filtered by opt-in: they enter neither the apply set nor the compare rows
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     expect(mocks.kindOptInGet).toHaveBeenCalled();
     expect(mocks.collectKnownHosts).not.toHaveBeenCalled();
@@ -310,11 +310,11 @@ describe("M165 known_host 同步", () => {
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-1"]);
-    // 推送明文与 Go json.Marshal 逐字节一致(knownHostObject 布局)
+    // The pushed plaintext is byte-identical to Go json.Marshal (knownHostObject layout)
     expect(await openPushed(objects[0], "known_host")).toBe(fixtureText("knownHostBasic"));
     expect(mocks.applyObjects).not.toHaveBeenCalled();
 
-    // 二次同步: 云端即本机内容, 两边一致, 不再推送也不应用
+    // Second sync: the cloud equals the local content, both sides consistent, no more push or apply
     const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 2);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
@@ -338,7 +338,7 @@ describe("M165 known_host 同步", () => {
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
     openDetails();
-    // 默认关: known_host 墓碑不进入推送集合, 也不出现在对比行
+    // Off by default: the known_host tombstone enters neither the push set nor the compare rows
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
     expect(text()).toContain("待推送 0 项");
     expect(text()).not.toContain("kh-del");
@@ -350,7 +350,7 @@ describe("M165 known_host 同步", () => {
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["kh-del"]);
-    // 冲突墓碑原样携带败者三元组(M163 R4 语义), 不得退化为用户删除墓碑
+    // The conflict tombstone carries the loser triple as-is (M163 R4 semantics); it must not degrade into a user-deleted tombstone
     expect(await openPushed(objects[0], "tombstone")).toBe(fixtureText("tombstoneKnownHostConflict"));
   });
 });
@@ -377,7 +377,7 @@ describe("M165 AI 档案同步", () => {
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["p-1"]);
-    // 载荷与 Go json.Marshal 逐字节一致(aiProfileObject 布局, apiKey 明文在其中, 整体经 DEK 加密)
+    // The payload is byte-identical to Go json.Marshal (aiProfileObject layout, apiKey in plaintext inside, the whole thing DEK-encrypted)
     expect(await openPushed(objects[0], "ai_profile")).toBe(fixtureText("aiProfileFull"));
   });
 
@@ -478,7 +478,7 @@ describe("M165 R2 开关切换竞态", () => {
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("待推送 1 项"));
 
-    // 关闭开关: set 挂起期间推送已禁用; set 返回后 reload 完成前仍禁用(旧快照已作废)
+    // Toggling off: push is disabled while set is pending; still disabled after set returns until reload completes (the old snapshot is invalidated)
     const reloadGate = deferred<void>();
     mocks.collectTombstones.mockImplementationOnce(async () => {
       await reloadGate.promise;
@@ -487,7 +487,7 @@ describe("M165 R2 开关切换竞态", () => {
     optInCheckbox(0).click();
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
     setGate.resolve();
-    // reload 已开始(collectTombstones 第二次调用)但未完成: 旧快照仍是 (1), 按钮必须保持禁用
+    // reload has started (second collectTombstones call) but not finished: the old snapshot is still (1), the button must stay disabled
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
     reloadGate.resolve();
     await flushUntil(() => text().includes("待推送 0 项"));
@@ -503,12 +503,12 @@ describe("M165 R2 开关切换竞态", () => {
     });
 
     mounted = mountSyncCard();
-    // 第一次 load(开启)挂在 collectKnownHosts; 开关渲染后立即关闭(opt-in 关的 load 不碰该 mock, 先完成)
+    // The first load (enabled) hangs on collectKnownHosts; toggle off right after the toggles render (the load with opt-in off does not touch that mock and finishes first)
     await flushUntilOptInRendered();
     optInCheckbox(0).click();
     openDetails();
     await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
-    // 慢 load 此刻才完成: 回写必须被代次检查丢弃, 禁用种类不得出现在对比行
+    // The slow load finishes only now: the write-back must be discarded by the generation check, and the disabled kind must not appear in compare rows
     slowLoad.resolve();
     await flushUntil(() => text().includes("待推送 0 项"));
     expect(text()).not.toContain("10.0.0.9:22");
@@ -532,7 +532,7 @@ describe("M165 R2 开关切换竞态", () => {
     });
     optInCheckbox(0).click();
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
-    // reload 已开始但未完成: 旧 applySet 仍是 (1), 按钮必须保持禁用
+    // reload has started but not finished: the old applySet is still (1), the button must stay disabled
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
     reloadGate.resolve();
     await flushUntil(() => text().includes("当前待应用 0 项"));

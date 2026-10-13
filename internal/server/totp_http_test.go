@@ -171,7 +171,7 @@ func TestAccountHTTPAdminMFARequired(t *testing.T) {
 		t.Fatalf("non-admin put status=%d", call.status)
 	}
 
-	// 策略开启后未绑定会话被锁到只能绑定: /auth/totp 可用, 其余路由 403 mfa_enrollment_required。
+	// With the policy on, unbound sessions are locked down to binding-only: /auth/totp works, other routes are 403 mfa_enrollment_required.
 	call = fixture.call(t, http.MethodGet, "/auth/totp", nil, bob, "", nil)
 	if call.status != http.StatusOK || call.body["mfa_required"] != true || call.body["enabled"] != false {
 		t.Fatalf("bob totp status=%d body=%v", call.status, call.body)
@@ -185,7 +185,7 @@ func TestAccountHTTPAdminMFARequired(t *testing.T) {
 		t.Fatalf("admin locked until bound status=%d body=%v", call.status, call.body)
 	}
 
-	// 超管完成绑定后管理面恢复, 用户列表如实汇报绑定状态。
+	// After the superadmin completes binding, the admin surface is restored and the user list truthfully reports binding state.
 	call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, admin, admin.csrf, nil)
 	adminSecret := call.body["secret"].(string)
 	call = fixture.call(t, http.MethodPost, "/auth/totp/confirm", map[string]any{"code": testTOTPCode(t, adminSecret, time.Now().Unix())}, admin, admin.csrf, nil)
@@ -219,7 +219,7 @@ func TestAccountHTTPMFARequiredEnrollmentFlow(t *testing.T) {
 		t.Fatalf("put settings status=%d body=%v", call.status, call.body)
 	}
 
-	// 未绑定用户仍可密码登录拿会话(否则永远无法绑定), 但响应带 mfa_required, 且会话被锁。
+	// An unbound user can still password-login to get a session (otherwise they could never bind), but the response carries mfa_required and the session is locked.
 	bob := fixture.login(t, "bob", "password-b1")
 	call = fixture.call(t, http.MethodGet, "/auth/me", nil, bob, "", nil)
 	if call.status != http.StatusOK || call.body["mfa_required"] != true || call.body["user"].(map[string]any)["mfa_enabled"] != false {
@@ -233,7 +233,7 @@ func TestAccountHTTPMFARequiredEnrollmentFlow(t *testing.T) {
 		t.Fatalf("logout must stay available: %d", call.status)
 	}
 
-	// 完成绑定后锁解除: 其余路由恢复。
+	// After completing the binding, the lock lifts: other routes are restored.
 	bob = fixture.login(t, "bob", "password-b1")
 	call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, bob, bob.csrf, nil)
 	if call.status != http.StatusOK {
@@ -292,7 +292,7 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 		return response.StatusCode, decoded
 	}
 
-	// 策略默认关闭: /rpc 与会话 cookie 正常可用。
+	// The policy is off by default: /rpc and the session cookie work normally.
 	if status, _ := rpcWithSession(); status != http.StatusOK {
 		t.Fatalf("default rpc status=%d", status)
 	}
@@ -300,7 +300,7 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 	if err := fixture.accounts.SetMFARequired(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
-	// mfa_required 未绑定: /rpc 与 /ws/* 全部 403 mfa_enrollment_required, 绑定必需路由不受影响。
+	// mfa_required unbound: /rpc and /ws/* are all 403 mfa_enrollment_required; binding-required routes are unaffected.
 	status, body := rpcWithSession()
 	if status != http.StatusForbidden || body["error"].(map[string]any)["code"] != "mfa_enrollment_required" {
 		t.Fatalf("locked rpc status=%d body=%v", status, body)
@@ -316,7 +316,7 @@ func TestAccountHTTPMFARequiredLocksRPCAndWebSocket(t *testing.T) {
 		t.Fatalf("totp status must stay available: %d", call.status)
 	}
 
-	// 完成绑定后各面解锁。
+	// After completing the binding, all surfaces unlock.
 	call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, session, session.csrf, nil)
 	secret := call.body["secret"].(string)
 	call = fixture.call(t, http.MethodPost, "/auth/totp/confirm", map[string]any{"code": testTOTPCode(t, secret, time.Now().Unix())}, session, session.csrf, nil)
@@ -343,7 +343,7 @@ func TestAccountHTTPTOTPRebindRequiresReverify(t *testing.T) {
 		t.Fatalf("confirm status=%d body=%v", call.status, call.body)
 	}
 
-	// 已绑定: 无重验凭据直接 403(不计限流), 原绑定不受影响。
+	// Bound: a missing re-verification credential is a direct 403 (not throttled), and the existing binding is unaffected.
 	call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{}, session, session.csrf, nil)
 	if call.status != http.StatusForbidden {
 		t.Fatalf("rebind without reverify status=%d body=%v", call.status, call.body)
@@ -353,7 +353,7 @@ func TestAccountHTTPTOTPRebindRequiresReverify(t *testing.T) {
 		t.Fatalf("binding must stay intact: %d %v", call.status, call.body)
 	}
 
-	// 密码重验通过, 换绑进入 pending; 确认新码后新绑定生效。
+	// Password re-verification passes, rebinding enters pending; confirming the new code activates the new binding.
 	call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{"reverify": "password-a1"}, session, session.csrf, nil)
 	if call.status != http.StatusOK {
 		t.Fatalf("rebind with password status=%d body=%v", call.status, call.body)
@@ -373,7 +373,7 @@ func TestAccountHTTPTOTPRebindRequiresReverify(t *testing.T) {
 		t.Fatalf("login with new secret status=%d body=%v", call.status, call.body)
 	}
 
-	// 错误重验凭据 403 并触发限流, 再试直接 429。
+	// A wrong re-verification credential is a 403 and triggers throttling; the next try is a direct 429.
 	if call = fixture.call(t, http.MethodPost, "/auth/totp/setup", map[string]any{"reverify": "wrong-credential"}, session, session.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("rebind with wrong reverify status=%d body=%v", call.status, call.body)
 	}

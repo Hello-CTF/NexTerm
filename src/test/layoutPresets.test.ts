@@ -223,7 +223,7 @@ describe("captureWorkspacePreset", () => {
     expect(preset).not.toBeNull();
     expect(preset!.panes).toHaveLength(2);
     expect(preset!.panes[0].tabs.map((t) => t.kind)).toEqual(["terminal"]);
-    // 活动标签「设置」被过滤后回落到面板内最后一个标签
+    // The active "Settings" tab is filtered out, so it falls back to the last tab in the pane
     expect(preset!.panes[0].activeTabIndex).toBe(0);
     expect(preset!.panes[0].tabs[0].tabId).toBe("T1");
     expect(preset!.activePaneIndex).toBe(1);

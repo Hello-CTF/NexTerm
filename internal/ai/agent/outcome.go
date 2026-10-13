@@ -111,7 +111,7 @@ func (r *Runner) editAffectedRuns(ctx context.Context, conversationID string, ro
 			}
 			continue
 		}
-		// 无锚点消息的历史 run 按创建时间兜底
+		// Historical runs without an anchor message fall back to creation time
 		if run.CreatedAt > rows[targetIndex].CreatedAt {
 			affected = append(affected, run)
 		}

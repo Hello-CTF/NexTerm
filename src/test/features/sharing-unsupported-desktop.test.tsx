@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-// 桌面端分享卡 · 未登录: 给「登录服务端账号后可用」引导卡 (按钮滚向「账号同步」分区), 不发任何请求。
+// Desktop share card - logged out: shows the "log in to a server account to use" guidance card (button scrolls to the "Account Sync" section), no requests fired.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
@@ -34,7 +34,7 @@ describe("分享卡片 · 桌面端未登录", () => {
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
-    // 分享卡在设置页内, 「账号同步」分区必然存在; 补一个目标节点验证滚动行为。
+    // The share card lives inside the settings page, so the "Account Sync" section must exist; add a target node to verify the scroll behavior.
     const anchor = document.createElement("div");
     anchor.id = "settings-account";
     document.body.appendChild(anchor);

@@ -7,7 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// 墓碑写入取大语义回归: 同 ID 较旧删除时间不得覆盖较新墓碑(SQLite 标量 max 路径)。
+// Tombstone write max-semantics regression: an older deletion time for the same ID must not overwrite a newer tombstone (SQLite scalar max path).
 func TestSyncTombstonePutKeepsMaxDeletedAt(t *testing.T) {
 	instance := newTestInstance(t, false)
 	ctx := context.Background()

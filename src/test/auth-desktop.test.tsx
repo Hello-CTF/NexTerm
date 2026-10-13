@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面端账号卡: 身份来自「账号同步」link 的服务端会话(syncApi.status),
-// role 由 remoteAccountApi.adminUsers 探测; 账号操作全部走 remoteAccountApi 代理,
-// 代理未覆盖的功能(退出登录/TOTP/配对码/注册开关)如实隐藏并注明浏览器管理。
+// Desktop account card: identity comes from the server session of the "Account Sync" link (syncApi.status),
+// role is probed via remoteAccountApi.adminUsers; all account operations go through the remoteAccountApi proxy,
+// features not covered by the proxy (logout / TOTP / pairing codes / registration toggle) are hidden as-is with a note to manage in the browser.
 import { act, createElement, Fragment } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -89,7 +89,7 @@ function syncStatus(loggedIn: boolean, username = "", userId = "") {
   };
 }
 
-// 普通用户: adminUsers 探测被服务端拒绝(403), 身份退回最小视图。
+// Regular user: the adminUsers probe is rejected by the server (403), identity falls back to the minimal view.
 function seedUser() {
   mocks.status.mockResolvedValue(syncStatus(true, "alice", "u-alice"));
   mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "需要超级管理员权限" });
@@ -176,7 +176,7 @@ describe("桌面端账号卡·普通用户", () => {
     expect(buttonLabels).not.toContain("添加设备");
     expect(text).toContain("两步验证的绑定、换绑与关闭暂未接入桌面端");
     expect(text).toContain("配对码添加新设备请在浏览器中打开服务端 Web 界面操作");
-    // 非超管: 用户管理卡不渲染
+    // Non-super-admin: the user management card is not rendered
     expect(text).not.toContain("用户管理");
     expect(text).not.toContain("开放注册");
   });

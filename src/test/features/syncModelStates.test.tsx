@@ -127,7 +127,7 @@ describe("SyncCard 桌面端状态", () => {
     expect(urlInput.value).toBe("https://sync.example.com");
     expect(userInput.value).toBe("alice");
     expect(passInput.value).toBe("");
-    // 未开启跳过证书校验时高级选项折叠
+    // Advanced options are collapsed when skip-cert-verify is off
     expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
     clickButton(mounted.container, "高级选项");
     await flush();

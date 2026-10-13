@@ -35,7 +35,7 @@ func identityFrom(r *http.Request) *account.Identity {
 	return identity
 }
 
-// fleetCSRFToken 与账号会话同一套无状态派生规则: HMAC(sessionID), 会话失效即同步失效。
+// fleetCSRFToken follows the same stateless derivation rule as the account session: HMAC(sessionID); it expires in sync with the session.
 func fleetCSRFToken(sessionID string) string {
 	mac := hmac.New(sha256.New, []byte(sessionID))
 	mac.Write([]byte(csrfPurpose))
@@ -95,8 +95,8 @@ func decodeFleetJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
-// fleetRoutePatterns 是 fleet 处理器认领的全部路由模式 (设备管理 + 分享);
-// Handler 内部 mux 与挂载到共享 mux 时共用同一张表, 保证两条路径不会漂移。
+// fleetRoutePatterns are all route patterns claimed by the fleet handlers (device management + sharing);
+// the Handler's internal mux and mounting into the shared mux share the same table, so the two paths never drift apart.
 var fleetRoutePatterns = []string{
 	"POST /device/enroll",
 	"POST /device/enroll-codes",
@@ -124,15 +124,15 @@ var fleetRoutePatterns = []string{
 	"GET /share/devices/{id}/terminal",
 }
 
-// Handler 返回 fleet 设备管理的独立 HTTP 入口; --auth=off 下所有路由一律 403。
+// Handler returns the standalone HTTP entry for fleet device management; under --auth=off all routes get 403.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.mountRoutes(mux)
 	return s.fleetGuard(mux)
 }
 
-// Mount 把 fleet 全部路由注册进共享 mux; 每个模式都指向同一个带 guard 的
-// 入口, guard 的 --auth=off 硬边界与设备凭证鉴权不受挂载方式影响。
+// Mount registers all fleet routes into the shared mux; every pattern points at the same guarded entry,
+// and the guard's --auth=off hard boundary plus device credential auth are unaffected by how mounting is done.
 func (s *Service) Mount(mux *http.ServeMux) {
 	handler := s.Handler()
 	for _, pattern := range fleetRoutePatterns {
@@ -163,13 +163,13 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session("GET /fleet/base-urls", s.serveBaseURLsGet)
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)
 
-	// agent 合同路由: 设备凭证 (device_id+secret) 鉴权写在 handler 内,
-	// 不接受会话/gateway, 因此不套任何用户态中间件。
+	// Agent contract routes: device credential (device_id+secret) auth is written inside the handlers,
+	// accepting neither session nor gateway, so no user-state middleware is wrapped around them.
 	mux.HandleFunc("POST /agent/sync", s.serveAgentSync)
 	mux.HandleFunc("POST /agent/current-url", s.serveAgentCurrentURL)
 	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)
 
-	// 分享管理路由: 账号会话把关, 写操作另需 CSRF。
+	// Share management routes: account session required, writes additionally require CSRF.
 	sessionCSRF("POST /share/links", s.serveShareLinkCreate)
 	session("GET /share/links", s.serveShareLinkList)
 	sessionCSRF("POST /share/links/{id}/revoke", s.serveShareLinkRevoke)
@@ -180,17 +180,17 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session("GET /share/host-shares", s.serveHostShareList)
 	sessionCSRF("POST /share/host-shares/{id}/revoke", s.serveHostShareRevoke)
 
-	// 分享数据面: 公开链接以 token 为凭据 (匿名可达, 等同 /device/enroll),
-	// 注册分享终端要求账号会话; 二者都是 GET 升级, 与其他 session 路由一样
-	// 不要求 CSRF。公开链接的普通 GET (浏览器导航) 在 handler 内分流给静态
-	// SPA 入口, 只有 WS upgrade 进入 token 鉴权。
+	// Share data plane: public links use the token as the credential (anonymously reachable, same as /device/enroll),
+	// registered share terminals require an account session; both are GET upgrades and, like the other session routes,
+	// require no CSRF. Plain GETs of public links (browser navigations) are diverted to the static
+	// SPA entry inside the handler; only the WS upgrade enters token auth.
 	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
 	mux.HandleFunc("GET /share/public/device/{token}", s.serveSharePublicDeviceTerminal)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }
 
-// fleetGuard 落实 --auth=off 硬边界 (fleet 依赖可归因身份, off 下一律关闭),
-// 并把会话 cookie 解析为身份; 匿名请求照常进入公开路由。
+// fleetGuard enforces the --auth=off hard boundary (fleet depends on attributable identity; everything is closed when off),
+// and parses the session cookie into an identity; anonymous requests still enter the public routes as usual.
 func (s *Service) fleetGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -231,8 +231,8 @@ func (s *Service) requireFleetSession(next http.Handler) http.Handler {
 	})
 }
 
-// mfaEnrollAllowedPaths 与主服务 account_session.go 保持一致:
-// mfa_required 策略下未绑定会话只能访问绑定所需路由(绑定面在主服务 /auth/totp*)。
+// mfaEnrollAllowedPaths stays consistent with the main service's account_session.go:
+// under the mfa_required policy, unenrolled sessions may only access the routes needed for enrollment (the enrollment surface is the main service's /auth/totp*).
 var mfaEnrollAllowedPaths = map[string]bool{
 	"/auth/me":           true,
 	"/auth/totp":         true,
@@ -345,9 +345,9 @@ func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// agentView.StateDigest 是设备端 supervisor 状态摘要 (控制通道 hello 上报,
-// 不含凭据材料), 仅供已授权浏览器在 /fleet/devices/{id}/bridge 上完成 supervisor
-// hello; 设备离线或未上报时为空。
+// agentView.StateDigest is the device-side supervisor state digest (reported by the control channel hello,
+// containing no credential material); it only lets an authorized browser complete the supervisor
+// hello on /fleet/devices/{id}/bridge, and is empty when the device is offline or has not reported one.
 type agentView struct {
 	Platform         string       `json:"platform"`
 	AppVersion       string       `json:"app_version"`

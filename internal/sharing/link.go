@@ -15,17 +15,17 @@ import (
 )
 
 const (
-	// linkRevalidateTTL 是公开链接 Gate 重查的短 TTL: 块级重查收敛为每秒
-	// 每连接至多一次, 吊销/收缩最迟在 TTL 后的下一次重查生效。
+	// linkRevalidateTTL is the short TTL for public-link Gate revalidation: block-level revalidation converges to at most
+	// once per second per connection, and revocation/shrinkage takes effect at the latest on the next revalidation after the TTL.
 	linkRevalidateTTL = time.Second
-	// linkInputAuditWindow 是输入审计的聚合窗口: 同窗同类事件只计数,
-	// 匿名 read_write 连接无法逐块刷爆 audit_log。
+	// linkInputAuditWindow is the aggregation window for input audit: same-kind events in one window are only counted,
+	// so anonymous read_write connections cannot flood audit_log block by block.
 	linkInputAuditWindow = time.Minute
 )
 
-// Grant 是一次分享授权的快照: 服务端校验通过后交给连接路径与 agent 端
-// Gate, 绑定分享 ID、设备、会话、权限与过期时间。OwnerID 是设备 owner
-// (区别于 share 行的授予者 owner_id); 公开链接 Recipient 为空。
+// Grant is a snapshot of one share authorization: after server-side verification it is handed to the connection path and the agent-side
+// Gate, binding the share ID, device, session, permission, and expiry. OwnerID is the device owner
+// (distinct from the grantor owner_id of the share row); public links have an empty Recipient.
 type Grant struct {
 	ShareIDs   []string   `json:"share_ids"`
 	DeviceID   string     `json:"device_id"`
@@ -36,8 +36,8 @@ type Grant struct {
 	ExpiresAt  int64      `json:"expires_at"`
 }
 
-// Link 是一条公开分享链接; OwnerID 是授予者 (设备 owner 或代管的
-// owner)。
+// Link is a public share link; OwnerID is the grantor (the device owner or the managed
+// owner).
 type Link struct {
 	ID             string
 	OwnerID        string
@@ -50,8 +50,8 @@ type Link struct {
 	LastAccessedAt int64
 }
 
-// CreateLink 为 daemon 设备上的一个实时终端会话创建公开分享链接。默认只读;
-// write 显式为 true 时才授予读写。原始 token 只在本次返回, 库中只存哈希。
+// CreateLink creates a public share link for one live terminal session on a daemon device. Read-only by default;
+// read_write is granted only when write is explicitly true. The raw token is returned only in this response; only its hash is stored.
 func (s *Service) CreateLink(ctx context.Context, identity *account.Identity, deviceID, sessionID string, write bool, ttl time.Duration) (*Link, string, error) {
 	if _, err := s.authorize(ctx, identity, deviceID, "create", auditKindLinkCreate); err != nil {
 		return nil, "", err
@@ -97,8 +97,8 @@ func (s *Service) CreateLink(ctx context.Context, identity *account.Identity, de
 	return link, token, nil
 }
 
-// ResolveLink 用公开 token 换取授权快照; 无效、过期、已吊销或设备不可达
-// 一律拒绝并写审计, 不区分无效与不存在。
+// ResolveLink exchanges a public token for an authorization snapshot; invalid, expired, revoked, or unreachable-device cases
+// are all denied with an audit record, without distinguishing invalid from nonexistent.
 func (s *Service) ResolveLink(ctx context.Context, token string) (*Grant, error) {
 	notFound := func() (*Grant, error) {
 		auditErr := s.audit(ctx, auditKindLinkAccess, auditPayload{Action: "access", Requester: "", Outcome: "deny", Reason: "not_found"})
@@ -180,8 +180,8 @@ func (s *Service) ResolveLink(ctx context.Context, token string) (*Grant, error)
 	}, nil
 }
 
-// RevokeLink 吊销公开链接; owner 可执行, 重复吊销不报错。
-// 每次判定都写含 share_id 的审计。
+// RevokeLink revokes a public link; the owner may do this, and repeated revocation does not error.
+// Every decision is recorded in an audit entry carrying the share_id.
 func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	shareLink := query.Use(s.db).ShareLink
 	row, err := shareLink.WithContext(ctx).Where(shareLink.ID.Eq(linkID)).First()
@@ -213,7 +213,7 @@ func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, li
 	return nil
 }
 
-// ListLinks 返回 owner 创建的公开链接; 仅 owner 可见。不含 token 哈希。
+// ListLinks returns the public links created by the owner; only the owner can see them. Token hashes are not included.
 func (s *Service) ListLinks(ctx context.Context, identity *account.Identity) ([]*Link, error) {
 	shareLink := query.Use(s.db).ShareLink
 	rows, err := shareLink.WithContext(ctx).
@@ -240,9 +240,9 @@ func (s *Service) ListLinks(ctx context.Context, identity *account.Identity) ([]
 	return links, nil
 }
 
-// revalidateLink 是 RevalidateLink 的内部实现, 额外返回机器可读的拒绝原因
-// ("revoked"/"expired"/"device_revoked"/"owner_mismatch"/"not_found"), 供输入
-// 路径写审计。重查前先用 checkDeviceBinding 校验当前设备归属与吊销状态。
+// revalidateLink is the internal implementation of RevalidateLink; it additionally returns a machine-readable denial reason
+// ("revoked"/"expired"/"device_revoked"/"owner_mismatch"/"not_found") for the input
+// path to write audits. Before revalidating it uses checkDeviceBinding to verify current device ownership and revocation state.
 func (s *Service) revalidateLink(ctx context.Context, grant *Grant) (*Grant, string, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 {
 		return nil, "not_found", ipc.NewError(ipc.CodeForbidden, "分享链接无效")
@@ -292,9 +292,9 @@ func (s *Service) revalidateLink(ctx context.Context, grant *Grant) (*Grant, str
 	return &refreshed, "", nil
 }
 
-// RevalidateLink 按 ShareIDs 重查链接行并校验设备/会话绑定: 吊销、过期或
-// 绑定不一致的行一律剔除; 全部失效则拒绝。返回刷新后的 Grant (权限与过期
-// 时间以当前行为准), 供连接路径与 agent recheck 使用, 不信任签发时快照。
+// RevalidateLink re-reads link rows by ShareIDs and verifies device/session binding: revoked, expired, or
+// binding-mismatched rows are all dropped; if everything is invalid it denies. Returns the refreshed Grant (permission and expiry
+// follow the current rows), for use by the connection path and agent recheck, never trusting the snapshot from issuance.
 func (s *Service) RevalidateLink(ctx context.Context, grant *Grant) (*Grant, error) {
 	refreshed, _, err := s.revalidateLink(ctx, grant)
 	return refreshed, err
@@ -317,12 +317,12 @@ func linkDenyMessage(reason string) string {
 	}
 }
 
-// NewLinkGate 为公开链接连接建立执行 Gate: 逐块以 RevalidateLink 按当前行
-// 刷新授权 (吊销/过期/设备吊销即双向停止), 输入方向在 Write 前再经
-// RevalidateLinkInput 审计并强制 read_write。重查带短 TTL 缓存: 匿名
-// read_write 连接的每块输入不再都打到数据库与审计, 吊销/收缩最迟在 TTL 后的
-// 下一次重查生效。后续连接切片应通过本构造建立数据通路, 而不是直接持有
-// Grant 快照。
+// NewLinkGate builds the enforcement Gate for public link connections: per block it refreshes the authorization from current rows
+// via RevalidateLink (revocation/expiry/device revocation stops both directions immediately), and the input direction additionally
+// goes through RevalidateLinkInput for auditing and read_write enforcement before Write. Revalidation carries a short TTL cache:
+// per-block input of anonymous read_write connections no longer hits the database and audit every time, and revocation/shrinkage takes effect at the latest on the next
+// revalidation after the TTL. Future connection slices should build their data path through this constructor instead of holding a
+// Grant snapshot directly.
 func (s *Service) NewLinkGate(grant *Grant, options ...GateOption) *Gate {
 	wired := []GateOption{
 		WithRevalidateTTL(linkRevalidateTTL),
@@ -336,9 +336,9 @@ func (s *Service) NewLinkGate(grant *Grant, options ...GateOption) *Gate {
 	return NewGate(grant, append(wired, options...)...)
 }
 
-// RevalidateLinkInput 是公开链接输入路径的服务端强制点: 每次输入都按当前
-// 行重查 (吊销/过期/绑定) 并要求 read_write, 不信任签发时的 Grant 快照;
-// 每次判定都写审计 (按会话/时间窗口聚合, 见 auditLinkInput)。
+// RevalidateLinkInput is the server-side enforcement point of the public link input path: every input is re-read from the current
+// row (revocation/expiry/binding) and required to be read_write, never trusting the Grant snapshot from issuance;
+// every decision is written to the audit log (aggregated by session/time window, see auditLinkInput).
 func (s *Service) RevalidateLinkInput(ctx context.Context, grant *Grant) (*Grant, error) {
 	refreshed, reason, err := s.revalidateLink(ctx, grant)
 	if err == nil && !refreshed.Permission.AllowsWrite() {
@@ -385,10 +385,10 @@ var linkInputAudits = struct {
 	windows map[string]*linkInputAuditState
 }{windows: map[string]*linkInputAuditState{}}
 
-// auditInputAggregated 按分享类别 + 会话/设备 + 时间窗口聚合输入审计: 窗口内
-// 同类事件只计数不落行; 窗口过期后的同类事件把计数折算成一行; 类别变化 (如
-// allow -> deny) 先把旧窗口计数折算落行, 再立即落新事件的一行, 拒绝不被延迟。
-// 设备链接没有会话 ID, 按设备聚合 (匿名 read_write 连接无法逐块刷爆 audit_log)。
+// auditInputAggregated aggregates input audits by share kind + session/device + time window: within a window,
+// same-kind events are only counted without writing rows; after the window expires, same-kind events fold the count into one row; a kind change (e.g.
+// allow -> deny) first folds the old window count into a row, then immediately writes one row for the new event, so denials are never delayed.
+// Device links have no session ID and aggregate by device (anonymous read_write connections cannot flood audit_log block by block).
 func (s *Service) auditInputAggregated(ctx context.Context, kind string, payload auditPayload) error {
 	key := payload.SessionID
 	if key == "" {

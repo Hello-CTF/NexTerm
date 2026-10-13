@@ -2,8 +2,8 @@
 
 package biometric
 
-// 非 iOS/Android 平台占位实现: 能力不可用, 调用一律返回 ErrUnavailable,
-// 保证全仓 go build / go vet / go test 在 mac、linux、windows 通过。
+// Placeholder implementation for non-iOS/Android platforms: capability unavailable, every call returns ErrUnavailable,
+// keeping repo-wide go build / go vet / go test green on mac, linux, and windows.
 
 func Current() (Status, error) {
 	return Status{Available: false}, nil

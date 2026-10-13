@@ -192,7 +192,7 @@ describe("ModelManager AI-1 profile fields", () => {
     click(view!.container.querySelector('button[title="新增档案"]')!);
     await flush();
 
-    // 新档案参数全默认: 高级参数折叠,展开后才看得到字段
+    // New profile params all default: advanced params collapsed, fields only visible after expanding
     expect(() => inputFor("最大输出")).toThrow();
     clickButton(view!.container, "高级参数");
     await flush();

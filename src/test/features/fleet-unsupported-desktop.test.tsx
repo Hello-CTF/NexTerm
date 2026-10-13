@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 桌面端设备管理 · 未登录: 入口可见, 点进来给「登录服务端账号后可用」引导视图
-// (按钮打开「设置」并滚向「账号同步」分区), 不发任何请求。
+// Desktop device management - logged out: the entry is visible, clicking through shows the "log in to a server account to use" onboarding view
+// (the button opens "Settings" and scrolls to the "Account Sync" section), no requests fired.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";

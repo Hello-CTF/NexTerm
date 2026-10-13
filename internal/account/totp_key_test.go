@@ -99,7 +99,7 @@ func TestTOTPRebindReverify(t *testing.T) {
 		t.Fatalf("wrong password accepted: %v", err)
 	}
 
-	// 当前动态码可换绑; 确认后旧恢复码全部作废, 换发新码。
+	// The current TOTP code can be used to rebind; confirming invalidates all old recovery codes and issues new ones.
 	secret2, _, err := a.BeginTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, *now/1000))
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestTOTPRebindReverify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 恢复码可换绑(一次性, 用掉即焚)。
+	// Recovery codes can be used to rebind (one-time, burned on use).
 	if _, _, err := a.BeginTOTPSetup(ctx, user.ID, codes2[0]); err != nil {
 		t.Fatalf("recovery reverify rejected: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestTOTPRebindReverify(t *testing.T) {
 		t.Fatal("reused recovery code accepted for rebind")
 	}
 
-	// 登录密码可换绑。
+	// The login password can be used to rebind.
 	if _, _, err := a.BeginTOTPSetup(ctx, user.ID, "password-123"); err != nil {
 		t.Fatalf("password reverify rejected: %v", err)
 	}

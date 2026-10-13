@@ -61,7 +61,7 @@ func deviceKnownHost(t *testing.T, device *testDevice, id string) (store.KnownHo
 	return row, found
 }
 
-// serverUserID 取测试账号的用户 ID, 用于按用户写设备端 opt-in 键。
+// serverUserID returns the test account's user ID, for writing per-user device-side opt-in keys.
 func serverUserID(t *testing.T, server *testSyncServer, username, password string) string {
 	t.Helper()
 	user, err := server.accounts.Authenticate(context.Background(), username, password)
@@ -71,8 +71,8 @@ func serverUserID(t *testing.T, server *testSyncServer, username, password strin
 	return user.ID
 }
 
-// enableDeviceKindOptIn 为设备上的指定用户开启 known_host/AI 档案同步(opt-in 是设备端按用户键存的)。
-// M165 引擎门控后, 涉及这两类对象的同步测试都显式开启, 默认开启由 TestEngineKindOptInDefaultOnAndDisable 覆盖。
+// enableDeviceKindOptIn enables known_host/AI profile sync for the given user on the device (opt-in is stored device-side, keyed by user).
+// After the M165 engine gating, sync tests touching these two kinds enable them explicitly; the default-on case is covered by TestEngineKindOptInDefaultOnAndDisable.
 func enableDeviceKindOptIn(t *testing.T, device *testDevice, userID string) {
 	t.Helper()
 	if err := device.db.SetKnownHostSyncOptIn(context.Background(), userID, true); err != nil {
@@ -83,8 +83,8 @@ func enableDeviceKindOptIn(t *testing.T, device *testDevice, userID string) {
 	}
 }
 
-// deleteDeviceKnownHost/deleteDeviceAIProfile 模拟本地删除入口(后续 store/app 切片接入): 先立碑再删行。
-// 用户主动删除是普通墓碑: 同时清除冲突三元组元数据, 再传播不得携带败者三元组。
+// deleteDeviceKnownHost/deleteDeviceAIProfile simulate the local deletion entry points (later store/app slices wire in): tombstone first, then delete the row.
+// User-initiated deletion is a plain tombstone: conflict triple metadata is cleared too, so re-propagation must not carry the loser triple.
 func deleteDeviceKnownHost(t *testing.T, device *testDevice, id string, deletedAt int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -121,7 +121,7 @@ func requireDeviceQuiescent(t *testing.T, device *testDevice, server *testSyncSe
 	}
 }
 
-// assertServerObjectKind 直接解开服务端密文, 验证对象槽位当前存放的种类(对象/墓碑)。
+// assertServerObjectKind decrypts the server-side ciphertext directly, verifying which kind (object/tombstone) currently occupies the object slot.
 func assertServerObjectKind(t *testing.T, server *testSyncServer, username, password, objectID, wantKind string) {
 	t.Helper()
 	var blob []byte
@@ -135,8 +135,8 @@ func assertServerObjectKind(t *testing.T, server *testSyncServer, username, pass
 	}
 }
 
-// 评审回归(顺序一: 败者先推, 胜者后同步): 胜者同步时必须为败者立碑并推走,
-// 服务端败者对象被墓碑替换; 再删除胜者后, 新设备不得复活败者的旧指纹。
+// Review regression (order one: loser pushes first, winner syncs later): the winner must tombstone the loser and push it away when it syncs,
+// the server-side loser object is replaced by the tombstone; after the winner is then deleted, new devices must not revive the loser's old fingerprint.
 func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -158,14 +158,14 @@ func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 		t.Fatalf("winner must keep its row: %+v found=%v", row, found)
 	}
 
-	// 败者设备再同步: 墓碑清除其本地旧行。
+	// Loser device syncs again: the tombstone clears its local old row.
 	syncDevice(t, loser, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, loser, loserID); found {
 		t.Fatal("loser row must be tombstoned on the loser device")
 	}
 	assertDeviceTombstone(t, loser, loserID, KindKnownHost)
 
-	// 删除胜者并传播后, 新设备不得得到败者(或胜者)的任何行。
+	// After deleting the winner and propagating, new devices must not get any row of the loser (or the winner).
 	deleteDeviceKnownHost(t, winner, winnerID, ids.NowMS())
 	syncDevice(t, winner, server, "alice", "alice-pw-123")
 	syncDevice(t, loser, server, "alice", "alice-pw-123")
@@ -182,9 +182,9 @@ func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
 }
 
-// 评审回归(R2): 同 ID 不同三元组的本地化身不得与同 ID 墓碑共存。
-// 化身让出原 ID(re-ID)后: 信任内容经新 ID 在全设备保留, 服务端败者槽位被墓碑替换,
-// 后续同原 ID 墓碑不误删 re-ID 记录, 二次收敛后全设备静默。
+// Review regression (R2): a local incarnation with the same ID but a different triple must not coexist with a same-ID tombstone.
+// After the incarnation yields its original ID (re-ID): the trusted content is preserved on all devices under the new ID, the server-side loser slot is replaced by a tombstone,
+// later same-ID tombstones do not mistakenly delete the re-IDed record, and after a second convergence all devices are quiescent.
 func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -204,8 +204,8 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	putDeviceKnownHost(t, deviceB, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
 	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
 
-	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(sharedID, 新三元组, 100)上服务端
-	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: 化身 re-ID, 原 ID 立碑并推走
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // loser object (sharedID, new triple, 100) lands on the server
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: incarnation re-ID, original ID tombstoned and pushed away
 
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", sharedID, KindTombstone)
 	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
@@ -216,7 +216,7 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	syncDevice(t, rogue, server, "alice", "alice-pw-123")
 
-	// 全设备(含后加入者)都持有化身信任内容(新 ID)与胜者行, 且都不存在原 ID 行。
+	// All devices (including late joiners) hold the incarnation's trusted content (new ID) and the winner row, and none holds the original-ID row.
 	newcomer := newTestDevice(t)
 	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
@@ -248,7 +248,7 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 		t.Fatalf("every device must hold the incarnation: %v", incarnationIDs)
 	}
 
-	// 后续同原 ID 的墓碑(更晚修订)不误删 re-ID 后的化身。
+	// A later tombstone with the original ID (higher revision) must not mistakenly delete the re-IDed incarnation.
 	tombstonePayload, err := marshalObject(tombstoneObject{TargetKind: KindKnownHost, DeletedAt: ids.NowMS()})
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 		t.Fatalf("re-IDed incarnation must survive the same-id tombstone: %+v found=%v", row, found)
 	}
 
-	// 较新墓碑随 A 的推送传播, 其余设备各拉取一次: 化身在全设备存活。
+	// The newer tombstone propagates with A's push; the other devices each pull once: the incarnation survives on all devices.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	for name, device := range devices {
 		if name == "A" {
@@ -274,7 +274,7 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 		}
 	}
 
-	// 二次收敛: 全设备空闲同步静默。
+	// Second convergence: idle sync is silent on all devices.
 	for name, device := range devices {
 		if report := syncDevice(t, device, server, "alice", "alice-pw-123"); report.Pulled+report.Applied+report.Pushed != 0 {
 			t.Fatalf("device%s not quiescent: %+v", name, report)
@@ -282,8 +282,8 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	}
 }
 
-// 评审回归(R3): 其他设备仍持原 ID 同一信任副本时, re-ID 对象在同 addedAt 哈希决胜中
-// 必须必胜——旧副本只能走 displaced 路径保留新 ID, 原 ID 墓碑只清旧槽位, 信任记录不丢。
+// Review regression (R3): while other devices still hold the same trusted copy under the original ID, the re-IDed object must win
+// the same-addedAt hash duel - the old copy can only take the displaced path keeping the new ID, the original-ID tombstone only clears the old slot, and the trusted record is not lost.
 func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -296,7 +296,7 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 
 	sharedID := ids.New()
 	winnerID := ids.New()
-	// B 与 A 都持有原 ID 的信任副本与三元组胜者行(更早的同步所致)。
+	// B and A both hold the trusted copy under the original ID and the triple winner row (from an earlier sync).
 	putDeviceKnownHost(t, deviceB, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
 	putDeviceKnownHost(t, deviceB, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
 	putDeviceKnownHost(t, deviceA, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
@@ -305,10 +305,10 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	enableDeviceKindOptIn(t, rogue, userID)
 	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
 
-	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(sharedID 迁移三元组, 100)上服务端
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B 先同步: re-ID + 原 ID 立碑并推走
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // loser object (sharedID, migrated triple, 100) lands on the server
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B syncs first: re-ID + original ID tombstoned and pushed away
 
-	// 构造性不变式: B 的 re-ID 载荷在同修订号下必胜原 ID 副本(两种哈希顺序中败者被拒绝)。
+	// Constructive invariant: B's re-ID payload must beat the original-ID copy at the same revision (the loser ordering is constructively rejected in both hash orders).
 	rows, err := deviceB.db.KnownHostList(ctx)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("deviceB rows=%+v err=%v", rows, err)
@@ -334,7 +334,7 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 		t.Fatal("re-ID payload must provably win the equal-revision hash duel against the old copy")
 	}
 
-	// A 持原副本后同步: 对 re-ID 对象只能 displaced(采纳新 ID), 原 ID 墓碑被吸收, 信任内容与修订号保留。
+	// A, still holding the original copy, syncs later: it can only displace the re-IDed object (adopting the new ID); the original-ID tombstone is absorbed, trusted content and revision preserved.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
 		t.Fatal("deviceA must displace the old copy")
@@ -344,11 +344,11 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	}
 	assertDeviceTombstone(t, deviceA, sharedID, KindKnownHost)
 
-	// 服务端槽位: 原 ID 是墓碑, 新 ID 是存活对象(不得被墓碑替换)。
+	// Server slots: the original ID is a tombstone, the new ID is a live object (must not be replaced by a tombstone).
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", sharedID, KindTombstone)
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", reID, KindKnownHost)
 
-	// 新设备同样获得信任内容(新 ID, 原修订号)。
+	// The newcomer likewise gets the trusted content (new ID, original revision).
 	newcomer := newTestDevice(t)
 	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
@@ -359,13 +359,13 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 		t.Fatal("newcomer must not resurrect the original id")
 	}
 
-	// 二次同步静默。
+	// Second sync is silent.
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
 }
 
-// incarnationIDOf 返回设备上指定主机的行 ID(re-ID 后由调用方断言内容而非具体 ID)。
+// incarnationIDOf returns the row ID of the given host on the device (after re-ID, callers assert content rather than the concrete ID).
 func incarnationIDOf(t *testing.T, device *testDevice, host string) string {
 	t.Helper()
 	rows, err := device.db.KnownHostList(context.Background())
@@ -381,9 +381,9 @@ func incarnationIDOf(t *testing.T, device *testDevice, host string) string {
 	return ""
 }
 
-// 评审回归(R4): 冲突墓碑与用户删除墓碑的区分。B 持旧副本(50), A 持同 ID 较新化身(60),
-// 三元组胜者(200): A 吸收冲突墓碑时必须安全 re-ID 保留较新信任内容(而非按用户删除清掉),
-// 原 ID 与败者 re-ID 槽位都收敛为墓碑, 最新内容在 A/B/rogue/新设备保留, 二次同步静默。
+// Review regression (R4): distinguishing conflict tombstones from user deletion tombstones. B holds an old copy (50), A holds a newer incarnation with the same ID (60),
+// and the triple winner (200): when A absorbs the conflict tombstone it must safely re-ID and preserve the newer trusted content (not clear it as a user deletion),
+// the original ID and the loser's re-ID slot both converge to tombstones, the newest content is preserved on A/B/rogue/new devices, and a second sync is silent.
 func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -403,8 +403,8 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 	putDeviceKnownHost(t, deviceA, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
 	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
 
-	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(100)上服务端
-	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B: 旧副本 re-ID + 冲突墓碑(200) + 推送
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // loser object (100) lands on the server
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B: old copy re-ID + conflict tombstone (200) + push
 	if _, found := deviceKnownHost(t, deviceB, sharedID); found {
 		t.Fatal("B must vacate the original id")
 	}
@@ -413,7 +413,7 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 		t.Fatal("B must re-ID under a fresh id")
 	}
 
-	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: 较新化身 re-ID 保留, 旧 re-ID 槽位立碑
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: newer incarnation preserved via re-ID, old re-ID slot tombstoned
 
 	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
 		t.Fatal("A must vacate the original id")
@@ -431,7 +431,7 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 	assertDeviceTombstone(t, deviceA, sharedID, KindKnownHost)
 	assertDeviceTombstone(t, deviceA, olderReID, KindKnownHost)
 
-	// B 采纳较新化身并弃旧 re-ID; rogue 的败者行被同三元组冲突墓碑清除。
+	// B adopts the newer incarnation and drops the old re-ID; rogue's loser row is cleared by the same-triple conflict tombstone.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	syncDevice(t, rogue, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, rogue, sharedID); found {
@@ -444,7 +444,7 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 		t.Fatal("B must drop the older re-ID")
 	}
 
-	// 新设备获得最新信任内容(60); 服务端原 ID 与败者 re-ID 槽位都是墓碑, 新 ID 是存活对象。
+	// The newcomer gets the newest trusted content (60); the server-side original ID and loser re-ID slots are both tombstones, the new ID is the live object.
 	newcomer := newTestDevice(t)
 	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
@@ -461,15 +461,15 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", olderReID, KindTombstone)
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", newerReID, KindKnownHost)
 
-	// 二次同步静默: 无持续重推, 无墓碑抖动。
+	// Second sync is silent: no continuous re-pushing, no tombstone flapping.
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, rogue, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
 }
 
-// 评审回归(顺序二: 胜者先推, 败者后同步): 败者经 displaced 路径立碑自身并 adopts 胜者;
-// 删除胜者后二次收敛, 新设备同样不得复活败者。
+// Review regression (order two: winner pushes first, loser syncs later): the loser tombstones itself via the displaced path and adopts the winner;
+// after the winner is deleted and a second convergence completes, new devices must not revive the loser either.
 func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -564,7 +564,7 @@ func TestEngineSyncKnownHostsAndAIProfilesConverge(t *testing.T) {
 		t.Fatal("deviceB profiles must keep an active profile")
 	}
 
-	// B 端新增回流到 A。
+	// B's new addition flows back to A.
 	hostB := ids.New()
 	putDeviceKnownHost(t, deviceB, hostB, "db.example.com", 2222, "ssh-rsa", "SHA256:from-b", 200)
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
@@ -610,7 +610,7 @@ func TestEngineSettingsDeletionConverges(t *testing.T) {
 	assertDeviceTombstone(t, deviceB, hostID, KindKnownHost)
 	assertDeviceTombstone(t, deviceB, profileID, KindAIProfile)
 
-	// 空闲同步不得复活已删对象。
+	// Idle sync must not revive deleted objects.
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); found {
@@ -635,7 +635,7 @@ func TestEngineKnownHostLWWConflictConverges(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// 双方离线编辑同一行, B 的修订号更高。
+	// Both sides edit the same row offline; B's revision is higher.
 	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:a-edit", 200)
 	putDeviceKnownHost(t, deviceB, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:b-edit", 300)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
@@ -652,7 +652,7 @@ func TestEngineKnownHostLWWConflictConverges(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-// 同修订不同内容以规范载荷哈希决胜: 双设备必须收敛到同一档案, 与推送顺序无关。
+// Same revision with different content decides by canonical payload hash: both devices must converge to the same profile regardless of push order.
 func TestEngineAIProfileEqualRevisionConverges(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -731,7 +731,7 @@ func TestEngineAIProfileKeyedDeferredWhileVaultLocked(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-// M165 R2: opt-in 默认开启, 关闭后停止收集/应用, 远端副本保留。
+// M165 R2: opt-in is on by default; turning it off stops collection/apply and remote copies are kept.
 func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -774,7 +774,7 @@ func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 	}
 }
 
-// M165 R2: 开启→同步; 关闭→停止收集/应用/墓碑传播(远端副本保留); 再开启→补拉合并(关闭期间未记对账)。
+// M165 R2: on -> sync; off -> stop collection/apply/tombstone propagation (remote copies kept); on again -> catch-up pull and merge (nothing reconciled while off).
 func TestEngineKindOptInOnOffOn(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -794,7 +794,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 		t.Fatal("opt-in 开启后 known_host 必须同步")
 	}
 
-	// A 关闭: 本地新增不推送; B 的远端变更不应用到 A。
+	// A turns off: local additions are not pushed, and B's remote changes are not applied to A.
 	if err := deviceA.db.SetKnownHostSyncOptIn(ctx, userID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +811,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 		t.Fatal("opt-in 关闭后远端对象不得应用")
 	}
 
-	// A 删除本地行(关闭期间, opt-in 关): 不立碑不传播, 远端副本保留。
+	// A deletes the local row (while off, opt-in off): no tombstone, no propagation, the remote copy is kept.
 	if err := deviceA.db.KnownHostRemove(ctx, hostID); err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +820,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 		t.Fatal("opt-in 关闭期间删除不得传播, 远端副本必须保留")
 	}
 
-	// 再开启: 关闭期间未记对账的远端对象(fromB)补拉合并; 本地删除未立碑的 hostID 不复活(远端副本保留在 B 与服务端)。
+	// Re-enabled: remote objects not reconciled while off (fromB) are pulled and merged; the locally deleted hostID (never tombstoned) does not revive (the remote copy stays on B and the server).
 	enableDeviceKindOptIn(t, deviceA, userID)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceA, fromB); !found {
@@ -834,7 +834,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 	}
 }
 
-// M165 R2: opt-in 关闭的设备不应用远端墓碑(本地行保留); 重新开启后按墓碑清除。
+// M165 R2: a device with opt-in off does not apply remote tombstones (local rows kept); after re-enabling, rows are cleared per the tombstones.
 func TestEngineKindOptInRemoteTombstoneGated(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -851,7 +851,7 @@ func TestEngineKindOptInRemoteTombstoneGated(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// B 关闭; A 删除并推送墓碑。
+	// B turns off; A deletes and pushes the tombstone.
 	if err := deviceB.db.SetKnownHostSyncOptIn(ctx, userID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -859,13 +859,13 @@ func TestEngineKindOptInRemoteTombstoneGated(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	assertServerObjectKind(t, server, "alice", "alice-pw-123", hostID, KindTombstone)
 
-	// B 同步: 墓碑不应用, 本地行保留。
+	// B syncs: the tombstone is not applied, the local row is kept.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
 		t.Fatal("opt-in 关闭时远端墓碑不得删除本地行")
 	}
 
-	// B 重新开启: 墓碑(仍未对账)在下一轮应用, 本地行清除。
+	// B re-enables: the tombstone (still unreconciled) is applied in the next round and the local row is cleared.
 	enableDeviceKindOptIn(t, deviceB, userID)
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); found {

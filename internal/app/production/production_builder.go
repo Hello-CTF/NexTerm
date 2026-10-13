@@ -37,13 +37,12 @@ type ProductionConfig struct {
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
 	DB                      store.BackendConfig
-	// StagedBlobs 由服务端装配注入 ( nexterm-server ), 把 blob Stage/Reserve 响应的
-	// 相对 path 解析为暂存文件路径; 桌面端为 nil。
+	// StagedBlobs is injected by the server-side assembly (nexterm-server), resolving relative paths from blob Stage/Reserve responses to staged file paths; nil on desktop.
 	StagedBlobs StagedBlobResolver
-	// RestartFunc 由桌面端注入: 启动新进程并退出当前 wails 应用; server 为 nil,
-	// app_restart 降级为不可用原因。
+	// RestartFunc is injected by the desktop: start a new process and exit the current wails app; when server is nil,
+	// app_restart degrades to an unavailability reason.
 	RestartFunc func(context.Context, string) error
-	// ScreenInsets 由桌面端注入 wails Screen API 实现; server 为 nil。
+	// ScreenInsets is injected by the desktop via the wails Screen API; nil on the server.
 	ScreenInsets func(context.Context) (ScreenInsets, error)
 }
 

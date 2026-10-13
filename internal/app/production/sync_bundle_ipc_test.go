@@ -551,7 +551,7 @@ func (f *syncBundleHTTPFixture) rpc(t *testing.T, command string, args any, cook
 	return response.StatusCode, decoded
 }
 
-// 账号模式边界: /rpc 传输层把关会话与 CSRF; 资产摘要与导入按当前账号隔离。
+// Account mode boundary: the /rpc transport layer enforces session and CSRF; asset digest and import are isolated per the current account.
 func TestSyncBundleHTTPAuthBoundaries(t *testing.T) {
 	fixture := newSyncBundleHTTPFixture(t)
 
@@ -620,8 +620,9 @@ func TestSyncBundleHTTPAuthBoundaries(t *testing.T) {
 
 func ptr[T any](value T) *T { return &value }
 
-// 本机删除墓碑优先于旧包: UI 删除(凭据经 CredentialDelete, 分组/片段经 0020 触发器)后
-// 重导删除前导出的旧包, 三类对象都不得复活, 墓碑必须保留; 载荷较新或 force 才允许导入并清碑。
+// Local deletion tombstones beat old bundles: after a UI deletion (credentials via CredentialDelete, groups/snippets via the 0020
+// trigger), re-importing an old bundle exported before the deletion must not revive any of the three kinds, and the tombstones must
+// be kept; only a newer payload or force allows the import and clears the tombstones.
 func TestSyncBundleImportRespectsLocalTombstones(t *testing.T) {
 	database, credentialVault, syncService := newSyncBundleTestService(t, false, true)
 	ctx := t.Context()
@@ -754,8 +755,8 @@ func syncTombstoneRow(ctx context.Context, database *store.Store, id string) (de
 	return deletedAt, true, nil
 }
 
-// 分组导入两遍链接: 子先父后不产生 FK 硬错误; 悬空父级与循环父级按 v2 文案置 nil + 警告,
-// 导入整体成功并返回 ImportReport, 不再中途硬错误部分落库。
+// Group import two-pass linking: child-before-parent produces no FK hard errors; dangling parents and cyclic parents are set nil
+// with a warning per the v2 text, the overall import succeeds and returns an ImportReport, and no mid-way hard error partially persists rows.
 func TestSyncBundleGroupImportParentHandling(t *testing.T) {
 	database, _, syncService := newSyncBundleTestService(t, false, true)
 	ctx := t.Context()
@@ -826,7 +827,7 @@ func TestSyncBundleGroupImportParentHandling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 循环必须被打破: 恰好一方保持顶级(先处理的一方清父级), 另一方挂到已清父级的一方下形成合法链。
+	// The cycle must be broken: exactly one member stays top-level (the first-processed one clears its parent), and the other hangs under the one that cleared its parent, forming a legal chain.
 	if (rowA.ParentID == nil) == (rowB.ParentID == nil) {
 		t.Fatalf("cycle must leave exactly one top-level member: A=%+v B=%+v", rowA, rowB)
 	}
@@ -844,8 +845,8 @@ func warningsContain(warnings []string, substring string) bool {
 	return false
 }
 
-// 包内重复分组 ID 按 last-index 去重: 同一 ID 只处理最后一项,
-// 墓碑判断/skipped 计数/details/plan/父级引用统一采用最终决策。
+// Duplicate group IDs within one bundle are deduped by last-index: only the last entry for an ID is processed,
+// and tombstone checks/skipped counts/details/plan/parent references uniformly use the final decision.
 func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
 	database, _, syncService := newSyncBundleTestService(t, false, true)
 	ctx := t.Context()

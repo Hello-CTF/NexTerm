@@ -86,8 +86,8 @@ type Config struct {
 	Memory      *memory.Store
 	MemoryScope memory.Scope
 
-	// ServerMode 标记 nexterm-server 装配(桌面端为 false): 设备授权与授权规则
-	// 按账号隔离, 当前仅超管可变更。
+	// ServerMode marks nexterm-server assembly (false on desktop): device grants and
+	// grant rules are isolated per account; currently only super admins may change them.
 	ServerMode bool
 }
 

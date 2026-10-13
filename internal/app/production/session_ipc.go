@@ -168,8 +168,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				return productionSessionInfo(connected.Info()), nil
 			})
 		},
-		// 快速连接让服务端直接向任意 host:port 发起 SSH; 服务端装配 (desktop=false)
-		// 下一律禁用, 任意登录用户不能借服务器 pivot 到内网任意地址。桌面单用户模式保持可用。
+		// Quick connect lets the server initiate SSH directly to arbitrary host:ports; in the server-side assembly (desktop=false)
+		// it is always disabled, so no logged-in user can pivot through the server to arbitrary intranet addresses. Desktop single-user mode stays available.
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect_quick", func(ctx context.Context, _ *ipc.Call, input sessionQuickConnectRequest) (sessionInfoDTO, error) {
 				if !s.desktop {
@@ -178,9 +178,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				return s.connectQuick(ctx, input)
 			})
 		},
-		// 设备不是资产表记录: 以伪资产 (id=device/<deviceId>) 接入会话体系,
-		// 拨号/授权由连接器持有的设备拨号面完成, 不经资产选项与凭据。认证用户
-		// 写进 options: 重连在后台 ctx 运行, 授权回退读它。
+		// A device is not an asset table record: it joins the session system as a pseudo asset (id=device/<deviceId>),
+		// with dialing/authorization done by the device dialing surface held by the connector, not via asset options and credentials.
+		// The authenticated user is written into options: reconnects run in a background ctx, and authorization falls back to reading it.
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect_device", func(ctx context.Context, _ *ipc.Call, input sessionConnectDeviceRequest) (sessionInfoDTO, error) {
 				if input.DeviceID == "" {
@@ -307,8 +307,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				var durable *session.DurableTabOptions
 				if connected, err := s.sessions.Session(input.SessionID); err == nil {
 					ephemeral = connected.Asset().Kind == session.KindLocal
-					// 设备通道没有裸 PTY: 终端标签一律落在设备 daemon 的 durable
-					// 会话上, 重连/重开按 id 恢复。
+					// Device channels have no raw PTY: terminal tabs always land on the device daemon's durable
+					// sessions, restored by id on reconnect/reopen.
 					if connected.Asset().Kind == session.KindDevice {
 						durable = &session.DurableTabOptions{}
 					}

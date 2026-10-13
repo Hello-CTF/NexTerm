@@ -46,7 +46,7 @@ import {
   IconZap,
 } from "../../ui/icons";
 
-// 设置分区导航:小标签直达对应区域;目标都是本视图里必然渲染的节点。
+// Settings section navigation: small tabs jump directly to the corresponding section; targets are nodes always rendered in this view.
 const SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: "外观", icon: IconMonitor },
   { id: "settings-terminal", label: "终端", icon: IconTerminal },
@@ -114,8 +114,8 @@ export function SettingsView() {
   const [autoLockDraft, setAutoLockDraft] = useState("");
 
   const qc = useQueryClient();
-  // refetchOnWindowFocus 关闭: 窗口聚焦触发的重取会用服务端旧值覆盖正在编辑的自动锁定草稿,
-  // 刷新只跟随保存/头部按钮等显式 invalidate。
+  // refetchOnWindowFocus off: refetches triggered by window focus would overwrite the auto-lock draft being edited with stale server values;
+  // refreshes only follow explicit invalidations such as save/header buttons.
   const vault = useQuery({
     queryKey: ["vault-status"],
     queryFn: () => vaultApi.status(),
@@ -140,8 +140,8 @@ export function SettingsView() {
     jumpToSection(id);
   };
 
-  // 目录高亮跟随右侧内容滚动: 滚动容器内最后一个顶部越过阈值的分区即当前分区。
-  // 点击跳转的乐观高亮与滚动收敛到同一分区, 跳转与折叠行为不变。
+  // The TOC highlight follows the right-side content scroll: the current section is the last one whose top crossed the threshold inside the scroll container.
+  // The optimistic highlight from click-to-jump and the scroll settle on the same section; jump and collapse behavior is unchanged.
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = contentRef.current;
@@ -215,13 +215,13 @@ export function SettingsView() {
         pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
       } else {
         await vaultApi.changePassword(old, next);
-        // iOS/Android 上已登记生物识别材料的, 改密后用新密码静默重存, 否则生物识别解锁会稳定失败
+        // On iOS/Android with biometric material enrolled, silently re-store it with the new password after a change; otherwise biometric unlock would consistently fail
         if (next !== "" && isMobile()) {
           try {
             const bio = await biometricApi.status();
             if (bio.canEvaluate && bio.hasMaterial) await biometricApi.enable(next);
           } catch {
-            // 重存失败只意味着下次仍需密码解锁
+            // A failed re-store only means the password unlock is needed again next time
           }
         }
         pushToast(

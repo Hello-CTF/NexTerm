@@ -61,8 +61,8 @@ type attachMsg struct {
 	ID                string `json:"id"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
-	// Offset 是客户端已消费的 recording 绝对字节偏移, 服务端从该处 seek
-	// 续传。旧服务端忽略该字段并从 0 重放, 客户端在流内跳过前缀降级。
+	// Offset is the absolute byte offset of the recording the client has consumed; the server seeks there
+	// and resumes. Old servers ignore this field and replay from 0; the client degrades by skipping the prefix in-stream.
 	Offset uint64 `json:"offset,omitempty"`
 }
 

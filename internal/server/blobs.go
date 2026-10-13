@@ -48,8 +48,8 @@ type BlobStore struct {
 	newID          func() string
 	now            func() time.Time
 	logger         *slog.Logger
-	// openAccess 表示部署形态不存在请求身份 (auth=off/回环监听/网关),
-	// 无属主元数据的暂存条目直接放行; 有账号形态保持 false, 无属主一律不可访问。
+	// openAccess means the deployment shape has no request identity (auth=off/loopback listen/gateway);
+	// staged entries without owner metadata are allowed through; account shapes keep false, and ownerless entries are never accessible.
 	openAccess bool
 }
 
@@ -327,8 +327,8 @@ func (b *BlobStore) writeOwnerMeta(dir string, r *http.Request) error {
 	return os.WriteFile(filepath.Join(dir, blobMetaName), encoded, 0o600)
 }
 
-// canAccess 校验请求身份是暂存条目属主；无属主元数据的条目仅在没有请求身份的
-// 部署形态 (openAccess) 下放行。拒绝与不存在同样回 404, 不泄露存在性。
+// canAccess verifies the request identity owns the staged entry; entries without owner metadata are only allowed in
+// deployment shapes with no request identity (openAccess). Denial and nonexistence both return 404, not leaking existence.
 func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 	identity := accountIdentityFrom(r.Context())
 	userID := ""
@@ -338,8 +338,8 @@ func (b *BlobStore) canAccess(r *http.Request, dir string) bool {
 	return b.canAccessDir(dir, userID)
 }
 
-// canAccessDir 是 canAccess 的按身份判等拆分, 供 HTTP 面与 IPC 面共用;
-// userID 空串表示无身份 (网关/auth=off), 仅 openAccess 形态放行无属主条目。
+// canAccessDir is canAccess split into a per-identity equality check, shared by the HTTP surface and the IPC surface;
+// an empty userID means no identity (gateway/auth=off), and only openAccess shapes allow ownerless entries.
 func (b *BlobStore) canAccessDir(dir, userID string) bool {
 	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
 	if errors.Is(err, os.ErrNotExist) {
@@ -358,12 +358,13 @@ func (b *BlobStore) canAccessDir(dir, userID string) bool {
 	return userID != "" && userID == meta.OwnerID
 }
 
-// ResolveStagedPath 把 Stage/Reserve 响应里的相对 path (id/name) 解析为暂存文件的服务器
-// 绝对路径, 供服务端 IPC (fs_upload/fs_download/terminal_record_start 等) 定位浏览器暂存
-// 文件; 响应本身不含绝对路径, 解析只在服务端发生。userID 是 ipc 会话注入的操作用户,
-// 属主口径与 HTTP 面一致 (IPC 面无角色信息, 超管不能代解析他人暂存)。persist 条目不在
-// 暂存根, 不能经此解析。name 必须等于 SafeBlobName(name) (即暂存落盘名), 拒绝大小写、
-// 控制字符、前导点等变体, 如 .META.JSON 在大小写不敏感文件系统上会与属主元数据碰撞。
+// ResolveStagedPath resolves the relative path (id/name) from a Stage/Reserve response to the staged file's server-side
+// absolute path, letting server-side IPC (fs_upload/fs_download/terminal_record_start, etc.) locate browser-staged
+// files; responses themselves carry no absolute path, and resolution happens only server-side. userID is the operating user
+// injected by the ipc session, with the same ownership rule as the HTTP surface (the IPC surface has no role info, so a
+// superadmin cannot resolve others' staging). persist entries are not under the staging root and cannot be resolved here.
+// name must equal SafeBlobName(name) (the staged on-disk name); variants with different case, control characters, or leading
+// dots are rejected, e.g. .META.JSON would collide with owner metadata on case-insensitive filesystems.
 func (b *BlobStore) ResolveStagedPath(rel, userID string) (string, error) {
 	id, name, found := strings.Cut(rel, "/")
 	if !found || !ids.Valid(id) || name == "" || name != SafeBlobName(name) {

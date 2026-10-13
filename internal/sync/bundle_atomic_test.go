@@ -8,7 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// 对象类事务原子性: 资产类中途失败时整类回滚, 更早提交的对象类(分组)不受影响。
+// Per-object-class transaction atomicity: when the asset class fails midway, the whole class rolls back and the earlier-committed class (groups) is unaffected.
 func TestImportBundleRollsBackFailedAssetClass(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, true)

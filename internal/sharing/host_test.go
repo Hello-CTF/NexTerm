@@ -101,8 +101,8 @@ func TestHostShareCreateAuthorization(t *testing.T) {
 	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(other), deviceID, recipient.Username, true, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 
-	// 越权 + 不存在用户名: authorize 先于用户名解析, 仍 forbidden 并写 deny/not_owner
-	// 审计, 不泄露接收者是否存在。
+	// Unauthorized + nonexistent username: authorize runs before username resolution, so it is still forbidden with a deny/not_owner
+	// audit, never revealing whether the recipient exists.
 	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(other), deviceID, "missing-user", true, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 

@@ -180,7 +180,7 @@ describe("closeWorkspace 批量关闭", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].kind).toBe("error");
     expect(toasts[0].text).toContain("1 个终端操作失败：资源不存在：tab not found");
-    // 取消之外的路径也只发一条: 工作区仍被关闭, 不再补发转入后台等第二条
+    // Paths other than cancel also send only one: the workspace is still closed, no second "moved to background" toast follows
     expect(useUi.getState().workspaces).toHaveLength(0);
   });
 

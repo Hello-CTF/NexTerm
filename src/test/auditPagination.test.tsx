@@ -396,7 +396,7 @@ describe("AuditView 设备时间线", () => {
     await flushUntil(() => mounted!.container.querySelector('select[aria-label="按设备过滤"]') !== null);
     const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
     if (!select) throw new Error("设备过滤下拉未出现");
-    // 未选设备时维持来源筛选。
+    // With no device selected, the source filter is kept.
     expect(mocks.auditQuery).toHaveBeenCalledWith({ source: undefined, limit: 100, offset: 0 });
 
     setSelectValue(select, "d-1");
@@ -408,7 +408,7 @@ describe("AuditView 设备时间线", () => {
     expect(body).toContain("设备接入");
     const badges = [...mounted!.container.querySelectorAll("tbody .nx-badge")].map((b) => b.textContent);
     expect(badges).toContain("设备");
-    // 设备过滤期间来源筛选禁用 (避免“来源+设备”组合出空集)。
+    // During device filtering the source filter is disabled (avoiding an empty set from the "source + device" combination).
     const userSegment = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-segment-item")].find(
       (b) => b.textContent?.trim() === "用户",
     );

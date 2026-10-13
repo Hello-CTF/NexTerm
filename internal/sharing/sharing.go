@@ -65,8 +65,8 @@ const (
 
 	defaultLinkTTL      = time.Hour
 	defaultHostShareTTL = 24 * time.Hour
-	// defaultDeviceShareTTL 是设备公开链接的默认有效期: 设备级分享面向更长
-	// 的协作窗口, 与注册主机分享的默认对齐。
+	// defaultDeviceShareTTL is the default validity period of device public links: device-level sharing targets longer
+	// collaboration windows, aligned with the registered host share default.
 	defaultDeviceShareTTL = 24 * time.Hour
 	minShareTTL           = time.Minute
 	maxShareTTL           = 30 * 24 * time.Hour
@@ -98,8 +98,8 @@ const (
 
 func (p Permission) AllowsWrite() bool { return p == PermissionReadWrite }
 
-// ErrTokenNotFound 表示公开链接 token 不存在; HTTP 入口据此把随机 token 尝试
-// 计入限流退避, 其余拒绝原因 (吊销/过期/未生效/设备离线) 不惩罚链接持有者。
+// ErrTokenNotFound means the public link token does not exist; the HTTP entry point counts random token attempts
+// toward rate-limit backoff, while other denial reasons (revoked/expired/not-yet-valid/device offline) do not punish the link holder.
 var ErrTokenNotFound = ipc.NewError(ipc.CodeForbidden, "分享链接无效")
 
 func permissionFor(write bool) Permission {
@@ -114,9 +114,9 @@ type Config struct {
 	Accounts *account.Accounts
 }
 
-// AgentProbeFunc 探测设备守护代理当前是否在线 (例如控制通道是否已注册);
-// 返回错误即视为离线。requireDaemon 在数据库 last_seen 检查通过后调用,
-// 用于把 "进程已断开但 last_seen 未过 staleness 窗口" 的设备即时判离线。
+// AgentProbeFunc probes whether the device daemon agent is currently online (e.g. whether the control channel is registered);
+// an error means offline. requireDaemon calls it after the database last_seen check passes,
+// to instantly judge a device "process disconnected but last_seen within the staleness window" as offline.
 type AgentProbeFunc func(ctx context.Context, deviceID string) error
 
 type Service struct {
@@ -244,7 +244,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
 }
 
-// authorizeDevice 判定设备归属并给出 outcome/reason, 不写审计。
+// authorizeDevice decides device ownership and yields outcome/reason without writing an audit.
 func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identity, deviceID string) (*deviceGrant, string, string, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	switch {
@@ -258,8 +258,8 @@ func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identit
 	return grant, "allow", "", nil
 }
 
-// authorize 是分享设备动作的授权点: 仅设备 owner 放行, 已吊销设备
-// 一律拒绝; 每次判定 (放行或拒绝) 都写审计。
+// authorize is the authorization point for share device actions: only the device owner is allowed, and revoked devices
+// are always denied; every decision (allow or deny) is written to the audit log.
 func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
 	grant, outcome, reason, decision := s.authorizeDevice(ctx, identity, deviceID)
 	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
@@ -272,9 +272,9 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	return grant, nil
 }
 
-// checkDeviceBinding 校验授权快照与当前设备状态一致: 设备必须存在、未吊销,
-// 且当前 owner 与 Grant.OwnerID 一致 (设备易主后旧授权立即失效); 返回机器
-// 可读的拒绝原因 ("" 表示通过)。
+// checkDeviceBinding verifies that the authorization snapshot matches the current device state: the device must exist, not be revoked,
+// and the current owner must match Grant.OwnerID (old authorizations become invalid immediately after the device changes hands); it returns a machine-
+// readable denial reason ("" means pass).
 func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string, error) {
 	userDevice := query.Use(s.db).UserDevice
 	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(grant.DeviceID)).First()
@@ -293,8 +293,8 @@ func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string,
 	return "", nil
 }
 
-// requireDaemon 限定分享目标为 daemon 主机: 必须有 device_agent 记录且终端
-// 功能开启; last_seen 超过 staleness 窗口视为代理离线。
+// requireDaemon limits share targets to daemon hosts: a device_agent row must exist with the terminal
+// feature enabled; last_seen beyond the staleness window counts as the agent being offline.
 func (s *Service) requireDaemon(ctx context.Context, deviceID string) error {
 	deviceAgent := query.Use(s.db).DeviceAgent
 	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).First()

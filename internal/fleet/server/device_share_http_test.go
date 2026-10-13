@@ -38,7 +38,7 @@ func TestDeviceShareLinkManagement(t *testing.T) {
 	device := startShareTestAgent(t, f, owner, "devlink-box")
 	ownerSession := f.session(t, owner)
 
-	// 匿名与 CSRF 边界。
+	// Anonymous and CSRF boundaries.
 	if call := f.call(t, "GET", "/share/device-links", nil, nil, ""); call.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous list: HTTP %d", call.status)
 	}
@@ -51,14 +51,14 @@ func TestDeviceShareLinkManagement(t *testing.T) {
 		t.Fatal("empty token")
 	}
 
-	// 生效时刻不早于过期时刻: 400。
+	// Effect time at/after expiry: 400.
 	if call := f.call(t, "POST", "/share/device-links", map[string]any{
 		"device_id": device.deviceID, "write": false, "not_before_ms": time.Now().UnixMilli() + 3600000, "ttl_ms": 60000,
 	}, ownerSession, ownerSession.csrf); call.status != http.StatusBadRequest {
 		t.Fatalf("not_before >= expiry: HTTP %d %v", call.status, call.body)
 	}
 
-	// 非 owner 吊销被拒; 非 owner 的列表为空。
+	// Non-owner revoke is rejected; the non-owner's list is empty.
 	otherSession := f.session(t, other)
 	if call := f.call(t, "POST", "/share/device-links/"+linkID+"/revoke", nil, otherSession, otherSession.csrf); call.status != http.StatusForbidden {
 		t.Fatalf("other revoke: HTTP %d", call.status)
@@ -67,7 +67,7 @@ func TestDeviceShareLinkManagement(t *testing.T) {
 		t.Fatalf("other list: HTTP %d %v", call.status, call.body)
 	}
 
-	// owner 列表含该链接且绝不携带 token/hash; 设备链接没有 session_id。
+	// The owner list contains the link and never carries token/hash; device links have no session_id.
 	call := f.call(t, "GET", "/share/device-links", nil, ownerSession, "")
 	if call.status != http.StatusOK {
 		t.Fatalf("owner list: HTTP %d %v", call.status, call.body)
@@ -89,7 +89,7 @@ func TestDeviceShareLinkManagement(t *testing.T) {
 	if call := f.call(t, "POST", "/share/device-links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("owner revoke: HTTP %d %v", call.status, call.body)
 	}
-	// 吊销后 token 立即不可用 (审计 reason=revoked); 把关走 WS upgrade 路径。
+	// After revocation the token is instantly unusable (audit reason=revoked); the gate goes through the WS upgrade path.
 	if status := dialShareViewerStatus(t, f, "/share/public/device/"+token); status != http.StatusForbidden {
 		t.Fatalf("revoked resolve: HTTP %d", status)
 	}
@@ -116,7 +116,7 @@ func TestDeviceShareLinkNotYetValidStopsHandshake(t *testing.T) {
 		t.Fatalf("not_yet_valid audit = %v", last)
 	}
 
-	// 生效时刻到达后同一 token 可用 (直接推进行的 not_before)。
+	// Once the effect time arrives, the same token works (push the row's not_before forward directly).
 	deviceShareLink := query.Use(f.service.db).DeviceShareLink
 	if _, err := deviceShareLink.WithContext(context.Background()).
 		Where(deviceShareLink.TokenHash.Eq(hashSecret(token))).
@@ -138,17 +138,17 @@ func TestSharePublicDeviceTerminalReadWrite(t *testing.T) {
 
 	conn := dialShareViewer(t, f, "/share/public/device/"+token, nil)
 	collector := watchShareConn(conn)
-	// ready 帧携带的是数据面为访客新建的终端会话 (不是任何既有会话)。
+	// The ready frame carries the terminal session the data plane created for the visitor (not any existing session).
 	ready := collector.expectReady(t, "read_write")
 	if ready.SessionID == "" {
 		t.Fatal("device terminal ready has no session id")
 	}
 
-	// 输入产生输出: 标记只有真正执行才会出现 (终端回显的是命令原文)。
+	// Input produces output: the marker only appears if the command actually executed (the terminal echoes the command text).
 	collector.sendBinary(t, []byte("echo dev-$((40+2))\n"))
 	collector.expectOutput(t, "dev-42", 10*time.Second)
 
-	// 输入动作已写审计 (allow), 且不携带 token。
+	// The input action was audited (allow) and carries no token.
 	inputs := auditPayloads(t, f, "device_share_link_input")
 	if len(inputs) == 0 {
 		t.Fatal("no device_share_link_input audit rows")
@@ -195,7 +195,7 @@ func TestSharePublicDeviceTerminalReadOnlyAndShrink(t *testing.T) {
 	device := startShareTestAgent(t, f, owner, "devro-box")
 	ownerSession := f.session(t, owner)
 
-	// 只读: 输入被静默丢弃 (终端回显命令原文, 但执行标记不出现), 连接保持。
+	// Read-only: input is silently discarded (the terminal echoes the command text, but the execution marker never appears), and the connection stays up.
 	_, readToken := createDeviceShareLink(t, f, ownerSession, device.deviceID, false, 0)
 	conn := dialShareViewer(t, f, "/share/public/device/"+readToken, nil)
 	collector := watchShareConn(conn)
@@ -206,7 +206,7 @@ func TestSharePublicDeviceTerminalReadOnlyAndShrink(t *testing.T) {
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 
-	// 读写: 权限收缩 (read_write -> read, 模拟行被改) 后输入立即停止, 已有输出继续。
+	// Read-write: after permission shrinkage (read_write -> read, simulating the row being changed), input stops immediately and existing output continues.
 	_, writeToken := createDeviceShareLink(t, f, ownerSession, device.deviceID, true, 0)
 	conn2 := dialShareViewer(t, f, "/share/public/device/"+writeToken, nil)
 	collector2 := watchShareConn(conn2)
@@ -266,7 +266,7 @@ func TestSharePublicDevicePageServesSPA(t *testing.T) {
 		_, _ = w.Write([]byte(page))
 	}))
 
-	// 设备链接的普通 GET (浏览器导航) 同样直接拿到 SPA, 不校验 token, 不写审计。
+	// Plain GET of a device link (browser navigation) likewise gets the SPA directly: no token verification, no audit.
 	response, err := f.client.Get(f.http.URL + "/share/public/device/some-token")
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestSharePublicDevicePageServesSPA(t *testing.T) {
 		t.Fatalf("plain GET wrote device_share_link_access audit rows: %v", rows)
 	}
 
-	// upgrade 路径的 token 把关不变: 无效 token 的 WS 握手仍 403。
+	// Token gating on the upgrade path is unchanged: a WS handshake with an invalid token still gets 403.
 	if status := dialShareViewerStatus(t, f, "/share/public/device/not-a-token"); status != http.StatusForbidden {
 		t.Fatalf("invalid token WS handshake = %d, want 403", status)
 	}
@@ -296,15 +296,15 @@ func TestShareDaemonOfflineStopsDeviceLink(t *testing.T) {
 	collector := watchShareConn(conn)
 	collector.expectReady(t, "read_write")
 
-	// agent 掉线: 已建立的分享流随桥接断开而停止。
+	// Agent offline: the established share stream stops with the bridge disconnecting.
 	device.stop()
 	collector.expectClosed(t, 10*time.Second)
 
-	// 掉线后打开一律 503 (探针即时判离线, 不等 last_seen 过期)。
+	// Opens after offline always get 503 (the probe judges offline instantly, without waiting for last_seen to expire).
 	if status := dialShareViewerStatus(t, f, "/share/public/device/"+token); status != http.StatusServiceUnavailable {
 		t.Fatalf("offline resolve: HTTP %d", status)
 	}
-	// 掉线后创建一律 503。
+	// Creates after offline always get 503.
 	if call := f.call(t, "POST", "/share/device-links", map[string]any{
 		"device_id": device.deviceID, "write": false, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf); call.status != http.StatusServiceUnavailable {
@@ -312,8 +312,8 @@ func TestShareDaemonOfflineStopsDeviceLink(t *testing.T) {
 	}
 }
 
-// 匿名 resolve 限流: 有效 token 成功重置窗口; 随机 token 首次 403 并记审计,
-// 随后按客户端 IP 进入退避 (429), 被限流的尝试不再写 audit_log。
+// Anonymous resolve rate limiting: a valid token success resets the window; a random token gets 403 with an audit on first try,
+// then enters backoff by client IP (429), and throttled attempts no longer write audit_log.
 func TestSharePublicDeviceResolveRateLimited(t *testing.T) {
 	f := newHTTPFixture(t, false)
 	owner := f.createUser(t, "ratelimit-owner")
@@ -336,7 +336,7 @@ func TestSharePublicDeviceResolveRateLimited(t *testing.T) {
 	if after := len(auditPayloads(t, f, "device_share_link_access")); after != before {
 		t.Fatalf("throttled attempts still wrote audit rows: before=%d after=%d", before, after)
 	}
-	// 退避按客户端 IP 生效: 窗口内真实 token 同样 429 (限流不区分 token 真伪)。
+	// Backoff applies by client IP: a real token within the window also gets 429 (rate limiting does not distinguish token validity).
 	if status := dialShareViewerStatus(t, f, "/share/public/device/"+token); status != http.StatusTooManyRequests {
 		t.Fatalf("valid token within backoff = %d, want 429", status)
 	}

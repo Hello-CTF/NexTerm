@@ -14,9 +14,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// 资产包协议 v1: 面向文件的导入/导出, 与 v2 同步对象协议相互独立。
-// 资产包走文件, 不经过同步链路; 摘要/导出/导入在桌面端与服务器端共用同一实现,
-// 操作的是当前后端(桌面本机或服务器共享库)的资产表, 身份边界由 /rpc 传输层把关。
+// Asset bundle protocol v1: file-oriented import/export, independent of the v2 sync object protocol.
+// Bundles travel as files, not through the sync link; digest/export/import share one implementation
+// across desktop and server, operating on the asset tables of the current backend (desktop local or server shared library); the /rpc transport layer enforces the identity boundary.
 const BundleProtocolVersion = 1
 
 type DigestEntry struct {
@@ -138,7 +138,7 @@ type ImportBundleRequest struct {
 	Force  bool       `json:"force"`
 }
 
-// origin 标识资产包来源端; 服务器共享库与桌面本机各自如实上报。
+// origin identifies which side produced the bundle; the server shared library and the desktop local backend each report truthfully.
 func (s *Service) origin() string {
 	if s.desktop {
 		return "desktop"
@@ -146,7 +146,7 @@ func (s *Service) origin() string {
 	return "server"
 }
 
-// Digest 列出当前后端的全部非内置资产(含软删), 供导出勾选与导入预览"本机已存在"判定。
+// Digest lists all non-built-in assets of the current backend (including soft-deleted), for export selection and import preview "already exists locally" checks.
 func (s *Service) Digest(ctx context.Context) (SyncDigest, error) {
 	rows, err := s.store.AssetList(ctx, true)
 	if err != nil {
@@ -169,8 +169,8 @@ func (s *Service) Digest(ctx context.Context) (SyncDigest, error) {
 	}, nil
 }
 
-// ExportBundle 把勾选资产打包: 自动带上分组祖先链与全部片段; withCreds 时内联被引用凭据的明文,
-// 凭据库必须处于解锁状态, 未勾选凭据时资产只保留凭据引用。
+// ExportBundle packs the selected assets: it automatically includes group ancestor chains and all snippets; with withCreds the plaintext of referenced credentials is inlined,
+// which requires the vault to be unlocked; unselected credentials leave assets with credential references only.
 func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest) (SyncBundle, error) {
 	bundle := SyncBundle{
 		Protocol: BundleProtocolVersion, Origin: s.origin(), ExportedAt: ids.NowMS(),
@@ -301,9 +301,9 @@ type bundleAssetDecision struct {
 	equalRevision  bool
 }
 
-// ImportBundle 按资产包协议 v1 写入当前后端: 本机版本较新的条目默认跳过(force 覆盖),
-// 非法条目拒绝并记警告; 凭据删除墓碑按修订号裁决, 删除写入同步墓碑防止对端复活。
-// 同一对象类的全部写入在单个事务内提交, 任一失败整类回滚, 不留下半导入状态。
+// ImportBundle writes the bundle into the current backend per asset bundle protocol v1: entries whose local version is newer are skipped by default (force overrides),
+// invalid entries are rejected with a warning; credential deletion tombstones are decided by revision, and deletions write sync tombstones to prevent revival on the peer.
+// All writes of one object class commit in a single transaction; any failure rolls back the whole class, leaving no half-imported state.
 func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest) (ImportReport, error) {
 	bundle := request.Bundle
 	if bundle.Protocol != BundleProtocolVersion {
@@ -366,7 +366,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	if err != nil {
 		return ImportReport{}, err
 	}
-	// 两遍写入: 先全部按顶级分组落库(任意顺序都无 FK 依赖), 再链接父级; 整类一个事务。
+	// Two-pass write: first store everything as top-level groups (any order, no FK dependencies), then link parents; one transaction per class.
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		for _, plan := range groupPlans {
 			if err := s.engine.groupUpsertTx(ctx, tx, groupObject{
@@ -726,7 +726,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	return report, nil
 }
 
-// inImportTx 在单个事务内提交一个对象类的全部写入, 任一语句失败整类回滚。
+// inImportTx commits all writes of one object class in a single transaction; any statement failure rolls back the whole class.
 func (s *Service) inImportTx(ctx context.Context, apply func(*gorm.DB) error) error {
 	var applyErr error
 	err := s.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -761,9 +761,9 @@ type bundleGroupPlan struct {
 	exists    bool
 }
 
-// planGroupImports 校验分组载荷并解析父级: 同一 trim 后非空 ID 只处理包内最后一项(last-index 去重),
-// 墓碑判断/skipped 计数/plan 构建/父级引用统一采用最终决策; 本机删除墓碑较新且非 force 时跳过(保留墓碑);
-// 父级只允许指向包内或通过本地存在性校验的分组, 悬空父级置 nil; 循环与超深经 mergedGroupTopology 兜底。
+// planGroupImports validates group payloads and resolves parents: each non-empty ID after trim only processes the last in-bundle entry (last-index dedup);
+// tombstone checks, skipped counts, plan building, and parent references all use the final decision; a newer local deletion tombstone skips the entry unless force (tombstone kept);
+// parents may only point to in-bundle groups or groups passing local existence checks, dangling parents become nil; cycles and excessive depth fall back to mergedGroupTopology.
 func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGroup, force bool, report *ImportReport, warnf func(string, ...any)) ([]bundleGroupPlan, error) {
 	lastIndex := make(map[string]int, len(payloads))
 	for index, payload := range payloads {

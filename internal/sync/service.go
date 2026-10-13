@@ -23,7 +23,7 @@ const (
 
 type Option func(*Service)
 
-// WithMetadata 保留应用版本与桌面端标记; v2 协议不再向对端暴露版本与来源标识。
+// WithMetadata retains the app version and desktop flag; the v2 protocol no longer exposes version or origin markers to the peer.
 func WithMetadata(appVersion string, desktop bool) Option {
 	return func(s *Service) {
 		s.appVersion = appVersion
@@ -86,7 +86,7 @@ type Service struct {
 	blockedNoticed bool
 }
 
-// syncRoundStatus 是最近一轮 Service.Sync 的内存态三件套, 形状照 store.RetentionStatus。
+// syncRoundStatus is the in-memory trio of the most recent Service.Sync round, shaped after store.RetentionStatus.
 type syncRoundStatus struct {
 	LastAttemptAt time.Time `json:"lastAttemptAt"`
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
@@ -106,7 +106,7 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	}
 	s.engine = NewEngine(db, credentialVault, s.logger)
 	if credentialVault != nil {
-		// 凭据库解锁后立即唤醒一轮后台同步: 启动时锁定的库在解锁后不必等下一个周期。
+		// Wake a background sync round immediately after the vault unlocks: a vault locked at startup no longer waits for the next period.
 		credentialVault.AddUnlockListener(s.wake)
 	}
 	return s
@@ -166,15 +166,15 @@ func (s *Service) syncBackground(ctx context.Context) {
 	if _, err := s.Sync(ctx); err != nil && ctx.Err() == nil {
 		s.engine.logger.Warn("background sync failed", "error", err)
 	}
-	// 后台轮新建立会话(解锁唤醒/故障恢复)时广播状态, 已挂载的设置页才能自动刷新为已登录。
+	// Broadcast status when a background round establishes a new session (unlock wake/failure recovery), so an open settings page auto-refreshes to logged-in.
 	if !wasLoggedIn && s.engine.hasSession() {
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
 	}
 }
 
-// noteSyncBlocked 记录凭据库锁定/未初始化导致的后台同步暂停: 写入轮次状态使 Status 可见
-// (此前静默跳过, 用户无从得知同步停摆), 且每段连续暂停期只记一行 Warn, 解锁恢复后
-// roundStatus.LastError 由下一轮成功同步的 defer 清除。
+// noteSyncBlocked records a background sync pause caused by a locked/uninitialized vault: it writes the round status so Status is visible
+// (previously a silent skip with no way for the user to know sync stalled), and logs only one Warn per contiguous pause period; after unlock recovery,
+// roundStatus.LastError is cleared by the next successful round's defer.
 func (s *Service) noteSyncBlocked(err error) {
 	s.roundMu.Lock()
 	s.roundStatus.LastAttemptAt = time.Now()
@@ -187,19 +187,18 @@ func (s *Service) noteSyncBlocked(err error) {
 	}
 }
 
-// clearSyncBlocked 在链接可读(凭据库可用)后复位暂停闩锁: 下次进入暂停态会重新记日志。
+// clearSyncBlocked resets the pause latch once the link is readable (vault available): entering the paused state again logs anew.
 func (s *Service) clearSyncBlocked() {
 	s.roundMu.Lock()
 	s.blockedNoticed = false
 	s.roundMu.Unlock()
 }
 
-// probeSavedLink 启动时对已保存的链接做一次连接探测: 持久会话(上次进程落盘)有效即
-// 免登恢复(不重新登录、不解 DEK 信封, MFA 账号不再挑战); 持久会话缺失/失效则走与
-// LinkSet 同路径的口令探测: connected 即建立会话并刷新 VerifiedAt; mfa_required/
-// reset_required 无法自动完成, 如实记入 LastError 引导重新交互登录; 探测失败只记
-// LastError, 不阻塞启动。未配置或凭据库不可用(锁定/未初始化)时静默跳过,
-// 由后台循环与解锁唤醒接手。
+// probeSavedLink runs one connection probe against the saved link at startup: a valid persisted session (saved by the last process) restores
+// without login (no re-login, no DEK envelope unwrap, no MFA challenge for MFA accounts); a missing/invalid persisted session falls back to the
+// same password probe path as LinkSet: connected establishes the session and refreshes VerifiedAt; mfa_required/reset_required cannot complete
+// automatically and are recorded in LastError to guide an interactive re-login; probe failures only record LastError and do not block startup.
+// When unconfigured or the vault is unavailable (locked/uninitialized), it silently skips and leaves over to the background loop and unlock wake.
 func (s *Service) probeSavedLink(ctx context.Context) {
 	ctx = vault.WithBackground(ctx)
 	link, err := s.LinkGet(ctx)
@@ -241,9 +240,9 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
 }
 
-// probePersistedSession 优先用落盘的持久会话恢复账号会话: me() 校验通过即免登恢复。
-// 信封与当前链接身份不一致(链接已改配)或服务端已吊销会话(401)时清除信封并回退
-// 口令重登; 网络等其余失败保留信封, 同样回退口令重登。
+// probePersistedSession prefers restoring the account session from the persisted session: a passing me() check restores without login.
+// When the envelope does not match the current link identity (link reconfigured) or the server has revoked the session (401), it clears the envelope and falls back
+// to password re-login; other failures such as network errors keep the envelope and also fall back to password re-login.
 func (s *Service) probePersistedSession(ctx context.Context, secret linkSecret) bool {
 	persisted, found := s.engine.loadPersistedSession(ctx)
 	if !found {
@@ -293,7 +292,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// ObjectHandler 暴露服务端盲存储入口, 由服务端挂载到会话中间件之后。
+// ObjectHandler exposes the server-side blind-store entry, mounted by the server after the session middleware.
 func (s *Service) ObjectHandler() *ObjectHandler {
 	return NewObjectHandler(s.store.GORM(), s.store.Backend(), s.engine.logger)
 }
@@ -360,7 +359,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 		return LinkResult{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	secret := linkSecret{}
-	// 仅信封值参与逐字段合并; 历史明文整单覆写的前提是调用方每次提交完整链接。
+	// Only envelope values participate in field-by-field merging; wholesale overwrite of legacy plaintext relies on the caller submitting the complete link every time.
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
 		return LinkResult{}, err
 	} else if found && strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
@@ -385,7 +384,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if patch.Insecure != nil {
 		secret.Insecure = *patch.Insecure
 	}
-	// 链接身份变更即旧账号登出: 持久会话属于旧身份, 立即清除(成功重连会重写)。
+	// A link identity change logs the old account out: the persisted session belongs to the old identity and is cleared immediately (a successful reconnect rewrites it).
 	if secret.URL != prevURL || secret.Username != prevUsername {
 		s.engine.clearPersistedSession(ctx)
 	}
@@ -405,8 +404,8 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if !result.Link.IsConfigured() {
 		return result, nil
 	}
-	// 保存不因探测失败而回滚(与既有"先存后验"语义一致): 失败只记 LastError,
-	// 成功分态 connected/mfa_required/reset_required, connected 时刷新 VerifiedAt。
+	// Saving is not rolled back on probe failure (same "save first, verify second" semantics as before): failure only records LastError,
+	// success splits into connected/mfa_required/reset_required, with VerifiedAt refreshed on connected.
 	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
 	if err != nil {
 		s.recordProbe(ctx, err)
@@ -429,8 +428,8 @@ func (s *Service) refreshLinkResult(ctx context.Context, result LinkResult) Link
 	return result
 }
 
-// LinkResult 是链接写操作与登录入职的返回: Link 视图之外附带连接三态,
-// MFA/强制改密分支携带完成入职所需的票据或一次性恢复密钥。
+// LinkResult is the return of link write operations and login onboarding: the Link view plus the connection tri-state,
+// with the MFA/forced-password-change branches carrying the ticket or one-time recovery key needed to finish onboarding.
 type LinkResult struct {
 	Link
 	Connect      string `json:"connect"`
@@ -450,7 +449,7 @@ func remoteConfigFromSecret(secret linkSecret) RemoteConfig {
 	return RemoteConfig{URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure}
 }
 
-// LinkMFA 提交 TOTP 码完成两步登录入职; 票据由上一次 LinkSet 的 mfa_required 返回下发。
+// LinkMFA submits a TOTP code to complete two-step login onboarding; the ticket is issued by the previous LinkSet's mfa_required return.
 func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
@@ -472,7 +471,7 @@ func (s *Service) LinkMFA(ctx context.Context, code string) (LinkResult, error) 
 	return result, nil
 }
 
-// LinkResetPassword 提交新密码完成强制改密入职; 成功后保存的链接口令同步更新为新口令。
+// LinkResetPassword submits a new password to complete forced-password-change onboarding; on success the saved link password is updated to the new password.
 func (s *Service) LinkResetPassword(ctx context.Context, newPassword string) (LinkResult, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
@@ -572,7 +571,7 @@ func syncReportChanged(report SyncReport) bool {
 	return report.Applied > 0 || report.Pushed > 0
 }
 
-// Sync 用已保存的链接执行一轮完整同步(对账 → 拉取合并 → 推送)。
+// Sync runs one full sync round (reconcile -> pull and merge -> push) with the saved link.
 func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()

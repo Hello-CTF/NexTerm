@@ -111,10 +111,10 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
-// eventFilter 按订阅者身份过滤敏感事件: 无身份连接 (开放部署/网关) 不做
-// 过滤; 登录用户只收到属于自己的 device://status、session://connect-progress
-// (含跳板 host:port) 与 ai://notification。归属查询失败、payload 异型、属主
-// 为空一律不下发 (失败关闭); 超管同样只收自己的 (镜像 device 语义)。
+// eventFilter filters sensitive events by subscriber identity: identity-less connections (open deployments/gateway) are not
+// filtered; logged-in users only receive their own device://status, session://connect-progress
+// (including bastion host:port), and ai://notification. Failed ownership lookups, malformed payloads, and empty owners
+// are never delivered (fail closed); superadmins likewise only receive their own (mirroring device semantics).
 func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 	if identity == nil {
 		return nil
@@ -192,14 +192,15 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// pumpSocket 见 pumpSocketWithRead; 无上行处理 (读循环丢弃全部上行字节)。
+// pumpSocket see pumpSocketWithRead; no upstream handling (the read loop discards all upstream bytes).
 func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, func(), error)) {
 	s.pumpSocketWithRead(ctx, connection, next, nil)
 }
 
-// pumpSocketWithRead 把 next 产生的帧串行写给对端, 读循环只用于观察断开与应答
-// 控制帧; onRead 非空时每个上行数据帧同步回调 (仍在读 goroutine 内, 不得直接写
-// 连接, 回写须经由 next 的帧源排队)。onRead 为 nil 时上行字节全部丢弃。
+// pumpSocketWithRead writes frames produced by next to the peer serially; the read loop only watches for disconnects
+// and answers control frames; when onRead is non-nil, every upstream data frame is synchronously callbacked (still
+// inside the read goroutine; it must not write to the connection directly, and writes back must be queued via next's frame source).
+// When onRead is nil, all upstream bytes are discarded.
 func (s *Server) pumpSocketWithRead(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, func(), error), onRead func(context.Context, websocket.MessageType, []byte)) {
 	ctx, cancel := context.WithCancel(ctx)
 	readDone := make(chan struct{})

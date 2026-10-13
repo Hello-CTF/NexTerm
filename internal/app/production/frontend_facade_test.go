@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// 前端 IPC facade(src/ipc 下直接发起 call 的文件)的命令钉值必须全部落在
-// production dispatcher 注册面上; 反向差集只允许 ai_takeover_resume 这一个纯后端
-// 入口(前端只接 ai_takeover_enter/run/exit)。
+// Command pinned values in the frontend IPC facade (files under src/ipc that initiate calls directly) must all fall within
+// the production dispatcher's registered surface; the reverse difference may only contain ai_takeover_resume, the single
+// pure-backend entry (the frontend only consumes ai_takeover_enter/run/exit).
 var frontendFacadeFiles = []string{
 	filepath.Join("..", "..", "..", "src", "ipc", "commands.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "cron.ts"),

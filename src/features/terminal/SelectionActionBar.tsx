@@ -6,7 +6,7 @@ const COARSE_POINTER_QUERY = "(pointer: coarse)";
 const BAR_HALF_WIDTH_PX = 112;
 const VIEWPORT_MARGIN_PX = 8;
 
-// 平台判定不引用 platform.ts: 多个终端测试对 platform 的局部 mock 未导出 isCoarsePointer。
+// Platform detection deliberately does not import platform.ts: several terminal tests partially mock platform without exporting isCoarsePointer.
 export function isCoarsePointerDevice(): boolean {
   return (
     typeof window !== "undefined" &&

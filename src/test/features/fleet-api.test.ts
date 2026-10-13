@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// FLEET149 线上契约: fleetApi 的路径/方法/CSRF/蛇形 JSON 字段对齐
-// internal/fleet/server/http.go 的真实路由, 401 复用既有会话过期事件。
+// FLEET149 live contract: fleetApi paths/methods/CSRF/snake_case JSON fields align with
+// the real routes in internal/fleet/server/http.go; 401 reuses the existing session-expired event.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面端设备管理 · 已登录: 数据全部走 remote* 代理 (remote_fleet_* / remote_healthz),
-// 列表/签发/吊销/自启/指标/接入地址与 WEB 同视图; 桌面无 /ws/events 通道,
-// 在线状态只靠 30 秒轮询刷新, 不订阅 device://status。
+// Desktop device management - logged in: all data goes through the remote* proxies (remote_fleet_* / remote_healthz),
+// list/issue/revoke/autostart/metrics/enrollment URLs share the WEB view; desktop has no /ws/events channel,
+// online state refreshes only via 30-second polling, no device://status subscription.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";

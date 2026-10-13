@@ -157,7 +157,7 @@ export interface TakeoverState {
   startedAt: number;
 }
 
-// AI 看板按工作区分组: 每个工作区一组标签, 每个标签绑定一个独立会话。
+// AI board groups by workspace: each workspace gets one tab group, each tab bound to an independent conversation.
 export interface AiDockTab {
   id: string;
   title: string;
@@ -169,7 +169,7 @@ export interface AiBoard {
   activeTabId: string | null;
 }
 
-// 没有远程主机工作区(无工作区或「工具」工作区)时, AI 看板落在全局分组。
+// Without a remote-host workspace (no workspace or the "tools" workspace), the AI board falls into the global group.
 export const GLOBAL_AI_BOARD_KEY = "global";
 
 export interface BroadcastState {
@@ -264,7 +264,7 @@ interface UiState {
 let toastSeq = 1;
 let tabSeq = 1;
 
-// 会话列表的 auth 守卫: 登录/登出切换账号时, 在途的旧请求可能迟到, 不允许回写覆盖新会话的数据。
+// Auth guard for the session list: when login/logout switches accounts, in-flight old requests may arrive late and must not write back over the new session data.
 let sessionsEpoch = 0;
 
 const LEFT_MIN = 180;
@@ -1267,8 +1267,8 @@ function collectWorkspaceClose(tabs: AppTab[], assetKind?: string): WorkspaceClo
   };
 }
 
-// confirmWorkspaceClose 把 dirty 编辑器与 blocked 终端合并成一次汇总确认;
-// 取消时不发出任何 IPC, 也不关闭任何标签。
+// confirmWorkspaceClose merges dirty editors and blocked terminals into one summary confirmation;
+// on cancel, no IPC is issued and no tab is closed.
 async function confirmWorkspaceClose(
   summary: WorkspaceCloseSummary,
   title: string,
@@ -1313,7 +1313,7 @@ async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<Wo
   };
 }
 
-// pushWorkspaceCloseToast 一次关闭只发一条汇总 toast: 有失败发错误, 否则有终端动向才发一条信息。
+// pushWorkspaceCloseToast emits one summary toast per close: an error if anything failed, otherwise one info toast only when terminals were affected.
 function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome): void {
   const { pushToast } = useUi.getState();
   const parts: string[] = [];
@@ -1332,8 +1332,8 @@ function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome):
   pushToast("info", `已关闭「${title}」：${parts.join("，")}`);
 }
 
-// reclaimWorkspaceTabs 汇总确认后收回标签占用(终端转后台/结束、数据库断开)但不关闭工作区;
-// 供布局预设「应用到当前工作区」在重建分屏前复用同一套确认与收回语义。
+// reclaimWorkspaceTabs reclaims tab occupancy after the summary confirmation (terminals detached/killed, databases disconnected) without closing the workspace;
+// used by the layout preset "apply to current workspace" to reuse the same confirm-and-reclaim semantics before rebuilding splits.
 export async function reclaimWorkspaceTabs(
   tabs: AppTab[],
   title: string,
@@ -1400,7 +1400,7 @@ const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
   { key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true },
 ];
 
-// decided 仅由批量关闭传入: undefined=按偏好分派, null=批量选择已取消(保留运行中终端), 其余为统一决定。
+// decided is only passed by batch close: undefined = dispatch by preference, null = batch choice canceled (keep running terminals), anything else is the unified decision.
 async function requestCloseTabWithAction(
   id: string,
   decided: TerminalCloseAction | null | undefined,
@@ -1732,8 +1732,8 @@ async function openConnectedAssetSession(
     assetId: asset.id,
     assetKind: asset.kind,
   });
-  // 设备会话没有文件面 (supervisor v2 无 fs 帧), 不自动切到文件栏; 手动打开
-  // 时由 FileTree 给出显式降级。
+  // Device sessions have no file plane (supervisor v2 has no fs frames), so do not auto-switch to the files panel;
+  // FileTree gives an explicit degradation when opened manually.
   if (asset.kind !== "device" && !sidebarsOverlayWorkspace()) {
     setLeftMode("files");
     setLeftOpen(true);
@@ -1763,8 +1763,8 @@ export interface ConnectAssetOptions {
   silent?: boolean;
 }
 
-// connectAssetSession 只建立会话并登记进会话列表, 不打开任何标签;
-// 供布局预设恢复等「先连上再按预设摆标签」的入口使用。
+// connectAssetSession only establishes the session and registers it in the session list, opening no tabs;
+// used by entries like layout preset restore that connect first and arrange tabs afterwards.
 export async function connectAssetSession(
   asset: ConnectAssetInput,
 ): Promise<SessionInfo | null> {
@@ -1788,7 +1788,7 @@ export async function connectAssetSession(
   }
 }
 
-// connectDbAsset 建立数据库连接并返回 connId, 不打开标签; 布局预设恢复数据库标签时使用。
+// connectDbAsset establishes a database connection and returns the connId without opening a tab; used when layout preset restore rebuilds database tabs.
 export async function connectDbAsset(asset: ConnectAssetInput): Promise<string | null> {
   try {
     if (!(await ensureVaultReadyFor(asset))) return null;
@@ -1873,7 +1873,7 @@ async function runConnectAsset(
         useConnectHistory.getState().record(asset.id);
         return { ok: true };
       } catch {
-        // 会话已在服务端删除或重连失败: 落到下方清残留工作区走全新连接
+        // Session deleted on the server or reconnect failed: fall through to clean up the leftover workspace below and make a fresh connection
       }
     }
     await useUi.getState().closeWorkspace(existing.id);
@@ -1924,15 +1924,15 @@ async function runConnectAsset(
   }
 }
 
-// deviceAssetId 是设备会话在会话体系里的伪资产 id (与后端 session_connect_device
-// 的 asset.ID 一致); 设备不是资产表记录, 凭据/主机密钥流程一律不适用。
+// deviceAssetId is the pseudo asset id of a device session in the session system (matching the
+// asset.ID of the backend session_connect_device); devices are not asset table records, so credential/host-key flows never apply.
 export function deviceAssetId(deviceId: string): string {
   return `device/${deviceId}`;
 }
 
-// connectDevice 打开 fleet 设备的完整工作区: 会话经 session_connect_device 建立
-// (服务端做 owner/吊销/终端开关授权), 终端标签进会话体系, 复用重连与 durable
-// 恢复语义。工作区去重/断线重连与 connectAsset 同形态。
+// connectDevice opens the full workspace of a fleet device: the session is established via session_connect_device
+// (the server enforces owner/revocation/terminal-switch authorization), terminal tabs enter the session system, reusing
+// reconnect and durable restore semantics. Workspace dedup/reconnect mirrors connectAsset.
 export async function connectDevice(
   device: { id: string; name: string },
   options?: ConnectAssetOptions,
@@ -1981,7 +1981,7 @@ async function runConnectDevice(
         useUi.getState().setActiveWorkspace(existing.id);
         return { ok: true };
       } catch {
-        // 会话已在服务端删除或重连失败: 落到下方清残留工作区走全新连接
+        // Session deleted on the server or reconnect failed: fall through to clean up the leftover workspace below and make a fresh connection
       }
     }
     await useUi.getState().closeWorkspace(existing.id);
@@ -2066,7 +2066,7 @@ export async function saveQuickConnectAsset(
   const password = await promptQuickConnectPassword(display);
   if (password === null) return { ok: false, canceled: true };
   try {
-    // 服务端装配禁用了 session_quick_connect_user: web 模式下不回填服务器 OS 用户。
+    // The server assembly disabled session_quick_connect_user: in web mode, do not backfill the server OS user.
     const username = target.username ?? (DESKTOP ? await sessionApi.quickConnectDefaultUser() : "");
     let credId: string | null = null;
     if (password) {
@@ -2103,9 +2103,9 @@ export async function saveQuickConnectAsset(
 
 const inflightReconnects = new Map<string, Promise<SessionInfo | null>>();
 
-// SESSION_RECONNECT_WAIT_MS 对齐后端重连生命周期: internal/session 默认 10 次尝试、
-// 退避 1/2/4/8/16/30s(合计 181s), 每次拨号 SSH 默认 15s, 6 分钟覆盖最坏情况;
-// connected/failed 终态会提前结束等待, 超时只是兜底。
+// SESSION_RECONNECT_WAIT_MS aligns with the backend reconnect lifecycle: internal/session defaults to 10 attempts with
+// backoff 1/2/4/8/16/30s (181s total), each SSH dial defaults to 15s, so 6 minutes covers the worst case;
+// terminal connected/failed states end the wait early, the timeout is only a fallback.
 export const SESSION_RECONNECT_WAIT_MS = 360_000;
 
 export function isSessionReconnectPending(sessionId: string): boolean {
@@ -2138,8 +2138,8 @@ async function runReconnectAndWait(
   const started = await sessionApi.reconnect(session.id);
   if (!started) throw new Error("重连未能启动");
   const deadline = Date.now() + timeoutMs;
-  // session_reconnect 先返回、后端协程后置 reconnecting, 首次 list 可能读到启动前的
-  // 旧 disconnected/failed; 只有见过 connecting/reconnecting 之后的终态才算失败。
+  // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
+  // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
   let enteredReconnect = false;
   for (;;) {
     const list = await sessionApi.list();

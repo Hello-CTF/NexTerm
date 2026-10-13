@@ -119,7 +119,7 @@ func (m Mode) valid() bool {
 	return m == ReadOnly || m == ReadWrite || m == Silent || m == Unattended
 }
 
-// DeviceMode 返回设备的权限模式覆盖；无覆盖时 ok 为 false。
+// DeviceMode returns the device's permission mode override; ok is false when there is no override.
 func (m *Manager) DeviceMode(deviceID string) (Mode, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -127,7 +127,7 @@ func (m *Manager) DeviceMode(deviceID string) (Mode, bool) {
 	return mode, ok
 }
 
-// WithDeviceMode 在给定配置上应用设备模式覆盖；无覆盖或设备为空时原样返回。
+// WithDeviceMode applies the device mode override to the given config; returns it unchanged when there is no override or the device is empty.
 func (m *Manager) WithDeviceMode(config Config, deviceID string) Config {
 	if deviceID == "" {
 		return config
@@ -138,7 +138,7 @@ func (m *Manager) WithDeviceMode(config Config, deviceID string) Config {
 	return config
 }
 
-// SetDeviceMode 设置设备的权限模式覆盖；mode 为空字符串时清除覆盖，回落到全局模式。
+// SetDeviceMode sets the device's permission mode override; an empty mode clears the override, falling back to the global mode.
 func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {

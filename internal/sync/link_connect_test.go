@@ -28,7 +28,7 @@ func TestLinkSetConnectedCachesSession(t *testing.T) {
 		t.Fatalf("probe not recorded: %+v", result.Link)
 	}
 
-	// 会话已在 LinkSet 时建立: 远端调用不再重登。
+	// The session was already established during LinkSet: remote calls do not re-login.
 	if _, err := instance.service.Remote().ListDevices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestLinkSetBadPasswordRecordsError(t *testing.T) {
 	fixture.createUser(t, "alice", "alice-pw-123")
 	instance := newTestInstance(t, true)
 
-	// 先存后验: 探测失败不回滚保存、不报错, 状态为空且 LastError 落盘。
+	// Save first, verify second: a failed probe does not roll back the save and does not error; the state is empty and LastError is persisted.
 	result, err := instance.service.LinkSet(context.Background(), linkPatch(fixture.URL, "alice", "wrong-pw"))
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestLinkMFAFlow(t *testing.T) {
 		t.Fatalf("connect = %+v, want mfa_required with ticket", result)
 	}
 
-	// 错误验证码被拒且不消费票据: 同一票据重试正确动态码必须成功(与服务端语义一致)。
+	// A wrong code is rejected without consuming the ticket: retrying the same ticket with the correct TOTP code must succeed (same semantics as the server).
 	if _, err := instance.service.LinkMFA(ctx, "000000"); err == nil {
 		t.Fatal("wrong TOTP code must fail")
 	} else {
@@ -89,7 +89,7 @@ func TestLinkMFAFlow(t *testing.T) {
 		t.Fatalf("connect = %q, want connected", result.Connect)
 	}
 
-	// 会话(cookie+CSRF)内存持有: 远端读与 CSRF 写都直接可用, 且不再重登。
+	// The session (cookie+CSRF) is held in memory: remote reads and CSRF writes work directly, with no re-login.
 	if _, err := instance.service.Remote().ListDevices(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestLinkResetRequiredFlow(t *testing.T) {
 		t.Fatalf("connect = %q, want reset_required", result.Connect)
 	}
 
-	// 强制改密入职: 用新口令签发全新 DEK 信封, 恢复密钥只在响应里下发一次。
+	// Forced-password-change onboarding: a brand-new DEK envelope is issued with the new password, and the recovery key is delivered only once in the response.
 	result, err = instance.service.LinkResetPassword(ctx, "brand-new-pw-1")
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestLinkResetRequiredFlow(t *testing.T) {
 		t.Fatalf("connect = %+v, want connected with one-shot recovery key", result)
 	}
 
-	// 受限会话被服务端保留为正式会话: 读与 CSRF 写直接可用, 全程只登录一次。
+	// The restricted session is kept by the server as a formal session: reads and CSRF writes work directly, with exactly one login in the whole flow.
 	if _, err := instance.service.Remote().ListDevices(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -138,14 +138,14 @@ func TestLinkResetRequiredFlow(t *testing.T) {
 		t.Fatalf("logins = %d, want 1 (reset 完成复用受限会话, 不重登)", got)
 	}
 
-	// 中间态已消费: 重复提交新密码必须拒绝。
+	// The intermediate state is consumed: submitting a new password again must be rejected.
 	if _, err := instance.service.LinkResetPassword(ctx, "another-pw-1"); err == nil {
 		t.Fatal("consumed reset state must reject a second password")
 	} else {
 		requireCode(t, err, ipc.CodeBadParam)
 	}
 
-	// 保存的口令已更新为新口令: 不带口令重新保存(合并既有口令)必须直接 connected。
+	// The saved password was updated to the new one: re-saving without a password (merging the existing password) must be connected directly.
 	link, err := instance.service.LinkGet(ctx)
 	if err != nil {
 		t.Fatal(err)

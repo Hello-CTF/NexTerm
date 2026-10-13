@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// M195 验收: 设置分区导航(小标签直达、键盘可达)与统一登录入口
-// (Web 未登录时全设置页只有一个登录按钮; 账号/同步/分享不再各放一个)。
+// M195 acceptance: settings section navigation (small-tab jump, keyboard reachable) and a unified login entry
+// (Web logged-out: the whole settings page has a single login button; account/sync/sharing no longer each place one).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -207,7 +207,7 @@ describe("设置分区导航", () => {
     const scrollContainer = mounted.container.querySelector<HTMLElement>("div.overflow-y-auto");
     expect(scrollContainer).not.toBeNull();
 
-    // 模拟滚动位置: ai-model 是最后一个顶部越过阈值的分区, 其余排在阈值外或更靠上
+    // Simulate scroll position: ai-model is the last section whose top crossed the threshold, the rest sit outside the threshold or higher up
     const offsets: Record<string, number> = {
       "settings-appearance": -300,
       "settings-terminal": -120,
@@ -231,7 +231,7 @@ describe("设置分区导航", () => {
       } as DOMRect;
     });
 
-    // rAF 同步化: 滚动监听经 requestAnimationFrame 合帧, 测试内同步执行以便立即断言
+    // rAF synchronization: the scroll listener batches via requestAnimationFrame; executed synchronously in the test for immediate assertions
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
       return 0;
@@ -303,11 +303,11 @@ describe("统一登录入口(Web 未登录)", () => {
     expect(text).toContain("当前未登录");
     expect(text).not.toContain("登录以启用同步");
     expect(text).not.toContain("去登录");
-    // 分享卡保留说明但没有任何按钮
+    // The share card keeps its description but has no buttons
     const share = document.getElementById("settings-share")!;
     expect(share.textContent).toContain("登录后可以把你接入的设备分享给其他注册用户");
     expect(share.querySelectorAll("button").length).toBe(0);
-    // 唯一的登录按钮打开账号门
+    // The single login button opens the account gate
     click(loginButtons[0]);
     expect(useAuth.getState().gate).toBe("login");
   });

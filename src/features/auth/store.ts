@@ -1,6 +1,6 @@
-// 账号会话与同步 DEK 的内存态。DEK 绝不持久化、绝不出内存;
-// 会话只存 HttpOnly cookie(浏览器管理),CSRF 令牌与 DEK 仅内存持有,
-// 页面刷新后经 /auth/me 重取 CSRF 令牌,DEK 需重新用密码解锁。
+// In-memory state of the account session and sync DEK. The DEK is never persisted and never leaves memory;
+// the session stores only the HttpOnly cookie (browser-managed); the CSRF token and DEK are memory-only,
+// the CSRF token is refetched via /auth/me after a page refresh, and the DEK must be unlocked again with the password.
 
 import { create } from "zustand";
 import {
@@ -30,7 +30,7 @@ import { DESKTOP, WEB } from "../../ipc/env";
 import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
 
-// syncPreferenceStore 在登录/刷新后注册账号偏好存储(M140 /auth/preferences),登出时注销。
+// syncPreferenceStore registers the account preference store (M140 /auth/preferences) after login/refresh, and unregisters on logout.
 function syncPreferenceStore(loggedIn: boolean): void {
   if (loggedIn || DESKTOP) {
     registerAccountPreferenceStore(createHttpPreferenceStore());
@@ -58,13 +58,13 @@ interface AuthState {
   user: AccountUser | null;
   dek: Uint8Array | null;
   gate: AuthGateKind;
-  /** 最近一次初始化/注册/改密签发的恢复密钥,展示一次后由界面清除。 */
+  /** Recovery key issued by the latest init/register/password change; cleared by the UI after one display. */
   pendingRecoveryKey: RecoveryKeyIssue | null;
-  /** 密码已通过、待 TOTP 第二因子的中间态; 密码仅驻留内存,验证完成或取消即清除。 */
+  /** Intermediate state after the password passes, awaiting the TOTP second factor; the password stays in memory only and is cleared on completion or cancel. */
   pendingMfa: PendingMfa | null;
   /**
-   * mfa_required 策略下未绑定会话被服务端锁到只能绑定;
-   * 登录密码暂存于此,绑定完成后用于解 DEK 进入应用,完成或登出即清除。
+   * Under the mfa_required policy, an unenrolled session is locked by the server to enrollment only;
+   * the login password is stashed here, used to decrypt the DEK after enrollment completes, and cleared on completion or logout.
    */
   mfaEnrollmentPassword: string | null;
   error: AppError | null;
@@ -80,7 +80,7 @@ interface AuthState {
   completeResetRequired: (tempPassword: string, newPassword: string) => Promise<void>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<RecoveryKeyIssue>;
   recoveryReset: (username: string, recoveryKey: string, newPassword: string) => Promise<void>;
-  // 配对码登记设备(公共路由,不建会话);返回设备供随后的 login 以 device_id 绑定会话。
+  // Enroll a device with a pairing code (public route, no session created); returns the device for the subsequent login to bind the session via device_id.
   enrollDevice: (code: string, name: string) => Promise<AccountDevice>;
   unlockDEK: (password: string) => Promise<void>;
   lockDEK: () => void;
@@ -92,15 +92,15 @@ function zeroize(data: Uint8Array | null): void {
   if (data) data.fill(0);
 }
 
-// DEK 随浏览器标签会话持久化(sessionStorage): 页面刷新后自动恢复解锁,
-// 关闭标签/浏览器即失效, 避免每次刷新都要求重新输入密码。
+// The DEK persists with the browser tab session (sessionStorage): unlock auto-restores after a page refresh,
+// and it is gone when the tab/browser closes, avoiding a password prompt on every refresh.
 const DEK_SESSION_PREFIX = "nexterm.sessionDek.v1.";
 
 function persistDek(userId: string, dek: Uint8Array): void {
   try {
     sessionStorage.setItem(DEK_SESSION_PREFIX + userId, bytesToBase64(dek));
   } catch {
-    // sessionStorage 不可用时仅内存持有
+    // Memory-only when sessionStorage is unavailable
   }
 }
 
@@ -117,7 +117,7 @@ function clearPersistedDek(userId: string): void {
   try {
     sessionStorage.removeItem(DEK_SESSION_PREFIX + userId);
   } catch {
-    // 忽略
+    // Ignore
   }
 }
 
@@ -135,7 +135,7 @@ function toAppError(e: unknown): AppError {
   return { code: "internal", message: e instanceof Error ? e.message : String(e) };
 }
 
-/** 用口令与(可选)指定 DEK 产出完整信封五元组;dek 缺省时新生成。 */
+/** Build the full five-part envelope set from a password and (optional) given DEK; generates a fresh DEK when omitted. */
 async function buildEnvelopes(
   password: string,
   dek: Uint8Array,
@@ -173,8 +173,8 @@ async function fetchAndUnwrapDEK(password: string): Promise<Uint8Array> {
 
 type AuthSet = (partial: Partial<AuthState>) => void;
 
-// finishPasswordLogin 完成密码认证后的公共收尾: 记录 CSRF 令牌、拉取/初始化 DEK 信封并进入应用。
-// mfa_required 策略下的未绑定会话进入强制绑定门(服务端已把会话锁到只能绑定)。
+// finishPasswordLogin is the shared wrap-up after password authentication: record the CSRF token, fetch/init the DEK envelope, and enter the app.
+// An unenrolled session under the mfa_required policy enters the forced enrollment gate (the server has already locked the session to enrollment only).
 async function finishPasswordLogin(set: AuthSet, session: AccountSession, password: string): Promise<void> {
   setCsrfToken(session.csrf_token);
   set({ user: session.user });
@@ -186,7 +186,7 @@ async function finishPasswordLogin(set: AuthSet, session: AccountSession, passwo
     set({ gate: "mfa_enroll", mfaEnrollmentPassword: password });
     return;
   }
-  // 管理员创建的用户可能还没有 DEK 信封:用登录密码本地生成并上传(insert-only)。
+  // Users created by an admin may not have a DEK envelope yet: generate one locally with the login password and upload it (insert-only).
   let dek: Uint8Array;
   let recovery: RecoveryKeyIssue | null = null;
   try {
@@ -227,8 +227,8 @@ export const useAuth = create<AuthState>((set, get) => ({
         return;
       }
       if (!status.initialized) {
-        // auth=on 必须先完成超管初始化; loopback 免登录部署允许匿名继续用,
-        // 想要账号的用户在设置页账号卡里有显式初始化入口。
+        // With auth=on, superadmin init must complete first; loopback passwordless deployments allow continuing anonymously,
+        // and users who want an account have an explicit init entry in the settings account card.
         set({ user: null, gate: status.auth === "on" ? "setup" : "ready" });
         syncPreferenceStore(false);
         return;
@@ -246,8 +246,8 @@ export const useAuth = create<AuthState>((set, get) => ({
         }
         syncPreferenceStore(true);
       } catch {
-        // 平台托管模式(懒猫): 网关头已经过平台认证, 这里换取「平台所有者」会话。
-        // 用户既看不到登录, 也看不到初始化码 —— 打开就是所有者。
+        // Platform-hosted mode (Lazycat): the gateway has already authenticated via the platform; exchange the "platform owner" session here.
+        // Users see neither login nor the init code - opening the app means being the owner.
         if (status.auth === "platform") {
           try {
             const session = await authApi.platformSession();
@@ -258,16 +258,16 @@ export const useAuth = create<AuthState>((set, get) => ({
             syncPreferenceStore(true);
             return;
           } catch {
-            // 网关头缺失等(例如直连端口而非平台入口): 退回匿名可用, 由账号卡说明原因。
+            // Gateway header missing etc. (e.g. direct port access instead of the platform entry): fall back to anonymous availability; the account card explains why.
           }
         }
-        // loopback 部署允许匿名继续用;auth=on 必须登录
+        // Loopback deployments allow continuing anonymously; auth=on requires login
         set({ user: null, gate: status.auth === "on" ? "login" : "ready" });
         syncPreferenceStore(false);
       }
     } catch (e) {
-      // auth=off 下 /auth/status 也被 accountGuard 403(消息文本是服务端合同);
-      // 归一为 auth=off 状态,界面据此显示"账号功能已关闭",而不是死登录入口。
+      // With auth=off, /auth/status is also 403'd by accountGuard (the message text is a server contract);
+      // normalize to the auth=off state so the UI shows "account features disabled" instead of a dead login entry.
       if (e instanceof AuthApiError && e.status === 403 && e.message.includes("--auth=off")) {
         set({ status: { initialized: false, registration_open: false, auth: "off" }, user: null, gate: "ready", error: null });
         syncPreferenceStore(false);
@@ -292,7 +292,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // verifyMfa 用动态码或恢复码完成第二步; 成功路径与密码登录一致(解 DEK、进门)。
+  // verifyMfa completes the second step with a dynamic code or recovery code; the success path mirrors password login (decrypt DEK, enter the gate).
   verifyMfa: async (code) => {
     const pending = get().pendingMfa;
     if (!pending) return;
@@ -309,7 +309,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   cancelMfa: () => set({ pendingMfa: null, error: null }),
 
-  // finishMfaEnrollment 在强制绑定完成后进门: 刷新会话(已绑定), 有暂存密码时顺带解 DEK。
+  // finishMfaEnrollment enters the app after forced enrollment completes: refresh the session (now bound), and decrypt the DEK when a stashed password exists.
   finishMfaEnrollment: async () => {
     set({ error: null });
     try {
@@ -333,7 +333,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       await authApi.logout();
     } catch {
-      // 会话可能已失效;本地状态照样清除
+      // The session may already be invalid; local state is cleared regardless
     }
     const logoutUserId = get().user?.id;
     if (logoutUserId) clearPersistedDek(logoutUserId);
@@ -389,8 +389,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // reset_required(管理员重置):信封已被服务端删除,用新密码签发全新 DEK。
-  // changePassword 在事务内校验临时密码并 upsert 信封;不能先 dekUpload(insert-only),否则重试因信封已存在 409 卡死。
+  // reset_required (admin reset): the envelope was deleted by the server; issue a brand-new DEK with the new password.
+  // changePassword validates the temporary password and upserts the envelope in one transaction; do not dekUpload first (insert-only), or a retry deadlocks on 409 because the envelope already exists.
   completeResetRequired: async (tempPassword, newPassword) => {
     set({ error: null });
     const dek = generateDEK();
@@ -412,7 +412,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // 主动改密:用旧密码解出 DEK,再用新密码与新恢复密钥重包裹;密文不动。
+  // Proactive password change: decrypt the DEK with the old password, re-wrap it with the new password and a new recovery key; ciphertext untouched.
   changePassword: async (oldPassword, newPassword) => {
     set({ error: null });
     try {
@@ -429,9 +429,9 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // 恢复密钥重置(公开路由):面向忘记密码的登出用户。客户端签发全新 DEK,
-  // 服务端校验恢复密钥散列后写入新信封并吊销全部会话;旧密文因旧 DEK 不可恢复,
-  // 界面须明确提示云端正文需从仍持有数据的设备重新同步。
+  // Recovery key reset (public route): for logged-out users who forgot the password. The client issues a brand-new DEK,
+  // the server verifies the recovery key hash, writes the new envelope and revokes all sessions; old ciphertext is unrecoverable with the old DEK,
+  // so the UI must clearly state that cloud content needs to re-sync from a device that still holds the data.
   recoveryReset: async (username, recoveryKey, newPassword) => {
     set({ error: null });
     const dek = generateDEK();
@@ -447,7 +447,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // 配对码登记设备:公共路由,只登记不建会话;成功后由界面用返回的设备 id 走统一 login 绑定会话。
+  // Enroll a device with a pairing code: public route, registers only without creating a session; on success the UI uses the returned device id to bind the session via the unified login.
   enrollDevice: async (code, name) => {
     set({ error: null });
     try {
@@ -481,7 +481,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   clearError: () => set({ error: null }),
 }));
 
-// 会话过期(401)时通知门重新登录;由 main.tsx 的 AuthGate 挂载监听。
+// On session expiry (401), notify the gate to re-login; mounted and listened to by AuthGate in main.tsx.
 if (typeof window !== "undefined") {
   window.addEventListener(SESSION_EXPIRED_EVENT, () => {
     const state = useAuth.getState();
@@ -493,7 +493,7 @@ if (typeof window !== "undefined") {
       syncPreferenceStore(false);
     }
   });
-  // 服务端以 mfa_enrollment_required 拒绝(策略中途开启等): 已登录未绑定的会话切入强制绑定门。
+  // The server rejects with mfa_enrollment_required (e.g. policy enabled mid-session): a logged-in unenrolled session switches to the forced enrollment gate.
   window.addEventListener(MFA_ENROLLMENT_REQUIRED_EVENT, () => {
     const state = useAuth.getState();
     if (state.user && !state.user.mfa_enabled) {

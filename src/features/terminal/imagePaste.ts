@@ -1,7 +1,7 @@
 export { bytesToBase64 } from "../../ui/base64";
 
-// pureImageFiles 仅在全部文件项都是图片且至少一张时返回文件列表(all-or-nothing)。
-// 混合载荷(图片+非图片文件)返回空数组, 整个事件交还默认处理, 不提取图片子集、不丢弃任何内容。
+// pureImageFiles returns the file list only when every item is an image and there is at least one (all-or-nothing).
+// A mixed payload (images + non-image files) returns an empty array and the whole event goes back to default handling: no image subset is extracted and nothing is dropped.
 export function pureImageFiles(data: DataTransfer | null): File[] {
   if (!data) return [];
   const entries: { type: string; file: File | null }[] = [];
@@ -20,8 +20,8 @@ export function pureImageFiles(data: DataTransfer | null): File[] {
   return entries.map((entry) => entry.file as File);
 }
 
-// clipboardHasPlainText 判断混合剪贴板里是否有可用纯文本:
-// 有文本时把粘贴交还给终端默认处理, 保证普通文本与 bracketed paste 永不丢失。
+// clipboardHasPlainText reports whether a mixed clipboard has usable plain text:
+// when text exists, the paste goes back to the terminal's default handling so plain text and bracketed paste are never lost.
 export function clipboardHasPlainText(data: DataTransfer | null): boolean {
   if (!data) return false;
   try {
@@ -31,15 +31,15 @@ export function clipboardHasPlainText(data: DataTransfer | null): boolean {
   }
 }
 
-// markdownFileLink 生成插入终端光标的 Markdown 链接(普通链接, 非图片嵌入)。
-// 文本转义反斜杠与方括号; 目标含空白或圆括号时用尖括号包裹(CommonMark 合法目标)。
+// markdownFileLink builds a Markdown link to insert at the terminal cursor (a normal link, not an image embed).
+// Backslashes and square brackets are escaped in the text; a destination containing whitespace or parentheses is wrapped in angle brackets (a CommonMark-legal target).
 export function markdownFileLink(name: string, url: string): string {
   const text = (name || "file").replace(/([\\\[\]])/g, "\\$1");
   const destination = /[\s()]/.test(url) ? `<${url}>` : url;
   return `[${text}](${destination})`;
 }
 
-// pasteFileExtension 从文件名或 MIME 提取安全的小写扩展名(不含点), 缺省 png。
+// pasteFileExtension extracts a safe lowercase extension (without the dot) from the file name or MIME, defaulting to png.
 export function pasteFileExtension(file: File): string {
   const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(file.name)?.[1];
   if (fromName) return fromName.toLowerCase();

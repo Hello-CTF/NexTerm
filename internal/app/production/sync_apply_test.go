@@ -12,8 +12,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 离线共享工作区边界: 命令层不索取会话身份(匿名上下文即可应用),
-// 会话与 CSRF 由 /rpc 传输层(internal/server requireAuth)在账号模式下把关。
+// Offline shared workspace boundary: the command layer does not ask for a session identity (an anonymous context can apply),
+// and session plus CSRF are enforced by the /rpc transport layer (internal/server requireAuth) in account mode.
 func TestSyncApplyObjectsCommandOfflineAnonymous(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)

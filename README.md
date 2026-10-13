@@ -10,6 +10,8 @@
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+**中文** | [English](README_EN.md)
+
 </div>
 
 ## 功能

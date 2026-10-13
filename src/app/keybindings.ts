@@ -275,7 +275,7 @@ export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | nu
 const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
 const DEFAULTS = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a.defaultBinding]));
 
-// keybindingPrefKey 是账号级键位覆盖的线上扁平键(internal/account/preferences.go 白名单)。
+// keybindingPrefKey is the wire flat key for account-level keybinding overrides (whitelist in internal/account/preferences.go).
 function keybindingPrefKey(id: KeybindingActionId): string {
   return `keybinding.${id}`;
 }
@@ -296,7 +296,7 @@ function parseOverrides(raw: unknown): Overrides {
   return out;
 }
 
-// loadLocalOverrides 只读设备本地层;账号层由 preferences 的线上扁平覆盖单独提供。
+// loadLocalOverrides reads only the device-local layer; the account layer is provided separately by the wire flat overrides from preferences.
 function loadLocalOverrides(): Overrides {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -306,7 +306,7 @@ function loadLocalOverrides(): Overrides {
   }
 }
 
-// parseAccountLayer 从线上扁平记录解析键位层(服务端默认与账号覆盖同形状,如 keybinding.newTerminal = "Mod+Shift+t")。
+// parseAccountLayer parses a keybinding layer from wire flat records (server defaults and account overrides share the same shape, e.g. keybinding.newTerminal = "Mod+Shift+t").
 function parseAccountLayer(flat: Record<string, unknown>): Overrides {
   const out: Overrides = {};
   for (const action of KEYBINDING_ACTIONS) {
@@ -324,7 +324,7 @@ function parseAccountLayer(flat: Record<string, unknown>): Overrides {
   return out;
 }
 
-// 服务端默认/账号覆盖加载或清除后由 preferences 通知回填:只重建快照,不改动设备本地层与已写回的账号键。
+// After server defaults / account overrides load or clear, preferences notifies back here: only the snapshot is rebuilt; the device-local layer and written-back account keys are untouched.
 export function applyAccountKeybindingLayers(defaults: Record<string, unknown>, overrides: Record<string, unknown>): void {
   defaultsLayer = parseAccountLayer(defaults);
   accountLayer = parseAccountLayer(overrides);
@@ -339,8 +339,8 @@ function buildSnapshot(overrides: Overrides): KeybindingSnapshot {
   return out;
 }
 
-// 设备本地层(localStorage)、服务端全局默认层(/admin/preferences)与账号覆盖层(线上扁平键)分离;
-// 快照按 内置默认 < 服务端默认 < 设备本地 < 账号覆盖 合并。
+// The device-local layer (localStorage), the server global default layer (/admin/preferences) and the account override layer (wire flat keys) are kept separate;
+// the snapshot merges as builtin default < server default < device local < account override.
 let localOverrides: Overrides = loadLocalOverrides();
 let defaultsLayer: Overrides = {};
 let accountLayer: Overrides = {};
@@ -373,7 +373,7 @@ export function setKeybinding(id: KeybindingActionId, binding: string | null): v
   if (binding !== null && normalized === null) return;
   const store = getAccountPreferenceStore();
   const key = keybindingPrefKey(id);
-  // 与生效默认(服务端默认优先于内置默认)相同即回到默认:清设备本地值与账号覆盖。
+  // Matching the effective default (server default takes precedence over builtin default) means back to default: clear the device-local value and the account override.
   if (normalized === (id in defaultsLayer ? defaultsLayer[id] : DEFAULTS.get(id))) {
     delete localOverrides[id];
     delete accountLayer[id];
@@ -523,7 +523,7 @@ export function bindingConflicts(
   return conflicts;
 }
 
-// 账号覆盖加载/清除后自动重建键位快照(与 preferences 的账号覆盖事件联动)。
+// After account overrides load/clear, the keybinding snapshot is rebuilt automatically (linked to the preferences account override events).
 subscribeAccountOverrides(() => {
   applyAccountKeybindingLayers(getAccountDefaults(), getAccountOverrides());
 });

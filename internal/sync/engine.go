@@ -23,7 +23,7 @@ const (
 	maxPullPages      = 10000
 )
 
-// maxPullBytes 是客户端单页拉取预算; 测试可临时调小以构造分页场景。
+// maxPullBytes is the client-side per-page pull budget; tests may lower it temporarily to construct pagination scenarios.
 var maxPullBytes int64 = maxPullWireBytes
 
 type SyncReport struct {
@@ -40,8 +40,8 @@ type SyncReport struct {
 	unresolvedRefs map[string]bool
 }
 
-// markUnresolvedRef 标记对象以引用降级形态应用(依赖对象未到): 引擎不得记对账,
-// 保持未对账状态使下一轮重拉, 依赖到达后自动恢复。
+// markUnresolvedRef marks an object applied in reference-degraded form (a dependency has not arrived): the engine must not record reconciliation,
+// staying unreconciled so the next round re-pulls it and recovery happens automatically once the dependency arrives.
 func (report *SyncReport) markUnresolvedRef(id string) {
 	if report.unresolvedRefs == nil {
 		report.unresolvedRefs = map[string]bool{}
@@ -49,8 +49,8 @@ func (report *SyncReport) markUnresolvedRef(id string) {
 	report.unresolvedRefs[id] = true
 }
 
-// hasUnresolvedRef 报告对象本轮是否以引用降级形态应用; 标记留存整个 syncOnce,
-// 供推送侧抑制降级版本回推, 每个同步轮次开始时应清空重计。
+// hasUnresolvedRef reports whether the object was applied in reference-degraded form this round; the mark lives for the whole syncOnce,
+// letting the push side suppress pushing degraded versions back; it is cleared and recomputed at the start of each sync round.
 func (report *SyncReport) hasUnresolvedRef(id string) bool {
 	return report.unresolvedRefs[id]
 }
@@ -62,10 +62,10 @@ type remoteSession struct {
 	dek    []byte
 }
 
-// persistedSession 是落盘的账号同步会话信封内容(setting sync.link.session, enc:v1:
-// 凭据库信封, 与保存的链接口令同级保护), 使桌面端进程重启后免登恢复会话。
-// 安全姿态变化: 用户 DEK 随此首次落盘(此前仅内存持有); 这些字段永不进日志
-// (对齐 logSyncRound 只记计数不记载荷的惯例)。
+// persistedSession is the persisted account sync session envelope (setting sync.link.session, enc:v1:
+// vault envelope, protected at the same level as the saved link password), letting the desktop process restore the session without login after a restart.
+// Security posture change: the user DEK is persisted for the first time (previously memory-only); these fields never go into logs
+// (aligned with the logSyncRound convention of logging counts only, never payloads).
 type persistedSession struct {
 	URL         string `json:"url"`
 	Username    string `json:"username"`
@@ -75,8 +75,8 @@ type persistedSession struct {
 	DEK         []byte `json:"dek"`
 }
 
-// Engine 是 v2 全量载荷对象协议的客户端引擎: 同一本地副本在未登录与登录后保持一致,
-// 登录仅挂接同步。引擎自身无状态, 会话与 DEK 仅内存缓存。
+// Engine is the client engine of the v2 full-payload object protocol: the same local replica stays identical before and after login,
+// login only attaches sync. The engine itself is stateless; the session and DEK are memory-cached only.
 type Engine struct {
 	store  *store.Store
 	vault  *vault.Vault
@@ -95,7 +95,7 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	return &Engine{store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{}}
 }
 
-// kindOptIn 是同步对象在一轮同步内的 opt-in 快照; 零值即硬关闭。
+// kindOptIn is the per-sync-round opt-in snapshot of sync object kinds; the zero value means hard-off.
 type kindOptIn struct {
 	knownHost    bool
 	aiProfile    bool
@@ -103,7 +103,7 @@ type kindOptIn struct {
 	preferences  bool
 }
 
-// loadKindOptIn 按会话用户读取同步对象的 opt-in; 无会话身份(userID 为空)时硬关闭, 不退化为全局设置。
+// loadKindOptIn reads the sync object opt-in for the session user; with no session identity (empty userID) it is hard-off, not falling back to global settings.
 func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, error) {
 	if userID == "" {
 		return kindOptIn{}, nil
@@ -127,8 +127,8 @@ func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, e
 	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile, aiPermission: aiPermission, preferences: preferences}, nil
 }
 
-// allowsRemote 判定远端对象(含墓碑)本轮是否可应用; 硬关闭的种类不应用也不记对账,
-// 保持未对账状态, 日后开启 opt-in 的同步轮即可再拉取合并。
+// allowsRemote decides whether a remote object (including tombstones) may be applied this round; hard-off kinds are neither applied nor reconciled,
+// staying unreconciled so a later round with opt-in enabled can pull and merge them.
 func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 	switch kind {
 	case KindKnownHost:
@@ -158,7 +158,7 @@ func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
 	return true
 }
 
-// Sync 执行一轮完整同步: 对账 → 拉取合并 → 推送本地变更。冲突(其他设备先推或回滚)自动重试。
+// Sync runs one full sync round: reconcile -> pull and merge -> push local changes. Conflicts (another device pushed first or rolled back) retry automatically.
 func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
@@ -191,8 +191,8 @@ func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, err
 	return report, err
 }
 
-// logSyncRound 每轮同步至多一行汇总: 空轮静默, 有变更 Info, 失败 Warn;
-// 警告只记数量, 警告原文含对象 ID 不进日志。
+// logSyncRound logs at most one summary line per sync round: silent for empty rounds, Info for changes, Warn for failures;
+// warnings log counts only; warning texts containing object IDs never go into logs.
 func (e *Engine) logSyncRound(userID string, report SyncReport, syncErr error) {
 	attrs := []any{
 		"user", userID, "pulled", report.Pulled, "applied", report.Applied, "skipped", report.PullSkipped,
@@ -237,8 +237,8 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 	return e.establishSession(ctx, config, client, config.Password)
 }
 
-// establishSession 在密码通道已通过后完成会话入职: 取身份与 DEK 信封、解包 DEK、
-// 缓存会话并把会话落盘为持久会话。
+// establishSession completes session onboarding after the password channel has passed: fetch the identity and DEK envelope, unwrap the DEK,
+// cache the session, and persist it as a durable session.
 func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, client *remoteClient, password string) (*remoteSession, error) {
 	userID, err := client.me(ctx)
 	if err != nil {
@@ -260,8 +260,8 @@ func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, clie
 	return session, nil
 }
 
-// persistSession 把已建立的会话落盘为持久会话, 供下次进程启动免登恢复;
-// 落盘失败只记警告, 不影响已建立的内存会话。
+// persistSession persists an established session as a durable session for login-free restore on the next process start;
+// persist failures only log a warning and do not affect the established in-memory session.
 func (e *Engine) persistSession(ctx context.Context, config RemoteConfig, session *remoteSession) {
 	if e.vault == nil {
 		return
@@ -285,8 +285,8 @@ func (e *Engine) persistSession(ctx context.Context, config RemoteConfig, sessio
 	}
 }
 
-// loadPersistedSession 读取持久会话信封: 未保存或凭据库锁定/未初始化时按无持久会话处理
-// (锁定保持静默跳过); 信封损坏或无法解密时清除并记警告, 下次登录会重写。
+// loadPersistedSession reads the persisted session envelope: unsaved or vault locked/uninitialized is treated as no persisted session
+// (locked stays a silent skip); a corrupt or undecryptable envelope is cleared with a warning and rewritten on next login.
 func (e *Engine) loadPersistedSession(ctx context.Context) (*persistedSession, bool) {
 	if e.vault == nil {
 		return nil, false
@@ -324,8 +324,8 @@ func (e *Engine) clearPersistedSession(ctx context.Context) {
 	}
 }
 
-// restoreSession 用持久会话重建远端会话: me() 校验 cookie 仍有效且身份与保存的一致,
-// 成功即缓存会话(不重新登录、不解 DEK 信封); 失败由调用方决定清除或回退口令重登。
+// restoreSession rebuilds the remote session from a persisted session: me() verifies the cookie is still valid and the identity matches the saved one,
+// caching the session on success (no re-login, no DEK envelope unwrap); on failure the caller decides whether to clear it or fall back to password re-login.
 func (e *Engine) restoreSession(ctx context.Context, config RemoteConfig, persisted *persistedSession) (*remoteSession, error) {
 	client, err := newRemoteClient(config)
 	if err != nil {
@@ -364,10 +364,10 @@ func (e *Engine) hasSession() bool {
 	return e.session != nil
 }
 
-// syncOnce 单轮同步; conflict 为 true 表示推送时 head 不一致, 需要重新对账后再试。
+// syncOnce runs a single sync round; conflict=true means the head diverged during push and reconciliation must rerun before retrying.
 func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *SyncReport) (bool, error) {
 	userID := session.userID
-	// 未决引用标记只在本轮有效: 拉取阶段降级应用的对象不记对账、不回推, 冲突重试时清空重计。
+	// Unresolved-ref marks are valid for this round only: objects applied degraded during the pull phase are neither reconciled nor re-pushed; conflict retries clear and recompute them.
 	report.unresolvedRefs = nil
 	optIn, err := e.loadKindOptIn(ctx, userID)
 	if err != nil {
@@ -400,7 +400,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		return false, err
 	}
 	if !completed {
-		// 对账未完成(stall): 持久化进度但本轮不得 collect/push, 不得采用最新 head 继续。
+		// Reconciliation incomplete (stall): persist progress, but this round must not collect/push or continue with the newest head.
 		if err := e.saveCursor(ctx, userID, cursor); err != nil {
 			return false, err
 		}
@@ -414,7 +414,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	pendingHashes := make([]string, 0, len(objects))
 	for _, id := range sortObjectsForPush(objects) {
 		if report.hasUnresolvedRef(id) {
-			// 本地是对端载荷的引用降级形态: 不得回推覆盖云端带引用对象, 依赖到达后恢复正常对账。
+			// Local is the reference-degraded form of the remote payload: do not push it back over the cloud object with references; normal reconciliation resumes once the dependency arrives.
 			continue
 		}
 		local := objects[id]
@@ -453,8 +453,8 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		cursor.Head = response.Head
 		pending, pendingHashes = rest, restHashes
 	}
-	// 收尾拉取: 把游标推进到推送时点, 使空闲同步保持静默, 并立即看到推送期间其他设备的变更。
-	// 收尾无补拉 ID, 空页即自然完成; 若超出有界页数仍未完成, 记警告但不影响已完成的推送。
+	// Final pull: advance the cursor to the push point so idle sync stays silent and changes from other devices during the push are seen immediately.
+	// The final pull has no catch-up IDs and completes naturally on an empty page; if it exceeds the bounded page count, log a warning without affecting the completed push.
 	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report, optIn); err != nil {
 		return false, err
 	} else if !completed {
@@ -468,10 +468,10 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	return false, nil
 }
 
-// pullAllAndApply 耗尽所有游标分页, 并确认全部 unreconciled ID 已返回或已不存在,
-// 然后才允许进入推送。游标进度只由 next_seq 推进(补拉 ID 的 seq 不得推进游标或伪造完成);
-// 首个对象必完整返回的预算规则保证每页至少消化一个对象, 循环必然收敛。
-// 返回 completed=false 表示 stall(对账未完成), 调用方不得在本轮 collect/push。
+// pullAllAndApply exhausts all cursor pages and confirms every unreconciled ID has been returned or no longer exists
+// before push is allowed. Cursor progress advances only via next_seq (catch-up IDs must not advance the cursor or fake completion);
+// the budget rule that the first object must be returned in full guarantees each page digests at least one object, so the loop always converges.
+// Returning completed=false means stall (reconciliation incomplete); the caller must not collect/push this round.
 func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport, optIn kindOptIn) (bool, error) {
 	remaining := make(map[string]bool, len(unreconciled))
 	for _, id := range unreconciled {
@@ -496,7 +496,7 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 			delete(remaining, object.ID)
 			returned++
 		}
-		// 游标只由 next_seq(游标对象)推进; 补拉 ID 不影响游标位置与完成判定。
+		// The cursor advances only via next_seq (cursor objects); catch-up IDs do not affect the cursor position or completion decision.
 		cursor.Seq = pullResponse.NextSeq
 		cursor.Head = pullResponse.Head
 		if pullResponse.CursorDone && len(remaining) == 0 {
@@ -641,15 +641,15 @@ func (e *Engine) syncTombstonePut(ctx context.Context, objectID, kind string, de
 	return nil
 }
 
-// snippetUpsert 与 store.GroupUpsert 同款语义: 按 ID 幂等写入并保留对端修订号,
-// 并在同一事务清除同 ID 的删除墓碑: 较新片段胜过旧墓碑后不得留下可回滚对象的墓碑。
+// snippetUpsert mirrors store.GroupUpsert semantics: idempotent write by ID preserving the peer revision,
+// clearing the same-ID deletion tombstone in the same transaction: once a newer snippet beats an old tombstone, no tombstone that could roll back the object may remain.
 func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return e.snippetUpsertTx(ctx, tx, row)
 	})
 }
 
-// snippetUpsertTx 是 snippetUpsert 的事务内版本, 供 ImportBundle 把一个对象类的多次写入并入同一事务。
+// snippetUpsertTx is the in-transaction version of snippetUpsert, letting ImportBundle merge multiple writes of one object class into the same transaction.
 func (e *Engine) snippetUpsertTx(ctx context.Context, tx *gorm.DB, row store.SnippetRow) error {
 	row.OwnerID = ipc.OwnerID(ctx)
 	if err := tx.Clauses(clause.OnConflict{

@@ -33,8 +33,8 @@ func registerRemote(t *testing.T, manager *Manager, owner string) TabInfo {
 	return info
 }
 
-// TestRemoteSessionFeedAndSpectate 钉住壳的核心数据面: 推入的输出既进屏幕模型
-// (快照源), 也使 Spectator 订阅拿到与真实终端一致的 快照帧 + 二进制增量帧。
+// TestRemoteSessionFeedAndSpectate pins the shell's core data plane: pushed output enters both the screen model
+// (snapshot source) and Spectator subscriptions, which receive snapshot frames + binary delta frames identical to a real terminal.
 func TestRemoteSessionFeedAndSpectate(t *testing.T) {
 	manager := newRemoteManager(t)
 	ctx := context.Background()
@@ -107,8 +107,8 @@ func TestRemoteSessionFeedAndSpectate(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionRejectsNonRemote: 远程通道只作用于壳; 普通终端标签页与未知
-// 标签页一律拒绝, 防止误写真实终端。
+// TestRemoteSessionRejectsNonRemote: remote channels only act on shells; normal terminal tabs and unknown
+// tabs are always rejected, preventing accidental writes to real terminals.
 func TestRemoteSessionRejectsNonRemote(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
@@ -137,8 +137,8 @@ func TestRemoteSessionRejectsNonRemote(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionEndKeepsSnapshot: end 与真实进程退出同语义 — 标签页保留、
-// exited 置位、新订阅者仍拿到含既有输出的快照, 但不再接受推流与推流连接。
+// TestRemoteSessionEndKeepsSnapshot: end has the same semantics as a real process exit - the tab is kept,
+// exited is set, new subscribers still get a snapshot containing the existing output, but feeding and feed connections are no longer accepted.
 func TestRemoteSessionEndKeepsSnapshot(t *testing.T) {
 	manager := newRemoteManager(t)
 	ctx := context.Background()
@@ -150,7 +150,7 @@ func TestRemoteSessionEndKeepsSnapshot(t *testing.T) {
 	if err := manager.EndRemote(info.ID, &code); err != nil {
 		t.Fatal(err)
 	}
-	// 重复 end 幂等。
+	// Repeated end is idempotent.
 	if err := manager.EndRemote(info.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRemoteSessionEndKeepsSnapshot(t *testing.T) {
 	}
 }
 
-// TestRemoteFeedExclusive: 同一壳只允许一条活跃推流连接; 释放后可重连续推。
+// TestRemoteFeedExclusive: only one active feed connection is allowed per shell; reattach works after release.
 func TestRemoteFeedExclusive(t *testing.T) {
 	manager := newRemoteManager(t)
 	info := registerRemote(t, manager, "user-a")
@@ -209,14 +209,14 @@ func TestRemoteFeedExclusive(t *testing.T) {
 		t.Fatalf("reattach after detach: %v", err)
 	}
 	manager.DetachRemoteFeed(again)
-	// 释放兜底: 重复 detach 不得把计数压成负数阻断后续 attach。
+	// Release fallback: a repeated detach must not push the count negative and block later attaches.
 	manager.DetachRemoteFeed(again)
 	if _, err := manager.AttachRemoteFeed(info.ID); err != nil {
 		t.Fatalf("attach after double detach: %v", err)
 	}
 }
 
-// TestRemoteSessionLimit: 单账号活跃壳上限; 他人不受影响; CloseRemote 释放名额。
+// TestRemoteSessionLimit: per-account active shell limit; others are unaffected; CloseRemote frees the slot.
 func TestRemoteSessionLimit(t *testing.T) {
 	manager := newRemoteManager(t)
 	first := registerRemote(t, manager, "user-a")
@@ -237,8 +237,8 @@ func TestRemoteSessionLimit(t *testing.T) {
 	}
 }
 
-// TestRemoteIdleSweep 钉住空闲回收: 无推流、无观看且活动超时的壳被收割
-// (标签页与会话一并移除); 活跃推流连接或订阅观看者都挂起回收; 断连重置计时。
+// TestRemoteIdleSweep pins idle reaping: a shell with no feed, no watchers, and timed-out activity is reaped
+// (tab and session removed together); an active feed connection or subscribed watchers suspend reaping; disconnect resets the timer.
 func TestRemoteIdleSweep(t *testing.T) {
 	manager := newRemoteManager(t, func(config *Config) { config.IdleTimeout = 30 * time.Millisecond })
 	ctx := context.Background()
@@ -253,7 +253,7 @@ func TestRemoteIdleSweep(t *testing.T) {
 		session.mu.Unlock()
 	}
 
-	// 有推流连接时即使活动时刻已过也不收割。
+	// With a feed connection attached, the shell is not reaped even if the activity time has passed.
 	stale()
 	feed, err := manager.AttachRemoteFeed(info.ID)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestRemoteIdleSweep(t *testing.T) {
 		t.Fatalf("attached feed shell reaped: %v", err)
 	}
 
-	// 断连重置计时: 立刻扫不收割。
+	// Disconnect resets the timer: an immediate sweep does not reap.
 	manager.DetachRemoteFeed(feed)
 	if err := manager.SweepIdle(ctx); err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestRemoteIdleSweep(t *testing.T) {
 		t.Fatalf("just-detached shell reaped: %v", err)
 	}
 
-	// 有订阅观看者时同样不收割; 观看者离开且活动已超时即收割。
+	// With subscribed watchers the shell is likewise not reaped; once the watcher leaves and activity has timed out, it is reaped.
 	if _, err := manager.AttachSpectator(ctx, info.ID, SpectateOptions{ClientID: "viewer", ChannelID: "remote-idle-spect"}); err != nil {
 		t.Fatal(err)
 	}
@@ -301,8 +301,8 @@ func TestRemoteIdleSweep(t *testing.T) {
 	}
 }
 
-// TestRemoteCloseEndsSpectators: 显式终结 (CloseRemote) 移除壳并关闭订阅通道,
-// 与真实标签页关闭一致 (viewer 侧表现为流终止)。
+// TestRemoteCloseEndsSpectators: explicit termination (CloseRemote) removes the shell and closes subscriber channels,
+// consistent with a real tab close (the viewer side sees the stream end).
 func TestRemoteCloseEndsSpectators(t *testing.T) {
 	manager := newRemoteManager(t)
 	ctx := context.Background()
@@ -332,7 +332,7 @@ func TestRemoteCloseEndsSpectators(t *testing.T) {
 	}
 }
 
-// TestRemoteResize: resize 同步屏幕模型与标签页尺寸, 快照随之反映新尺寸。
+// TestRemoteResize: resize syncs the screen model and tab size, and the snapshot reflects the new size.
 func TestRemoteResize(t *testing.T) {
 	manager := newRemoteManager(t)
 	ctx := context.Background()

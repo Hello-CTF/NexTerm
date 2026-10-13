@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// FLEET149 接入地址: 客户端校验对齐服务端 normalizeBaseURL 规则;
-// 超管有序编辑 (添加/删除/上下移) 经 PUT /fleet/base-urls 保存, 以服务端规范化返回为准。
+// FLEET149 enrollment URLs: client-side validation aligns with the server-side normalizeBaseURL rules;
+// super-admin ordered edits (add/remove/move up/down) are saved via PUT /fleet/base-urls, subject to the server-normalized response.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";

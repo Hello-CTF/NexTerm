@@ -1,7 +1,7 @@
-// 设备会话的账号边界: 常驻 App 根部, 与设备管理视图是否打开无关。身份变化
-// (WEB logout/401 会话过期/账号 A->B, 桌面 sync link 断开/换绑) 时关掉全部
-// 设备类工作区并断开其会话, 旧账号的设备 shell 不会留给新账号。
-// previous 防止 mount 时误清。
+// Account boundary for device sessions: lives permanently at the App root, regardless of whether the device management view is open. On identity changes
+// (WEB logout/401 session expiry/account A->B, desktop sync link disconnect/rebind), close all device workspaces
+// and disconnect their sessions, so the old account's device shells are never left to the new account.
+// previous prevents a mistaken cleanup at mount.
 
 import { useEffect, useRef } from "react";
 import { useAuth } from "../auth/store";

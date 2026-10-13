@@ -23,8 +23,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// relayTestRemote 是 previewRelayRemote 的内存实现: 记录建壳/建链接/删壳,
-// 推流拨号由测试经 dialFeed 注入脚本化假连接。
+// relayTestRemote is the in-memory implementation of previewRelayRemote: it records shell creation/link creation/deletion,
+// and feed dialing is injected by tests via dialFeed with scripted fake connections.
 type relayTestRemote struct {
 	mu         sync.Mutex
 	shells     map[string]bool
@@ -87,7 +87,7 @@ func (r *relayTestRemote) shellCount() int {
 	return len(r.shells)
 }
 
-// relayTestFeed 是脚本化假推流连接: 记录全部写帧, failAfter 次成功后写开始失败。
+// relayTestFeed is a scripted fake feed connection: it records all written frames, and writes start failing after failAfter successes.
 type relayTestFeed struct {
 	mu        sync.Mutex
 	writes    []relayTestWrite
@@ -136,7 +136,7 @@ func (f *relayTestFeed) CloseNow() error {
 	return nil
 }
 
-// waitWrite 等待一个满足条件的写帧出现, 返回其下标 (从 from 起)。
+// waitWrite waits for a write frame matching the condition to appear, returning its index (starting from from).
 func (f *relayTestFeed) waitWrite(t *testing.T, from int, match func(relayTestWrite) bool) int {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -182,8 +182,8 @@ func isEndFrame(write relayTestWrite) bool {
 	return json.Unmarshal(write.data, &frame) == nil && frame.Type == "end"
 }
 
-// newRelayTestRig 装配单元测试中继: 真 session.Manager (本地 /bin/sh) + 内存
-// 远程面; dialFeed 由各测试注入脚本化连接。
+// newRelayTestRig assembles the unit-test relay: a real session.Manager (local /bin/sh) + an in-memory
+// remote surface; dialFeed is injected by each test with a scripted connection.
 func newRelayTestRig(t *testing.T) (*previewRelayManager, *session.Manager, *relayTestRemote) {
 	t.Helper()
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
@@ -219,8 +219,8 @@ func openRelayTestTab(t *testing.T, sessions *session.Manager) session.TabInfo {
 	return tab
 }
 
-// TestPreviewRelayLifecycle 钉住中继主链路: 建壳+建链接 → 快照帧不转发 → 增量
-// 输出二进制帧上行 → tab 退出 → end 控制帧 + 删壳 → Active 清空。
+// TestPreviewRelayLifecycle pins the relay's main path: create shell + link -> snapshot frame not forwarded -> incremental
+// output binary frames flow upstream -> tab exits -> end control frame + shell delete -> Active cleared.
 func TestPreviewRelayLifecycle(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	feed := newRelayTestFeed(1 << 30)
@@ -268,8 +268,8 @@ func TestPreviewRelayLifecycle(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayDuplicateCreate 钉住重复创建语义: 单 tab 同时只有一条活跃
-// 中继, 重复创建直接返回既有链接, 不新建壳/链接。
+// TestPreviewRelayDuplicateCreate pins the duplicate-create semantics: a single tab has only one active relay at a time,
+// and repeated creates return the existing link directly without creating a new shell/link.
 func TestPreviewRelayDuplicateCreate(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	feed := newRelayTestFeed(1 << 30)
@@ -292,8 +292,8 @@ func TestPreviewRelayDuplicateCreate(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayTabCloseDeletesShell 钉住 tab 关闭联动: 订阅通道随关闭报错,
-// 中继自行收尾 (end + 删壳 + Active 清空)。
+// TestPreviewRelayTabCloseDeletesShell pins the tab-close linkage: the subscription channel errors out on close,
+// and the relay finishes on its own (end + shell delete + Active cleared).
 func TestPreviewRelayTabCloseDeletesShell(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	feed := newRelayTestFeed(1 << 30)
@@ -319,11 +319,12 @@ func TestPreviewRelayTabCloseDeletesShell(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayReconnect 钉住断线续推: 写失败即按退避重拨, 未成功写出的帧
-// 重发到新连接 (不丢不重), 之后输出继续上行, 收尾帧落在新连接上。
+// TestPreviewRelayReconnect pins resume-after-disconnect: a write failure triggers backoff redial, frames not successfully
+// written are resent to the new connection (no loss, no duplication), output keeps flowing upstream afterwards, and the
+// finishing frame lands on the new connection.
 func TestPreviewRelayReconnect(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
-	first := newRelayTestFeed(1) // 第 1 帧成功后写开始失败
+	first := newRelayTestFeed(1) // writes start failing after the first frame succeeds
 	second := newRelayTestFeed(1 << 30)
 	var dials atomic.Int64
 	manager.dialFeed = func(context.Context, string) (previewRelayFeed, error) {
@@ -337,7 +338,7 @@ func TestPreviewRelayReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 持续制造输出直到重拨发生: 重拨前写失败的帧会重发到新连接。
+	// Keep producing output until the redial happens: frames whose writes failed before the redial are resent to the new connection.
 	deadline := time.Now().Add(10 * time.Second)
 	for dials.Load() < 2 && time.Now().Before(deadline) {
 		_ = sessions.Write(context.Background(), tab.ID, "owner", []byte("echo reconnect-marker\n"))
@@ -361,12 +362,12 @@ func TestPreviewRelayReconnect(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayRedialBudgetExhausted 钉住重拨预算耗尽: 持续拨不上即收尾
-// (删壳 + Active 清空), 不让背压长期阻塞本地终端。
+// TestPreviewRelayRedialBudgetExhausted pins redial budget exhaustion: persistently failing to dial finishes the relay
+// (shell delete + Active cleared), never letting backpressure block the local terminal long-term.
 func TestPreviewRelayRedialBudgetExhausted(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	manager.redialBudget = 1200 * time.Millisecond
-	first := newRelayTestFeed(0) // 写入即失败
+	first := newRelayTestFeed(0) // writes fail immediately
 	manager.dialFeed = func() func(context.Context, string) (previewRelayFeed, error) {
 		dialed := false
 		return func(context.Context, string) (previewRelayFeed, error) {
@@ -395,8 +396,8 @@ func TestPreviewRelayRedialBudgetExhausted(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayCreateFailureCleansUpShell 钉住建壳后任一步失败的回收: 预览
-// 创建失败 → 壳必删; 拨号失败 → 壳必删。
+// TestPreviewRelayCreateFailureCleansUpShell pins cleanup after any post-shell step fails: preview creation failure -> the shell
+// must be deleted; dial failure -> the shell must be deleted.
 func TestPreviewRelayCreateFailureCleansUpShell(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	manager.dialFeed = func(context.Context, string) (previewRelayFeed, error) { return nil, errors.New("dial refused") }
@@ -428,7 +429,7 @@ func TestPreviewRelayCreateFailureCleansUpShell(t *testing.T) {
 	}
 }
 
-// TestPreviewRelayExitedTabRejected 钉住已退出终端的创建拒绝 (不产生壳)。
+// TestPreviewRelayExitedTabRejected pins create rejection for an exited terminal (no shell is produced).
 func TestPreviewRelayExitedTabRejected(t *testing.T) {
 	manager, sessions, remote := newRelayTestRig(t)
 	manager.dialFeed = func(context.Context, string) (previewRelayFeed, error) { return newRelayTestFeed(1 << 30), nil }
@@ -473,9 +474,8 @@ func TestPreviewRelayCommandsRegistered(t *testing.T) {
 	}
 }
 
-// TestPreviewShareCommandArgsRejected 钉住 preview_share_create/active 的参数校验:
-// 嵌套 args 缺字段或为空时返回 bad_param, 不触达中继 (缺整个 args 信封时输入
-// 解码为零值, 走同一拒绝)。
+// TestPreviewShareCommandArgsRejected pins preview_share_create/active argument validation: missing fields or empty nested args
+// return bad_param without touching the relay (when the whole args envelope is missing, the input decodes to zero values and takes the same rejection).
 func TestPreviewShareCommandArgsRejected(t *testing.T) {
 	production := newUpdateTestProduction(t, true, nil)
 	response := dispatchHostKeyTest(t, production, "preview_share_create", `{"args":{"tabId":"","ttlMs":0}}`)

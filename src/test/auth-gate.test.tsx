@@ -40,7 +40,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 避免真实 argon2id(生产参数一次数秒):信封生成/解包全部打桩,其余保持真实。
+// Avoid real argon2id (production params take seconds per run): stub all envelope generation/unwrapping, keep the rest real.
 vi.mock("../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../features/auth/crypto")>();
   return {
@@ -149,7 +149,7 @@ describe("AuthGate 首次初始化", () => {
       }),
     );
 
-    // 恢复密钥只显示一次,复制后才能进入
+    // Recovery key is shown only once; entry is allowed after copying
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制"));
     expect(copyBtn).toBeTruthy();
@@ -198,7 +198,7 @@ describe("AuthGate loopback 免登录", () => {
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
 
-    // 设置页账号卡的「初始化账号」入口
+    // "Initialize account" entry on the settings page account card
     useAuth.setState({ gate: "setup" });
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
     clickButton(mounted.container, "暂不初始化，匿名使用");
@@ -281,15 +281,15 @@ describe("AuthGate 恢复密钥全屏门", () => {
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
 
-    // 全屏门容器(fixed inset-0)存在,底层应用被遮挡
+    // Fullscreen gate container (fixed inset-0) is present, the underlying app is covered
     const gate = mounted.container.querySelector(".fixed.inset-0");
     expect(gate).not.toBeNull();
 
-    // 复制前「已手动保存」不可用
+    // "Saved manually" is unavailable before copying
     const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入应用")) as HTMLButtonElement | undefined;
     expect(doneBtn?.disabled).toBe(true);
 
-    // 复制后可用
+    // Available after copying
     const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制")) as HTMLButtonElement | undefined;
     copyBtn?.click();
     await flush();
@@ -362,7 +362,7 @@ describe("AuthGate 登录", () => {
   });
 
   it("管理员创建的用户首登无信封:本地生成并上传,展示恢复密钥", async () => {
-    // GET /auth/dek 返回 not_found(管理员创建的用户尚无 DEK 信封)
+    // GET /auth/dek returns not_found (users created by an admin have no DEK envelope yet)
     mocks.dekGet.mockRejectedValue({ code: "not_found", message: "未找到: DEK 信封", status: 404 });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
@@ -381,7 +381,7 @@ describe("AuthGate 登录", () => {
         recoveryHash: "hash-1",
       }),
     );
-    // 上传成功后进入恢复密钥一次性展示
+    // After a successful upload, enter the one-time recovery key display
     await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥（仅显示一次）"));
     expect(useAuth.getState().gate).toBe("ready");
   });
@@ -448,7 +448,7 @@ describe("AuthGate reset_required 强制改密", () => {
     clickButton(mounted.container, "设置新密码");
 
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
-    // changePassword 在事务内 upsert 信封并校验临时密码;不再先 dekUpload(insert-only 会在重试时 409 卡死)
+    // changePassword upserts the envelope in a transaction and verifies the temp password; dekUpload no longer runs first (insert-only would 409 forever on retry)
     expect(mocks.dekUpload).not.toHaveBeenCalled();
     expect(mocks.changePassword).toHaveBeenCalledWith(
       expect.objectContaining({ oldPassword: "temp-pw-123", newPassword: "new-pw-123" }),
@@ -479,7 +479,7 @@ describe("AuthGate reset_required 强制改密", () => {
     clickButton(mounted.container, "设置新密码");
     await flushUntil(() => mounted!.container.textContent?.includes("原密码错误"));
 
-    // 重试:正确的临时密码应能走到 changePassword(不先在 dekUpload 处 409)
+    // Retry: the correct temp password should reach changePassword (not 409 at dekUpload first)
     const retryInputs = mounted.container.querySelectorAll("input");
     setInputValue(retryInputs[0], "temp-pw-123");
     await flush();
@@ -512,7 +512,7 @@ describe("AuthGate 用配对码添加设备", () => {
     await flushUntil(() => mocks.enroll.mock.calls.length > 0);
     expect(mocks.enroll).toHaveBeenCalledWith("pair-code-123", "办公室的浏览器", "web");
 
-    // 第二步: 设备已登记, 用账号密码登录, 会话绑定到该设备
+    // Step two: device enrolled, log in with the account password, the session binds to that device
     await flushUntil(() => mounted!.container.textContent?.includes("设备已登记"));
     expect(mounted!.container.textContent).toContain("办公室的浏览器");
     const loginInputs = mounted!.container.querySelectorAll("input");
@@ -551,7 +551,7 @@ describe("AuthGate 用配对码添加设备", () => {
     clickButton(mounted!.container, "添加并继续");
     await flushUntil(() => mounted!.container.textContent?.includes("无法连接服务器"));
 
-    // 重试成功: 同一表单再次提交进入登录步
+    // Retry succeeds: submitting the same form again enters the login step
     clickButton(mounted!.container, "添加并继续");
     await flushUntil(() => mounted!.container.textContent?.includes("设备已登记"));
     expect(mocks.enroll.mock.calls.length).toBe(2);
@@ -575,7 +575,7 @@ describe("AuthGate 用配对码添加设备", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("用户名或密码错误"));
     expect(useAuth.getState().user).toBeNull();
 
-    // 重试: 正确的密码完成登录(仍绑定同一设备)
+    // Retry: the correct password completes login (still bound to the same device)
     const retryInputs = mounted!.container.querySelectorAll("input");
     setInputValue(retryInputs[1], "pw-123456");
     await flush();

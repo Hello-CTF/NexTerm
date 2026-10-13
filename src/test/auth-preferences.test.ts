@@ -59,7 +59,7 @@ const DEMO_USER = {
   last_login_at: 1,
 };
 
-// memoryStore 以线上扁平键形状模拟 M140 /auth/preferences 存储。
+// memoryStore simulates the M140 /auth/preferences storage with the production flat-key shape.
 function memoryStore(initial: Record<string, unknown> = {}, defaults: Record<string, unknown> = {}) {
   const data = { ...initial };
   const store = {
@@ -129,7 +129,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
 
     setKeybinding("quickConnect", "Mod+Shift+g");
     setKeybinding("toggleSplit", "Mod+Shift+\\");
-    // 账号快照不被后续改键冲掉,账号存储里的其他键也不被整表覆盖
+    // The account snapshot is not wiped by later key changes, and other keys in the account store are not overwritten wholesale.
     expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t");
     expect(getKeybinding("closeTab")).toBe("Mod+Shift+w");
     expect(store.data["keybinding.newTerminal"]).toBe("Mod+Shift+t");
@@ -239,11 +239,11 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
       { "keybinding.newTerminal": "Mod+Shift+g", "keybinding.quickConnect": "Mod+Shift+k" },
     );
     registerAccountPreferenceStore(store);
-    // 账号覆盖胜本地与服务端默认
+    // Account override beats local and server defaults
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
-    // 设备本地胜服务端默认
+    // Device-local beats the server default
     await vi.waitFor(() => expect(getKeybinding("quickConnect")).toBe("Mod+Shift+j"));
-    // 未声明的键回内置默认
+    // Undeclared keys fall back to built-in defaults
     expect(getKeybinding("toggleSplit")).toBe("Mod+\\");
   });
 
@@ -304,10 +304,10 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
     registerAccountPreferenceStore(createHttpPreferenceStore());
     await vi.waitFor(() => expect(prefsMocks.get).toHaveBeenCalled(), { timeout: 10000 });
 
-    // 服务端全局默认被继承
+    // Server global defaults are inherited
     await vi.waitFor(() => expect(getInputPrefs().selectionAutoCopy).toBe(true));
     await vi.waitFor(() => expect(getAppearancePrefs().terminalFontSize).toBe(16));
-    // 账号覆盖优先于全局默认与内置默认
+    // Account override takes precedence over global and built-in defaults
     await vi.waitFor(() => expect(getAppearancePrefs().terminalTheme).toBe("light"));
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
   });
@@ -332,7 +332,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
         clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalTheme", "appearance.themeMode"],
       }),
     );
-    // 清除后回默认,不残留已清掉的账号覆盖
+    // After clearing, falls back to defaults with no leftover cleared account overrides
     expect(getAppearancePrefs().terminalTheme).toBe("dark");
   });
 

@@ -18,19 +18,19 @@ import (
 )
 
 const (
-	// previewViewerReadLimit 是预览 viewer WS 的读上限: 上行只有 read_write
-	// 链接的输入帧 (人类击键量级), 这里只兜住异常大消息。
+	// previewViewerReadLimit is the read limit for the preview viewer WS: upstream only carries read_write
+	// link input frames (human keystroke volume); it only catches abnormally large messages.
 	previewViewerReadLimit = 1 << 20
-	// defaultPreviewRevalidateInterval 是预览连接的授权复查间隔: 无论有无
-	// 输出, 吊销/过期最迟在该间隔内生效。
+	// defaultPreviewRevalidateInterval is the authorization recheck interval for preview connections:
+	// revocation/expiry takes effect at the latest within this interval, regardless of output.
 	defaultPreviewRevalidateInterval = 10 * time.Second
-	// previewGuestLease 是预览访客的控制租约时长: 每次放行写入即续租,
-	// WS 结束时 ReleaseGuest 显式释放, ready 帧以 lease_ms 告知 viewer。
+	// previewGuestLease is the preview guest control lease duration: every admitted write renews it,
+	// ReleaseGuest explicitly releases it at WS end, and the ready frame tells the viewer via lease_ms.
 	previewGuestLease = 3 * time.Second
 )
 
-// PreviewSpectator 是预览对会话 Manager 的最小依赖: 订阅标签页输出、查归属、
-// 断开清理, 以及 read_write 链接的访客写入仲裁 (WriteGuest/ReleaseGuest)。
+// PreviewSpectator is the preview's minimal dependency on the session Manager: subscribing to tab output, ownership lookup,
+// disconnect cleanup, and guest write arbitration for read_write links (WriteGuest/ReleaseGuest).
 type PreviewSpectator interface {
 	AttachSpectator(context.Context, string, session.SpectateOptions) (session.TabInfo, error)
 	TabOwner(string) (string, error)
@@ -65,9 +65,9 @@ type previewLinkCreateRequest struct {
 	Write     bool   `json:"write"`
 }
 
-// servePreviewLinkCreate 处理 POST /share/previews: 为服务端托管的终端标签页
-// 创建预览链接, 默认只读, write 显式为 true 时授予读写。仅会话所有者可创建;
-// 创建响应是唯一携带一次性 token 的入口。
+// servePreviewLinkCreate handles POST /share/previews: create a preview link for a server-hosted terminal tab,
+// read-only by default, granting read-write only when write is explicitly true. Only the session owner may create;
+// the create response is the only entry carrying the one-time token.
 func (s *Server) servePreviewLinkCreate(w http.ResponseWriter, r *http.Request) {
 	var request previewLinkCreateRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
@@ -134,24 +134,24 @@ type previewErrorFrame struct {
 	Message string `json:"message"`
 }
 
-// previewControlFrame 是 server→viewer 的控制帧: 反馈一次访客写入的仲裁结果。
-// guest 携带租约到期时刻 (epoch ms); owner/busy 不携带。
+// previewControlFrame is the server-to-viewer control frame: it reports the arbitration result of one guest write.
+// guest carries the lease expiry (epoch ms); owner/busy carry nothing.
 type previewControlFrame struct {
 	Type       string `json:"type"`
 	State      string `json:"state"`
 	LeaseUntil int64  `json:"lease_until,omitempty"`
 }
 
-// serveSharePreview 处理 GET /share/preview/{token}: 浏览器普通导航由静态入口
-// 直接服务既有 SPA (不校验 token, 一律 no-store); WS upgrade 才是数据面 —
-// 匿名 viewer 用公开 token 换一次性授权 (ResolvePreview 已审计), 随后
-// AttachSpectator 订阅标签页: 首帧是当前屏幕快照, 之后只有实时输出。只读链接
-// 不安装输入处理, viewer 的上行字节被读循环丢弃; read_write 链接的 viewer 输入
-// 是二进制帧, 每次输入经 RevalidatePreviewInput 按当前行重查 (吊销/过期/权限
-// 收缩即时生效) 后进入 WriteGuest 租约仲裁, 仲裁结果以 control 帧反馈, 授权拒
-// 绝按语义下非终止错误帧 (降级 read_only / 吊销 revoked / 过期 expired);
-// read_write 连接的 WS 结束即 ReleaseGuest 释放控制权与租约。输出侧授权按间隔
-// 复查 (无论有无输出), 吊销/过期即终止。
+// serveSharePreview handles GET /share/preview/{token}: plain browser navigation is served the existing SPA
+// directly by the static entry (no token check, always no-store); only the WS upgrade is the data plane -
+// an anonymous viewer exchanges the public token for a one-time authorization (ResolvePreview is audited), then
+// AttachSpectator subscribes to the tab: the first frame is the current screen snapshot, afterwards only live output.
+// Read-only links install no input handling; the viewer's upstream bytes are discarded by the read loop; read_write
+// link viewer input is binary frames, each re-checked against the current row via RevalidatePreviewInput (revocation/
+// expiry/permission shrink take effect immediately) before entering WriteGuest lease arbitration, with arbitration
+// results fed back as control frames; authorization rejections deliver non-terminal error frames per semantics
+// (degraded read_only / revoked / expired); read_write connection end means ReleaseGuest frees control and lease.
+// Output-side authorization is rechecked on an interval (regardless of output), and revocation/expiry terminates.
 func (s *Server) serveSharePreview(page http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isPreviewWSUpgrade(r) {
@@ -167,8 +167,8 @@ func (s *Server) serveSharePreview(page http.Handler) http.HandlerFunc {
 		if err == nil {
 			s.previewResolve.RecordSuccess(key)
 		} else if errors.Is(err, sharing.ErrTokenNotFound) {
-			// 只对 token 不存在计入限流退避 (随机 token 洪水); 吊销/过期等真实
-			// token 的拒绝不惩罚持有者。
+			// Only token-not-found counts toward throttle backoff (random token floods); rejections of real tokens
+			// such as revoked/expired do not punish the holder.
 			s.previewResolve.RecordFailure(key)
 		}
 		if err != nil {
@@ -219,11 +219,11 @@ func (s *Server) serveSharePreview(page http.Handler) http.HandlerFunc {
 	}
 }
 
-// pumpSharePreview 把订阅帧泵给 viewer 直到任一侧结束或授权失效。复查在每帧
-// 写出前与空闲超时两边都触发, 吊销/过期不依赖流量。终止前先下发可识别错误帧
-// (作为正常帧走 pumpSocket 的串行写路径, 不与 keepalive ping 竞争写者)。
-// queue 里的 control/read_only 帧同样走该写路径, 与输出帧按到达顺序交错;
-// onRead 透传给 pumpSocket 的读循环 (只读链接为 nil)。
+// pumpSharePreview pumps subscription frames to the viewer until either side ends or authorization lapses. Rechecks fire both
+// before each frame write and on the idle timeout, so revocation/expiry does not depend on traffic. Before terminating, an
+// identifiable error frame is delivered (as a normal frame through pumpSocket's serialized write path, not competing with keepalive pings).
+// control/read_only frames in the queue take the same write path, interleaving with output frames in arrival order;
+// onRead is passed through to pumpSocket's read loop (nil for read-only links).
 func (s *Server) pumpSharePreview(ctx context.Context, conn *websocket.Conn, receiver ChannelReceiver, grant *sharing.PreviewGrant, queue *previewSendQueue, onRead func(context.Context, websocket.MessageType, []byte)) {
 	interval := s.previewRevalidateInterval
 	if interval <= 0 {
@@ -262,7 +262,7 @@ func (s *Server) pumpSharePreview(ctx context.Context, conn *websocket.Conn, rec
 				continue
 			}
 			if errors.Is(err, context.Canceled) && ctx.Err() == nil {
-				// 被 queue 的待写帧唤醒, 回循环顶取帧。
+				// Woken by a queued frame to write; back to the loop top to take a frame.
 				continue
 			}
 			if err != nil {
@@ -287,9 +287,9 @@ func (s *Server) pumpSharePreview(ctx context.Context, conn *websocket.Conn, rec
 	}, onRead)
 }
 
-// previewSendQueue 是 viewer 上行处理 (读 goroutine) 向泵写循环投递文本帧的
-// 队列: control 与 read_only 帧都经此走 pumpSocket 的串行写路径。push 唤醒正在
-// 空闲等待的 receiver.Next (arm 注册的 cancel), 避免控制反馈睡满复查间隔。
+// previewSendQueue is the queue by which the viewer upstream handler (read goroutine) delivers text frames to the pump write loop:
+// both control and read_only frames go through pumpSocket's serialized write path via it. push wakes a receiver.Next that is
+// idle-waiting (the registered cancel), so control feedback does not sleep through the whole recheck interval.
 type previewSendQueue struct {
 	mu     sync.Mutex
 	frames [][]byte
@@ -337,11 +337,12 @@ func (q *previewSendQueue) disarm() {
 	q.mu.Unlock()
 }
 
-// previewInputHandler 是 read_write 预览连接的输入路径: 只接受二进制帧 (文本
-// 与未知帧静默丢弃), 每次输入经 RevalidatePreviewInput 按当前行重查授权, 放行
-// 后进入 WriteGuest 租约仲裁, 仲裁结果以 control 帧反馈; 授权拒绝按语义下非终
-// 止错误帧 (见 rejectInput), 吊销/过期的连接终止由输出侧周期复查负责。handle
-// 只在 pumpSocket 读 goroutine 内运行, grant 快照无需加锁。
+// previewInputHandler is the input path for read_write preview connections: it accepts only binary frames (text
+// and unknown frames are silently discarded), re-checks authorization against the current row via RevalidatePreviewInput
+// for each input, and on admission enters WriteGuest lease arbitration with the result fed back as a control frame;
+// authorization rejections deliver non-terminal error frames per semantics (see rejectInput), and connection termination
+// for revoked/expired connections is handled by the output-side periodic recheck. handle only runs inside pumpSocket's
+// read goroutine, so the grant snapshot needs no locking.
 type previewInputHandler struct {
 	s     *Server
 	grant *sharing.PreviewGrant
@@ -367,14 +368,14 @@ func (h *previewInputHandler) handle(ctx context.Context, messageType websocket.
 	case errors.Is(err, session.ErrGuestControlBusy):
 		h.queue.pushJSON(previewControlFrame{Type: "control", State: "busy"})
 	}
-	// 其他写入失败 (标签页关闭/断线/不支持访客控制) 静默丢弃: 输出通道很快
-	// 会给出终止帧或随重连恢复, 无额外反馈帧类型。
+	// Other write failures (tab closed/disconnected/guest control unsupported) are silently discarded: the output channel
+	// will soon give a termination frame or recover via reconnect; there is no extra feedback frame type.
 }
 
-// rejectInput 把输入侧授权拒绝映射为非终止错误帧 (连接不断): 吊销/过期与输出侧
-// 终止帧同码同文案, 只读降级下 read_only; 链接无效与 DB/内部错误静默, 不泄露
-// 内部细节, 不误报 read_only。哨兵之外的 CodeForbidden 即只读降级 —
-// RevalidatePreviewInput 唯一的非哨兵 forbidden 错误。
+// rejectInput maps input-side authorization rejections to non-terminal error frames (connection stays open): revoked/expired share
+// the termination frame's code and text as the output side, read-only degradation yields read_only; invalid links and DB/internal
+// errors stay silent, leaking no internal details and never misreporting read_only. CodeForbidden outside the sentinels means
+// read-only degradation - the only non-sentinel forbidden error from RevalidatePreviewInput.
 func (h *previewInputHandler) rejectInput(err error) {
 	var frame previewErrorFrame
 	switch {
@@ -408,8 +409,8 @@ func writePreviewJSON(ctx context.Context, conn *websocket.Conn, frame any) erro
 	return conn.Write(writeCtx, websocket.MessageText, payload)
 }
 
-// previewTermination 把泵错误映射为可安全下发给 viewer 的终止码; 传输层断开
-// 与内部错误不携带细节 (避免泄露内部状态)。
+// previewTermination maps pump errors to termination codes safely deliverable to the viewer; transport disconnects
+// and internal errors carry no details (avoiding leaking internal state).
 func previewTermination(err error) (string, string) {
 	switch {
 	case errors.Is(err, sharing.ErrPreviewExpired):
@@ -426,8 +427,8 @@ func previewTermination(err error) (string, string) {
 	return "internal", "分享暂时不可用"
 }
 
-// servePreviewPage 用静态入口服务既有 SPA (与 "/" 同一 index.html, 不重定向
-// 不另造 shell); token URL 一律 no-store, 路径固定为 "/" 再做文件查找。
+// servePreviewPage serves the existing SPA with the static entry (same index.html as "/", no redirect
+// and no separate shell); token URLs are always no-store, and the path is pinned to "/" before file lookup.
 func servePreviewPage(page http.Handler, w http.ResponseWriter, r *http.Request) {
 	if page == nil {
 		http.NotFound(w, r)
@@ -443,8 +444,8 @@ func servePreviewPage(page http.Handler, w http.ResponseWriter, r *http.Request)
 	page.ServeHTTP(previewNoStoreWriter{w}, cloned)
 }
 
-// previewNoStoreWriter 在写出前强制 Cache-Control: no-store, 覆盖静态入口对
-// text/html 默认的 no-cache — token URL 不允许任何缓存。
+// previewNoStoreWriter forces Cache-Control: no-store before writing, overriding the static entry's default no-cache
+// for text/html - token URLs allow no caching at all.
 type previewNoStoreWriter struct{ http.ResponseWriter }
 
 func (w previewNoStoreWriter) WriteHeader(status int) {
@@ -457,8 +458,8 @@ func (w previewNoStoreWriter) Write(payload []byte) (int, error) {
 	return w.ResponseWriter.Write(payload)
 }
 
-// isPreviewWSUpgrade 判定请求是否为 WebSocket 升级; 判定条件与
-// websocket.Accept 的握手校验一致 (Connection/Upgrade 头 token, 大小写不敏感)。
+// isPreviewWSUpgrade decides whether a request is a WebSocket upgrade; the conditions match
+// websocket.Accept's handshake checks (Connection/Upgrade header tokens, case-insensitive).
 func isPreviewWSUpgrade(r *http.Request) bool {
 	return previewHeaderHasToken(r.Header, "Connection", "upgrade") && previewHeaderHasToken(r.Header, "Upgrade", "websocket")
 }

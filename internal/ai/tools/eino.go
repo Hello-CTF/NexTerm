@@ -270,9 +270,9 @@ type Interaction struct {
 	Preview  *Preview
 	Question *Question
 
-	// Commands 携带 exec_commands 的完整命令列表，供确认对话框全量展示。
+	// Commands carries the full command list of exec_commands for the confirm dialog to display in full.
 	Commands []string
-	// RulePattern 是「永久允许」将授予的路径范围；空串表示该动作不限路径。
+	// RulePattern is the path scope an "always allow" decision will grant; empty means the action is not path-limited.
 	RulePattern string
 }
 

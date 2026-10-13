@@ -9,8 +9,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// probeService 在共享夹具库上另起一个带 agent 探针的 Service, 探针行为由
-// 调用方给出; 原 fixture.service 无探针, 用于先造出链接/分享行。
+// probeService starts another Service with an agent probe on the shared fixture database; the probe behavior is given
+// by the caller; the original fixture.service has no probe and is used to create link/share rows first.
 func probeService(t *testing.T, f *serviceFixture, probe AgentProbeFunc) *Service {
 	t.Helper()
 	service, err := New(Config{DB: f.db, Accounts: f.accounts}, WithNow(func() int64 { return f.now }), WithAgentProbe(probe))

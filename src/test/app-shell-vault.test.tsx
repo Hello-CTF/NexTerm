@@ -232,7 +232,7 @@ describe("状态栏凭据库状态", () => {
   it("状态拉取失败时展示不可用，不给出开启保护入口", async () => {
     mocks.vaultStatus.mockRejectedValue(new Error("boom"));
     mounted = mountApp();
-    // react-query 的失败态经其内部调度落地, 单个 flush 不足以保证时序
+    // react-query settles its failure state via internal scheduling; a single flush does not guarantee the timing
     await flushUntil(() => vaultStatusControl()?.textContent === "凭据库不可用");
 
     const control = vaultStatusControl();

@@ -182,8 +182,8 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	return nil
 }
 
-// AddRule 新增一条路径级授权规则；同设备同动作同范围的已有规则（含已过期）会被更新而不是重复添加。
-// expiresAt 为零值表示永久授权。
+// AddRule adds a path-level grant rule; an existing rule with the same device, action, and scope
+// (even expired) is updated instead of duplicated. A zero expiresAt means a permanent grant.
 func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, expiresAt time.Time) (GrantRule, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -237,7 +237,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 	return rule, nil
 }
 
-// RevokeRule 按 ID 撤销一条授权规则；对未知 ID 幂等成功。
+// RevokeRule revokes a grant rule by ID; unknown IDs succeed idempotently.
 func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	ruleID = strings.TrimSpace(ruleID)
 	if ruleID == "" {
@@ -270,7 +270,7 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	return nil
 }
 
-// Rules 返回全部授权规则（含已过期规则，由展示层标注或惰性清理）。
+// Rules returns all grant rules (including expired ones, annotated by the display layer or lazily cleaned up).
 func (g *Grants) Rules() []GrantRule {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -279,7 +279,7 @@ func (g *Grants) Rules() []GrantRule {
 	return result
 }
 
-// matchRule 返回覆盖给定动作与路径的未过期规则。
+// matchRule returns the unexpired rule covering the given action and path.
 func (g *Grants) matchRule(deviceID, action, path string) (GrantRule, bool) {
 	now := g.now()
 	g.mu.RLock()
@@ -326,9 +326,10 @@ func (g *Grants) Evaluate(ctx context.Context, config Config, ruling Ruling, mem
 	return g.EvaluateResource(ctx, config, ruling, memory, deviceID, operation, runID, Resource{})
 }
 
-// EvaluateResource 在 Evaluate 之上叠加路径级规则：NeedsConfirm 裁定先匹配持久规则，
-// 再匹配本会话记住的路径规则，最后回落到设备级授权与全局权限模式。
-// Forbidden 始终拒绝；Danger 与 Unknowable 不会被任何授权覆盖，保持逐次确认。
+// EvaluateResource layers path-level rules on top of Evaluate: NeedsConfirm rulings match persistent
+// rules first, then this session's remembered path rules, then fall back to device-level grants and
+// the global permission mode. Forbidden is always denied; Danger and Unknowable are never overridden
+// by any grant and keep requiring per-call confirmation.
 func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Ruling, memory *Memory, deviceID, operation, runID string, resource Resource) Decision {
 	if ruling.Risk == Forbidden {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: ruling.Reason}

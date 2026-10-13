@@ -139,7 +139,7 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	readUntilMarker(t, attachment, "device-provider-marker")
-	// detach 保留设备端会话, 重 attach 回放历史输出 (durable 语义)。
+	// detach keeps the device-side session; re-attach replays historical output (durable semantics).
 	if err := attachment.Close(); err != nil {
 		t.Fatal(err)
 	}

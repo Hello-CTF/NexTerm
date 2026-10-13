@@ -1,6 +1,7 @@
 #!/bin/sh
-# 平台只能把 stable_secret 注入环境变量；这里把它落成 0600 密钥文件，
-# 让服务端走受支持的 NEXTERM_MASTER_KEY_FILE 流程，进程环境里不留密钥。
+# The platform can only inject stable_secret into environment variables; here
+# it is landed as a 0600 key file so the server uses the supported
+# NEXTERM_MASTER_KEY_FILE flow and no key remains in the process environment.
 set -eu
 
 if [ -n "${NEXTERM_LAZYCAT_VAULT_MASTER_KEY:-}" ]; then

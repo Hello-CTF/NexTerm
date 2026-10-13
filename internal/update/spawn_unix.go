@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// StartDetached 启动独立的新进程 (新会话), 供桌面端重启应用。
+// StartDetached starts an independent new process (new session), for the desktop to restart the app.
 func StartDetached(path string, args []string) error {
 	command := exec.Command(path, args...)
 	command.Stdout = os.Stdout

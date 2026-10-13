@@ -149,8 +149,10 @@ jobs:
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x "target/go-build/${binary}"
           fi
-      # 可选签名:在仓库 variables/secrets 配置后自动启用(自签固定身份或 Developer ID 均可);
-      # 公证只有 Developer ID + App Store Connect API 密钥能过,未配置时保持 ad-hoc 分发。
+      # Optional signing: enabled automatically once the repo variables/secrets
+      # are configured (either a self-signed fixed identity or Developer ID);
+      # notarization only passes with Developer ID + App Store Connect API key,
+      # staying ad-hoc when unconfigured.
       - name: Import the macOS signing identity (optional)
         if: matrix.os == 'darwin' && vars.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash

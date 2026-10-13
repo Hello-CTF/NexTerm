@@ -1,6 +1,6 @@
-// 接入地址 (fleet base URLs) 卡片: 超管可有序编辑 (添加/删除/上下移),
-// 普通用户只读。改动经 PUT /fleet/base-urls 保存, 以服务端规范化后的返回为准。
-// 保存只影响之后 enroll 的设备; 已接入设备持有 enroll 时下发的地址列表。
+// Base URL (fleet base URLs) card: superadmins can edit in order (add/remove/move up/down),
+// regular users are read-only. Changes are saved via PUT /fleet/base-urls, following the server-normalized response.
+// Saving only affects devices enrolled afterwards; already-enrolled devices hold the address list issued at enroll time.
 
 import { useEffect, useRef, useState } from "react";
 import { type FleetBaseURLEntry } from "../../ipc/fleetApi";
@@ -29,8 +29,8 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
-  // 保存成功后 draft 已是服务端权威列表, 跳过紧接着的那次 prop 同步,
-  // 避免 effect 用保存前的 entries prop 把服务端结果覆盖回去。
+  // After a successful save, draft is already the server-authoritative list; skip the immediately following prop sync,
+  // so the effect does not overwrite the server result with the pre-save entries prop.
   const skipPropSync = useRef(false);
 
   useEffect(() => {

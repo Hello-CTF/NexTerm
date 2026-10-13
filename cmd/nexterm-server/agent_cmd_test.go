@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
-// TestAgentCLIDispatch 验证同一二进制的 agent 子命令分派: 无子命令/未知
-// 子命令/缺必填旗标一律退出码 2, 不触碰任何服务管理器。
+// TestAgentCLIDispatch verifies agent subcommand dispatch of the same binary:
+// missing subcommand/unknown subcommand/missing required flags all exit with
+// code 2 without touching any service manager.
 func TestAgentCLIDispatch(t *testing.T) {
 	binary := buildServerBinary(t)
 	cases := []struct {
@@ -35,8 +36,9 @@ func TestAgentCLIDispatch(t *testing.T) {
 	}
 }
 
-// TestServerProcessMountsFleetRoutes 用真实进程验证 fleet 接线: enrollment、
-// 用户态设备管理、agent 合同路由在真实二进制里可用且鉴权边界正确。
+// TestServerProcessMountsFleetRoutes verifies fleet wiring with a real
+// process: enrollment, user-level device management, and agent contract
+// routes are available in the real binary with correct auth boundaries.
 func TestServerProcessMountsFleetRoutes(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
@@ -46,7 +48,7 @@ func TestServerProcessMountsFleetRoutes(t *testing.T) {
 	session := initSuperadminThroughProcess(t, process, address, "fleet-admin", "fleet-admin-pw-123")
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// 会话 + CSRF 签发接入码。
+	// Session + CSRF issues an enroll code.
 	issue := requestAccountJSON(t, client, address, "/device/enroll-codes", map[string]any{"ttl_ms": 600000}, session, http.StatusOK)
 	var issued struct {
 		Code string `json:"code"`
@@ -56,7 +58,7 @@ func TestServerProcessMountsFleetRoutes(t *testing.T) {
 		t.Fatalf("enroll code = %s", issue.body)
 	}
 
-	// 匿名兑换接入码 -> 设备凭证。
+	// Anonymous exchange of the enroll code for device credentials.
 	enrollPayload, err := json.Marshal(map[string]any{"code": issued.Code, "name": "process-box", "platform": "linux", "app_version": "e2e"})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +73,7 @@ func TestServerProcessMountsFleetRoutes(t *testing.T) {
 		t.Fatalf("enroll = %s", enroll.body)
 	}
 
-	// 设备凭证经 /agent/sync 可用; 错误凭证 403。
+	// Device credentials work via /agent/sync; wrong credentials get 403.
 	syncPayload, err := json.Marshal(map[string]any{
 		"device_id": enrolled.DeviceID, "secret": enrolled.Secret,
 		"sample": map[string]any{"ts": time.Now().UnixMilli(), "cpu_pct": 1.5, "mem_used": 1, "mem_total": 2, "disk_used": 3, "disk_total": 4, "uptime_s": 5},
@@ -86,7 +88,7 @@ func TestServerProcessMountsFleetRoutes(t *testing.T) {
 	}
 	requestAccountJSON(t, client, address, "/agent/sync", json.RawMessage(badSync), nil, http.StatusForbidden)
 
-	// 用户态设备列表需要会话 (无 cookie -> 401)。
+	// The user-level device list requires a session (no cookie -> 401).
 	response, err := client.Get("http://" + address + "/fleet/devices")
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +98,8 @@ func TestServerProcessMountsFleetRoutes(t *testing.T) {
 		t.Fatalf("anonymous /fleet/devices status = %d, want 401", response.StatusCode)
 	}
 
-	// 设备指标按会话可读回刚刚 sync 的样本 (GET 路由, 带会话 cookie)。
+	// Device metrics read back the just-synced sample per session (GET route
+	// with session cookie).
 	metricsRequest, err := http.NewRequest(http.MethodGet, "http://"+address+"/fleet/devices/"+enrolled.DeviceID+"/metrics", nil)
 	if err != nil {
 		t.Fatal(err)

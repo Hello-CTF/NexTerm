@@ -71,7 +71,7 @@ function ruleExpiryText(rule: AiGrantRule, now: number): string {
 
 export function GrantPanel({ onClose }: { onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
-  // 授权状态是全局设置: 服务端多用户模式下仅超管可变更, 其他登录用户只读。
+  // Grant state is a global setting: in server multi-user mode, only superadmins can change it; other logged-in users are read-only.
   const account = useAuth((s) => s.user);
   const readOnly = WEB && account !== null && account.role !== "superadmin";
   const [assets, setAssets] = useState<Asset[] | null>(null);

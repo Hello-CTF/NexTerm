@@ -28,8 +28,8 @@ type previewFixture struct {
 	previews *sharing.Service
 }
 
-// newPreviewFixture 装配带只读预览的完整 server: 真 session Manager (本地 sh)
-// 经 hub adapter 供输出通道, 真 sharing.Service。
+// newPreviewFixture assembles a full server with read-only previews: a real session Manager (local sh)
+// providing output channels via a hub adapter, and a real sharing.Service.
 func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
@@ -68,15 +68,15 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	}
 }
 
-// openTab 以指定属主打开一个真实终端标签页 (本地 sh), 返回 tab ID。
+// openTab opens a real terminal tab (local sh) with the given owner, returning the tab ID.
 func (f *previewFixture) openTab(t *testing.T, ownerID string) string {
 	t.Helper()
 	tabID, _ := f.openTabWithChannel(t, ownerID)
 	return tabID
 }
 
-// openTabWithChannel 同 openTab, 额外返回属主通道 ID (detach 后可清空 controller,
-// 供访客控制仲裁路径的测试使用)。
+// openTabWithChannel is like openTab, additionally returning the owner channel ID (detaching it clears the controller,
+// for tests of the guest control arbitration path).
 func (f *previewFixture) openTabWithChannel(t *testing.T, ownerID string) (string, string) {
 	t.Helper()
 	connectCtx := ipc.WithUserID(context.Background(), ownerID)
@@ -111,18 +111,18 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 	bob := f.login(t, "bob", "password-bob")
 	tabID := f.openTab(t, aliceID)
 
-	// 未登录 401; 缺 CSRF 403。
+	// Not logged in 401; missing CSRF 403.
 	if call := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": tabID}, nil, "", nil); call.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous create status = %d, want 401", call.status)
 	}
 	if call := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": tabID}, alice, "", nil); call.status != http.StatusForbidden {
 		t.Fatalf("missing csrf status = %d, want 403", call.status)
 	}
-	// 他人的终端: bob 403。
+	// Someone else's terminal: bob 403.
 	if call := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": tabID}, bob, bob.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("non-owner create status = %d, want 403", call.status)
 	}
-	// 不存在的标签页: 404。
+	// Nonexistent tab: 404.
 	if call := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": ids.New()}, alice, alice.csrf, nil); call.status != http.StatusNotFound {
 		t.Fatalf("missing tab create status = %d, want 404", call.status)
 	}
@@ -139,12 +139,12 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 	if call.body["session_id"] != tabID {
 		t.Fatalf("create body = %v", call.body)
 	}
-	// write 省略默认只读。
+	// write omitted defaults to read-only.
 	if call.body["permission"] != "read" {
 		t.Fatalf("default create permission = %v, want read", call.body["permission"])
 	}
 
-	// write: true 显式授予读写。
+	// write: true explicitly grants read-write.
 	writable := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": tabID, "ttl_ms": 60_000, "write": true}, alice, alice.csrf, nil)
 	if writable.status != http.StatusOK {
 		t.Fatalf("write create status = %d body = %v", writable.status, writable.body)
@@ -153,7 +153,7 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 		t.Fatalf("write create permission = %v, want read_write", writable.body["permission"])
 	}
 
-	// 列表: alice 2 条且带真实 permission、不含 token; bob 0 条。
+	// List: alice has 2 entries with real permission and no token; bob has 0.
 	list := f.call(t, http.MethodGet, "/share/previews", nil, alice, "", nil)
 	if list.status != http.StatusOK || len(list.body["links"].([]any)) != 2 {
 		t.Fatalf("alice list = %d %v", list.status, list.body)
@@ -177,7 +177,7 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 		t.Fatalf("bob list = %d %v", list.status, list.body)
 	}
 
-	// 吊销: bob 403; alice 200; 之后 token 不可用 (WS 握手 403)。
+	// Revoke: bob 403; alice 200; the token is unusable afterwards (WS handshake 403).
 	if call := f.call(t, http.MethodPost, "/share/previews/"+linkID+"/revoke", nil, bob, bob.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("non-owner revoke status = %d, want 403", call.status)
 	}
@@ -209,7 +209,7 @@ func TestSharePreviewPageServesSPA(t *testing.T) {
 	if response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", response.Header.Get("Cache-Control"))
 	}
-	// 无效 token 的普通 GET 同样直接服务 SPA (不校验 token)。
+	// A plain GET with an invalid token likewise serves the SPA directly (no token check).
 	response, err = f.client.Get(f.http.URL + "/share/preview/not-a-token")
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestSharePreviewPageServesSPA(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("plain GET invalid token = %d, want 200", response.StatusCode)
 	}
-	// WS upgrade 才走 token 把关。
+	// Only the WS upgrade goes through token checks.
 	if status := dialPreviewStatus(t, f.http.URL, "not-a-token"); status != http.StatusForbidden {
 		t.Fatalf("invalid token WS handshake = %d, want 403", status)
 	}
@@ -266,14 +266,14 @@ func readPreviewJSON(t *testing.T, conn *websocket.Conn, timeout time.Duration) 
 	return decoded
 }
 
-// expectPreviewError 读帧直到错误帧出现 (实时输出帧可与之交叠), 校验终止码。
+// expectPreviewError reads frames until an error frame appears (live output frames may interleave), checking the termination code.
 func expectPreviewError(t *testing.T, conn *websocket.Conn, code string, timeout time.Duration) {
 	t.Helper()
 	expectPreviewErrorFrame(t, conn, code, "", timeout)
 }
 
-// expectPreviewErrorFrame 同 expectPreviewError, 额外钉住 message 文案
-// (message 为空串时只校验 code)。
+// expectPreviewErrorFrame is like expectPreviewError, additionally pinning the message text
+// (when message is empty, only the code is checked).
 func expectPreviewErrorFrame(t *testing.T, conn *websocket.Conn, code, message string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -333,9 +333,9 @@ func createPreviewWithWrite(t *testing.T, f *previewFixture, session *accountTes
 	return linkID, token
 }
 
-// TestSharePreviewTerminalEndToEnd 钉住只读订阅的完整数据面: ready 帧声明
-// read 与 lease_ms, 随后是当前屏幕快照帧, 之后实时输出以二进制到达; 只读链接
-// 不安装输入处理, viewer 上行的字节被读循环丢弃不进终端, 输出不受影响。
+// TestSharePreviewTerminalEndToEnd pins the read-only subscription's full data plane: the ready frame declares
+// read and lease_ms, followed by the current screen snapshot frame, then live output arriving as binary; read-only
+// links install no input handling, the viewer's upstream bytes are discarded by the read loop and never reach the terminal, and output is unaffected.
 func TestSharePreviewTerminalEndToEnd(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -361,11 +361,11 @@ func TestSharePreviewTerminalEndToEnd(t *testing.T) {
 	}
 	_ = lines
 
-	// viewer 上行输入: 协议层丢弃, 不进入终端。
+	// Viewer upstream input: dropped at the protocol layer, never reaching the terminal.
 	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
 		t.Fatal(err)
 	}
-	// 属主正常输出应继续到达 viewer。
+	// The owner's normal output should keep arriving at the viewer.
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -421,8 +421,8 @@ func TestSharePreviewExpiryStopsStream(t *testing.T) {
 	expectPreviewError(t, conn, "expired", 10*time.Second)
 }
 
-// TestSharePreviewTabCloseEndsStream: 标签页关闭后订阅通道终止, viewer 收到
-// ended 错误帧。
+// TestSharePreviewTabCloseEndsStream: after the tab closes, the subscription channel terminates and the viewer receives
+// an ended error frame.
 func TestSharePreviewTabCloseEndsStream(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -480,7 +480,7 @@ func TestSharePreviewAbsentInSyncOnly(t *testing.T) {
 	}
 }
 
-// awaitPreviewControl 读帧直到 control 帧出现 (输出二进制帧可与之交叠), 返回解码帧。
+// awaitPreviewControl reads frames until a control frame appears (binary output frames may interleave), returning the decoded frame.
 func awaitPreviewControl(t *testing.T, conn *websocket.Conn, timeout time.Duration) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -504,8 +504,8 @@ func awaitPreviewControl(t *testing.T, conn *websocket.Conn, timeout time.Durati
 	return nil
 }
 
-// expectPreviewBinaryMarker 读帧直到二进制输出包含 marker; 期间若出现 forbidden
-// 字节 (被拒输入的回显) 或 error 帧即失败, 用于钉住"被拒输入不落终端且连接不断"。
+// expectPreviewBinaryMarker reads frames until binary output contains the marker; it fails if forbidden bytes
+// (echo of rejected input) or an error frame appear meanwhile, pinning "rejected input never reaches the terminal and the connection stays open".
 func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbidden string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -546,9 +546,9 @@ func previewTabController(t *testing.T, f *previewFixture, tabID string) string 
 	return tab.Info().Controller
 }
 
-// TestSharePreviewWriteInputReachesTerminal 钉住可写预览的完整输入方向: ready
-// 声明 read_write 与 lease_ms, viewer 二进制输入经仲裁取得控制权 (guest control
-// 帧携带 lease_until), 字节落入终端并随回显输出回到 viewer。
+// TestSharePreviewWriteInputReachesTerminal pins the writable preview's full input direction: ready
+// declares read_write and lease_ms, viewer binary input wins control via arbitration (guest control
+// frame carries lease_until), bytes land in the terminal and come back to the viewer as echo output.
 func TestSharePreviewWriteInputReachesTerminal(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -585,9 +585,9 @@ func TestSharePreviewWriteInputReachesTerminal(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "guest-rw-42", "", 10*time.Second)
 }
 
-// TestSharePreviewWriteOwnerControls 钉住属主占有仲裁: 属主客户端持有 controller
-// 时访客输入被 ErrGuestControlOwner 挡回 (owner control 帧), 字节不落终端,
-// 连接与输出不受影响。
+// TestSharePreviewWriteOwnerControls pins owner-held arbitration: while the owner client holds the controller,
+// guest input is turned back with ErrGuestControlOwner (owner control frame), bytes never reach the terminal,
+// and the connection and output are unaffected.
 func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -612,9 +612,9 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "owner-flow-1", "denied-ow-1", 10*time.Second)
 }
 
-// TestSharePreviewWriteGuestBusy 钉住访客间仲裁: 另一访客的租约仍在断线宽限窗内
-// (controller 已被 orphan 清理但租约未到期) 时, 访客输入被 ErrGuestControlBusy
-// 挡回 (busy control 帧), 字节不落终端。
+// TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration: while another guest's lease is still within the disconnect
+// grace window (controller orphan-cleaned but lease not expired), guest input is turned back with ErrGuestControlBusy
+// (busy control frame), and bytes never reach the terminal.
 func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -626,8 +626,8 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	linkA, _ := createPreviewWithWrite(t, f, alice, tabID, true)
 	_, tokenB := createPreviewWithWrite(t, f, alice, tabID, true)
 
-	// 访客 A 经 manager 取得控制后断开订阅通道: orphan 清理摘掉 controller,
-	// 租约保留至到期 (断线宽限)。
+	// Guest A takes control via the manager and then drops its subscription channel: orphan cleanup removes the controller,
+	// and the lease is kept until expiry (disconnect grace).
 	if _, err := f.manager.AttachSpectator(context.Background(), tabID, session.SpectateOptions{
 		ClientID: "preview-" + linkA, ChannelID: "spec-a",
 	}); err != nil {
@@ -659,9 +659,9 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "owner-flow-2", "denied-b-1", 10*time.Second)
 }
 
-// TestSharePreviewShrinkToReadRejectsInput 钉住权限收缩的输入侧生效: read_write
-// 连接建立后链接被改成 read, 后续输入按当前行重查被拒, 只下非终止 read_only
-// 错误帧, 连接不断, 字节不落终端。
+// TestSharePreviewShrinkToReadRejectsInput pins permission shrink taking effect on the input side: after a read_write
+// connection is established, the link is changed to read; subsequent input is re-checked against the current row and rejected,
+// delivering only a non-terminal read_only error frame, the connection stays open, and bytes never reach the terminal.
 func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -684,7 +684,7 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	writePreviewInput(t, conn, "echo denied-ro-1\n")
 	expectPreviewErrorFrame(t, conn, "read_only", "预览当前为只读", 10*time.Second)
 
-	// 非终止: 连接继续, 属主接管后的输出照常到达, 被拒输入从未落终端。
+	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -694,9 +694,9 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "after-ro-1", "denied-ro-1", 10*time.Second)
 }
 
-// TestSharePreviewDisconnectReleasesGuest 钉住 WS 结束的 ReleaseGuest: 访客 A
-// 断连后其控制权与租约被显式释放 (而非留到租约到期), 另一链接的访客 B 输入
-// 立即可取得控制 (先 busy 后 guest 的探针证明释放生效)。
+// TestSharePreviewDisconnectReleasesGuest pins ReleaseGuest at WS end: after guest A disconnects, its control and lease are
+// explicitly released (rather than left to expire), and guest B on another link can take control immediately
+// (proven by the busy-then-guest probes).
 func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -747,13 +747,13 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 			}
 			return
 		}
-		// busy: A 的租约尚未释放, 继续探针。
+		// busy: A's lease is not yet released; keep probing.
 	}
 	t.Fatal("guest B never acquired control after guest A disconnected")
 }
 
-// TestSharePreviewRevokeTerminatesWritable 钉住可写连接的吊销终止: 终止帧与只读
-// 路径一致 (revoked), WS 结束后访客控制权被释放。
+// TestSharePreviewRevokeTerminatesWritable pins revocation terminating a writable connection: the termination frame matches the
+// read-only path (revoked), and guest control is released at WS end.
 func TestSharePreviewRevokeTerminatesWritable(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.server.previewRevalidateInterval = 100 * time.Millisecond
@@ -783,9 +783,9 @@ func TestSharePreviewRevokeTerminatesWritable(t *testing.T) {
 	})
 }
 
-// TestSharePreviewTextFrameDropped 钉住非法上行帧处理: 文本帧不是合同输入类型,
-// 静默丢弃且不下任何错误帧 (read_only 都不发), 连接不断; 随后的合法二进制输入
-// 正常放行。
+// TestSharePreviewTextFrameDropped pins invalid upstream frame handling: text frames are not a contracted input type,
+// they are silently discarded with no error frame at all (not even read_only), and the connection stays open; subsequent
+// valid binary input is admitted normally.
 func TestSharePreviewTextFrameDropped(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -804,18 +804,18 @@ func TestSharePreviewTextFrameDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePreviewInput(t, conn, "echo text-ok-1\n")
-	// 文本帧若产生任何响应都会先于二进制输入的 control 帧到达 (读循环顺序处理,
-	// 队列先进先出); awaitPreviewControl 遇到 error 帧即失败, 钉住静默丢弃语义。
+	// Any response to a text frame would arrive before the control frame of the binary input (the read loop processes in order,
+	// queue is FIFO); awaitPreviewControl fails on error frames, pinning the silent-discard semantics.
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "guest" {
 		t.Fatalf("control frame = %v, want guest", control)
 	}
 	expectPreviewBinaryMarker(t, conn, "text-ok-1", "nope", 10*time.Second)
 }
 
-// TestSharePreviewRevokedInputFrame 钉住吊销后的输入帧映射: read_write 连接建立
-// 后链接被吊销, 输入按当前行重查被拒, 下非终止 revoked 帧 (与输出侧终止帧同码
-// 同文案), 不误报 read_only; 输出侧周期复查 (测试内调至 1 小时, 不触发) 终止前
-// 连接继续, 被拒输入不落终端。
+// TestSharePreviewRevokedInputFrame pins the input frame mapping after revocation: after a read_write connection is established,
+// the link is revoked, and input re-checked against the current row is rejected with a non-terminal revoked frame (same code and text
+// as the output-side termination frame), never misreported as read_only; before the output-side periodic recheck terminates
+// (set to 1 hour in this test, not firing), the connection continues and rejected input never reaches the terminal.
 func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.server.previewRevalidateInterval = time.Hour
@@ -837,7 +837,7 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	writePreviewInput(t, conn, "echo denied-rev-1\n")
 	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已吊销", 10*time.Second)
 
-	// 非终止: 连接继续, 属主接管后的输出照常到达, 被拒输入从未落终端。
+	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -847,9 +847,9 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "after-rev-1", "denied-rev-1", 10*time.Second)
 }
 
-// TestSharePreviewExpiredInputFrame 钉住过期后的输入帧映射: read_write 连接建立
-// 后链接过期, 输入按当前行重查被拒, 下非终止 expired 帧, 不误报 read_only;
-// 连接在输出侧周期复查 (测试内不触发) 终止前继续。
+// TestSharePreviewExpiredInputFrame pins the input frame mapping after expiry: after a read_write connection is established,
+// the link expires, and input re-checked against the current row is rejected with a non-terminal expired frame, never misreported
+// as read_only; the connection continues until the output-side periodic recheck (not fired in this test) terminates it.
 func TestSharePreviewExpiredInputFrame(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.server.previewRevalidateInterval = time.Hour

@@ -104,7 +104,7 @@ func auditPayloadRows(t *testing.T, db *gorm.DB, source, kind string) []map[stri
 	return payloads
 }
 
-// auditAssetIDs 返回指定 kind 的 fleet 审计行的 asset_id 列 (设备时间线的过滤锚点)。
+// auditAssetIDs returns the asset_id column of fleet audit rows of the given kind (the filter anchor of the device timeline).
 func auditAssetIDs(t *testing.T, db *gorm.DB, kind string) []string {
 	t.Helper()
 	audit := query.Use(db).AuditRow
@@ -126,7 +126,7 @@ func auditAssetIDs(t *testing.T, db *gorm.DB, kind string) []string {
 	return ids
 }
 
-// 上下线只在真实状态迁移时落审计: 未上线先下线忽略, 重复上线/重复下线只记一次。
+// Online/offline audits are only written on real state transitions: offline-before-online is ignored, and repeated online/offline only records once.
 func TestDevicePresenceTransitionDedup(t *testing.T) {
 	fixture := newServiceFixture(t)
 

@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-// 资产树「设备」分区测试: 分区位置(内置本地终端后、其他资产/分组前)、未登录不渲染且
-// 零请求、单击/Enter 打开设备终端(无独立「终端」按钮)、离线/终端关闭禁用提示、
-// revoked 不显示、吊销两次确认与取消、上下文菜单吊销 danger 样式、
-// 分区刷新、DevicesView 复用 MetricsPanel 回归。
+// Asset tree "Devices" section tests: section position (after the built-in local terminal, before other assets/groups), no render and
+// zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), offline/terminal-closed disable hints,
+// revoked not shown, revoke double-confirm and cancel, context-menu revoke danger style,
+// section refresh, DevicesView reusing MetricsPanel regression.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
@@ -365,7 +365,7 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect(deviceWorkspace()?.sessionId).toBe("s-dev-1");
     await flushUntil(() => deviceTerminalTabs().length === 1);
 
-    // Enter 重复打开同一设备聚焦已有工作区, 不新建会话。
+    // Enter on the same device again focuses the existing workspace, no new session is created.
     keydown(row, "Enter");
     await flush();
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
@@ -445,7 +445,7 @@ describe("资产树「设备」分区 · 自动收敛", () => {
     const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
     const before = deviceFetches();
 
-    // 他处吊销后, 下一轮 60s 轮询把设备从分区移除。
+    // After a revoke elsewhere, the next 60s poll removes the device from the section.
     devices = [{ ...ONLINE_DEVICE, revoked_at: NOW - 60_000 }];
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);

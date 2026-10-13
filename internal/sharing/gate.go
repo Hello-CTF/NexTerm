@@ -11,21 +11,21 @@ import (
 )
 
 var (
-	// ErrInputNotAllowed 表示只读授权的输入方向被拒绝。
+	// ErrInputNotAllowed means the input direction of a read-only grant is rejected.
 	ErrInputNotAllowed = errors.New("sharing: grant is read-only")
-	// ErrGrantExpired 表示授权已过有效期, 双向都必须停止。
+	// ErrGrantExpired means the grant is past its validity period; both directions must stop.
 	ErrGrantExpired = errors.New("sharing: grant expired")
 )
 
-// RecheckFunc 让执行路径在会话中途按当前数据库状态刷新授权 (例如调用
-// Service.RevalidateLink / Service.RevalidateHostAccess); 返回的 Grant 替换
-// 快照并立即作用于后续判定 (权限收缩即时生效), 返回错误即双向停止。
+// RecheckFunc lets the execution path refresh the authorization mid-session against the current database state (e.g. calling
+// Service.RevalidateLink / Service.RevalidateHostAccess); the returned Grant replaces the
+// snapshot and takes effect on subsequent decisions immediately (permission shrinkage applies at once); an error stops both directions.
 type RecheckFunc func(ctx context.Context, grant *Grant) (*Grant, error)
 
-// Gate 是分享流的执行点: 输出方向 (终端到 viewer) 始终放行, 输入方向仅对
-// read_write 授权放行; 每个数据块在 Read 前与 Write 前各复查一次 (可用
-// WithRevalidateTTL 把重查收敛为短 TTL 缓存), 授权失效后双向立即停止,
-// 失效或取消期间读到的块一律丢弃。阻塞的 Read 由集成层在取消时关闭 source 唤醒。
+// Gate is the enforcement point of a share stream: the output direction (terminal to viewer) is always allowed, the input direction only for
+// read_write grants; each data block is rechecked once before Read and once before Write (use
+// WithRevalidateTTL to converge revalidation into a short TTL cache); once the grant becomes invalid both directions stop immediately,
+// and blocks read during invalidity or cancellation are discarded. A blocked Read is woken by the integration layer closing the source on cancellation.
 type Gate struct {
 	refreshMu  sync.Mutex
 	mu         sync.Mutex
@@ -39,8 +39,8 @@ type Gate struct {
 	inputCache    refreshCache
 }
 
-// refreshCache 是 revalidate 短 TTL 缓存的条目: grant 是上次成功刷新的快照,
-// at 是其刷新时刻 (毫秒)。
+// refreshCache is an entry of the revalidate short-TTL cache: grant is the snapshot from the last successful refresh,
+// and at is its refresh time (milliseconds).
 type refreshCache struct {
 	grant *Grant
 	at    int64
@@ -62,17 +62,17 @@ func WithRecheck(recheck RecheckFunc) GateOption {
 	}
 }
 
-// WithInputCheck 为输入方向附加 Write 前的逐块强制点 (如公开链接的审计输入
-// 检查); 返回的 Grant 同样替换快照。
+// WithInputCheck attaches a per-block enforcement point before Write for the input direction (e.g. the audited input
+// check of public links); the returned Grant likewise replaces the snapshot.
 func WithInputCheck(check func(ctx context.Context, grant *Grant) (*Grant, error)) GateOption {
 	return func(g *Gate) {
 		g.inputCheck = check
 	}
 }
 
-// WithRevalidateTTL 打开 recheck 与 inputCheck 的短 TTL 缓存: TTL 内的重复
-// 调用不重查, 沿用上次的刷新快照, 吊销/收缩最迟在 TTL 后的下一次调用生效
-// (空闲连接由集成层的周期 Check 兜住)。非正数 (默认) 关闭缓存, 逐块重查。
+// WithRevalidateTTL turns on the short TTL cache for recheck and inputCheck: repeated calls within the TTL are not
+// revalidated and reuse the last refresh snapshot; revocation/shrinkage takes effect at the latest on the next call after the TTL
+// (idle connections are covered by the integration layer's periodic Check). A non-positive value (the default) disables the cache and revalidates per block.
 func WithRevalidateTTL(ttl time.Duration) GateOption {
 	return func(g *Gate) {
 		g.revalidateTTL = ttl
@@ -109,16 +109,16 @@ func (g *Gate) InputAllowed() bool {
 	return g.grant != nil && g.grant.Permission.AllowsWrite()
 }
 
-// Check 先按 recheck 刷新授权快照 (支持权限收缩与有效期变化), 再按当前
-// ExpiresAt 判定; 过期或 recheck 失败 (吊销) 都返回错误。
+// Check first refreshes the grant snapshot via recheck (covering permission shrinkage and expiry changes), then judges by the current
+// ExpiresAt; expiry or a failed recheck (revocation) both return an error.
 func (g *Gate) Check(ctx context.Context) error {
 	return g.check(ctx, func(ctx context.Context, grant *Grant) (*Grant, error) {
 		return g.cachedRefresh(ctx, grant, g.recheck, &g.recheckCache)
 	})
 }
 
-// CheckFresh 与 Check 判定相同, 但绕过 TTL 缓存强制重查: 集成层在数据通路
-// 已经断开时用它取当前授权状态, 缓存窗口不会掩盖刚刚发生的过期/吊销。
+// CheckFresh decides the same as Check but bypasses the TTL cache to force a revalidation: the integration layer uses it to
+// fetch the current authorization state once the data path is already torn down, so the cache window cannot hide an expiry/revocation that just happened.
 func (g *Gate) CheckFresh(ctx context.Context) error {
 	return g.check(ctx, func(ctx context.Context, grant *Grant) (*Grant, error) {
 		if g.recheck == nil {
@@ -148,9 +148,9 @@ func (g *Gate) check(ctx context.Context, refresh func(ctx context.Context, gran
 	return nil
 }
 
-// cachedRefresh 执行一次 revalidate: TTL 窗口内直接返回 nil (沿用当前快照,
-// 缓存条目一定比当前快照旧或相同, 不会把权限回滚到更宽的状态); 窗口外真实
-// 调用, 成功的刷新写入缓存。错误不缓存, 吊销即时传递。
+// cachedRefresh performs one revalidation: within the TTL window it returns nil directly (keeping the current snapshot;
+// the cache entry is always older than or equal to the current snapshot, so it can never roll permissions back to a wider state); outside the window it makes the real
+// call, and a successful refresh is written to the cache. Errors are not cached; revocation passes through immediately.
 func (g *Gate) cachedRefresh(ctx context.Context, grant *Grant, check RecheckFunc, cache *refreshCache) (*Grant, error) {
 	if check == nil {
 		return nil, nil
@@ -173,12 +173,12 @@ func (g *Gate) cachedRefresh(ctx context.Context, grant *Grant, check RecheckFun
 	return refreshed, nil
 }
 
-// PipeOutput 把终端输出拷贝给 viewer, 直到源结束、上下文结束或授权失效。
+// PipeOutput copies terminal output to the viewer until the source ends, the context ends, or the grant becomes invalid.
 func (g *Gate) PipeOutput(ctx context.Context, dst io.Writer, src io.Reader) error {
 	return g.pipe(ctx, dst, src, false)
 }
 
-// PipeInput 把 viewer 输入拷贝给终端; 只读授权拒绝且不放行任何字节。
+// PipeInput copies viewer input to the terminal; a read-only grant is rejected and not a single byte is let through.
 func (g *Gate) PipeInput(ctx context.Context, dst io.Writer, src io.Reader) error {
 	return g.pipe(ctx, dst, src, true)
 }

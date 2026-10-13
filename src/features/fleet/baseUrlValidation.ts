@@ -1,7 +1,7 @@
-// 接入地址的前置校验, 与服务端 fleetserver.normalizeBaseURL 同一套规则:
-// 显式 http/https、必须含主机名、不能带用户信息/查询参数/片段;
-// 明文 http 仅限本机/内网地址, 否则必须勾选 insecure。
-// 客户端先拦一道, 服务端仍会做最终规范化 (去重/去尾斜杠/小写 scheme)。
+// Pre-validation of base URLs, same rules as the server-side fleetserver.normalizeBaseURL:
+// explicit http/https, hostname required, no user info/query/fragment;
+// plain http is limited to local/private addresses, otherwise insecure must be checked.
+// The client intercepts first; the server still does the final normalization (dedup/trailing slash/lowercase scheme).
 
 export const MAX_BASE_URLS = 8;
 export const MAX_BASE_URL_LENGTH = 2048;
@@ -32,7 +32,7 @@ export interface BaseURLValidation {
   error: string | null;
 }
 
-// 返回规范化后的地址或错误信息; 通过时 url 已去尾斜杠、scheme 小写。
+// Returns the normalized URL or an error message; on success the URL has its trailing slash removed and scheme lowercased.
 export function validateBaseURL(raw: string, insecure: boolean): BaseURLValidation {
   const trimmed = raw.trim();
   if (!trimmed) return { url: "", error: "接入地址不能为空" };
@@ -55,7 +55,7 @@ export function validateBaseURL(raw: string, insecure: boolean): BaseURLValidati
   if (scheme === "http" && !insecure && !isLocalOrPrivate(parsed.hostname)) {
     return { url: "", error: "公网地址必须使用 HTTPS；设备凭证不能通过明文 HTTP 传输" };
   }
-  // JS URL 会把空 path 归一化成 "/", 这里按 Go 的语义手动拼回去尾斜杠的结果。
+  // JS URL normalizes an empty path to "/"; here the trailing slash is manually stripped per Go semantics.
   const path = parsed.pathname.replace(/\/+$/, "");
   return { url: `${scheme}://${parsed.host}${path}`, error: null };
 }

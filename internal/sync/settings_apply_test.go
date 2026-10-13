@@ -203,12 +203,12 @@ func TestApplyKnownHostTripleConflictLocalNewerKeepsRow(t *testing.T) {
 	requireKnownHost(t, instance, localID, "SHA256:local", 300)
 	requireNoKnownHost(t, instance, remoteID)
 	requireNoSyncTombstone(t, instance, localID)
-	// 败者(远端)必须按胜者修订号立碑, 随本轮推送覆盖服务端败者对象。
+	// The loser (remote) must be tombstoned at the winner's revision, overwriting the server-side loser object with this round's push.
 	requireSyncTombstone(t, instance, remoteID, KindKnownHost, 300)
 }
 
-// re-ID 的新 ID 必须在同修订号哈希决胜中必胜旧载荷: 两种哈希顺序里, 败者顺序被构造性拒绝,
-// 旧副本只能走 displaced 路径, 不会反向把 re-ID 对象墓碑化。
+// The re-IDed new ID must beat the old payload in the same-revision hash tiebreak: in both hash orderings the loser ordering is constructively rejected,
+// so the old copy can only take the displaced path and never tombstones the re-IDed object in reverse.
 func TestKnownHostReincarnationIDWinsHashTiebreak(t *testing.T) {
 	instance := newTestInstance(t, false)
 	engine := instance.service.engine
@@ -236,9 +236,9 @@ func TestKnownHostReincarnationIDWinsHashTiebreak(t *testing.T) {
 	}
 }
 
-// 与载荷同 ID 但不同三元组的本地行是「化身」: 它与同 ID 败者墓碑不能共存(槽位二义,
-// 服务端不收敛, 后续同 ID 墓碑会误删它)。化身必须在同一事务内让出原 ID——信任内容以
-// 新 ID 原样保留, 原 ID 立碑给远端败者; 不同三元组的他行不受影响。
+// A local row with the same ID as the payload but a different triple is an "incarnation": it cannot coexist with a same-ID loser tombstone (slot ambiguity,
+// the server would not converge, and later same-ID tombstones would mistakenly delete it). The incarnation must yield its original ID in the same transaction - the trusted content is
+// preserved verbatim under the new ID, and the original ID is tombstoned for the remote loser; rows with different triples are unaffected.
 func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	instance := newTestInstance(t, false)
 	sharedID := ids.New()
@@ -246,8 +246,8 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	mustApplyObjects(t, instance, applyKnownHost(t, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:unrelated", 50))
 	mustApplyObjects(t, instance, applyKnownHost(t, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200))
 
-	// 载荷携带 sharedID 与较新修订号(50 → 100)迁移三元组, 但目标三元组的胜者(200)更胜一筹:
-	// 迁移被拒, sharedID 立碑, 化身以新 ID 保留(内容与修订号不变)。
+	// The payload carries sharedID with a newer revision (50 -> 100) migrating the triple, but the target triple's winner (200) is stronger:
+	// the migration is rejected, sharedID is tombstoned, and the incarnation is preserved under a new ID (content and revision unchanged).
 	result := mustApplyObjects(t, instance, applyKnownHost(t, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
 	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
 	requireSyncTombstone(t, instance, sharedID, KindKnownHost, 200)
@@ -269,7 +269,7 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 		t.Fatalf("incarnation must survive under a fresh id with content intact: %+v", rows)
 	}
 
-	// 收集映射不得再有同 ID 槽位冲突: 化身对象与原 ID 墓碑各自成对象。
+	// The collect map must no longer have a same-ID slot conflict: the incarnation object and the original-ID tombstone are separate objects.
 	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 		t.Fatalf("incarnation must be collected as a known_host object: %+v", entry)
 	}
 
-	// 后续同原 ID 的墓碑(更晚修订)不会误删 re-ID 后的化身。
+	// A later tombstone with the original ID (higher revision) does not mistakenly delete the re-IDed incarnation.
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostTombstone(t, sharedID, 300)).Objects[0], ApplyResultApplied)
 	rows, err = instance.db.KnownHostList(context.Background())
 	if err != nil || len(rows) != 2 {
@@ -298,8 +298,9 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	}
 }
 
-// 冲突墓碑(携带原败者三元组)遇到同 ID 不同三元组的较新胜出化身: 不得按用户删除清掉,
-// 必须安全 re-ID 保留内容与修订号, 冲突墓碑只清原槽位并随收集再传播(保留三元组)。
+// A conflict tombstone (carrying the original loser triple) meeting a newer winning incarnation with the same ID but a different triple: it must not be cleared
+// as a user deletion; the incarnation must be safely re-IDed with content and revision preserved, and the conflict tombstone only clears the original slot
+// and re-propagates with collection (triple preserved).
 func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 	instance := newTestInstance(t, false)
 	sharedID := ids.New()
@@ -319,7 +320,7 @@ func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 		t.Fatalf("newer incarnation must survive under a fresh id: %+v", incarnation)
 	}
 
-	// 收集: 原 ID 槽位是携带三元组的冲突墓碑, 新 ID 是存活对象。
+	// Collect: the original ID slot is the conflict tombstone carrying the triple, the new ID is the live object.
 	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +333,7 @@ func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 		t.Fatalf("incarnation must be collected as a known_host object: %+v", entry)
 	}
 
-	// 同三元组冲突墓碑重放(其他设备的败者清理): 本地已无原 ID 行, 只合并墓碑, 化身不受影响。
+	// Same-triple conflict tombstone replay (loser cleanup from another device): the original-ID row is gone locally, so only the tombstone merges and the incarnation is unaffected.
 	replay := mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, sharedID, "git.example.com", 22, "ssh-ed25519", 200))
 	requireApplyResult(t, replay.Objects[0], ApplyResultApplied)
 	if row, found, _ := instance.service.engine.knownHostByID(context.Background(), incarnation.ID); !found || row.Fingerprint != "SHA256:newer" {
@@ -340,7 +341,7 @@ func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 	}
 }
 
-// 用户主动删除墓碑(无三元组)按 ID 生效, 不论本地行三元组; 再传播不得携带三元组。
+// User-initiated deletion tombstones (no triple) take effect by ID regardless of the local row's triple; re-propagation must not carry a triple.
 func TestApplyKnownHostUserTombstoneDeletesRegardlessOfTriple(t *testing.T) {
 	instance := newTestInstance(t, false)
 	rowID := ids.New()
@@ -360,7 +361,7 @@ func TestApplyKnownHostUserTombstoneDeletesRegardlessOfTriple(t *testing.T) {
 	}
 }
 
-// 本地行修订号较新: 冲突墓碑不得清除也不得 re-ID, 由本地行按标准反复活语义重推槽位。
+// A newer local row revision: the conflict tombstone must neither clear nor re-ID it; the local row re-pushes the slot per standard anti-revival semantics.
 func TestApplyKnownHostConflictTombstoneNewerRowSkips(t *testing.T) {
 	instance := newTestInstance(t, false)
 	rowID := ids.New()
@@ -372,8 +373,8 @@ func TestApplyKnownHostConflictTombstoneNewerRowSkips(t *testing.T) {
 	requireNoSyncTombstone(t, instance, rowID)
 }
 
-// 同一 ID 的多个冲突墓碑: 三元组元数据确定性地跟随修订号最大者, 不拼出混合墓碑;
-// 更高修订的用户删除墓碑随后清除元数据, 再传播退化为纯用户删除。
+// Multiple conflict tombstones for the same ID: the triple metadata deterministically follows the highest revision, never mixing tombstones;
+// a later higher-revision user deletion tombstone then clears the metadata, and re-propagation degrades to a plain user deletion.
 func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	instance := newTestInstance(t, false)
 	ctx := context.Background()
@@ -403,7 +404,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	}
 	assertTombstoneTriple("b.example.com", 200)
 
-	// 反向落地顺序: 低修订后落不得覆盖高修订元数据。
+	// Reverse landing order: a later lower-revision landing must not overwrite the higher-revision metadata.
 	otherID := ids.New()
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "a.example.com", 22, "ssh-rsa", 50)).Objects[0], ApplyResultApplied)
@@ -415,7 +416,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 		t.Fatalf("lower revision must not overwrite the meta: %s", entry.plaintext)
 	}
 
-	// 更高修订的用户删除: 元数据被清除, 再传播为纯用户删除。
+	// A higher-revision user deletion: the metadata is cleared and re-propagation is a plain user deletion.
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostTombstone(t, hostID, 300)).Objects[0], ApplyResultApplied)
 	assertTombstoneTriple("", 0)
 }
@@ -426,14 +427,14 @@ func TestApplyKnownHostTripleConflictRemoteLoserTombstoned(t *testing.T) {
 	loserID := ids.New()
 	mustApplyObjects(t, instance, applyKnownHost(t, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200))
 
-	// 败者先推后到: 本地胜者保住行, 败者 id 按胜者修订号立碑, 本轮 collect/push 即可覆盖服务端败者对象。
+	// The loser arrives after the winner pushed: the local winner keeps its row, the loser id is tombstoned at the winner's revision, and this round's collect/push overwrites the server-side loser object.
 	result := mustApplyObjects(t, instance, applyKnownHost(t, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
 	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
 	requireKnownHost(t, instance, winnerID, "SHA256:winner", 200)
 	requireNoKnownHost(t, instance, loserID)
 	requireSyncTombstone(t, instance, loserID, KindKnownHost, 200)
 
-	// 墓碑阻断败者重放; 较新败者仍可胜出并反过来立碑胜者。
+	// The tombstone blocks loser replay; a newer loser can still win and tombstone the winner in turn.
 	stale := mustApplyObjects(t, instance, applyKnownHost(t, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
 	requireApplyResult(t, stale.Objects[0], ApplyResultSkipped)
 	requireNoKnownHost(t, instance, loserID)
@@ -445,7 +446,7 @@ func TestApplyKnownHostTripleConflictRemoteLoserTombstoned(t *testing.T) {
 	requireSyncTombstone(t, instance, winnerID, KindKnownHost, 300)
 }
 
-// 同修订不同 ID 的同行记录必须以规范载荷哈希决胜: 两种应用顺序收敛到同一终态。
+// Same-triple rows with different IDs at the same revision must decide by canonical payload hash: both application orders converge to the same final state.
 func TestApplyKnownHostEqualRevisionConverges(t *testing.T) {
 	hostA := ids.New()
 	hostB := ids.New()
@@ -515,7 +516,7 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 		t.Fatalf("stored envelope must open to the payload key: %q err=%v", plaintext, err)
 	}
 
-	// 落盘形态重建的规范载荷必须与应用载荷逐字节一致(含 reveal 后的 apiKey)。
+	// The canonical payload rebuilt from the persisted form must be byte-identical to the applied payload (including the revealed apiKey).
 	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
@@ -617,7 +618,7 @@ func TestApplyAIProfileKeyedSkippedWhenVaultUnavailable(t *testing.T) {
 	}
 }
 
-// 档案共享 LWW 时钟: 较旧对象不得拉低设置修订号, 本地较新编辑不被回滚。
+// Profiles share the LWW clock: an older object must not lower the setting revision, and newer local edits are not rolled back.
 func TestApplyAIProfileSharedClockNeverLowersRevision(t *testing.T) {
 	instance := newTestInstance(t, true)
 	keeperID := ids.New()
@@ -633,7 +634,7 @@ func TestApplyAIProfileSharedClockNeverLowersRevision(t *testing.T) {
 	}
 }
 
-// 同步落盘的 ai.models 必须能被 profiles.Manager 直接消费: 字段不漂移, 密钥经本地凭据库可解析。
+// The synced ai.models must be directly consumable by profiles.Manager: fields do not drift, and keys resolve via the local vault.
 func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 	instance := newTestInstance(t, true)
 	profileID := ids.New()

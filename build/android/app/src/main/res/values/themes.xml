@@ -8,7 +8,7 @@
         <!-- Status bar color. -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <!-- 深色界面配浅色系统栏图标, 透明栏下保证状态栏与导航条可读 -->
+        <!-- Dark UI with light system bar icons; keeps status bar and navigation bar readable under transparent bars -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <!-- Window background -->

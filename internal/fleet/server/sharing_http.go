@@ -16,20 +16,20 @@ import (
 	"github.com/coder/websocket"
 )
 
-// maxShareViewerMessage 是 viewer WS 的读上限; 输入帧经 supervisor 协议
-// 分片 (单帧上限 256KiB), 这里只兜住异常大消息。
+// maxShareViewerMessage is the read limit of the viewer WS; input frames go through supervisor protocol
+// fragmentation (256KiB per frame), so this only catches abnormally large messages.
 const maxShareViewerMessage = 1 << 20
 
-// defaultShareRevalidateInterval 是空闲分享连接的周期复查间隔: 数据流停止时
-// 吊销/过期/设备变化最迟在该间隔内生效。
+// defaultShareRevalidateInterval is the periodic recheck interval for idle share connections: when the data flow stops,
+// revocation/expiry/device changes take effect at the latest within this interval.
 const defaultShareRevalidateInterval = 10 * time.Second
 
-// shareViewerWriteTimeout 是写 viewer WS 的单条消息超时: 慢 viewer (TCP
-// 背压) 不得把输出泵与连接拆除无限期挂死。
+// shareViewerWriteTimeout is the per-message timeout for writing to the viewer WS: a slow viewer (TCP
+// backpressure) must not hang the output pump and the connection teardown indefinitely.
 const shareViewerWriteTimeout = 30 * time.Second
 
-// shareTerminateCheckTimeout 是终止前强制授权重查的超时: 重查只读数据库,
-// 超时后按无终止码处理 (视同纯传输错误), 不拖延连接拆除。
+// shareTerminateCheckTimeout is the timeout for the forced authorization recheck before termination: the recheck only reads the database,
+// and on timeout it is treated as no termination code (as if a pure transport error), never delaying the connection teardown.
 const shareTerminateCheckTimeout = 5 * time.Second
 
 type shareLinkView struct {
@@ -80,8 +80,8 @@ type shareLinkCreateRequest struct {
 	TTLMS     int64  `json:"ttl_ms"`
 }
 
-// deviceShareLinkView 是设备公开链接的管理视图; 与 shareLinkView 的区别是
-// 绑定设备而非单个会话, 并携带 not_before (延迟生效时刻)。
+// deviceShareLinkView is the management view of a device public link; unlike shareLinkView it binds the
+// device rather than a single session, and carries not_before (the delayed effect time).
 type deviceShareLinkView struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -155,8 +155,8 @@ func (s *Service) serveShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
 	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// serveDeviceShareLinkCreate 处理 POST /share/device-links: 创建设备公开链接,
-// 响应是唯一携带一次性 token 的入口 (列表/吊销响应不含 token)。
+// serveDeviceShareLinkCreate handles POST /share/device-links: creates a device public link,
+// and the response is the only entry carrying the one-time token (list/revoke responses carry no token).
 func (s *Service) serveDeviceShareLinkCreate(w http.ResponseWriter, r *http.Request) {
 	var request deviceShareLinkCreateRequest
 	if err := decodeFleetJSON(w, r, &request); err != nil {
@@ -202,10 +202,10 @@ func (s *Service) serveHostShareCreate(w http.ResponseWriter, r *http.Request) {
 		writeFleetFailure(w, err)
 		return
 	}
-	// 设备授权与 deny 审计在 sharing.CreateHostShare 内先于用户名解析 (越权一律
-	// 403+审计, 不泄露接收者是否存在); 接收者按用户名精确解析 (大小写不敏感),
-	// 创建不要求前端持有用户目录 (/admin/users 仅超管), 仅设备 owner
-	// 同一合同。两条错误路径都不接触任何密码或密钥材料。
+	// Device authorization and deny auditing happen inside sharing.CreateHostShare before username resolution (unauthorized requests always get
+	// 403+audit, never revealing whether the recipient exists); the recipient is resolved by exact username (case-insensitive),
+	// and creation does not require the frontend to hold a user directory (/admin/users is superadmin-only), only the device owner
+	// signs the same contract. Neither error path touches any password or key material.
 	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, request.RecipientUsername, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
 	if err != nil {
 		writeFleetFailure(w, err)
@@ -235,9 +235,9 @@ func (s *Service) serveHostShareRevoke(w http.ResponseWriter, r *http.Request) {
 	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// dialShareSupervisor 返回设备代管数据通路专用的 supervisor 客户端: 每次
-// 拨号经 registry 请求一条出站桥接 (supervisor 协议字节透传), hello 摘要取
-// 自设备控制通道上报的 state_digest。设备离线或未上报时拒绝。
+// dialShareSupervisor returns the supervisor client dedicated to the device managed-share data path: each dial
+// requests an outbound bridge via the registry (supervisor protocol bytes pass through transparently), and the hello digest comes from
+// the state_digest reported by the device control channel. It refuses when the device is offline or has not reported one.
 func (s *Service) dialShareSupervisor(deviceID string) (*supervisor.Client, error) {
 	digest, ok := s.registry.StateDigest(deviceID)
 	if !ok {
@@ -261,8 +261,8 @@ type shareErrorFrame struct {
 	Message string `json:"message"`
 }
 
-// shareTerminalWS 串行化 viewer WS 的全部写 (二进制输出与文本控制帧共用
-// 一条连接, coder/websocket 只允许一个并发写者); 读只有一个方向, 无需加锁。
+// shareTerminalWS serializes all writes to the viewer WS (binary output and text control frames share
+// one connection, and coder/websocket allows only one concurrent writer); reads go in a single direction and need no lock.
 type shareTerminalWS struct {
 	conn *websocket.Conn
 
@@ -310,7 +310,7 @@ func (r *shareWSReader) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		// viewer 输入只认二进制帧; 文本控制帧不进入终端字节流。
+		// Viewer input accepts only binary frames; text control frames never enter the terminal byte stream.
 		if kind != websocket.MessageBinary {
 			continue
 		}
@@ -329,10 +329,10 @@ func (w shareWSWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// discardInput 在输入方向被 Gate 拒绝后持续读并丢弃 viewer 消息: 只读或
-// 权限收缩后会话保持 (输出继续), 控制帧 (ping/close) 也需要持续读取来应答。
-// 读用 background ctx — coder/websocket 会在读 ctx 取消时直接拆连接, 那会
-// 抢在终止错误帧写出之前把 viewer 连接杀掉。
+// discardInput keeps reading and discarding viewer messages after the input direction is rejected by the Gate: after read-only or
+// permission shrinkage the session stays alive (output continues), and control frames (ping/close) also need continuous reads to be answered.
+// Reads use a background ctx - coder/websocket tears the connection down when the read ctx is canceled, which would
+// kill the viewer connection before the termination error frame is written.
 func (v *shareTerminalWS) discardInput() error {
 	for {
 		if _, _, err := v.conn.Read(context.Background()); err != nil {
@@ -341,8 +341,8 @@ func (v *shareTerminalWS) discardInput() error {
 	}
 }
 
-// shareResolveKey 是匿名公开链接 resolve 的限流键: 按客户端 IP 计数, 成功
-// resolve 重置窗口; 随机 token 洪水刷不动 audit_log。
+// shareResolveKey is the rate-limit key for anonymous public link resolves: counted by client IP, and a successful
+// resolve resets the window; random token floods cannot flood audit_log.
 func (s *Service) shareResolveKey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	key := "share-resolve|" + clientIP(r)
 	if !s.shareResolveGate.Allow(key) {
@@ -352,8 +352,8 @@ func (s *Service) shareResolveKey(w http.ResponseWriter, r *http.Request) (strin
 	return key, true
 }
 
-// recordShareResolveOutcome 只对 token 不存在计入限流退避 (随机 token 洪水);
-// 吊销/过期/未生效/设备离线等真实 token 的拒绝不惩罚持有者。
+// recordShareResolveOutcome only counts nonexistent tokens toward rate-limit backoff (random token floods);
+// denials of real tokens such as revoked/expired/not-yet-valid/device-offline do not punish the holder.
 func (s *Service) recordShareResolveOutcome(key string, err error) {
 	if err == nil {
 		s.shareResolveGate.RecordSuccess(key)
@@ -364,12 +364,11 @@ func (s *Service) recordShareResolveOutcome(key string, err error) {
 	}
 }
 
-// serveSharePublicTerminal 处理 GET /share/public/{token}: 浏览器普通导航
-// (非 WS upgrade) 由配置的静态入口直接服务 SPA 页面, 不做 token 校验/审计/
-// 持久化; WS upgrade 才是数据面 — 匿名 viewer 用公开 token 换取一次性授权
-// (ResolveLink 已审计), 随后经出站桥接 attach 到分享会话, 双向字节流过
-// sharing Gate: 输出始终放行, 输入仅 read_write, 吊销/过期/设备变化逐块
-// 复查即时双向停止。
+// serveSharePublicTerminal handles GET /share/public/{token}: plain browser navigations
+// (non-WS-upgrade) are served the SPA page directly by the configured static entry, with no token verification/auditing/
+// persistence; the WS upgrade is the data plane - an anonymous viewer exchanges the public token for a one-time authorization
+// (ResolveLink already audits), then attaches to the shared session via an outbound bridge, with bytes flowing both ways through the
+// sharing Gate: output is always allowed, input only with read_write, and revocation/expiry/device changes stop both directions immediately per recheck.
 func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Request) {
 	if !isShareWSUpgrade(r) {
 		s.serveSharePublicPage(w, r)
@@ -388,11 +387,10 @@ func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Reques
 	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
 }
 
-// serveSharePublicDeviceTerminal 处理 GET /share/public/device/{token}: 设备
-// 公开链接的数据面, 与 serveSharePublicTerminal 同一合同 — 普通导航由静态
-// 入口直接服务 SPA (不做 token 校验), WS upgrade 才进入 token 鉴权; 区别在
-// 于 Grant 不带 SessionID, 数据面经 host agent 为访客新建终端 (而不是 attach
-// 分享者的既有会话), 全程不接触主机密码或私钥。
+// serveSharePublicDeviceTerminal handles GET /share/public/device/{token}: the data plane of a device
+// public link, under the same contract as serveSharePublicTerminal - plain navigations are served the SPA directly by the static
+// entry (no token verification), and only the WS upgrade enters token auth; the difference is that the Grant carries no SessionID, so the data plane
+// creates a terminal for the visitor via the host agent (instead of attaching to the sharer's existing session), never touching host passwords or private keys.
 func (s *Service) serveSharePublicDeviceTerminal(w http.ResponseWriter, r *http.Request) {
 	if !isShareWSUpgrade(r) {
 		s.serveSharePublicPage(w, r)
@@ -411,8 +409,8 @@ func (s *Service) serveSharePublicDeviceTerminal(w http.ResponseWriter, r *http.
 	s.serveShareTerminal(w, r, grant, s.sharing.NewDeviceLinkGate(grant))
 }
 
-// isShareWSUpgrade 判定请求是否为 WebSocket 升级; 判定条件与
-// websocket.Accept 的握手校验一致 (Connection/Upgrade 头 token, 大小写不敏感)。
+// isShareWSUpgrade reports whether the request is a WebSocket upgrade; the conditions match
+// websocket.Accept's handshake checks (Connection/Upgrade header tokens, case-insensitive).
 func isShareWSUpgrade(r *http.Request) bool {
 	return headerHasToken(r.Header, "Connection", "upgrade") && headerHasToken(r.Header, "Upgrade", "websocket")
 }
@@ -428,10 +426,9 @@ func headerHasToken(header http.Header, key, token string) bool {
 	return false
 }
 
-// serveSharePublicPage 用配置的静态入口服务 SPA (与 "/" 同一 index.html,
-// 不重定向不另造 shell); token URL 一律 no-store。静态入口按 URL.Path 查
-// 文件, 原始 token 路径可能撞上真实静态文件或被编码 dot-segment 校验拒绝,
-// 因此克隆请求并把路径固定为 "/", 只保留 query 等上下文。
+// serveSharePublicPage serves the SPA with the configured static entry (the same index.html as "/", with no redirect and no separate shell);
+// token URLs are always no-store. The static entry looks up files by URL.Path, and raw token paths could hit a real static file or be rejected
+// by encoded dot-segment checks, so the request is cloned with the path pinned to "/", keeping only the query and other context.
 func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
 	if s.sharePublicPage == nil {
 		http.NotFound(w, r)
@@ -447,8 +444,8 @@ func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
 	s.sharePublicPage.ServeHTTP(noStoreWriter{w}, page)
 }
 
-// noStoreWriter 在写出前强制 Cache-Control: no-store, 覆盖静态入口对
-// text/html 默认的 no-cache — token URL 不允许任何缓存。
+// noStoreWriter forces Cache-Control: no-store before writing, overriding the static entry's default
+// no-cache for text/html - token URLs allow no caching at all.
 type noStoreWriter struct{ http.ResponseWriter }
 
 func (w noStoreWriter) WriteHeader(status int) {
@@ -461,9 +458,9 @@ func (w noStoreWriter) Write(payload []byte) (int, error) {
 	return w.ResponseWriter.Write(payload)
 }
 
-// serveShareTerminalOpen 处理 GET /share/devices/{id}/terminal: 注册用户
-// (AuthorizeTerminalOpen 已审计) 经 host agent 新建终端, 双向字节流过
-// sharing Gate, 权限收缩即时生效。
+// serveShareTerminalOpen handles GET /share/devices/{id}/terminal: a registered user
+// (AuthorizeTerminalOpen already audited) opens a new terminal via the host agent, with bytes flowing both ways through the
+// sharing Gate, and permission shrinkage taking effect immediately.
 func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request) {
 	grant, err := s.sharing.AuthorizeTerminalOpen(r.Context(), identityFrom(r), r.PathValue("id"))
 	if err != nil {
@@ -473,9 +470,9 @@ func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request)
 	s.serveShareTerminal(w, r, grant, s.sharing.NewHostGate(grant))
 }
 
-// serveShareTerminal 升级 viewer WS 并建立 gated 数据通路。grant 带
-// SessionID 时 attach 既有会话 (公开链接), 否则经 host agent 新建终端
-// (注册分享); 两条路径的泵与 Gate 语义完全一致。
+// serveShareTerminal upgrades the viewer WS and establishes the gated data path. When the grant carries a
+// SessionID it attaches to the existing session (public links); otherwise it creates a terminal via the host agent
+// (registered shares); the pumps and Gate semantics of both paths are exactly the same.
 func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
@@ -528,18 +525,18 @@ func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, gr
 	}
 	stream, err := client.Attach(r.Context(), info.ID, expect)
 	if err != nil {
-		// attach 失败时回收刚创建的会话, 不在宿主上留下孤儿终端。
+		// When attach fails, reclaim the just-created session so no orphan terminal is left on the host.
 		cleanup()
 		return "", nil, nil, err
 	}
 	return info.ID, stream, cleanup, nil
 }
 
-// pumpShareTerminal 双向泵送直到任一侧结束或授权失效: 输出 Gate.PipeOutput
-// (终端到 viewer), 输入 Gate.PipeInput (viewer 到终端), 另有一个周期复查
-// goroutine 兜住空闲连接 (无数据流时吊销/过期同样生效)。授权失效时任一
-// goroutine 都会带着错误返回, 随后 best-effort 发错误帧并关闭; 阻塞的读
-// 由 stream.Close 与 viewer 关闭唤醒。
+// pumpShareTerminal pumps bytes both ways until either side ends or the grant becomes invalid: output via Gate.PipeOutput
+// (terminal to viewer), input via Gate.PipeInput (viewer to terminal), plus a periodic recheck
+// goroutine to cover idle connections (revocation/expiry takes effect even with no data flow). Once the grant becomes invalid, any
+// goroutine returns with an error, followed by a best-effort error frame and close; blocked reads
+// are woken by stream.Close and the viewer close.
 func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.Stream, gate *sharing.Gate) {
 	pumpCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 3)
@@ -574,9 +571,9 @@ func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.
 	_ = stream.Close()
 	code, message, ok := shareTermination(err)
 	if !ok && err != nil {
-		// 传输层错误 (桥接断开等) 先于授权复查到时不会映射终止码, 终止前
-		// 强制重查一次授权: 过期/吊销仍下发可识别错误帧, 不让传输错误掩盖
-		// 真实终止原因。
+		// A transport-layer error (bridge disconnect, etc.) arriving before the authorization recheck maps to no termination code; before terminating,
+		// force one authorization recheck: expiry/revocation still delivers a recognizable error frame, and the transport error never masks
+		// the real termination reason.
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), shareTerminateCheckTimeout)
 		defer checkCancel()
 		if checkErr := gate.CheckFresh(checkCtx); checkErr != nil {
@@ -606,8 +603,8 @@ func (s *Service) failShareTerminal(viewer *shareTerminalWS, err error) {
 	_ = viewer.conn.Close(websocket.StatusPolicyViolation, "share failed")
 }
 
-// shareTermination 把泵错误映射为可安全下发给 viewer 的终止码; 传输层
-// 断开与内部错误不携带细节 (避免泄露数据库/内部状态)。
+// shareTermination maps pump errors to termination codes that are safe to deliver to the viewer; transport-layer
+// disconnects and internal errors carry no details (avoiding leaking database/internal state).
 func shareTermination(err error) (string, string, bool) {
 	switch {
 	case err == nil:

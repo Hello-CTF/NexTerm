@@ -53,8 +53,8 @@ function formatExpiry(expiresAt: number): string | null {
   return `有效期至 ${date.toLocaleString()}`;
 }
 
-// snapshotEscape 把当前屏幕快照渲染进一个空白终端: 文本行从左上角铺开, 再
-// 把光标移到快照位置。快照不含字符属性 (服务端屏幕模型只存文本)。
+// snapshotEscape renders the current screen snapshot into a blank terminal: text lines spread from the top-left, then
+// the cursor moves to the snapshot position. The snapshot carries no character attributes (the server screen model stores text only).
 function snapshotEscape(snapshot: PreviewSnapshot): string {
   const text = snapshot.lines.join("\r\n");
   const row = Math.max(0, Math.trunc(snapshot.cursorRow)) + 1;
@@ -146,9 +146,9 @@ export function PublicPreviewApp({ token }: { token: string }) {
     };
   }, []);
 
-  // 输入只按权限门控: live 且 read_write 时按键总是经 sendInput 以二进制帧
-  // 发出, 由服务端逐帧仲裁并用 control 帧刷新徽章与提示; read 权限的按键
-  // 就地丢弃, 不进入任何发送路径。
+  // Input is gated purely by permission: when live and read_write, keys always go out via sendInput as binary frames,
+  // arbitrated frame by frame by the server, with control frames refreshing badges and hints; keys under read permission
+  // are dropped on the spot and never enter any send path.
   const handleInput = useCallback((data: string) => {
     const connection = connectionRef.current;
     const current = phaseRef.current;

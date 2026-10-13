@@ -23,7 +23,7 @@ import (
 
 const GatewayAuthHeader = syncservice.GatewayAuthHeader
 
-// SettingStore 是 setting 表的最小读写子集, 由装配层以 *store.Store 注入。
+// SettingStore is the minimal read/write subset of the setting table, injected by the wiring layer as *store.Store.
 type SettingStore interface {
 	SettingGet(ctx context.Context, key string) (string, bool, error)
 	SettingSet(ctx context.Context, key, value string) error
@@ -31,14 +31,14 @@ type SettingStore interface {
 	SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error)
 }
 
-// AuditFunc 写审计记录; 由装配层桥接到 store.AuditInsert。
+// AuditFunc writes audit records; bridged by the wiring layer to store.AuditInsert.
 type AuditFunc func(ctx context.Context, source, kind string, payload map[string]any) error
 
-// AssetOwnerFunc 按资产 ID 查属主用户 ID (不受调用方 owner 作用域限制),
-// 供 /ws/events 按归属过滤敏感事件; 由装配层桥接到 store.AssetOwnerID。
+// AssetOwnerFunc looks up the owner user ID by asset ID (not restricted by the caller's owner scope),
+// letting /ws/events filter sensitive events by ownership; bridged by the wiring layer to store.AssetOwnerID.
 type AssetOwnerFunc func(ctx context.Context, assetID string) (string, error)
 
-// DBHealthSource 是 /healthz 暴露的非秘密数据库元数据来源。
+// DBHealthSource is the non-secret database metadata source exposed by /healthz.
 type DBHealthSource interface {
 	Backend() store.Backend
 	DB() *sql.DB
@@ -47,7 +47,7 @@ type DBHealthSource interface {
 type Config struct {
 	Options    Options
 	Dispatcher *ipc.Dispatcher
-	// PeerDispatcher 是同步对端命令面(资产包三命令), 只在 sync-only 部署挂载到 /sync/rpc 并计入健康。
+	// PeerDispatcher is the sync peer command surface (the three asset bundle commands), mounted to /sync/rpc and counted in health only in sync-only deployments.
 	PeerDispatcher *ipc.Dispatcher
 	Environment    ipc.Environment
 	Accounts       *account.Accounts
@@ -65,10 +65,10 @@ type Config struct {
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
-	// Previews 与 Spectator 一起启用远程预览 (公开预览链接): 管理端点
-	// 挂在账号路由下, 公开数据面是 GET /share/preview/{token}。Spectator 若同时
-	// 实现 RemoteSessionRegistry (生产注入的 *session.Manager 即如此), 额外
-	// 挂载 /share/remote-sessions 远程会话壳管理面。
+	// Previews together with Spectator enables remote previews (public preview links): management endpoints
+	// are mounted under the account routes, and the public data plane is GET /share/preview/{token}. If Spectator also
+	// implements RemoteSessionRegistry (the *session.Manager injected in production does), the
+	// /share/remote-sessions remote session shell management surface is additionally mounted.
 	Previews    *sharing.Service
 	Spectator   PreviewSpectator
 	DB          DBHealthSource
@@ -106,10 +106,10 @@ type Server struct {
 	fleet           *fleetserver.Service
 	previews        *sharing.Service
 	spectator       PreviewSpectator
-	// remoteSessions 由 Spectator 断言得到 (同一实例), 非空时挂载远程会话壳端点。
+	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
-	// previewRevalidateInterval 是预览连接的授权复查间隔, 测试可调小。
+	// previewRevalidateInterval is the authorization recheck interval for preview connections; tests may lower it.
 	previewRevalidateInterval time.Duration
 	db                        DBHealthSource
 
@@ -140,7 +140,7 @@ type Health struct {
 	DB               *DBHealth        `json:"db,omitempty"`
 }
 
-// DBHealth 是 /healthz 暴露的非秘密数据库元数据: 后端名、ping 延迟与连接池计数。
+// DBHealth is the non-secret database metadata exposed by /healthz: backend name, ping latency, and connection pool counts.
 type DBHealth struct {
 	Backend string       `json:"backend"`
 	PingOK  bool         `json:"pingOk"`
@@ -171,8 +171,8 @@ func New(config Config) (*Server, error) {
 	default:
 		return nil, fmt.Errorf("invalid auth mode %q", authMode)
 	}
-	// 平台模式下唯一的放行凭据就是网关注入的请求头; 没有配置密钥时任何请求都会被拒,
-	// 与其静默锁死, 不如启动即失败。
+	// In platform mode the only admission credential is the gateway-injected request header; without a configured key every request would be rejected,
+	// so failing at startup beats a silent lockout.
 	if authMode == AuthPlatform && config.GatewayAuthKey == "" {
 		return nil, fmt.Errorf("auth mode %q requires a gateway key (NEXTERM_GATEWAY_AUTH); without it no request can be admitted", AuthPlatform)
 	}
@@ -180,7 +180,7 @@ func New(config Config) (*Server, error) {
 	authRequired := false
 	switch authMode {
 	case AuthPlatform:
-		// 平台模式不区分 syncOnly: 门在网关上, 不在监听地址上。
+		// Platform mode does not distinguish syncOnly: the gate is on the gateway, not on the listen address.
 		authRequired = true
 	default:
 		if !config.Options.SyncOnly {
@@ -288,8 +288,8 @@ func (s *Server) routes(config Config) http.Handler {
 		mux.Handle("POST /sync/v2/ids", s.accountGuard(s.requireAccountSession(inject(config.SyncObjects))))
 	}
 	if s.options.SyncOnly {
-		// 对端同步 RPC 面: 仅 digest/export/import 三命令, 与账号 RPC 同一套会话与 CSRF 把关;
-		// Host 与 Origin 边界由 transportGuard 统一施加。完整版不挂此面(/rpc 已含三命令)。
+		// Peer sync RPC surface: only the digest/export/import three commands, under the same session and CSRF checks as the account RPC;
+		// Host and Origin boundaries are uniformly enforced by transportGuard. The full build does not mount this surface (/rpc already has the three commands).
 		if config.PeerDispatcher != nil && s.accounts != nil {
 			peerRPC := ipc.NewRPCHandler(config.PeerDispatcher, s.environment)
 			peerRPC.MaxBytes = config.MaxRPCBytes
@@ -304,14 +304,14 @@ func (s *Server) routes(config Config) http.Handler {
 	}
 
 	if s.fleet != nil {
-		// 公开分享页复用同一静态入口: 普通 GET /share/public/{token} 服务
-		// 既有 SPA/index, 不另造 shell。
+		// The public share page reuses the same static entry: a plain GET /share/public/{token} serves
+		// the existing SPA/index without building a separate shell.
 		s.fleet.SetSharePublicPage(staticHandler)
 		s.fleet.Mount(mux)
 	}
 	if !s.options.SyncOnly && s.previews != nil && s.spectator != nil {
-		// 远程预览的公开数据面: 普通 GET 与公开分享页同一静态入口,
-		// WS upgrade 才走 token 把关; 只读/可写由链接权限决定。
+		// Remote preview's public data plane: a plain GET shares the same static entry as the public share page,
+		// only the WS upgrade goes through token checks; read-only/writable is decided by the link permission.
 		mux.HandleFunc("GET /share/preview/{token}", s.serveSharePreview(staticHandler))
 	}
 
@@ -326,8 +326,8 @@ func (s *Server) routes(config Config) http.Handler {
 		blobs = NewBlobStore(s.options.DataDir, s.logger)
 	}
 	if blobs != nil {
-		// 存在任何无身份放行路径 (auth=off/回环监听/网关) 时属主概念不成立,
-		// 暂存 blob 放开无属主条目; 仅当所有放行请求都带账号会话身份时保持属主判等。
+		// When any identity-less admission path exists (auth=off/loopback listen/gateway), the ownership concept does not hold,
+		// and staged blobs allow ownerless entries; owner equality is kept only when every admitted request carries an account session identity.
 		blobs.openAccess = !(s.authRequired && s.accounts != nil && s.gatewayAuthKey == "")
 		mux.Handle("POST /files/blob", s.requireAuth(http.HandlerFunc(blobs.Stage)))
 		mux.Handle("GET /files/blob", s.requireAuth(http.HandlerFunc(blobs.Download)))
@@ -374,7 +374,7 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	commands := s.dispatcher.Len()
 	if s.options.SyncOnly {
-		// sync-only 只挂对端命令面, 健康如实上报其真实命令数(未挂载时为 0)。
+		// sync-only mounts only the peer command surface, and health truthfully reports its real command count (0 when not mounted).
 		commands = 0
 		if s.peerDispatcher != nil && s.accounts != nil {
 			commands = s.peerDispatcher.Len()

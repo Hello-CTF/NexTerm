@@ -7,9 +7,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// RemoteProxy 是桌面端经已登录服务端账号调远程 API 的代理面: 会话由
-// engine.ensureSession 供应(401 自动重登), 方法与服务端路由一一对应的
-// 类型化合同, 不做通用透传。仅桌面端可用。
+// RemoteProxy is the desktop-side proxy surface for calling remote APIs through a logged-in server account: sessions are
+// supplied by engine.ensureSession (401 auto re-login), methods are typed contracts corresponding one-to-one with server routes,
+// with no generic passthrough. Desktop only.
 type RemoteProxy struct {
 	service *Service
 }
@@ -166,7 +166,7 @@ func (p *RemoteProxy) RevokePreviewLink(ctx context.Context, id string) (RemoteO
 	return RemoteOK{OK: err == nil}, err
 }
 
-// 远程会话壳与预览创建: 桌面端只读预览中继的管理面。
+// Remote session shells and preview creation: the management surface of the desktop read-only preview relay.
 
 func (p *RemoteProxy) RemoteSessionCreate(ctx context.Context, title, assetID string, cols, rows uint32) (*RemoteSession, error) {
 	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteSession, error) {
@@ -187,8 +187,8 @@ func (p *RemoteProxy) CreatePreviewLink(ctx context.Context, sessionID string, t
 	})
 }
 
-// ServerBaseURL 返回账号连接的规范化服务端地址, 用于拼公开预览 URL;
-// 只读本地链接配置, 不要求会话在线。
+// ServerBaseURL returns the canonical server address of the account connection for building public preview URLs;
+// it only reads the local link config and does not require an online session.
 func (p *RemoteProxy) ServerBaseURL(ctx context.Context) (string, error) {
 	config, err := p.service.remoteConfig(ctx)
 	if err != nil {
@@ -237,8 +237,8 @@ func (p *RemoteProxy) AdminSetUserState(ctx context.Context, userID, state strin
 	return RemoteOK{OK: err == nil}, err
 }
 
-// ChangeMyPassword 主动改密: 用旧口令解出 DEK, 用新口令与新恢复密钥重包裹
-// (密文不动, 与 WEB changePassword 同语义); 成功后同步更新本地保存的链接口令。
+// ChangeMyPassword is the proactive password change: unwrap the DEK with the old password and re-wrap it with the new password and a new recovery key
+// (ciphertext untouched, same semantics as WEB changePassword); on success the locally saved link password is updated too.
 func (p *RemoteProxy) ChangeMyPassword(ctx context.Context, oldPassword, newPassword string) (*RemotePasswordChangeResult, error) {
 	recoveryKey := ""
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
@@ -277,13 +277,13 @@ func (p *RemoteProxy) ChangeMyPassword(ctx context.Context, oldPassword, newPass
 		return nil, err
 	}
 	p.service.updateLinkedPassword(ctx, oldPassword, newPassword)
-	// 改密后清除持久会话: 内存会话不受影响(服务端保留当前会话), 下次启动回退口令重登。
+	// Clear the persisted session after the password change: the in-memory session is unaffected (the server keeps the current session), and the next start falls back to password re-login.
 	p.service.engine.clearPersistedSession(ctx)
 	return &RemotePasswordChangeResult{OK: true, RecoveryKey: recoveryKey}, nil
 }
 
-// updateLinkedPassword 在远端改密成功后把本地保存的链接口令一并更新;
-// 远端已生效, 本地更新失败只记日志(下次登录失败会自然暴露)。
+// updateLinkedPassword also updates the locally saved link password after a successful remote password change;
+// the remote side is already in effect, so a local update failure only logs (a failed next login would surface it naturally).
 func (s *Service) updateLinkedPassword(ctx context.Context, oldPassword, newPassword string) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
@@ -297,7 +297,7 @@ func (s *Service) updateLinkedPassword(ctx context.Context, oldPassword, newPass
 	}
 }
 
-// Healthz 读服务端版本; 空串表示版本不可用, 调用方必须隐藏依赖版本的 UI。
+// Healthz reads the server version; an empty string means the version is unavailable, and callers must hide version-dependent UI.
 func (p *RemoteProxy) Healthz(ctx context.Context) (string, error) {
 	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (string, error) {
 		return client.Healthz(ctx)

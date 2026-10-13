@@ -48,7 +48,7 @@ func TestCompareNameExtraction(t *testing.T) {
 	if permission.name != "全局 AI 权限" {
 		t.Fatalf("ai_permission name=%q", permission.name)
 	}
-	// 名称缺失或载荷损坏时退化为 id。
+	// Falls back to the id when the name is missing or the payload is corrupt.
 	broken := newCompareEntity("b1", KindAsset, []byte("{not json"))
 	if broken.name != "b1" {
 		t.Fatalf("broken name=%q", broken.name)
@@ -89,7 +89,7 @@ func TestCompareStateDecisions(t *testing.T) {
 	if state := compareState(live(100), live(200)); state != CompareStateRemoteNewer {
 		t.Fatalf("remote revision higher state=%s", state)
 	}
-	// 平修订号按载荷哈希字典序决胜: 与 merge.go remoteWins 同规则。
+	// Equal revisions break by payload hash lexicographic order: same rule as merge.go remoteWins.
 	localTie, remoteTie := live(100), live(100)
 	remoteTie = mustEntity(t, "x", KindAsset, assetObject{ID: "x", Name: "web2", UpdatedAt: 100})
 	want := CompareStateRemoteNewer
@@ -99,21 +99,21 @@ func TestCompareStateDecisions(t *testing.T) {
 	if state := compareState(localTie, remoteTie); state != want {
 		t.Fatalf("tie-break state=%s want %s (hashes %s vs %s)", state, want, localTie.payloadHash, remoteTie.payloadHash)
 	}
-	// 远端删除形态: 本机胜 = 本机较新, 否则 = 云端已删。
+	// Remote deleted form: local wins = local newer, otherwise = remote deleted.
 	if state := compareState(live(600), tombstone(500)); state != CompareStateLocalNewer {
 		t.Fatalf("local live newer than remote tombstone state=%s", state)
 	}
 	if state := compareState(live(100), tombstone(500)); state != CompareStateRemoteDeleted {
 		t.Fatalf("remote tombstone newer state=%s", state)
 	}
-	// 本机删除形态: 本机胜 = 本机已删, 否则 = 云端较新。
+	// Local deleted form: local wins = local deleted, otherwise = remote newer.
 	if state := compareState(tombstone(600), live(100)); state != CompareStateLocalDeleted {
 		t.Fatalf("local tombstone newer state=%s", state)
 	}
 	if state := compareState(tombstone(100), live(600)); state != CompareStateRemoteNewer {
 		t.Fatalf("remote live newer than local tombstone state=%s", state)
 	}
-	// 软删资产按 deletedAt 参与修订号。
+	// Soft-deleted assets participate in the revision via deletedAt.
 	if state := compareState(softDeleted(100, 700), live(600)); state != CompareStateLocalDeleted {
 		t.Fatalf("soft-deleted local newer state=%s", state)
 	}
@@ -125,14 +125,14 @@ func TestCompareStateDecisions(t *testing.T) {
 func TestCompareTranscriptContentFullness(t *testing.T) {
 	omitted := mustEntity(t, "t", KindTranscript, map[string]any{"id": "t", "assetName": "a", "endedAt": 10, "contentOmitted": true})
 	full := mustEntity(t, "t", KindTranscript, map[string]any{"id": "t", "assetName": "a", "endedAt": 10, "content": []any{map[string]any{"seq": 1}}})
-	// 同 endedAt: 完整内容胜省略版, 双向对称。
+	// Same endedAt: full content beats the omitted version, symmetric in both directions.
 	if state := compareState(full, omitted); state != CompareStateLocalNewer {
 		t.Fatalf("full local vs omitted remote state=%s", state)
 	}
 	if state := compareState(omitted, full); state != CompareStateRemoteNewer {
 		t.Fatalf("omitted local vs full remote state=%s", state)
 	}
-	// 同完整度按 endedAt 裁决。
+	// Same fullness: decided by endedAt.
 	newer := mustEntity(t, "t", KindTranscript, map[string]any{"id": "t", "assetName": "a", "endedAt": 20, "contentOmitted": true})
 	if state := compareState(newer, omitted); state != CompareStateLocalNewer {
 		t.Fatalf("newer endedAt state=%s", state)
@@ -175,14 +175,14 @@ func TestBuildCompareRowsAssembly(t *testing.T) {
 	if row := byID["r2"]; row.State != CompareStateRemoteDeleted {
 		t.Fatalf("r2=%+v", row)
 	}
-	// 本机同名的不可解行沿用本机名称与类型; 纯云端不可解行退化为 id 且类型留空。
+	// Undecryptable rows with a same-name local row keep the local name and kind; pure-cloud undecryptable rows degrade to the id with an empty kind.
 	if row := byID["u1"]; row.State != CompareStateRemoteUndecryptable || row.Name != "密钥外分组" || row.Kind != KindGroup || row.UpdatedLocal != 70 {
 		t.Fatalf("u1=%+v", row)
 	}
 	if row := byID["u2"]; row.State != CompareStateRemoteUndecryptable || row.Name != "u2" || row.Kind != "" {
 		t.Fatalf("u2=%+v", row)
 	}
-	// 差异在前, same 排后: 本例全差异, 校验名称排序与稳定性。
+	// Differences first, same last: this case is all differences, checking name ordering and stability.
 	for i := 1; i < len(rows); i++ {
 		if rows[i-1].State == CompareStateSame && rows[i].State != CompareStateSame {
 			t.Fatalf("same row ordered before diff: %v", rows)
@@ -204,7 +204,7 @@ func TestBuildCompareRowsSameSortsLast(t *testing.T) {
 	}
 }
 
-// TestServiceCompareEndToEnd 经真实测试服务端走完整链路: 同步后全一致, 随后逐类制造分歧。
+// TestServiceCompareEndToEnd walks the full path through a real test server: everything matches after sync, then divergences are manufactured kind by kind.
 func TestServiceCompareEndToEnd(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -235,12 +235,12 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 	}
 
 	link()
-	// 未同步任何内容时本机与云端皆空。
+	// Nothing synced yet: both local and cloud are empty.
 	if result := compare(); len(result.Rows) != 0 || result.Remote != 0 {
 		t.Fatalf("empty compare=%+v", result)
 	}
 
-	// 写入本机对象并同步: 之后本机与云端逐字节一致。
+	// Write local objects and sync: local and cloud then match byte for byte.
 	groupID, assetID, snippetID, credentialID := ids.New(), ids.New(), ids.New(), ids.New()
 	host := "10.0.0.1"
 	putTestGroup(t, instance, groupID, nil, "生产环境")
@@ -265,7 +265,7 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 			t.Fatalf("after sync %s state=%s (rows=%+v)", id, state, result.Rows)
 		}
 	}
-	// 行名取自本机实体。
+	// Row names come from the local entities.
 	names := map[string]string{}
 	for _, row := range result.Rows {
 		names[row.ID] = row.Name
@@ -274,14 +274,14 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 		t.Fatalf("names=%v", names)
 	}
 
-	// 仅本机: 新增分组未同步。
+	// Local only: a new group not yet synced.
 	localOnlyID := ids.New()
 	putTestGroup(t, instance, localOnlyID, nil, "未推送")
 	if state := states(compare())[localOnlyID]; state != CompareStateLocalOnly {
 		t.Fatalf("local-only state=%s", state)
 	}
 
-	// 本机较新: 资产修订号高于云端。
+	// Local newer: the asset revision is higher than the cloud's.
 	if _, err := instance.db.AssetUpsert(ctx, store.AssetRow{ID: assetID, Kind: "ssh", Name: "web-01-改名", Host: &host, CreatedAt: 100, UpdatedAt: 200}); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 		t.Fatalf("local-newer state=%s", state)
 	}
 
-	// 仅云端: 另一设备推送本机未知资产(Compare 只读不应用, 本机侧始终缺席)。
+	// Remote only: another device pushed an asset unknown locally (Compare is read-only and never applies, so the local side stays absent).
 	deviceB := newTestDevice(t)
 	remoteOnlyID := ids.New()
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: remoteOnlyID, Kind: "ssh", Name: "db-01", CreatedAt: 300, UpdatedAt: 300})
@@ -298,8 +298,8 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 		t.Fatalf("remote-only state=%s", state)
 	}
 
-	// 云端较新: B 把共有资产改到更高修订号并推送(本机 @200 未推送)。
-	// 云端已删: B 删除共有片段, 远端墓碑修订号高于本机存活修订号。
+	// Remote newer: B edits the shared asset to a higher revision and pushes (local @200 unpushed).
+	// Remote deleted: B deletes the shared snippet; the remote tombstone revision is higher than the local live revision.
 	putDeviceAsset(t, deviceB, store.AssetRow{ID: assetID, Kind: "ssh", Name: "web-01-B 改", Host: &host, CreatedAt: 100, UpdatedAt: 300})
 	if err := deviceB.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 		t.Fatalf("remote-deleted state=%s", state)
 	}
 
-	// 本机已删: 删除本机分组(墓碑修订号为当前毫秒, 远高于云端存活修订号)。
+	// Local deleted: delete the local group (the tombstone revision is the current millisecond, far above the cloud live revision).
 	if err := instance.db.GroupDelete(ctx, groupID); err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestServiceCompareEndToEnd(t *testing.T) {
 	}
 }
 
-// TestServiceCompareUndecryptableRows DEK 重置后旧密文解不开: 行如实标注 remote-undecryptable。
+// TestServiceCompareUndecryptableRows: after a DEK reset the old ciphertext cannot be decrypted; rows are labeled remote-undecryptable truthfully.
 func TestServiceCompareUndecryptableRows(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -353,7 +353,7 @@ func TestServiceCompareUndecryptableRows(t *testing.T) {
 	}
 }
 
-// TestServiceCompareRequiresDesktopAndLink 边界: 非桌面端拒绝, 未配置链接拒绝。
+// TestServiceCompareRequiresDesktopAndLink boundaries: non-desktop is rejected, unconfigured link is rejected.
 func TestServiceCompareRequiresDesktopAndLink(t *testing.T) {
 	ctx := context.Background()
 	web := newTestInstance(t, true)

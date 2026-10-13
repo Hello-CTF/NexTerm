@@ -25,11 +25,13 @@ application:
     - /=http://nexterm-server:8080/
 
   public_path:
-    # 设备 agent 合同 (/device/enroll, /agent/sync, /agent/current-url,
-    # /ws/device) 依赖 public_path 免平台会话到达; 设备身份由设备凭证把关,
-    # 不依赖平台 gateway auth。/share/public/{token} 是公开分享链接的数据面
-    # (token 即凭据, 无需平台会话)。其余路由 (含分享管理 /share/links、
-    # /share/host-shares 与需要账号会话的 /sync/v2/*) 一律留在平台认证之后。
+    # Device agent contract (/device/enroll, /agent/sync, /agent/current-url,
+    # /ws/device) relies on public_path to bypass the platform session; device
+    # identity is gated by device credentials, not platform gateway auth.
+    # /share/public/{token} is the data plane of public share links (the token
+    # is the credential, no platform session needed). All other routes
+    # (including share management /share/links, /share/host-shares and
+    # /sync/v2/* which needs an account session) stay behind platform auth.
     - /device/enroll
     - /agent/sync
     - /agent/current-url
@@ -108,11 +110,16 @@ services:
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
       - NEXTERM_LISTEN=0.0.0.0:8080
       - NEXTERM_PLATFORM=lazycat
-      # 平台的登录门已经完成了认证, 这里把访问控制整个交给它: 只有携带上面那条 inject
-      # 注入的网关头 (X-NexTerm-Gateway-Auth) 的请求才会被放行, 首个这样的请求成为
-      # 「平台所有者」账号并自动拿到会话。因此懒猫上既不生成、也不需要一次性初始化码。
+      # The platform login gate already does authentication, so access control
+      # is handed to it entirely: only requests carrying the gateway header
+      # (X-NexTerm-Gateway-Auth) injected by the inject above are let through,
+      # and the first such request becomes the "platform owner" account and
+      # automatically gets a session. That is why Lazycat neither generates
+      # nor needs a one-time init code.
       - NEXTERM_AUTH=platform
-      # 反代部署下网关会把 Host 改写成上游地址，同源判定必须知道本实例对外的域名。
-      # 用部署期渲染的 AppDomain，不写死：换微服、换域名都不用改这里。
-      # 同时给出带 scheme 的形式，覆盖两种匹配口径。
+      # Behind a reverse proxy the gateway rewrites Host to the upstream
+      # address, so same-origin checks must know this instance's public domain.
+      # Use the AppDomain rendered at deploy time instead of hardcoding:
+      # moving to another box or domain needs no change here.
+      # The scheme-qualified form is also given to cover both matching styles.
       - NEXTERM_ALLOWED_ORIGINS={{ .S.AppDomain }},https://{{ .S.AppDomain }}

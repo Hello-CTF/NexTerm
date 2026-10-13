@@ -1,5 +1,5 @@
-// CPU 24 小时趋势线: 手写 SVG, 无图表依赖; x 轴按采样时间线性映射,
-// y 轴固定 0-100%。单点采样画圆点, 空数据由调用方走空态, 不在此分支。
+// CPU 24-hour trend line: hand-written SVG, no chart dependency; the x axis maps linearly by sample time,
+// the y axis is fixed 0-100%. A single sample renders as a dot; empty data is handled by the caller's empty state, not here.
 
 import type { FleetMetricsSample } from "../../ipc/fleetApi";
 

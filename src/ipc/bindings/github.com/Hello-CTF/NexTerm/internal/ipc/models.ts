@@ -32,7 +32,7 @@ export enum Code {
     CodeForbidden = "forbidden",
 
     /**
-     * CodeMFAEnrollmentRequired 表示 mfa_required 策略下未绑定会话被限制在绑定相关路由。
+     * CodeMFAEnrollmentRequired means that under the mfa_required policy, unenrolled sessions are restricted to enrollment-related routes.
      */
     CodeMFAEnrollmentRequired = "mfa_enrollment_required",
     CodeNotController = "not_controller",

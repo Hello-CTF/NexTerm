@@ -17,7 +17,7 @@ type ServerError struct {
 	Status  int
 	Code    string
 	Message string
-	// ServerVersion 只在 version_mismatch 错误中由 server 上报, 其余错误为空。
+	// ServerVersion is reported by the server only in version_mismatch errors; it is empty for all other errors.
 	ServerVersion string
 }
 

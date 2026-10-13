@@ -16,20 +16,22 @@ import (
 	"github.com/coder/websocket"
 )
 
-// 桌面端只读预览中继 (第 3 期 b): 把本地终端标签页的输出经服务端远程会话壳
-// 中继成匿名可开的只读预览链接。preview_share_create 建壳 + 建链接 + 起中继
-// goroutine: AttachSpectator 订阅本地 tab (订阅首帧是本地屏幕快照, 跳过不转 —
-// 壳会给自己的观众产快照, 中继只推增量二进制输出帧), 输出原样写 feed WS;
-// tab 退出/关闭/账号切换时发 end 控制帧并 DELETE 壳。feed 断线按退避重拨续推
-// (壳在服务端保留), 重拨预算耗尽即收尾。单 tab 同时只允许一条活跃中继, 重复
-// 创建直接返回内存中持有的既有链接 (token 不持久化, 仅中继存活期间可查)。
+// Desktop read-only preview relay (phase 3 b): relay a local terminal tab's output through a server-side remote
+// session shell into an anonymously openable read-only preview link. preview_share_create creates the shell + link +
+// relay goroutine: AttachSpectator subscribes to the local tab (the subscription's first frame is the local screen
+// snapshot, skipped - the shell produces its own snapshot for its viewers, and the relay only pushes incremental
+// binary output frames), and output is written to the feed WS verbatim; on tab exit/close/account switch it sends
+// the end control frame and DELETEs the shell. A disconnected feed redials with backoff to resume feeding
+// (the shell is kept server-side), and exhausting the redial budget finishes the relay. Only one active relay is
+// allowed per tab at a time; repeated creates return the existing link held in memory (the token is not persisted
+// and is only available while the relay lives).
 
 const (
-	// previewRelayPollInterval 是空闲心跳间隔: spectator 通道不带控制事件,
-	// tab 退出/resize/账号切换都在心跳里探测 (pumpSharePreview 同款模式)。
+	// previewRelayPollInterval is the idle heartbeat: the spectator channel carries no control events,
+	// so tab exit/resize/account switch are all detected in the heartbeat (same pattern as pumpSharePreview).
 	previewRelayPollInterval = time.Second
-	// previewRelayRedialBudget 是 feed 断线后的重拨总预算: 预算内靠 hub 订阅
-	// 队列 (512 帧/16MiB) 吸收输出不丢帧; 耗尽即收尾, 避免背压长期阻塞本地终端。
+	// previewRelayRedialBudget is the total redial budget after a feed disconnect: within budget the hub subscription
+	// queue (512 frames/16MiB) absorbs output without losing frames; on exhaustion the relay finishes, avoiding long-term backpressure on the local terminal.
 	previewRelayRedialBudget = 45 * time.Second
 	previewRelayRedialMin    = time.Second
 	previewRelayRedialMax    = 15 * time.Second
@@ -38,11 +40,11 @@ const (
 	previewRelayStopTimeout  = 10 * time.Second
 )
 
-// previewRelayEndFrame 是推流方主动收尾的控制帧: 服务端按进程退出语义关闭壳的
-// 写入方向 (快照保留); 随后的 DELETE 才把壳连同预览流一并终结。
+// previewRelayEndFrame is the control frame for the feeder actively finishing: the server closes the shell's write
+// direction per process-exit semantics (snapshot preserved); the following DELETE is what terminates the shell with its preview streams.
 var previewRelayEndFrame = []byte(`{"type":"end"}`)
 
-// previewRelayRemote 是中继对远程代理面的最小依赖; *syncservice.RemoteProxy 实现。
+// previewRelayRemote is the relay's minimal dependency on the remote proxy surface; *syncservice.RemoteProxy implements it.
 type previewRelayRemote interface {
 	RemoteSessionCreate(ctx context.Context, title, assetID string, cols, rows uint32) (*syncservice.RemoteSession, error)
 	CreatePreviewLink(ctx context.Context, sessionID string, ttlMS int64) (*syncservice.RemotePreviewLinkCreate, error)
@@ -51,13 +53,13 @@ type previewRelayRemote interface {
 	ServerBaseURL(ctx context.Context) (string, error)
 }
 
-// previewRelaySyncStatus 是中继对账号状态的探测面; *syncservice.Service 实现。
+// previewRelaySyncStatus is the relay's probe surface for account state; *syncservice.Service implements it.
 type previewRelaySyncStatus interface {
 	Status(ctx context.Context) (syncservice.Status, error)
 }
 
-// previewRelayFeed 是远程推流连接的最小写面; *websocket.Conn 直接实现, 测试
-// 用脚本化假连接注入写失败以驱动重拨路径。
+// previewRelayFeed is the minimal write surface of a remote feed connection; *websocket.Conn implements it directly, and tests
+// inject scripted fake connections with write failures to drive the redial path.
 type previewRelayFeed interface {
 	Write(ctx context.Context, messageType websocket.MessageType, data []byte) error
 	Close(code websocket.StatusCode, reason string) error
@@ -79,8 +81,8 @@ type previewRelay struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	receiver  *hub.Receiver
-	// feed 是 run goroutine 持有的当前活跃推流连接 (重拨后更新), 仅 run 读写,
-	// finish 由 run 的 defer 调用, 同 goroutine 免锁。
+	// feed is the currently active feed connection held by the run goroutine (updated after redials); only run reads and
+	// writes it, and finish is called by run's defer in the same goroutine, so no locking is needed.
 	feed previewRelayFeed
 	once sync.Once
 }
@@ -138,9 +140,9 @@ func (m *previewRelayManager) Start(ctx context.Context) error {
 	return nil
 }
 
-// Create 为本地 tab 建只读预览: 注册远程壳 → 建预览链接 → 拨 feed → 订阅本地
-// 输出起中继。任一步失败按序回收 (壳必删, 预览链接随 TTL 自然过期); tab 已有
-// 活跃中继时直接返回既有链接。
+// Create builds a read-only preview for a local tab: register the remote shell -> create the preview link -> dial the feed ->
+// subscribe to local output and start the relay. Any step failing recycles in order (the shell is always deleted, and the
+// preview link expires naturally via TTL); if the tab already has an active relay, the existing link is returned directly.
 func (m *previewRelayManager) Create(ctx context.Context, tabID string, ttlMS int64) (*previewShareCreateResult, error) {
 	if m.sessions == nil || m.remote == nil || m.dialFeed == nil {
 		return nil, ipc.NewError(ipc.CodeUnsupported, "只读预览仅在桌面端可用")
@@ -166,7 +168,7 @@ func (m *previewRelayManager) Create(ctx context.Context, tabID string, ttlMS in
 	}
 	m.mu.Unlock()
 
-	// 标题/资产元数据从 tab 会话信息取 (远程壳仅作展示元数据, 不参与资产去重)。
+	// Title/asset metadata comes from the tab's session info (the remote shell is display metadata only and does not participate in asset dedup).
 	title, assetID := "", ""
 	if owner, err := m.sessions.Session(tab.SessionID); err == nil {
 		asset := owner.Asset()
@@ -216,7 +218,7 @@ func (m *previewRelayManager) Create(ctx context.Context, tabID string, ttlMS in
 		cols: info.Cols, rows: info.Rows,
 		ctx: relayCtx, cancel: cancel,
 	}
-	// 订阅本地输出: 首帧快照不转发 (壳会给自己的观众产快照), 只推增量二进制帧。
+	// Subscribe to local output: the first snapshot frame is not forwarded (the shell produces its own snapshot for its viewers); only incremental binary frames are pushed.
 	if _, err := m.sessions.AttachSpectator(relayCtx, tabID, session.SpectateOptions{
 		ChannelID: relay.channelID, ClientID: "preview-relay",
 	}); err != nil {
@@ -243,7 +245,7 @@ func (m *previewRelayManager) Create(ctx context.Context, tabID string, ttlMS in
 		return nil, ipc.NewError(ipc.CodeDisconnected, "预览中继服务未就绪")
 	}
 	if existing := m.relays[tabID]; existing != nil {
-		// 并发创建竞态: 后到者让位, 自建的壳由 defer 回收。
+		// Concurrent create race: the later arrival yields, and its self-built shell is recycled by defer.
 		result := existing.result()
 		m.mu.Unlock()
 		cancel()
@@ -260,8 +262,8 @@ func (m *previewRelayManager) Create(ctx context.Context, tabID string, ttlMS in
 	return relay.result(), nil
 }
 
-// Active 返回 tab 当前活跃中继的远程壳 id (桌面菜单按它过滤「进行中的预览」);
-// 无活跃中继返回空。
+// Active returns the remote shell id of the tab's currently active relay (the desktop menu filters "in-progress previews" by it);
+// empty when there is no active relay.
 func (m *previewRelayManager) Active(tabID string) previewShareActiveResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -292,8 +294,8 @@ func (m *previewRelayManager) Shutdown(ctx context.Context) error {
 	}
 }
 
-// run 是中继 goroutine 本体: 泵输出直到 tab 结束/关闭、账号切换、服务停止或
-// feed 不可恢复; 退出必经 finish 收尾 (end 帧 + 删壳 + 退订)。
+// run is the relay goroutine proper: it pumps output until the tab ends/closes, the account switches, the service stops, or
+// the feed is unrecoverable; exit always goes through finish for cleanup (end frame + shell delete + unsubscribe).
 func (r *previewRelay) run(m *previewRelayManager, feed previewRelayFeed) {
 	defer m.wg.Done()
 	defer r.cancel()
@@ -320,11 +322,11 @@ func (r *previewRelay) pump(m *previewRelayManager, feed previewRelayFeed) {
 					}
 					continue
 				}
-				// 通道关闭 = tab 关闭/manager 停止/退订, 收尾。
+				// Channel closed = tab closed/manager stopped/unsubscribed; finish up.
 				return
 			}
 			if frame.Kind != hub.FrameBinary {
-				// 快照等 JSON 帧不转发: 壳的观众从壳的终端模型取快照。
+				// Snapshot and other JSON frames are not forwarded: the shell's viewers take snapshots from the shell's terminal model.
 				_ = r.receiver.Ack(frame.Sequence)
 				continue
 			}
@@ -347,8 +349,9 @@ func (r *previewRelay) pump(m *previewRelayManager, feed previewRelayFeed) {
 	}
 }
 
-// redial 在预算内按退避重拨 feed (壳在服务端保留可续推); 重拨成功补发当前尺寸
-// (断线期间的 resize 控制帧可能已丢), 预算耗尽或服务停止返回 nil。
+// redial redials the feed with backoff within budget (the shell is kept server-side and feeding can resume); after a successful
+// redial it resends the current size (resize control frames during the disconnect may have been lost), and returns nil on budget
+// exhaustion or service stop.
 func (r *previewRelay) redial(m *previewRelayManager, cols, rows uint32) previewRelayFeed {
 	backoff := previewRelayRedialMin
 	deadline := time.Now().Add(m.redialBudget)
@@ -373,8 +376,8 @@ func (r *previewRelay) redial(m *previewRelayManager, cols, rows uint32) preview
 	}
 }
 
-// pollRelay 空闲心跳: tab 消失/退出或账号切换 → false (收尾); resize → 补发
-// 控制帧 (best effort, 写失败由输出路径的重拨兜底)。
+// pollRelay is the idle heartbeat: tab gone/exited or account switch -> false (finish up); resize -> resend the
+// control frame (best effort; write failures are covered by the output path's redial).
 func (m *previewRelayManager) pollRelay(r *previewRelay, feed previewRelayFeed, cols, rows *uint32) bool {
 	tab, err := m.sessions.Tab(r.tabID)
 	if err != nil {
@@ -391,9 +394,9 @@ func (m *previewRelayManager) pollRelay(r *previewRelay, feed previewRelayFeed, 
 	return m.accountIntact(r)
 }
 
-// accountIntact 探测账号切换/断开: 链接被清除、用户名或服务端地址变化 → 中继
-// 失去归属, 停止; 状态读取失败 (vault 锁定等瞬态) 不动中继, 401 重登由
-// remoteCall 兜底, 因此 LoggedIn 抖动不在此判定。
+// accountIntact detects account switch/disconnect: a cleared link, or a changed username or server address, means the relay
+// loses its ownership and stops; transient state read failures (vault locked, etc.) do not touch the relay, 401 re-login is
+// covered by remoteCall, so LoggedIn flapping is not judged here.
 func (m *previewRelayManager) accountIntact(r *previewRelay) bool {
 	if m.syncStatus != nil {
 		status, err := m.syncStatus.Status(r.ctx)
@@ -418,9 +421,9 @@ func (m *previewRelayManager) writeResize(r *previewRelay, feed previewRelayFeed
 	_ = feed.Write(writeCtx, websocket.MessageText, payload)
 }
 
-// finish 统一收尾 (幂等): 摘 map → 退订本地输出 → end 帧 → 关 feed → DELETE 壳。
-// 摘 map 先于网络清理, 保证收尾期间的新创建拿到全新中继; end/删除用独立超时
-// 上下文 (中继 ctx 已取消), 失败只记日志, 壳由服务端空闲回收兜底。
+// finish is the unified (idempotent) cleanup: remove from map -> unsubscribe local output -> end frame -> close feed -> DELETE the shell.
+// Removing from the map precedes network cleanup, guaranteeing new creates during cleanup get a brand-new relay; end/delete use
+// independent timeout contexts (the relay ctx is already canceled), failures are only logged, and the server-side idle reaping is the backstop.
 func (m *previewRelayManager) finish(r *previewRelay, feed previewRelayFeed) {
 	r.once.Do(func() {
 		m.mu.Lock()
@@ -455,8 +458,8 @@ type previewShareCreateRequest struct {
 	TTLMS int64  `json:"ttlMs"`
 }
 
-// previewShareCreateResult 的 token 只在创建当场随响应下发用于拼/展示公开
-// URL, 不持久化; sessionId 是远程壳 id, 桌面菜单按它过滤「进行中的预览」。
+// previewShareCreateResult's token is delivered only with the create response on the spot, for building/displaying the public
+// URL, and is never persisted; sessionId is the remote shell id, which the desktop menu uses to filter "in-progress previews".
 type previewShareCreateResult struct {
 	Token     string `json:"token"`
 	URL       string `json:"url"`

@@ -207,8 +207,8 @@ func TestWaitForSinceSeqCancellation(t *testing.T) {
 }
 
 func TestWaitForSinceSeqScansBeyondFirstWindow(t *testing.T) {
-	// 超过一个扫描窗口 (64 KiB) 的噪声之后再出现目标：扫描游标必须推进，
-	// 否则每轮只重读锚点后同一前缀，目标永远不会命中。
+	// The target appears after more than one scan window (64 KiB) of noise: the scan cursor must advance,
+	// otherwise each round only re-reads the same prefix after the anchor and the target never hits.
 	ring := newFakeRing(0, "a")
 	registry := NewRegistry(Dependencies{Terminal: anchoredTerminal(ring), PollInterval: time.Millisecond})
 	noise := strings.Repeat("x", (70<<10)+512)

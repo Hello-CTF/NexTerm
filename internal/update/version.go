@@ -104,8 +104,8 @@ func isNewerVersion(candidate, current string) bool {
 	return compareVersions(candidateVersion, currentVersion) > 0
 }
 
-// acceptsPrerelease 按当前版本决定是否接受 prerelease: 当前版本带预发布后缀
-// (如 0.2.2-rc.7) 或无法解析 (dev 构建) 时接受, 稳定版只接受稳定 release。
+// acceptsPrerelease decides by the current version whether prereleases are accepted: accepted when the current version has a prerelease suffix
+// (e.g. 0.2.2-rc.7) or cannot be parsed (dev builds); stable versions accept only stable releases.
 func acceptsPrerelease(current string) bool {
 	parsed, ok := parseVersion(current)
 	if !ok {

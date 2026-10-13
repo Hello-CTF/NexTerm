@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// SHARE158 线上契约: sharingApi 的路径/方法/CSRF/蛇形 JSON 字段对齐
-// internal/fleet/server/sharing_http.go 的真实路由, 401 复用既有会话过期事件;
-// 公开链接只有列表与吊销 — 不存在任何创建方法 (创建入口归实时会话切片)。
+// SHARE158 live contract: sharingApi paths/methods/CSRF/snake_case JSON fields align with
+// the real routes in internal/fleet/server/sharing_http.go; 401 reuses the existing session-expired event;
+// public links have only list and revoke - no creation method exists (the creation entry belongs to the live-session slice).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {

@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
-// FLEET168 全新机器一键安装指令: oneLineInstallCommand 的构造 (curl 拉取
-// /install-device.sh + --server/--code/--version 真实版本 + --insecure 跟随
-// 接入地址, 动态参数单引号包裹), Windows 设备另给 PowerShell 版
-// oneLineInstallCommandWindows (iex 拉取 /install-device.ps1, 同名参数),
-// 以及 DevicesView 接入面板里的一行安装
-// 指令 — 版本来自真实 /healthz, 版本不可用时整段隐藏 (不伪造), 既有
-// enroll/install 命令保留, 绝不声称安装成功。
+// FLEET168 one-line install command for brand-new machines: construction of oneLineInstallCommand (curl fetches
+// /install-device.sh + --server/--code/--version real version + --insecure follows
+// the enrollment URL, dynamic params single-quote wrapped), Windows devices additionally get the PowerShell version
+// oneLineInstallCommandWindows (iex fetches /install-device.ps1, same-named params),
+// plus the one-line install command in the DevicesView enrollment panel - the version
+// comes from the real /healthz, the whole block is hidden when the version is unavailable (no faking), existing
+// enroll/install commands are kept, and install success is never claimed.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
@@ -65,8 +65,8 @@ interface RecordedCall {
   method: string;
 }
 
-// healthBehavior 控制 GET /healthz: ok 给真实版本, fail 模拟服务端不可用,
-// empty 给空版本 (都不得出现一键安装指令)。
+// healthBehavior controls GET /healthz: ok returns a real version, fail simulates server unavailability,
+// empty returns an empty version (in none of these may the one-line install command appear).
 const healthBehavior: { mode: "ok" | "fail" | "empty" } = { mode: "ok" };
 
 function route(): RecordedCall[] {
@@ -164,7 +164,7 @@ describe("oneLineInstallCommand 构造", () => {
     const command = oneLineInstallCommand("https://nexterm.example.com/mirror;v2/$(id)", false, "co'de", "0.2.2");
     expect(command).toContain("'https://nexterm.example.com/mirror;v2/$(id)/install-device.sh'");
     expect(command).toContain("--code 'co'\\''de'");
-    // 构造结果整体不含未包裹的元字符 (逐个参数仍是单引号安全形式)
+    // The constructed result contains no unwrapped metacharacters overall (each argument remains single-quote safe)
     expect(shellQuote("a'b")).toBe("'a'\\''b'");
   });
 });
@@ -216,7 +216,7 @@ describe("设备管理 · 一键安装指令", () => {
     expect(details?.open).toBe(false);
     expect(oneLineElements[0].closest("details")).toBeNull();
     expect(oneLineElements[1].closest("details")).toBe(details);
-    // Windows PowerShell 版提示与命令: 首个地址在主区, 备用地址进高级说明
+    // Windows PowerShell version hint and command: the first address is in the main area, the fallback address goes into the advanced details
     expect(document.body.textContent).toContain("Windows 设备请用 PowerShell 版");
     const windowsOneLiners = commands.filter((c) => c.includes("install-device.ps1"));
     expect(windowsOneLiners).toHaveLength(2);
@@ -231,10 +231,10 @@ describe("设备管理 · 一键安装指令", () => {
     const windowsElements = [...document.querySelectorAll("code")].filter((c) => c.textContent?.includes("install-device.ps1"));
     expect(windowsElements[0].closest("details")).toBeNull();
     expect(windowsElements[1].closest("details")).toBe(details);
-    // 既有命令 (已装二进制) 保留
+    // Existing commands (binary already installed) kept
     expect(commands.some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
     expect(commands.some((c) => c.includes("nexterm-agent install"))).toBe(true);
-    // 绝不声称安装成功
+    // Install success is never claimed
     expect(document.body.textContent).toContain("不会执行安装");
     expect(document.body.textContent).toContain("无法确认安装结果");
   });
@@ -274,7 +274,7 @@ describe("设备管理 · 一键安装指令", () => {
     expect(commandTexts().some((c) => c.includes("install-device.ps1"))).toBe(false);
     expect(document.body.textContent).not.toContain("--version");
     expect(document.body.textContent).not.toContain("PowerShell");
-    // 既有命令不受影响
+    // Existing commands are unaffected
     expect(commandTexts().some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
   });
 

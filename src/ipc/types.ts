@@ -88,7 +88,7 @@ export type MessageDto = { id: string, conversationId: string, role: string, con
 
 export type ModelProfile = { 
 id: string, 
-// temperature 未显式设置时服务端省略该键, 运行时值为 undefined; reasoningEffort 同理。
+// When temperature is not set explicitly, the server omits the key and the runtime value is undefined; same for reasoningEffort.
 name: string, baseUrl: string, apiKey: string, model: string, temperature: number, 
 reasoningEffort?: string,
 contextWindow: number, 
@@ -188,7 +188,7 @@ export type SyncCollectAsset = { id: string, groupId?: string, kind: string, nam
 port?: number, username?: string, authKind?: string, keyPath?: string, credId?: string, optionsJson: string,
 tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt?: number, };
 
-// known_host 冲突墓碑携带原败者三元组; 用户主动删除墓碑不带。
+// known_host conflict tombstones carry the original loser triple; tombstones from user-initiated deletes do not.
 export type SyncCollectTombstone = { id: string, targetKind: string, deletedAt: number,
 host?: string, port?: number, keyType?: string, };
 
@@ -200,8 +200,8 @@ secret?: string, secretState: SyncCollectSecretState, };
 export type SyncCollectKnownHost = { id: string, host: string, port: number, keyType: string,
 fingerprint: string, addedAt: number, };
 
-// apiKey 只在 revealed 且档案确有密钥时给出; apiKeySet 区分「无密钥」与「密钥被扣留」。
-// proxy 无 omitempty, 服务端 null 原样传递; temperature/reasoningEffort 未显式设置时缺省。
+// apiKey is given only when revealed and the profile actually holds a key; apiKeySet distinguishes "no key" from "key withheld".
+// proxy has no omitempty, the server passes null through as-is; temperature/reasoningEffort default when not set explicitly.
 export type SyncCollectAIProfile = { id: string, name: string, baseUrl: string, model: string,
 fallbackModel?: string, temperature?: number, reasoningEffort?: string, contextWindow: number, maxTokens?: number,
 proxy: string | null, stream: boolean, requestTimeoutSeconds?: number, idleTimeoutSeconds?: number,
@@ -218,7 +218,7 @@ export type SyncCollectKnownHostsResult = { knownHosts: SyncCollectKnownHost[], 
 
 export type SyncCollectAIProfilesResult = { profiles: SyncCollectAIProfile[], hasMore: boolean, nextAfterId?: string, };
 
-// 按账号用户隔离的同步 opt-in(默认开启); 用户身份由服务端会话注入, 不由客户端上报。
+// Per-account-user sync opt-in (default on); user identity is injected by the server session, not reported by the client.
 export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, aiPermission: boolean, preferences: boolean, };
 
 export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };

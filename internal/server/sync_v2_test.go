@@ -11,7 +11,7 @@ import (
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
-// syncV2EchoHandler 回显注入的同步用户身份, 用于验证 /sync/v2/* 中间件链。
+// syncV2EchoHandler echoes the injected sync user identity, for verifying the /sync/v2/* middleware chain.
 func syncV2EchoHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := syncservice.UserIDFromContext(r.Context())

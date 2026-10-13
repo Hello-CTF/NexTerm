@@ -148,8 +148,8 @@ func readSetting(ctx context.Context, db *store.Store, key string) (string, erro
 	return value, nil
 }
 
-// noteLoadError 记录设置读取失败: 此时库状态未知, 初始化守卫据此拒绝换新 DEK,
-// 避免把"读不到"误判为"未初始化"而让旧密文永久不可解密。
+// noteLoadError records a setting read failure: the vault state is now unknown, and the init guard refuses a DEK rotation
+// so "cannot read" is never misread as "not initialized", which would make old ciphertext permanently undecryptable.
 func (v *Vault) noteLoadError(key string, err error) {
 	slog.Warn("读取凭据库设置失败，初始化将被拒绝", "setting", key, "error", err)
 	if v.loadErr == nil {
@@ -164,8 +164,8 @@ func (v *Vault) guardLoadError() error {
 	return nil
 }
 
-// hasUndecryptableSecrets 报告库内是否仍有密文: 凭据行之外, setting 表里的
-// enc:v1: 信封(AI 密钥等)同样由当前 DEK 加密, 换新 DEK 会让它们永远无法解密。
+// hasUndecryptableSecrets reports whether ciphertext remains in the vault: besides credential rows,
+// enc:v1: envelopes in the setting table (AI keys, etc.) are also encrypted with the current DEK, and a DEK rotation would make them permanently undecryptable.
 func (v *Vault) hasUndecryptableSecrets(ctx context.Context) (bool, error) {
 	existing, err := v.store.CredentialList(ctx)
 	if err != nil {

@@ -12,8 +12,8 @@ import (
 
 const CommandCompare = "sync_compare"
 
-// 对比行状态与浏览器 CompareConsole 的 RowState 一致;
-// remote-undecryptable 为桌面端新增: 云端对象用当前 DEK 解不开时如实成行, 不算错误。
+// Row states match the browser CompareConsole RowState;
+// remote-undecryptable is desktop-only: cloud objects that cannot be decrypted with the current DEK still surface as rows, not errors.
 const (
 	CompareStateLocalOnly           = "local-only"
 	CompareStateRemoteOnly          = "remote-only"
@@ -25,7 +25,7 @@ const (
 	CompareStateRemoteUndecryptable = "remote-undecryptable"
 )
 
-// CompareRow 是一条本机/云端对象的对比结果; 修订号即 LWW 时钟值, 0 表示该侧不存在或不可读。
+// CompareRow is one local-vs-remote object comparison; the revision is the LWW clock value, 0 means that side does not exist or is unreadable.
 type CompareRow struct {
 	ID            string `json:"id"`
 	Kind          string `json:"kind"`
@@ -35,15 +35,15 @@ type CompareRow struct {
 	UpdatedRemote int64  `json:"updatedAtRemote,omitempty"`
 }
 
-// CompareResult 是 sync_compare 的返回: rows 按「差异优先, 名称次之」排序(与浏览器一致),
-// warnings 携带本地收集与云端拉取告警, remote 是本轮参与对比的云端对象数。
+// CompareResult is the sync_compare return: rows are sorted "differences first, then by name" (same as the browser),
+// warnings carry local collection and remote pull alerts, remote is the number of cloud objects compared this round.
 type CompareResult struct {
 	Rows     []CompareRow `json:"rows"`
 	Warnings []string     `json:"warnings,omitempty"`
 	Remote   int          `json:"remote"`
 }
 
-// compareEntity 是一侧实体的判定视图: 明文只用于哈希/修订号/名称, 不出本进程。
+// compareEntity is the decision view of one side's entity: plaintext is used only for hash/revision/name and never leaves this process.
 type compareEntity struct {
 	kind        string
 	plaintext   []byte
@@ -64,8 +64,8 @@ func newCompareEntity(id, kind string, plaintext []byte) compareEntity {
 	}
 }
 
-// compareName 从明文提取行名: 组/资产/片段/凭据/AI 档案用 name, known_host 用 host:port,
-// 偏好用 key, AI 权限为全局单例, 会话记录带资产名, 墓碑退化为对象 id。
+// compareName extracts the row name from plaintext: groups/assets/snippets/credentials/AI profiles use name, known_host uses host:port,
+// preferences use key, AI permissions are a global singleton, session records carry the asset name, tombstones degrade to the object id.
 func compareName(id, kind string, plaintext []byte) string {
 	switch kind {
 	case KindTombstone:
@@ -103,7 +103,7 @@ func compareName(id, kind string, plaintext []byte) string {
 	return id
 }
 
-// compareDeleted 判定该侧内容是否为删除形态: 墓碑对象或带 deletedAt 的软删资产。
+// compareDeleted decides whether this side's content is in deleted form: a tombstone object or a soft-deleted asset with deletedAt.
 func compareDeleted(kind string, plaintext []byte) bool {
 	if kind == KindTombstone {
 		return true
@@ -117,8 +117,8 @@ func compareDeleted(kind string, plaintext []byte) bool {
 	return payload.DeletedAt != nil
 }
 
-// compareLocalWins 与浏览器 localWins 同一裁决: 同 hash 无需推送; 会话记录完整内容胜省略版;
-// 其余修订号大者胜, 平手按载荷哈希字典序决胜。
+// compareLocalWins applies the browser localWins decision: same hash needs no push; a full-content session record beats the omitted-content version;
+// otherwise the higher revision wins, ties break by payload hash lexicographic order.
 func compareLocalWins(local, remote compareEntity) bool {
 	if local.payloadHash == remote.payloadHash {
 		return false
@@ -145,8 +145,8 @@ func transcriptContentFull(plaintext []byte) bool {
 	return !payload.ContentOmitted
 }
 
-// compareState 与浏览器 buildRows 同态: 同 hash 即一致; 删除形态参与时对侧胜给「已删」,
-// 本侧胜给「较新」; 其余按 LWW 胜方给「较新」。
+// compareState mirrors the browser buildRows: same hash means identical; with a deleted form involved, the other side winning yields "deleted",
+// this side winning yields "newer"; otherwise the LWW winner yields "newer".
 func compareState(local, remote compareEntity) string {
 	if local.payloadHash == remote.payloadHash {
 		return CompareStateSame
@@ -171,8 +171,8 @@ func compareState(local, remote compareEntity) string {
 	}
 }
 
-// buildCompareRows 合并本机与云端实体为对比行: 差异在前(same 排后), 名称字典次序之。
-// undecryptable 是解不开的云端对象 id 集合: 本机同名行用本机名称如实标注, 纯云端行退化为 id。
+// buildCompareRows merges local and remote entities into comparison rows: differences first (same last), then by name lexicographically.
+// undecryptable is the set of undecryptable cloud object ids: local same-name rows are labeled with the local name, remote-only rows degrade to the id.
 func buildCompareRows(local map[string]compareEntity, remote map[string]compareEntity, undecryptable map[string]bool) []CompareRow {
 	rows := make([]CompareRow, 0, len(local)+len(remote)+len(undecryptable))
 	for id, l := range local {
@@ -215,9 +215,9 @@ func buildCompareRows(local map[string]compareEntity, remote map[string]compareE
 	return rows
 }
 
-// Compare 输出本机与云端对象的逐条对比(仅桌面端): 本机侧经与同步轮相同的 collectLocalObjects
-// 收集, 云端侧拉取全量对象并用引擎会话 DEK 解密; 判定规则与浏览器 CompareConsole 一致。
-// 对比是只读视图: 不推进游标、不写对账状态。会话过期自动重登一次。
+// Compare outputs a row-by-row local-vs-remote object comparison (desktop only): the local side is collected via the same collectLocalObjects
+// as a sync round, the remote side pulls all objects and decrypts them with the engine session DEK; decision rules match the browser CompareConsole.
+// The comparison is a read-only view: it advances no cursor and writes no reconciliation state. An expired session triggers one automatic re-login.
 func (s *Service) Compare(ctx context.Context) (CompareResult, error) {
 	if err := s.requireDesktop(); err != nil {
 		return CompareResult{}, err
@@ -269,7 +269,7 @@ func (s *Service) compareWithSession(ctx context.Context, session *remoteSession
 	if missed > 0 {
 		report.warnf("%d 个云端对象未能拉取(超出单页预算), 对比结果不包含它们", missed)
 	}
-	// buildCompareRows 边匹配边收缩 remote/undecryptable, 云端对象数必须先取定。
+	// buildCompareRows shrinks remote/undecryptable as it matches, so the cloud object count must be taken first.
 	remoteCount := len(remote) + len(undecryptable)
 	return CompareResult{
 		Rows:     buildCompareRows(local, remote, undecryptable),
@@ -283,9 +283,9 @@ const (
 	comparePullRounds = 4
 )
 
-// fetchRemoteEntities 拉取并解密全部云端对象; opt-in 硬关闭的种类(含其墓碑)不参与对比,
-// 与同步轮的应用过滤一致。拉取按 ID 补拉(sinceSeq 取 maxSeq, 游标分支留空, 预算全给补拉),
-// 超出单页预算被截断的对象有界重试; 解密失败的记入 undecryptable, 由调用方如实成行。
+// fetchRemoteEntities pulls and decrypts all cloud objects; kinds with opt-in hard-off (including their tombstones) do not participate,
+// matching the sync round's apply filter. The pull is by-ID catch-up (sinceSeq at maxSeq, cursor branch left empty, budget all to catch-up);
+// objects truncated by the single-page budget get bounded retries; decryption failures go into undecryptable and surface as rows via the caller.
 func (s *Service) fetchRemoteEntities(ctx context.Context, session *remoteSession, idsResponse *IDsResponse, optIn kindOptIn) (remote map[string]compareEntity, undecryptable map[string]bool, missed int, returnErr error) {
 	remote = map[string]compareEntity{}
 	undecryptable = map[string]bool{}

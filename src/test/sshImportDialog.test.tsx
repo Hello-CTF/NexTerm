@@ -313,7 +313,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     )!;
     expect(edBox.checked).toBe(true);
 
-    // 手动取消一台主机与一个密钥，冲突主机改为覆盖
+    // Manually uncheck one host and one key; switch the conflicting host to overwrite
     bastionBox.click();
     edBox.click();
     await flush();

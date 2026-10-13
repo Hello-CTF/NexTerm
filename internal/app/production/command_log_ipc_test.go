@@ -78,8 +78,8 @@ func TestCommandLogIPCFollowsFilters(t *testing.T) {
 	}
 }
 
-// 服务端装配(desktop=false)下, 已登录调用者无论是否自报 userId 都只能
-// 读到自己的命令记录; 无身份的开放部署保持原行为。
+// In the server-side assembly (desktop=false), a logged-in caller reads only their own command records whether or not
+// they report a userId; identity-less open deployments keep the original behavior.
 func TestCommandLogIPCServerModeScopesToCaller(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)
@@ -132,7 +132,7 @@ func TestCommandLogIPCServerModeScopesToCaller(t *testing.T) {
 	if got := query(plain, `{}`); len(got) != 1 || got[0].UserID == nil || *got[0].UserID != "u-1" {
 		t.Fatalf("non-admin unfiltered query = %+v", got)
 	}
-	// 自报他人 userId 被强制收敛为调用者自己: 读到的是 u-1 的记录而不是 u-2 的。
+	// A self-reported other userId is forced down to the caller: what is read is u-1's records, not u-2's.
 	if got := count(plain, `{"userId":"u-2"}`); got != 1 {
 		t.Fatalf("non-admin cross-user count = %d, want forced-to-self 1", got)
 	}

@@ -143,7 +143,7 @@ async function wireMobileInsets(): Promise<void> {
       style.setProperty("--nx-inset-bottom", `${insets.bottom}px`);
       style.setProperty("--nx-inset-left", `${insets.left}px`);
     } catch {
-      // system_insets 不可用(server/web)时保持 env()/0 值
+      // Keep the env()/0 values when system_insets is unavailable (server/web)
     }
   };
   await apply();

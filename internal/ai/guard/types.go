@@ -169,7 +169,7 @@ type Decision struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// DecideResource 在 Decide 之上叠加本会话记住的路径级授权。
+// DecideResource layers the path-level grants remembered for this session on top of Decide.
 func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resource) Decision {
 	if ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
 		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
@@ -241,7 +241,7 @@ func (m *Memory) Contains(kind Kind) bool {
 	return ok
 }
 
-// AddPathRule 记住一条本会话有效的路径级授权（如某目录下的写入）。
+// AddPathRule remembers a path-level grant valid for this session (e.g. writes under a directory).
 func (m *Memory) AddPathRule(action, pattern string) {
 	if m == nil || action == "" {
 		return
@@ -257,7 +257,7 @@ func (m *Memory) AddPathRule(action, pattern string) {
 	m.mu.Unlock()
 }
 
-// CoversPathRule 报告本会话是否已记住覆盖该动作与路径的授权。
+// CoversPathRule reports whether this session has remembered a grant covering the action and path.
 func (m *Memory) CoversPathRule(action, path string) bool {
 	if m == nil || action == "" {
 		return false

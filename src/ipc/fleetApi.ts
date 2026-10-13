@@ -1,6 +1,6 @@
-// /fleet/* 与 /device/enroll-codes 的浏览器端 HTTP 客户端, 与 authApi 共用
-// 同一会话 cookie 与 CSRF 头 (request 直接复用, 401 同样走 SESSION_EXPIRED_EVENT)。
-// 仅 WEB 传输可用: 桌面端无账号体系, 由视图层给出显式不可用态。
+// Browser-side HTTP client for /fleet/* and /device/enroll-codes; shares the same
+// session cookie and CSRF header with authApi (request is reused directly, 401 also goes through SESSION_EXPIRED_EVENT).
+// WEB transport only: the desktop has no account system, so the view layer shows an explicit unavailable state.
 
 import { request } from "./authApi";
 
@@ -25,8 +25,8 @@ export interface FleetAgentInfo {
   current_url: string;
   service_state: FleetServiceState;
   last_seen_at: number;
-  // 设备端 supervisor 状态摘要 (控制通道上报, 不含凭据材料), 仅供远程终端
-  // hello 协商; 不得在 UI 展示、写日志或持久化到 web storage。设备离线时缺省。
+  // Device-side supervisor state digest (reported over the control channel, no credential material), for remote terminal
+  // hello negotiation only; must not be shown in the UI, logged, or persisted to web storage. Absent when the device is offline.
   state_digest?: string;
 }
 
@@ -92,7 +92,7 @@ export const fleetApi = {
   putBaseUrls: (entries: FleetBaseURLEntry[]) =>
     request<{ base_urls: FleetBaseURLEntry[] }>("PUT", "/fleet/base-urls", { base_urls: entries }, { csrf: true }),
 
-  // serverVersion 读 /healthz 的真实服务端版本 (全新机器一键安装的 --version
-  // 用)。返回空串表示版本不可用: 调用方必须隐藏依赖版本的 UI, 不得伪造版本。
+  // serverVersion reads the real server version from /healthz (used for one-click install --version on fresh
+  // machines). An empty string means the version is unavailable: callers must hide version-dependent UI, never fabricate a version.
   serverVersion: () => request<{ version?: string }>("GET", "/healthz").then((r) => r.version ?? ""),
 };

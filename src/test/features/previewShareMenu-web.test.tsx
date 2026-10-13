@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
-// WEB 端预览链接: PreviewShareMenu 分流保持 previewApi 直连 — 创建经
-// createPreviewLink (sessionId 即 tabId, 默认 write:false 只读, 勾选「允许控制」
-// 发 write:true, 成功后勾选重置), URL 用 previewPublicUrl 拼, 列表按 tabId 直接
-// 过滤并按 permission 显示只读/可控制徽章, 吊销走 revokePreviewLink; 不触桌面中继入口。
+// WEB preview links: PreviewShareMenu dispatch keeps the previewApi direct connection - creation via
+// createPreviewLink (sessionId is the tabId, default write:false read-only, checking "allow control"
+// sends write:true, the checkbox resets after success), the URL is assembled with previewPublicUrl, the list filters
+// directly by tabId and shows read-only/controllable badges by permission, revoke goes through revokePreviewLink;
+// the desktop relay entry is not touched.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, clickButton, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";

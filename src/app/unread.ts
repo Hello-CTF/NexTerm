@@ -24,8 +24,8 @@ function collectTracked(): { storeIdByTabId: Map<string, string>; backgroundIds:
   return { storeIdByTabId, backgroundIds, foregroundIds };
 }
 
-// 首轮观测只建基线不打标: 恢复的布局里守护终端可能刚有输出, 避免启动时全部亮起点。
-// 之后 lastOutputMsAgo 变小说明两次轮询间有新输出; 只给非活动标签打标, 一次 setState 批量落。
+// The first poll only builds a baseline without marking: restored layouts may have daemon terminals that just produced output, avoiding all dots lighting up at startup.
+// Afterwards, lastOutputMsAgo decreasing means new output between two polls; only non-active tabs are marked, applied in one batched setState.
 export async function pollUnreadTabsOnce(): Promise<void> {
   const { storeIdByTabId, backgroundIds, foregroundIds } = collectTracked();
   for (const tabId of [...lastOutputMsAgo.keys()]) {
@@ -47,7 +47,7 @@ export async function pollUnreadTabsOnce(): Promise<void> {
     if (prev === undefined) continue;
     if (info.lastOutputMsAgo < prev && backgroundIds.has(storeId)) mark.add(storeId);
   }
-  // 已激活标签上的陈旧标记一并清除, 覆盖 addTab 聚焦/关闭顺延等不经 setActiveTab 的激活路径。
+  // Stale marks on activated tabs are cleared too, covering activation paths that bypass setActiveTab such as addTab focus/close succession.
   const state = useUi.getState();
   const stale = new Set<string>();
   for (const w of state.workspaces) {

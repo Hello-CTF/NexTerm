@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// DekUnlockBanner: 浏览器刷新后会话经 cookie 恢复但 DEK 为空时的主界面解锁入口。
-// 覆盖三种可见性状态、解锁成功 toast+消失、密码错误内联可重试、dismiss 后不再显示(刷新再来)。
+// DekUnlockBanner: the main-screen unlock entry when the session is restored via cookie after a browser refresh but the DEK is empty.
+// Covers the three visibility states, unlock-success toast + dismissal, inline retry on wrong password, and no re-show after dismiss (until refresh).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
@@ -27,7 +27,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 避免真实 argon2id: 解包打桩, 其余(base64 等)保持真实。
+// Avoid real argon2id: stub unwrap, keep the rest (base64 etc.) real.
 vi.mock("../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../features/auth/crypto")>();
   return { ...original, unwrapDEKWithPassword: mocks.unwrap };

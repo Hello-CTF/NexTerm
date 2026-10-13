@@ -26,7 +26,7 @@ func TestTakePushBatchBoundaries(t *testing.T) {
 		t.Fatalf("second batch=%+v rest=%+v", batch, rest)
 	}
 
-	// 单对象超过整批上限时独立成批, 不丢失。
+	// A single object exceeding the whole batch limit forms its own batch and is not lost.
 	huge := []WireObject{{ID: "x", Blob: make([]byte, maxPushBatchBytes+1)}, {ID: "y", Blob: []byte("small")}}
 	batch, _, rest, _ = takePushBatch(huge, []string{"hx", "hy"})
 	if len(batch) != 1 || batch[0].ID != "x" || len(rest) != 1 || rest[0].ID != "y" {

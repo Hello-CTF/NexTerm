@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 预览 API 线上契约: 路径/方法/CSRF/蛇形 JSON 字段对齐
-// internal/server/preview_http.go 的真实路由; 创建响应是唯一携带一次性 token
-// 的入口, token 只用于当场拼公开 URL。创建 body 恒显式携带 write 决定是否可写。
+// Preview API live contract: paths/methods/CSRF/snake_case JSON fields align with
+// the real routes in internal/server/preview_http.go; the creation response is the only entry carrying the one-time token,
+// and the token is only used to assemble the public URL on the spot. The creation body always explicitly carries write to decide writability.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {

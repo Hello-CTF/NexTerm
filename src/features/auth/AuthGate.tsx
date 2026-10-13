@@ -1,5 +1,5 @@
-// 账号门:首次初始化 / 登录 / 注册 / reset_required 强制改密 / 恢复密钥一次性展示。
-// 仅在 WEB 且门状态非 ready 时渲染全屏覆盖。
+// Account gate: first-time init / login / register / reset_required forced password change / one-time recovery key display.
+// Renders a fullscreen overlay only under WEB and when the gate state is not ready.
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth, type RecoveryKeyIssue } from "./store";
@@ -41,7 +41,7 @@ export function AuthGate() {
     else setScreen(null);
   }, [gate]);
 
-  // 初始化/注册/改密成功后签发的一次性恢复密钥优先于门状态展示
+  // The one-time recovery key issued after successful init/register/password change takes display precedence over the gate state
   const issue = recoveryIssue ?? pendingRecoveryKey;
   if (issue) {
     return (
@@ -147,7 +147,7 @@ function SetupForm() {
     try {
       await initSuperadmin(code.trim(), username.trim(), password);
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -209,7 +209,7 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
     try {
       await login(username.trim(), password);
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -259,7 +259,7 @@ function TotpChallengeForm() {
     try {
       await verifyMfa(code.trim());
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -286,8 +286,8 @@ function TotpChallengeForm() {
   );
 }
 
-// MfaEnrollForm 是 mfa_required 策略下未绑定会话的强制绑定门:
-// 服务端把这类会话锁到只能绑定, 完成 TOTP 绑定(并保存恢复码)后才能进入应用。
+// MfaEnrollForm is the forced enrollment gate for unenrolled sessions under the mfa_required policy:
+// the server locks such sessions to enrollment only; TOTP binding (and saving the recovery codes) must complete before entering the app.
 function MfaEnrollForm() {
   const finishMfaEnrollment = useAuth((s) => s.finishMfaEnrollment);
   const logout = useAuth((s) => s.logout);
@@ -489,7 +489,7 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
     try {
       await register(username.trim(), password, displayName.trim());
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -544,7 +544,7 @@ function ResetRequiredForm() {
     try {
       await completeResetRequired(tempPassword, newPassword);
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -598,7 +598,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
     try {
       await recoveryReset(username.trim(), recoveryKey, newPassword);
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
@@ -642,7 +642,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // 第一步: 配对码登记设备(公共路由, 只登记不建会话)。
+  // Step one: enroll the device with a pairing code (public route, registers only, no session created).
   const submitEnroll = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -661,13 +661,13 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
     try {
       setDevice(await enrollDevice(trimmedCode, name));
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }
   };
 
-  // 第二步: 走统一登录, 会话绑定到刚登记的设备。
+  // Step two: go through the unified login, binding the session to the just-enrolled device.
   const submitLogin = async (e: FormEvent) => {
     e.preventDefault();
     clearError();
@@ -675,7 +675,7 @@ function EnrollForm({ onBack }: { onBack: () => void }) {
     try {
       await login(username.trim(), password, device?.id);
     } catch {
-      // 错误已在 store 里
+      // The error is already surfaced in the store
     } finally {
       setBusy(false);
     }

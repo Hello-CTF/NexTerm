@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面只读预览 IPC 线形契约: preview_share_create/active 在 Go 侧是 RegisterNested
-// (internal/app/production/preview_relay.go), args 必须再包一层 args 信封;
-// 扁平传参会被嵌套层剥空、解码为零值, 报 "tabId/ttlMs 不能为空"。
+// Desktop read-only preview IPC wire contract: preview_share_create/active are RegisterNested on the Go side
+// (internal/app/production/preview_relay.go), so args must be wrapped in one more args envelope;
+// flat arguments get stripped by the nested layer and decode to zero values, erroring with "tabId/ttlMs 不能为空".
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {

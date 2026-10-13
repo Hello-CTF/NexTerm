@@ -655,9 +655,9 @@ func TestAccountHTTPLoopbackExplicit(t *testing.T) {
 	}
 }
 
-// TestAccountStatusLoopbackUninitialized 守住 M196 合同: 全新 loopback 实例未初始化即免登录
-// (状态上报 loopback, /rpc 匿名可用), 但账号路由仍要求会话; 初始化后模式不变。
-// loopback 模式监听非回环地址时等同 on: 状态不得再上报 loopback, 匿名 /rpc 一律 401。
+// TestAccountStatusLoopbackUninitialized guards the M196 contract: a fresh loopback instance is login-free before initialization
+// (status reports loopback, /rpc anonymously usable), but account routes still require a session; the mode is unchanged after initialization.
+// Loopback mode listening on a non-loopback address equals on: status must no longer report loopback, and anonymous /rpc is always 401.
 func TestAccountStatusLoopbackUninitialized(t *testing.T) {
 	fixture := newAccountFixture(t, AuthLoopback)
 
