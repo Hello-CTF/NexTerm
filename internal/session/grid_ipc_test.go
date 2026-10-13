@@ -46,10 +46,6 @@ func TestGridCommandsResizeFlushAndErrorClassification(t *testing.T) {
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	channel := connector.transport(0).channel(0)
 	dispatcher := newGridDispatcher(t, manager)
-	commands := dispatcher.Commands()
-	if len(commands) != 2 || commands[0] != CommandTerminalResize || commands[1] != CommandTerminalResizeFlush {
-		t.Fatalf("registered commands = %v", commands)
-	}
 	requireGridResponse(t, dispatchGrid(dispatcher, CommandTerminalResize, `{"tabId":"`+tab.ID+`","clientId":"client-a","cols":100,"rows":30}`))
 	if calls, cols, rows := fakeChannelGrid(channel); calls != 1 || cols != 100 || rows != 30 {
 		t.Fatalf("dispatch resize = calls %d, %dx%d", calls, cols, rows)

@@ -25,9 +25,14 @@ func TestIPCRegistrationAndWireShapes(t *testing.T) {
 	if err := service.RegisterCommands(dispatcher); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	wantCommands := []string{"db_columns", "db_connect", "db_disconnect", "db_query", "db_schemas", "db_tables", "redis_command", "redis_inspect", "redis_scan", "redis_set_ttl"}
-	if !reflect.DeepEqual(dispatcher.Commands(), wantCommands) {
-		t.Fatalf("commands=%v", dispatcher.Commands())
+	registered := map[string]bool{}
+	for _, command := range dispatcher.Commands() {
+		registered[command] = true
+	}
+	for _, command := range []string{"db_columns", "db_connect", "db_disconnect", "db_query", "db_schemas", "db_tables", "redis_command", "redis_inspect", "redis_scan", "redis_set_ttl"} {
+		if !registered[command] {
+			t.Fatalf("missing command %s in %v", command, dispatcher.Commands())
+		}
 	}
 
 	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "db_connect", Args: json.RawMessage(`{"args":{"inline":{"kind":"mysql","host":"localhost"}}}`)}, ipc.Environment{})

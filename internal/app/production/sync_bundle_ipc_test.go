@@ -439,8 +439,17 @@ func TestSyncBundlePeerDispatcherSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	commands := peer.Commands()
-	if len(commands) != 3 || commands[0] != syncservice.CommandDigest || commands[1] != syncservice.CommandExport || commands[2] != syncservice.CommandImport {
+	if len(commands) != 3 {
 		t.Fatalf("peer surface = %v", commands)
+	}
+	for _, command := range []string{syncservice.CommandDigest, syncservice.CommandExport, syncservice.CommandImport} {
+		found := false
+		for _, name := range commands {
+			found = found || name == command
+		}
+		if !found {
+			t.Fatalf("peer surface %v missing %s", commands, command)
+		}
 	}
 }
 
