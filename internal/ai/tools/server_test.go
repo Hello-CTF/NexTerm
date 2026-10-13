@@ -133,6 +133,15 @@ func TestTerminalCreateToolExecution(t *testing.T) {
 	}
 }
 
+func TestTerminalCreateDescriptionDocumentsCommandKinds(t *testing.T) {
+	description := einoDescriptions["terminal_create"]
+	for _, want := range []string{"ssh/docker/local/device", "send_keys 传 tab_id"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("terminal_create description missing %q: %q", want, description)
+		}
+	}
+}
+
 func TestTerminalCreateForegroundOpensTab(t *testing.T) {
 	terminal := &fakeTerminal{}
 	registry := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "s" }})

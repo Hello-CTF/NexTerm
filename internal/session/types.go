@@ -353,6 +353,13 @@ func startupCommandSupported(kind string) bool {
 	return kind == KindSSH || kind == KindDocker
 }
 
+// createTabCommandSupported reports whether a detached CreateTab shell accepts
+// a startup line written into its stdin: any interactive-shell kind (local
+// PTY, ssh, docker, device daemon PTY) does; line-mode winrm does not.
+func createTabCommandSupported(kind string) bool {
+	return startupCommandSupported(kind) || kind == KindLocal || kind == KindDevice
+}
+
 func canonicalEncoding(encoding string) string {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "", "utf-8", "utf8":

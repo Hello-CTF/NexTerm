@@ -393,7 +393,7 @@ type CreateTabOptions struct {
 	Rows      uint32
 	Title     string
 	// Command is an optional startup command written to the new shell; only
-	// kinds with startupCommandSupported accept it, others reject the call.
+	// kinds with createTabCommandSupported accept it, others reject the call.
 	Command string
 }
 
@@ -412,7 +412,7 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 	if kind == KindRemote {
 		return TabInfo{}, ErrUnsupported
 	}
-	if options.Command != "" && !startupCommandSupported(kind) {
+	if options.Command != "" && !createTabCommandSupported(kind) {
 		return TabInfo{}, ErrUnsupported
 	}
 	var title string
