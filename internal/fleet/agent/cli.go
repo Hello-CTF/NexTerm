@@ -218,11 +218,14 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	switch {
 	case err == nil:
 		return ExitOK
+	case errors.Is(err, errUpgradeStaged):
+		fmt.Fprintln(stdout, "agent: 协议版本不兼容, 已从官方 release 下载并校验新版本, 延迟替换脚本将完成升级并拉起服务")
+		return ExitOK
 	case errors.Is(err, ErrRevoked):
 		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
-		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 请升级本程序")
+		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 自升级不可用或已失败, 请用 install-device.sh 重装")
 		return ExitProtocol
 	default:
 		fmt.Fprintln(stderr, "agent run:", err)
