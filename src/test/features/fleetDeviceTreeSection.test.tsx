@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 // Asset tree "Devices" section tests: section position (after the built-in local terminal, before other assets/groups), no render and
-// zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), offline/terminal-closed disable hints,
-// revoked not shown, revoke double-confirm and cancel, context-menu revoke danger style,
-// section refresh, DevicesView reusing MetricsPanel regression.
+// zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), only online devices are listed
+// (offline/agent-less rows hidden, terminal-closed rows stay but disabled), revoked not shown, revoke double-confirm and cancel,
+// context-menu revoke danger style, section refresh, DevicesView reusing MetricsPanel regression.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
@@ -128,6 +128,8 @@ const TERMINAL_DISABLED_DEVICE = {
 };
 
 const REVOKED_DEVICE = { ...ONLINE_DEVICE, id: "d-4", name: "old-laptop", revoked_at: NOW - 3600_000 };
+
+const SECOND_ONLINE = { ...ONLINE_DEVICE, id: "d-9", name: "nas-01" };
 
 const METRICS_SAMPLES = [
   {
@@ -372,22 +374,19 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect(deviceTerminalTabs()).toHaveLength(1);
   });
 
-  it("离线/终端关闭的设备行禁用并给出提示, 点击不打开终端", async () => {
+  it("离线设备不在资产树显示; 终端关闭的在线设备禁用并给出提示, 点击不打开终端", async () => {
     route({ devices: [OFFLINE_DEVICE, TERMINAL_DISABLED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("noterm-01") ?? false);
 
-    const offline = deviceRow("db-02");
-    expect(offline.getAttribute("aria-disabled")).toBe("true");
-    expect(offline.getAttribute("title")).toContain("设备离线，无法打开终端");
-    expect(offline.textContent).toContain("离线");
+    expect(section().textContent).not.toContain("db-02");
+    expect(section().textContent).not.toContain("离线");
 
     const noTerm = deviceRow("noterm-01");
     expect(noTerm.getAttribute("aria-disabled")).toBe("true");
     expect(noTerm.getAttribute("title")).toContain("该设备已关闭远程终端");
 
-    click(offline);
     click(noTerm);
     keydown(noTerm, "Enter");
     await flush();
@@ -454,33 +453,28 @@ describe("资产树「设备」分区 · 自动收敛", () => {
     expect(deviceFetches()).toBeGreaterThan(before);
   });
 
-  it("device://status 事件实时翻转在线状态与行禁用态, 不重拉列表; 未知设备 ID 忽略", async () => {
-    const calls = route({ devices: [OFFLINE_DEVICE] });
+  it("device://status 事件实时使设备行上下线, 不重拉列表; 未知设备 ID 忽略", async () => {
+    const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
-    await flushUntil(() => document.body.textContent?.includes("db-02") ?? false);
-
-    expect(deviceRow("db-02").textContent).toContain("离线");
-    expect(deviceRow("db-02").getAttribute("aria-disabled")).toBe("true");
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const handler = mocks.deviceStatusHandlers.at(-1);
     if (!handler) throw new Error("device://status 未订阅");
     const fetchesBefore = calls.length;
 
-    act(() => handler({ deviceId: "d-x", online: true }));
+    act(() => handler({ deviceId: "d-x", online: false }));
     await flush();
-    expect(deviceRow("db-02").textContent).toContain("离线");
+    expect(section().textContent).toContain("web-01");
 
-    act(() => handler({ deviceId: "d-2", online: true }));
+    act(() => handler({ deviceId: "d-1", online: false }));
     await flush();
-    expect(deviceRow("db-02").textContent).toContain("在线");
-    expect(deviceRow("db-02").getAttribute("aria-disabled")).toBe("false");
+    expect(section().textContent ?? "").not.toContain("web-01");
     expect(calls.length).toBe(fetchesBefore);
 
-    act(() => handler({ deviceId: "d-2", online: false }));
+    act(() => handler({ deviceId: "d-1", online: true }));
     await flush();
-    expect(deviceRow("db-02").textContent).toContain("离线");
-    expect(deviceRow("db-02").getAttribute("aria-disabled")).toBe("true");
+    expect(section().textContent).toContain("web-01");
     expect(calls.length).toBe(fetchesBefore);
   });
 
@@ -506,7 +500,7 @@ describe("资产树「设备」分区 · 自动收敛", () => {
 
 describe("资产树「设备」分区 · 吊销两次确认", () => {
   it("两个 warning 都确认后才吊销, 成功后设备立即从分区移除", async () => {
-    const calls = route({ devices: [ONLINE_DEVICE, OFFLINE_DEVICE] });
+    const calls = route({ devices: [ONLINE_DEVICE, SECOND_ONLINE] });
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
     mountTree();
@@ -521,7 +515,7 @@ describe("资产树「设备」分区 · 吊销两次确认", () => {
     expect(String(mocks.ask.mock.calls[1]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("凭证立即失效");
     expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("从资产中移除且不可恢复");
-    expect(section().textContent).toContain("db-02");
+    expect(section().textContent).toContain("nas-01");
   });
 
   it("第一个确认取消: 不再弹第二个, 不发请求", async () => {
