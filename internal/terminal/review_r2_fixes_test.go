@@ -148,7 +148,7 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 	if got := tab.Dump(0); !bytes.Equal(got, wantRaw) {
 		t.Fatalf("raw dump mismatch: got %d bytes want %d", len(got), len(wantRaw))
 	}
-	replay, start := tab.ReplayFrom(0, 0)
+	replay, start, _ := tab.ReplayFrom(0, 0)
 	if start != 0 || !bytes.Equal(replay, wantRaw) {
 		t.Fatal("replay not lossless")
 	}

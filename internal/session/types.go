@@ -322,6 +322,12 @@ type AttachOptions struct {
 	ClientID    string
 	ChannelID   string
 	ReplayBytes int
+	// FromSeq/FromEpoch 是客户端已消费输出流的锚点: FromSeq 为 ring 字节序号,
+	// FromEpoch 为上次 attach 锚点帧下发的流纪元。两者都提供时服务端尝试从
+	// FromSeq 偏移续传 (不清屏); 锚点过期或纪元不符则回退全量清屏重放并在
+	// 锚点帧里显式标记 expired。零值保持既有全量重放行为。
+	FromSeq   uint64
+	FromEpoch string
 }
 
 func reconnectable(kind string) bool {

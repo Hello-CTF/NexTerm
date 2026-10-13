@@ -136,3 +136,112 @@ func writeDuringDisconnect(t *testing.T, ctx context.Context, client *supervisor
 		seen.Write(buffer[:count])
 	}
 }
+
+// offsetRecordingProvider wraps a durable provider and records the offsets
+// presented to successful AttachFrom resumes.
+type offsetRecordingProvider struct {
+	base.DurableProvider
+	mu      sync.Mutex
+	offsets []uint64
+}
+
+func (p *offsetRecordingProvider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
+	attacher, ok := p.DurableProvider.(interface {
+		AttachFrom(context.Context, string, uint64) (base.DurableAttachment, error)
+	})
+	if !ok {
+		return nil, base.ErrUnsupported
+	}
+	attachment, err := attacher.AttachFrom(ctx, id, offset)
+	if err == nil {
+		p.mu.Lock()
+		p.offsets = append(p.offsets, offset)
+		p.mu.Unlock()
+	}
+	return attachment, err
+}
+
+// TestReconnectDurableAttachUsesConsumedOffset proves the reconnect path
+// resumes the daemon stream from the consumed recording offset instead of
+// replaying from byte zero: exactly one AttachFrom happens and its offset is
+// nonzero yet below the final recording size (the disconnect-window output is
+// streamed, the pre-reconnect prefix is not).
+func TestReconnectDurableAttachUsesConsumedOffset(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "supervisor")
+	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir, err := os.MkdirTemp("/tmp", "nx-replay-offset-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+	server, err := supervisor.NewServer(instance, filepath.Join(runDir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		_ = instance.Close()
+	})
+	client := supervisor.NewClient(server.SocketPath(), stateDir)
+	provider := &offsetRecordingProvider{DurableProvider: supervisor.NewRemoteProvider(client)}
+	resolver := &countingResolver{provider: provider}
+
+	tabID := ""
+	connector := newFakeConnector()
+	connector.connect = func(ctx context.Context, asset Asset, generation uint64, call int) (base.Transport, error) {
+		if call == 2 {
+			writeDuringDisconnect(t, ctx, client, tabID)
+		}
+		return newFakeTransport(asset.Kind, uint64(call)+1000), nil
+	}
+	manager := NewManager(Config{
+		Connector:        connector,
+		Terminals:        newFakeTerminalFactory(),
+		DurableResolver:  resolver,
+		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
+	})
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "ssh-offset", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "offset-1", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabID = info.ID
+	if err := manager.Write(ctx, tabID, "client-a", []byte("echo before-mark''er\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitForTabMarker(t, manager, tabID, "before-marker")
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForTabMarker(t, manager, tabID, "during-marker")
+
+	stat, err := os.Stat(filepath.Join(stateDir, "sessions", tabID, "output.raw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.offsets) != 1 {
+		t.Fatalf("AttachFrom calls = %v, want exactly one offset resume", provider.offsets)
+	}
+	offset := provider.offsets[0]
+	if offset == 0 || offset >= uint64(stat.Size()) {
+		t.Fatalf("AttachFrom offset = %d, want within (0, %d)", offset, stat.Size())
+	}
+	if err := manager.CloseTab(tabID); err != nil {
+		t.Fatal(err)
+	}
+}

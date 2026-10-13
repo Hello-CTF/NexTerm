@@ -48,7 +48,8 @@ func (s *sessionTerminal) CommandState(_ context.Context, tabID string) (Command
 }
 
 func (s *sessionTerminal) OutputSince(_ context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
-	return s.manager.OutputSince(tabID, seq, maxBytes)
+	data, start, latest, _, err := s.manager.OutputSince(tabID, seq, maxBytes)
+	return data, start, latest, err
 }
 
 func (s *sessionTerminal) SessionAssetKind(_ context.Context, sessionID string) (string, error) {

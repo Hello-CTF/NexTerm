@@ -75,6 +75,7 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	receiver := bindTestReceiver(t, manager, "b-1")
+	receiveTestAnchor(t, receiver)
 	assertFrameData(t, receiver, replayClear)
 	frame := receiveTestFrame(t, receiver)
 	if !bytes.Contains(frame.Data, raw) {

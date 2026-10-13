@@ -217,9 +217,60 @@ export function XtermView(props: XtermViewProps) {
       },
       updateLinesBelow,
     );
-    const channel = createBinaryChannel((bytes) => {
-      writeOscSegments(oscFilter.push(bytes));
-    });
+    // 输出流序号锚点: 服务端每次 attach 先下发锚点帧, 之后本段流的字节连续对应
+    // ring 序号 streamSeq + max(0, 已收字节 - controlBytes)。重连 attach 时把该
+    // 序号与纪元带回 (fromSeq/fromEpoch), 服务端从偏移续传不再清屏全量重放。
+    // skipLeading 处理重连决策与服务器处理之间到达的在途帧: 它们已被渲染, 新流
+    // 从 fromSeq 重发的前缀要跳过, 避免重复输出。
+    let streamAnchor: { epoch: string; seq: number; control: number } | null = null;
+    let streamBytes = 0;
+    let skipLeading = 0;
+    let expiredNoticePending = false;
+    const writeExpiredNotice = () => {
+      term.writeln("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m");
+    };
+    const channel = createBinaryChannel(
+      (bytes) => {
+        streamBytes += bytes.length;
+        let out = bytes;
+        if (skipLeading > 0) {
+          if (out.length <= skipLeading) {
+            skipLeading -= out.length;
+            out = out.subarray(0, 0);
+          } else {
+            out = out.subarray(skipLeading);
+            skipLeading = 0;
+          }
+        }
+        if (out.length > 0) {
+          writeOscSegments(oscFilter.push(out));
+        }
+        if (expiredNoticePending && streamBytes >= (streamAnchor?.control ?? 0)) {
+          expiredNoticePending = false;
+          writeExpiredNotice();
+        }
+      },
+      (control) => {
+        const previous = streamAnchor
+          ? streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control)
+          : 0;
+        streamAnchor = {
+          epoch: control.epoch,
+          seq: control.streamSeq,
+          control: control.controlBytes ?? 0,
+        };
+        streamBytes = 0;
+        skipLeading = 0;
+        if (!control.expired && streamAnchor.control === 0 && previous > control.streamSeq) {
+          skipLeading = previous - control.streamSeq;
+        }
+        expiredNoticePending = control.expired === true;
+        if (expiredNoticePending && streamAnchor.control === 0) {
+          expiredNoticePending = false;
+          writeExpiredNotice();
+        }
+      },
+    );
     const applyRemoteDimensions = (cols: number, rows: number) => {
       applyGrid({ cols, rows });
     };
@@ -314,9 +365,17 @@ export function XtermView(props: XtermViewProps) {
     const reattachOnReopen = () => {
       const id = kernelTabId;
       if (!id) return;
+      const resume = streamAnchor
+        ? {
+            seq: streamAnchor.seq + Math.max(0, streamBytes - streamAnchor.control),
+            epoch: streamAnchor.epoch,
+          }
+        : undefined;
       void (async () => {
         try {
-          const info = await terminalApi.attachTab(id, channel, -1);
+          const info = resume
+            ? await terminalApi.attachTab(id, channel, -1, resume)
+            : await terminalApi.attachTab(id, channel, -1);
           if (disposed) return;
           kernelTabIdRef.current = info.tabId;
           applyRemoteDimensions(info.cols, info.rows);

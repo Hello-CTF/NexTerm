@@ -227,7 +227,15 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 					return opened, gone, err
 				}
 			}
-			attachment, err := provider.Attach(ctx, tab.ID)
+			var attachment base.DurableAttachment
+			var err error
+			offsetResume := false
+			if attacher, ok := provider.(durableOffsetAttacher); ok {
+				attachment, err = attacher.AttachFrom(ctx, tab.ID, uint64(durableFed))
+				offsetResume = true
+			} else {
+				attachment, err = provider.Attach(ctx, tab.ID)
+			}
 			if errors.Is(err, durable.ErrNotFound) {
 				gone[tab] = struct{}{}
 				continue
@@ -242,8 +250,12 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				_ = attachment.Close()
 				return opened, gone, err
 			}
+			channel := newChannelHandle(attachment)
+			if !offsetResume {
+				channel = newChannelHandle(&prefixSkipChannel{Channel: attachment, remaining: durableFed})
+			}
 			opened[tab] = &replacementChannel{
-				channel: newChannelHandle(&prefixSkipChannel{Channel: attachment, remaining: durableFed}),
+				channel: channel,
 				durable: attachment,
 			}
 			continue

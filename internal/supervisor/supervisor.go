@@ -166,6 +166,13 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 }
 
 func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error) {
+	return s.AttachFrom(ctx, id, 0)
+}
+
+// AttachFrom resumes the session's recorded output from the absolute byte
+// offset instead of replaying the recording from byte zero. An offset beyond
+// the recording size is rejected with ErrInvalidInput.
+func (s *Supervisor) AttachFrom(ctx context.Context, id string, offset uint64) (*Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -173,7 +180,7 @@ func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error)
 	if err != nil {
 		return nil, err
 	}
-	return session.attach()
+	return session.attach(offset)
 }
 
 func (s *Supervisor) resolveSession(id string) (*Session, error) {

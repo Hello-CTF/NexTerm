@@ -221,6 +221,126 @@ func TestConnectHelperRejectsStateCollision(t *testing.T) {
 	}
 }
 
+// fakeOffsetStreamServer runs a minimal daemon that parses the attach offset,
+// reports it through gotOffset, replies attached, then streams the given
+// output frames verbatim (ignoring the offset, like a pre-offset daemon).
+func fakeOffsetStreamServer(t *testing.T, stateDir string, gotOffset *uint64, frames [][]byte) string {
+	t.Helper()
+	runDir, err := os.MkdirTemp("/tmp", "nx-sup-offset-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+	path := filepath.Join(runDir, "supervisor.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	digest, err := stateDigestFor(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		kind, payload, err := readFrame(conn)
+		if err != nil || kind != frameHello {
+			return
+		}
+		var hello helloMsg
+		if err := unmarshalFrame(payload, &hello); err != nil {
+			return
+		}
+		if hello.Version != ProtocolVersion || hello.StateDigest != digest {
+			return
+		}
+		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+			return
+		}
+		kind, payload, err = readFrame(conn)
+		if err != nil || kind != frameAttach {
+			return
+		}
+		var msg attachMsg
+		if err := unmarshalFrame(payload, &msg); err != nil {
+			return
+		}
+		*gotOffset = msg.Offset
+		attached, err := marshalFrame(frameAttached, Info{ID: msg.ID, CreatedAt: time.Now(), Incarnation: ids.New(), Cols: 80, Rows: 24})
+		if err != nil {
+			return
+		}
+		if err := writeFrame(conn, frameAttached, attached); err != nil {
+			return
+		}
+		for _, data := range frames {
+			if err := writeFrame(conn, frameOutput, data); err != nil {
+				return
+			}
+		}
+		for {
+			if _, _, err := readFrame(conn); err != nil {
+				return
+			}
+		}
+	}()
+	return path
+}
+
+// TestStreamAttachFromSkipsUnhonoredOffset simulates a pre-offset daemon: it
+// ignores the requested offset and replays from byte zero, so the stream must
+// drop the already-consumed prefix locally and deliver only the suffix.
+func TestStreamAttachFromSkipsUnhonoredOffset(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	var gotOffset uint64
+	path := fakeOffsetStreamServer(t, stateDir, &gotOffset, [][]byte{
+		outputPayload(0, []byte("hello ")),
+		outputPayload(6, []byte("world")),
+	})
+	client := NewClient(path, stateDir)
+	stream, err := client.AttachFrom(context.Background(), ids.New(), nil, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	buffer := make([]byte, 64)
+	count, err := stream.Read(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(buffer[:count]); got != "world" {
+		t.Fatalf("read = %q, want %q", got, "world")
+	}
+	if gotOffset != 6 {
+		t.Fatalf("daemon saw offset = %d, want 6", gotOffset)
+	}
+}
+
+// TestStreamAttachFromFailsOnGapBeforeOffset pins the explicit failure when
+// the daemon's stream starts beyond the requested offset: the client cannot
+// backfill the gap, so the stream fails instead of skipping silently.
+func TestStreamAttachFromFailsOnGapBeforeOffset(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	var gotOffset uint64
+	path := fakeOffsetStreamServer(t, stateDir, &gotOffset, [][]byte{
+		outputPayload(10, []byte("late")),
+	})
+	client := NewClient(path, stateDir)
+	stream, err := client.AttachFrom(context.Background(), ids.New(), nil, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	buffer := make([]byte, 64)
+	if _, err := stream.Read(buffer); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("read = %v, want ErrProtocol", err)
+	}
+}
+
 func TestConnectHelperDistinctStateDirsStayIsolated(t *testing.T) {
 	stateDirA := filepath.Join(t.TempDir(), "state-a")
 	stateDirB := filepath.Join(t.TempDir(), "state-b")

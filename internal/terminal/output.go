@@ -108,21 +108,21 @@ func (o *Output) AttachReplay(ctx context.Context, id string, sink Sink, replayB
 	return nil
 }
 
-func (o *Output) AttachFrom(ctx context.Context, id string, sink Sink, seq uint64, max int) (next uint64, attached bool, err error) {
+func (o *Output) AttachFrom(ctx context.Context, id string, sink Sink, seq uint64, max int) (next uint64, clamped, attached bool, err error) {
 	o.chunkMu.Lock()
 	defer o.chunkMu.Unlock()
-	replay, start := o.tab.ReplayFrom(seq, max)
+	replay, start, clamped := o.tab.ReplayFrom(seq, max)
 	if len(replay) > 0 {
 		if err := sink.SendBinary(ctx, replay); err != nil {
-			return start, false, err
+			return start, clamped, false, err
 		}
 	}
 	next = start + uint64(len(replay))
 	if next < o.tab.LatestSeq() {
-		return next, false, nil
+		return next, clamped, false, nil
 	}
 	o.fanout.Attach(id, sink)
-	return next, true, nil
+	return next, clamped, true, nil
 }
 
 func (o *Output) Detach(id string) bool { return o.fanout.Detach(id) }

@@ -96,6 +96,38 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([[4, 5], [6], [7, 255], [65]]);
   });
 
+  it("流锚点帧分流给 onControl，其余消息仍按字节解码", async () => {
+    const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
+    const frames: number[][] = [];
+    const anchors: unknown[] = [];
+    const channel = createBinaryChannel(
+      (bytes) => frames.push(Array.from(bytes)),
+      (control) => anchors.push(control),
+    );
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: STREAM_ANCHOR_TYPE, epoch: "e1", streamSeq: 5 } });
+    push({ data: [1, 2] });
+    push({ data: { type: "other-json" } });
+
+    expect(anchors).toEqual([{ type: STREAM_ANCHOR_TYPE, epoch: "e1", streamSeq: 5 }]);
+    expect(frames).toEqual([[1, 2]]);
+  });
+
+  it("未注册 onControl 时锚点帧被静默忽略", async () => {
+    const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
+    const frames: number[] = [];
+    const channel = createBinaryChannel((bytes) => frames.push(...bytes));
+    await ready(channel);
+    const push = handlerAt();
+
+    push({ data: { type: STREAM_ANCHOR_TYPE, epoch: "e1", streamSeq: 5 } });
+    push({ data: [3] });
+
+    expect(frames).toEqual([3]);
+  });
+
   it("dispose 幂等退订，并忽略迟到的回调", async () => {
     const off = vi.fn();
     runtime.Events.On.mockReturnValue(off);

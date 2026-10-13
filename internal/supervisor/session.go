@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -277,15 +278,31 @@ func (s *Session) Wait(ctx context.Context) error {
 	}
 }
 
-func (s *Session) attach() (*Attachment, error) {
+func (s *Session) attach(offset uint64) (*Attachment, error) {
 	replay, err := openRecording(recordingPath(s.supervisor.stateDir, s.entry.ID))
 	if err != nil {
 		return nil, err
+	}
+	if offset > 0 {
+		size, err := replay.Seek(0, io.SeekEnd)
+		if err != nil {
+			_ = replay.Close()
+			return nil, fmt.Errorf("%w: size supervisor recording: %v", ErrUnavailable, err)
+		}
+		if offset > uint64(size) {
+			_ = replay.Close()
+			return nil, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, offset, size)
+		}
+		if _, err := replay.Seek(int64(offset), io.SeekStart); err != nil {
+			_ = replay.Close()
+			return nil, fmt.Errorf("%w: seek supervisor recording: %v", ErrUnavailable, err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	attachment := &Attachment{
 		session: s,
 		replay:  replay,
+		nextSeq: offset,
 		notify:  make(chan struct{}, 1),
 		ctx:     ctx,
 		cancel:  cancel,
