@@ -125,6 +125,13 @@ func TestRemoteHelperTwoClientsShareSession(t *testing.T) {
 		t.Fatalf("grid after the peer resize = %+v; want 100x30", infos)
 	}
 
+	// The session input backlog (inputQueueSlots) is a real product limit: the helper rejects input frames once it
+	// fills, so an unpaced burst is scheduler-sensitive. A pacing attachment gives closed-loop backpressure - each
+	// marker must echo there before the next write - keeping the fan-out proof independent of runner load.
+	pace, err := clientA.Attach(ctx, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	const burst = 20
 	var writers sync.WaitGroup
 	writers.Add(1)
@@ -136,6 +143,7 @@ func TestRemoteHelperTwoClientsShareSession(t *testing.T) {
 				t.Errorf("burst write %d: %v", index, err)
 				return
 			}
+			readUntil(t, pace, fmt.Sprintf("mc-burst-%d-x", index))
 		}
 	}()
 	readers := make([]*Stream, 2)
@@ -151,6 +159,9 @@ func TestRemoteHelperTwoClientsShareSession(t *testing.T) {
 	}
 	writers.Wait()
 	readerWG.Wait()
+	if err := pace.Close(); err != nil {
+		t.Fatal(err)
+	}
 	for index, data := range seen {
 		for marker := 0; marker < burst; marker++ {
 			if count := countOccurrences(string(data), fmt.Sprintf("mc-burst-%d-x", marker)); count != 1 {

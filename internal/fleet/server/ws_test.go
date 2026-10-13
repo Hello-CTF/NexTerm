@@ -492,6 +492,28 @@ func TestDevicePresenceShutdownSilent(t *testing.T) {
 	}
 }
 
+// waitForAppVersion polls the stored agent version: the server acks hello_ok before persisting the hello version, so
+// the refreshed row is never visible synchronously after the ack.
+func waitForAppVersion(t *testing.T, f *httpFixture, deviceID, want string) {
+	t.Helper()
+	deviceAgent := query.Use(f.service.db).DeviceAgent
+	deadline := time.Now().Add(5 * time.Second)
+	var got string
+	var lastErr error
+	for time.Now().Before(deadline) {
+		row, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+		if err == nil {
+			if row.AppVersion == want {
+				return
+			}
+			got = row.AppVersion
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("等待 app_version 刷新为 %q 超时, 当前 %q err=%v", want, got, lastErr)
+}
+
 func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {
 	f := newHTTPFixture(t, false)
 	owner := f.createUser(t, "ws-version-owner")
@@ -503,20 +525,20 @@ func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {
 	if response.Type != "hello_ok" {
 		t.Fatalf("hello response = %+v", response)
 	}
-	deviceAgent := query.Use(f.service.db).DeviceAgent
-	row, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
-	if err != nil || row.AppVersion != "9.9.9" {
-		t.Fatalf("agent app_version = %q err=%v, want refreshed 9.9.9", row.AppVersion, err)
-	}
+	waitForAppVersion(t, f, deviceID, "9.9.9")
 
-	// An empty hello version leaves the stored version untouched.
+	// An empty hello version leaves the stored version untouched: the refresh skips empty values, so once the first
+	// refresh landed nothing in flight can still change the row; the settle window (as in requireNoPresenceEvent) lets
+	// a regression that writes empty surface instead of racing the read.
 	response = helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
 	})
 	if response.Type != "hello_ok" {
 		t.Fatalf("hello response = %+v", response)
 	}
-	row, err = deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	time.Sleep(300 * time.Millisecond)
+	deviceAgent := query.Use(f.service.db).DeviceAgent
+	row, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
 	if err != nil || row.AppVersion != "9.9.9" {
 		t.Fatalf("agent app_version = %q err=%v, want unchanged 9.9.9", row.AppVersion, err)
 	}
