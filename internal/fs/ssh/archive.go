@@ -98,7 +98,11 @@ func (f *FS) Extract(ctx context.Context, remotePath string) (string, error) {
 	if f.executor == nil {
 		return "", base.ErrUnsupported
 	}
-	command, target, err := ExtractCommand(remotePath)
+	resolved, err := f.real(ctx, remotePath)
+	if err != nil {
+		return "", err
+	}
+	command, target, err := ExtractCommand(resolved)
 	if err != nil {
 		return "", err
 	}

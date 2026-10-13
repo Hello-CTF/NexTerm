@@ -45,6 +45,11 @@ func (f *FileSystem) execute(ctx context.Context, script string) (string, error)
 		if message == "" {
 			message = fmt.Sprintf("WinRM file operation exited with status %d", *result.ExitCode)
 		}
+		// PowerShell reports missing paths only as text ("... because it does not exist."); map it to the
+		// sentinel so fs-layer callers (and the fsIPCError not_found mapping) can classify it correctly.
+		if strings.Contains(message, "does not exist") {
+			return "", fmt.Errorf("WinRM file operation: %s: %w", message, fs.ErrNotExist)
+		}
 		return "", fmt.Errorf("WinRM file operation: %s", message)
 	}
 	return strings.TrimSpace(result.Stdout), nil

@@ -195,7 +195,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 			return ipc.Register(dispatcher, "fs_mkdir", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
-					err = filesystem.Mkdir(ctx, input.Path)
+					err = fslocal.EnsureRemoteDir(ctx, filesystem, input.Path)
 				}
 				return nil, fsIPCError(kind, err)
 			})
@@ -317,6 +317,9 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 func fsIPCError(transportKind string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
 	}
 	classified := terminalIPCError(err)
 	var appErr *ipc.Error

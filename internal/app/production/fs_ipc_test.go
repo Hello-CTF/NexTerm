@@ -301,6 +301,93 @@ func TestProductionFSStagedLocalPathResolution(t *testing.T) {
 	}
 }
 
+type extractFakeTransport struct {
+	fs base.FileSystem
+}
+
+func (t *extractFakeTransport) Kind() string       { return "device" }
+func (t *extractFakeTransport) Generation() uint64 { return 1 }
+func (t *extractFakeTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+	return base.ExecResult{}, base.ErrUnsupported
+}
+func (t *extractFakeTransport) Ping(context.Context) (time.Duration, error) { return 0, nil }
+func (t *extractFakeTransport) IsAlive() bool                               { return true }
+func (t *extractFakeTransport) Close() error                                { return nil }
+func (t *extractFakeTransport) FileSystem(context.Context) (base.FileSystem, error) {
+	return t.fs, nil
+}
+
+type extractFakeFS struct {
+	base.FileSystem
+	target string
+	err    error
+}
+
+func (f *extractFakeFS) Extract(context.Context, string) (string, error) {
+	return f.target, f.err
+}
+
+func TestProductionFSExtract(t *testing.T) {
+	events := &fsEventRecorder{}
+	filesystem := &extractFakeFS{target: "/data/bundle"}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return &extractFakeTransport{fs: filesystem}, nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "device/dev-1", Kind: session.KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := func() ipc.Response {
+		return production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_extract", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/data/bundle.tar"}`)}, production.Environment(""))
+	}
+
+	response := dispatch()
+	var target string
+	requireStoreTestResponse(t, response, &target)
+	if target != "/data/bundle" {
+		t.Fatalf("fs_extract = %q, want the extractor's target directory", target)
+	}
+
+	filesystem.err = errors.New("extract device archive: remote command exited 1: tar: Error opening archive")
+	response = dispatch()
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeIO {
+		t.Fatalf("device extract failure = %+v, want the io error code", response)
+	}
+}
+
+func TestProductionFSExtractUnsupportedForLocal(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-extract-local", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_extract", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/tmp/bundle.tar"}`)}, production.Environment(""))
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("local fs_extract = %+v, want unsupported", response)
+	}
+}
+
 type rangeFakeTransport struct {
 	fs base.FileSystem
 }

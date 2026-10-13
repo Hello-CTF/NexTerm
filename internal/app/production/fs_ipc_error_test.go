@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -209,5 +213,100 @@ func TestFSIPCErrorAcquirePassesThroughSessionLookup(t *testing.T) {
 	}, ipc.Environment{})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("fs_list = %+v, want not_found", response)
+	}
+}
+
+func TestFSIPCErrorMapsNotExistToNotFound(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		kind      string
+		assetKind string
+	}{
+		{name: "ssh", kind: "ssh", assetKind: session.KindSSH},
+		{name: "winrm", kind: "winrm", assetKind: session.KindWinRM},
+		{name: "device", kind: "device", assetKind: session.KindDevice},
+		{name: "local", kind: "local", assetKind: session.KindLocal},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			notExist := fmt.Errorf("list /missing: %w", fs.ErrNotExist)
+			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return fakeProviderTransport{kind: testCase.kind, fs: fakeProviderFileSystem{err: notExist}}, nil
+			})
+			manager := session.NewManager(session.Config{Connector: connector})
+			dispatcher := ipc.NewDispatcher()
+			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
+				t.Fatal(err)
+			}
+			connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-notexist-" + testCase.name, Kind: testCase.assetKind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := dispatcher.Dispatch(t.Context(), ipc.Request{
+				Command: "fs_list", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/missing"}`),
+			}, ipc.Environment{})
+			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+				t.Fatalf("fs_list = %+v, want not_found", response)
+			}
+			if !strings.Contains(response.Error.Message, "list /missing") {
+				t.Fatalf("underlying detail lost: %q", response.Error.Message)
+			}
+		})
+	}
+}
+
+// singleLevelMkdirFS mimics sftp Mkdir semantics over the local filesystem:
+// one level only, and a bare server failure when the directory exists.
+type singleLevelMkdirFS struct {
+	base.FileSystem
+}
+
+func (f singleLevelMkdirFS) Mkdir(_ context.Context, path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("mkdir %s: server failure", path)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("mkdir %s: server failure", path)
+	}
+	return os.Mkdir(path, 0o755)
+}
+
+func TestFSMkdirCreatesNestedDirectories(t *testing.T) {
+	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+		return fakeProviderTransport{kind: "ssh", fs: singleLevelMkdirFS{FileSystem: fslocal.New()}}, nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	dispatcher := ipc.NewDispatcher()
+	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-mkdir", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkdir := func(path string) ipc.Response {
+		encoded, _ := json.Marshal(path)
+		return dispatcher.Dispatch(t.Context(), ipc.Request{
+			Command: "fs_mkdir", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + string(encoded) + `}`),
+		}, ipc.Environment{})
+	}
+	nested := filepath.Join(t.TempDir(), "a", "b", "c")
+	if response := mkdir(nested); !response.OK || response.Error != nil {
+		t.Fatalf("nested fs_mkdir = %+v", response)
+	}
+	if info, err := os.Stat(nested); err != nil || !info.IsDir() {
+		t.Fatalf("nested dir stat = %v, %v", info, err)
+	}
+	if response := mkdir(nested); !response.OK || response.Error != nil {
+		t.Fatalf("existing-dir fs_mkdir = %+v, want a no-op", response)
+	}
+	blocker := filepath.Join(t.TempDir(), "occupied")
+	if err := os.WriteFile(blocker, []byte("a file sits where a directory is needed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if response := mkdir(filepath.Join(blocker, "child")); response.OK || response.Error == nil {
+		t.Fatalf("fs_mkdir through a file component = %+v, want a failure", response)
+	}
+	if response := mkdir(blocker); response.OK || response.Error == nil {
+		t.Fatalf("fs_mkdir onto a file = %+v, want a failure", response)
 	}
 }

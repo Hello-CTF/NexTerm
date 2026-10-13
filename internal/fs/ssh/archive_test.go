@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -92,6 +93,36 @@ func TestCopyBufferLimitsAndCancellation(t *testing.T) {
 	cancel()
 	if _, err := copyBuffer(ctx, io.Discard, strings.NewReader("a"), nil, nil, -1); err != context.Canceled {
 		t.Fatalf("canceled copy = %v", err)
+	}
+}
+
+func TestExtractResolvesHomePaths(t *testing.T) {
+	executor := &fakeExecutor{}
+	filesystem, _ := newTestFS(t, executor)
+	ctx := context.Background()
+	home, err := filesystem.real(ctx, "~")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := filesystem.Extract(ctx, "~/packs/x.tar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTarget := path.Join(home, "packs", "x")
+	if target != wantTarget {
+		t.Fatalf("extract target = %q, want %q", target, wantTarget)
+	}
+	if len(executor.commands) != 1 {
+		t.Fatalf("extract commands = %v", executor.commands)
+	}
+	command := executor.commands[0]
+	if strings.Contains(command, "~") {
+		t.Fatalf("extract command kept a literal tilde: %q", command)
+	}
+	for _, fragment := range []string{ShellQuote(path.Join(home, "packs", "x.tar")), "-C " + ShellQuote(wantTarget)} {
+		if !strings.Contains(command, fragment) {
+			t.Fatalf("extract command = %q, want fragment %q", command, fragment)
+		}
 	}
 }
 
