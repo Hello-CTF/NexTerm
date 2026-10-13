@@ -305,7 +305,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </button>
       </div>
 
-      <div className="flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
+      <div className="nx-ai-tabstrip flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
         <div
           role="tablist"
           aria-label="AI 任务标签"
