@@ -9,7 +9,7 @@ import { biometricApi, systemApi, vaultApi } from "../ipc/commands";
 
 export function DekUnlockBanner() {
   if (WEB) return <WebDekUnlockBanner />;
-  return <MobileVaultUnlockBanner />;
+  return <NativeVaultUnlockBanner />;
 }
 
 // 浏览器刷新后会话经 cookie 恢复但 DEK 已随内存清空,自动同步静默停摆;
@@ -93,10 +93,11 @@ function WebDekUnlockBanner() {
   );
 }
 
-// 移动端凭据库锁定横幅: 凭据库主密码保护同步链接口令与凭据, 锁定即同步停摆。
-// 生物识别快捷解锁材料为该主密码(iOS 存 Keychain 并绑定当前面容集,
+// 原生端(桌面与移动端)凭据库锁定横幅: 凭据库主密码保护同步链接口令与凭据, 锁定即同步停摆;
+// 解锁成功后既有 fireUnlocked → wake 链路自动恢复同步。
+// 生物识别快捷解锁仅 iOS/Android: 解锁材料为该主密码(iOS 存 Keychain 并绑定当前面容集,
 // Android 存 Keystore 加密的 EncryptedSharedPreferences), 验证走系统生物识别弹窗,
-// 通过后仍调 vault_unlock 既有路径; 验证取消/失败保持密码输入。
+// 通过后仍调 vault_unlock 既有路径; 验证取消/失败保持密码输入。桌面端只有密码解锁分支。
 const DONT_ASK_KEY = "nexterm.biometricUnlock.dontAsk";
 
 function dontAskBiometricAgain(): boolean {
@@ -107,17 +108,19 @@ function dontAskBiometricAgain(): boolean {
   }
 }
 
-function MobileVaultUnlockBanner() {
+function NativeVaultUnlockBanner() {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const platform = useQuery({ queryKey: ["app-platform"], queryFn: () => systemApi.platform() });
-  const supported = platform.data === "ios" || platform.data === "android";
+  const mobile = platform.data === "ios" || platform.data === "android";
+  const supported =
+    mobile || platform.data === "darwin" || platform.data === "windows" || platform.data === "linux";
   const bioLabel = platform.data === "ios" ? "面容 ID" : "生物识别";
   const vault = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status(), enabled: supported });
   const bio = useQuery({
     queryKey: ["biometric-status"],
     queryFn: () => biometricApi.status(),
-    enabled: supported,
+    enabled: mobile,
   });
 
   const [dismissed, setDismissed] = useState(false);
@@ -278,7 +281,9 @@ function MobileVaultUnlockBanner() {
     >
       <IconLock size={13} className="shrink-0 text-amber-300" />
       <span className="min-w-0 truncate">
-        数据密钥未解锁，同步已暂停；输入主密码或使用{bioLabel}解锁
+        {mobile
+          ? `数据密钥未解锁，同步已暂停；输入主密码或使用${bioLabel}解锁`
+          : "数据密钥未解锁，同步已暂停；输入主密码即可恢复同步与加密内容"}
       </span>
       <div className="nx-spacer" />
       {error && (
