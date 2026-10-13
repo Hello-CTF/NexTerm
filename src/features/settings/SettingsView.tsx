@@ -215,7 +215,7 @@ export function SettingsView() {
         pushToast("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
       } else {
         await vaultApi.changePassword(old, next);
-        // iOS 上已登记 FaceID 材料的, 改密后用新密码静默重存, 否则面容解锁会稳定失败
+        // iOS/Android 上已登记生物识别材料的, 改密后用新密码静默重存, 否则生物识别解锁会稳定失败
         if (next !== "" && isMobile()) {
           try {
             const bio = await biometricApi.status();

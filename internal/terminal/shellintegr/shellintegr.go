@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 // Shell identifies a shell supported by this package.
@@ -54,7 +56,7 @@ func Wrap(shell Shell, path string) (*Launch, error) {
 	if path == "" {
 		path = string(shell)
 	}
-	dir, err := os.MkdirTemp("", "nexterm-shellintegr-*")
+	dir, err := os.MkdirTemp(platform.TempDir(), "nexterm-shellintegr-*")
 	if err != nil {
 		return nil, err
 	}

@@ -125,8 +125,9 @@ export interface BiometricUnlockResult {
   message?: string;
 }
 
-// 生物识别快捷解锁(iOS): 解锁材料为凭据库主密码, 存 iOS Keychain(设备级保护),
-// 验证由系统面容/指纹弹窗完成; 其他平台 status.available 恒 false。
+// 生物识别快捷解锁(iOS/Android): 解锁材料为凭据库主密码, iOS 存 Keychain(绑定当前
+// 面容集的访问控制), Android 存 Keystore 加密的 EncryptedSharedPreferences;
+// 验证由系统生物识别弹窗完成; 其他平台 status.available 恒 false。
 export const biometricApi = {
   status: () => call<BiometricStatus>("biometric_status"),
   unlock: () => call<BiometricUnlockResult>("biometric_unlock"),

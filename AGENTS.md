@@ -61,7 +61,7 @@
 - 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）；upsert 冲突列-目标表一致性 `go run ./scripts/check-conflict-columns`。
 - 已安装 task 时 `task check` 一次跑完上述常规项（`verify-manifest-injects` 在其中，复用接线检查不在其中，改动相关文件时以 `task verify:wiring` 单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
 - CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
-- 真实 Chromium 验收缺口：原 `task acceptance:browser`（`.github/scripts/browser-acceptance.mjs`）随演示模式一并移除——它完全依赖 `?demo=1` 启动应用。真实浏览器行为（焦点与纯键盘导航、窄宽溢出、触摸命中、WebSocket 早期帧/重连、真实服务端 reload 恢复等）当前没有任何自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
+- 真实 Chromium 验收：`task smoke:browser`（`.github/scripts/browser-smoke.mjs`）不依赖演示模式 - 构建真实 dist 后以 `--auth=loopback` 真实服务端服务 SPA，用 Node 内置 WebSocket 裸连 CDP 驱动系统 Chrome（`CHROME_PATH` 可覆盖），覆盖真实启动进工作台、纯键盘 Tab 焦点导航、`/ws/events` 真实帧（`/rpc layout_put` 触发 `layout://changed`）与真实服务端 reload 恢复；不在 CI 门禁内，按需本地跑。其余真实浏览器行为（窄宽溢出、触摸命中、WebSocket 断线重连、RPC 抖动、auth=on CSRF 等）仍无自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
 
 ## 分层测试节奏
 

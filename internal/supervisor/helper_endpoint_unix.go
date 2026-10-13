@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 func helperEndpoint(stateDir string) (string, error) {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", os.Geteuid(), stateDir)))
-	return filepath.Join(os.TempDir(), fmt.Sprintf("nexterm-sup-%x", sum[:8]), fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion)), nil
+	return filepath.Join(platform.TempDir(), fmt.Sprintf("nexterm-sup-%x", sum[:8]), fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion)), nil
 }
 
 func endpointPath(path string) string {

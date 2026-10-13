@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"golang.org/x/crypto/nacl/secretbox"
@@ -183,7 +184,7 @@ func readBlobEntries(dbPath string) ([]blobEntry, error) {
 }
 
 func iterateLevelDB(dbPath string) ([]blobEntry, error) {
-	tmp, err := os.MkdirTemp("", "termius-leveldb-*")
+	tmp, err := os.MkdirTemp(platform.TempDir(), "termius-leveldb-*")
 	if err != nil {
 		return nil, err
 	}
