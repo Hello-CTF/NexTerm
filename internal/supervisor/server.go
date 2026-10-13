@@ -138,6 +138,7 @@ type serverConn struct {
 	writeMu   sync.Mutex
 	closeOnce sync.Once
 
+	sessionMu  sync.Mutex
 	attachment *Attachment
 
 	clientFeatures []string
@@ -245,8 +246,10 @@ func (c *serverConn) handleCreate(payload []byte) {
 		return
 	}
 	if !usePTY {
-		// Assign before replying so a concurrent close() always sees the session for its execKill path.
+		// Assign before replying: a concurrent close() that snapshots after this store kills the session.
+		c.sessionMu.Lock()
 		c.exec = session
+		c.sessionMu.Unlock()
 	}
 	if err := c.reply(frameCreated, session.Info()); err != nil {
 		if !usePTY {
@@ -255,7 +258,9 @@ func (c *serverConn) handleCreate(payload []byte) {
 			session.drainExecPipes()
 			identity := session.Identity()
 			_ = c.server.supervisor.kill(context.Background(), session.ID(), &identity)
+			c.sessionMu.Lock()
 			c.exec = nil
+			c.sessionMu.Unlock()
 		}
 		return
 	}
@@ -273,8 +278,14 @@ func (c *serverConn) handleList() {
 	_ = c.reply(frameListed, infos)
 }
 
+func (c *serverConn) attached() *Attachment {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	return c.attachment
+}
+
 func (c *serverConn) handleAttach(payload []byte) bool {
-	if c.attachment != nil {
+	if c.attached() != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "connection is already attached"})
 		return true
 	}
@@ -300,7 +311,9 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return true
 	}
+	c.sessionMu.Lock()
 	c.attachment = attachment
+	c.sessionMu.Unlock()
 	if err := c.reply(frameAttached, attachment.Info()); err != nil {
 		_ = attachment.Detach()
 		return false
@@ -310,11 +323,12 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 }
 
 func (c *serverConn) handleInput(payload []byte) {
-	if c.attachment == nil {
+	attachment := c.attached()
+	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
 		return
 	}
-	count, err := c.attachment.tryWrite(payload)
+	count, err := attachment.tryWrite(payload)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
@@ -323,7 +337,7 @@ func (c *serverConn) handleInput(payload []byte) {
 }
 
 func (c *serverConn) handleKillSession(payload []byte) {
-	if c.attachment != nil {
+	if c.attached() != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "kill session frame on attached connection"})
 		return
 	}
@@ -353,7 +367,8 @@ func (c *serverConn) handleKillSession(payload []byte) {
 }
 
 func (c *serverConn) handleResize(payload []byte) {
-	if c.attachment == nil {
+	attachment := c.attached()
+	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "resize frame without attach"})
 		return
 	}
@@ -362,7 +377,7 @@ func (c *serverConn) handleResize(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
 		return
 	}
-	if err := c.attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {
+	if err := attachment.Resize(context.Background(), msg.Cols, msg.Rows); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
@@ -370,19 +385,23 @@ func (c *serverConn) handleResize(payload []byte) {
 }
 
 func (c *serverConn) handleKill() {
-	if c.exec != nil {
-		if err := c.execKill(context.Background()); err != nil {
+	c.sessionMu.Lock()
+	session := c.exec
+	c.sessionMu.Unlock()
+	if session != nil {
+		if err := c.execKill(context.Background(), session); err != nil {
 			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 			return
 		}
 		_ = c.reply(frameOK, struct{}{})
 		return
 	}
-	if c.attachment == nil {
+	attachment := c.attached()
+	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "kill frame without attach"})
 		return
 	}
-	if err := c.attachment.Kill(context.Background()); err != nil {
+	if err := attachment.Kill(context.Background()); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
@@ -390,11 +409,12 @@ func (c *serverConn) handleKill() {
 }
 
 func (c *serverConn) handleGetVersions() {
-	if c.attachment == nil {
+	attachment := c.attached()
+	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "versions frame without attach"})
 		return
 	}
-	event, grid, err := c.attachment.Versions()
+	event, grid, err := attachment.Versions()
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
@@ -403,7 +423,8 @@ func (c *serverConn) handleGetVersions() {
 }
 
 func (c *serverConn) handleSetVersions(payload []byte) {
-	if c.attachment == nil {
+	attachment := c.attached()
+	if attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "versions frame without attach"})
 		return
 	}
@@ -412,7 +433,7 @@ func (c *serverConn) handleSetVersions(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
 		return
 	}
-	if err := c.attachment.PersistVersions(msg.Event, msg.Grid); err != nil {
+	if err := attachment.PersistVersions(msg.Event, msg.Grid); err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
@@ -453,9 +474,9 @@ func (c *serverConn) pumpExecPipe(session *Session, pipe io.Reader, stream byte,
 
 // execKill terminates the one-shot session; an already finished session is
 // dropped from the supervisor at exit, so ErrNotFound means the kill landed.
-func (c *serverConn) execKill(ctx context.Context) error {
-	identity := c.exec.Identity()
-	err := c.server.supervisor.kill(ctx, c.exec.ID(), &identity)
+func (c *serverConn) execKill(ctx context.Context, session *Session) error {
+	identity := session.Identity()
+	err := c.server.supervisor.kill(ctx, session.ID(), &identity)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
@@ -509,11 +530,15 @@ func (c *serverConn) replyError(kind frameType, msg errorMsg) {
 
 func (c *serverConn) close() {
 	c.closeOnce.Do(func() {
-		if c.attachment != nil {
-			_ = c.attachment.Detach()
+		c.sessionMu.Lock()
+		attachment := c.attachment
+		session := c.exec
+		c.sessionMu.Unlock()
+		if attachment != nil {
+			_ = attachment.Detach()
 		}
-		if c.exec != nil {
-			_ = c.execKill(context.Background())
+		if session != nil {
+			_ = c.execKill(context.Background(), session)
 		}
 		_ = c.conn.Close()
 	})
