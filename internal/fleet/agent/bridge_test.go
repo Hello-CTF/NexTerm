@@ -275,6 +275,43 @@ func TestBridgePipeCarriesSupervisorProtocol(t *testing.T) {
 	}
 }
 
+func TestBridgePipeSessionProvidesTerm(t *testing.T) {
+	if value, ok := os.LookupEnv("TERM"); ok {
+		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
+	}
+	if err := os.Unsetenv("TERM"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	harness := newBridgeHarness(t, ctx)
+
+	created, err := harness.client().Create(ctx, supervisor.CreateOptions{
+		Command: []string{"/bin/sh", "-c", `printf 'term=%s\n' "${TERM:-unset}"`},
+		Cols:    80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attachment, err := harness.client().Attach(ctx, created.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := readUntilMarker(t, attachment, "\r\n")
+	if !strings.Contains(output, "term=xterm-256color") {
+		t.Fatalf("bridge session output = %q, want injected TERM", output)
+	}
+	if err := attachment.Close(); err != nil {
+		t.Fatal(err)
+	}
+	killCtx, killCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer killCancel()
+	if err := harness.client().Kill(killCtx, created.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBridgePipeCleansUpOnRemoteClose(t *testing.T) {
 	stateDir := testStateDir(t)
 	testSupervisorServer(t, stateDir)

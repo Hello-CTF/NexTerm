@@ -127,7 +127,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		Path: command[0],
 		Args: command[1:],
 		Dir:  options.Dir,
-		Env:  mergedEnv(commandEnv),
+		Env:  sessionEnv(commandEnv),
 		Cols: options.Cols,
 		Rows: options.Rows,
 		ID:   id,
