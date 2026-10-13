@@ -2466,6 +2466,11 @@
     -webkit-touch-callout: default;
   }
 
+  .nx-ai-composer-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
   .nx-ai-composer-actions .nx-icon-btn-sm,
   .nx-ai-composer-actions .nx-send-btn {
     position: relative;
