@@ -18,7 +18,6 @@ import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import {
-  IconActivity,
   IconInfo,
   IconMonitor,
   IconRefresh,
@@ -33,7 +32,6 @@ import { onEventsResync } from "../../ipc/webTransport";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
 import { isOnline, ONLINE_THRESHOLD_MS } from "./format";
-import { MetricsPanel } from "./MetricsPanel";
 
 function deviceRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -57,7 +55,6 @@ export function DeviceTreeSection() {
   const account = useFleetAccount();
   const userId = account.userId;
   const [menu, setMenu] = useState<{ x: number; y: number; device: FleetDevice } | null>(null);
-  const [metricsOpenId, setMetricsOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   // presence 是 device://status 事件的实时信号 (设备 ID → 在线状态 + 收到时间),
@@ -159,14 +156,6 @@ export function DeviceTreeSection() {
       hint: disabledReason ?? undefined,
       onSelect: () => openDeviceTerminalTab(device),
     });
-    if (device.agent) {
-      items.push({
-        kind: "item",
-        label: "指标",
-        icon: <IconActivity size={13} />,
-        onSelect: () => setMetricsOpenId((id) => (id === device.id ? null : device.id)),
-      });
-    }
     items.push(
       { kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab },
       { kind: "separator" },
@@ -222,8 +211,6 @@ export function DeviceTreeSection() {
             device={device}
             online={onlineOf(device)}
             busy={busyId === device.id}
-            metricsOpen={metricsOpenId === device.id}
-            onToggleMetrics={() => setMetricsOpenId((id) => (id === device.id ? null : device.id))}
             onMenu={(x, y) => setMenu({ x, y, device })}
             onRevoke={() => void revoke(device)}
           />
@@ -262,16 +249,12 @@ function DeviceTreeRow({
   device,
   online,
   busy,
-  metricsOpen,
-  onToggleMetrics,
   onMenu,
   onRevoke,
 }: {
   device: FleetDevice;
   online: boolean;
   busy: boolean;
-  metricsOpen: boolean;
-  onToggleMetrics: () => void;
   onMenu: (x: number, y: number) => void;
   onRevoke: () => void;
 }) {
@@ -342,17 +325,6 @@ function DeviceTreeRow({
           </button>
         ) : (
           <span className="nx-row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-            {agent && (
-              <button
-                className="nx-icon-btn nx-icon-btn-sm"
-                title="指标"
-                aria-label={`指标 ${device.name}`}
-                aria-expanded={metricsOpen}
-                onClick={onToggleMetrics}
-              >
-                <IconActivity size={12} />
-              </button>
-            )}
             <button
               className="nx-icon-btn nx-icon-btn-sm"
               title="详情（打开设备管理）"
@@ -384,11 +356,6 @@ function DeviceTreeRow({
           </span>
         )}
       </div>
-      {metricsOpen && agent && (
-        <div className="mx-1 mb-1 rounded border border-neutral-800/60 px-2 py-2">
-          <MetricsPanel deviceId={device.id} online={online} />
-        </div>
-      )}
     </>
   );
 }

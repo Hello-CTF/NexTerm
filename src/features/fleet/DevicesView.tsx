@@ -3,8 +3,8 @@
 // 设备列表由服务端按角色过滤 (超管看全部+owner, 普通用户只看自己的);
 // 桌面端经「账号同步」link 的服务端会话代理同一批合同 (remote_fleet_*),
 // 未登录给「登录服务端账号后可用」的引导视图并指向「设置 → 账号同步」, 不发任何请求。
-// 指标面板已抽到 ./MetricsPanel (含 CPU 24h 趋势线 ./MetricsChart), 与资产树
-// 「设备」分区共用, 此处只复用, 不另实现图表逻辑。
+// 指标面板在 ./MetricsPanel (含 CPU 24h 趋势线 ./MetricsChart), 此处直接复用,
+// 不另实现图表逻辑。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
