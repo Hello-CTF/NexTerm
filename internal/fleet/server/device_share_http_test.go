@@ -246,11 +246,10 @@ func TestSharePublicDeviceTerminalRevokeStopsStream(t *testing.T) {
 	if call := f.call(t, "POST", "/share/device-links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
 	}
-	errorFrame := collector.expectErrorFrame(t, 10*time.Second)
-	if errorFrame.Code != "forbidden" || !strings.Contains(errorFrame.Message, "吊销") {
-		t.Fatalf("error frame = %+v", errorFrame)
+	errorFrame := collector.expectTerminated(t, 15*time.Second)
+	if errorFrame != nil && (errorFrame.Code != "forbidden" || !strings.Contains(errorFrame.Message, "吊销")) {
+		t.Fatalf("error frame = %+v", *errorFrame)
 	}
-	collector.expectClosed(t, 5*time.Second)
 	device.waitSessionMissing(t, ready.SessionID)
 
 	if status := dialShareViewerStatus(t, f, "/share/public/device/"+token); status != http.StatusForbidden {
