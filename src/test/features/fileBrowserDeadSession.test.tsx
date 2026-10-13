@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { clickButton, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -259,26 +259,27 @@ afterEach(() => {
 });
 
 describe("FileBrowser 会话已删除", () => {
-  it("显示真实原因与「重新连接这台主机」，不提供无效的「重试」", async () => {
+  it("自动重连失败后显示真实原因与「重新连接这台主机」，不提供无效的「重试」", async () => {
     seedWorkspace({ assetId: "asset-1" });
+    mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
 
     await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(panel()?.textContent).not.toContain("请刷新后重试");
     expect(buttonTexts()).toContain("重新连接这台主机");
     expect(buttonTexts()).not.toContain("重试");
-    expect(mocks.connect).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    expect(mocks.connect).toHaveBeenCalledWith("asset-1");
+    await flush();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("重新连接走 fresh connect 并复用原标签加载新会话，不重复工作区/会话/标签", async () => {
+  it("检测到死会话后自动重连一次：fresh connect 复用原标签加载新会话，不重复工作区/会话/标签", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
     );
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
-
-    clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
@@ -293,6 +294,37 @@ describe("FileBrowser 会话已删除", () => {
     expect(toastTexts()).toContain("已重新连接");
     expect(toolbarButton("上传")?.disabled).toBe(false);
     expect(toolbarButton("新建")?.disabled).toBe(false);
+  });
+
+  it("新会话仍被删除时只为新会话再自动重连一次，随后停止不循环", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mounted = mountFromStore();
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await flush();
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(storeTabSessionId()).toBe("s2");
+    expect(panel()?.textContent).toContain("会话已在服务端删除");
+    expect(buttonTexts()).toContain("重新连接这台主机");
+  });
+
+  it("自动重连进行中展示「正在重新连接…」并禁用按钮，失败后回退为手动按钮", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    const pending = deferred<unknown>();
+    mocks.connect.mockReturnValue(pending.promise);
+    mounted = mountFromStore();
+
+    await flushUntil(() => buttonTexts().includes("正在重新连接…"));
+    const busy = [...mounted.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "正在重新连接…",
+    );
+    expect(busy?.disabled).toBe(true);
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+
+    pending.reject(new Error("dial tcp: connection refused"));
+    await flushUntil(() => buttonTexts().includes("重新连接这台主机"));
+    expect(toastTexts()).toContain("重新连接失败");
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
   it("updateTab 重指向会话时只同步正在跟踪旧会话的工作区", () => {
@@ -320,6 +352,7 @@ describe("FileBrowser 会话已删除", () => {
 
   it("死会话下禁用工具栏与菜单里会打到后端的项目并给出真实原因", async () => {
     seedWorkspace({ assetId: "asset-1" });
+    mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
     await waitFor(() => expect(panel()).not.toBeNull());
 
@@ -357,13 +390,10 @@ describe("FileBrowser 会话已删除", () => {
     expect(mocks.mkdir).not.toHaveBeenCalled();
   });
 
-  it("取消主机密钥变更确认：不信任、不重试，面板保持真实原因", async () => {
+  it("取消主机密钥变更确认：不信任、不重试，面板保持真实原因，手动点击才会再试", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
-
-    clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("主机 127.0.0.1:22 的密钥已变更");
@@ -372,9 +402,14 @@ describe("FileBrowser 会话已删除", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(storeTabSessionId()).toBe(SID);
     expect(panel()?.textContent).toContain("会话已在服务端删除");
+
+    clickButton(mounted.container, "重新连接这台主机");
+
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
   });
 
-  it("接受主机密钥变更：记账后重连成功并复用原标签", async () => {
+  it("接受主机密钥变更：记账后自动重连成功并复用原标签", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValueOnce(CHANGED_HOST_KEY);
     mocks.ask.mockResolvedValue(true);
@@ -382,9 +417,6 @@ describe("FileBrowser 会话已删除", () => {
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
     );
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
-
-    clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new");
@@ -395,30 +427,40 @@ describe("FileBrowser 会话已删除", () => {
     expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
   });
 
-  it("fresh connect 失败：报告真实错误，面板与会话保持原样", async () => {
+  it("自动重连失败：报告真实错误，面板与会话保持原样，手动重试成功恢复", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
-
-    clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
     expect(toastTexts()).toContain("connection refused");
     expect(storeTabSessionId()).toBe(SID);
     expect(useUi.getState().sessions.map((s) => s.id)).toEqual([SID]);
     expect(panel()?.textContent).toContain("会话已在服务端删除");
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+
+    clickButton(mounted.container, "重新连接这台主机");
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(buttonTexts()).toContain("重新连接这台主机"));
+
+    mocks.connect.mockResolvedValue(NEW_SESSION);
+    mocks.list.mockImplementation((sid: string) =>
+      sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
+    );
+    clickButton(mounted.container, "重新连接这台主机");
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mocks.connect).toHaveBeenCalledTimes(3);
+    expect(storeTabSessionId()).toBe("s2");
   });
 
-  it("本地会话（无资产）回退 connectLocal，同样复用原标签", async () => {
+  it("本地会话（无资产）自动回退 connectLocal，同样复用原标签", async () => {
     seedWorkspace();
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
     );
     mounted = mountFromStore();
-    await waitFor(() => expect(panel()).not.toBeNull());
-
-    clickButton(mounted.container, "重新连接这台主机");
 
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
@@ -426,13 +468,19 @@ describe("FileBrowser 会话已删除", () => {
     expect(storeTabSessionId()).toBe("s-local");
   });
 
-  it("找不到文件标签时给出准确原因，不盲目发起连接", async () => {
+  it("找不到文件标签时给出准确原因，不盲目发起连接，也不循环重试", async () => {
     mounted = mountStandalone();
-    await waitFor(() => expect(panel()).not.toBeNull());
+
+    await waitFor(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.connectLocal).not.toHaveBeenCalled();
+    expect(useUi.getState().toasts).toHaveLength(1);
+    const firstToastId = useUi.getState().toasts[0]?.id;
 
     clickButton(mounted.container, "重新连接这台主机");
 
-    await waitFor(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
+    await waitFor(() => expect(useUi.getState().toasts[0]?.id).not.toBe(firstToastId));
+    expect(useUi.getState().toasts).toHaveLength(1);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(mocks.connectLocal).not.toHaveBeenCalled();
   });
@@ -476,11 +524,14 @@ describe("FileBrowser 生产重试策略（retry: 1）", () => {
 
   it("not_found 不再自动重试：只调用一次 fsApi.list 即显示死会话面板", async () => {
     seedWorkspace({ assetId: "asset-1" });
+    mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountProductionRetry();
 
     await waitFor(() => expect(panel()?.textContent).toContain("会话已在服务端删除"));
     expect(mocks.list).toHaveBeenCalledTimes(1);
     expect(mocks.list).toHaveBeenCalledWith(SID, "~");
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(1);
   });
 
   it("瞬时错误保留一次自动重试：失败后共调用两次，之后重试可恢复", async () => {
