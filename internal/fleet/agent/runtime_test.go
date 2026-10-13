@@ -683,3 +683,15 @@ func TestRuntimeSyncContinuesWithoutMetrics(t *testing.T) {
 		t.Fatalf("Run = %v, want clean stop", err)
 	}
 }
+
+func TestEffectiveAppVersion(t *testing.T) {
+	if got := effectiveAppVersion("1.0.7"); got != "1.0.7" {
+		t.Fatalf("dev build must keep the config version, got %q", got)
+	}
+	old := version.Version
+	version.Version = "1.0.10"
+	defer func() { version.Version = old }()
+	if got := effectiveAppVersion("1.0.7"); got != "1.0.10" {
+		t.Fatalf("release build must report the build version, got %q", got)
+	}
+}

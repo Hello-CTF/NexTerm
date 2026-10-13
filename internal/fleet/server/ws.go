@@ -113,6 +113,7 @@ func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMess
 		_ = conn.Close(websocket.StatusInternalError, "hello ack failed")
 		return
 	}
+	s.refreshAgentAppVersion(context.Background(), hello.DeviceID, hello.AppVersion)
 	s.deviceOnline(hello.DeviceID)
 	for {
 		if _, _, err := conn.Read(context.Background()); err != nil {

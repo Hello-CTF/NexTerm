@@ -487,3 +487,33 @@ func TestDevicePresenceShutdownSilent(t *testing.T) {
 		t.Fatalf("关停写出了离线审计: %v", ids)
 	}
 }
+
+func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "ws-version-owner")
+	deviceID, secret := enrollWSAgent(t, f, owner, "ws-version-box")
+
+	response := helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret, AppVersion: "9.9.9",
+	})
+	if response.Type != "hello_ok" {
+		t.Fatalf("hello response = %+v", response)
+	}
+	deviceAgent := query.Use(f.service.db).DeviceAgent
+	row, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	if err != nil || row.AppVersion != "9.9.9" {
+		t.Fatalf("agent app_version = %q err=%v, want refreshed 9.9.9", row.AppVersion, err)
+	}
+
+	// An empty hello version leaves the stored version untouched.
+	response = helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+	})
+	if response.Type != "hello_ok" {
+		t.Fatalf("hello response = %+v", response)
+	}
+	row, err = deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	if err != nil || row.AppVersion != "9.9.9" {
+		t.Fatalf("agent app_version = %q err=%v, want unchanged 9.9.9", row.AppVersion, err)
+	}
+}

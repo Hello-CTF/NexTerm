@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -274,6 +275,20 @@ func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) 
 // deviceOnline/deviceOffline are the only exit points for device presence: they write an audit and push device://status only on real state transitions,
 // and repeated calls (the unregister/register interleave of a replacement reconnect) are ignored outright.
 // The caller may already hold a canceled ctx (control channel disconnect path); a background ctx is used uniformly here to finish the database write and the push.
+// refreshAgentAppVersion persists the agent-reported version from the control-channel hello when it changed,
+// so device management reflects upgrades; the enroll-time value alone goes stale after a binary swap.
+func (s *Service) refreshAgentAppVersion(ctx context.Context, deviceID, appVersion string) {
+	if deviceID == "" || appVersion == "" || len(appVersion) > maxAppVersionLength {
+		return
+	}
+	deviceAgent := query.Use(s.db).DeviceAgent
+	if _, err := deviceAgent.WithContext(ctx).
+		Where(deviceAgent.DeviceID.Eq(deviceID), deviceAgent.AppVersion.Neq(appVersion)).
+		UpdateColumns(map[string]any{"app_version": appVersion}); err != nil {
+		slog.Warn("刷新设备 agent 版本失败", "device", deviceID, "error", err)
+	}
+}
+
 func (s *Service) deviceOnline(deviceID string) {
 	s.transitionPresence(deviceID, true)
 }

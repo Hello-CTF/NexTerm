@@ -142,6 +142,15 @@ func New(options Options) (*Runtime, error) {
 	}, nil
 }
 
+// effectiveAppVersion reports the running build's version when it is a real release build, so a manually
+// swapped binary self-reports; dev builds keep the enroll-time config value.
+func effectiveAppVersion(configVersion string) string {
+	if version.Version != "" && version.Version != "dev" {
+		return version.Version
+	}
+	return configVersion
+}
+
 // Run drives the agent until the context ends, the device is revoked, or the
 // control channel protocol mismatches. It returns ErrRevoked on revocation; on
 // protocol mismatch it first attempts a self-upgrade to the server-reported
@@ -156,7 +165,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.deviceID = config.DeviceID
 	r.secret = config.Secret
 	r.platform = config.Platform
-	r.appVersion = config.AppVersion
+	r.appVersion = effectiveAppVersion(config.AppVersion)
 	r.mu.Lock()
 	r.desired = ConfigUpdate{
 		DesiredAutostart:  config.DesiredAutostart,
