@@ -83,6 +83,8 @@ type openTerminalRequest struct {
 type attachTerminalRequest struct {
 	TabID       string `json:"tabId"`
 	ReplayBytes int    `json:"replayBytes"`
+	FromSeq     uint64 `json:"fromSeq,omitempty"`
+	FromEpoch   string `json:"fromEpoch,omitempty"`
 }
 
 type attachedTabDTO struct {
@@ -299,6 +301,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				}
 				info, err := s.sessions.AttachTab(ctx, input.TabID, session.AttachOptions{
 					ClientID: call.ClientID, ChannelID: call.Channel.ID, ReplayBytes: replayBytes,
+					FromSeq: input.FromSeq, FromEpoch: input.FromEpoch,
 				})
 				if err == nil {
 					return attachedSessionTab(info), nil

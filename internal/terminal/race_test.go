@@ -52,7 +52,7 @@ func TestConcurrentTabAndOutput(t *testing.T) {
 			_ = tab.TailLines(5)
 			_ = tab.ScreenHistory(5)
 			_ = tab.Dump(128)
-			_, _ = tab.ReplayFrom(0, 64)
+			_, _, _ = tab.ReplayFrom(0, 64)
 			_ = tab.State()
 			time.Sleep(time.Millisecond)
 		}
@@ -68,7 +68,7 @@ func TestConcurrentTabAndOutput(t *testing.T) {
 				return
 			}
 			if i%3 == 0 {
-				_, _, _ = o.AttachFrom(ctx, fmt.Sprintf("seq-%d", i), &memSink{}, 0, 128)
+				_, _, _, _ = o.AttachFrom(ctx, fmt.Sprintf("seq-%d", i), &memSink{}, 0, 128)
 			}
 			o.Detach(fmt.Sprintf("dyn-%d", i))
 		}

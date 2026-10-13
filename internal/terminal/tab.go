@@ -314,7 +314,7 @@ func (t *Tab) DroppedBytes() uint64 {
 	return t.ring.Dropped()
 }
 
-func (t *Tab) ReplayFrom(seq uint64, max int) (data []byte, start uint64) {
+func (t *Tab) ReplayFrom(seq uint64, max int) (data []byte, start uint64, clamped bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.ring.ReplayFrom(seq, max)

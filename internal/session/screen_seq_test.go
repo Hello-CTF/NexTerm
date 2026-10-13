@@ -39,28 +39,28 @@ func TestTabScreenSeqMonotonicAndOutputSince(t *testing.T) {
 	if err != nil || managerSeq != 11 {
 		t.Fatalf("manager.ScreenSeq = %d, %v; want 11", managerSeq, err)
 	}
-	data, start, latest, err := manager.OutputSince(tab.ID, 5, 100)
+	data, start, latest, clamped, err := manager.OutputSince(tab.ID, 5, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != " world" || start != 5 || latest != 11 {
-		t.Fatalf("OutputSince(5) = %q, start %d, latest %d; want \" world\", 5, 11", data, start, latest)
+	if string(data) != " world" || start != 5 || latest != 11 || clamped {
+		t.Fatalf("OutputSince(5) = %q, start %d, latest %d, clamped %v; want \" world\", 5, 11, false", data, start, latest, clamped)
 	}
 
-	data, start, latest, err = manager.OutputSince(tab.ID, 0, 4)
+	data, start, latest, clamped, err = manager.OutputSince(tab.ID, 0, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "hell" || start != 0 || latest != 11 {
-		t.Fatalf("OutputSince(0, 4) = %q, start %d, latest %d; want \"hell\", 0, 11", data, start, latest)
+	if string(data) != "hell" || start != 0 || latest != 11 || clamped {
+		t.Fatalf("OutputSince(0, 4) = %q, start %d, latest %d, clamped %v; want \"hell\", 0, 11, false", data, start, latest, clamped)
 	}
 
-	data, start, latest, err = manager.OutputSince(tab.ID, latest, 100)
+	data, start, latest, clamped, err = manager.OutputSince(tab.ID, latest, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 0 || start != 11 || latest != 11 {
-		t.Fatalf("OutputSince(latest) = %q, start %d, latest %d; want empty, 11, 11", data, start, latest)
+	if len(data) != 0 || start != 11 || latest != 11 || clamped {
+		t.Fatalf("OutputSince(latest) = %q, start %d, latest %d, clamped %v; want empty, 11, 11, false", data, start, latest, clamped)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestTabScreenSeqZeroWithoutRingTerminal(t *testing.T) {
 	if seq := tab.ScreenSeq(); seq != 0 {
 		t.Fatalf("ScreenSeq without ring = %d, want 0", seq)
 	}
-	if _, _, _, err := manager.OutputSince(tab.ID, 0, 10); err != ErrUnsupported {
+	if _, _, _, _, err := manager.OutputSince(tab.ID, 0, 10); err != ErrUnsupported {
 		t.Fatalf("OutputSince without ring err = %v, want ErrUnsupported", err)
 	}
 }

@@ -231,9 +231,9 @@ func TestOutputAttachFromSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &memSink{}
-	next, attached, err := o.AttachFrom(ctx, "a", sink, 4, 0)
-	if err != nil || next != 10 || !attached {
-		t.Fatalf("next = %d attached = %v err = %v", next, attached, err)
+	next, clamped, attached, err := o.AttachFrom(ctx, "a", sink, 4, 0)
+	if err != nil || next != 10 || clamped || !attached {
+		t.Fatalf("next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
 	}
 	if err := o.Chunk(ctx, []byte("X")); err != nil {
 		t.Fatal(err)
@@ -242,12 +242,32 @@ func TestOutputAttachFromSequence(t *testing.T) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}
 	sinkC := &memSink{}
-	next, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
-	if err != nil || next != 11 || !attached {
-		t.Fatalf("beyond-total next = %d attached = %v err = %v", next, attached, err)
+	next, clamped, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
+	if err != nil || next != 11 || clamped || !attached {
+		t.Fatalf("beyond-total next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
 	}
 	if len(sinkC.Frames()) != 0 {
 		t.Fatalf("sinkC replay = %q", sinkC.Bytes())
+	}
+}
+
+func TestOutputAttachFromClampedAnchor(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	ctx := context.Background()
+	if err := o.Chunk(ctx, make([]byte, ScrollbackBytes+1)); err != nil {
+		t.Fatal(err)
+	}
+	sink := &memSink{}
+	next, clamped, attached, err := o.AttachFrom(ctx, "a", sink, 0, 0)
+	if err != nil || !clamped || !attached {
+		t.Fatalf("next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
+	}
+	if next != tab.LatestSeq() {
+		t.Fatalf("next = %d, want latest %d", next, tab.LatestSeq())
+	}
+	if got := sink.Bytes(); !bytes.Equal(got, tab.Dump(0)) || len(got) != ScrollbackBytes {
+		t.Fatalf("clamped replay len = %d, want full ring %d", len(got), ScrollbackBytes)
 	}
 }
 
@@ -264,7 +284,7 @@ func TestOutputAttachFromBoundedReplayCatchUp(t *testing.T) {
 		if round > 10 {
 			t.Fatal("catch-up did not converge")
 		}
-		next, attached, err := o.AttachFrom(ctx, "b", sink, seq, 3)
+		next, _, attached, err := o.AttachFrom(ctx, "b", sink, seq, 3)
 		if err != nil {
 			t.Fatal(err)
 		}

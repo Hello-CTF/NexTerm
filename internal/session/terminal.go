@@ -84,21 +84,21 @@ func (m *Manager) ScreenSeq(tabID string) (uint64, error) {
 // OutputSince returns the raw output bytes produced after seq, capped at
 // maxBytes, together with the actual start sequence and the latest sequence.
 // When seq has scrolled out of the ring, start reports the oldest retained
-// byte so callers can flag the anchor as expired.
-func (m *Manager) OutputSince(tabID string, seq uint64, maxBytes int) (data []byte, start, latest uint64, err error) {
+// byte and clamped is true so callers can flag the anchor as expired.
+func (m *Manager) OutputSince(tabID string, seq uint64, maxBytes int) (data []byte, start, latest uint64, clamped bool, err error) {
 	tab, err := m.Tab(tabID)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, false, err
 	}
 	core, ok := tab.terminal.(interface {
-		ReplayFrom(uint64, int) ([]byte, uint64)
+		ReplayFrom(uint64, int) ([]byte, uint64, bool)
 		LatestSeq() uint64
 	})
 	if !ok {
-		return nil, 0, 0, ErrUnsupported
+		return nil, 0, 0, false, ErrUnsupported
 	}
-	data, start = core.ReplayFrom(seq, maxBytes)
-	return data, start, core.LatestSeq(), nil
+	data, start, clamped = core.ReplayFrom(seq, maxBytes)
+	return data, start, core.LatestSeq(), clamped, nil
 }
 
 func (m *Manager) TerminalModeState(tabID string) (terminal.State, error) {

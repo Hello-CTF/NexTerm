@@ -100,10 +100,11 @@ func (r *Ring) Dump(max int) []byte {
 	return r.copyAt(r.total-uint64(n), n)
 }
 
-func (r *Ring) ReplayFrom(seq uint64, max int) (data []byte, start uint64) {
+func (r *Ring) ReplayFrom(seq uint64, max int) (data []byte, start uint64, clamped bool) {
 	start = seq
 	if start < r.Base() {
 		start = r.Base()
+		clamped = true
 	}
 	if start > r.total {
 		start = r.total
@@ -112,7 +113,7 @@ func (r *Ring) ReplayFrom(seq uint64, max int) (data []byte, start uint64) {
 	if max > 0 && n > max {
 		n = max
 	}
-	return r.copyAt(start, n), start
+	return r.copyAt(start, n), start, clamped
 }
 
 func (r *Ring) Clear() {

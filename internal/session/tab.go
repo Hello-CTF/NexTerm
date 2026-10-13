@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -22,6 +23,21 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 type subscriber struct {
 	client   string
 	producer *hub.Producer
+}
+
+const streamAnchorType = "nexterm.stream-anchor"
+
+// streamAnchor 是 attach 输出流的首帧 (hub JSON 帧), 告知客户端本段流的序号
+// 锚点: streamSeq 是首个非控制字节对应的 ring 绝对序号, controlBytes 是流首部
+// 不计入序号的控制字节数 (清屏转义); expired 表示客户端锚点未被采纳, 本次
+// 已回退为全量清屏重放。客户端按 streamSeq + max(0, 已收字节 - controlBytes)
+// 得出已消费序号, 重连时经 AttachOptions.FromSeq/FromEpoch 带回续传。
+type streamAnchor struct {
+	Type         string `json:"type"`
+	Epoch        string `json:"epoch"`
+	StreamSeq    uint64 `json:"streamSeq"`
+	ControlBytes int    `json:"controlBytes,omitempty"`
+	Expired      bool   `json:"expired,omitempty"`
 }
 
 type Tab struct {
@@ -61,6 +77,7 @@ type Tab struct {
 	commandState    shellintegr.CommandState
 	pendingCmd      *pendingCommand
 	durableFed      int64
+	streamEpoch     string
 
 	catchUpRemaining int64
 
@@ -263,6 +280,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
+		streamEpoch: ids.New(),
 	}
 	if options.Durable != nil {
 		if m.offsets != nil {
@@ -399,14 +417,17 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
 		return TabInfo{}, err
 	}
-	if clear {
-		if err := producer.SendBinary(attachCtx, replayClear); err != nil {
+	anchor, control, replay := m.planAttachReplay(tab, options, clear)
+	if anchor != nil {
+		frame, _ := json.Marshal(anchor)
+		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
 		}
 	}
-	var replay []byte
-	if options.ReplayBytes > 0 {
-		replay = tab.terminal.Dump(options.ReplayBytes)
+	if len(control) > 0 {
+		if err := producer.SendBinary(attachCtx, control); err != nil {
+			return TabInfo{}, err
+		}
 	}
 	for len(replay) > 0 {
 		size := min(len(replay), 64<<10)
@@ -447,6 +468,50 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	attached = true
 	m.emit(attachCtx, TopicTerminalControl, event)
 	return info, nil
+}
+
+// planAttachReplay 计算一次 attach 要发送的输出流: 客户端锚点 (FromSeq +
+// FromEpoch) 可采纳时从该偏移续传, 不发清屏控制字节; 锚点缺失、纪元不符、
+// 已滚出 ring 或缺口超过 ReplayBytes 上限时回退既有的清屏+全量重放并把锚点
+// 标记为 expired。终端不带序号追踪时锚点为 nil, 不发锚点帧。
+func (m *Manager) planAttachReplay(tab *Tab, options AttachOptions, clear bool) (*streamAnchor, []byte, []byte) {
+	core, ok := tab.terminal.(interface {
+		ReplayFrom(uint64, int) ([]byte, uint64, bool)
+		LatestSeq() uint64
+	})
+	if !ok {
+		var replay []byte
+		if options.ReplayBytes > 0 {
+			replay = tab.terminal.Dump(options.ReplayBytes)
+		}
+		if clear {
+			return nil, replayClear, replay
+		}
+		return nil, nil, replay
+	}
+	anchor := &streamAnchor{Type: streamAnchorType, Epoch: tab.streamEpoch}
+	if options.FromSeq > 0 {
+		anchor.Expired = true
+		if options.FromEpoch == anchor.Epoch {
+			data, start, clamped := core.ReplayFrom(options.FromSeq, 0)
+			gap := core.LatestSeq() - start
+			if !clamped && (options.ReplayBytes == 0 || gap <= uint64(options.ReplayBytes)) {
+				anchor.Expired = false
+				anchor.StreamSeq = start
+				return anchor, nil, data
+			}
+		}
+	}
+	var replay []byte
+	if options.ReplayBytes > 0 {
+		replay = tab.terminal.Dump(options.ReplayBytes)
+	}
+	anchor.StreamSeq = core.LatestSeq() - uint64(len(replay))
+	if clear {
+		anchor.ControlBytes = len(replayClear)
+		return anchor, replayClear, replay
+	}
+	return anchor, nil, replay
 }
 
 func (m *Manager) releaseChannelReservation(tabID, channelID string) {

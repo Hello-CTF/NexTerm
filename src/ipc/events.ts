@@ -99,11 +99,38 @@ export interface DeviceStatusEvent {
   online: boolean;
 }
 
+export interface StreamAnchorControl {
+  type: string;
+  epoch: string;
+  streamSeq: number;
+  controlBytes?: number;
+  expired?: boolean;
+}
+
+export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
+
+function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_ANCHOR_TYPE &&
+    typeof (raw as { epoch?: unknown }).epoch === "string" &&
+    typeof (raw as { streamSeq?: unknown }).streamSeq === "number"
+  );
+}
+
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
+  onControl?: (control: StreamAnchorControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
-  channel.onmessage = (raw) => decodeBytes(raw, onBytes);
+  channel.onmessage = (raw) => {
+    if (isStreamAnchor(raw)) {
+      onControl?.(raw);
+      return;
+    }
+    decodeBytes(raw, onBytes);
+  };
   return channel;
 }
 

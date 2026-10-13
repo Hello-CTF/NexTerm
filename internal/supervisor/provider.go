@@ -58,7 +58,7 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 	if session == nil {
 		return nil, translateError(err)
 	}
-	attachment, err := session.attach()
+	attachment, err := session.attach(0)
 	if err != nil {
 		identity := session.Identity()
 		_ = p.supervisor.kill(context.Background(), session.ID(), &identity)
@@ -69,6 +69,14 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 
 func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
 	attachment, err := p.supervisor.Attach(ctx, id)
+	if attachment == nil {
+		return nil, translateError(err)
+	}
+	return &channelAttachment{Attachment: attachment}, nil
+}
+
+func (p *Provider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
+	attachment, err := p.supervisor.AttachFrom(ctx, id, offset)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
@@ -205,6 +213,14 @@ func (p *RemoteProvider) compensateCreateAttempt(id, attempt string) {
 
 func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
 	stream, err := p.client.Attach(ctx, id, nil)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &streamAttachment{Stream: stream, provider: p}, nil
+}
+
+func (p *RemoteProvider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
+	stream, err := p.client.AttachFrom(ctx, id, nil, offset)
 	if err != nil {
 		return nil, translateError(err)
 	}

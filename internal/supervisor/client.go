@@ -87,11 +87,19 @@ func (c *Client) List(ctx context.Context) ([]Info, error) {
 }
 
 func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stream, error) {
+	return c.AttachFrom(ctx, id, expect, 0)
+}
+
+// AttachFrom asks the daemon to resume the recorded output from the absolute
+// byte offset. Daemons that predate the offset field ignore it and replay
+// from byte zero; the stream detects either case from the first output frame
+// and skips the already-consumed prefix locally, so both honor the offset.
+func (c *Client) AttachFrom(ctx context.Context, id string, expect *Identity, offset uint64) (*Stream, error) {
 	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	msg := attachMsg{ID: id}
+	msg := attachMsg{ID: id, Offset: offset}
 	if expect != nil {
 		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
 		msg.ExpectIncarnation = expect.Incarnation
@@ -114,6 +122,7 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 		conn:     conn,
 		info:     info,
 		identity: Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		want:     offset,
 		reqToken: make(chan struct{}, 1),
 		resp:     make(chan clientFrame, 1),
 		newData:  make(chan struct{}, 1),
@@ -272,6 +281,9 @@ type Stream struct {
 	mu         sync.Mutex
 	readBuf    []byte
 	seq        uint64
+	want       uint64
+	skip       uint64
+	started    bool
 	exitErr    error
 	dead       bool
 	userClosed bool
@@ -536,10 +548,29 @@ func (s *Stream) readLoop() {
 				return
 			}
 			s.mu.Lock()
+			if !s.started {
+				s.started = true
+				if seq > s.want {
+					s.mu.Unlock()
+					s.fail(fmt.Errorf("%w: output stream starts at %d, beyond resume offset %d", ErrProtocol, seq, s.want))
+					return
+				}
+				s.seq = seq
+				s.skip = s.want - seq
+			}
 			if seq != s.seq {
 				s.mu.Unlock()
 				s.fail(fmt.Errorf("%w: output sequence %d does not match expected %d", ErrProtocol, seq, s.seq))
 				return
+			}
+			s.seq += uint64(len(data))
+			if s.skip > 0 {
+				drop := uint64(len(data))
+				if drop > s.skip {
+					drop = s.skip
+				}
+				data = data[drop:]
+				s.skip -= drop
 			}
 			if len(s.readBuf)+len(data) > maxStreamBuffer {
 				s.mu.Unlock()
@@ -547,7 +578,6 @@ func (s *Stream) readLoop() {
 				return
 			}
 			s.readBuf = append(s.readBuf, data...)
-			s.seq += uint64(len(data))
 			s.mu.Unlock()
 			select {
 			case s.newData <- struct{}{}:

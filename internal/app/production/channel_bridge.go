@@ -119,6 +119,15 @@ func (b *terminalBridge) run(ctx context.Context, channelID string, channel *ter
 		if err != nil {
 			return
 		}
+		if frame.Kind == hub.FrameJSON {
+			if jsonStream, ok := channel.stream.(ipc.JSONStream); ok {
+				if err := jsonStream.SendJSON(ctx, frame.Data); err != nil {
+					return
+				}
+			}
+			_ = channel.receiver.Ack(frame.Sequence)
+			continue
+		}
 		if frame.Kind != hub.FrameBinary {
 			_ = channel.receiver.Ack(frame.Sequence)
 			continue

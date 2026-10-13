@@ -264,7 +264,7 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 			return true
 		}
 	}
-	attachment, err := session.attach()
+	attachment, err := session.attach(msg.Offset)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return true
