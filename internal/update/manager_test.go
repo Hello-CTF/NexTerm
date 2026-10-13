@@ -333,3 +333,31 @@ func TestRestartUsesInjectedFunc(t *testing.T) {
 		t.Fatalf("result = %+v, target = %q", result, target)
 	}
 }
+
+func TestInstallTargetFor(t *testing.T) {
+	installed := filepath.Join("D:", "NexTerm", "nexterm-desktop-windows-amd64.exe")
+	loose := filepath.Join("D:", "tools", "nexterm-test.exe")
+	fallbackDir := filepath.Join("C:", "Users", "x", "AppData", "Local", "Programs", "NexTerm")
+	fallbackExe := filepath.Join(fallbackDir, "nexterm-desktop-windows-amd64.exe")
+	tests := []struct {
+		name        string
+		running     string
+		registered  string
+		fallbackDir string
+		wantTarget  string
+		wantInPlace bool
+	}{
+		{"运行中的就是安装版则原位替换", installed, installed, fallbackDir, installed, true},
+		{"散装副本装到登记位置并重启过去", loose, installed, fallbackDir, installed, false},
+		{"无登记时散装副本装到默认目录", loose, "", fallbackDir, fallbackExe, false},
+		{"登记与默认都没有时退回原位替换", loose, "", "", loose, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, inPlace := installTargetFor(tt.running, tt.registered, tt.fallbackDir, "nexterm-desktop-windows-amd64.exe")
+			if target != tt.wantTarget || inPlace != tt.wantInPlace {
+				t.Fatalf("installTargetFor() = %q, %v; want %q, %v", target, inPlace, tt.wantTarget, tt.wantInPlace)
+			}
+		})
+	}
+}
