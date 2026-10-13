@@ -76,6 +76,7 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 		return TabInfo{}, err
 	}
 	if replaced {
+		old.co.teardown(old.producer)
 		_ = old.producer.Close()
 	}
 	attached := false
@@ -117,7 +118,11 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 		m.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
 	}
-	tab.subscribers[options.ChannelID] = subscriber{client: clientID(options.ClientID), producer: producer}
+	tab.subscribers[options.ChannelID] = subscriber{
+		client:   clientID(options.ClientID),
+		producer: producer,
+		co:       newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) }),
+	}
 	info := tab.infoLocked()
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()

@@ -84,9 +84,9 @@ func newTestTab(t *testing.T, opts ...TabOption) *Tab {
 	return tab
 }
 
-func newTestOutput(t *testing.T, tab *Tab, opts ...OutputOption) *Output {
+func newTestOutput(t *testing.T, tab *Tab) *Output {
 	t.Helper()
-	o := NewOutput(tab, opts...)
+	o := NewOutput(tab)
 	t.Cleanup(o.Close)
 	return o
 }

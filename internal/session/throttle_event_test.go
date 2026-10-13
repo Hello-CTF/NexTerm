@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -421,5 +422,210 @@ func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
 			t.Fatalf("queued frames = %+v", manager.bus.Stats())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestSlowConsumerKickedAfterGraceOthersUnaffected(t *testing.T) {
+	emitter, events := throttleCollector()
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(), Emitter: emitter,
+		SlowConsumerGrace: 60 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "kick", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", "a-1")
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1", ReplayBytes: 1024}); err != nil {
+		t.Fatal(err)
+	}
+	channel := connector.transport(0).channel(0)
+
+	healthy := bindTestReceiver(t, manager, "b-1")
+	assertFrameData(t, healthy, replayClear)
+	marker := []byte("marker-after-kick")
+	var sawMarker atomic.Bool
+	var drained atomic.Int64
+	stopDrain := make(chan struct{})
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			frame, err := healthy.Next(ctx)
+			cancel()
+			if err != nil {
+				select {
+				case <-stopDrain:
+					return
+				default:
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					continue
+				}
+				return
+			}
+			drained.Add(int64(len(frame.Data)))
+			if bytes.Contains(frame.Data, marker) {
+				sawMarker.Store(true)
+			}
+			if err := healthy.Ack(frame.Sequence); err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stopDrain); <-drainDone })
+
+	stopFlood := make(chan struct{})
+	var floodWG sync.WaitGroup
+	floodWG.Add(1)
+	go func() {
+		defer floodWG.Done()
+		frame := bytes.Repeat([]byte("x"), 1024)
+		for {
+			select {
+			case <-stopFlood:
+				return
+			default:
+			}
+			if err := channel.emit(frame); err != nil {
+				return
+			}
+		}
+	}()
+
+	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
+	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "a-1" {
+		t.Fatalf("entry = %+v", entry)
+	}
+
+	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
+	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "a-1" {
+		t.Fatalf("kick recovery = %+v", recovery)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "" {
+		t.Fatalf("tab info after kick = %+v", info)
+	}
+
+	if err := channel.emit(marker); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !sawMarker.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("healthy subscriber stopped receiving after slow consumer kick")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(stopFlood)
+	floodWG.Wait()
+	if drained.Load() == 0 {
+		t.Fatal("healthy subscriber starved during slow consumer kick")
+	}
+	if info := tab.Info(); info.Subscribers != 1 {
+		t.Fatalf("kick detached more than the slow channel: %+v", info)
+	}
+}
+
+func TestSlowConsumerDrainedWithinGraceIsNotKicked(t *testing.T) {
+	emitter, events := throttleCollector()
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(), Emitter: emitter,
+		SlowConsumerGrace: 500 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "grace", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", "a-1")
+	channel := connector.transport(0).channel(0)
+
+	flood := func() (chan struct{}, *sync.WaitGroup) {
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			frame := bytes.Repeat([]byte("x"), 1024)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if err := channel.emit(frame); err != nil {
+					return
+				}
+			}
+		}()
+		return stop, &wg
+	}
+	receiver := bindTestReceiver(t, manager, "a-1")
+	t.Cleanup(func() { _ = receiver.Close() })
+	var paused atomic.Bool
+	stopDrain := make(chan struct{})
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		for {
+			select {
+			case <-stopDrain:
+				return
+			default:
+			}
+			if paused.Load() {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			frame, err := receiver.Next(ctx)
+			cancel()
+			if err != nil {
+				continue
+			}
+			if err := receiver.Ack(frame.Sequence); err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stopDrain); <-drainDone })
+	paused.Store(true)
+
+	stop, wg := flood()
+	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
+	if entry.Recovered || entry.ChannelID != "a-1" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	paused.Store(false)
+	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
+	if !recovery.Recovered || recovery.ChannelID != "a-1" {
+		t.Fatalf("recovery = %+v", recovery)
+	}
+	close(stop)
+	wg.Wait()
+	time.Sleep(1500 * time.Millisecond)
+	if info := tab.Info(); info.Subscribers != 1 {
+		t.Fatalf("drained consumer was kicked: %+v", info)
+	}
+
+	// 再背压起新计时器, drain 后同样不被踢。
+	paused.Store(true)
+	stop2, wg2 := flood()
+	reentry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
+	if reentry.Recovered || reentry.ChannelID != "a-1" {
+		t.Fatalf("reentry = %+v", reentry)
+	}
+	paused.Store(false)
+	waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
+	close(stop2)
+	wg2.Wait()
+	time.Sleep(1500 * time.Millisecond)
+	if info := tab.Info(); info.Subscribers != 1 {
+		t.Fatalf("re-armed grace kicked drained consumer: %+v", info)
 	}
 }

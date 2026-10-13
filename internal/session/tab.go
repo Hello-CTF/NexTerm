@@ -22,6 +22,7 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 type subscriber struct {
 	client   string
 	producer *hub.Producer
+	co       *outCoalescer
 }
 
 type Tab struct {
@@ -387,6 +388,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, err
 	}
 	if replaced {
+		old.co.teardown(old.producer)
 		_ = old.producer.Close()
 	}
 	attached := false
@@ -428,7 +430,11 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, ErrTabClosed
 	}
 	client := clientID(options.ClientID)
-	tab.subscribers[options.ChannelID] = subscriber{client: client, producer: producer}
+	tab.subscribers[options.ChannelID] = subscriber{
+		client:   client,
+		producer: producer,
+		co:       newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) }),
+	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
 			if err := tab.grid.Claim(); err != nil {
@@ -501,12 +507,20 @@ func (t *Tab) ScreenSeq() uint64 {
 
 func (m *Manager) DetachChannel(channelID string) error {
 	m.mu.Lock()
+	_, cleanup := m.detachChannelLocked(channelID)
+	m.mu.Unlock()
+	cleanup()
+	return nil
+}
+
+// detachChannelLocked 在 m.mu 下摘除通道注册并返回解锁后执行的清理动作
+// (producer 关闭、事件发射、ephemeral tab 回收), DetachChannel 与
+// kickSlowConsumer 共用, 保证复查与摘除原子。
+func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	tab := m.tabs[m.channelTabs[channelID]]
 	if tab == nil {
 		delete(m.channelTabs, channelID)
-		m.mu.Unlock()
-		_ = m.bus.CloseChannel(channelID)
-		return nil
+		return "", func() { _ = m.bus.CloseChannel(channelID) }
 	}
 	tab.mu.Lock()
 	subscriber, attached := tab.subscribers[channelID]
@@ -517,21 +531,23 @@ func (m *Manager) DetachChannel(channelID string) error {
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
+	tabID := tab.ID
 	tab.mu.Unlock()
-	m.mu.Unlock()
-	if attached {
-		_ = subscriber.producer.Close()
-	} else {
-		_ = m.bus.CloseChannel(channelID)
+	return tabID, func() {
+		if attached {
+			subscriber.co.teardown(subscriber.producer)
+			_ = subscriber.producer.Close()
+		} else {
+			_ = m.bus.CloseChannel(channelID)
+		}
+		m.emit(context.Background(), TopicTerminalControl, event)
+		if throttleRecovered {
+			m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
+		}
+		if attached && empty && ephemeral {
+			_ = m.CloseTab(tabID)
+		}
 	}
-	m.emit(context.Background(), TopicTerminalControl, event)
-	if throttleRecovered {
-		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
-	}
-	if attached && empty && ephemeral {
-		return m.CloseTab(tab.ID)
-	}
-	return nil
 }
 
 func (m *Manager) DetachClient(tabID, client string) error {
@@ -582,6 +598,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	for _, subscriber := range detached {
+		subscriber.co.teardown(subscriber.producer)
 		_ = subscriber.producer.Close()
 	}
 	if len(detached) > 0 {
@@ -902,6 +919,7 @@ func (m *Manager) closeTabResources(tab *Tab) {
 		}
 		m.mu.Unlock()
 		for _, subscriber := range subscribers {
+			subscriber.co.teardown(subscriber.producer)
 			_ = subscriber.producer.Close()
 		}
 		if channel != nil {
@@ -954,7 +972,12 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	}
 	tab.mu.Unlock()
 	for _, subscriber := range subscribers {
-		err := subscriber.producer.SendBinary(feedCtx, data)
+		batch, sendNow := subscriber.co.add(data)
+		if !sendNow {
+			continue
+		}
+		err := subscriber.producer.SendBinary(feedCtx, batch)
+		subscriber.co.sent()
 		if errors.Is(err, hub.ErrClosed) || errors.Is(err, hub.ErrReplaced) {
 			continue
 		}
@@ -963,6 +986,31 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		}
 	}
 	return nil
+}
+
+// flushSubscriberOutput 是合并窗口到点的 flush: 与 feed 一样在 feedGate 下
+// 取缓冲批次并发送, 保持与实时输出/重放帧的相对顺序。
+func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return
+	}
+	if err := tab.lockFeed(context.Background()); err != nil {
+		return
+	}
+	defer tab.unlockFeed()
+	tab.mu.Lock()
+	subscriber, ok := tab.subscribers[channelID]
+	tab.mu.Unlock()
+	if !ok {
+		return
+	}
+	batch := subscriber.co.take()
+	if len(batch) == 0 {
+		return
+	}
+	_ = subscriber.producer.SendBinary(tab.ctx, batch)
+	subscriber.co.sent()
 }
 
 func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64) bool {
