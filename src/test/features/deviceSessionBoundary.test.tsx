@@ -3,7 +3,7 @@
 // non-device workspaces are unaffected; same identity on mount is not wrongly cleared.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
 	(window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -108,6 +108,17 @@ describe("设备会话账号边界", () => {
 
 		expect(mocks.disconnect).toHaveBeenCalledWith("s-dev");
 		expect(useUi.getState().workspaces.map((w) => w.id)).toEqual(["ws-ssh"]);
+	});
+
+	it("身份从 null 解析完成 (桌面启动顺序): 不当作换账号, 设备工作区保留", async () => {
+		mounted?.unmount();
+		useAuth.setState({ user: null });
+		mounted = mountWithClient(createElement(DeviceSessionBoundary));
+		await flush();
+		useAuth.setState({ user: USER });
+		await flush();
+		expect(useUi.getState().workspaces.some((w) => w.assetKind === "device")).toBe(true);
+		expect(mocks.disconnect).not.toHaveBeenCalled();
 	});
 
 	it("同身份刷新不清设备工作区", async () => {

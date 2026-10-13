@@ -18,7 +18,11 @@ export function DeviceSessionBoundary() {
 
 	useEffect(() => {
 		if (previous.current === userId) return;
+		const last = previous.current;
 		previous.current = userId;
+		// Initial identity resolution (null -> user) is not an account switch: on desktop the account query
+		// resolves after the layout boot has already restored device workspaces, and cleaning here would wipe them.
+		if (last === null) return;
 		const st = useUi.getState();
 		const deviceWorkspaces = st.workspaces.filter((w) => w.assetKind === "device");
 		if (deviceWorkspaces.length === 0) return;
