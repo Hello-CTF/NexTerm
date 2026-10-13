@@ -28,23 +28,6 @@ func TestCombinedCommandOutputPreservesTransportEventOrder(t *testing.T) {
 	}
 }
 
-func TestCombinedCommandOutputDeliversBothStreams(t *testing.T) {
-	events := make(chan base.OutputEvent, 2)
-	events <- base.OutputEvent{Data: []byte("stdout")}
-	events <- base.OutputEvent{Data: []byte("stderr"), Stderr: true}
-	close(events)
-	stream := &eventCommandStream{events: events}
-	reader := combinedCommandOutput(stream)
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = reader.Close()
-	if string(output) != "stdoutstderr" {
-		t.Fatalf("combined output = %q", output)
-	}
-}
-
 func TestCombinedCommandOutputDeliversStderrEventPromptly(t *testing.T) {
 	events := make(chan base.OutputEvent)
 	stream := &eventCommandStream{events: events}

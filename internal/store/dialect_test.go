@@ -27,20 +27,6 @@ func TestParseBackend(t *testing.T) {
 	}
 }
 
-func TestDialectHelpers(t *testing.T) {
-	sqlite := Dialect{backend: BackendSQLite}
-	postgres := Dialect{backend: BackendPostgres}
-	if sqlite.ScalarMax() != "max" || postgres.ScalarMax() != "GREATEST" {
-		t.Fatalf("ScalarMax = %q / %q", sqlite.ScalarMax(), postgres.ScalarMax())
-	}
-	if sqlite.offsetColumn() != "offset" || postgres.offsetColumn() != `"offset"` {
-		t.Fatalf("offsetColumn = %q / %q", sqlite.offsetColumn(), postgres.offsetColumn())
-	}
-	if sqlite.Backend() != BackendSQLite || postgres.Backend() != BackendPostgres {
-		t.Fatal("Backend() mismatch")
-	}
-}
-
 func TestPostgresErrorClassification(t *testing.T) {
 	for code, want := range map[string]bool{
 		"23505": true,

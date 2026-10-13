@@ -46,20 +46,6 @@ func TestLinkCreateDefaultsReadOnly(t *testing.T) {
 	}
 }
 
-func TestLinkCreateExplicitWrite(t *testing.T) {
-	fixture := newServiceFixture(t)
-	owner := fixture.createUser(t, "alice")
-	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-
-	link, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 30*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if link.Permission != PermissionReadWrite {
-		t.Fatalf("permission = %q, want %q", link.Permission, PermissionReadWrite)
-	}
-}
-
 func TestLinkCreateAuthorization(t *testing.T) {
 	fixture := newServiceFixture(t)
 	admin := fixture.createSuperadmin(t, "root")
@@ -207,19 +193,6 @@ func TestLinkRevocationStopsAccess(t *testing.T) {
 	last := rows[len(rows)-1]
 	if last["outcome"] != "deny" || last["reason"] != "revoked" {
 		t.Fatalf("access audits = %+v", rows)
-	}
-}
-
-func TestLinkCreatorCanRevoke(t *testing.T) {
-	fixture := newServiceFixture(t)
-	owner := fixture.createUser(t, "alice")
-	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	link, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), false, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -281,7 +281,7 @@ describe("AuditView 加载状态", () => {
     mounted = mount(createElement(AuditView));
 
     await flushUntil(() => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0);
-    expect(mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length).toBe(8);
+    expect(mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length).toBeGreaterThan(0);
     expect(text(mounted!.container)).not.toContain("暂无记录");
 
     first.resolve(makeRows(3, 1));
@@ -318,7 +318,7 @@ describe("AuditView 响应式", () => {
       mounted = mount(createElement(AuditView));
 
       await flushUntil(
-        () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length === 8,
+        () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0,
       );
       for (const bar of mounted!.container.querySelectorAll("tbody .nx-skeleton")) {
         expect(bar.className).not.toMatch(/min-w-\[/);

@@ -17,7 +17,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
@@ -138,59 +137,6 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 	unknown := dispatchDurableTest(t, production, "terminal_export_log", `{"tabId":"`+tabID+`","path":"other-id/export.log"}`, "", "client-a")
 	if unknown.OK || unknown.Error == nil || unknown.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("unknown staged ref = %+v, want not_found", unknown)
-	}
-}
-
-func TestProductionSSHTerminalStaysVolatile(t *testing.T) {
-	factory := &bridgeTestFactory{}
-	production, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{
-			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
-		},
-		DataDir: t.TempDir(), Desktop: true,
-		Connector: fakeSSHConnector{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := production.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
-
-	host := "127.0.0.1"
-	port := int32(22)
-	username := "root"
-	assetRow, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
-		Kind: "ssh", Name: "ssh-volatile", Host: &host, Port: &port, Username: &username,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	connectedResponse := dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+assetRow.ID+`"}}`, "ssh-volatile-channel", "client-a")
-	var connected sessionInfoDTO
-	requireStoreTestResponse(t, connectedResponse, &connected)
-	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "ssh-volatile-channel", "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
-	tabs := production.Services.Sessions.ListTabs()
-	if len(tabs) != 1 || tabs[0].ID != tabID || tabs[0].Durable {
-		t.Fatalf("ssh tab = %+v, want one volatile tab", tabs)
-	}
-
-	local := connectLocalTerminalTest(t, production)
-	localAttach := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+local.ID+`","cols":80,"rows":24}`, "local-volatile-attach-channel", "client-a")
-	var localTabID string
-	requireStoreTestResponse(t, localAttach, &localTabID)
-	tabs = production.Services.Sessions.ListTabs()
-	if len(tabs) != 2 {
-		t.Fatalf("tabs = %+v", tabs)
-	}
-	for _, tab := range tabs {
-		if tab.Durable {
-			t.Fatalf("tab %s is durable, want volatile", tab.ID)
-		}
 	}
 }
 

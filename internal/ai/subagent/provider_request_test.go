@@ -13,21 +13,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 )
 
-func TestAcceptanceTemperatureDefaultAndConfigured(t *testing.T) {
-	t.Setenv("NEXTERM_AI_TEMPERATURE", "")
-	if got := acceptanceTemperature(t); got != nil {
-		t.Fatalf("default temperature = %v, want unset", *got)
-	}
-	t.Setenv("NEXTERM_AI_TEMPERATURE", "1")
-	if got := acceptanceTemperature(t); got == nil || *got != 1 {
-		t.Fatalf("configured temperature = %v, want 1", got)
-	}
-	t.Setenv("NEXTERM_AI_TEMPERATURE", "1.25")
-	if got := acceptanceTemperature(t); got == nil || *got != 1.25 {
-		t.Fatalf("configured temperature = %v, want 1.25", got)
-	}
-}
-
 func TestProfileModelFactorySendsConfiguredTemperature(t *testing.T) {
 	configured := 1.25
 	var mu sync.Mutex

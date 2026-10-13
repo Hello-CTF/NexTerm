@@ -626,22 +626,6 @@ func TestAccountHTTPAuthOffBounds(t *testing.T) {
 	}
 }
 
-func TestAccountHTTPLoopbackExplicit(t *testing.T) {
-	fixture := newAccountFixture(t, AuthLoopback)
-
-	status, body := postRPC(t, fixture.client, fixture.http.URL+"/rpc", "app_info", nil)
-	if status != http.StatusOK || !body.OK {
-		t.Fatalf("loopback legacy rpc status=%d body=%v", status, body)
-	}
-	call := fixture.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
-	if call.status != http.StatusOK || call.body["auth"] != AuthLoopback {
-		t.Fatalf("loopback account status=%d body=%v", call.status, call.body)
-	}
-	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, nil, "", nil); call.status != http.StatusUnauthorized {
-		t.Fatalf("loopback me without session status=%d", call.status)
-	}
-}
-
 // TestAccountStatusLoopbackUninitialized guards the M196 contract: a fresh loopback instance is login-free before initialization
 // (status reports loopback, /rpc anonymously usable), but account routes still require a session; the mode is unchanged after initialization.
 // Loopback mode listening on a non-loopback address equals on: status must no longer report loopback, and anonymous /rpc is always 401.

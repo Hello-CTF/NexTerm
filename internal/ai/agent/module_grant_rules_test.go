@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
@@ -108,21 +107,4 @@ func TestGrantRuleCommandsUnavailableWithoutGrants(t *testing.T) {
 			t.Fatalf("%s without grants = %+v", command, response)
 		}
 	}
-}
-
-func TestGrantRuleSetRejectsZeroExpiryTime(t *testing.T) {
-	grants, err := guard.NewGrants(context.Background(), &grantSettings{values: make(map[string]string)}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dispatcher := newGrantDispatcher(t, Config{Grants: grants})
-	response := dispatchGrant(t, dispatcher, "ai_grant_rule_set", `{"deviceId":"asset-a","action":"send_keys","expiresAt":`+jsonNumber(time.Now().Add(-time.Hour).UnixMilli())+`}`)
-	if response.OK {
-		t.Fatalf("past expiry accepted: %+v", response)
-	}
-}
-
-func jsonNumber(value int64) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
 }

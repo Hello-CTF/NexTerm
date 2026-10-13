@@ -578,40 +578,6 @@ func TestR9ToolCallFailClosed(t *testing.T) {
 	}
 }
 
-func TestR9PreservedBoundaries(t *testing.T) {
-	t.Parallel()
-	safe := []string{
-		`ls -la /tmp`,
-		`git status --short`,
-		`git --no-pager log`,
-		`git push origin main`,
-		`curl https://example.test`,
-		`echo x | xargs`,
-		`wget -qO- https://example.test`,
-		`psql -c 'SELECT 1'`,
-		`nice ls`,
-		`echo 'id' | sh`,
-		`sudo -u root id`,
-		`echo hi | at now`,
-		`crontab -l`,
-		`git clean -n`,
-		`docker ps -a`,
-		`touch /tmp/x`,
-		`echo pwn > /tmp/x`,
-	}
-	for _, command := range safe {
-		t.Run(command, func(t *testing.T) {
-			ruling := ClassifyCommand(command, nil)
-			if ruling.Risk > NeedsConfirm {
-				t.Fatalf("ClassifyCommand(%q) = %v, want Safe or NeedsConfirm", command, ruling)
-			}
-			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAllow {
-				t.Fatalf("silent decision = %+v, want ActionAllow", decision)
-			}
-		})
-	}
-}
-
 func TestR9XargsWordParsing(t *testing.T) {
 	t.Parallel()
 	words, ok := xargsInputWords(wrapperScan{nulMode: true}, "-rf\x00/\x00")

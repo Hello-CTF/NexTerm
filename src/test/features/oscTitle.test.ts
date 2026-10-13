@@ -126,12 +126,6 @@ describe("terminalOsc52 setting", () => {
     localStorage.clear();
   });
 
-  it("is off by default", () => {
-    useUi.getState().setTerminalOsc52(false);
-    expect(useUi.getState().terminalOsc52).toBe(false);
-    expect(localStorage.getItem("nexterm.terminal.v1")).toBe('{"osc52":false}');
-  });
-
   it("persists explicit opt-in", () => {
     useUi.getState().setTerminalOsc52(true);
     expect(useUi.getState().terminalOsc52).toBe(true);

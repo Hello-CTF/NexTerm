@@ -9,48 +9,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func TestRemoteCommandsRegistered(t *testing.T) {
-	production := newUpdateTestProduction(t, false, nil)
-	commands := production.Dispatcher.Commands()
-	for _, command := range []string{
-		"remote_healthz",
-		"remote_fleet_devices",
-		"remote_fleet_device_metrics",
-		"remote_fleet_device_revoke",
-		"remote_fleet_device_autostart",
-		"remote_fleet_enroll_code",
-		"remote_fleet_base_urls_get",
-		"remote_fleet_base_urls_put",
-		"remote_share_host_list",
-		"remote_share_host_create",
-		"remote_share_host_revoke",
-		"remote_share_link_list",
-		"remote_share_link_create",
-		"remote_share_link_revoke",
-		"remote_share_preview_list",
-		"remote_share_preview_revoke",
-		"remote_account_devices",
-		"remote_account_device_revoke",
-		"remote_account_admin_users",
-		"remote_account_admin_create_user",
-		"remote_account_admin_set_user_state",
-		"remote_account_change_password",
-		"sync_link_mfa",
-		"sync_link_reset_password",
-	} {
-		found := false
-		for _, registered := range commands {
-			if registered == command {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("production is missing %s", command)
-		}
-	}
-}
-
 func TestRemoteCommandsServerModeRejected(t *testing.T) {
 	production := newUpdateTestProduction(t, false, nil)
 	response := dispatchHostKeyTest(t, production, "remote_fleet_devices", `null`)

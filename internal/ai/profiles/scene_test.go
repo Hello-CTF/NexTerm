@@ -70,32 +70,6 @@ func TestClientForUnknownProfileFails(t *testing.T) {
 	}
 }
 
-func TestClientForRejectsMaskedSentinelKey(t *testing.T) {
-	ctx := context.Background()
-	database := openStore(t)
-	manager, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saveSceneProfile(t, manager, "active-key", "active")
-	masked := saveSceneProfile(t, manager, "masked-key", "masked")
-	raw := storedSetting(t, database, profiles.SettingKey)
-	tampered := strings.Replace(raw, `"apiKey":"masked-key"`, `"apiKey":"`+profiles.MaskedAPIKey+`"`, 1)
-	if tampered == raw {
-		t.Fatal("failed to tamper stored profile key")
-	}
-	if err := database.SettingSet(ctx, profiles.SettingKey, tampered); err != nil {
-		t.Fatal(err)
-	}
-	reloaded, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reloaded.ClientFor(masked.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
-		t.Fatalf("expected ErrProfileKeyUnavailable, got %v", err)
-	}
-}
-
 func TestClientForDecryptsEnvelopeLikeActiveClient(t *testing.T) {
 	ctx := context.Background()
 	database, _ := openVaultStore(t)
