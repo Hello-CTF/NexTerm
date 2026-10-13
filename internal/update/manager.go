@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -257,4 +258,19 @@ func (m *Manager) Restart(ctx context.Context) Result {
 		return Result{UnavailableReason: "重启失败: " + err.Error()}
 	}
 	return Result{Restarted: true}
+}
+
+// installTargetFor 决定安装完成后新 exe 的位置: 注册表登记的安装目标优先,
+// 否则退回 NSIS 默认目录; inPlace 为 true 表示当前运行的就是安装目标本身,
+// 可以改名替换; false 表示当前是散装副本, 不动它, 装完重启到安装版。
+func installTargetFor(exePath, registered, fallbackDir, exeName string) (target string, inPlace bool) {
+	target = registered
+	if target == "" && fallbackDir != "" {
+		target = filepath.Join(fallbackDir, exeName)
+	}
+	if target == "" {
+		return exePath, true
+	}
+	target = filepath.Clean(target)
+	return target, strings.EqualFold(target, filepath.Clean(exePath))
 }
