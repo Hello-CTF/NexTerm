@@ -84,7 +84,7 @@
 
 - 实现期只跑聚焦测试：与改动直接相关的 Go 包 / 前端测试，外加 `pnpm typecheck`、`pnpm lint`；不为每个小改动重复全仓套件。
 - 高风险改动（并发、协议、持久化、安全、数据库）一旦可运行，立即补跑相关集成测试与 `go test -race ./...`；涉及 build tag 的按需加 `-tags`。
-- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验 15 个最终产物并生成 `SHA256SUMS`。release 资产共 16 个：6 个桌面包（2 个 NSIS、2 个 DMG、2 个 deb）+ 2 个服务端 tar.gz + 2 个移动包（apk、ipa）+ 5 个 agent 包（linux/darwin tar.gz 各两个架构、1 个 windows amd64 zip）+ `SHA256SUMS`。
+- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验全部最终产物并生成 `SHA256SUMS`（产物清单以 release workflow 与该脚本为准）。
 - 分层不削弱门禁：CI 保留全部质量检查，上文"质量命令"全绿要求不变；评审须实际运行并核对行为，不得凭汇报放行。
 
 ## pprof 调试
@@ -107,9 +107,9 @@
 
 ## PostgreSQL 真实测试
 
-- PG 门控测试位于 `internal/dbtest`、`internal/store`、`internal/account`、`internal/sync`、`internal/ai/cron`、`internal/fleet/server`，统一经 `internal/dbtest` harness 读取 `NEXTERM_TEST_PG_DSN`；未设置时逐测试 SKIP，SKIP 不算已验证。
-- 本地聚焦复跑：`NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`（等价于对同六个包 `go test -count=1`）；该 task 在 DSN 缺失时直接失败，不把 SKIP 当通过。
-- 远程 CI 的 `postgres` job 真实启动 PostgreSQL 16 服务并携带 DSN 跑上述六个包，日志出现任何 harness SKIP 即判 job 失败；DSN 经 `add-mask` 脱敏，不写入日志。
+- PG 门控测试位于 `internal/dbtest`、`internal/store`、`internal/account`、`internal/sync`、`internal/ai/cron`、`internal/fleet/server`，统一经 `internal/dbtest` harness 读取 `NEXTERM_TEST_PG_DSN`；未设置时逐测试 SKIP，SKIP 不算已验证。新增门控包时 harness、CI postgres job 与本节同步。
+- 本地聚焦复跑：`NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`（等价于对这些包 `go test -count=1`）；该 task 在 DSN 缺失时直接失败，不把 SKIP 当通过。
+- 远程 CI 的 `postgres` job 真实启动 PostgreSQL 服务并携带 DSN 跑上述包，日志出现任何 harness SKIP 即判 job 失败；DSN 经 `add-mask` 脱敏，不写入日志。
 
 ## 多 agent 协作
 
