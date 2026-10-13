@@ -3,9 +3,13 @@
 package supervisor
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 const utf8Locale = "C.UTF-8"
@@ -72,3 +76,23 @@ func execSignalName(state *os.ProcessState) string {
 	}
 	return status.Signal().String()
 }
+
+// resolveLoginPATH reports the user's login-shell PATH with a short timeout; empty means unresolved.
+// Service-installed agents (systemd --user, launchd) run with a minimal PATH where CLIs like docker do not
+// resolve, while interactive tabs get the full PATH through the login shell.
+func resolveLoginPATHImpl() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, defaultShellCommand(nil)[0], "-l", "-c", `printf %s "$PATH"`)
+	// Without a delay Wait would block on an inherited stdout pipe if the login shell backgrounds a child.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	text := string(out)
+	// A chatty rc file must not poison the overlay: a valid PATH is absolute and whitespace-free.
+	if err != nil || !strings.HasPrefix(text, "/") || strings.ContainsAny(text, " \t\n\r") {
+		return ""
+	}
+	return text
+}
+
+var loginPATH = sync.OnceValue(resolveLoginPATHImpl)

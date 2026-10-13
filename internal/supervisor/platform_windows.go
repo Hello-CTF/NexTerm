@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 func defaultShellCommand(_ []string) []string {
@@ -30,3 +31,8 @@ func killSignalName() string {
 func execSignalName(*os.ProcessState) string {
 	return ""
 }
+
+// resolveLoginPATHImpl is a no-op on Windows: the PATH an agent process inherits already covers child processes.
+func resolveLoginPATHImpl() string { return "" }
+
+var loginPATH = sync.OnceValue(resolveLoginPATHImpl)

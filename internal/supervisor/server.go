@@ -244,6 +244,10 @@ func (c *serverConn) handleCreate(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
+	if !usePTY {
+		// Assign before replying so a concurrent close() always sees the session for its execKill path.
+		c.exec = session
+	}
 	if err := c.reply(frameCreated, session.Info()); err != nil {
 		if !usePTY {
 			// Without a stream consumer the pipes would never drain and execWait would never reap;
@@ -251,11 +255,11 @@ func (c *serverConn) handleCreate(payload []byte) {
 			session.drainExecPipes()
 			identity := session.Identity()
 			_ = c.server.supervisor.kill(context.Background(), session.ID(), &identity)
+			c.exec = nil
 		}
 		return
 	}
 	if !usePTY {
-		c.exec = session
 		go c.streamExec(session)
 	}
 }

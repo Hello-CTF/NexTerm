@@ -49,7 +49,7 @@ func TestExecSplitStreams(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	stdout, stderr, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	stdout, stderr, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", `printf 'out-1'; printf 'err-1' >&2; printf 'out-2'; printf 'err-2' >&2`},
 	})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestExecEnvAndDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "exec-dir-marker"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", `ls; printf %s "$EXEC_MARKER"`},
 		Dir:     dir,
 		Env:     []string{"EXEC_MARKER=env-ok"},
@@ -99,7 +99,7 @@ func TestExecNonZeroExit(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	_, _, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	_, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", "exit 42"},
 	})
 	if err != nil {
@@ -114,7 +114,7 @@ func TestExecSignalExit(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	_, _, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	_, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", "kill -TERM $$"},
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func TestExecSpawnFailure(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	_, _, _, err := client.Exec(context.Background(), ExecSpec{
+	_, _, _, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/nonexistent/nexterm-exec-missing"},
 	})
 	if err == nil {
@@ -145,7 +145,7 @@ func TestExecOutputCap(t *testing.T) {
 	original := maxExecOutput
 	maxExecOutput = 64 * 1024
 	defer func() { maxExecOutput = original }()
-	stdout, _, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"dd", "if=/dev/zero", "bs=4096", "count=64"},
 	})
 	if !errors.Is(err, ErrUnavailable) {
@@ -170,7 +170,7 @@ func TestExecContextCancel(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		_, _, _, err := client.Exec(ctx, ExecSpec{
+		_, _, _, _, err := client.Exec(ctx, ExecSpec{
 			Command: []string{"sleep", "30"},
 		})
 		done <- outcome{err}
@@ -196,7 +196,7 @@ func TestExecSessionNotListedNotAttachable(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := client.Exec(ctx, ExecSpec{
+		_, _, _, _, err := client.Exec(ctx, ExecSpec{
 			Command: []string{"sleep", "30"},
 		})
 		done <- err
@@ -232,7 +232,7 @@ func TestExecThroughRemoteClient(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", server.SocketPath())
 	}
 	client := NewRemoteClient(dial, digest)
-	stdout, stderr, exitCode, err := client.Exec(context.Background(), ExecSpec{
+	stdout, stderr, exitCode, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", `printf 'remote-out'; printf 'remote-err' >&2; exit 3`},
 	})
 	if err != nil {
@@ -250,7 +250,7 @@ func TestExecValidation(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
 	client := testClient(t, server)
-	if _, _, _, err := client.Exec(context.Background(), ExecSpec{}); !errors.Is(err, ErrInvalidInput) {
+	if _, _, _, _, err := client.Exec(context.Background(), ExecSpec{}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("empty command error = %v, want ErrInvalidInput", err)
 	}
 	noPTY := false
@@ -303,7 +303,7 @@ func TestExecUnsupportedWithoutFeature(t *testing.T) {
 	received := make(chan frameType, 1)
 	path := fakeExecUnawareServer(t, stateDir, received)
 	client := NewClient(path, stateDir)
-	_, _, _, err := client.Exec(context.Background(), ExecSpec{
+	_, _, _, _, err := client.Exec(context.Background(), ExecSpec{
 		Command: []string{"/bin/sh", "-c", "true"},
 	})
 	if !errors.Is(err, ErrUnsupported) {
@@ -408,4 +408,21 @@ func TestServerReapsExecWhenCreatedReplyFails(t *testing.T) {
 	// the exec session must still be drained and reaped instead of leaking.
 	_ = conn.Close()
 	awaitSessionCount(t, supervisor, 0)
+}
+
+func TestExecEnvUsesLoginShellPATH(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	t.Setenv("PATH", "/nonexistent")
+	stdout, _, exitCode, _, err := client.Exec(context.Background(), ExecSpec{Command: []string{"/bin/sh", "-c", `printf %s "$PATH"`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if path := string(stdout); path == "" || path == "/nonexistent" {
+		t.Fatalf("exec PATH = %q, want the login-shell PATH overlay", path)
+	}
 }
