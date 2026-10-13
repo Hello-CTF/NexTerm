@@ -218,6 +218,17 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const autoReconnectRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionGone) {
+      autoReconnectRef.current = null;
+      return;
+    }
+    if (autoReconnectRef.current === sessionId) return;
+    autoReconnectRef.current = sessionId;
+    void reconnectHost();
+  }, [sessionGone, sessionId]);
+
   const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
     if (!file) return;
