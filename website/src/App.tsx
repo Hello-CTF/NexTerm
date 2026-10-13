@@ -1,8 +1,16 @@
 import { useState } from "react";
-import { ArrowRight, CodeXml, Download, Monitor, Moon, Server, Smartphone, Sun } from "lucide-react";
+import { ArrowRight, Download, Monitor, Moon, Server, Smartphone, Sun } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
+
+function GithubIcon({ size = 19 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+    </svg>
+  );
+}
 
 type Theme = "dark" | "light";
 
@@ -78,7 +86,7 @@ function App() {
           </nav>
           <div className="header-actions">
             <a className="icon-link" href={repository} target="_blank" rel="noreferrer" aria-label="GitHub 仓库">
-              <CodeXml size={19} />
+              <GithubIcon size={19} />
             </a>
             <button className="icon-link" type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}>
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
@@ -103,7 +111,7 @@ function App() {
                 下载 NexTerm
               </a>
               <a className="button button-secondary" href={repository} target="_blank" rel="noreferrer">
-                <CodeXml size={17} />
+                <GithubIcon size={17} />
                 查看源码
               </a>
             </div>

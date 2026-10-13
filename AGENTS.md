@@ -88,6 +88,12 @@
 - 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验 15 个最终产物并生成 `SHA256SUMS`。release 资产共 16 个：6 个桌面包（2 个 NSIS、2 个 DMG、2 个 deb）+ 2 个服务端 tar.gz + 2 个移动包（apk、ipa）+ 5 个 agent 包（linux/darwin tar.gz 各两个架构、1 个 windows amd64 zip）+ `SHA256SUMS`，不生成也不上传 `release-evidence.json` 与 `real-target-gaps.json`；真实环境验证缺口只在 release notes 与 Pages 文档中如实说明。
 - 分层不削弱门禁：CI 保留全部质量检查，上文"质量命令"全绿要求不变；评审须实际运行并核对行为，不得凭汇报放行。
 
+## pprof 调试
+
+- 三个进程默认都不开 pprof，按需用 flag 或环境变量开启（flag 优先）：`nexterm-server --pprof-addr 127.0.0.1:6060`、`nexterm-desktop --pprof-addr 127.0.0.1:6061`、`nexterm-agent run -pprof-addr 127.0.0.1:6062`，或共用 `NEXTERM_PPROF_ADDR`。
+- 只接受回环地址（`:6060` 这类裸端口绑到 127.0.0.1）；确需外部访问时显式传 `0.0.0.0`，其他非回环地址直接拒绝。开启时 block/mutex profile 采样率为 1。
+- 卡住时抓现场：`curl -o goroutine.txt 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2'`；`go tool pprof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'`；`curl -o trace.out 'http://127.0.0.1:6060/debug/pprof/trace?seconds=5'`。
+
 ## 平台 build tags
 
 - 平台分支一律用文件级 `//go:build`（在文件第 1 行）；常见约束为 `windows`、`unix`、`darwin || linux`、`!windows`，文件名多用 `*_unix.go`、`*_windows.go`、`*_darwin.go` 后缀，但按约束语义命名即可，如 `winsize_signed.go`（`aix || solaris`）、`protector_unsupported.go`（`!windows && !darwin`）及多处 `darwin || linux` 测试均无平台后缀。
