@@ -482,7 +482,7 @@ func (r *Registry) terminalCreate(ctx context.Context, scope Scope, raw []byte) 
 	if args.Command != "" {
 		text += "，启动命令已发送"
 	}
-	text += "；该标签已在会话中打开，可用 send_keys/read_screen 的 tab_id 操作"
+	text += "；该标签为后台分离状态，需用户接管后交互（AI 无法直接操作非作用域标签）"
 	return OK(text)
 }
 

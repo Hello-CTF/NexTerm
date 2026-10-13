@@ -140,7 +140,7 @@ var einoDescriptions = map[string]string{
 	"exit_plan_mode":  "提交计划供用户审核，不自动执行。",
 	ReminderTool:      "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
 	NotifyTool:        "向用户发送应用内通知，用于长任务完成或需要用户立即注意的事项；message 为通知内容（不超过 200 字），内容必须同时写进当轮回复正文，弹窗可能被错过。",
-	"terminal_create": "在当前会话新建一个终端标签页（启动新 shell，需用户确认）；可选 title 设置标签标题，可选 command 作为启动命令（仅 ssh/docker 会话支持，其他类型会被拒绝）。返回新标签的 tab_id，之后用 send_keys/read_screen 配合该 id 操作。",
+	"terminal_create": "在当前会话新建一个终端标签页（启动新 shell，需用户确认）；可选 title 设置标签标题，可选 command 作为启动命令（仅 ssh/docker 会话支持，其他类型会被拒绝）。返回新标签的 tab_id；该标签为分离（后台）状态：ssh/docker/device 会话需用户在「后台会话」接管后交互，本机（local）会话可用 terminal_attach_tab 附加；AI 不能用 send_keys/read_screen 操作非作用域标签。",
 	"terminal_rename": "重命名当前作用域的终端标签页；title 为新标题（必填），tab_id 缺省为当前标签。自定义标题不会被远程标题序列覆盖，后台会话重连后仍保留。",
 }
 
