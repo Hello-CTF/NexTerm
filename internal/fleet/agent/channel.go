@@ -248,6 +248,8 @@ func DialBridge(ctx context.Context, wsURL string, hello HelloMessage, insecure 
 		}
 		return nil, &ServerError{Status: status, Message: err.Error()}
 	}
+	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
+	conn.SetReadLimit(1 << 20)
 	payload, err := json.Marshal(hello)
 	if err != nil {
 		_ = conn.Close(websocket.StatusProtocolError, "bad hello")

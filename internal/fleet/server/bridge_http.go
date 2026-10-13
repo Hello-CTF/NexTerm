@@ -43,10 +43,24 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "设备已关闭远程访问")))
 		return
 	}
+	// Pre-check purpose support before upgrading: a rejected purpose must reach the caller as a readable fleet
+	// error, not as a bare WS close after Accept (the desktop only surfaces close reasons). Old agents report no
+	// capabilities at all, which is an empty list - online state is checked separately from capability reporting.
+	if !s.registry.AgentOnline(deviceID) {
+		writeFleetJSON(w, http.StatusServiceUnavailable, ipc.Failure(ipc.NewError(ipc.CodeDisconnected, errDeviceOffline.Error())))
+		return
+	}
+	capabilities, _ := s.registry.Capabilities(deviceID)
+	if !servesPurpose(capabilities, purpose) {
+		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, errPurposeUnsupported.Error())))
+		return
+	}
 	user, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		return
 	}
+	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
+	user.SetReadLimit(1 << 20)
 	bridge, err := s.registry.RequestBridge(r.Context(), deviceID, purpose)
 	if err != nil {
 		_ = user.Close(websocket.StatusPolicyViolation, "device bridge unavailable")

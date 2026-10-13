@@ -72,6 +72,8 @@ func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID, purpose s
 	if err != nil {
 		return nil, err
 	}
+	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
+	conn.SetReadLimit(1 << 20)
 	return websocket.NetConn(context.Background(), conn, websocket.MessageBinary), nil
 }
 

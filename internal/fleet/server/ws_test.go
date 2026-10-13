@@ -530,3 +530,30 @@ func TestDeviceHelloIgnoresUnknownFields(t *testing.T) {
 		t.Fatalf("hello = %+v", hello)
 	}
 }
+
+func TestDeviceBridgeRelayPurposePreCheck(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "relay-purpose")
+	deviceID, secret := enrollWSAgent(t, f, owner, "relay-purpose-box")
+	session := f.session(t, owner)
+
+	// Offline device: any purpose gets 503 before any upgrade.
+	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=file", nil, session, ""); response.status != http.StatusServiceUnavailable {
+		t.Fatalf("offline relay: HTTP %d %v", response.status, response.body)
+	}
+
+	// Online agent without capabilities (an old agent): file gets 403 with the purpose error, bogus gets 400.
+	control := dialDeviceWS(t, f)
+	if response := helloDevice(t, control, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+	}); response.Type != "hello_ok" {
+		t.Fatalf("hello = %+v", response)
+	}
+	defer func() { _ = control.Close(websocket.StatusNormalClosure, "") }()
+	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=file", nil, session, ""); response.status != http.StatusForbidden {
+		t.Fatalf("unadvertised file relay: HTTP %d %v", response.status, response.body)
+	}
+	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=bogus", nil, session, ""); response.status != http.StatusBadRequest {
+		t.Fatalf("unknown purpose relay: HTTP %d %v", response.status, response.body)
+	}
+}

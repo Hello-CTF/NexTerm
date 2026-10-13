@@ -53,6 +53,8 @@ func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
+	conn.SetReadLimit(1 << 20)
 	hello, err := readDeviceHello(conn)
 	if err != nil {
 		_ = conn.Close(websocket.StatusPolicyViolation, "bad hello")
