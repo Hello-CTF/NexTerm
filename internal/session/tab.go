@@ -189,6 +189,12 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		m.mu.Unlock()
 		return TabInfo{}, ErrDisconnected
 	}
+	// Remote shells are a pushed feed with no backend channel; opening a tab here would attach to nothing.
+	if session.Asset().Kind == KindRemote {
+		session.mu.Unlock()
+		m.mu.Unlock()
+		return TabInfo{}, ErrUnsupported
+	}
 	generation := session.generation
 	transport := session.transport
 	kind := session.asset.Kind
@@ -401,6 +407,11 @@ func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabI
 		return TabInfo{}, err
 	}
 	kind := session.Asset().Kind
+	// Remote shells have no backend channel; creating a tab there would panic in OpenTab. Other kinds
+	// (local/ssh/docker/device/winrm) all support detached creation.
+	if kind == KindRemote {
+		return TabInfo{}, ErrUnsupported
+	}
 	if options.Command != "" && !startupCommandSupported(kind) {
 		return TabInfo{}, ErrUnsupported
 	}

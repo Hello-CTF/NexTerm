@@ -506,7 +506,7 @@ func TestCreateTabDetachedRouting(t *testing.T) {
 func TestCreateTabRejectsCommandOnUnsupportedKind(t *testing.T) {
 	manager, _, _, connected := openTestSession(t, KindLocal)
 	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Command: "ls"}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("local command err=%v", err)
+		t.Fatalf("local command = %v; want ErrUnsupported", err)
 	}
 	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Cols: 100, Rows: 40})
 	if err != nil {
@@ -638,5 +638,20 @@ func TestDeviceSessionOwnerEnforcedAcrossUsers(t *testing.T) {
 	}
 	if err := manager.Reconnect(bob, session.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-user reconnect = %v, want ErrForbidden", err)
+	}
+}
+
+func TestCreateTabRejectsRemoteKind(t *testing.T) {
+	// A remote shell carries no backend channel (a preview feed, not a shell), so creation must refuse cleanly
+	// instead of panicking in OpenTab.
+	manager, _, _, session := openTestSession(t, KindSSH)
+	session.mu.Lock()
+	session.asset.Kind = KindRemote
+	session.mu.Unlock()
+	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: session.ID}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("CreateTab on remote = %v; want ErrUnsupported", err)
+	}
+	if _, err := manager.OpenTab(context.Background(), OpenTabOptions{SessionID: session.ID, ChannelID: "c-1", Cols: 80, Rows: 24}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("OpenTab on remote = %v; want ErrUnsupported", err)
 	}
 }
