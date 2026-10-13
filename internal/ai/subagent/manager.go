@@ -535,11 +535,12 @@ func consumeVariant(current *task, variant *adk.MessageVariant) (*schema.Message
 
 func emitToolResult(current *task, message *schema.Message) {
 	var result struct {
-		OK        bool   `json:"ok"`
-		Text      string `json:"text"`
-		ExitCode  int    `json:"exitCode"`
-		Truncated bool   `json:"truncated"`
-		Panic     bool   `json:"panic"`
+		OK        bool         `json:"ok"`
+		Text      string       `json:"text"`
+		ExitCode  int          `json:"exitCode"`
+		Truncated bool         `json:"truncated"`
+		Panic     bool         `json:"panic"`
+		Terminal  *TerminalRef `json:"terminal"`
 	}
 	_ = json.Unmarshal([]byte(message.Content), &result)
 	text, cut := capText(result.Text, 4096)
@@ -552,6 +553,7 @@ func emitToolResult(current *task, message *schema.Message) {
 		Truncated: result.Truncated || cut,
 		ExitCode:  result.ExitCode,
 		Panic:     result.Panic,
+		Terminal:  result.Terminal,
 	})
 }
 

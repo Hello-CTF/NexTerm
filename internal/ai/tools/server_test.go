@@ -133,6 +133,60 @@ func TestTerminalCreateToolExecution(t *testing.T) {
 	}
 }
 
+func TestTerminalCreateForegroundOpensTab(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "s" }})
+	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{"title":"构建机"}`)}, nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if result.Terminal == nil || result.Terminal.TabID != "tab-new" || result.Terminal.SessionID != "s" || result.Terminal.Title != "构建机" {
+		t.Fatalf("terminal payload = %+v", result.Terminal)
+	}
+	if !strings.Contains(result.Text, "已创建并在前台展示") {
+		t.Fatalf("text=%q", result.Text)
+	}
+	read := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "read_screen", Args: json.RawMessage(`{"tab_id":"tab-new"}`)}, nil)
+	if !read.OK {
+		t.Fatalf("read_screen on created tab: %+v", read)
+	}
+	keys := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "k", Name: "send_keys", Args: json.RawMessage(`{"keys":"ls","tab_id":"tab-new"}`)}, nil)
+	if !keys.OK || len(terminal.writes) != 1 {
+		t.Fatalf("send_keys on created tab: %+v writes=%d", keys, len(terminal.writes))
+	}
+	crossJob := registry.Execute(context.Background(), "j2", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r2", Name: "read_screen", Args: json.RawMessage(`{"tab_id":"tab-new"}`)}, nil)
+	if crossJob.OK || !strings.Contains(crossJob.Text, ErrCrossScope.Error()) {
+		t.Fatalf("cross-job read=%+v", crossJob)
+	}
+	other := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "other" }})
+	if created := other.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{}`)}, nil); !created.OK {
+		t.Fatalf("create=%+v", created)
+	}
+	crossSession := other.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r3", Name: "read_screen", Args: json.RawMessage(`{"tab_id":"tab-new"}`)}, nil)
+	if crossSession.OK || !strings.Contains(crossSession.Text, ErrCrossScope.Error()) {
+		t.Fatalf("cross-session read=%+v", crossSession)
+	}
+}
+
+func TestTerminalCreateBackgroundStaysDetached(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "s" }})
+	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{"background":true}`)}, nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if result.Terminal != nil {
+		t.Fatalf("background create must not carry a foreground payload: %+v", result.Terminal)
+	}
+	if !strings.Contains(result.Text, "分离终端") || !strings.Contains(result.Text, "「后台会话」") {
+		t.Fatalf("text=%q", result.Text)
+	}
+	read := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "read_screen", Args: json.RawMessage(`{"tab_id":"tab-new"}`)}, nil)
+	if !read.OK {
+		t.Fatalf("read_screen on background tab: %+v", read)
+	}
+}
+
 func TestTerminalCreateRequiresSessionScope(t *testing.T) {
 	terminal := &fakeTerminal{}
 	registry := NewRegistry(Dependencies{Terminal: terminal})

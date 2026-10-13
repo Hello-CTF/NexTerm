@@ -48,6 +48,7 @@ type SendKeysArgs struct {
 	Keys   string `json:"keys" jsonschema:"required"`
 	Enter  bool   `json:"enter,omitempty"`
 	WaitMS int    `json:"wait_ms,omitempty"`
+	TabID  string `json:"tab_id,omitempty"`
 }
 type WaitForArgs struct {
 	Pattern   string `json:"pattern" jsonschema:"required"`
@@ -99,8 +100,9 @@ type ExitPlanModeArgs struct {
 	Plan string `json:"plan" jsonschema:"required"`
 }
 type TerminalCreateArgs struct {
-	Title   string `json:"title,omitempty"`
-	Command string `json:"command,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Command    string `json:"command,omitempty"`
+	Background bool   `json:"background,omitempty"`
 }
 type TerminalRenameArgs struct {
 	TabID string `json:"tab_id,omitempty"`
@@ -121,8 +123,8 @@ var einoDescriptions = map[string]string{
 	"write_file":      "以原子方式创建新文件，不覆盖已有文件；覆盖现有文件需用户授权并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
 	"list_dir":        "列出目录内容，最多 500 项。",
 	"search_files":    "按文件名 glob 或文件内容正则搜索，不经过 shell。",
-	"read_screen":     "读取当前作用域终端的可见屏幕及屏幕序号；传 since_seq 仅读取该序号之后的新输出，并按 max_bytes 分页。终端支持 OSC 133 时附带命令状态。",
-	"send_keys":       "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；否则发送后直接返回并说明结果未验证。",
+	"read_screen":     "读取当前作用域终端的可见屏幕及屏幕序号；传 since_seq 仅读取该序号之后的新输出，并按 max_bytes 分页；可选 tab_id 指定本任务 terminal_create 创建的标签。终端支持 OSC 133 时附带命令状态。",
+	"send_keys":       "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点；可选 tab_id 指定本任务 terminal_create 创建的标签。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；否则发送后直接返回并说明结果未验证。",
 	"wait_for":        "等待当前终端最近 30 行匹配正则；传 since_seq 则只匹配该屏幕序号锚点之后的新输出（不会误命中旧内容）。可被任务取消。",
 	"shell_history":   "读取 NexTerm 所在本机的 shell 历史（zsh/bash/fish），返回最新 N 条（默认 50，最多 500）并已脱敏。仅读取本机且默认不同步；远端会话仍读取本机历史并明确标注。需要用户确认。",
 	"docker_ps":       "列出当前会话中的 Docker 容器。",
@@ -140,7 +142,7 @@ var einoDescriptions = map[string]string{
 	"exit_plan_mode":  "提交计划供用户审核，不自动执行。",
 	ReminderTool:      "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
 	NotifyTool:        "向用户发送应用内通知，用于长任务完成或需要用户立即注意的事项；message 为通知内容（不超过 200 字），内容必须同时写进当轮回复正文，弹窗可能被错过。",
-	"terminal_create": "在当前会话新建一个终端标签页（启动新 shell，需用户确认）；可选 title 设置标签标题，可选 command 作为启动命令（仅 ssh/docker 会话支持，其他类型会被拒绝）。返回新标签的 tab_id；该标签为分离（后台）状态：ssh/docker/device 会话需用户在「后台会话」接管后交互，本机（local）会话可用 terminal_attach_tab 附加；AI 不能用 send_keys/read_screen 操作非作用域标签。",
+	"terminal_create": "在当前会话新建一个终端标签页（启动新 shell，需用户确认）；可选 title 设置标签标题，可选 command 作为启动命令（仅 ssh/docker/local/device 会话支持，会原样写入新 shell 的标准输入，含换行时按多条命令依次执行；winrm 等不支持的类型会被拒绝，此时可先创建标签再用 send_keys 传 tab_id 发送命令）。返回新标签的 tab_id；默认在用户工作区前台展示，AI 在其中工作，用户可随时接管输入；background=true 时改为后台分离创建，用户可在「后台会话」接管。无论哪种方式，之后都可用 send_keys/read_screen 传 tab_id 操作本任务创建的标签。",
 	"terminal_rename": "重命名当前作用域的终端标签页；title 为新标题（必填），tab_id 缺省为当前标签。自定义标题不会被远程标题序列覆盖，后台会话重连后仍保留。",
 }
 
@@ -684,7 +686,11 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			return Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
 		if call.Name == "send_keys" {
-			tabID, err := e.Registry.resolveTab(e.Scope, "")
+			var input SendKeysArgs
+			if err := json.Unmarshal(call.Args, &input); err != nil {
+				return Fail(err), nil
+			}
+			tabID, err := e.Registry.resolveTab(e.JobID, e.Scope, input.TabID)
 			if err != nil {
 				return Fail(err), nil
 			}
@@ -744,7 +750,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if err := json.Unmarshal(call.Args, &input); err != nil {
 			return Fail(err), nil
 		}
-		tabID, err := e.Registry.resolveTab(e.Scope, "")
+		tabID, err := e.Registry.resolveTab(e.JobID, e.Scope, input.TabID)
 		if err != nil {
 			return Fail(err), nil
 		}

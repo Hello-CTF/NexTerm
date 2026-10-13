@@ -52,7 +52,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
     try {
       const list = await terminalApi.listLive();
       if (generation !== loadGenerationRef.current) return;
-      setItems(list.filter((t) => t.sessionKind !== "local" && t.subscribers === 0 && !t.exited));
+      setItems(list.filter((t) => t.subscribers === 0 && !t.exited));
       setError(null);
     } catch (e) {
       if (generation === loadGenerationRef.current) setError(describeError(e));

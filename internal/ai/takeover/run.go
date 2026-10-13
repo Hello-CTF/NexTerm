@@ -557,6 +557,9 @@ func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools
 }
 
 func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
+	if input.TabID != "" {
+		return tools.Fail(errors.New("终端接管只支持向当前接管的终端发送按键")), nil
+	}
 	callID := compose.GetToolCallID(ctx)
 	if callID == "" {
 		return tools.Output{}, errors.New("Eino tool call id is empty")
