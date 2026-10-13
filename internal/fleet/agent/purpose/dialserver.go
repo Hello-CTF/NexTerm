@@ -66,22 +66,29 @@ func (s *DialServer) ServeConn(ctx context.Context, conn net.Conn) error {
 	if err := deviceproto.WriteFrame(conn, deviceproto.FrameDialed, nil); err != nil {
 		return err
 	}
+	pumpBridge(ctx, conn, target)
+	return nil
+}
 
+// pumpBridge pipes bytes between the bridge and the target in both
+// directions with half-close propagation. It returns when the context ends,
+// the bridge dies, or both directions wound down after the target's EOF.
+func pumpBridge(ctx context.Context, bridge, target net.Conn) {
 	bridgeDone := make(chan struct{})
 	targetDone := make(chan struct{})
 	go func() {
 		defer close(bridgeDone)
-		bridgeToTarget(conn, target)
+		bridgeToTarget(bridge, target)
 	}()
 	go func() {
 		defer close(targetDone)
-		targetToBridge(conn, target)
+		targetToBridge(bridge, target)
 	}()
 	select {
 	case <-ctx.Done():
 		// Close both ends explicitly so the pump goroutines unwind now
 		// instead of at the deferred closes on return.
-		_ = conn.Close()
+		_ = bridge.Close()
 		_ = target.Close()
 		<-bridgeDone
 		<-targetDone
@@ -94,7 +101,6 @@ func (s *DialServer) ServeConn(ctx context.Context, conn net.Conn) error {
 		// client may still send, so keep pumping until it closes.
 		<-bridgeDone
 	}
-	return nil
 }
 
 // bridgeToTarget forwards client data frames to the target; a FrameDialEOF
