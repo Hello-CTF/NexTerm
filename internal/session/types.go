@@ -149,6 +149,7 @@ type Config struct {
 	ReconnectMax      int
 	ReconnectBackoff  []time.Duration
 	DefaultReplay     int
+	SlowConsumerGrace time.Duration
 }
 
 type SessionInfo struct {

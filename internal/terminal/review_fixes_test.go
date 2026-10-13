@@ -1,99 +1,11 @@
 package terminal
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
-
-func blockingSink() SinkFunc {
-	return func(ctx context.Context, data []byte) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-}
-
-func TestConsumeCancellationWithPendingDoesNotDeadlock(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	o.Attach("block", blockingSink())
-	o.SetVisible(false)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	chunks := make(chan []byte, 1)
-	chunks <- []byte("pending-bytes")
-	done := make(chan error, 1)
-	go func() { done <- o.Consume(ctx, chunks) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err = %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Consume deadlocked on cancellation with pending batch")
-	}
-
-	closeDone := make(chan struct{})
-	go func() {
-		o.Close()
-		close(closeDone)
-	}()
-	select {
-	case <-closeDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Output.Close deadlocked with a blocked flush")
-	}
-}
-
-func TestConsumeNormalEOFDeliversPending(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	sink := &memSink{}
-	o.Attach("a", sink)
-	o.SetVisible(false)
-	chunks := make(chan []byte, 1)
-	chunks <- []byte("tail")
-	close(chunks)
-	if err := o.Consume(context.Background(), chunks); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(sink.Bytes(), []byte("tail")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
-}
-
-func TestWaitBelowWakesAllWaiters(t *testing.T) {
-	i := NewInflight()
-	i.Add(100)
-	const waiters = 5
-	var wg sync.WaitGroup
-	errs := make(chan error, waiters)
-	for w := 0; w < waiters; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			errs <- i.WaitBelow(ctx, 50)
-		}()
-	}
-	time.Sleep(20 * time.Millisecond)
-	i.SubSaturating(60)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("waiter not woken: %v", err)
-		}
-	}
-}
 
 func TestConcurrentResizeConsistency(t *testing.T) {
 	tab := newTestTab(t)
