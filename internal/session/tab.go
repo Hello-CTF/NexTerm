@@ -507,12 +507,20 @@ func (t *Tab) ScreenSeq() uint64 {
 
 func (m *Manager) DetachChannel(channelID string) error {
 	m.mu.Lock()
+	_, cleanup := m.detachChannelLocked(channelID)
+	m.mu.Unlock()
+	cleanup()
+	return nil
+}
+
+// detachChannelLocked 在 m.mu 下摘除通道注册并返回解锁后执行的清理动作
+// (producer 关闭、事件发射、ephemeral tab 回收), DetachChannel 与
+// kickSlowConsumer 共用, 保证复查与摘除原子。
+func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	tab := m.tabs[m.channelTabs[channelID]]
 	if tab == nil {
 		delete(m.channelTabs, channelID)
-		m.mu.Unlock()
-		_ = m.bus.CloseChannel(channelID)
-		return nil
+		return "", func() { _ = m.bus.CloseChannel(channelID) }
 	}
 	tab.mu.Lock()
 	subscriber, attached := tab.subscribers[channelID]
@@ -523,22 +531,23 @@ func (m *Manager) DetachChannel(channelID string) error {
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
+	tabID := tab.ID
 	tab.mu.Unlock()
-	m.mu.Unlock()
-	if attached {
-		subscriber.co.teardown(subscriber.producer)
-		_ = subscriber.producer.Close()
-	} else {
-		_ = m.bus.CloseChannel(channelID)
+	return tabID, func() {
+		if attached {
+			subscriber.co.teardown(subscriber.producer)
+			_ = subscriber.producer.Close()
+		} else {
+			_ = m.bus.CloseChannel(channelID)
+		}
+		m.emit(context.Background(), TopicTerminalControl, event)
+		if throttleRecovered {
+			m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
+		}
+		if attached && empty && ephemeral {
+			_ = m.CloseTab(tabID)
+		}
 	}
-	m.emit(context.Background(), TopicTerminalControl, event)
-	if throttleRecovered {
-		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
-	}
-	if attached && empty && ephemeral {
-		return m.CloseTab(tab.ID)
-	}
-	return nil
 }
 
 func (m *Manager) DetachClient(tabID, client string) error {

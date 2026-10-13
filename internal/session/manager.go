@@ -617,10 +617,10 @@ func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
 	m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, InflightBytes: queuedBytes, Version: version})
 }
 
-// kickSlowConsumer 在背压宽限到期后踢出仍不消费的通道: DetachChannel 关闭其
-// hub 通道 (producer.Close), 客户端走既有重连 + DiscardPending + 重放恢复;
-// 其他 subscriber 的队列互不影响。宽限内已 drain 或已 detach 的通道在此
-// 被复查拦下 (slowKicks 项不存在或背压标记已清)。
+// kickSlowConsumer 在背压宽限到期后踢出仍不消费的通道: 复查与摘除在同一把
+// m.mu 下完成 (无复查-drain 竞态窗口), producer.Close 后客户端走既有重连 +
+// DiscardPending + 重放恢复; 其他 subscriber 的队列互不影响。宽限内已 drain
+// 或已 detach 的通道被复查拦下 (slowKicks 项不存在或背压标记已清)。
 func (m *Manager) kickSlowConsumer(channelID string) {
 	m.mu.Lock()
 	if m.slowKicks[channelID] == nil {
@@ -629,13 +629,14 @@ func (m *Manager) kickSlowConsumer(channelID string) {
 	}
 	delete(m.slowKicks, channelID)
 	tabID := m.channelTabs[channelID]
-	stillSlow := tabID != "" && m.throttleChannels[tabID][channelID]
-	m.mu.Unlock()
-	if !stillSlow {
+	if tabID == "" || !m.throttleChannels[tabID][channelID] {
+		m.mu.Unlock()
 		return
 	}
+	_, cleanup := m.detachChannelLocked(channelID)
+	m.mu.Unlock()
 	m.logger.Warn("slow terminal consumer kicked after backpressure grace", "channel", channelID, "tab", tabID, "grace", m.slowConsumerGrace)
-	_ = m.DetachChannel(channelID)
+	cleanup()
 }
 
 func (m *Manager) onDrain(channelID string, queuedBytes int) {
