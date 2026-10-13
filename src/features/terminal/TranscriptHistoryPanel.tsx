@@ -79,7 +79,12 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
-  const [assetId, setAssetId] = useState<string | null>(null);
+  // Open directly on the host of the currently active workspace (device sessions carry their
+  // device/<id> pseudo-asset id); the hosts[0] fallback below stays for host-less contexts.
+  const [assetId, setAssetId] = useState<string | null>(() => {
+    const st = useUi.getState();
+    return st.workspaces.find((w) => w.id === st.activeWorkspaceId)?.assetId ?? null;
+  });
   const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);

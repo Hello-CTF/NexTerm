@@ -22,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   transcriptRemove: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
+  uiState: {
+    pushToast: null as unknown,
+    workspaces: [] as { id: string; assetId?: string }[],
+    activeWorkspaceId: null as string | null,
+  },
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -37,10 +42,12 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: {},
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
-vi.mock("../../app/store", () => ({
-  useUi: (selector: (state: { pushToast: unknown }) => unknown) =>
-    selector({ pushToast: mocks.toast }),
-}));
+vi.mock("../../app/store", () => {
+  mocks.uiState.pushToast = mocks.toast;
+  const useUi = (selector: (state: typeof mocks.uiState) => unknown) => selector(mocks.uiState);
+  useUi.getState = () => mocks.uiState;
+  return { useUi };
+});
 
 import { TranscriptHistoryPanel } from "../../features/terminal/TranscriptHistoryPanel";
 import {
@@ -113,6 +120,8 @@ beforeEach(() => {
   mocks.transcriptRead.mockResolvedValue(readResult([]));
   mocks.transcriptSearch.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
+  mocks.uiState.workspaces = [];
+  mocks.uiState.activeWorkspaceId = null;
 });
 
 afterEach(() => {
@@ -121,6 +130,17 @@ afterEach(() => {
 });
 
 describe("TranscriptHistoryPanel", () => {
+  it("打开时默认选中当前活动工作区的主机而非列表第一台", async () => {
+    const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
+    mocks.assetList.mockResolvedValue([other, ASSET]);
+    mocks.uiState.workspaces = [{ id: "ws-1", assetId: ASSET.id }];
+    mocks.uiState.activeWorkspaceId = "ws-1";
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
+    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
+    expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
+  });
+
   it("shows empty state when the host has no transcripts", async () => {
     mounted = mount(createElement(TranscriptHistoryPanel));
     await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
