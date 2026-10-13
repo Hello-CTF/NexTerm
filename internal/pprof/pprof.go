@@ -10,6 +10,7 @@ import (
 	"net/http/pprof"
 	"net/netip"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -38,6 +39,9 @@ func NormalizeAddr(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", fmt.Errorf("invalid pprof address %q: %w", addr, err)
+	}
+	if portNum, err := strconv.Atoi(port); err != nil || portNum < 0 || portNum > 65535 {
+		return "", fmt.Errorf("invalid pprof address %q: port must be a number between 0 and 65535", addr)
 	}
 	if host == "" {
 		return net.JoinHostPort("127.0.0.1", port), nil

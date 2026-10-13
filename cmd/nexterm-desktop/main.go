@@ -64,17 +64,6 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-desktop: close log:", err)
 		}
 	}()
-	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
-		return 1
-	}
-	defer func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-		_ = pprofServer.Close(shutdownCtx)
-	}()
-
 	assets, err := newDesktopAssets(invocation.WebRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
@@ -148,6 +137,16 @@ func run(args []string) int {
 			},
 		},
 	})
+	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		return 1
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = pprofServer.Close(shutdownCtx)
+	}()
 	service.links.onEmit(func(url string) {
 		wailsApp.Event.Emit(deepLinkEvent, url)
 	})

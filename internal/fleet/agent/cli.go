@@ -171,7 +171,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("run", stderr)
 	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
-	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址 (默认 NEXTERM_PPROF_ADDR, 仅回环)")
+	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址 (默认 NEXTERM_PPROF_ADDR, 仅回环, 显式 0.0.0.0 除外)")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
