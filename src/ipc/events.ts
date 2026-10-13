@@ -49,6 +49,7 @@ export interface TerminalControlEvent {
   version: number;
   cwd?: string;
   durable?: boolean;
+  title?: string;
 }
 
 export class EventVersionGate {

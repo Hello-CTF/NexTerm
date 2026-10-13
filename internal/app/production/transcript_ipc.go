@@ -3,7 +3,10 @@ package production
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -98,7 +101,7 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 		},
 		func() error {
 			return ipc.Register(dispatcher, "transcript_list", func(ctx context.Context, _ *ipc.Call, input transcriptListRequest) ([]transcriptSummaryDTO, error) {
-				if err := store.EnsureID(input.AssetID); err != nil {
+				if err := ensureTranscriptAssetID(input.AssetID); err != nil {
 					return nil, err
 				}
 				rows, err := s.database.TranscriptListByAsset(ctx, input.AssetID, 0)
@@ -192,7 +195,23 @@ type errTranscriptEmptyQuery struct{}
 
 func (errTranscriptEmptyQuery) Error() string { return "transcript search query is empty" }
 
+// Device session transcripts are recorded under the pseudo asset id device/<deviceId>, which is not an asset
+// table record (see session_connect_device), so the ULID rule is applied to the embedded device id instead.
+func ensureTranscriptAssetID(assetID string) error {
+	if deviceID, ok := strings.CutPrefix(assetID, "device/"); ok {
+		if !ids.Valid(deviceID) {
+			return ipc.BadParam(fmt.Errorf("ID 格式不正确"))
+		}
+		return nil
+	}
+	return store.EnsureID(assetID)
+}
+
 func (s *terminalCommandService) assetDeleted(ctx context.Context, assetID string) bool {
+	// Device pseudo assets are not asset table records; a missing AssetGet row must not flag them as deleted.
+	if strings.HasPrefix(assetID, "device/") {
+		return false
+	}
 	row, err := s.database.AssetGet(ctx, assetID)
 	if err != nil {
 		return true

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -244,7 +245,7 @@ func (s *Service) dialShareSupervisor(deviceID string) (*supervisor.Client, erro
 		return nil, ipc.NewError(ipc.CodeDisconnected, "设备代理未上报状态摘要")
 	}
 	return supervisor.NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
-		return s.registry.RequestBridge(ctx, deviceID)
+		return s.registry.RequestBridge(ctx, deviceID, agent.PurposeTerminal)
 	}, digest), nil
 }
 

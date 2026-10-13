@@ -302,7 +302,7 @@ function DesktopLinkCard() {
                 id="sync-pass"
                 type="password"
                 className="nx-input min-w-0 flex-1"
-                placeholder={link?.hasPassword ? "留空则不修改已保存的密码" : "账号密码（用于解锁数据密钥）"}
+                placeholder={link?.hasPassword ? "留空则不修改已保存的密码" : "账号密码"}
                 value={draft.password}
                 autoComplete="new-password"
                 onChange={(e) => updateDraft({ password: e.target.value })}

@@ -64,7 +64,7 @@ func OperationGrantKind(operation string) GrantKind {
 	switch operation {
 	case "send_keys":
 		return GrantKindTerminalWrite
-	case "exec_commands":
+	case "exec_commands", "terminal_create":
 		return GrantKindSessionExec
 	default:
 		return ""

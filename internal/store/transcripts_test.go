@@ -480,6 +480,32 @@ func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
 	}
 }
 
+func TestDurableTabTitleRoundtrip(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	title, err := db.DurableTabTitleGet(ctx, "tab-missing")
+	if err != nil || title != "" {
+		t.Fatalf("missing title = %q err=%v", title, err)
+	}
+	if err := db.DurableTabTitleSet(ctx, "tab-1", "构建机"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DurableTabTitleSet(ctx, "tab-1", "部署终端"); err != nil {
+		t.Fatal(err)
+	}
+	title, err = db.DurableTabTitleGet(ctx, "tab-1")
+	if err != nil || title != "部署终端" {
+		t.Fatalf("title = %q err=%v", title, err)
+	}
+	if err := db.DurableTabTitleDelete(ctx, "tab-1"); err != nil {
+		t.Fatal(err)
+	}
+	title, err = db.DurableTabTitleGet(ctx, "tab-1")
+	if err != nil || title != "" {
+		t.Fatalf("title after delete = %q err=%v", title, err)
+	}
+}
+
 func TestDurableTranscriptOffsetAppendAccumulates(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)

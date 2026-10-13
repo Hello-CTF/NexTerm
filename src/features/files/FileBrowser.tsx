@@ -40,7 +40,6 @@ import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUt
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
-import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { validateEntryName } from "./fileOps";
 import { useCwdFollow } from "./cwdFollow";
 import { dropUploadFiles } from "./transferActions";
@@ -85,10 +84,6 @@ function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
 }
 
 export function FileBrowser({ sessionId }: { sessionId: string }) {
-  const deviceSession = useUi(
-    (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
-  );
-  if (deviceSession) return <DeviceSessionNotice feature="文件浏览" />;
   return <FileBrowserInner sessionId={sessionId} />;
 }
 

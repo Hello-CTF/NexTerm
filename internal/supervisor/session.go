@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,9 @@ type Session struct {
 	pty       *pty.Session
 	recording *os.File
 
+	// exec is set for one-shot non-PTY sessions; pty and recording are nil.
+	exec *execState
+
 	mu          sync.RWMutex
 	dead        bool
 	exitErr     error
@@ -44,6 +48,16 @@ type Session struct {
 	shellCleanup func()
 
 	versionsMu sync.Mutex
+}
+
+// execState holds the process of a non-PTY session. drained tracks the two
+// pipe consumers: cmd.Wait runs only after both pipes are fully read, as
+// os/exec requires.
+type execState struct {
+	cmd     *exec.Cmd
+	stdout  io.ReadCloser
+	stderr  io.ReadCloser
+	drained sync.WaitGroup
 }
 
 const (
@@ -77,6 +91,13 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		inputDone:   make(chan struct{}),
 		deadCh:      make(chan struct{}),
 	}
+}
+
+func newExecSession(supervisor *Supervisor, options CreateOptions, id string, state *execState) *Session {
+	session := newSession(supervisor, options, id, nil, nil)
+	session.exec = state
+	state.drained.Add(2)
+	return session
 }
 
 func newRecoveredSession(supervisor *Supervisor, entry registryEntry) *Session {
@@ -152,6 +173,9 @@ func (s *Session) tryWrite(p []byte) (int, error) {
 }
 
 func (s *Session) writeInput(p []byte, wait bool) (int, error) {
+	if s.exec != nil {
+		return 0, fmt.Errorf("%w: non-PTY exec sessions take no input", ErrUnsupported)
+	}
 	s.mu.RLock()
 	dead := s.dead
 	s.mu.RUnlock()
@@ -279,6 +303,9 @@ func (s *Session) Wait(ctx context.Context) error {
 }
 
 func (s *Session) attach(offset uint64) (*Attachment, error) {
+	if s.exec != nil {
+		return nil, fmt.Errorf("%w: non-PTY exec sessions are not attachable", ErrUnsupported)
+	}
 	replay, err := openRecording(recordingPath(s.supervisor.stateDir, s.entry.ID))
 	if err != nil {
 		return nil, err
@@ -363,6 +390,45 @@ func (s *Session) pump() {
 	s.finish(s.pty.Wait(context.Background()))
 }
 
+// execWait reaps a non-PTY process once both pipes are fully drained by the
+// stream consumer; os/exec forbids Wait before the reads complete.
+func (s *Session) execWait() {
+	defer s.supervisor.sessionDone()
+	s.exec.drained.Wait()
+	s.finish(execExitStatus(s.exec.cmd.Wait()))
+}
+
+// reapExec discards a non-PTY session's output and reaps the process on abort
+// paths where no stream consumer exists to drain the pipes.
+func (s *Session) reapExec() {
+	s.drainExecPipes()
+	s.execWait()
+}
+
+// drainExecPipes starts the two discard consumers that let execWait complete
+// when no stream consumer will ever drain the process pipes.
+func (s *Session) drainExecPipes() {
+	go func() {
+		_, _ = io.Copy(io.Discard, s.exec.stdout)
+		s.exec.drained.Done()
+	}()
+	go func() {
+		_, _ = io.Copy(io.Discard, s.exec.stderr)
+		s.exec.drained.Done()
+	}()
+}
+
+func execExitStatus(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return &base.ExitError{Code: exitErr.ExitCode(), Signal: execSignalName(exitErr.ProcessState)}
+	}
+	return err
+}
+
 func (s *Session) record(chunk []byte) {
 	if _, err := s.recording.Write(chunk); err != nil {
 		s.setRecErr(fmt.Errorf("%w: write supervisor recording: %v", ErrUnavailable, err))
@@ -398,15 +464,26 @@ func (s *Session) finish(waitErr error) {
 		s.entry.Signal = signal
 		now := time.Now()
 		s.entry.FinishedAt = &now
-		persistErr := writeEntry(sessionsRoot(s.supervisor.stateDir), s.entry)
+		// Non-PTY sessions persist nothing: no registry entry, no recording,
+		// and the session is dropped from the supervisor once it exits.
+		var persistErr error
+		if s.exec == nil {
+			persistErr = writeEntry(sessionsRoot(s.supervisor.stateDir), s.entry)
+		}
 		s.mu.Unlock()
-		closeErr := s.recording.Close()
-		if errors.Is(closeErr, os.ErrClosed) {
-			closeErr = nil
+		var closeErr error
+		if s.recording != nil {
+			closeErr = s.recording.Close()
+			if errors.Is(closeErr, os.ErrClosed) {
+				closeErr = nil
+			}
 		}
 		close(s.deadCh)
 		s.stopInput()
 		s.notifyAll()
+		if s.exec != nil {
+			s.supervisor.dropSession(s.entry.ID)
+		}
 		s.supervisor.recordFinishError(errors.Join(persistErr, closeErr))
 	})
 }
@@ -424,8 +501,14 @@ func exitStatus(err error) (code *int, signal string, exitErr error) {
 	return nil, "", nil
 }
 
-func (s *Session) closePTY() {
+func (s *Session) closeProcess() {
 	s.markKilled()
+	if s.exec != nil {
+		if s.exec.cmd.Process != nil {
+			_ = s.exec.cmd.Process.Kill()
+		}
+		return
+	}
 	_ = s.pty.Close()
 }
 

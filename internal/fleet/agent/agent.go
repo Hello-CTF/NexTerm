@@ -29,6 +29,10 @@ const (
 	// agent. The server rejects mismatches with a version_mismatch error.
 	ProtocolVersion = 1
 
+	// PurposeTerminal is the implicit bridge purpose: an empty purpose on the
+	// wire means a terminal bridge, and agents pre-dating purposes serve only it.
+	PurposeTerminal = "terminal"
+
 	configVersion = 1
 
 	PathHealth     = "/healthz"

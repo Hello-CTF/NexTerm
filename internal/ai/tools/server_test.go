@@ -117,3 +117,60 @@ func TestAuditRedactionAndDBTruncation(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 }
+
+func TestTerminalCreateToolExecution(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal})
+	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{"title":"构建机","command":"make -j4"}`)}, nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if len(terminal.createCalls) != 1 || terminal.createCalls[0].Title != "构建机" || terminal.createCalls[0].Command != "make -j4" {
+		t.Fatalf("createCalls=%v", terminal.createCalls)
+	}
+	if !strings.Contains(result.Text, "tab_id=tab-new") {
+		t.Fatalf("result must report the new tab id: %q", result.Text)
+	}
+}
+
+func TestTerminalCreateRequiresSessionScope(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal})
+	result := registry.Execute(context.Background(), "j", Scope{}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{}`)}, nil)
+	if result.OK || len(terminal.createCalls) != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	registry = NewRegistry(Dependencies{})
+	result = registry.Execute(context.Background(), "j", Scope{SessionID: "s"}, Call{ID: "c", Name: "terminal_create", Args: json.RawMessage(`{}`)}, nil)
+	if result.OK || !strings.Contains(result.Text, "终端服务未配置") {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestTerminalRenameToolExecution(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "s" }})
+	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{"title":"部署终端"}`)}, nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if len(terminal.renameCalls) != 1 || terminal.renameCalls[0] != [2]string{"t", "部署终端"} {
+		t.Fatalf("renameCalls=%v", terminal.renameCalls)
+	}
+}
+
+func TestTerminalRenameCrossScopeRejected(t *testing.T) {
+	terminal := &fakeTerminal{}
+	registry := NewRegistry(Dependencies{Terminal: terminal, TabSession: func(string) string { return "s" }})
+	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{"tab_id":"other","title":"x"}`)}, nil)
+	if result.OK || !strings.Contains(result.Text, ErrCrossScope.Error()) || len(terminal.renameCalls) != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	result = registry.Execute(context.Background(), "j", Scope{SessionID: "s"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{"title":"x"}`)}, nil)
+	if result.OK || !strings.Contains(result.Text, "tabId") {
+		t.Fatalf("missing scope tab: result=%+v", result)
+	}
+	if result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{}`)}, nil); result.OK {
+		t.Fatal("missing title must fail validation")
+	}
+}

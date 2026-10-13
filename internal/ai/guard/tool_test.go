@@ -32,7 +32,7 @@ func TestSendKeysUsesActualSubmitBehavior(t *testing.T) {
 
 func TestRegisteredToolGuardCoverage(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify"} {
+	for _, name := range []string{"read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify", "terminal_rename"} {
 		if got := classifyToolForTest(name, `{}`); got.Risk != Safe {
 			t.Errorf("%s: got %v", name, got)
 		}
@@ -42,6 +42,20 @@ func TestRegisteredToolGuardCoverage(t *testing.T) {
 	}
 	if got := classifyToolForTest("db_query", `{"sql":"SELECT 1; DROP DATABASE x"}`); got.Risk != Forbidden {
 		t.Fatalf("multi-statement SQL: %v", got)
+	}
+}
+
+func TestTerminalCreateGuardCoverage(t *testing.T) {
+	t.Parallel()
+	ruling := classifyToolForTest("terminal_create", `{}`)
+	if ruling.Risk != NeedsConfirm || ruling.Kind != KindProcess {
+		t.Fatalf("bare create ruling = %+v", ruling)
+	}
+	if got := classifyToolForTest("terminal_create", `{"command":"ls -la"}`); got.Risk != NeedsConfirm {
+		t.Fatalf("read-only startup command: got %v", got)
+	}
+	if got := classifyToolForTest("terminal_create", `{"command":"rm -rf -- /"}`); got.Risk != Forbidden {
+		t.Fatalf("destructive startup command: got %v", got)
 	}
 }
 

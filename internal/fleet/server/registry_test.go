@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/coder/websocket"
 )
 
@@ -47,11 +48,11 @@ type bridgeOutcome struct {
 func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.CancelFunc, chan bridgeOutcome, string) {
 	t.Helper()
 	controlClient, controlServer := wsPair(t)
-	r.RegisterControl(deviceID, controlServer, "")
+	r.RegisterControl(deviceID, controlServer, "", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bridgeOutcome, 1)
 	go func() {
-		conn, err := r.RequestBridge(ctx, deviceID)
+		conn, err := r.RequestBridge(ctx, deviceID, agent.PurposeTerminal)
 		result <- bridgeOutcome{conn: conn, err: err}
 	}()
 	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -64,8 +65,8 @@ func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.Can
 	if err := json.Unmarshal(raw, &message); err != nil {
 		t.Fatal(err)
 	}
-	if message.Type != "bridge" || message.BridgeID == "" {
-		t.Fatalf("control message = %+v, want bridge request", message)
+	if message.Type != "bridge" || message.BridgeID == "" || message.Purpose != agent.PurposeTerminal {
+		t.Fatalf("control message = %+v, want terminal bridge request", message)
 	}
 	return cancel, result, message.BridgeID
 }
@@ -91,7 +92,7 @@ func TestRegistryAbandonBeforePair(t *testing.T) {
 		t.Fatalf("RequestBridge = %v, want errDeviceOffline", outcome.err)
 	}
 	_, agentConn := wsPair(t)
-	if _, err := r.PairBridge("dev-abandon-pair", bridgeID, newWSConn(agentConn)); err != errBridgeNotPending {
+	if _, err := r.PairBridge("dev-abandon-pair", bridgeID, "", newWSConn(agentConn)); err != errBridgeNotPending {
 		t.Fatalf("PairBridge = %v, want errBridgeNotPending", err)
 	}
 	if count := bridgeIDs(r); count != 0 {
@@ -108,7 +109,7 @@ func TestRegistryAbandonBeforeDeliverClosesConn(t *testing.T) {
 	r := NewRegistry()
 	cancel, result, bridgeID := startBridgeRequest(t, r, "dev-abandon-deliver")
 	agentClient, agentConn := wsPair(t)
-	deliver, err := r.PairBridge("dev-abandon-deliver", bridgeID, newWSConn(agentConn))
+	deliver, err := r.PairBridge("dev-abandon-deliver", bridgeID, "", newWSConn(agentConn))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestRegistryDeliverBeforeAbandon(t *testing.T) {
 	defer cancel()
 	agentClient, agentConn := wsPair(t)
 	conn := newWSConn(agentConn)
-	deliver, err := r.PairBridge("dev-deliver-first", bridgeID, conn)
+	deliver, err := r.PairBridge("dev-deliver-first", bridgeID, "", conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 		cancel, result, bridgeID := startBridgeRequest(t, r, deviceID)
 		agentClient, agentConn := wsPair(t)
 		conn := newWSConn(agentConn)
-		deliver, err := r.PairBridge(deviceID, bridgeID, conn)
+		deliver, err := r.PairBridge(deviceID, bridgeID, "", conn)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -200,5 +201,95 @@ func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 			t.Fatalf("iteration %d: agent bridge connection still open", iteration)
 		}
 		readCancel()
+	}
+}
+
+// Capabilities round-trip: the hello-advertised purposes are stored with the control channel and readable
+// while the device is online; unregistration drops them.
+func TestRegistryCapabilitiesRoundTrip(t *testing.T) {
+	r := NewRegistry()
+	_, controlServer := wsPair(t)
+	r.RegisterControl("dev-caps", controlServer, "digest-1", []string{"terminal", "file"})
+	capabilities, ok := r.Capabilities("dev-caps")
+	if !ok || len(capabilities) != 2 || capabilities[0] != "terminal" || capabilities[1] != "file" {
+		t.Fatalf("Capabilities = %v, %v", capabilities, ok)
+	}
+	if digest, ok := r.StateDigest("dev-caps"); !ok || digest != "digest-1" {
+		t.Fatalf("StateDigest = %q, %v", digest, ok)
+	}
+	capabilities[0] = "mutated"
+	if again, _ := r.Capabilities("dev-caps"); again[0] != "terminal" {
+		t.Fatalf("Capabilities leaked the stored slice: %v", again)
+	}
+	r.UnregisterControl("dev-caps", controlServer)
+	if _, ok := r.Capabilities("dev-caps"); ok {
+		t.Fatal("Capabilities reported for an offline device")
+	}
+}
+
+// Old agents advertise no capabilities: a non-terminal purpose is rejected before any control frame is
+// written, so they never mis-handle a purpose bridge as terminal.
+func TestRequestBridgeRejectsUnadvertisedPurpose(t *testing.T) {
+	r := NewRegistry()
+	controlClient, controlServer := wsPair(t)
+	r.RegisterControl("dev-old", controlServer, "", nil)
+	if _, err := r.RequestBridge(context.Background(), "dev-old", "file"); err != errPurposeUnsupported {
+		t.Fatalf("RequestBridge = %v, want errPurposeUnsupported", err)
+	}
+	if count := pendingIDs(r); count != 0 {
+		t.Fatalf("pending = %d, want 0", count)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, _, err := controlClient.Read(readCtx); err == nil {
+		t.Fatal("a control frame was written for a rejected purpose")
+	}
+}
+
+// An advertised purpose passes the gate and reaches the control channel with the purpose on the wire;
+// pairing then accepts only a bridge hello echoing the same purpose.
+func TestRequestBridgeAdvertisedPurpose(t *testing.T) {
+	r := NewRegistry()
+	controlClient, controlServer := wsPair(t)
+	r.RegisterControl("dev-file", controlServer, "", []string{"terminal", "file"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan bridgeOutcome, 1)
+	go func() {
+		conn, err := r.RequestBridge(ctx, "dev-file", "file")
+		result <- bridgeOutcome{conn: conn, err: err}
+	}()
+	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, raw, err := controlClient.Read(readCtx)
+	readCancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message controlMessage
+	if err := json.Unmarshal(raw, &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.Type != "bridge" || message.Purpose != "file" {
+		t.Fatalf("control message = %+v, want purpose=file bridge request", message)
+	}
+	_, terminalConn := wsPair(t)
+	if _, err := r.PairBridge("dev-file", message.BridgeID, "", newWSConn(terminalConn)); err != errBridgeNotPending {
+		t.Fatalf("PairBridge with terminal echo = %v, want errBridgeNotPending", err)
+	}
+	_, fileConn := wsPair(t)
+	conn := newWSConn(fileConn)
+	deliver, err := r.PairBridge("dev-file", message.BridgeID, "file", conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver()
+	outcome := <-result
+	if outcome.err != nil {
+		t.Fatalf("RequestBridge = %v, want delivered conn", outcome.err)
+	}
+	_ = outcome.conn.Close()
+	r.UnregisterBridge(conn)
+	if count := bridgeIDs(r); count != 0 {
+		t.Fatalf("bridges = %d, want 0", count)
 	}
 }

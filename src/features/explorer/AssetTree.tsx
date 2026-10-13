@@ -673,7 +673,7 @@ function AssetRow({
       role="treeitem"
       aria-level={level}
       tabIndex={0}
-      className={`nx-row nx-row-reserve-actions ${hidden ? "opacity-55" : ""}`}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions ${hidden ? "opacity-55" : ""}`}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
@@ -895,7 +895,7 @@ function GroupNode({
         if (id) onMoveAsset(id, group.id);
       }}
     >
-      <div className="nx-row nx-row-reserve-actions w-full text-neutral-400">
+      <div className="nx-row nx-row-oneline nx-row-reserve-actions w-full text-neutral-400">
         <button
           className="flex min-w-0 flex-auto items-center gap-1 text-left"
           onClick={() => toggleCollapsed(group.id)}

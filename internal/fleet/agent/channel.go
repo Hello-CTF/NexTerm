@@ -45,6 +45,11 @@ type HelloMessage struct {
 	Platform   string `json:"platform"`
 	AppVersion string `json:"app_version"`
 	BridgeID   string `json:"bridge_id,omitempty"`
+	// Purpose echoes the bridge request's purpose, so the server pairs the connection with the right consumer; empty means terminal.
+	Purpose string `json:"purpose,omitempty"`
+	// Capabilities advertises the bridge purposes this agent serves; the server requests a non-terminal
+	// bridge only after the agent advertised it here, so old agents never mis-handle a purpose bridge as terminal.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// StateDigest is the device-side supervisor state directory digest (sha256(identity\x00dir)),
 	// with which the server passes the helper's hello verification for managed attach/create sessions; the digest itself
 	// is not a credential, it only identifies the state directory on the device.
@@ -60,6 +65,7 @@ type serverMessage struct {
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
+	Purpose           string `json:"purpose,omitempty"`
 }
 
 // ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
@@ -81,7 +87,7 @@ type ConfigUpdate struct {
 
 type channelHandlers struct {
 	onConfig func(ConfigUpdate)
-	onBridge func(bridgeID string)
+	onBridge func(bridgeID, purpose string)
 	onRevoke func()
 }
 
@@ -167,7 +173,7 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 			}
 		case "bridge":
 			if handlers.onBridge != nil && message.BridgeID != "" {
-				handlers.onBridge(message.BridgeID)
+				handlers.onBridge(message.BridgeID, message.Purpose)
 			}
 		case "revoke":
 			if handlers.onRevoke != nil {

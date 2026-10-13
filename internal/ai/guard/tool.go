@@ -90,6 +90,11 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return result
 	case "send_keys":
 		return ClassifySendKeys(stringField(fields, "keys"), boolField(fields, "enter"), config.DangerRules)
+	case "terminal_rename":
+		return Allow()
+	case "terminal_create":
+		result := Confirm(KindProcess, "新建终端会启动新的 shell 进程")
+		return Worst(result, ClassifyCommand(stringField(fields, "command"), config.DangerRules))
 	case "docker_exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if matchDangerRule(stringField(fields, "container_id"), config.DangerRules) {

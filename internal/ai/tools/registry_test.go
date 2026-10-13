@@ -24,6 +24,9 @@ func TestRegistryToolsDispatchable(t *testing.T) {
 	if !PlanAllowed("redis_scan") || !PlanAllowed(NotifyTool) || PlanAllowed("exec_commands") || PlanAllowed("write_file") || PlanAllowed(ReminderTool) {
 		t.Fatal("incorrect plan policy")
 	}
+	if PlanAllowed("terminal_create") || PlanAllowed("terminal_rename") {
+		t.Fatal("terminal mutations must stay out of plan mode")
+	}
 }
 
 func TestSchemaValidationBeforeConfirmation(t *testing.T) {

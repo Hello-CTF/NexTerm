@@ -35,6 +35,9 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				}
 				return docker.NewMobyBackend(client), nil
 			}
+			if connected.Asset().Kind == session.KindDevice {
+				return nil, fmt.Errorf("%w: device Docker SDK", base.ErrUnsupported)
+			}
 			transport, err := sessions.Transport(ctx, sessionID)
 			if err != nil {
 				return nil, err

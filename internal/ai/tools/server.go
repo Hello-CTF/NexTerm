@@ -456,6 +456,58 @@ func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) st
 	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
 }
 
+func (r *Registry) terminalCreate(ctx context.Context, scope Scope, raw []byte) Output {
+	var args struct {
+		Title   string `json:"title"`
+		Command string `json:"command"`
+	}
+	if err := decode(raw, &args); err != nil {
+		return Fail(err)
+	}
+	if scope.SessionID == "" {
+		return Fail(errors.New("当前 AI 作用域没有 sessionId"))
+	}
+	terminal, ok := r.deps.Terminal.(CreateTerminal)
+	if !ok {
+		return Fail(errors.New("终端服务未配置"))
+	}
+	created, err := terminal.Create(ctx, scope.SessionID, CreateTerminalOptions{Title: args.Title, Command: args.Command})
+	if err != nil {
+		return Fail(err)
+	}
+	text := fmt.Sprintf("已创建终端标签页，tab_id=%s", created.TabID)
+	if created.Title != "" {
+		text += fmt.Sprintf("，标题「%s」", created.Title)
+	}
+	if args.Command != "" {
+		text += "，启动命令已发送"
+	}
+	text += "；该标签已在会话中打开，可用 send_keys/read_screen 的 tab_id 操作"
+	return OK(text)
+}
+
+func (r *Registry) terminalRename(ctx context.Context, scope Scope, raw []byte) Output {
+	var args struct {
+		TabID string `json:"tab_id"`
+		Title string `json:"title"`
+	}
+	if err := decode(raw, &args); err != nil {
+		return Fail(err)
+	}
+	tabID, err := r.resolveTab(scope, args.TabID)
+	if err != nil {
+		return Fail(err)
+	}
+	terminal, ok := r.deps.Terminal.(RenameTerminal)
+	if !ok {
+		return Fail(errors.New("终端服务未配置"))
+	}
+	if err := terminal.Rename(ctx, tabID, args.Title); err != nil {
+		return Fail(err)
+	}
+	return OK(fmt.Sprintf("已将终端标签页 %s 重命名为「%s」", tabID, args.Title))
+}
+
 const (
 	maxSendKeysWaitMS = 10_000
 	busyReturnGraceMS = 1_500

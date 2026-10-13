@@ -27,6 +27,7 @@ import {
   countBlockedTerminals,
   isSessionReconnectPending,
   reconnectSessionAndWait,
+  sanitizeRemoteTabTitle,
   sessionStatusText,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
@@ -60,7 +61,7 @@ import {
   type KeybindingActionId,
 } from "./keybindings";
 import { connectWithHostKeyConfirm } from "./hostKeys";
-import { assetApi, sessionApi, syncApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
+import { assetApi, sessionApi, syncApi, terminalApi, vaultApi, type Asset, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { TRANSPORT, WEB } from "../ipc/env";
 import {
@@ -1699,7 +1700,12 @@ function PaneGroup({
   const renameTab = async (id: string, title: string) => {
     const next = await promptText("重命名标签：", title);
     if (next === null || !next.trim()) return;
-    updateTab(id, { title: next.trim(), renamedByUser: true });
+    const trimmed = sanitizeRemoteTabTitle(next);
+    if (!trimmed) return;
+    updateTab(id, { title: trimmed, renamedByUser: true });
+    // Kernel-backed tabs also persist the title backend-side so other attached clients converge (best-effort).
+    const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
+    if (tabId) void terminalApi.renameTab(tabId, trimmed).catch(() => undefined);
   };
 
   const openTabMenu = (t: (typeof pane.tabs)[number], x: number, y: number) => {

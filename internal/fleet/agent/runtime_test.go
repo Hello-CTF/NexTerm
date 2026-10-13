@@ -695,3 +695,180 @@ func TestEffectiveAppVersion(t *testing.T) {
 		t.Fatalf("release build must report the build version, got %q", got)
 	}
 }
+
+// bridgeProbe routes the fake fleet server's WS connections by hello: control channels get hello_ok plus
+// the given bridge request, and bridge dials are captured (hello recorded) then held open.
+type bridgeProbe struct {
+	request      serverMessage
+	controlHello chan HelloMessage
+	bridgeHello  chan HelloMessage
+}
+
+func newBridgeProbe(request serverMessage) *bridgeProbe {
+	return &bridgeProbe{
+		request:      request,
+		controlHello: make(chan HelloMessage, 4),
+		bridgeHello:  make(chan HelloMessage, 4),
+	}
+}
+
+func (p *bridgeProbe) control(t *testing.T) func(conn *websocket.Conn, hello HelloMessage) {
+	return func(conn *websocket.Conn, hello HelloMessage) {
+		if hello.BridgeID != "" {
+			p.bridgeHello <- hello
+		} else {
+			p.controlHello <- hello
+		}
+		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok"}); err != nil {
+			t.Error(err)
+			return
+		}
+		if hello.BridgeID == "" && p.request.Type != "" {
+			if err := writeServerMessage(conn, p.request); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+		for {
+			if _, _, err := conn.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// runBridgeProbe starts the runtime against the probe server and returns a stop function that always
+// leaves a cleanly stopped runtime, including on t.Fatal.
+func runBridgeProbe(t *testing.T, agentRuntime *Runtime) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v, want clean stop", err)
+		}
+	})
+}
+
+func newBridgeProbeRuntime(t *testing.T, server *fakeFleetServer) *Runtime {
+	t.Helper()
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	return newTestRuntime(t, dataDir, entries, &fakeManager{})
+}
+
+// The terminal path is byte-identical to before purposes existed: the bridge is dialed and the hello
+// echoes the purpose, with capabilities advertising exactly the terminal service.
+func TestRuntimeRoutesTerminalBridge(t *testing.T) {
+	probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-t1", Purpose: PurposeTerminal})
+	server := newFakeFleetServer(t)
+	server.setWSControl(probe.control(t))
+	runBridgeProbe(t, newBridgeProbeRuntime(t, server))
+
+	select {
+	case hello := <-probe.bridgeHello:
+		if hello.BridgeID != "bridge-t1" || hello.Purpose != PurposeTerminal {
+			t.Fatalf("bridge hello = %+v, want terminal purpose echo", hello)
+		}
+		if len(hello.Capabilities) != 1 || hello.Capabilities[0] != PurposeTerminal {
+			t.Fatalf("bridge hello capabilities = %v, want [terminal]", hello.Capabilities)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("terminal bridge was not dialed")
+	}
+}
+
+// The terminal gate still applies to purpose-routed requests: with terminal access disabled the bridge
+// request is dropped before any dial.
+func TestRuntimeTerminalBridgeGateUnchanged(t *testing.T) {
+	probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-g1", Purpose: PurposeTerminal})
+	server := newFakeFleetServer(t)
+	server.setWSControl(probe.control(t))
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	config := writeRuntimeConfig(t, dataDir, entries, true)
+	config.TerminalEnabled = false
+	if err := StoreAt(dataDir).Save(config); err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime := newTestRuntime(t, dataDir, entries, &fakeManager{})
+	runBridgeProbe(t, agentRuntime)
+
+	// The bridge request is written right after hello_ok on the same connection, so once the control hello
+	// arrived the request is already on its way.
+	select {
+	case <-probe.controlHello:
+	case <-time.After(15 * time.Second):
+		t.Fatal("control channel did not come up")
+	}
+	select {
+	case hello := <-probe.bridgeHello:
+		t.Fatalf("terminal-disabled bridge was dialed: %+v", hello)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// A bridge request for a purpose with no registered handler is logged and dropped before any dial,
+// leaving the control channel and runtime untouched.
+func TestRuntimeDropsUnhandledPurposeBridge(t *testing.T) {
+	probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-u1", Purpose: "file"})
+	server := newFakeFleetServer(t)
+	server.setWSControl(probe.control(t))
+	runBridgeProbe(t, newBridgeProbeRuntime(t, server))
+
+	select {
+	case <-probe.controlHello:
+	case <-time.After(15 * time.Second):
+		t.Fatal("control channel did not come up")
+	}
+	select {
+	case hello := <-probe.bridgeHello:
+		t.Fatalf("unhandled purpose bridge was dialed: %+v", hello)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// A registered purpose handler is invoked under the runtime's loopWg bookkeeping, the runtime itself never
+// dials for it, and the purpose joins the advertised capabilities.
+func TestRuntimePurposeHandlerServesBridge(t *testing.T) {
+	probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-f1", Purpose: "file"})
+	server := newFakeFleetServer(t)
+	server.setWSControl(probe.control(t))
+	agentRuntime := newBridgeProbeRuntime(t, server)
+	handled := make(chan string, 1)
+	agentRuntime.RegisterPurposeHandler("file", func(ctx context.Context, bridgeID string) error {
+		handled <- bridgeID
+		return nil
+	})
+	runBridgeProbe(t, agentRuntime)
+
+	select {
+	case hello := <-probe.controlHello:
+		var terminal, file bool
+		for _, capability := range hello.Capabilities {
+			terminal = terminal || capability == PurposeTerminal
+			file = file || capability == "file"
+		}
+		if !terminal || !file {
+			t.Fatalf("control hello capabilities = %v, want terminal and file", hello.Capabilities)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("control channel did not come up")
+	}
+	select {
+	case bridgeID := <-handled:
+		if bridgeID != "bridge-f1" {
+			t.Fatalf("handled bridge = %q, want bridge-f1", bridgeID)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("purpose handler was not invoked")
+	}
+	select {
+	case hello := <-probe.bridgeHello:
+		t.Fatalf("runtime dialed a purpose bridge itself: %+v", hello)
+	case <-time.After(500 * time.Millisecond):
+	}
+}

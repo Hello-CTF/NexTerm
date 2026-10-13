@@ -79,7 +79,7 @@ func TestDialDeviceBridgeRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1")
+	conn, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestDialDeviceBridgeReLoginAfterRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1")
+	conn, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestDialDeviceBridgeForbiddenPassthrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.failNextDial.Store(true)
-	if _, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1"); err == nil {
+	if _, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1", ""); err == nil {
 		t.Fatal("forbidden dial must fail")
 	} else if errors.Is(err, errSessionExpired) {
 		t.Fatalf("403 must not be misclassified as session expiry: %v", err)
@@ -151,7 +151,7 @@ func TestDialDeviceBridgeWithoutSessionIs401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.dialDeviceBridge(context.Background(), "dev-1"); !errors.Is(err, errSessionExpired) {
+	if _, err := client.dialDeviceBridge(context.Background(), "dev-1", ""); !errors.Is(err, errSessionExpired) {
 		t.Fatalf("dial without login = %v, want errSessionExpired", err)
 	}
 }

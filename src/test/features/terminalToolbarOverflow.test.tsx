@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
@@ -212,11 +213,11 @@ describe("terminal toolbar overflow", () => {
     );
     expect(encodingBadge).toBeUndefined();
     const search = toolbar.querySelector<HTMLButtonElement>('button[title^="搜索终端内容"]');
-    expect(search?.className).toContain("max-[560px]:hidden");
+    expect(search?.className).toContain("@max-[560px]:hidden");
     const blocks = [...toolbar.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
       b.textContent?.includes("命令块"),
     );
-    expect(blocks?.className).toContain("max-[560px]:hidden");
+    expect(blocks?.className).toContain("@max-[560px]:hidden");
     expect(overflowButton().className).not.toContain("hidden");
   });
 
@@ -283,5 +284,29 @@ describe("terminal toolbar overflow", () => {
     keyDown(document.activeElement as Element, "Escape");
     await flush();
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("collapses the toolbar by pane width so the overflow button stays inside the pane", async () => {
+    await flush();
+    const pane = mounted!.container.querySelector(".nx-pane");
+    expect(pane?.className).toContain("@container/term");
+
+    const toolbar = mounted!.container.querySelector(".nx-toolbar");
+    if (!toolbar) throw new Error("toolbar not found");
+    const collapsible = [
+      toolbar.querySelector('button[title^="搜索终端内容"]'),
+      toolbar.querySelector('button[title="定位到上一条命令"]'),
+      toolbar.querySelector('button[title="定位到下一条命令"]'),
+      [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("命令块")),
+      toolbar.querySelector(".nx-divider-v"),
+    ];
+    for (const el of collapsible) {
+      expect(el?.className).toContain("@max-[560px]:hidden");
+    }
+    expect(overflowButton().className).not.toContain("hidden");
+
+    const css = readFileSync("src/styles.css", "utf8");
+    const block = css.match(/@container term \(max-width: 560px\) \{([\s\S]*?)\n\}/);
+    expect(block?.[1]).toContain("overflow-x: auto");
   });
 });

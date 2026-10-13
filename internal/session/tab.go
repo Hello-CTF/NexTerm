@@ -71,6 +71,7 @@ type Tab struct {
 	exited          bool
 	closed          bool
 	destroying      bool
+	title           string
 	cancelPump      context.CancelFunc
 	cwdTracker      *shellintegr.Tracker
 	cwd             string
@@ -107,6 +108,7 @@ func (t *Tab) infoLocked() TabInfo {
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
+		Title: t.title,
 	}
 }
 
@@ -118,6 +120,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
+		Title: t.title,
 	}
 }
 
@@ -139,8 +142,11 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if !validSize(options.Cols, options.Rows) {
 		return TabInfo{}, ErrInvalidSize
 	}
-	if options.ChannelID == "" {
+	if options.ChannelID == "" && !options.Detached {
 		return TabInfo{}, hub.ErrInvalidChannel
+	}
+	if options.ChannelID != "" && options.Detached {
+		return TabInfo{}, ErrInvalidOptions
 	}
 	if m.terminals == nil {
 		return TabInfo{}, ErrUnsupported
@@ -212,6 +218,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = durableAttachment.Kill(context.Background())
 			m.deleteDurableTranscriptOffset(tabID)
+			m.deleteDurableTabTitle(tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -307,6 +314,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				tab.gridRevision = gridRevision
 			}
 		}
+		if title := m.durableTabTitle(tabID); title != "" {
+			tab.title = title
+		}
 	}
 	tab.feedGate <- struct{}{}
 	if err := m.initGrid(tab, channel, generation); err != nil {
@@ -342,9 +352,18 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 
-	info, err := m.attach(ctx, tab, AttachOptions{ClientID: options.ClientID, ChannelID: options.ChannelID}, false)
-	if err != nil {
-		return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
+	var info TabInfo
+	if options.Detached {
+		tab.mu.Lock()
+		info = tab.infoLocked()
+		event := tab.controlEventLocked()
+		tab.mu.Unlock()
+		m.emit(ctx, TopicTerminalControl, event)
+	} else {
+		info, err = m.attach(ctx, tab, AttachOptions{ClientID: options.ClientID, ChannelID: options.ChannelID}, false)
+		if err != nil {
+			return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
+		}
 	}
 	m.transcriptResize(ctx, tab, cols, rows)
 	if kind == KindWinRM {
@@ -357,6 +376,113 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable == nil && startupCommand != "" && startupCommandSupported(kind) {
 		_ = writeAll(channel, []byte(startupCommand+"\n"))
 	}
+	return info, nil
+}
+
+// CreateTabOptions describes a detached terminal tab opened on behalf of a
+// client that is not (yet) attached, such as an AI-created terminal.
+type CreateTabOptions struct {
+	SessionID string
+	Cols      uint32
+	Rows      uint32
+	Title     string
+	// Command is an optional startup command written to the new shell; only
+	// kinds with startupCommandSupported accept it, others reject the call.
+	Command string
+}
+
+// CreateTab opens a detached terminal tab on the session with the same
+// durable/PTY routing the attach flow uses: local sessions get an ephemeral
+// tab, device sessions a daemon-durable tab, everything else a plain PTY tab.
+// The tab starts with no subscribers; clients attach via AttachTab.
+func (m *Manager) CreateTab(ctx context.Context, options CreateTabOptions) (TabInfo, error) {
+	session, err := m.Session(options.SessionID)
+	if err != nil {
+		return TabInfo{}, err
+	}
+	kind := session.Asset().Kind
+	if options.Command != "" && !startupCommandSupported(kind) {
+		return TabInfo{}, ErrUnsupported
+	}
+	var title string
+	if options.Title != "" {
+		title, err = normalizeTabTitle(options.Title)
+		if err != nil {
+			return TabInfo{}, err
+		}
+	}
+	cols, rows := options.Cols, options.Rows
+	if cols == 0 || rows == 0 {
+		cols, rows = 80, 24
+	}
+	open := OpenTabOptions{
+		SessionID: options.SessionID, Cols: cols, Rows: rows,
+		Ephemeral: kind == KindLocal, Detached: true,
+	}
+	if kind == KindDevice {
+		open.Durable = &DurableTabOptions{}
+	}
+	info, err := m.OpenTab(ctx, open)
+	if err != nil {
+		return TabInfo{}, err
+	}
+	if title != "" {
+		info, err = m.RenameTab(ctx, info.ID, title)
+		if err != nil {
+			return TabInfo{}, errors.Join(err, m.CloseTab(info.ID))
+		}
+	}
+	if options.Command != "" {
+		tab, err := m.Tab(info.ID)
+		if err != nil {
+			return TabInfo{}, err
+		}
+		tab.mu.Lock()
+		channel := tab.channel
+		exited := tab.exited
+		tab.mu.Unlock()
+		if exited || channel == nil {
+			return TabInfo{}, errors.Join(ErrTabClosed, m.CloseTab(info.ID))
+		}
+		if err := writeAll(channel, []byte(options.Command+"\n")); err != nil {
+			return TabInfo{}, errors.Join(err, m.CloseTab(info.ID))
+		}
+	}
+	return info, nil
+}
+
+// RenameTab sets the custom title of a terminal tab and emits a control event
+// so every attached client refreshes. Durable tabs persist the title and
+// restore it on recovery; other tabs keep it in memory for their lifetime.
+func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, error) {
+	title, err := normalizeTabTitle(title)
+	if err != nil {
+		return TabInfo{}, err
+	}
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return TabInfo{}, err
+	}
+	tab.session.mu.Lock()
+	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx))
+	tab.session.mu.Unlock()
+	if !allowed {
+		return TabInfo{}, ErrForbidden
+	}
+	tab.mu.Lock()
+	if tab.closed || tab.destroying {
+		tab.mu.Unlock()
+		return TabInfo{}, ErrTabClosed
+	}
+	tab.title = title
+	event := tab.controlEventLocked()
+	info := tab.infoLocked()
+	durable := tab.durable != nil
+	tab.mu.Unlock()
+	if durable {
+		m.persistDurableTabTitle(tabID, title)
+	}
+	m.emit(ctx, TopicTerminalControl, event)
 	return info, nil
 }
 
@@ -945,6 +1071,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			return err
 		}
 		m.deleteDurableTranscriptOffset(id)
+		m.deleteDurableTabTitle(id)
 	} else {
 		m.mu.Unlock()
 	}

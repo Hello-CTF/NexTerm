@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -11,6 +12,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
+
+// DeviceBridgeDialFunc opens one bridge of the given purpose to a device, keyed by device ID:
+// "terminal" reaches the supervisor helper, "file"/"forward" reach the agent's purpose servers.
+type DeviceBridgeDialFunc func(ctx context.Context, deviceID, purpose string) (net.Conn, error)
 
 // DeviceConnectorConfig is the dialing surface for device sessions, injected by the wiring layer per host: Dial opens a
 // bridge to the device supervisor helper (desktop = WS bridge via the logged-in server account, server = fleet registry
@@ -20,7 +25,7 @@ import (
 // attempt at the server HTTP edge). Reconnects run in a background ctx where userID is unavailable, so the IPC layer
 // writes the authenticated user into asset options as the fallback.
 type DeviceConnectorConfig struct {
-	Dial      device.DialFunc
+	Dial      DeviceBridgeDialFunc
 	Digest    func(ctx context.Context, deviceID string) (string, error)
 	Authorize func(ctx context.Context, userID, deviceID string) error
 }
@@ -53,7 +58,10 @@ func (c *productionConnector) connectDevice(ctx context.Context, options product
 	if err != nil {
 		return nil, err
 	}
-	return device.New(options.DeviceID, digest, config.Dial, generation), nil
+	dial := func(ctx context.Context, purpose string) (net.Conn, error) {
+		return config.Dial(ctx, options.DeviceID, purpose)
+	}
+	return device.New(options.DeviceID, digest, dial, generation), nil
 }
 
 // productionDurableResolver routes durable providers by transport: device transports connect directly to the device

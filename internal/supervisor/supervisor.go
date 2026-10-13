@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -101,68 +102,113 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	s.mu.Unlock()
 	defer s.creates.Done()
 
-	dir := sessionDir(s.stateDir, id)
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("%w: artifacts for %s", ErrAlreadyExists, id)
-		}
-		return nil, fmt.Errorf("create supervisor session directory: %w", err)
-	}
+	usePTY := options.usePTY()
 	abort := func(cause error) (*Session, error) {
 		if cleanupErr := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); cleanupErr != nil {
 			return nil, errors.Join(cause, cleanupErr)
 		}
 		return nil, cause
 	}
-	recording, err := os.OpenFile(recordingPath(s.stateDir, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return abort(fmt.Errorf("create supervisor recording: %w", err))
-	}
-	launch, wrapped := wrapShellIntegration(options.Command, options.Env)
-	command, commandEnv := options.Command, options.Env
-	if wrapped {
-		command, commandEnv = launch.command, launch.env
-	}
-	ptySession, err := ptyStart(s.ctx, pty.Config{
-		Path: command[0],
-		Args: command[1:],
-		Dir:  options.Dir,
-		Env:  sessionEnv(commandEnv),
-		Cols: options.Cols,
-		Rows: options.Rows,
-		ID:   id,
-	})
-	if err != nil {
-		if wrapped {
-			launch.cleanup()
+	var session *Session
+	var recording *os.File
+	if usePTY {
+		dir := sessionDir(s.stateDir, id)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return nil, fmt.Errorf("%w: artifacts for %s", ErrAlreadyExists, id)
+			}
+			return nil, fmt.Errorf("create supervisor session directory: %w", err)
 		}
-		_ = recording.Close()
-		return abort(err)
-	}
-	session := newSession(s, options, id, ptySession, recording)
-	if wrapped {
-		session.shellCleanup = launch.cleanup
-	}
-	if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
-		session.closePTY()
-		session.cleanupShell()
-		_ = recording.Close()
-		return abort(err)
+		recording, err = os.OpenFile(recordingPath(s.stateDir, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return abort(fmt.Errorf("create supervisor recording: %w", err))
+		}
+		launch, wrapped := wrapShellIntegration(options.Command, options.Env)
+		command, commandEnv := options.Command, options.Env
+		if wrapped {
+			command, commandEnv = launch.command, launch.env
+		}
+		ptySession, err := ptyStart(s.ctx, pty.Config{
+			Path: command[0],
+			Args: command[1:],
+			Dir:  options.Dir,
+			Env:  sessionEnv(commandEnv),
+			Cols: options.Cols,
+			Rows: options.Rows,
+			ID:   id,
+		})
+		if err != nil {
+			if wrapped {
+				launch.cleanup()
+			}
+			_ = recording.Close()
+			return abort(err)
+		}
+		session = newSession(s, options, id, ptySession, recording)
+		if wrapped {
+			session.shellCleanup = launch.cleanup
+		}
+		if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
+			session.closeProcess()
+			session.cleanupShell()
+			_ = recording.Close()
+			return abort(err)
+		}
+	} else {
+		// Shell integration wraps interactive shells for PTY rendering; a
+		// non-PTY exec runs the argv exactly as given.
+		state, err := execStart(s.ctx, options.Command, options.Dir, sessionEnv(options.Env))
+		if err != nil {
+			return abort(err)
+		}
+		session = newExecSession(s, options, id, state)
 	}
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
-		session.closePTY()
+		session.closeProcess()
 		session.cleanupShell()
-		_ = recording.Close()
+		if recording != nil {
+			_ = recording.Close()
+		}
+		if !usePTY {
+			s.pumps.Add(1)
+			go session.reapExec()
+		}
 		return abort(ErrClosed)
 	}
 	s.sessions[id] = session
-	s.pumps.Add(2)
+	if usePTY {
+		s.pumps.Add(2)
+	} else {
+		s.pumps.Add(1)
+	}
 	s.mu.Unlock()
-	go session.pump()
-	go session.inputPump()
+	if usePTY {
+		go session.pump()
+		go session.inputPump()
+	} else {
+		go session.execWait()
+	}
 	return session, nil
+}
+
+func execStart(ctx context.Context, command []string, dir string, env []string) (*execState, error) {
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = dir
+	cmd.Env = env
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &execState{cmd: cmd, stdout: stdout, stderr: stderr}, nil
 }
 
 func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error) {
@@ -203,6 +249,11 @@ func (s *Supervisor) List(ctx context.Context) ([]Info, error) {
 	s.mu.Lock()
 	sessions := make([]*Session, 0, len(s.sessions))
 	for _, session := range s.sessions {
+		// Non-PTY exec sessions are one-shot and never durable, so the
+		// durable inventory List reports hides them.
+		if session.exec != nil {
+			continue
+		}
 		sessions = append(sessions, session)
 	}
 	s.mu.Unlock()
@@ -323,6 +374,12 @@ func (s *Supervisor) killByAttempt(ctx context.Context, id, attempt string) erro
 	return nil
 }
 
+func (s *Supervisor) dropSession(id string) {
+	s.mu.Lock()
+	delete(s.sessions, id)
+	s.mu.Unlock()
+}
+
 func (s *Supervisor) artifactsPresent(id string) (bool, error) {
 	if !ids.Valid(id) {
 		return false, fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
@@ -401,7 +458,7 @@ func (s *Session) killAndWait(ctx context.Context, timeout time.Duration) error 
 	dead := s.dead
 	s.mu.RUnlock()
 	if !dead {
-		s.closePTY()
+		s.closeProcess()
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

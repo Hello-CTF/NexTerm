@@ -3,6 +3,7 @@ package fleetserver
 import (
 	"net/http"
 
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/coder/websocket"
 )
@@ -16,7 +17,20 @@ import (
 func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request) {
 	identity := identityFrom(r)
 	deviceID := r.PathValue("id")
-	if _, err := s.authorize(r.Context(), identity, deviceID, "terminal_open", auditKindDeviceTerminal); err != nil {
+	purpose := r.URL.Query().Get("purpose")
+	action := "terminal_open"
+	switch purpose {
+	case "", agent.PurposeTerminal:
+		purpose = agent.PurposeTerminal
+	case "file":
+		action = "file_open"
+	case "forward":
+		action = "forward_open"
+	default:
+		writeFleetJSON(w, http.StatusBadRequest, ipc.Failure(ipc.NewError(ipc.CodeBadParam, "未知的桥接用途")))
+		return
+	}
+	if _, err := s.authorize(r.Context(), identity, deviceID, action, auditKindDeviceTerminal); err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
@@ -26,14 +40,14 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !desired.TerminalEnabled {
-		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "设备已关闭终端访问")))
+		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "设备已关闭远程访问")))
 		return
 	}
 	user, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		return
 	}
-	bridge, err := s.registry.RequestBridge(r.Context(), deviceID)
+	bridge, err := s.registry.RequestBridge(r.Context(), deviceID, purpose)
 	if err != nil {
 		_ = user.Close(websocket.StatusPolicyViolation, "device bridge unavailable")
 		return

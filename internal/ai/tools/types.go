@@ -160,6 +160,28 @@ type Terminal interface {
 	Write(context.Context, string, []byte) error
 }
 
+type CreateTerminalOptions struct {
+	Title   string
+	Command string
+}
+
+type CreatedTab struct {
+	TabID string
+	Title string
+}
+
+// CreateTerminal is the optional Terminal extension opening a new terminal
+// tab on a session. The session terminal implements it; terminals without tab
+// management simply do not, and the tool stays disabled.
+type CreateTerminal interface {
+	Create(context.Context, string, CreateTerminalOptions) (CreatedTab, error)
+}
+
+// RenameTerminal is the optional Terminal extension renaming a terminal tab.
+type RenameTerminal interface {
+	Rename(context.Context, string, string) error
+}
+
 // CommandStateTerminal is the optional Terminal extension exposing OSC 133
 // command lifecycle state. The session terminal implements it; terminals
 // without command tracking simply do not, and callers fall back to

@@ -57,6 +57,59 @@ func TestProductionAttachTabLocalTabEndsWithAppRestart(t *testing.T) {
 	}
 }
 
+func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
+	dataDir := durableTestDataDir(t)
+	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	connected := connectLocalTerminalTest(t, production)
+
+	createResponse := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"`+connected.ID+`","title":"构建机"}`, "", "client-a")
+	var created attachedTabDTO
+	requireStoreTestResponse(t, createResponse, &created)
+	if created.TabID == "" || created.Title != "构建机" || created.SessionID != connected.ID {
+		t.Fatalf("created = %+v", created)
+	}
+
+	renameResponse := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"部署终端"}`, "", "client-a")
+	var renamed attachedTabDTO
+	requireStoreTestResponse(t, renameResponse, &renamed)
+	if renamed.TabID != created.TabID || renamed.Title != "部署终端" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+
+	listResponse := dispatchDurableTest(t, production, "terminal_list", `null`, "", "client-a")
+	var live []liveTabDTO
+	requireStoreTestResponse(t, listResponse, &live)
+	found := false
+	for _, tab := range live {
+		if tab.TabID == created.TabID {
+			found = true
+			if tab.Title != "部署终端" {
+				t.Fatalf("listed tab = %+v", tab)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("created tab missing from terminal_list: %+v", live)
+	}
+
+	badTitle := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"`+created.TabID+`","title":"  "}`, "", "client-a")
+	if badTitle.OK || badTitle.Error == nil || badTitle.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("blank title rename = %+v, want bad_param", badTitle)
+	}
+	missing := dispatchDurableTest(t, production, "terminal_rename_tab", `{"tabId":"missing","title":"x"}`, "", "client-a")
+	if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("missing tab rename = %+v, want not_found", missing)
+	}
+	unsupported := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"`+connected.ID+`","command":"ls"}`, "", "client-a")
+	if unsupported.OK || unsupported.Error == nil || unsupported.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("local command create = %+v, want unsupported", unsupported)
+	}
+	missingSession := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"missing"}`, "", "client-a")
+	if missingSession.OK || missingSession.Error == nil || missingSession.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("missing session create = %+v, want not_found", missingSession)
+	}
+}
+
 func TestProductionSessionReconnectDoesNotAutoTrustChangedHostKey(t *testing.T) {
 	server := newHostKeyTestServer(t)
 	production := newHostKeyTestProduction(t)

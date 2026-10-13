@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -23,5 +24,9 @@ func envKeyEqual(existing, key string) bool {
 }
 
 func killSignalName() string {
+	return ""
+}
+
+func execSignalName(*os.ProcessState) string {
 	return ""
 }

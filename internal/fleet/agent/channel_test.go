@@ -194,3 +194,16 @@ func TestDialBridgeCarriesBinaryFrames(t *testing.T) {
 
 func boolPointer(value bool) *bool    { return &value }
 func int64Pointer(value int64) *int64 { return &value }
+
+// Old-peer compatibility: control frames carrying fields unknown to this build parse without error;
+// the purpose rides along with the bridge request for routing.
+func TestServerMessageIgnoresUnknownFields(t *testing.T) {
+	var message serverMessage
+	payload := `{"type":"bridge","bridge_id":"b1","purpose":"file","future_field":123}`
+	if err := json.Unmarshal([]byte(payload), &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.BridgeID != "b1" || message.Purpose != "file" {
+		t.Fatalf("serverMessage = %+v", message)
+	}
+}

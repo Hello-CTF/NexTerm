@@ -108,6 +108,37 @@ describe("BackgroundSessions hides local terminals", () => {
     view.unmount();
   });
 
+  it("shows a custom backend title and restores it on takeover", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-titled", sessionKind: "ssh", sessionName: "远程 SSH", title: "构建机" }),
+    ]);
+    seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => {
+        expect(view?.container.textContent).toContain("构建机");
+      });
+      const button = [...view.container.querySelectorAll("button")].find(
+        (candidate) => candidate.textContent?.trim() === "接管",
+      );
+      expect(button).toBeDefined();
+      await act(async () => {
+        button?.click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-titled");
+      expect(added?.title).toBe("构建机");
+      expect(added?.renamedByUser).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("旧加载响应不会覆盖新一轮刷新", async () => {
     vi.useFakeTimers();
     const first = deferred<LiveTabInfo[]>();

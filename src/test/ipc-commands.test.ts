@@ -58,6 +58,26 @@ describe("desktop 命令 envelope", () => {
     });
   });
 
+  it("重命名与新建终端命令使用扁平参数", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { tabId: "tab-1", title: "构建机" } });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await expect(terminalApi.renameTab("tab-1", "构建机")).resolves.toEqual({
+      tabId: "tab-1",
+      title: "构建机",
+    });
+    expect(requestAt(0)).toEqual({
+      cmd: "terminal_rename_tab",
+      args: { tabId: "tab-1", title: "构建机" },
+    });
+
+    await terminalApi.createTab("session-1", { title: "部署", command: "make" });
+    expect(requestAt(1)).toEqual({
+      cmd: "terminal_create_tab",
+      args: { sessionId: "session-1", title: "部署", command: "make" },
+    });
+  });
+
   it("SSH 诊断命令使用 nested args 合同", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
     const { sessionApi, assetApi } = await import("../ipc/commands");

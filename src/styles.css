@@ -2277,6 +2277,35 @@
   }
 }
 
+@container term (max-width: 560px) {
+  .nx-toolbar {
+    gap: 4px;
+    padding: 0 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nx-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nx-toolbar > * {
+    flex-shrink: 0;
+  }
+
+  .nx-toolbar > .nx-toolbar-title {
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nx-toolbar > .nx-spacer {
+    min-width: 0;
+  }
+}
+
 @media (pointer: coarse), (max-width: 560px) {
   .nx-terminal-keys {
     display: flex;
@@ -2339,6 +2368,10 @@
   .nx-row {
     flex-wrap: wrap;
     row-gap: 4px;
+  }
+
+  .nx-row-oneline {
+    flex-wrap: nowrap;
   }
 
   .nx-tab,

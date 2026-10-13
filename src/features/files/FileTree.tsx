@@ -36,7 +36,6 @@ import {
   parentOf,
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
-import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
@@ -87,10 +86,6 @@ function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
 }
 
 export function FileTree({ sessionId }: { sessionId: string }) {
-  const deviceSession = useUi(
-    (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
-  );
-  if (deviceSession) return <DeviceSessionNotice feature="文件浏览" />;
   return <FileTreeInner sessionId={sessionId} />;
 }
 
@@ -814,7 +809,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
               aria-selected={isSel}
               tabIndex={0}
               data-drop-path={isDir ? entry.path : undefined}
-              className={`nx-row nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
+              className={`nx-row nx-row-oneline nx-row-reserve-actions ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => {
                 setSelected(entry.path);

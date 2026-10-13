@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -61,6 +63,8 @@ type Runtime struct {
 	desired      ConfigUpdate
 	serviceState ServiceState
 	currentURL   string
+	// purposeHandlers serves non-terminal bridge purposes; terminal is built in and never enters the map.
+	purposeHandlers map[string]PurposeHandler
 
 	runCtx     context.Context
 	loopWg     sync.WaitGroup
@@ -124,21 +128,22 @@ func New(options Options) (*Runtime, error) {
 		upgrader = defaultUpgrader(executable)
 	}
 	return &Runtime{
-		store:        options.Store,
-		dataDir:      options.DataDir,
-		prober:       options.Prober,
-		manager:      options.Manager,
-		collector:    collector,
-		ensureHelper: ensureHelper,
-		bridge:       bridge,
-		upgrader:     upgrader,
-		stateDir:     stateDir,
-		executable:   executable,
-		logger:       logger,
-		now:          now,
-		revokeCh:     make(chan struct{}),
-		fatalCh:      make(chan error, 1),
-		reconfigCh:   make(chan struct{}, 1),
+		store:           options.Store,
+		dataDir:         options.DataDir,
+		prober:          options.Prober,
+		manager:         options.Manager,
+		collector:       collector,
+		ensureHelper:    ensureHelper,
+		bridge:          bridge,
+		upgrader:        upgrader,
+		stateDir:        stateDir,
+		executable:      executable,
+		logger:          logger,
+		now:             now,
+		purposeHandlers: make(map[string]PurposeHandler),
+		revokeCh:        make(chan struct{}),
+		fatalCh:         make(chan error, 1),
+		reconfigCh:      make(chan struct{}, 1),
 	}, nil
 }
 
@@ -227,17 +232,31 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runtime) hello(bridgeID string) HelloMessage {
+func (r *Runtime) hello(bridgeID, purpose string) HelloMessage {
 	return HelloMessage{
-		Type:        "hello",
-		Protocol:    ProtocolVersion,
-		DeviceID:    r.deviceID,
-		Secret:      r.secret,
-		Platform:    r.platform,
-		AppVersion:  r.appVersion,
-		BridgeID:    bridgeID,
-		StateDigest: r.stateDigest,
+		Type:         "hello",
+		Protocol:     ProtocolVersion,
+		DeviceID:     r.deviceID,
+		Secret:       r.secret,
+		Platform:     r.platform,
+		AppVersion:   r.appVersion,
+		BridgeID:     bridgeID,
+		Purpose:      purpose,
+		StateDigest:  r.stateDigest,
+		Capabilities: r.capabilities(),
 	}
+}
+
+// capabilities reports the bridge purposes this agent serves: terminal always, plus every registered purpose handler.
+func (r *Runtime) capabilities() []string {
+	r.mu.Lock()
+	extra := make([]string, 0, len(r.purposeHandlers))
+	for purpose := range r.purposeHandlers {
+		extra = append(extra, purpose)
+	}
+	r.mu.Unlock()
+	sort.Strings(extra)
+	return append([]string{PurposeTerminal}, extra...)
 }
 
 // computeStateDigest computes and caches the device-side supervisor state digest for the control channel hello
@@ -465,7 +484,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		channel, err := DialChannel(ctx, client.WSURL(), r.hello(""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
+		channel, err := DialChannel(ctx, client.WSURL(), r.hello("", ""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
 			if isForbidden(err) {
 				r.revoke()
@@ -552,7 +571,65 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	r.fatal(errUpgradeStaged)
 }
 
-func (r *Runtime) handleBridge(bridgeID string) {
+// PurposeHandler serves one bridge of a non-terminal purpose; it owns the full bridge lifecycle
+// (dialing included) and runs under the runtime's loopWg bookkeeping until it returns.
+type PurposeHandler func(ctx context.Context, bridgeID string) error
+
+// RegisterPurposeHandler registers the handler serving bridges of one non-terminal purpose; the purpose is
+// advertised in hello capabilities from the next control channel dial on, so the server gates requests to it.
+func (r *Runtime) RegisterPurposeHandler(purpose string, handler PurposeHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.purposeHandlers[purpose] = handler
+}
+
+// DialPurposeBridge dials one purpose bridge through the current endpoint with this runtime's authenticated hello.
+// The composition root plugs the purpose servers (package purpose imports this package, so they cannot be wired
+// from here) into the runtime through it.
+func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose string) (net.Conn, error) {
+	client := r.prober.Current()
+	if client == nil {
+		return nil, ErrNoEndpoint
+	}
+	conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
+	if err != nil {
+		return nil, err
+	}
+	return websocket.NetConn(ctx, conn, websocket.MessageBinary), nil
+}
+
+func (r *Runtime) handleBridge(bridgeID, purpose string) {
+	if purpose != "" && purpose != PurposeTerminal {
+		r.handlePurposeBridge(bridgeID, purpose)
+		return
+	}
+	r.handleTerminalBridge(bridgeID, purpose)
+}
+
+// handlePurposeBridge dispatches a non-terminal bridge to its registered handler under the same loopWg
+// bookkeeping as terminal bridges; without a handler the request is logged and dropped before any dial.
+func (r *Runtime) handlePurposeBridge(bridgeID, purpose string) {
+	if !r.desiredSnapshot().TerminalEnabled {
+		r.logger.Warn("purpose bridge requested but terminal access is disabled", "bridge_id", bridgeID, "purpose", purpose)
+		return
+	}
+	r.mu.Lock()
+	handler := r.purposeHandlers[purpose]
+	r.mu.Unlock()
+	if handler == nil {
+		r.logger.Warn("bridge requested for an unhandled purpose; ignoring", "bridge_id", bridgeID, "purpose", purpose)
+		return
+	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		if err := handler(r.runCtx, bridgeID); err != nil {
+			r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+		}
+	}()
+}
+
+func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 	if !r.desiredSnapshot().TerminalEnabled {
 		r.logger.Warn("bridge requested but terminal access is disabled", "bridge_id", bridgeID)
 		return
@@ -573,7 +650,7 @@ func (r *Runtime) handleBridge(bridgeID string) {
 			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
 			return
 		}
-		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID), client.Insecure())
+		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
 		if err != nil {
 			if isForbidden(err) {
 				r.revoke()

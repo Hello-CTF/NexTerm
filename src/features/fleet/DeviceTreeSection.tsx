@@ -2,7 +2,8 @@
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter opens a remote terminal, no separate "terminal" button).
-// Renders nothing and issues no requests when logged out; revoked devices are not shown (not even grayed out). Revocation requires two
+// Renders nothing and issues no requests when logged out; revoked devices are not shown (not even grayed out), and neither are
+// offline or agent-less devices: only online devices appear, so no online badge is rendered. Revocation requires two
 // warning confirmations (the second explicitly states "credentials become invalid immediately, removed from assets and unrecoverable"),
 // and the device is removed from the section immediately on success.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
@@ -171,7 +172,8 @@ export function DeviceTreeSection() {
     return items;
   };
 
-  const devices = (devicesQuery.data?.devices ?? []).filter((d) => d.revoked_at === 0);
+  const enrolled = (devicesQuery.data?.devices ?? []).filter((d) => d.revoked_at === 0);
+  const devices = enrolled.filter((d) => onlineOf(d));
 
   return (
     <div role="group" aria-label="设备" className="mb-0.5">
@@ -202,14 +204,15 @@ export function DeviceTreeSection() {
             重试
           </button>
         </div>
-      ) : devices.length === 0 ? (
+      ) : enrolled.length === 0 ? (
         <div className="nx-hint px-2 py-1.5 text-[11px]">还没有接入设备，在「设备管理」里接入。</div>
+      ) : devices.length === 0 ? (
+        <div className="nx-hint px-2 py-1.5 text-[11px]">设备都不在线，在「设备管理」里查看。</div>
       ) : (
         devices.map((device) => (
           <DeviceTreeRow
             key={device.id}
             device={device}
-            online={onlineOf(device)}
             busy={busyId === device.id}
             onMenu={(x, y) => setMenu({ x, y, device })}
             onRevoke={() => void revoke(device)}
@@ -226,8 +229,8 @@ export function DeviceTreeSection() {
                 title: menu.device.name,
                 items: buildMenu(
                   menu.device,
-                  disabledReasonOf(menu.device, onlineOf(menu.device)) === null,
-                  disabledReasonOf(menu.device, onlineOf(menu.device)),
+                  disabledReasonOf(menu.device) === null,
+                  disabledReasonOf(menu.device),
                 ),
               }
             : null
@@ -238,29 +241,25 @@ export function DeviceTreeSection() {
   );
 }
 
-function disabledReasonOf(device: FleetDevice, online: boolean): string | null {
-  if (!device.agent) return "该设备未安装设备代理，无法打开终端";
-  if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
-  if (!online) return "设备离线，无法打开终端";
+function disabledReasonOf(device: FleetDevice): string | null {
+  if (!device.agent?.terminal_enabled) return "该设备已关闭远程终端";
   return null;
 }
 
 function DeviceTreeRow({
   device,
-  online,
   busy,
   onMenu,
   onRevoke,
 }: {
   device: FleetDevice;
-  online: boolean;
   busy: boolean;
   onMenu: (x: number, y: number) => void;
   onRevoke: () => void;
 }) {
   const coarse = useCoarsePointer();
   const agent = device.agent;
-  const disabledReason = disabledReasonOf(device, online);
+  const disabledReason = disabledReasonOf(device);
   const connectable = disabledReason === null;
 
   const open = () => {
@@ -283,7 +282,7 @@ function DeviceTreeRow({
         aria-level={1}
         aria-disabled={!connectable}
         tabIndex={0}
-        className={`nx-row nx-row-reserve-actions ${connectable ? "" : "cursor-not-allowed opacity-55"}`}
+        className={`nx-row nx-row-oneline nx-row-reserve-actions ${connectable ? "" : "cursor-not-allowed opacity-55"}`}
         onClick={open}
         onDoubleClick={open}
         onContextMenu={(e) => {
@@ -304,11 +303,6 @@ function DeviceTreeRow({
         <IconMonitor size={14} className="shrink-0 text-neutral-500" />
         <span className="nx-row-name min-w-0 flex-auto truncate">{device.name}</span>
         {agent?.platform && <span className="nx-row-target min-w-0 truncate text-[11px] text-neutral-500">{agent.platform}</span>}
-        {agent ? (
-          <span className={`nx-badge ${online ? "nx-badge-green" : ""}`}>{online ? "在线" : "离线"}</span>
-        ) : (
-          <span className="nx-badge">无代理</span>
-        )}
         {coarse ? (
           <button
             className="nx-icon-btn nx-icon-btn-sm nx-row-more"

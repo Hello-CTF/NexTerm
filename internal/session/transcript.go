@@ -125,3 +125,24 @@ func (m *Manager) deleteDurableTranscriptOffset(tabID string) {
 	}
 	m.offsets.DeleteDurableTranscriptOffset(tabID)
 }
+
+func (m *Manager) durableTabTitle(tabID string) string {
+	if m.titles == nil {
+		return ""
+	}
+	return m.titles.DurableTabTitle(tabID)
+}
+
+func (m *Manager) persistDurableTabTitle(tabID, title string) {
+	if m.titles == nil {
+		return
+	}
+	m.titles.PersistDurableTabTitle(tabID, title)
+}
+
+func (m *Manager) deleteDurableTabTitle(tabID string) {
+	if m.titles == nil {
+		return
+	}
+	m.titles.DeleteDurableTabTitle(tabID)
+}

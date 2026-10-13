@@ -25,3 +25,23 @@ func (o durableTranscriptOffsets) PersistDurableTranscriptOffset(tabID string, o
 func (o durableTranscriptOffsets) DeleteDurableTranscriptOffset(tabID string) {
 	_ = o.database.DurableTranscriptOffsetDelete(context.Background(), tabID)
 }
+
+type durableTabTitles struct {
+	database *store.Store
+}
+
+func (t durableTabTitles) DurableTabTitle(tabID string) string {
+	title, err := t.database.DurableTabTitleGet(context.Background(), tabID)
+	if err != nil {
+		return ""
+	}
+	return title
+}
+
+func (t durableTabTitles) PersistDurableTabTitle(tabID string, title string) {
+	_ = t.database.DurableTabTitleSet(context.Background(), tabID, title)
+}
+
+func (t durableTabTitles) DeleteDurableTabTitle(tabID string) {
+	_ = t.database.DurableTabTitleDelete(context.Background(), tabID)
+}

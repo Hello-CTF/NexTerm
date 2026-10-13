@@ -33,6 +33,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DeviceMetrics:           newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
 		DeviceShareLink:         newDeviceShareLink(db, opts...),
+		DurableTabTitle:         newDurableTabTitle(db, opts...),
 		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
 		HitlRunRow:              newHitlRunRow(db, opts...),
 		HostShare:               newHostShare(db, opts...),
@@ -82,6 +83,7 @@ type Query struct {
 	DeviceMetrics           deviceMetrics
 	DeviceMetricsHourly     deviceMetricsHourly
 	DeviceShareLink         deviceShareLink
+	DurableTabTitle         durableTabTitle
 	DurableTranscriptOffset durableTranscriptOffset
 	HitlRunRow              hitlRunRow
 	HostShare               hostShare
@@ -132,6 +134,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DeviceMetrics:           q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
 		DeviceShareLink:         q.DeviceShareLink.clone(db),
+		DurableTabTitle:         q.DurableTabTitle.clone(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
 		HitlRunRow:              q.HitlRunRow.clone(db),
 		HostShare:               q.HostShare.clone(db),
@@ -189,6 +192,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
 		DeviceShareLink:         q.DeviceShareLink.replaceDB(db),
+		DurableTabTitle:         q.DurableTabTitle.replaceDB(db),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
 		HitlRunRow:              q.HitlRunRow.replaceDB(db),
 		HostShare:               q.HostShare.replaceDB(db),
@@ -236,6 +240,7 @@ type queryCtx struct {
 	DeviceMetrics           *deviceMetricsDo
 	DeviceMetricsHourly     *deviceMetricsHourlyDo
 	DeviceShareLink         *deviceShareLinkDo
+	DurableTabTitle         *durableTabTitleDo
 	DurableTranscriptOffset *durableTranscriptOffsetDo
 	HitlRunRow              *hitlRunRowDo
 	HostShare               *hostShareDo
@@ -283,6 +288,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),
 		DeviceShareLink:         q.DeviceShareLink.WithContext(ctx),
+		DurableTabTitle:         q.DurableTabTitle.WithContext(ctx),
 		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
 		HitlRunRow:              q.HitlRunRow.WithContext(ctx),
 		HostShare:               q.HostShare.WithContext(ctx),

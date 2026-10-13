@@ -164,6 +164,7 @@ describe("FileTree row actions", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
     const row = rowByName(mounted!.container, "notes.txt");
+    expect(row.className).toContain("nx-row-oneline");
     expect(row.querySelector(".nx-row-actions")).toBeNull();
     expect(row.querySelector(".nx-row-more")?.getAttribute("aria-label")).toBe(
       "更多操作 notes.txt",
