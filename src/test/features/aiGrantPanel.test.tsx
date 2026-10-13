@@ -8,6 +8,7 @@ import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, t
 const mocks = vi.hoisted(() => ({
   web: false,
   assetList: vi.fn(),
+  fleetDevices: vi.fn(),
   grantList: vi.fn(),
   grantSet: vi.fn(),
   grantRevoke: vi.fn(),
@@ -17,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   toast: vi.fn(),
   onClose: vi.fn(),
+}));
+
+vi.mock("../../features/fleet/clients", () => ({
+  fleetClient: () => ({ devices: mocks.fleetDevices }),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -113,6 +118,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     vi.clearAllMocks();
     mocks.web = false;
     mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.fleetDevices.mockResolvedValue({ devices: [] });
     mocks.grantList.mockResolvedValue([]);
     mocks.ruleList.mockResolvedValue([]);
     mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
@@ -241,6 +247,7 @@ describe("GrantPanel 授权规则", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.fleetDevices.mockResolvedValue({ devices: [] });
     mocks.grantList.mockResolvedValue([]);
     mocks.ruleList.mockResolvedValue([]);
     mocks.ask.mockResolvedValue(true);
@@ -343,6 +350,7 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
     vi.clearAllMocks();
     mocks.web = true;
     mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.fleetDevices.mockResolvedValue({ devices: [] });
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
     mocks.ruleList.mockResolvedValue([
       { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
@@ -377,5 +385,86 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
     clickButton(view!.container, "添加规则");
     await flush();
     expect(view!.container.querySelector("select[aria-label='规则设备']")).not.toBeNull();
+  });
+});
+
+
+describe("GrantPanel fleet 设备授权目标", () => {
+  const GATEWAY = {
+    id: "d-1",
+    name: "边缘网关",
+    kind: "agent",
+    created_at: 1,
+    last_seen_at: 1,
+    revoked_at: 0,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.assetList.mockResolvedValue(ASSETS);
+    mocks.fleetDevices.mockResolvedValue({ devices: [GATEWAY] });
+    mocks.grantList.mockResolvedValue([]);
+    mocks.ruleList.mockResolvedValue([]);
+    mocks.grantSet.mockImplementation((deviceId: string, kinds: string[]) =>
+      Promise.resolve({ deviceId, kinds, updatedAt: 1 }),
+    );
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast });
+    useAuth.setState({ user: null });
+  });
+
+  it("fleet 设备以 device/<id> 作为授权目标并带设备徽标，已吊销设备不出现", async () => {
+    mocks.fleetDevices.mockResolvedValue({
+      devices: [GATEWAY, { ...GATEWAY, id: "d-2", name: "旧网关", revoked_at: 1720000000000 }],
+    });
+    await mountPanel();
+    const row = rowFor("边缘网关");
+    expect(row.textContent).toContain("未授权");
+    expect(row.textContent).toContain("设备");
+    expect(() => rowFor("旧网关")).toThrow();
+
+    clickButton(row, "开启授权");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledOnce();
+    expect(mocks.ask.mock.calls[0][0] as string).toContain("边缘网关");
+    expect(mocks.grantSet).toHaveBeenCalledWith("device/d-1", ["terminal_write"]);
+    await flushUntil(() => rowFor("边缘网关").textContent?.includes("已授权：终端写入") === true);
+  });
+
+  it("规则设备下拉包含 fleet 设备，保存规则使用 device/<id>", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
+    );
+    await mountPanel();
+    clickButton(view!.container, "添加规则");
+    await flush();
+    const select = view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则设备']")!;
+    const options = [...select.options].map((o) => o.textContent);
+    expect(options).toContain("边缘网关");
+    setSelectValue(select, "device/d-1");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>("select[aria-label='规则动作']")!, "exec_commands");
+    clickButton(view!.container, "添加");
+    await flushUntil(() => mocks.ruleSet.mock.calls.length > 0);
+    expect(mocks.ask.mock.calls[0][0] as string).toContain("边缘网关");
+    const [deviceId, action, path, expiresAt] = mocks.ruleSet.mock.calls[0];
+    expect(deviceId).toBe("device/d-1");
+    expect(action).toBe("exec_commands");
+    expect(path).toBe("");
+    expect(expiresAt).toBe(0);
+  });
+
+  it("fleet 设备列表失败时降级为仅资产目标，不显示加载失败", async () => {
+    mocks.fleetDevices.mockRejectedValue(new Error("登录服务端账号后可用"));
+    await mountPanel();
+    expect(rowFor("生产 Web").textContent).toContain("未授权");
+    expect(view!.container.textContent ?? "").not.toContain("加载失败");
+  });
+
+  it("规则引用未知 device id 时按原始 id 渲染", async () => {
+    mocks.ruleList.mockResolvedValue([
+      { id: "rule-x", deviceId: "device/gone", action: "exec_commands", path: "", expiresAt: 0, createdAt: 1, updatedAt: 1 },
+    ]);
+    await mountPanel();
+    expect(view!.container.textContent ?? "").toContain("device/gone");
   });
 });

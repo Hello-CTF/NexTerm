@@ -59,7 +59,7 @@ func newDeviceIPCTestRig(t *testing.T) *deviceIPCTestRig {
 
 func (r *deviceIPCTestRig) connector(authorize *sync.Map) *DeviceConnectorConfig {
 	return &DeviceConnectorConfig{
-		Dial: func(ctx context.Context, _ string) (net.Conn, error) {
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", r.endpoint)
 		},
 		Digest: func(context.Context, string) (string, error) {
@@ -147,7 +147,7 @@ func TestProductionDeviceConnectValidationAndConfig(t *testing.T) {
 
 	// Authorization rejections pass through session_connect_device verbatim (owner/revocation/terminal-switch rejection texts).
 	production.Services.SetDeviceConnector(&DeviceConnectorConfig{
-		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
+		Dial:   func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
 		Digest: func(context.Context, string) (string, error) { return "digest", nil },
 		Authorize: func(context.Context, string, string) error {
 			return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")

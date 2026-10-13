@@ -34,7 +34,7 @@ func TestConnectDeviceRequiresConnectorConfig(t *testing.T) {
 func TestConnectDeviceRequiresDeviceID(t *testing.T) {
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
-		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
+		Dial:   func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
 		Digest: func(context.Context, string) (string, error) { return "digest", nil },
 	})
 	_, err := connector.Connect(t.Context(), deviceAsset(""), 1)
@@ -50,7 +50,7 @@ func TestConnectDeviceAuthorizesBeforeDial(t *testing.T) {
 	var calls []string
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
-		Dial: func(context.Context, string) (net.Conn, error) {
+		Dial: func(context.Context, string, string) (net.Conn, error) {
 			calls = append(calls, "dial")
 			return nil, errors.New("dial must not run")
 		},
@@ -77,7 +77,9 @@ func TestConnectDeviceAuthorizeUserIDFromOptions(t *testing.T) {
 	var gotUser, gotDevice string
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
-		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("not dialed in this test") },
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("not dialed in this test")
+		},
 		Digest: func(context.Context, string) (string, error) { return "digest", nil },
 		Authorize: func(_ context.Context, userID, deviceID string) error {
 			gotUser, gotDevice = userID, deviceID
@@ -107,7 +109,7 @@ func TestConnectDeviceDigestFailurePropagates(t *testing.T) {
 	digestErr := ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
-		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
+		Dial:   func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
 		Digest: func(context.Context, string) (string, error) { return "", digestErr },
 	})
 	_, err := connector.Connect(t.Context(), deviceAsset("dev-1"), 1)
@@ -121,7 +123,9 @@ func TestConnectDeviceReturnsDeviceTransport(t *testing.T) {
 	var authorized string
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
-		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("not dialed in this test") },
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("not dialed in this test")
+		},
 		Digest: func(_ context.Context, deviceID string) (string, error) { return "digest-" + deviceID, nil },
 		Authorize: func(_ context.Context, userID, deviceID string) error {
 			authorized = deviceID
@@ -142,8 +146,8 @@ func TestConnectDeviceReturnsDeviceTransport(t *testing.T) {
 	if deviceTransport.Kind() != session.KindDevice || deviceTransport.Generation() != 3 {
 		t.Fatalf("transport = %s gen %d; want device gen 3", deviceTransport.Kind(), deviceTransport.Generation())
 	}
-	if _, err := transport.Exec(ctx, "echo hi", base.ExecOptions{}); !errors.Is(err, base.ErrUnsupported) {
-		t.Fatalf("Exec error = %v; want ErrUnsupported", err)
+	if _, err := transport.Exec(ctx, "echo hi", base.ExecOptions{}); err == nil || !strings.Contains(err.Error(), "not dialed") {
+		t.Fatalf("Exec error = %v; want the bridge dial failure", err)
 	}
 }
 

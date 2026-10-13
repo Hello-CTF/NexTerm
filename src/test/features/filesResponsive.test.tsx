@@ -539,3 +539,31 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
     }
   });
 });
+
+
+describe("设备会话面板直接渲染", () => {
+  const DEVICE_SESSIONS = [
+    { id: "s-dev", assetId: "device/d-1", assetName: "边缘网关", kind: "device", status: "connected", controller: "" },
+  ];
+
+  it("FileTree 对设备会话渲染正常文件树，左栏宽度壳层不变", async () => {
+    useUi.setState({ sessions: DEVICE_SESSIONS as never, leftWidth: 300 });
+    mounted = mountWithClient(createElement(FileTree, { sessionId: "s-dev" }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+
+    const root = mounted!.container.firstElementChild as HTMLElement;
+    expect(root.tagName).toBe("ASIDE");
+    expect(root.style.width).toBe("300px");
+    expect(mounted!.container.textContent).not.toContain("设备会话不支持");
+  });
+
+  it("FileBrowser 对设备会话渲染正常 nx-pane 面板", async () => {
+    useUi.setState({ sessions: DEVICE_SESSIONS as never });
+    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s-dev" }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+
+    const root = mounted!.container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("nx-pane");
+    expect(mounted!.container.textContent).not.toContain("设备会话不支持");
+  });
+});

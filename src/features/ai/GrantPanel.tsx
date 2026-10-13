@@ -7,6 +7,8 @@ import {
   type AiGrantRule,
   type AiGrantRuleAction,
 } from "../../ipc/grantApi";
+import { fleetClient } from "../fleet/clients";
+import type { FleetDevice } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -54,9 +56,14 @@ const ASSET_KIND_LABEL: Record<string, string> = {
   mysql: "MySQL",
   postgres: "PostgreSQL",
   redis: "Redis",
+  device: "设备",
 };
 
 const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
+
+// Grant targets are real assets plus fleet devices, the latter keyed by the device/<id> pseudo asset id
+// (same form the guard store and session_connect_device use); only id/name/kind are ever rendered.
+type GrantTarget = { id: string; name: string; kind: string };
 
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action] ?? rule.action;
@@ -75,6 +82,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const account = useAuth((s) => s.user);
   const readOnly = WEB && account !== null && account.role !== "superadmin";
   const [assets, setAssets] = useState<Asset[] | null>(null);
+  const [devices, setDevices] = useState<FleetDevice[]>([]);
   const [grants, setGrants] = useState<Record<string, AiDeviceGrant>>({});
   const [drafts, setDrafts] = useState<Record<string, AiGrantKind[]>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -89,14 +97,21 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
 
   const reload = useCallback(async () => {
     try {
-      const [assetRows, grantRows, ruleRows] = await Promise.all([
+      const [assetRows, grantRows, ruleRows, deviceRows] = await Promise.all([
         assetApi.list(),
         grantApi.list(),
         grantApi.ruleList(),
+        // Fleet enumeration is additive: when the fleet link is unavailable (e.g. desktop logged out)
+        // the panel degrades to asset-only targets instead of failing the whole load.
+        fleetClient().devices().then(
+          (r) => r.devices,
+          () => [] as FleetDevice[],
+        ),
       ]);
       const map: Record<string, AiDeviceGrant> = {};
       for (const grant of grantRows) map[grant.deviceId] = grant;
       setAssets(assetRows);
+      setDevices(deviceRows);
       setGrants(map);
       setRules(ruleRows);
       setLoadError(null);
@@ -109,16 +124,16 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     void reload();
   }, [reload]);
 
-  const kindsFor = (asset: Asset): AiGrantKind[] =>
+  const kindsFor = (asset: GrantTarget): AiGrantKind[] =>
     drafts[asset.id] ?? (grants[asset.id]?.kinds.length ? grants[asset.id].kinds : ["terminal_write"]);
 
-  const toggleKind = (asset: Asset, kind: AiGrantKind) => {
+  const toggleKind = (asset: GrantTarget, kind: AiGrantKind) => {
     const current = kindsFor(asset);
     const next = current.includes(kind) ? current.filter((k) => k !== kind) : [...current, kind];
     setDrafts((prev) => ({ ...prev, [asset.id]: next }));
   };
 
-  const enableGrant = async (asset: Asset) => {
+  const enableGrant = async (asset: GrantTarget) => {
     const kinds = kindsFor(asset);
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
@@ -139,7 +154,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const revoke = async (asset: Asset) => {
+  const revoke = async (asset: GrantTarget) => {
     const scope = (grants[asset.id]?.kinds ?? []).map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
       `撤销「${asset.name}」的设备授权？\n\n撤销后，该设备上的${scope || "终端写入、命令执行"}将按当前权限模式处理，授权记录会从当前 NexTerm 实例删除。`,
@@ -165,7 +180,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   const actionNeedsPath = RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.needsPath ?? true;
 
   const addRule = async () => {
-    const device = assets?.find((a) => a.id === ruleDevice);
+    const device = allTargets.find((a) => a.id === ruleDevice);
     if (!device || ruleBusy) return;
     const pattern = rulePath.trim();
     if (actionNeedsPath && pattern === "") {
@@ -201,7 +216,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
   };
 
   const revokeRule = async (rule: AiGrantRule) => {
-    const device = assets?.find((a) => a.id === rule.deviceId);
+    const device = allTargets.find((a) => a.id === rule.deviceId);
     const confirmed = await ask(
       `撤销授权规则「${device?.name ?? rule.deviceId} ${ruleScopeText(rule)}」？\n\n撤销后，相关操作将按当前权限模式处理，规则记录会从当前 NexTerm 实例删除。`,
       { kind: "warning" },
@@ -219,8 +234,15 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const assetName = (deviceId: string) => assets?.find((a) => a.id === deviceId)?.name ?? deviceId;
-  const grantAssets = assets?.filter((a) => !DB_ASSET_KINDS.has(a.kind)) ?? null;
+  // Revoked devices can no longer host sessions, so they are not offered as grant or rule targets;
+  // existing rules that reference them still render by name via allTargets/assetName fallback.
+  const deviceTargets: GrantTarget[] = devices
+    .filter((d) => d.revoked_at === 0)
+    .map((d) => ({ id: `device/${d.id}`, name: d.name, kind: "device" }));
+  const allTargets: GrantTarget[] = [...(assets ?? []), ...deviceTargets];
+  const assetName = (deviceId: string) => allTargets.find((a) => a.id === deviceId)?.name ?? deviceId;
+  const grantAssets: GrantTarget[] | null =
+    assets === null ? null : [...assets.filter((a) => !DB_ASSET_KINDS.has(a.kind)), ...deviceTargets];
   const now = Date.now();
 
   return (

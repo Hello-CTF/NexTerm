@@ -1732,9 +1732,7 @@ async function openConnectedAssetSession(
     assetId: asset.id,
     assetKind: asset.kind,
   });
-  // Device sessions have no file plane (supervisor v2 has no fs frames), so do not auto-switch to the files panel;
-  // FileTree gives an explicit degradation when opened manually.
-  if (asset.kind !== "device" && !sidebarsOverlayWorkspace()) {
+  if (!sidebarsOverlayWorkspace()) {
     setLeftMode("files");
     setLeftOpen(true);
   }

@@ -83,6 +83,7 @@ func TestFSIPCErrorClassifiesProviderFailures(t *testing.T) {
 	}{
 		{name: "sftp", kind: "ssh", assetKind: session.KindSSH, want: ipc.CodeSFTP},
 		{name: "winrm", kind: "winrm", assetKind: session.KindWinRM, want: ipc.CodeWinRM},
+		{name: "device", kind: "device", assetKind: session.KindDevice, want: ipc.CodeIO},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			sentinel := errors.New("provider exploded")

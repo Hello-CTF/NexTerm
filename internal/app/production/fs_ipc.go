@@ -328,6 +328,8 @@ func fsIPCError(transportKind string, err error) error {
 		return ipc.WrapError(ipc.CodeSFTP, err.Error(), err)
 	case "winrm":
 		return ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
+	case "device":
+		return ipc.WrapError(ipc.CodeIO, err.Error(), err)
 	}
 	return classified
 }

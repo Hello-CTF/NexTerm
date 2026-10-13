@@ -20,14 +20,15 @@ import (
 // connection lives independently and does not hold opMu long-term.
 
 // DialDeviceBridge completes the WS upgrade against the server device bridge endpoint with the logged-in session and returns a byte-stream connection;
-// 401 goes through remoteCall's dropSession re-login loop, same semantics as the typed remote methods.
-func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {
+// purpose selects the bridge kind ("terminal"/"file"/"forward", empty means terminal). 401 goes through remoteCall's dropSession re-login loop,
+// same semantics as the typed remote methods.
+func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
 	if deviceID == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "deviceId 不能为空")
 	}
 	var conn net.Conn
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		dialed, err := client.dialDeviceBridge(ctx, deviceID)
+		dialed, err := client.dialDeviceBridge(ctx, deviceID, purpose)
 		if err != nil {
 			return err
 		}
@@ -62,8 +63,12 @@ func (p *RemoteProxy) RemoteSessionFeedDial(ctx context.Context, sessionID strin
 	return conn, nil
 }
 
-func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {
-	conn, err := c.dialRemoteWS(ctx, "/fleet/devices/"+urlpkg.PathEscape(deviceID)+"/bridge", "远端设备桥")
+func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
+	path := "/fleet/devices/" + urlpkg.PathEscape(deviceID) + "/bridge"
+	if purpose != "" {
+		path += "?purpose=" + urlpkg.QueryEscape(purpose)
+	}
+	conn, err := c.dialRemoteWS(ctx, path, "远端设备桥")
 	if err != nil {
 		return nil, err
 	}

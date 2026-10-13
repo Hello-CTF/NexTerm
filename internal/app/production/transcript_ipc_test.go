@@ -149,6 +149,34 @@ func TestTranscriptListMarksDeletedAssetAndUncleanEnd(t *testing.T) {
 	}
 }
 
+func TestTranscriptListAcceptsDevicePseudoAsset(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := transcriptDispatcher(t, database, session.NewManager(session.Config{}))
+	deviceAssetID := "device/01JDEVICE00000000000000001"
+	id := seedTranscript(t, database, deviceAssetID, 1000, "output\r\n")
+	if err := database.TranscriptEnd(ctx, id, 2000, false); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchStoreTest(dispatcher, "transcript_list", `{"assetId":"`+deviceAssetID+`"}`)
+	var summaries []transcriptSummaryDTO
+	requireStoreTestResponse(t, response, &summaries)
+	if len(summaries) != 1 {
+		t.Fatalf("expected one summary, got %+v", summaries)
+	}
+	if summaries[0].ID != id || summaries[0].AssetID != deviceAssetID {
+		t.Fatalf("unexpected summary: %+v", summaries[0])
+	}
+	if summaries[0].AssetDeleted {
+		t.Fatal("device pseudo assets are not asset records and must not be flagged deleted")
+	}
+}
+
 func TestTranscriptCommandsValidateInput(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -162,6 +190,9 @@ func TestTranscriptCommandsValidateInput(t *testing.T) {
 		args    string
 	}{
 		{"transcript_list", `{"assetId":"not a ulid"}`},
+		{"transcript_list", `{"assetId":"device/not-a-ulid"}`},
+		{"transcript_list", `{"assetId":"device/"}`},
+		{"transcript_list", `{"assetId":"device/01JDEVICE00000000000000001/x"}`},
 		{"transcript_read", `{"id":"!!"}`},
 		{"transcript_read", `{"id":"01JTRANSCRIPTMISSING000000"}`},
 		{"transcript_search", `{"id":"01JTRANSCRIPTMISSING000000","query":"x"}`},

@@ -6,7 +6,6 @@ import { forwardApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { DeviceSessionNotice } from "../files/DeviceSessionNotice";
 import {
   IconDownload,
   IconGlobe,
@@ -65,10 +64,6 @@ function useForwardPanelVisible(sessionId?: string): boolean {
 }
 
 export function ForwardPanel({ sessionId }: { sessionId?: string }) {
-  const deviceSession = useUi(
-    (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
-  );
-  if (deviceSession) return <DeviceSessionNotice feature="端口转发" />;
   return <ForwardPanelInner sessionId={sessionId} />;
 }
 

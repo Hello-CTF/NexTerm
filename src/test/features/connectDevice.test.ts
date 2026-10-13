@@ -75,10 +75,11 @@ describe("connectDevice 打开设备工作区", () => {
     expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
   });
 
-  it("设备工作区不自动切到文件栏 (设备会话没有文件面)", async () => {
+  it("设备工作区连接后自动切到文件栏 (与 ssh 会话一致)", async () => {
     useUi.setState({ leftMode: "assets" });
     await connectDevice(DEVICE);
-    expect(useUi.getState().leftMode).toBe("assets");
+    expect(useUi.getState().leftMode).toBe("files");
+    expect(useUi.getState().leftOpen).toBe(true);
   });
 
   it("同一设备在途时重复调用只发起一次连接", async () => {
