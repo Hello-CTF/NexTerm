@@ -17,6 +17,9 @@
 // Control channel messages are text JSON envelopes; bridge connections carry
 // raw supervisor protocol bytes as binary frames after the hello.
 // 403/forbidden means revocation and stops the agent.
+// A version_mismatch error frame carries the server version in server_version;
+// the standalone agent answers it with a self-upgrade from the fixed official
+// release source (ReleaseBaseURL) instead of a plain fatal exit.
 package agent
 
 import "errors"

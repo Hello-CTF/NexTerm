@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
 
@@ -20,10 +21,13 @@ const (
 
 // controlMessage 是服务端 -> agent 的控制通道帧, 字段语义与
 // internal/fleet/agent 的 serverMessage 一一对应 (该类型未导出, 此处镜像)。
+// ServerVersion 只在 version_mismatch 帧出现: agent 以此为目标版本从固定官方
+// release 源自升级; 旧 agent 解析时忽略未知字段。
 type controlMessage struct {
 	Type              string `json:"type"`
 	Code              string `json:"code,omitempty"`
 	Message           string `json:"message,omitempty"`
+	ServerVersion     string `json:"server_version,omitempty"`
 	DesiredAutostart  *bool  `json:"desired_autostart,omitempty"`
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
@@ -54,7 +58,8 @@ func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 	if hello.Protocol != agent.ProtocolVersion {
 		_ = writeControlJSON(r.Context(), conn, controlMessage{
 			Type: "error", Code: "version_mismatch",
-			Message: "控制通道协议版本不兼容",
+			Message:       "控制通道协议版本不兼容",
+			ServerVersion: version.Version,
 		})
 		_ = conn.Close(websocket.StatusProtocolError, "version mismatch")
 		return

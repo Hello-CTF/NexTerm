@@ -1,14 +1,18 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -451,6 +455,109 @@ func TestRuntimeProtocolMismatchIsFatal(t *testing.T) {
 	err := agentRuntime.Run(ctx)
 	if err != ErrProtocolMismatch {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+}
+
+func mismatchControl(serverVersion string) func(conn *websocket.Conn, hello HelloMessage) {
+	return func(conn *websocket.Conn, hello HelloMessage) {
+		if err := writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "protocol 2 required", ServerVersion: serverVersion}); err != nil {
+			_ = conn.Close(websocket.StatusProtocolError, "write failed")
+		}
+	}
+}
+
+func newUpgradeTestRuntime(t *testing.T, dataDir string, entries []BaseURLEntry, upgrader *Upgrader) *Runtime {
+	t.Helper()
+	prober, err := NewProber(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime, err := New(Options{
+		Store:        StoreAt(dataDir),
+		DataDir:      dataDir,
+		Prober:       prober,
+		Manager:      &fakeManager{},
+		Collector:    fakeCollector{},
+		EnsureHelper: func(context.Context) error { return nil },
+		Upgrader:     upgrader,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agentRuntime
+}
+
+func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
+	version := "1.2.3"
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version))
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	binary := []byte("new-agent-binary")
+	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), binary)
+	release := newReleaseServer(t, map[string][]byte{
+		"/v" + version + "/" + asset:             archive,
+		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
+	})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var replaced []stagedReplace
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: target,
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := agentRuntime.Run(ctx)
+	if !errors.Is(err, errUpgradeStaged) {
+		t.Fatalf("Run = %v, want errUpgradeStaged", err)
+	}
+	if len(replaced) != 1 || replaced[0].targetPath != target {
+		t.Fatalf("scheduleReplace calls = %+v", replaced)
+	}
+	content, readErr := os.ReadFile(replaced[0].newPath)
+	if readErr != nil || !bytes.Equal(content, binary) {
+		t.Fatalf("staged binary = %q, %v", content, readErr)
+	}
+	config, loadErr := StoreAt(dataDir).Load()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if config.DeviceID != testConfig().DeviceID || config.Secret != testConfig().Secret {
+		t.Fatalf("enroll credentials must survive self-upgrade, got device_id=%s", config.DeviceID)
+	}
+}
+
+func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
+	version := "9.9.9"
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch after retry exhaustion", err)
+	}
+	if got := release.requestCount("/v" + version + "/"); got != 3 {
+		t.Fatalf("upgrade attempts = %d, want 3", got)
 	}
 }
 

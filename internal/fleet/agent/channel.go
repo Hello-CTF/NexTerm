@@ -55,11 +55,23 @@ type serverMessage struct {
 	Type              string `json:"type"`
 	Code              string `json:"code,omitempty"`
 	Message           string `json:"message,omitempty"`
+	ServerVersion     string `json:"server_version,omitempty"`
 	DesiredAutostart  *bool  `json:"desired_autostart,omitempty"`
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
 }
+
+// ProtocolMismatchError 是 version_mismatch 控制帧的运行期错误形态:
+// errors.Is(err, ErrProtocolMismatch) 恒真, ServerVersion 携带 server 上报的
+// 版本号 (旧 server 不携带时为空), 供自升级解析目标版本。
+type ProtocolMismatchError struct {
+	ServerVersion string
+}
+
+func (e *ProtocolMismatchError) Error() string { return ErrProtocolMismatch.Error() }
+
+func (e *ProtocolMismatchError) Unwrap() error { return ErrProtocolMismatch }
 
 type ConfigUpdate struct {
 	DesiredAutostart  bool
@@ -117,7 +129,7 @@ func (c *Channel) handshake(ctx context.Context, hello HelloMessage) error {
 	case "hello_ok":
 		return nil
 	case "error":
-		return &ServerError{Code: first.Code, Message: first.Message}
+		return &ServerError{Code: first.Code, Message: first.Message, ServerVersion: first.ServerVersion}
 	default:
 		return fmt.Errorf("unexpected hello response %q", first.Type)
 	}
@@ -164,9 +176,9 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 			return ErrRevoked
 		case "error":
 			if message.Code == "version_mismatch" {
-				return ErrProtocolMismatch
+				return &ProtocolMismatchError{ServerVersion: message.ServerVersion}
 			}
-			return &ServerError{Code: message.Code, Message: message.Message}
+			return &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion}
 		default:
 			return fmt.Errorf("unknown control message %q", message.Type)
 		}
@@ -254,7 +266,7 @@ func DialBridge(ctx context.Context, wsURL string, hello HelloMessage, insecure 
 		return conn, nil
 	case "error":
 		_ = conn.Close(websocket.StatusPolicyViolation, message.Code)
-		return nil, &ServerError{Code: message.Code, Message: message.Message}
+		return nil, &ServerError{Code: message.Code, Message: message.Message, ServerVersion: message.ServerVersion}
 	default:
 		_ = conn.Close(websocket.StatusProtocolError, "bad handshake")
 		return nil, fmt.Errorf("unexpected bridge handshake response %q", message.Type)

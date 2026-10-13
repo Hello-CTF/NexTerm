@@ -31,6 +31,7 @@ type Options struct {
 	Collector    Collector
 	EnsureHelper func(ctx context.Context) error
 	Bridge       BridgeSpawner
+	Upgrader     *Upgrader
 	Logger       *slog.Logger
 	Now          func() time.Time
 }
@@ -43,6 +44,7 @@ type Runtime struct {
 	collector    Collector
 	ensureHelper func(ctx context.Context) error
 	bridge       BridgeSpawner
+	upgrader     *Upgrader
 	stateDir     string
 	executable   string
 	logger       *slog.Logger
@@ -114,6 +116,12 @@ func New(options Options) (*Runtime, error) {
 	if bridge == nil {
 		bridge = SubprocessBridge(executable)
 	}
+	// 内嵌分发 (nexterm-server agent, cliServicePrefix 非空) 不做自升级:
+	// 替换会拿 agent 资产覆盖 server 二进制。该路径保持 ErrProtocolMismatch。
+	upgrader := options.Upgrader
+	if upgrader == nil && len(cliServicePrefix) == 0 {
+		upgrader = defaultUpgrader(executable)
+	}
 	return &Runtime{
 		store:        options.Store,
 		dataDir:      options.DataDir,
@@ -122,6 +130,7 @@ func New(options Options) (*Runtime, error) {
 		collector:    collector,
 		ensureHelper: ensureHelper,
 		bridge:       bridge,
+		upgrader:     upgrader,
 		stateDir:     stateDir,
 		executable:   executable,
 		logger:       logger,
@@ -132,10 +141,12 @@ func New(options Options) (*Runtime, error) {
 	}, nil
 }
 
-// Run drives the agent until the context ends, the device is revoked, or a
-// fatal protocol mismatch surfaces. It returns ErrRevoked on revocation and
-// ErrProtocolMismatch when the server speaks an incompatible control
-// protocol; a plain context cancellation is a clean stop (nil).
+// Run drives the agent until the context ends, the device is revoked, or the
+// control channel protocol mismatches. It returns ErrRevoked on revocation; on
+// protocol mismatch it first attempts a self-upgrade to the server-reported
+// version and returns errUpgradeStaged once the deferred replace is scheduled,
+// or ErrProtocolMismatch when self-upgrade is unavailable or exhausted. A
+// plain context cancellation is a clean stop (nil).
 func (r *Runtime) Run(ctx context.Context) error {
 	config, err := r.store.Load()
 	if err != nil {
@@ -452,7 +463,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			}
 			var serverError *ServerError
 			if errors.As(err, &serverError) && serverError.Code == "version_mismatch" {
-				r.fatal(ErrProtocolMismatch)
+				r.selfUpgrade(ctx, serverError.ServerVersion)
 				return
 			}
 			r.logger.Warn("control channel dial failed", "url", client.BaseURL(), "error", err)
@@ -476,7 +487,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			return
 		}
 		if errors.Is(err, ErrProtocolMismatch) {
-			r.fatal(err)
+			r.selfUpgrade(ctx, mismatchServerVersion(err))
 			return
 		}
 		r.logger.Warn("control channel lost; reconnecting", "error", err)
@@ -486,6 +497,39 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		backoff = nextBackoff(backoff)
 	}
+}
+
+func mismatchServerVersion(err error) string {
+	var mismatch *ProtocolMismatchError
+	if errors.As(err, &mismatch) {
+		return mismatch.ServerVersion
+	}
+	return ""
+}
+
+// selfUpgrade 在协议不匹配时尝试把本机 agent 升级到 server 上报的版本。
+// 升级暂存成功 -> fatal(errUpgradeStaged) 退出让替换脚本接管; 自升级不可用
+// (内嵌分发) 或 server 未上报版本 (旧 server) 或重试耗尽 -> fatal
+// (ErrProtocolMismatch) 停留在待人工状态, 日志明确区分两条路径。
+func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
+	if r.upgrader == nil {
+		r.logger.Warn("control channel protocol mismatch; self-upgrade unavailable for this distribution, reinstall with install-device.sh")
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	if serverVersion == "" {
+		r.logger.Warn("control channel protocol mismatch; server did not report its version, reinstall with install-device.sh")
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	r.logger.Info("control channel protocol mismatch; attempting self-upgrade from the official release source", "target_version", serverVersion)
+	if err := r.upgrader.Upgrade(ctx, serverVersion); err != nil {
+		r.logger.Error("self-upgrade failed; staying on the current binary for manual intervention", "target_version", serverVersion, "error", err)
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	r.logger.Info("self-upgrade staged; deferred replace will swap the binary and restart the service", "target_version", serverVersion)
+	r.fatal(errUpgradeStaged)
 }
 
 func (r *Runtime) handleBridge(bridgeID string) {

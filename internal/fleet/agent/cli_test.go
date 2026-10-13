@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func stubCLIManager(t *testing.T) {
@@ -181,5 +183,85 @@ func TestCLIEnrollSurfacesServerRejection(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "注册失败") {
 		t.Fatalf("enroll stderr = %q", stderr.String())
+	}
+}
+
+func stubCLIRuntimeWithUpgrader(t *testing.T, upgrader *Upgrader) {
+	t.Helper()
+	restoreFactory := cliRuntimeFactory
+	cliRuntimeFactory = func(store *Store, dataDir string, prober *Prober, manager ServiceManager) (*Runtime, error) {
+		return New(Options{
+			Store: store, DataDir: dataDir, Prober: prober, Manager: manager,
+			Collector:    fakeCollector{},
+			EnsureHelper: func(context.Context) error { return nil },
+			Upgrader:     upgrader,
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		})
+	}
+	t.Cleanup(func() { cliRuntimeFactory = restoreFactory })
+	stubCLIManager(t)
+}
+
+func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
+	version := "1.2.3"
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version))
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), []byte("new-agent"))
+	release := newReleaseServer(t, map[string][]byte{
+		"/v" + version + "/" + asset:             archive,
+		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
+	})
+	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var replaced []stagedReplace
+	stubCLIRuntimeWithUpgrader(t, &Upgrader{
+		BaseURL: release.URL, Executable: target,
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+	})
+	dataDir := t.TempDir()
+	getenv := func(string) string { return dataDir }
+	var stdout, stderr bytes.Buffer
+	if code := RunCLI([]string{"enroll", "--server", server.server.URL, "--code", "c"}, getenv, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("enroll = %d, %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"run"}, getenv, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("run with staged self-upgrade = %d, stderr %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "延迟替换脚本") {
+		t.Fatalf("run stdout = %q", stdout.String())
+	}
+	if len(replaced) != 1 {
+		t.Fatalf("scheduleReplace calls = %+v", replaced)
+	}
+}
+
+func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("9.9.9"))
+	release := newReleaseServer(t, map[string][]byte{})
+	stubCLIRuntimeWithUpgrader(t, &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	})
+	dataDir := t.TempDir()
+	getenv := func(string) string { return dataDir }
+	var stdout, stderr bytes.Buffer
+	if code := RunCLI([]string{"enroll", "--server", server.server.URL, "--code", "c"}, getenv, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("enroll = %d, %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := RunCLI([]string{"run"}, getenv, &stdout, &stderr); code != ExitProtocol {
+		t.Fatalf("run with failed self-upgrade = %d, want ExitProtocol", code)
+	}
+	if !strings.Contains(stderr.String(), "install-device.sh") {
+		t.Fatalf("run stderr = %q, want manual reinstall guidance", stderr.String())
 	}
 }
