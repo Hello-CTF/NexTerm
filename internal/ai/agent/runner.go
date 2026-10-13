@@ -435,7 +435,7 @@ func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 		return ErrJobNotFound
 	}
 	resumer := current.eino.runner
-	_, iterator, err := r.hitl.Resume(context.Background(), resumer, answer)
+	_, iterator, err := r.hitl.Resume(current.ctx, resumer, answer)
 	if err != nil {
 		current.pendingMu.Unlock()
 		return mapResumeError(err)

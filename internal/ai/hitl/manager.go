@@ -354,7 +354,16 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 		return Resume{}, nil, err
 	}
 	run.mu.Unlock()
-	iterator, resumeErr := resumer.ResumeWithParams(run.ctx, run.checkpointID, params, options...)
+	// 恢复执行的 ctx: 携带调用方任务值 (修复重启恢复后值丢失), 不随传输取消
+	// (WithoutCancel), 随 run 取消而取消 (AfterFunc 挂到 run.ctx, run.ctx 身份
+	// 不变, Done() 观察者不受影响)。
+	resumeCtx := run.ctx
+	if ctx != nil {
+		execCtx, execCancel := context.WithCancel(context.WithoutCancel(ctx))
+		context.AfterFunc(run.ctx, execCancel)
+		resumeCtx = execCtx
+	}
+	iterator, resumeErr := resumer.ResumeWithParams(resumeCtx, run.checkpointID, params, options...)
 	if resumeErr == nil && iterator == nil {
 		resumeErr = errors.New("hitl: resumer returned a nil event stream")
 	}

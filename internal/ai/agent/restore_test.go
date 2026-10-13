@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -113,5 +115,52 @@ func TestRecoverRunsSupersededRunStaysFinished(t *testing.T) {
 	row, err := storage.RunGet(context.Background(), "superseded-run")
 	if err != nil || row.Status != RunStatusSuperseded || row.FinishedAt == nil {
 		t.Fatalf("superseded run after recovery = %+v err=%v", row, err)
+	}
+}
+
+func TestRestoredJobNotifyCarriesConversationOwner(t *testing.T) {
+	storage := restartStore(t)
+	conversation, err := storage.ConvCreate(ipc.WithUserID(context.Background(), "user-1"), "owned", map[string]any{"scope": tools.Scope{SessionID: "session"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var owners []string
+	deps := tools.Dependencies{
+		DockerAct: func(context.Context, string, string, string) error { return nil },
+		Notify: func(ctx context.Context, _ string) error {
+			mu.Lock()
+			owners = append(owners, tools.NotifyOwnerID(ctx))
+			mu.Unlock()
+			return nil
+		},
+	}
+	runner := durableRunner(t, storage, dockerConfirmChat(), deps, nil)
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversation.ID, Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := waitEvent(t, stream, "confirmRequired")
+
+	restarted := durableRunner(t, storage, sequenceModel(
+		toolCallMessage(namedToolCall("n1", "notify", `{"message":"恢复完成"}`)),
+		schema.AssistantMessage("done", nil),
+	), deps, nil)
+	if err := restarted.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumed := &SliceStream{}
+	if err := restarted.ConfirmStream(context.Background(), Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}, StaticStream(resumed)); err != nil {
+		t.Fatal(err)
+	}
+	events := waitClosed(t, resumed)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("resumed terminal counts done=%d error=%d", done, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(owners) != 1 || owners[0] != "user-1" {
+		t.Fatalf("notify owners = %v", owners)
 	}
 }

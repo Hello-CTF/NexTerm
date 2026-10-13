@@ -78,7 +78,7 @@ func TestEventBrokerReplayAppliesFilter(t *testing.T) {
 	}
 }
 
-func TestDeviceStatusFilterScopesToOwner(t *testing.T) {
+func TestEventFilterScopesDeviceStatusAndNotificationToOwner(t *testing.T) {
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
