@@ -27,6 +27,15 @@ type CreateOptions struct {
 	Env     []string
 	Cols    uint32
 	Rows    uint32
+	// Pty is nil or true for a PTY session; false requests a one-shot non-PTY
+	// exec session. Non-PTY sessions take no input, are excluded from List,
+	// cannot be attached, persist nothing, and are dropped when the process
+	// exits.
+	Pty *bool
+}
+
+func (o CreateOptions) usePTY() bool {
+	return o.Pty == nil || *o.Pty
 }
 
 type Info struct {

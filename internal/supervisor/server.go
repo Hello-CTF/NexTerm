@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"sync"
 	"time"
 )
@@ -138,6 +139,12 @@ type serverConn struct {
 	closeOnce sync.Once
 
 	attachment *Attachment
+
+	clientFeatures []string
+
+	// exec is the one-shot non-PTY session created on this connection; its
+	// output streams here and it is killed when the connection drops.
+	exec *Session
 }
 
 func (c *serverConn) serve() {
@@ -172,7 +179,8 @@ func (c *serverConn) serve() {
 		c.replyError(frameError, errorMsg{Code: codeStateMismatch, Message: "supervisor state digest does not match this endpoint"})
 		return
 	}
-	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion}); err != nil {
+	c.clientFeatures = hello.Features
+	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec}}); err != nil {
 		return
 	}
 	for {
@@ -217,6 +225,11 @@ func (c *serverConn) handleCreate(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
 		return
 	}
+	usePTY := msg.Pty == nil || *msg.Pty
+	if !usePTY && !slices.Contains(c.clientFeatures, featureExec) {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support non-PTY exec"})
+		return
+	}
 	session, err := c.server.supervisor.Create(context.Background(), CreateOptions{
 		ID:      msg.ID,
 		Attempt: msg.Attempt,
@@ -225,12 +238,26 @@ func (c *serverConn) handleCreate(payload []byte) {
 		Env:     msg.Env,
 		Cols:    msg.Cols,
 		Rows:    msg.Rows,
+		Pty:     msg.Pty,
 	})
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
-	_ = c.reply(frameCreated, session.Info())
+	if err := c.reply(frameCreated, session.Info()); err != nil {
+		if !usePTY {
+			// Without a stream consumer the pipes would never drain and execWait would never reap;
+			// drain first so the kill below completes instead of leaking the session.
+			session.drainExecPipes()
+			identity := session.Identity()
+			_ = c.server.supervisor.kill(context.Background(), session.ID(), &identity)
+		}
+		return
+	}
+	if !usePTY {
+		c.exec = session
+		go c.streamExec(session)
+	}
 }
 
 func (c *serverConn) handleList() {
@@ -339,6 +366,14 @@ func (c *serverConn) handleResize(payload []byte) {
 }
 
 func (c *serverConn) handleKill() {
+	if c.exec != nil {
+		if err := c.execKill(context.Background()); err != nil {
+			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+			return
+		}
+		_ = c.reply(frameOK, struct{}{})
+		return
+	}
 	if c.attachment == nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "kill frame without attach"})
 		return
@@ -378,6 +413,49 @@ func (c *serverConn) handleSetVersions(payload []byte) {
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
+}
+
+// streamExec forwards the session's stdout and stderr as frameExecOutput
+// frames and finishes with frameExit once the process is reaped. A write
+// failure means the client is gone; the connection close then kills the
+// process, which unblocks the remaining pipe reader.
+func (c *serverConn) streamExec(session *Session) {
+	var pumps sync.WaitGroup
+	pumps.Add(2)
+	go c.pumpExecPipe(session, session.exec.stdout, streamStdout, &pumps)
+	go c.pumpExecPipe(session, session.exec.stderr, streamStderr, &pumps)
+	pumps.Wait()
+	<-session.deadCh
+	info := session.Info()
+	_ = c.reply(frameExit, exitMsg{Code: info.ExitCode, Signal: info.Signal})
+}
+
+func (c *serverConn) pumpExecPipe(session *Session, pipe io.Reader, stream byte, pumps *sync.WaitGroup) {
+	defer pumps.Done()
+	defer session.exec.drained.Done()
+	buffer := make([]byte, outputChunkSize)
+	for {
+		count, err := pipe.Read(buffer)
+		if count > 0 {
+			if writeErr := c.replyRaw(frameExecOutput, execOutputPayload(stream, buffer[:count])); writeErr != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// execKill terminates the one-shot session; an already finished session is
+// dropped from the supervisor at exit, so ErrNotFound means the kill landed.
+func (c *serverConn) execKill(ctx context.Context) error {
+	identity := c.exec.Identity()
+	err := c.server.supervisor.kill(ctx, c.exec.ID(), &identity)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (c *serverConn) streamOutput(attachment *Attachment) {
@@ -429,6 +507,9 @@ func (c *serverConn) close() {
 	c.closeOnce.Do(func() {
 		if c.attachment != nil {
 			_ = c.attachment.Detach()
+		}
+		if c.exec != nil {
+			_ = c.execKill(context.Background())
 		}
 		_ = c.conn.Close()
 	})

@@ -5,6 +5,7 @@ package supervisor
 import (
 	"os"
 	"strings"
+	"syscall"
 )
 
 const utf8Locale = "C.UTF-8"
@@ -62,4 +63,12 @@ func envKeyEqual(existing, key string) bool {
 
 func killSignalName() string {
 	return "SIGKILL"
+}
+
+func execSignalName(state *os.ProcessState) string {
+	status, ok := state.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return ""
+	}
+	return status.Signal().String()
 }

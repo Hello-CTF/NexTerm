@@ -60,6 +60,20 @@ func TestOutputPayloadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestExecOutputPayloadRoundTrip(t *testing.T) {
+	payload := execOutputPayload(streamStderr, []byte("data"))
+	stream, data, err := parseExecOutput(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream != streamStderr || string(data) != "data" {
+		t.Fatalf("parse = %d, %q", stream, data)
+	}
+	if _, _, err := parseExecOutput(nil); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("empty exec output frame = %v, want ErrProtocol", err)
+	}
+}
+
 func TestErrorCodeMapping(t *testing.T) {
 	pairs := map[string]error{
 		codeNotFound:      ErrNotFound,

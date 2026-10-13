@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,6 +37,9 @@ func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
+	if options.Pty != nil && !*options.Pty {
+		return Info{}, fmt.Errorf("%w: non-PTY sessions are one-shot; use Client.Exec", ErrInvalidInput)
+	}
 	if options.Attempt == "" {
 		options.Attempt = ids.New()
 	}
@@ -64,6 +68,99 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 		return Info{}, err
 	}
 	return info, nil
+}
+
+// ExecSpec describes a one-shot non-PTY command: an argv with environment and
+// working directory, no input and no resize.
+type ExecSpec struct {
+	Command []string
+	Dir     string
+	Env     []string
+}
+
+// maxExecOutput bounds the combined stdout+stderr Exec collects; a variable
+// so tests can shrink it.
+var maxExecOutput = 4 * 1024 * 1024
+
+// Exec runs a non-PTY command through the supervisor and collects stdout and
+// stderr separately until the process exits. exitCode is the process exit
+// code, or -1 when the process was terminated by a signal; it is meaningful
+// only when err is nil. Output beyond maxExecOutput kills the process and
+// returns the partial buffers with an error. Cancelling ctx kills the process
+// (the connection drop makes the supervisor terminate the one-shot session).
+func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte, exitCode int, err error) {
+	if len(spec.Command) == 0 || spec.Command[0] == "" {
+		return nil, nil, -1, fmt.Errorf("%w: exec command is required", ErrInvalidInput)
+	}
+	conn, err := c.dialConn(ctx)
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	defer func() { _ = conn.Close() }()
+	if !slices.Contains(conn.features, featureExec) {
+		return nil, nil, -1, fmt.Errorf("%w: supervisor does not support non-PTY exec", ErrUnsupported)
+	}
+	noPTY := false
+	kind, _, err := conn.request(ctx, frameCreate, createMsg{
+		ID:      ids.New(),
+		Command: spec.Command,
+		Dir:     spec.Dir,
+		Env:     spec.Env,
+		Pty:     &noPTY,
+	})
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	if kind != frameCreated {
+		return nil, nil, -1, protocolMismatch(kind)
+	}
+	stopWatch := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopWatch()
+	for {
+		kind, payload, readErr := readFrame(conn.conn)
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return stdout, stderr, -1, context.Cause(ctx)
+			}
+			return stdout, stderr, -1, fmt.Errorf("%w: read exec stream: %v", base.ErrDisconnected, readErr)
+		}
+		switch kind {
+		case frameExecOutput:
+			stream, data, parseErr := parseExecOutput(payload)
+			if parseErr != nil {
+				return stdout, stderr, -1, parseErr
+			}
+			switch stream {
+			case streamStdout:
+				stdout = append(stdout, data...)
+			case streamStderr:
+				stderr = append(stderr, data...)
+			default:
+				return stdout, stderr, -1, fmt.Errorf("%w: exec output stream %d", ErrProtocol, stream)
+			}
+			if len(stdout)+len(stderr) > maxExecOutput {
+				return stdout, stderr, -1, fmt.Errorf("%w: exec output exceeds limit of %d bytes", ErrUnavailable, maxExecOutput)
+			}
+		case frameExit:
+			var msg exitMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				return stdout, stderr, -1, err
+			}
+			code := -1
+			if msg.Code != nil {
+				code = *msg.Code
+			}
+			return stdout, stderr, code, nil
+		case frameError, frameFatal:
+			var msg errorMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				return stdout, stderr, -1, err
+			}
+			return stdout, stderr, -1, codedError(msg.Code, msg.Message)
+		default:
+			return stdout, stderr, -1, protocolMismatch(kind)
+		}
+	}
 }
 
 func (c *Client) List(ctx context.Context) ([]Info, error) {
@@ -184,7 +281,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec}})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -202,6 +299,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		_ = netConn.Close()
 		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
 	}
+	conn.features = ack.Features
 	return conn, nil
 }
 
@@ -218,8 +316,9 @@ type clientFrame struct {
 }
 
 type clientConn struct {
-	conn    net.Conn
-	writeMu sync.Mutex
+	conn     net.Conn
+	features []string
+	writeMu  sync.Mutex
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {

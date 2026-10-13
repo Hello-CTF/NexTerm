@@ -40,11 +40,24 @@ const (
 	frameExit
 	frameFatal
 	frameKillSession
+	frameExecOutput
+)
+
+// featureExec is advertised in the hello handshake by peers that support
+// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
+const featureExec = "exec"
+
+// Exec output stream discriminators, the first byte of a frameExecOutput
+// payload.
+const (
+	streamStdout byte = 1
+	streamStderr byte = 2
 )
 
 type helloMsg struct {
-	Version     int    `json:"version"`
-	StateDigest string `json:"state_digest,omitempty"`
+	Version     int      `json:"version"`
+	StateDigest string   `json:"state_digest,omitempty"`
+	Features    []string `json:"features,omitempty"`
 }
 
 type createMsg struct {
@@ -55,6 +68,9 @@ type createMsg struct {
 	Env     []string `json:"env,omitempty"`
 	Cols    uint32   `json:"cols,omitempty"`
 	Rows    uint32   `json:"rows,omitempty"`
+	// Pty is nil or true for a PTY session (the only mode pre-feature peers
+	// know); false requests a one-shot non-PTY exec session.
+	Pty *bool `json:"pty,omitempty"`
 }
 
 type attachMsg struct {
@@ -242,4 +258,18 @@ func parseOutput(payload []byte) (seq uint64, data []byte, err error) {
 		return 0, nil, fmt.Errorf("%w: output frame of %d bytes is too short", ErrProtocol, len(payload))
 	}
 	return binary.BigEndian.Uint64(payload), payload[8:], nil
+}
+
+func execOutputPayload(stream byte, data []byte) []byte {
+	payload := make([]byte, 1+len(data))
+	payload[0] = stream
+	copy(payload[1:], data)
+	return payload
+}
+
+func parseExecOutput(payload []byte) (stream byte, data []byte, err error) {
+	if len(payload) < 1 {
+		return 0, nil, fmt.Errorf("%w: exec output frame is empty", ErrProtocol)
+	}
+	return payload[0], payload[1:], nil
 }
