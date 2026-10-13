@@ -19,7 +19,6 @@ var frontendFacadeFiles = []string{
 	filepath.Join("..", "..", "..", "src", "ipc", "grantApi.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "memory.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "remoteApi.ts"),
-	filepath.Join("..", "..", "..", "src", "ipc", "deviceTerminalApi.ts"),
 }
 
 var (

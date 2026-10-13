@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     assetList: vi.fn(),
     groupList: vi.fn(),
     snippetList: vi.fn(),
+    sessionConnectDevice: vi.fn(),
     listenEvent: vi.fn(),
     deviceStatusHandlers: [] as ((payload: unknown) => void)[],
     onEventsResync: vi.fn(),
@@ -51,7 +52,12 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       readKeyFile: vi.fn(),
     },
     vaultApi: { listCredentials: vi.fn().mockResolvedValue([]), setCredential: vi.fn() },
-    sessionApi: { connect: vi.fn(), probe: vi.fn(), list: vi.fn().mockResolvedValue([]) },
+    sessionApi: {
+      connect: vi.fn(),
+      probe: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+      connectDevice: mocks.sessionConnectDevice,
+    },
     terminalApi: { write: vi.fn() },
     dbApi: {},
   };
@@ -254,8 +260,14 @@ function deviceRow(name: string): HTMLElement {
   return row;
 }
 
+function deviceWorkspace() {
+  return useUi.getState().workspaces.find((w) => w.assetId === "device/d-1");
+}
+
 function deviceTerminalTabs() {
-  return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs.filter((t) => t.kind === "deviceTerminal")));
+  return (deviceWorkspace()?.panes ?? []).flatMap((p) =>
+    p.tabs.filter((t) => t.kind === "terminal" && t.sessionId === "s-dev-1"),
+  );
 }
 
 function keydown(element: HTMLElement, key: string): void {
@@ -271,6 +283,15 @@ beforeEach(() => {
   mocks.assetList.mockResolvedValue([LOCAL_ASSET, WEB_ASSET]);
   mocks.groupList.mockResolvedValue([GROUP]);
   mocks.snippetList.mockResolvedValue([]);
+  mocks.sessionConnectDevice.mockResolvedValue({
+    id: "s-dev-1",
+    assetId: "device/d-1",
+    name: "web-01",
+    kind: "device",
+    status: "connected",
+    tabs: [],
+    createdAt: 1,
+  });
   mocks.deviceStatusHandlers.length = 0;
   mocks.resyncHandlers.length = 0;
   mocks.listenEvent.mockImplementation((event: string, handler: (payload: unknown) => void) => {
@@ -326,7 +347,7 @@ describe("资产树「设备」分区 · 位置与登录门控", () => {
 });
 
 describe("资产树「设备」分区 · 设备行行为", () => {
-  it("单击与 Enter 都打开设备终端, 且没有独立「终端」按钮", async () => {
+  it("单击与 Enter 都打开设备终端工作区, 且没有独立「终端」按钮", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -337,14 +358,18 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect([...section().querySelectorAll("button")].some((b) => b.textContent?.trim() === "终端")).toBe(false);
 
     click(row);
+    await flushUntil(() => deviceWorkspace() !== undefined);
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledWith("d-1", "web-01");
+    expect(deviceWorkspace()?.assetKind).toBe("device");
+    expect(deviceWorkspace()?.sessionId).toBe("s-dev-1");
     await flushUntil(() => deviceTerminalTabs().length === 1);
-    expect(deviceTerminalTabs()[0].deviceId).toBe("d-1");
 
-    // Enter 重复打开同一设备聚焦已有标签, 不新增。
-    seedWorkspace();
+    // Enter 重复打开同一设备聚焦已有工作区, 不新建会话。
     keydown(row, "Enter");
-    await flushUntil(() => deviceTerminalTabs().length === 1);
-    expect(deviceTerminalTabs()[0].deviceId).toBe("d-1");
+    await flush();
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
+    expect(deviceTerminalTabs()).toHaveLength(1);
   });
 
   it("离线/终端关闭的设备行禁用并给出提示, 点击不打开终端", async () => {
@@ -366,7 +391,8 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     click(noTerm);
     keydown(noTerm, "Enter");
     await flush();
-    expect(deviceTerminalTabs()).toHaveLength(0);
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    expect(deviceWorkspace()).toBeUndefined();
   });
 
   it("已吊销设备不在分区显示 (不是灰显)", async () => {

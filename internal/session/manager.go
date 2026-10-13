@@ -167,7 +167,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	if asset.ID == "" {
 		return nil, errors.New("asset id is empty")
 	}
-	if asset.Kind != KindLocal && asset.Kind != KindSSH && asset.Kind != KindDocker && asset.Kind != KindWinRM {
+	if asset.Kind != KindLocal && asset.Kind != KindSSH && asset.Kind != KindDocker && asset.Kind != KindWinRM && asset.Kind != KindDevice {
 		return nil, fmt.Errorf("%w: asset kind %s", ErrUnsupported, asset.Kind)
 	}
 	if m.connector == nil {

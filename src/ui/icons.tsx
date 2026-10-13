@@ -582,6 +582,7 @@ export const KIND_ICON_MAP = {
   winrm: IconGrid,
   local: IconMonitor,
   docker: IconBox,
+  device: IconMonitor,
   mysql: IconDatabase,
   postgres: IconDatabase,
   redis: IconLayers,

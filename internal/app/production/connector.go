@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -25,6 +26,7 @@ type productionConnector struct {
 	vault    *vault.Vault
 	hostKeys *productionHostKeyStore
 	events   ipc.Emitter
+	device   atomic.Pointer[DeviceConnectorConfig]
 }
 
 type productionAssetOptions struct {
@@ -56,6 +58,8 @@ type productionAssetOptions struct {
 	InitialCommand        string            `json:"initialCommand"`
 	StartupCommand        string            `json:"startupCommand"`
 	Encoding              string            `json:"encoding"`
+	DeviceID              string            `json:"deviceId"`
+	UserID                string            `json:"userId"`
 }
 
 func newProductionConnector(database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter) (*productionConnector, error) {
@@ -94,6 +98,8 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		transport, err = c.connectSSH(ctx, asset.ID, options, generation)
 	case session.KindWinRM:
 		transport, err = c.connectWinRM(ctx, options)
+	case session.KindDevice:
+		transport, err = c.connectDevice(ctx, options, generation)
 	default:
 		err = fmt.Errorf("%w: %s transport", session.ErrUnsupported, asset.Kind)
 	}

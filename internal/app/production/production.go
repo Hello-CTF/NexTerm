@@ -143,7 +143,6 @@ func productionModules(services ProductionServices) []Module {
 		})
 	}
 	if services.Sync != nil {
-		deviceTerminal := newDeviceTerminalManager(services.Sync.Remote().DialDeviceBridge, services.Events)
 		modules = append(modules, Module{Name: "sync", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 			if err := services.Sync.RegisterCommands(dispatcher); err != nil {
 				return err
@@ -162,9 +161,8 @@ func productionModules(services ProductionServices) []Module {
 					return err
 				}
 			}
-			return registerDeviceTerminalCommands(dispatcher, deviceTerminal)
+			return nil
 		}, Component: services.Sync})
-		modules = append(modules, Module{Name: "device-terminal", Component: deviceTerminal})
 		if services.previewRelay != nil {
 			modules = append(modules, Module{Name: "preview-relay", Component: services.previewRelay})
 		}

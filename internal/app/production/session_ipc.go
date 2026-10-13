@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,11 @@ type dockerTabInfo struct {
 type sessionConnectRequest struct {
 	AssetID       string `json:"assetId"`
 	AcceptHostKey bool   `json:"acceptHostKey"`
+}
+
+type sessionConnectDeviceRequest struct {
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
 }
 
 type sessionIDRequest struct {
@@ -172,6 +178,32 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				return s.connectQuick(ctx, input)
 			})
 		},
+		// 设备不是资产表记录: 以伪资产 (id=device/<deviceId>) 接入会话体系,
+		// 拨号/授权由连接器持有的设备拨号面完成, 不经资产选项与凭据。认证用户
+		// 写进 options: 重连在后台 ctx 运行, 授权回退读它。
+		func() error {
+			return ipc.RegisterNested(dispatcher, "session_connect_device", func(ctx context.Context, _ *ipc.Call, input sessionConnectDeviceRequest) (sessionInfoDTO, error) {
+				if input.DeviceID == "" {
+					return sessionInfoDTO{}, ipc.BadParam(errors.New("deviceId 不能为空"))
+				}
+				name := strings.TrimSpace(input.Name)
+				if name == "" {
+					name = input.DeviceID
+				}
+				userID, _ := ipc.UserIDFromContext(ctx)
+				asset := session.Asset{
+					ID:      "device/" + input.DeviceID,
+					Name:    name,
+					Kind:    session.KindDevice,
+					Options: map[string]any{"deviceId": input.DeviceID, "userId": userID},
+				}
+				connected, err := s.sessions.Connect(ctx, asset)
+				if err != nil {
+					return sessionInfoDTO{}, terminalIPCError(err)
+				}
+				return productionSessionInfo(connected.Info()), nil
+			})
+		},
 		func() error {
 			return ipc.Register(dispatcher, "session_quick_connect_user", func(_ context.Context, _ *ipc.Call, _ struct{}) (string, error) {
 				if !s.desktop {
@@ -272,15 +304,21 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_attach", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
 				ephemeral := false
+				var durable *session.DurableTabOptions
 				if connected, err := s.sessions.Session(input.SessionID); err == nil {
 					ephemeral = connected.Asset().Kind == session.KindLocal
+					// 设备通道没有裸 PTY: 终端标签一律落在设备 daemon 的 durable
+					// 会话上, 重连/重开按 id 恢复。
+					if connected.Asset().Kind == session.KindDevice {
+						durable = &session.DurableTabOptions{}
+					}
 				}
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
 					return "", terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
-					Ephemeral: ephemeral,
+					Ephemeral: ephemeral, Durable: durable,
 				})
 				if err != nil {
 					s.bridge.Unbridge(call.Channel.ID)

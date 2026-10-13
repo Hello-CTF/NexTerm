@@ -36,6 +36,7 @@ import {
   parentOf,
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
+import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
@@ -86,6 +87,14 @@ function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
 }
 
 export function FileTree({ sessionId }: { sessionId: string }) {
+  const deviceSession = useUi(
+    (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
+  );
+  if (deviceSession) return <DeviceSessionNotice feature="文件浏览" />;
+  return <FileTreeInner sessionId={sessionId} />;
+}
+
+function FileTreeInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);

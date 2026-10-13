@@ -229,6 +229,19 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1
 		}
+		// 设备会话经 fleet 授权面接入会话体系: 每次 (重)连做 owner/吊销/终端开关
+		// 校验并写 terminal_open 审计, 桥与状态摘要直取 registry。
+		application.Services.SetDeviceConnector(&production.DeviceConnectorConfig{
+			Dial: fleetService.RequestDeviceBridge,
+			Digest: func(_ context.Context, deviceID string) (string, error) {
+				digest, ok := fleetService.DeviceStateDigest(deviceID)
+				if !ok || digest == "" {
+					return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+				}
+				return digest, nil
+			},
+			Authorize: fleetService.AuthorizeDeviceTerminal,
+		})
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
 	var settings server.SettingStore

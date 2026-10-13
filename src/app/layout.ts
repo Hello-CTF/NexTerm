@@ -54,7 +54,6 @@ const PANE_KINDS = new Set<PaneKind>([
   "settings",
   "audit",
   "devices",
-  "deviceTerminal",
   "background",
   "history",
 ]);
@@ -84,8 +83,6 @@ function sanitizeTab(raw: unknown): AppTab | null {
   if (!id || typeof kind !== "string" || !PANE_KINDS.has(kind as PaneKind)) return null;
   const tabId = optStr(raw.tabId);
   if (kind === "terminal" && !tabId) return null;
-  const deviceId = optStr(raw.deviceId);
-  if (kind === "deviceTerminal" && !deviceId) return null;
   return {
     id,
     kind: kind as PaneKind,
@@ -97,7 +94,6 @@ function sanitizeTab(raw: unknown): AppTab | null {
     dbKind: dbKindOf(typeof raw.dbKind === "string" ? raw.dbKind : "") ?? undefined,
     credId: optStr(raw.credId),
     path: optStr(raw.path),
-    deviceId,
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
     renamedByUser: raw.renamedByUser === true ? true : undefined,

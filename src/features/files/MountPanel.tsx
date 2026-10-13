@@ -6,6 +6,7 @@ import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
+import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { IconArrowLeft, IconChevronRight, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
 
 const FIELD_IDLE_VALIDATION_MS = 500;
@@ -56,7 +57,11 @@ function MountUnavailable({ reason }: { reason: string }) {
 
 export function MountPanel({ sessionId }: { sessionId?: string }) {
   const reason = mountUnavailableReason();
+  const deviceSession = useUi(
+    (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
+  );
   if (reason) return <MountUnavailable reason={reason} />;
+  if (deviceSession) return <DeviceSessionNotice feature="磁盘挂载" />;
   return <MountPanelInner sessionId={sessionId} />;
 }
 

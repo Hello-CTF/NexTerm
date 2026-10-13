@@ -20,6 +20,7 @@ const (
 	KindSSH    = "ssh"
 	KindDocker = "docker"
 	KindWinRM  = "winrm"
+	KindDevice = "device"
 
 	TopicSessionStatus     = "session://status"
 	TopicTerminalExit      = "terminal://exit"
@@ -331,11 +332,11 @@ type AttachOptions struct {
 }
 
 func reconnectable(kind string) bool {
-	return kind == KindSSH || kind == KindDocker || kind == KindWinRM
+	return kind == KindSSH || kind == KindDocker || kind == KindWinRM || kind == KindDevice
 }
 
 func ptyBacked(kind string) bool {
-	return kind == KindLocal || kind == KindSSH || kind == KindDocker
+	return kind == KindLocal || kind == KindSSH || kind == KindDocker || kind == KindDevice
 }
 
 func startupCommandSupported(kind string) bool {
