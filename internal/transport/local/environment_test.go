@@ -1,7 +1,9 @@
 package local
 
 import (
+	"os"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +76,42 @@ func TestEnvironmentLeavesColortermOutsideTerminal(t *testing.T) {
 	env := environment(nil, false, "")
 	if got := environmentValue(env, "COLORTERM"); got != "24bit" {
 		t.Fatalf("COLORTERM = %q, want untouched 24bit", got)
+	}
+}
+
+func TestEnvironmentDefaultsTermForExec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec TERM default is unix-only")
+	}
+	if value, ok := os.LookupEnv("TERM"); ok {
+		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
+	}
+	if err := os.Unsetenv("TERM"); err != nil {
+		t.Fatal(err)
+	}
+	env := environment(nil, false, "")
+	if got := environmentValue(env, "TERM"); got != "xterm-256color" {
+		t.Fatalf("TERM = %q, want xterm-256color", got)
+	}
+
+	emptied := environment(map[string]string{"TERM": ""}, false, "")
+	if got := environmentValue(emptied, "TERM"); got != "xterm-256color" {
+		t.Fatalf("empty TERM = %q, want fallback xterm-256color", got)
+	}
+	occurrences := 0
+	for _, entry := range emptied {
+		if strings.HasPrefix(entry, "TERM=") {
+			occurrences++
+		}
+	}
+	if occurrences != 1 {
+		t.Fatalf("TERM entries = %d, want exactly one", occurrences)
+	}
+}
+
+func TestEnvironmentKeepsExplicitTermForExec(t *testing.T) {
+	env := environment(map[string]string{"TERM": "vt100"}, false, "")
+	if got := environmentValue(env, "TERM"); got != "vt100" {
+		t.Fatalf("TERM = %q, want vt100", got)
 	}
 }
