@@ -9,7 +9,7 @@ import { biometricApi, systemApi, vaultApi } from "../ipc/commands";
 
 export function DekUnlockBanner() {
   if (WEB) return <WebDekUnlockBanner />;
-  return <IosVaultUnlockBanner />;
+  return <MobileVaultUnlockBanner />;
 }
 
 // 浏览器刷新后会话经 cookie 恢复但 DEK 已随内存清空,自动同步静默停摆;
@@ -93,8 +93,9 @@ function WebDekUnlockBanner() {
   );
 }
 
-// iOS 端凭据库锁定横幅: 凭据库主密码保护同步链接口令与凭据, 锁定即同步停摆。
-// 面容快捷解锁材料为该主密码(存 iOS Keychain, 设备级保护), 验证走系统面容弹窗,
+// 移动端凭据库锁定横幅: 凭据库主密码保护同步链接口令与凭据, 锁定即同步停摆。
+// 生物识别快捷解锁材料为该主密码(iOS 存 Keychain 并绑定当前面容集,
+// Android 存 Keystore 加密的 EncryptedSharedPreferences), 验证走系统生物识别弹窗,
 // 通过后仍调 vault_unlock 既有路径; 验证取消/失败保持密码输入。
 const DONT_ASK_KEY = "nexterm.biometricUnlock.dontAsk";
 
@@ -106,16 +107,17 @@ function dontAskBiometricAgain(): boolean {
   }
 }
 
-function IosVaultUnlockBanner() {
+function MobileVaultUnlockBanner() {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const platform = useQuery({ queryKey: ["app-platform"], queryFn: () => systemApi.platform() });
-  const isIos = platform.data === "ios";
-  const vault = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status(), enabled: isIos });
+  const supported = platform.data === "ios" || platform.data === "android";
+  const bioLabel = platform.data === "ios" ? "面容 ID" : "生物识别";
+  const vault = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status(), enabled: supported });
   const bio = useQuery({
     queryKey: ["biometric-status"],
     queryFn: () => biometricApi.status(),
-    enabled: isIos,
+    enabled: supported,
   });
 
   const [dismissed, setDismissed] = useState(false);
@@ -128,7 +130,7 @@ function IosVaultUnlockBanner() {
 
   const st = vault.data;
   const locked = !!st?.initialized && !st.unlocked && st.mode === "master" && !st.passwordless;
-  if (!isIos || dismissed) return null;
+  if (!supported || dismissed) return null;
   if (!locked && offerEnable === null) return null;
 
   const refreshUnlocked = async () => {
@@ -168,7 +170,7 @@ function IosVaultUnlockBanner() {
     try {
       const r = await biometricApi.unlock();
       if (!r.ok || !r.password) {
-        setNotice(r.message ?? "面容验证未通过，请使用密码解锁");
+        setNotice(r.message ?? "验证未通过，请使用密码解锁");
         return;
       }
       await vaultApi.unlock(r.password);
@@ -189,7 +191,7 @@ function IosVaultUnlockBanner() {
       await biometricApi.enable(offerEnable);
       setOfferEnable(null);
       void qc.invalidateQueries({ queryKey: ["biometric-status"] });
-      pushToast("success", "已启用面容 ID 快捷解锁");
+      pushToast("success", `已启用${bioLabel}快捷解锁`);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -205,7 +207,7 @@ function IosVaultUnlockBanner() {
       await biometricApi.disable();
       setConfirmDisable(false);
       void qc.invalidateQueries({ queryKey: ["biometric-status"] });
-      pushToast("success", "已关闭面容 ID 快捷解锁");
+      pushToast("success", `已关闭${bioLabel}快捷解锁`);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -218,10 +220,10 @@ function IosVaultUnlockBanner() {
       <div
         className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-950 px-3 text-xs text-amber-100"
         role="region"
-        aria-label="启用面容 ID 快捷解锁"
+        aria-label={`启用${bioLabel}快捷解锁`}
       >
         <IconLock size={13} className="shrink-0 text-amber-300" />
-        <span className="min-w-0 truncate">已解锁。启用面容 ID 快捷解锁？验证通过后即可免输密码</span>
+        <span className="min-w-0 truncate">已解锁。启用{bioLabel}快捷解锁？验证通过后即可免输密码</span>
         <div className="nx-spacer" />
         {error && (
           <span className="flex min-w-0 shrink items-center gap-1 text-red-300" role="alert">
@@ -237,7 +239,7 @@ function IosVaultUnlockBanner() {
           disabled={busy}
           onClick={() => void enableBiometric()}
         >
-          启用面容 ID
+          启用{bioLabel}
         </button>
         <button
           type="button"
@@ -276,7 +278,7 @@ function IosVaultUnlockBanner() {
     >
       <IconLock size={13} className="shrink-0 text-amber-300" />
       <span className="min-w-0 truncate">
-        数据密钥未解锁，同步已暂停；输入主密码或验证面容解锁
+        数据密钥未解锁，同步已暂停；输入主密码或使用{bioLabel}解锁
       </span>
       <div className="nx-spacer" />
       {error && (
@@ -321,7 +323,7 @@ function IosVaultUnlockBanner() {
               disabled={busy}
               onClick={() => void faceUnlock()}
             >
-              {busy ? "验证中…" : "用面容 ID 解锁"}
+              {busy ? "验证中…" : `用${bioLabel}解锁`}
             </button>
             <button
               type="button"
@@ -330,7 +332,7 @@ function IosVaultUnlockBanner() {
               title="删除本机保存的解锁材料"
               onClick={() => setConfirmDisable(true)}
             >
-              关闭面容 ID
+              关闭{bioLabel}
             </button>
           </>
         ))}

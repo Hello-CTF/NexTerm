@@ -69,6 +69,7 @@ func run(args []string) int {
 		return 1
 	}
 	streams := newDesktopStreamFactory()
+	var window *application.WebviewWindow
 	var wailsApp *application.App
 	events := ipc.EmitterFunc(func(ctx context.Context, event ipc.Event) error {
 		if err := ctx.Err(); err != nil {
@@ -97,16 +98,7 @@ func run(args []string) int {
 			return nil
 		},
 		ScreenInsets: func(context.Context) (production.ScreenInsets, error) {
-			screen := application.Get().Screen.GetPrimary()
-			if screen == nil {
-				return production.ScreenInsets{}, nil
-			}
-			return production.ScreenInsets{
-				Top:    screen.WorkArea.Y - screen.Bounds.Y,
-				Bottom: screen.Bounds.Height - screen.WorkArea.Y - screen.WorkArea.Height,
-				Left:   screen.WorkArea.X - screen.Bounds.X,
-				Right:  screen.Bounds.Width - screen.WorkArea.X - screen.WorkArea.Width,
-			}, nil
+			return screenInsets(currentScreen(window)), nil
 		},
 	})
 	if err != nil {
@@ -114,7 +106,6 @@ func run(args []string) int {
 		return showStartupError(paths, err, logger.Logger)
 	}
 	service := &Service{app: production.Application, streams: streams}
-	var window *application.WebviewWindow
 	wailsApp = application.New(application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",

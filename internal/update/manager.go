@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 const (
@@ -136,7 +137,7 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	directory, err := os.MkdirTemp("", "nexterm-update-")
+	directory, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-")
 	if err != nil {
 		return Result{}, err
 	}

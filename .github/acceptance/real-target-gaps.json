@@ -6,43 +6,66 @@
       "id": "real-browser-acceptance",
       "status": "evidence-gap",
       "owner": "release-acceptance",
-      "required": "Real Chromium acceptance (focus and keyboard navigation, narrow-viewport overflow, touch hit-testing, WebSocket early frames/reconnect, reload restore against a real server) has no automated harness since the demo mode and task acceptance:browser were removed; restore an equivalent harness or record manual evidence before claiming coverage."
+      "required": "Real Chromium acceptance beyond the smoke subset still has no automated harness: narrow-viewport (320/390px) panel overflow, elementFromPoint touch hit-testing and toast avoidance, WebSocket reconnect/replay after a server restart, RPC non-retry and 5xx jitter recovery, auth=on CSRF matrix, terminal transcript survival across server restarts, AI stream reconnect, and host-key-changed trust refusal. Record manual evidence or extend the harness before claiming coverage.",
+      "partial_automation": "task smoke:browser (.github/scripts/browser-smoke.mjs) covers, against a real --auth=loopback server serving the real dist SPA in system Chrome driven over raw CDP (no demo mode, no new dependencies): real-browser boot into the workspace shell, keyboard-only Tab focus navigation via the CDP Input domain, /ws/events socket open plus a real broker frame triggered by /rpc layout_put, and reload restore against the real server.",
+      "feasible_path": "Extend .github/scripts/browser-smoke.mjs with the remaining checks from the retired .github/scripts/browser-acceptance.mjs (git history, removed in 6c45a544): its CDP/Input/Emulation helpers still work unchanged; swap the ?demo=1 boot for a real --auth=loopback server (and an --auth=on server for the CSRF checks) exactly as the current smoke does.",
+      "prerequisites": "Node >= 22 (built-in WebSocket for CDP), a system Chrome/Chromium (CHROME_PATH override supported), go toolchain for the server binary, pnpm install for the frontend dist build. No npm browser-driver dependency is required.",
+      "suggested_tools": "Raw CDP over the Node built-in WebSocket (proven by both harnesses); Playwright only if the project ever accepts a new devDependency."
     },
     {
       "id": "physical-mobile-and-soft-keyboard",
       "status": "evidence-gap",
       "owner": "release-acceptance",
-      "required": "Physical iOS/Android layout, coarse pointer, keys bar and native soft-keyboard evidence at 360/560/820px where applicable."
+      "required": "Physical iOS/Android layout, coarse pointer, keys bar and native soft-keyboard evidence at 360/560/820px where applicable.",
+      "partial_automation": "jsdom/vitest covers the pure logic of the PR26 mobile behaviors: long-press-to-contextmenu state machine (src/test/longPress.test.ts), landscape-fullscreen detection (src/test/platform.test.ts), action-sheet drill-down/drag-to-close (src/test/features/contextMenuSheet.test.tsx), edge gestures, selection action bar, DEK unlock banner and mobile terminal font defaults. Native soft keyboard, real touch scrolling and OS-level gestures remain uncovered.",
+      "feasible_path": "Manual on-device checklist per release against the produced APK/IPA; the build/ios-dist CI job already produces a signed device IPA when signing variables are configured, so the remaining work is a documented human run.",
+      "prerequisites": "A physical iPhone/iPad and an Android phone, plus the release APK/IPA artifacts.",
+      "suggested_tools": "Manual checklist; Maestro or Detox would automate on-device flows but both are new dependencies and out of the current toolchain."
     },
     {
       "id": "lazycat-box-and-store",
       "status": "evidence-gap",
       "owner": "M47",
-      "required": "Build and install the Go LazyCat package on a real box; validate manifest injects, upstream image matching and LPK size against the recorded Rust LPK anchors."
+      "required": "Build and install the Go LazyCat package on a real box; validate manifest injects, upstream image matching and LPK size against the recorded Rust LPK anchors.",
+      "feasible_path": "Run lzc-cli build with lazycat/lzc-build.yml on a real LazyCat box, install the LPK, and compare manifest injects and LPK size with the recorded anchors; scripts/verify-manifest-injects already gates the static contract in CI.",
+      "prerequisites": "Access to a physical or VM LazyCat box and the lzc-cli toolchain.",
+      "suggested_tools": "lzc-cli, scripts/verify-manifest-injects for the static half."
     },
     {
       "id": "deployed-pages",
       "status": "evidence-gap",
       "owner": "M47",
-      "required": "Run responsive and WS acceptance against the actual deployed Pages URL; a local Vite build is not deployment evidence."
+      "required": "Run responsive and WS acceptance against the actual deployed Pages URL; a local Vite build is not deployment evidence.",
+      "feasible_path": "After a master push deploys Pages, point a browser-smoke-style CDP run at the deployed URL with ?api=<real server> for the WS checks; the static-only Pages deployment cannot serve /ws or /rpc, so WS acceptance needs a paired real server.",
+      "prerequisites": "The deployed Pages URL plus a reachable real nexterm-server for API/WS.",
+      "suggested_tools": ".github/scripts/browser-smoke.mjs CDP helpers retargeted at the deployed origin."
     },
     {
       "id": "native-installation",
       "status": "evidence-gap",
       "owner": "release-acceptance",
-      "required": "Install the produced NSIS/DMG on their real target OS versions and document signing/notarization and WebView2/WKWebView runtime results."
+      "required": "Install the produced NSIS/DMG on their real target OS versions and document signing/notarization and WebView2/WKWebView runtime results.",
+      "feasible_path": "Manual install matrix per release: NSIS on supported Windows versions (checks WebView2 bootstrap), DMG on supported macOS versions (checks Gatekeeper/notarization state and WKWebView); record versions and outcomes in the release notes.",
+      "prerequisites": "Real Windows and macOS machines or VMs per supported OS version, plus the release artifacts.",
+      "suggested_tools": "Manual checklist; installer smoke could be scripted with platform tooling (winget/nsis silent flags, hdiutil attach) but still needs real OS targets."
     },
     {
       "id": "linux-server-real-deployment",
       "status": "evidence-gap",
       "owner": "release-acceptance",
-      "required": "Install the server on a real always-on Linux host with a public domain and TLS certificate terminated at a reverse proxy, verify loopback health, browser init/login with a real account, desktop /sync/v2 sign-in and sync, and archive the reverse proxy 401 matrix; local e2e pairs and desktop/server artifacts are not deployment evidence."
+      "required": "Install the server on a real always-on Linux host with a public domain and TLS certificate terminated at a reverse proxy, verify loopback health, browser init/login with a real account, desktop /sync/v2 sign-in and sync, and archive the reverse proxy 401 matrix; local e2e pairs and desktop/server artifacts are not deployment evidence.",
+      "feasible_path": "Deploy the release tar.gz with deploy/systemd units behind nginx/caddy on a real host, then run browser init/login, desktop /sync/v2 sign-in, and the proxy 401 matrix by hand; NEXTERM_ALLOWED_ORIGINS must carry the public domain for WS/RPC origin checks.",
+      "prerequisites": "An always-on Linux host, a public domain, and a TLS-terminating reverse proxy.",
+      "suggested_tools": "deploy/systemd units, scripts/e2e-harness for the local pre-flight half, manual checklist for the deployed half."
     },
     {
       "id": "lazycat-arm64-real-box",
       "status": "evidence-gap",
       "owner": "M47",
-      "required": "Build the LazyCat package with LZC_ARCH=arm64 and run the real-box installation checklist on ARM64 LazyCat hardware, recording architecture-specific evidence; x86_64 box runs and desktop/server builds do not cover it."
+      "required": "Build the LazyCat package with LZC_ARCH=arm64 and run the real-box installation checklist on ARM64 LazyCat hardware, recording architecture-specific evidence; x86_64 box runs and desktop/server builds do not cover it.",
+      "feasible_path": "Repeat the lazycat-box-and-store run with LZC_ARCH=arm64 on ARM64 LazyCat hardware and record the architecture-specific evidence.",
+      "prerequisites": "ARM64 LazyCat hardware and the lzc-cli toolchain.",
+      "suggested_tools": "lzc-cli with LZC_ARCH=arm64."
     }
   ]
 }
