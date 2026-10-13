@@ -18,11 +18,11 @@ func TestFitMessageBudgetKeepsNewestFourToolResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !compacted || fitted[1].Content != "[较早的工具输出已省略]" {
+	if !compacted || fitted[1].Content != "[Earlier tool output omitted]" {
 		t.Fatalf("oldest tool result was not compacted: %+v", fitted)
 	}
 	for i := 2; i < len(fitted)-1; i++ {
-		if fitted[i].Content == "[较早的工具输出已省略]" {
+		if fitted[i].Content == "[Earlier tool output omitted]" {
 			t.Fatalf("newest four tool results were compacted: %+v", fitted)
 		}
 	}

@@ -15,7 +15,7 @@ var reconCommands = []string{
 	"free -m 2>/dev/null | head -5",
 	"ss -lntp 2>/dev/null | head -25 || netstat -lntp 2>/dev/null | head -25",
 	"systemctl --failed --no-pager 2>/dev/null | head -15",
-	"echo \"== docker ps（总数 $(docker ps -q 2>/dev/null | wc -l)）==\"; docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | head -60",
+	"echo \"== docker ps (total $(docker ps -q 2>/dev/null | wc -l)) ==\"; docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | head -60",
 }
 
 func (b *Builder) cachedRecon(ctx context.Context, sessionID string) string {
@@ -70,7 +70,7 @@ func Recon(ctx context.Context, transport base.Transport) string {
 		cancel()
 		fmt.Fprintf(&output, "$ %s\n", command)
 		if err != nil {
-			fmt.Fprintf(&output, "<侦察命令失败: %v>\n", err)
+			fmt.Fprintf(&output, "<recon command failed: %v>\n", err)
 			continue
 		}
 		stdout := result.Stdout
@@ -87,7 +87,7 @@ func Recon(ctx context.Context, transport base.Transport) string {
 		output.WriteString(strings.TrimRight(stdout, "\n"))
 		output.WriteByte('\n')
 		if truncated {
-			output.WriteString("（上一条命令输出超出预算已截断）\n")
+			output.WriteString("(previous command output exceeded the budget and was truncated)\n")
 		}
 	}
 	return output.String()

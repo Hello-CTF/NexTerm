@@ -198,7 +198,7 @@ func TestDurableHistorySummarizedKeepingKeyFacts(t *testing.T) {
 			t.Fatalf("early canary %q never reached the summarizer", canary)
 		}
 	}
-	for _, fact := range append(append([]string{}, compactionCanaries...), "[历史摘要]", "最近的问题") {
+	for _, fact := range append(append([]string{}, compactionCanaries...), "[History Summary]", "最近的问题") {
 		if !strings.Contains(context, fact) {
 			t.Fatalf("fact %q missing from model context:\n%s", fact, context)
 		}
@@ -222,7 +222,7 @@ func TestSummarizationFailureFallsBackToTruncation(t *testing.T) {
 	if !hasStatusPhase(events, "compacting") {
 		t.Fatal("missing compacting status event")
 	}
-	if strings.Contains(context, "[历史摘要]") {
+	if strings.Contains(context, "[History Summary]") {
 		t.Fatalf("failed summary still replaced history:\n%s", context)
 	}
 	if strings.Contains(context, "旧 filler 0") || !strings.Contains(context, "最近的问题") {
@@ -318,7 +318,7 @@ func TestSummarizationTimeoutFallsBackToTruncation(t *testing.T) {
 		t.Fatal("summary context carried no deadline")
 	}
 	context := flattenMessages(after.Messages)
-	if strings.Contains(context, "[历史摘要]") {
+	if strings.Contains(context, "[History Summary]") {
 		t.Fatalf("timed-out summary still replaced history:\n%s", context)
 	}
 	if strings.Contains(context, "旧 filler 0") || !strings.Contains(context, "最近的问题") {
@@ -339,7 +339,7 @@ func TestDurableSummarizationTimeoutFallsBackToTruncation(t *testing.T) {
 		t.Fatalf("summary timeout must fall back to history truncation: %v", err)
 	}
 	context := flattenMessages(fitted)
-	if strings.Contains(context, "[历史摘要]") {
+	if strings.Contains(context, "[History Summary]") {
 		t.Fatalf("timed-out summary still replaced history:\n%s", context)
 	}
 	if strings.Contains(context, "旧 filler 0") || !strings.Contains(context, "最近的问题") {
@@ -405,7 +405,7 @@ func TestDurableOversizedLatestExchangeSummaryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	context, _ := requireCompactionRunCompleted(t, stream, chat)
-	if strings.Contains(context, "[历史摘要]") {
+	if strings.Contains(context, "[History Summary]") {
 		t.Fatalf("failed summary still replaced history:\n%s", context)
 	}
 }
@@ -421,7 +421,7 @@ func TestDurableOversizedLatestExchangeEmptySummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	context, _ := requireCompactionRunCompleted(t, stream, chat)
-	if strings.Contains(context, "[历史摘要]") {
+	if strings.Contains(context, "[History Summary]") {
 		t.Fatalf("empty summary still replaced history:\n%s", context)
 	}
 }
@@ -502,7 +502,7 @@ func TestCompactionFinalizeRetainsLatestUnit(t *testing.T) {
 	if len(result) != 4 || result[0].Role != schema.System || result[1].Role != schema.User || result[2].Content != "最近的问题" || result[3].Content != "最近回复" {
 		t.Fatalf("unexpected finalized history: %+v", result)
 	}
-	if !strings.Contains(result[1].Content, "[历史摘要]") || !strings.Contains(result[1].Content, "摘要：保留关键事实") {
+	if !strings.Contains(result[1].Content, "[History Summary]") || !strings.Contains(result[1].Content, "摘要：保留关键事实") {
 		t.Fatalf("summary message malformed: %+v", result[1])
 	}
 }

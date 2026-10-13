@@ -7,12 +7,12 @@ import (
 	"unicode/utf8"
 )
 
-var weekdayNames = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+var weekdayNames = [...]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 
 func Render(bundle Bundle) string {
 	var output strings.Builder
 	if !bundle.Now.IsZero() {
-		output.WriteString("[当前时间]\n")
+		output.WriteString("[Current Time]\n")
 		name, offset := bundle.Now.Zone()
 		sign := "+"
 		if offset < 0 {
@@ -20,54 +20,54 @@ func Render(bundle Bundle) string {
 		}
 		zone := fmt.Sprintf("UTC%s%02d:%02d", sign, offset/3600, offset%3600/60)
 		if name != "" {
-			zone = fmt.Sprintf("%s（%s）", name, zone)
+			zone = fmt.Sprintf("%s (%s)", name, zone)
 		}
-		fmt.Fprintf(&output, "- 时间：%s\n", bundle.Now.Format(time.RFC3339))
-		fmt.Fprintf(&output, "- 时区：%s\n", zone)
-		fmt.Fprintf(&output, "- 星期：%s\n", weekdayNames[bundle.Now.Weekday()])
+		fmt.Fprintf(&output, "- Time: %s\n", bundle.Now.Format(time.RFC3339))
+		fmt.Fprintf(&output, "- Timezone: %s\n", zone)
+		fmt.Fprintf(&output, "- Weekday: %s\n", weekdayNames[bundle.Now.Weekday()])
 	}
 	if bundle.Session != nil {
-		output.WriteString("[会话上下文]\n")
-		fmt.Fprintf(&output, "- 连接：%s（%s）\n", bundle.Session.Name, bundle.Session.Kind)
+		output.WriteString("[Session Context]\n")
+		fmt.Fprintf(&output, "- Connection: %s (%s)\n", bundle.Session.Name, bundle.Session.Kind)
 		if bundle.Session.Host != "" {
-			fmt.Fprintf(&output, "- 主机：%s\n", bundle.Session.Host)
+			fmt.Fprintf(&output, "- Host: %s\n", bundle.Session.Host)
 		}
 		if bundle.Session.Username != "" {
-			fmt.Fprintf(&output, "- 用户：%s\n", bundle.Session.Username)
+			fmt.Fprintf(&output, "- User: %s\n", bundle.Session.Username)
 		}
 		if bundle.Session.CWD != "" {
-			fmt.Fprintf(&output, "- 当前目录：%s\n", bundle.Session.CWD)
+			fmt.Fprintf(&output, "- Current Directory: %s\n", bundle.Session.CWD)
 		}
 	}
 	if bundle.Screen != "" {
-		output.WriteString("[终端当前屏幕]\n")
+		output.WriteString("[Current Terminal Screen]\n")
 		output.WriteString(bundle.Screen)
 		output.WriteByte('\n')
 	}
 	if len(bundle.Tail) != 0 {
-		output.WriteString("[终端最近输出]\n")
+		output.WriteString("[Recent Terminal Output]\n")
 		output.WriteString(tailRunes(strings.Join(bundle.Tail, "\n"), 8000))
 		output.WriteByte('\n')
 	}
 	if bundle.Recon != "" {
-		output.WriteString("[环境侦察快照]\n")
+		output.WriteString("[Environment Recon Snapshot]\n")
 		output.WriteString(prefixRunes(bundle.Recon, 12000))
 		output.WriteByte('\n')
 	}
 	if len(bundle.Tables) != 0 {
-		output.WriteString("[数据库表]\n")
+		output.WriteString("[Database Tables]\n")
 		for _, table := range bundle.Tables {
 			fmt.Fprintf(&output, "%s.%s\n", table.Schema, table.Name)
 		}
 	}
 	if len(bundle.Containers) != 0 {
-		output.WriteString("[Docker 容器]\n")
+		output.WriteString("[Docker Containers]\n")
 		for _, container := range bundle.Containers {
 			fmt.Fprintf(&output, "%s [%s] %s (%s)\n", container.Name, container.State, container.Image, container.Status)
 		}
 	}
 	if bundle.Selection != "" {
-		output.WriteString("[用户选中的文本]\n")
+		output.WriteString("[User-Selected Text]\n")
 		output.WriteString(bundle.Selection)
 		output.WriteByte('\n')
 	}

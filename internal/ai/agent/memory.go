@@ -59,28 +59,28 @@ func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseToo
 	scope := r.config.MemoryScope
 	makers := []func() (tool.InvokableTool, error){
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool(memorySaveTool, "把一条长期运维记忆写入语义记忆库（按主题归档，写入前会做密钥检查）。", func(ctx context.Context, input memorySaveArgs) (tools.Output, error) {
+			return utils.InferTool(memorySaveTool, "Write one long-term operational memory into the semantic memory store (filed by topic; a secret check runs before writing).", func(ctx context.Context, input memorySaveArgs) (tools.Output, error) {
 				return tools.Guarded(ctx, memorySaveTool, func() (tools.Output, error) {
 					return memorySaveOutput(ctx, store, scope, input), nil
 				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool(memoryListTool, "列出长期语义记忆的目录（主题、ID、版本），可按主题过滤；条数与字节有限额，超出部分会省略并标注。", func(ctx context.Context, input memoryListArgs) (tools.Output, error) {
+			return utils.InferTool(memoryListTool, "List the catalog of long-term semantic memories (topic, ID, version), filterable by topic; entry count and bytes are capped, and anything beyond the caps is omitted and marked.", func(ctx context.Context, input memoryListArgs) (tools.Output, error) {
 				return tools.Guarded(ctx, memoryListTool, func() (tools.Output, error) {
 					return memoryListOutput(ctx, store, scope, input), nil
 				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool(memoryRecallTool, "按 ID 读取长期语义记忆的完整内容。", func(ctx context.Context, input memoryRecallArgs) (tools.Output, error) {
+			return utils.InferTool(memoryRecallTool, "Read the full content of a long-term semantic memory by ID.", func(ctx context.Context, input memoryRecallArgs) (tools.Output, error) {
 				return tools.Guarded(ctx, memoryRecallTool, func() (tools.Output, error) {
 					return memoryRecallOutput(ctx, store, scope, input), nil
 				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool(memoryForgetTool, "按 ID 与版本删除一条长期语义记忆（版本不一致会拒绝）。", func(ctx context.Context, input memoryForgetArgs) (tools.Output, error) {
+			return utils.InferTool(memoryForgetTool, "Delete one long-term semantic memory by ID and version (a version mismatch is rejected).", func(ctx context.Context, input memoryForgetArgs) (tools.Output, error) {
 				return tools.Guarded(ctx, memoryForgetTool, func() (tools.Output, error) {
 					return memoryForgetOutput(ctx, store, scope, input), nil
 				})

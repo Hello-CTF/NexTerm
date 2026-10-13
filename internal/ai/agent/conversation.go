@@ -64,7 +64,7 @@ func titlePrompt(message string) string {
 	if len(runes) > 500 {
 		message = string(runes[:500])
 	}
-	return "用不超过20个字概括以下用户消息的主题，作为会话标题。只输出标题文本本身，不要输出任何其他内容：\n" + message
+	return "Summarize the topic of the following user message as a conversation title, in no more than 20 characters. Output only the title text itself, with no other content:\n" + message
 }
 
 func normalizeTitle(content string) string {
@@ -235,20 +235,20 @@ func retitleContextLines(rows []store.MessageRow) []string {
 
 func retitlePrompt(currentTitle, prefix string, context []string) string {
 	var b strings.Builder
-	b.WriteString("以下是某个 AI 会话的现有标题与最近对话内容。\n现有标题：")
+	b.WriteString("Below are the current title of an AI conversation and its recent messages.\nCurrent title: ")
 	b.WriteString(currentTitle)
 	b.WriteString("\n")
 	if len(context) > 0 {
-		b.WriteString("最近对话：\n")
+		b.WriteString("Recent messages:\n")
 		for _, line := range context {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
 	}
 	if prefix == "" {
-		b.WriteString("请用不超过20个字概括这个会话的主题，作为新标题。只输出标题文本本身，不要输出任何其他内容。")
+		b.WriteString("Summarize the topic of this conversation as the new title, in no more than 20 characters. Output only the title text itself, with no other content.")
 	} else {
-		fmt.Fprintf(&b, "%q 是标题的分组前缀。请只为此会话概括一个新的主题部分（不超过20个字），输出时不要包含前缀，也不要输出任何其他内容。", prefix)
+		fmt.Fprintf(&b, "%q is the grouping prefix of the title. Summarize only a new topic part for this conversation (no more than 20 characters); do not include the prefix in the output, and do not output any other content.", prefix)
 	}
 	return b.String()
 }

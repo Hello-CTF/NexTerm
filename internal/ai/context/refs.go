@@ -61,41 +61,41 @@ func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileRe
 		}
 		screen, err := b.deps.Screen(ctx, ref.ID)
 		if err != nil {
-			return fmt.Sprintf("- %s（无法读取终端屏幕）\n", label)
+			return fmt.Sprintf("- %s (unable to read the terminal screen)\n", label)
 		}
 		if strings.TrimSpace(screen.Text) == "" {
-			return fmt.Sprintf("- %s（终端屏幕为空）\n", label)
+			return fmt.Sprintf("- %s (terminal screen is empty)\n", label)
 		}
-		return fmt.Sprintf("[引用：%s 的终端屏幕]\n%s\n", label, truncateRunes(screen.Text, min(RefScreenRunes, budget), true))
+		return fmt.Sprintf("[Reference: terminal screen of %s]\n%s\n", label, truncateRunes(screen.Text, min(RefScreenRunes, budget), true))
 	case "asset":
 		if b.deps.Session == nil || ref.ID == "" {
 			return ""
 		}
 		session, err := b.deps.Session(ctx, ref.ID)
 		if err != nil {
-			return fmt.Sprintf("- %s（无法读取会话信息）\n", label)
+			return fmt.Sprintf("- %s (unable to read session info)\n", label)
 		}
 		var brief strings.Builder
-		fmt.Fprintf(&brief, "- 连接：%s（%s）\n", session.Name, session.Kind)
+		fmt.Fprintf(&brief, "- Connection: %s (%s)\n", session.Name, session.Kind)
 		if session.Host != "" {
-			fmt.Fprintf(&brief, "- 主机：%s\n", session.Host)
+			fmt.Fprintf(&brief, "- Host: %s\n", session.Host)
 		}
 		if session.Username != "" {
-			fmt.Fprintf(&brief, "- 用户：%s\n", session.Username)
+			fmt.Fprintf(&brief, "- User: %s\n", session.Username)
 		}
 		if session.CWD != "" {
-			fmt.Fprintf(&brief, "- 当前目录：%s\n", session.CWD)
+			fmt.Fprintf(&brief, "- Current Directory: %s\n", session.CWD)
 		}
-		return fmt.Sprintf("[引用：会话 %s]\n%s", label, truncateRunes(brief.String(), budget, false))
+		return fmt.Sprintf("[Reference: session %s]\n%s", label, truncateRunes(brief.String(), budget, false))
 	case "file":
 		if readFile == nil || ref.Path == "" {
 			return ""
 		}
 		content, err := readFile(ctx, ref.SessionID, ref.Path)
 		if err != nil {
-			return fmt.Sprintf("- %s（无法读取文件 %s）\n", label, ref.Path)
+			return fmt.Sprintf("- %s (unable to read file %s)\n", label, ref.Path)
 		}
-		return fmt.Sprintf("[引用：文件 %s]\n%s\n", ref.Path, truncateRunes(content, min(RefFileRunes, budget), false))
+		return fmt.Sprintf("[Reference: file %s]\n%s\n", ref.Path, truncateRunes(content, min(RefFileRunes, budget), false))
 	default:
 		return ""
 	}
@@ -107,7 +107,7 @@ func truncateRunes(value string, limit int, keepTail bool) string {
 		return value
 	}
 	if keepTail {
-		return "[前文已截断]\n" + string(runes[len(runes)-limit:])
+		return "[Earlier content truncated]\n" + string(runes[len(runes)-limit:])
 	}
-	return string(runes[:limit]) + "\n[内容已截断]"
+	return string(runes[:limit]) + "\n[Content truncated]"
 }

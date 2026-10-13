@@ -14,7 +14,7 @@ func TestBuildInjectsTimeAnchorIntoVolatileOnly(t *testing.T) {
 	fixed := time.Date(2026, 10, 5, 20, 48, 0, 0, time.FixedZone("CST", 8*3600))
 	builder := NewBuilder(Dependencies{Now: func() time.Time { return fixed }})
 	prompt := builder.Build(context.Background(), tools.Scope{}, "")
-	for _, expected := range []string{"[当前时间]", "2026-10-05T20:48:00+08:00", "2026", "UTC+08:00", "CST", "星期一"} {
+	for _, expected := range []string{"[Current Time]", "2026-10-05T20:48:00+08:00", "2026", "UTC+08:00", "CST", "Monday"} {
 		if !strings.Contains(prompt.Volatile, expected) {
 			t.Errorf("missing %q in volatile context: %q", expected, prompt.Volatile)
 		}
@@ -22,7 +22,7 @@ func TestBuildInjectsTimeAnchorIntoVolatileOnly(t *testing.T) {
 	if !prompt.Bundle.Now.Equal(fixed) {
 		t.Errorf("bundle.Now = %v, want %v", prompt.Bundle.Now, fixed)
 	}
-	for _, forbidden := range []string{"2026-10-05", "当前时间", "星期一"} {
+	for _, forbidden := range []string{"2026-10-05", "Current Time", "Monday"} {
 		if strings.Contains(prompt.Stable, forbidden) {
 			t.Errorf("stable prompt must not contain time anchor %q: %q", forbidden, prompt.Stable)
 		}

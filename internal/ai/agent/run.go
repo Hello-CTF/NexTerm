@@ -253,12 +253,12 @@ func (r *Runner) initializeEino(current *job) error {
 	if r.config.Context != nil {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
 		if bundle.Volatile != "" {
-			messages = append(messages, schema.UserMessage("[环境上下文]\n"+bundle.Volatile))
+			messages = append(messages, schema.UserMessage("[Environment Context]\n"+bundle.Volatile))
 		}
 		if len(current.args.Refs) > 0 {
 			rendered := r.config.Context.RenderRefs(current.ctx, refSpecs(current.args.Refs), r.refFileReader())
 			if rendered != "" {
-				messages = append(messages, schema.UserMessage("[引用内容]\n"+rendered))
+				messages = append(messages, schema.UserMessage("[Referenced Content]\n"+rendered))
 			}
 		}
 	}
@@ -315,7 +315,7 @@ func (r *Runner) initializeEino(current *job) error {
 		returnDirectly["exit_plan_mode"] = true
 	}
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
-		Name: "nexterm-ai", Description: "NexTerm 运维助手", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
+		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
 
@@ -747,8 +747,8 @@ func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Mess
 				continue
 			}
 			kept++
-			if kept > 4 && messages[i].Content != "[较早的工具输出已省略]" {
-				messages[i].Content = "[较早的工具输出已省略]"
+			if kept > 4 && messages[i].Content != "[Earlier tool output omitted]" {
+				messages[i].Content = "[Earlier tool output omitted]"
 				compacted = true
 				changed = true
 				break

@@ -10,7 +10,7 @@ func TestRenderIncludesScreenAndStablePrompt(t *testing.T) {
 	t.Parallel()
 	bundle := Bundle{Session: &SessionBrief{Name: "web", Kind: "ssh"}, Screen: "visible", Tail: []string{"tail"}, Recon: "recon", Selection: "selection"}
 	rendered := Render(bundle)
-	for _, expected := range []string{"[终端当前屏幕]", "visible", "[终端最近输出]", "[环境侦察快照]", "[用户选中的文本]"} {
+	for _, expected := range []string{"[Current Terminal Screen]", "visible", "[Recent Terminal Output]", "[Environment Recon Snapshot]", "[User-Selected Text]"} {
 		if !strings.Contains(rendered, expected) {
 			t.Errorf("missing %q in %q", expected, rendered)
 		}

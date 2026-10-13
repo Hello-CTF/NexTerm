@@ -39,13 +39,13 @@ func TestRenderRefsInjectsRealContent(t *testing.T) {
 		return "", errors.New("not found")
 	})
 	for _, want := range []string{
-		"[引用：会话 生产机]",
-		"- 主机：10.0.0.1:22",
-		"- 当前目录：/srv",
-		"[引用：终端 1 的终端屏幕]",
+		"[Reference: session 生产机]",
+		"- Host: 10.0.0.1:22",
+		"- Current Directory: /srv",
+		"[Reference: terminal screen of 终端 1]",
 		"prompt$ ls",
-		"- 坏标签（无法读取终端屏幕）",
-		"[引用：文件 /etc/nginx/nginx.conf]",
+		"- 坏标签 (unable to read the terminal screen)",
+		"[Reference: file /etc/nginx/nginx.conf]",
 		"server {",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -69,7 +69,7 @@ func TestRenderRefsTruncatesScreenTailAndFileHead(t *testing.T) {
 	}, func(context.Context, string, string) (string, error) {
 		return strings.Repeat("x", RefFileRunes) + strings.Repeat("y", RefFileRunes), nil
 	})
-	if !strings.Contains(rendered, "[前文已截断]\n"+strings.Repeat("b", RefScreenRunes)) {
+	if !strings.Contains(rendered, "[Earlier content truncated]\n"+strings.Repeat("b", RefScreenRunes)) {
 		t.Fatalf("screen must keep the latest tail:\n%s", rendered[:200])
 	}
 	if strings.Contains(rendered, strings.Repeat("a", RefScreenRunes)) {
@@ -78,7 +78,7 @@ func TestRenderRefsTruncatesScreenTailAndFileHead(t *testing.T) {
 	if !strings.Contains(rendered, strings.Repeat("x", 100)) || strings.Contains(rendered, strings.Repeat("y", 100)) {
 		t.Fatal("file must keep the head and drop the tail")
 	}
-	if !strings.Contains(rendered, "[内容已截断]") {
+	if !strings.Contains(rendered, "[Content truncated]") {
 		t.Fatal("file truncation marker missing")
 	}
 }
@@ -92,7 +92,7 @@ func TestRenderRefsBudgetAndCountCaps(t *testing.T) {
 		refs = append(refs, RefSpec{Kind: "file", Label: "f", SessionID: "s1", Path: "/f"})
 	}
 	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), refs, readFile)
-	if count := strings.Count(rendered, "[引用：文件 /f]"); count > RefMaxCount {
+	if count := strings.Count(rendered, "[Reference: file /f]"); count > RefMaxCount {
 		t.Fatalf("ref count cap ignored: %d", count)
 	}
 	if got := len([]rune(rendered)); got > RefTotalRunes+200 {
