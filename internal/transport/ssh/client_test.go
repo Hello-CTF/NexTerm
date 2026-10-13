@@ -10,6 +10,7 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -208,6 +209,28 @@ func TestClientCloseUnblocksStalledSFTP(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("closing the client did not unblock SFTP initialization")
+	}
+}
+
+func TestSSHConnectProgressStagesDirect(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	cfg := testClientConfig(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	var events []ConnectProgress
+	cfg.Progress = func(progress ConnectProgress) {
+		events = append(events, progress)
+	}
+	client, err := Connect(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	want := []ConnectProgress{
+		{Stage: ConnectStageAuth, Hop: 0, Hops: 0, Host: cfg.Host, Port: cfg.Port},
+		{Stage: ConnectStageDial, Hop: 0, Hops: 0, Host: cfg.Host, Port: cfg.Port},
+		{Stage: ConnectStageHandshake, Hop: 0, Hops: 0, Host: cfg.Host, Port: cfg.Port},
+	}
+	if !slices.Equal(events, want) {
+		t.Fatalf("progress events = %+v, want %+v", events, want)
 	}
 }
 

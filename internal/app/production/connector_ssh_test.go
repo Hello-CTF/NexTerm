@@ -11,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -326,6 +328,55 @@ func TestProductionSSHJumpAssetCycleAndValidation(t *testing.T) {
 	goneID := createConnectorTestAsset(t, production, "gone-hop", "127.0.0.1", target.port(), "password", credID,
 		`{"jumpAssetId":"`+deletedID+`"}`)
 	requireConnectorConnectError(t, production, goneID, "deleted")
+}
+
+func (r *ipcEventRecorder) connectProgress() []ipc.ConnectProgressEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var progress []ipc.ConnectProgressEvent
+	for _, event := range r.events {
+		if event.Event != ipc.TopicConnectProgress {
+			continue
+		}
+		payload, ok := event.Payload.(ipc.ConnectProgressEvent)
+		if !ok {
+			continue
+		}
+		progress = append(progress, payload)
+	}
+	return progress
+}
+
+func TestProductionSSHConnectProgressEvents(t *testing.T) {
+	jump := newSSHConnectorServer(t, nil)
+	target := newSSHConnectorServer(t, nil)
+	recorder := &ipcEventRecorder{}
+	production := newHostKeyTestProductionWithEvents(t, recorder)
+	initConnectorTestVault(t, production)
+	credID := createConnectorTestCredential(t, production, "progress-password", "secret")
+
+	jumpAssetID := createConnectorTestAsset(t, production, "jump", "127.0.0.1", jump.port(), "password", credID,
+		`{"autoAcceptUnknownHost":true}`)
+	targetAssetID := createConnectorTestAsset(t, production, "target", "127.0.0.1", target.port(), "password", credID,
+		`{"jumpAssetId":"`+jumpAssetID+`","autoAcceptUnknownHost":true}`)
+
+	connected := connectHostKeyTestAsset(t, production, targetAssetID)
+	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
+
+	at := func(stage string, hop, port int) ipc.ConnectProgressEvent {
+		return ipc.ConnectProgressEvent{AssetID: targetAssetID, Stage: stage, Hop: hop, Hops: 1, Host: "127.0.0.1", Port: port}
+	}
+	want := []ipc.ConnectProgressEvent{
+		at("auth", 0, target.port()),
+		at("auth", 1, jump.port()),
+		at("dial", 1, jump.port()),
+		at("handshake", 1, jump.port()),
+		at("channel", 0, target.port()),
+		at("handshake", 0, target.port()),
+	}
+	if events := recorder.connectProgress(); !slices.Equal(events, want) {
+		t.Fatalf("connect progress events = %+v, want %+v", events, want)
+	}
 }
 
 func TestProductionSSHKeyboardInteractiveAsset(t *testing.T) {

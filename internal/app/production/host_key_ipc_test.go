@@ -207,10 +207,16 @@ type hostKeyDetailDTO struct {
 
 func newHostKeyTestProduction(t *testing.T) *Production {
 	t.Helper()
+	return newHostKeyTestProductionWithEvents(t, nil)
+}
+
+func newHostKeyTestProductionWithEvents(t *testing.T, events ipc.Emitter) *Production {
+	t.Helper()
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{},
+			Events:  events,
 		},
 		DataDir: t.TempDir(), Desktop: true,
 	})

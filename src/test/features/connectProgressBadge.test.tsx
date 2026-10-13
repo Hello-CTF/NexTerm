@@ -1,0 +1,240 @@
+/** @vitest-environment jsdom */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { flush, mount, type MountedView } from "./reactTestUtils";
+
+vi.mock("../../app/platform", () => ({
+  isMac: () => false,
+  modHint: () => "Ctrl",
+  setMacPlatform: () => {},
+  wailsDragRegionStyle: {},
+  wailsNoDragRegionStyle: {},
+  isWailsDragRegionTarget: () => false,
+}));
+
+vi.mock("../../ipc/commands", () => ({
+  assetApi: {},
+  dbApi: {},
+  vaultApi: {},
+  sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
+  terminalApi: {
+    listLive: vi.fn().mockResolvedValue([]),
+    write: vi.fn().mockResolvedValue(undefined),
+    detach: vi.fn().mockResolvedValue(undefined),
+    setVisible: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    listenEvent: vi.fn(() => Promise.resolve(() => {})),
+  };
+});
+
+vi.mock("../../ipc/env", () => ({
+  clientId: () => "me",
+  TRANSPORT: "desktop",
+  WEB: false,
+  DESKTOP: true,
+}));
+
+vi.mock("../../ui/dialogs", () => ({
+  describeTarget: () => "",
+  finishSave: vi.fn(),
+  pickSavePath: vi.fn(),
+  promptText: vi.fn(),
+  ask: vi.fn(),
+}));
+
+vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));
+vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
+
+vi.mock("../../features/terminal/XtermView", async () => {
+  const { useEffect } = await import("react");
+  return {
+    XtermView: (props: Record<string, unknown>) => {
+      useEffect(() => {
+        (props.onHandle as ((h: unknown) => void) | undefined)?.({
+          copyBlock: () => "",
+          scrollToBlock: () => {},
+          navigateBlock: () => null,
+          clearBlocks: () => {},
+          clear: () => {},
+          getSelection: () => "",
+          focus: () => {},
+          fit: () => {},
+          dimensions: () => ({ cols: 80, rows: 24 }),
+        });
+        (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+      }, []);
+      return <div className="h-full w-full min-h-0" />;
+    },
+  };
+});
+
+import { TerminalPane } from "../../features/terminal/TerminalPane";
+import { useUi } from "../../app/store";
+import type { SessionInfo } from "../../ipc/commands";
+
+let mounted: MountedView | undefined;
+
+function badge(text: string): HTMLElement | null {
+  return (
+    [...(mounted?.container.querySelectorAll<HTMLElement>(".nx-badge") ?? [])].find((b) =>
+      b.textContent?.includes(text),
+    ) ?? null
+  );
+}
+
+function seedSession(status: SessionInfo["status"]): void {
+  useUi.setState({
+    sessions: [
+      { id: "s1", assetId: "a1", name: "web-01", kind: "ssh", status, tabs: [], createdAt: 0 },
+    ],
+    workspaces: [
+      {
+        id: "ws1",
+        kind: "session",
+        title: "ws-1",
+        closable: true,
+        sessionId: "s1",
+        panes: [
+          {
+            id: "p1",
+            activeTabId: "t1",
+            tabs: [
+              { id: "t1", kind: "terminal", title: "term", sessionId: "s1", tabId: "kernel-1", closable: true },
+            ],
+          },
+        ],
+        activePaneId: "p1",
+        splitRatio: 0.5,
+      },
+    ],
+    activeWorkspaceId: "ws1",
+    connectProgress: {},
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  document.body.replaceChildren();
+  seedSession("reconnecting");
+  mounted = mount(
+    createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }),
+  );
+});
+
+afterEach(() => {
+  mounted?.unmount();
+  mounted = undefined;
+  useUi.getState().setConnectProgress("a1", null);
+});
+
+describe("session://connect-progress badge", () => {
+  it("重连中展示第几跳与阶段, 徽标 title 带主机端口", async () => {
+    await act(async () => {
+      await flush();
+    });
+    expect(badge("重连中")?.textContent).toBe("重连中");
+
+    act(() => {
+      useUi.getState().setConnectProgress("a1", {
+        assetId: "a1",
+        stage: "handshake",
+        hop: 1,
+        hops: 2,
+        host: "10.0.0.8",
+        port: 22,
+      });
+    });
+    const jumpBadge = badge("重连中");
+    expect(jumpBadge?.textContent).toBe("重连中 · 跳板 1/2 · SSH 握手认证");
+    expect(jumpBadge?.title).toBe("10.0.0.8:22");
+
+    act(() => {
+      useUi.getState().setConnectProgress("a1", {
+        assetId: "a1",
+        stage: "channel",
+        hop: 0,
+        hops: 2,
+        host: "10.0.0.9",
+        port: 2222,
+      });
+    });
+    expect(badge("重连中")?.textContent).toBe("重连中 · 目标主机 · 经跳板打开通道");
+  });
+
+  it("连接中展示目标主机阶段", async () => {
+    seedSession("connecting");
+    await act(async () => {
+      await flush();
+    });
+    act(() => {
+      useUi.getState().setConnectProgress("a1", {
+        assetId: "a1",
+        stage: "dial",
+        hop: 0,
+        hops: 0,
+        host: "10.0.0.8",
+        port: 22,
+      });
+    });
+    expect(badge("连接中")?.textContent).toBe("连接中 · 目标主机 · TCP 拨号");
+  });
+
+  it("清理后回到纯状态文案, 已连接后不再展示残留进度", async () => {
+    await act(async () => {
+      await flush();
+    });
+    act(() => {
+      useUi.getState().setConnectProgress("a1", {
+        assetId: "a1",
+        stage: "handshake",
+        hop: 2,
+        hops: 2,
+        host: "10.0.0.8",
+        port: 22,
+      });
+    });
+    expect(badge("重连中")?.textContent).toBe("重连中 · 跳板 2/2 · SSH 握手认证");
+
+    act(() => {
+      useUi.getState().setConnectProgress("a1", null);
+    });
+    expect(badge("重连中")?.textContent).toBe("重连中");
+
+    act(() => {
+      useUi.getState().setConnectProgress("a1", {
+        assetId: "a1",
+        stage: "handshake",
+        hop: 0,
+        hops: 2,
+        host: "10.0.0.9",
+        port: 22,
+      });
+      seedSession("connected");
+    });
+    expect(badge("已连接")?.textContent).toBe("已连接");
+  });
+
+  it("其他资产的进度不影响本会话徽标", async () => {
+    await act(async () => {
+      await flush();
+    });
+    act(() => {
+      useUi.getState().setConnectProgress("other-asset", {
+        assetId: "other-asset",
+        stage: "handshake",
+        hop: 1,
+        hops: 1,
+        host: "10.0.0.7",
+        port: 22,
+      });
+    });
+    expect(badge("重连中")?.textContent).toBe("重连中");
+  });
+});

@@ -41,6 +41,7 @@ describe("Wails events 与 channels", () => {
     const { EVENTS } = await import("../ipc/events");
     expect(Object.values(EVENTS)).toEqual([
       "session://status",
+      "session://connect-progress",
       "terminal://exit",
       "terminal://throttled",
       "terminal://control",

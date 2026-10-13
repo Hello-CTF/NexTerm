@@ -21,7 +21,7 @@ import { sessionApi, terminalApi, fsApi, assetApi, syncApi } from "../../ipc/com
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, reconnectSessionAndWait, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
+import { takePendingCommand, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
@@ -214,6 +214,9 @@ export function TerminalPane({
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const connectProgress = useUi((s) =>
+    sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
+  );
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
@@ -262,6 +265,8 @@ export function TerminalPane({
   }, [assetEncoding]);
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
   const statusText = sessionStatusText(sessionStatus);
+  const showConnectProgress =
+    sessionStatus === "connecting" || sessionStatus === "reconnecting";
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   const canDisconnect =
@@ -677,6 +682,7 @@ export function TerminalPane({
       pushToast("error", `重新连接失败：${describeError(e)}`);
     } finally {
       setReconnecting(false);
+      useUi.getState().setConnectProgress(assetId, null);
     }
   }, [storeTabId, pushToast]);
 
@@ -1087,9 +1093,16 @@ export function TerminalPane({
                 ? "nx-badge-red"
                 : ""
           }`}
+          title={
+            showConnectProgress && connectProgress
+              ? `${connectProgress.host}:${connectProgress.port}`
+              : undefined
+          }
         >
           <span className="nx-dot" />
-          {statusText}
+          {showConnectProgress && connectProgress
+            ? `${statusText} · ${connectProgressText(connectProgress)}`
+            : statusText}
         </span>
         {effectiveWinrm && (
           <span
