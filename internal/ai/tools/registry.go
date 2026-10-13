@@ -332,15 +332,15 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case "search_files":
 		return r.searchFiles(ctx, scope, call.Args)
 	case "read_screen":
-		return r.readScreen(ctx, scope, call.Args)
+		return r.readScreen(ctx, jobID, scope, call.Args)
 	case "send_keys":
-		return r.sendKeys(ctx, scope, call.Args)
+		return r.sendKeys(ctx, jobID, scope, call.Args)
 	case "terminal_create":
-		return r.terminalCreate(ctx, scope, call.Args)
+		return r.terminalCreate(ctx, jobID, scope, call.Args)
 	case "terminal_rename":
-		return r.terminalRename(ctx, scope, call.Args)
+		return r.terminalRename(ctx, jobID, scope, call.Args)
 	case "wait_for":
-		return r.waitFor(ctx, scope, call.Args, 120)
+		return r.waitFor(ctx, jobID, scope, call.Args, 120)
 	case "shell_history":
 		return r.shellHistory(ctx, scope, call.Args)
 	case "docker_ps":

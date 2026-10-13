@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { click, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
@@ -56,7 +56,7 @@ vi.mock("../ipc/events", async (importOriginal) => ({
   onChannelReopen: () => () => undefined,
 }));
 
-import { AiSidebar } from "../features/ai/AiSidebar";
+import { AiSidebar, aiCreatedTerminalOf } from "../features/ai/AiSidebar";
 import { replayableJobIds } from "../features/ai/runRestore";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../app/store";
 
@@ -242,5 +242,180 @@ describe("AiSidebar history reload", () => {
     expect(text()).not.toContain("被替换的工具");
     expect(text()).not.toContain("被替换的回答");
     expect(replayableJobIds(runRows)).toEqual(new Set(["job-2"]));
+  });
+});
+
+describe("aiCreatedTerminalOf", () => {
+  it("extracts the foreground terminal payload and rejects anything else", () => {
+    expect(aiCreatedTerminalOf({ type: "toolResult", ok: true, terminal: { tabId: "tab-9", sessionId: "s1", title: "构建机" } })).toEqual({
+      tabId: "tab-9",
+      sessionId: "s1",
+      title: "构建机",
+    });
+    expect(aiCreatedTerminalOf({ type: "toolResult", ok: true, terminal: { tabId: "tab-9", sessionId: "s1" } })).toEqual({
+      tabId: "tab-9",
+      sessionId: "s1",
+      title: undefined,
+    });
+    expect(aiCreatedTerminalOf({ type: "toolCall", ok: true, terminal: { tabId: "tab-9", sessionId: "s1" } })).toBeNull();
+    expect(aiCreatedTerminalOf({ type: "toolResult", ok: false, terminal: { tabId: "tab-9", sessionId: "s1" } })).toBeNull();
+    expect(aiCreatedTerminalOf({ type: "toolResult", ok: true })).toBeNull();
+    expect(aiCreatedTerminalOf({ type: "toolResult", ok: true, terminal: { tabId: "tab-9" } })).toBeNull();
+  });
+});
+
+describe("AiSidebar terminal_create 自动打开", () => {
+  let view: MountedView | null = null;
+
+  beforeEach(async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      setTimeout(cb, 0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    mocks.channels.length = 0;
+    mocks.chat.mockResolvedValue({ conversationId: "conv-1", jobId: "job-live" });
+    mocks.runs.mockResolvedValue([]);
+    mocks.runEvents.mockResolvedValue([]);
+    mocks.hitlSnapshot.mockRejectedValue(new Error("none"));
+    mocks.hitlEvents.mockResolvedValue([]);
+    mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.messages.mockResolvedValue([]);
+    mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
+    mocks.usageSummary.mockResolvedValue([]);
+    useUi.setState({
+      rightOpen: true,
+      aiBusy: false,
+      takeover: null,
+      pushToast: mocks.toast,
+      workspaces: [],
+      aiBoards: {
+        [GLOBAL_AI_BOARD_KEY]: {
+          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          activeTabId: "tab-bound",
+        },
+      },
+      sessions: [
+        { id: "s1", assetId: "a1", name: "web-1", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
+  });
+
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+    vi.unstubAllGlobals();
+  });
+
+  const sendMessage = async () => {
+    setInputValue(view!.container.querySelector("textarea")!, "开个终端");
+    click(view!.container.querySelector<HTMLButtonElement>('button[title="发送 (Enter)"]')!);
+    await flushUntil(() => mocks.channels.length > 0 && mocks.chat.mock.calls.length > 0);
+    return mocks.channels[0];
+  };
+
+  const workspaceTabs = () => useUi.getState().workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs);
+
+  it("terminal_create 前台结果自动在工作区打开标签", async () => {
+    const channel = await sendMessage();
+    channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create" });
+    channel.onEvent({
+      type: "toolResult",
+      id: "call-1",
+      ok: true,
+      summary: "已创建终端标签页",
+      text: "已创建并在前台展示终端标签页（tab_id=tab-9），AI 正在其中工作，用户可随时接管输入",
+      exitCode: 0,
+      terminal: { tabId: "tab-9", sessionId: "s1", title: "构建机" },
+    });
+    await flushUntil(() => workspaceTabs().some((t) => t.tabId === "tab-9"));
+    const tab = workspaceTabs().find((t) => t.tabId === "tab-9")!;
+    expect(tab.kind).toBe("terminal");
+    expect(tab.sessionId).toBe("s1");
+    expect(tab.title).toBe("构建机");
+    expect(tab.renamedByUser).toBe(true);
+    expect(tab.closable).toBe(true);
+  });
+
+  it("toolResult 缺少 terminal 负载（后台创建）不打开标签", async () => {
+    const channel = await sendMessage();
+    channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create" });
+    channel.onEvent({
+      type: "toolResult",
+      id: "call-1",
+      ok: true,
+      summary: "已创建终端标签页",
+      text: "已在后台创建分离终端（tab_id=tab-9），AI 可在其中工作，用户可在「后台会话」中接管",
+      exitCode: 0,
+    });
+    await flush();
+    expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
+  });
+
+  it("重排缓冲释放的 terminal_create 结果也会自动打开，且不重复", async () => {
+    const channel = await sendMessage();
+    const toolResult = {
+      type: "toolResult",
+      id: "call-1",
+      ok: true,
+      summary: "已创建终端标签页",
+      text: "已创建并在前台展示终端标签页（tab_id=tab-9），AI 正在其中工作，用户可随时接管输入",
+      exitCode: 0,
+      terminal: { tabId: "tab-9", sessionId: "s1" },
+      seq: 3,
+    };
+    channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create", seq: 1 });
+    channel.onEvent(toolResult);
+    await flush();
+    expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
+    channel.onEvent({ type: "status", phase: "thinking", seq: 2 });
+    await flushUntil(() => workspaceTabs().some((t) => t.tabId === "tab-9"));
+    channel.onEvent(toolResult);
+    await flush();
+    expect(workspaceTabs().filter((t) => t.tabId === "tab-9")).toHaveLength(1);
+  });
+
+  it("历史运行回放不重新打开标签", async () => {
+    view!.unmount();
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-old",
+        conversationId: "conv-1",
+        status: "interrupted",
+        attempt: 1,
+        seq: 1,
+        planMode: false,
+        source: "chat",
+        answer: "",
+        turns: 1,
+        tokensIn: 1,
+        tokensOut: 1,
+        cacheCreationTokens: 0,
+        latencyMs: 1,
+        retries: 0,
+        failures: 0,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ]);
+    mocks.runEvents.mockResolvedValue([
+      { type: "toolCall", id: "call-9", name: "terminal_create", display: "terminal_create", seq: 1 },
+      {
+        type: "toolResult",
+        id: "call-9",
+        ok: true,
+        summary: "已创建终端标签页",
+        text: "已创建并在前台展示终端标签页（tab_id=tab-old），AI 正在其中工作，用户可随时接管输入",
+        exitCode: 0,
+        terminal: { tabId: "tab-old", sessionId: "s1" },
+        seq: 2,
+      },
+    ]);
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => (view!.container.textContent ?? "").includes("terminal_create"));
+    expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
   });
 });

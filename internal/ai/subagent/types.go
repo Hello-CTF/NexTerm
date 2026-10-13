@@ -54,6 +54,16 @@ type Event struct {
 	Panic     bool
 	Status    Status
 	Err       string
+	Terminal  *TerminalRef
+}
+
+// TerminalRef mirrors the structured payload terminal_create puts on its tool
+// output in foreground mode; defined locally to avoid importing the tools
+// package (which already imports this one).
+type TerminalRef struct {
+	TabID     string `json:"tabId"`
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title,omitempty"`
 }
 
 type Observer func(Event)

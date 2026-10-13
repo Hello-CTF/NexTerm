@@ -410,11 +410,17 @@ export function appendHitlInterrupt(
   ]);
 }
 
+export interface DrainedEvent {
+  ev: Record<string, unknown>;
+  accepted: boolean;
+}
+
 export interface ApplyResult {
   state: ConversationState;
   accepted: boolean;
   terminal: "done" | "error" | "canceled" | null;
   gap?: { from: number; to: number } | null;
+  drained?: DrainedEvent[];
 }
 
 function rejected(state: ConversationState, terminal: "done" | "error" | "canceled" | null = null): ApplyResult {

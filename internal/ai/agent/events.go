@@ -32,6 +32,7 @@ type Event struct {
 	Reason              string
 	Preview             *tools.Preview
 	Question            *tools.Question
+	Terminal            *tools.CreatedTerminal
 	Commands            []string
 	RulePattern         string
 	RequestID           string
@@ -81,6 +82,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "toolResult":
 		payload["id"], payload["ok"], payload["summary"], payload["text"] = e.ID, e.OK, e.Summary, e.Text
 		payload["truncated"], payload["exitCode"], payload["panic"] = e.Truncated, e.ExitCode, e.Panic
+		if e.Terminal != nil {
+			payload["terminal"] = e.Terminal
+		}
 	case "confirmRequired":
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk
 		payload["rendered"], payload["reason"], payload["preview"] = e.Rendered, e.Reason, e.Preview
@@ -145,6 +149,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
 		payload["id"], payload["ok"], payload["summary"], payload["text"] = e.ID, e.OK, e.Summary, e.Text
 		payload["truncated"], payload["exitCode"], payload["panic"] = e.Truncated, e.ExitCode, e.Panic
+		if e.Terminal != nil {
+			payload["terminal"] = e.Terminal
+		}
 	case "subagentDone":
 		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
 		payload["status"], payload["summary"], payload["error"] = e.Status, e.Summary, e.Message

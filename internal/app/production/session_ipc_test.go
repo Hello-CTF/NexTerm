@@ -100,9 +100,21 @@ func TestProductionTerminalCreateAndRenameTab(t *testing.T) {
 	if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("missing tab rename = %+v, want not_found", missing)
 	}
-	unsupported := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"`+connected.ID+`","command":"ls"}`, "", "client-a")
-	if unsupported.OK || unsupported.Error == nil || unsupported.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("local command create = %+v, want unsupported", unsupported)
+	commandCreate := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"`+connected.ID+`","command":"echo nx-startup-mark"}`, "", "client-a")
+	var commandTab attachedTabDTO
+	requireStoreTestResponse(t, commandCreate, &commandTab)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		screenResponse := dispatchDurableTest(t, production, "terminal_screen_text", `{"tabId":"`+commandTab.TabID+`"}`, "", "client-a")
+		var screen string
+		requireStoreTestResponse(t, screenResponse, &screen)
+		if strings.Contains(screen, "nx-startup-mark") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("startup command output missing from local tab screen: %q", screen)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	missingSession := dispatchDurableTest(t, production, "terminal_create_tab", `{"sessionId":"missing"}`, "", "client-a")
 	if missingSession.OK || missingSession.Error == nil || missingSession.Error.Code != ipc.CodeNotFound {

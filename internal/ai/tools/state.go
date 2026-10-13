@@ -25,6 +25,7 @@ type jobState struct {
 	preparations map[string]*preparedChange
 	todos        []TodoItem
 	plan         string
+	createdTabs  map[string]struct{}
 }
 
 func newJobState() *jobState {
@@ -67,6 +68,24 @@ func (s *jobState) setPlan(plan string) {
 	s.mu.Lock()
 	s.plan = plan
 	s.mu.Unlock()
+}
+
+// rememberCreatedTab records a tab this job opened via terminal_create so
+// resolveTab can accept it as an in-scope target for the rest of the job.
+func (s *jobState) rememberCreatedTab(tabID string) {
+	s.mu.Lock()
+	if s.createdTabs == nil {
+		s.createdTabs = make(map[string]struct{})
+	}
+	s.createdTabs[tabID] = struct{}{}
+	s.mu.Unlock()
+}
+
+func (s *jobState) createdTab(tabID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.createdTabs[tabID]
+	return ok
 }
 
 func targetKey(scope Scope, name string) string {

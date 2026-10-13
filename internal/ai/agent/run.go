@@ -618,6 +618,9 @@ func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Even
 	case subagent.EventToolResult:
 		mapped.Type, mapped.ID, mapped.OK, mapped.Summary, mapped.Text = "subagentToolResult", event.CallID, event.OK, event.Summary, event.Text
 		mapped.Truncated, mapped.ExitCode, mapped.Panic = event.Truncated, event.ExitCode, event.Panic
+		if event.Terminal != nil {
+			mapped.Terminal = &tools.CreatedTerminal{TabID: event.Terminal.TabID, SessionID: event.Terminal.SessionID, Title: event.Terminal.Title}
+		}
 	case subagent.EventDone:
 		mapped.Type, mapped.Status, mapped.Summary, mapped.Message = "subagentDone", string(event.Status), event.Summary, event.Err
 	}
@@ -636,7 +639,7 @@ func (r *Runner) emitToolResult(current *job, message *schema.Message) (tools.Ou
 	}
 	text, cut := prefixBytes(result.Text, persistedToolResultLimit)
 	result.Truncated = result.Truncated || cut
-	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic}); err != nil {
+	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic, Terminal: result.Terminal}); err != nil {
 		return result, "", err
 	}
 	if result.Todos != nil {

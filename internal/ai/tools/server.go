@@ -308,12 +308,21 @@ func (s *fileSearch) searchContent(ctx context.Context, name string) error {
 	return nil
 }
 
-func (r *Registry) resolveTab(scope Scope, requested string) (string, error) {
+func (r *Registry) resolveTab(jobID string, scope Scope, requested string) (string, error) {
+	if requested != "" && requested != scope.TabID {
+		if !r.state(jobID).createdTab(requested) {
+			return "", ErrCrossScope
+		}
+		if r.deps.TabSession != nil && scope.SessionID != "" && r.deps.TabSession(requested) != scope.SessionID {
+			return "", ErrCrossScope
+		}
+		if r.deps.Terminal == nil {
+			return "", errors.New("终端服务未配置")
+		}
+		return requested, nil
+	}
 	if scope.TabID == "" {
 		return "", errors.New("当前 AI 作用域没有 tabId")
-	}
-	if requested != "" && requested != scope.TabID {
-		return "", ErrCrossScope
 	}
 	if r.deps.TabSession != nil && scope.SessionID != "" && r.deps.TabSession(scope.TabID) != scope.SessionID {
 		return "", ErrCrossScope
@@ -333,7 +342,7 @@ func (r *Registry) commandState(ctx context.Context, tabID string) (CommandState
 	return CommandState{}, nil
 }
 
-func (r *Registry) readScreen(ctx context.Context, scope Scope, raw []byte) Output {
+func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
 		TabID    string `json:"tab_id"`
 		SinceSeq uint64 `json:"since_seq"`
@@ -348,7 +357,7 @@ func (r *Registry) readScreen(ctx context.Context, scope Scope, raw []byte) Outp
 	if args.MaxBytes < 1 || args.MaxBytes > MaxOutputBytes {
 		return Fail(invalid("max_bytes 必须在 1-%d 字节之间", MaxOutputBytes))
 	}
-	tabID, err := r.resolveTab(scope, args.TabID)
+	tabID, err := r.resolveTab(jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -407,11 +416,12 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 	return Output{OK: true, Text: header + "\n" + text, Truncated: truncated || more}
 }
 
-func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output {
+func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
 		Keys   string `json:"keys"`
 		Enter  bool   `json:"enter"`
 		WaitMS int    `json:"wait_ms"`
+		TabID  string `json:"tab_id"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -419,7 +429,7 @@ func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output
 	if args.WaitMS < 0 || args.WaitMS > maxSendKeysWaitMS {
 		return Fail(invalid("wait_ms 必须在 0-%d 毫秒之间", maxSendKeysWaitMS))
 	}
-	tabID, err := r.resolveTab(scope, "")
+	tabID, err := r.resolveTab(jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -456,10 +466,11 @@ func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) st
 	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
 }
 
-func (r *Registry) terminalCreate(ctx context.Context, scope Scope, raw []byte) Output {
+func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
-		Title   string `json:"title"`
-		Command string `json:"command"`
+		Title      string `json:"title"`
+		Command    string `json:"command"`
+		Background bool   `json:"background"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -475,18 +486,21 @@ func (r *Registry) terminalCreate(ctx context.Context, scope Scope, raw []byte) 
 	if err != nil {
 		return Fail(err)
 	}
-	text := fmt.Sprintf("已创建终端标签页，tab_id=%s", created.TabID)
+	r.state(jobID).rememberCreatedTab(created.TabID)
+	detail := fmt.Sprintf("tab_id=%s", created.TabID)
 	if created.Title != "" {
-		text += fmt.Sprintf("，标题「%s」", created.Title)
+		detail += fmt.Sprintf("，标题「%s」", created.Title)
 	}
 	if args.Command != "" {
-		text += "，启动命令已发送"
+		detail += "，启动命令已发送"
 	}
-	text += "；该标签为后台分离状态，需用户接管后交互（AI 无法直接操作非作用域标签）"
-	return OK(text)
+	if args.Background {
+		return OK(fmt.Sprintf("已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", detail))
+	}
+	return Output{OK: true, Text: fmt.Sprintf("已创建并在前台展示终端标签页（%s），AI 正在其中工作，用户可随时接管输入", detail), Terminal: &CreatedTerminal{TabID: created.TabID, SessionID: scope.SessionID, Title: created.Title}}
 }
 
-func (r *Registry) terminalRename(ctx context.Context, scope Scope, raw []byte) Output {
+func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
 		TabID string `json:"tab_id"`
 		Title string `json:"title"`
@@ -494,7 +508,7 @@ func (r *Registry) terminalRename(ctx context.Context, scope Scope, raw []byte) 
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
-	tabID, err := r.resolveTab(scope, args.TabID)
+	tabID, err := r.resolveTab(jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -619,7 +633,7 @@ func tailText(screen Screen, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximumSeconds int) Output {
+func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw []byte, maximumSeconds int) Output {
 	var args struct {
 		Pattern   string `json:"pattern"`
 		TimeoutMS int64  `json:"timeout_ms"`
@@ -638,7 +652,7 @@ func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximum
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
 	}
-	tabID, err := r.resolveTab(scope, "")
+	tabID, err := r.resolveTab(jobID, scope, "")
 	if err != nil {
 		return Fail(err)
 	}

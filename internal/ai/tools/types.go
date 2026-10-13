@@ -62,13 +62,22 @@ type Output struct {
 	// ExitUnknown marks a completed action whose exit code could not be
 	// determined (e.g. a waited-on command still running or a bare OSC 133;D
 	// without a code). It must never be recorded or replayed as exit 0.
-	ExitUnknown bool       `json:"exitUnknown,omitempty"`
-	Truncated   bool       `json:"truncated"`
-	Panic       bool       `json:"panic,omitempty"`
-	Change      *Change    `json:"change,omitempty"`
-	Todos       []TodoItem `json:"todos,omitempty"`
-	Plan        string     `json:"plan,omitempty"`
-	Question    *Question  `json:"question,omitempty"`
+	ExitUnknown bool             `json:"exitUnknown,omitempty"`
+	Truncated   bool             `json:"truncated"`
+	Panic       bool             `json:"panic,omitempty"`
+	Change      *Change          `json:"change,omitempty"`
+	Todos       []TodoItem       `json:"todos,omitempty"`
+	Plan        string           `json:"plan,omitempty"`
+	Question    *Question        `json:"question,omitempty"`
+	Terminal    *CreatedTerminal `json:"terminal,omitempty"`
+}
+
+// CreatedTerminal describes a terminal tab created by terminal_create in
+// foreground mode: the client opens and attaches it in the workspace.
+type CreatedTerminal struct {
+	TabID     string `json:"tabId"`
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title,omitempty"`
 }
 
 func OK(text string) Output {

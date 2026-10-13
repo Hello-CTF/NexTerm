@@ -5,6 +5,7 @@ import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } fro
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
 import {
   GLOBAL_AI_BOARD_KEY,
+  nextTabId,
   useActiveWorkspace,
   useUi,
   type AiDockTab,
@@ -26,6 +27,7 @@ import { answerInput, confirmationInput } from "./aiWire";
 import {
   historyToItems,
   pendingInteraction,
+  type ApplyResult,
   type ChatItem,
   type ConfirmItem,
   type QuestionItem,
@@ -106,6 +108,29 @@ function latestPlanApproved(items: ChatItem[]): boolean {
     if (item.role === "user" && item.text.trim() === PLAN_EXECUTE_MESSAGE) return true;
   }
   return false;
+}
+
+interface AiCreatedTerminal {
+  tabId: string;
+  sessionId: string;
+  title?: string;
+}
+
+// aiCreatedTerminalOf extracts the structured terminal_create foreground
+// payload the backend puts on a successful tool result event.
+export function aiCreatedTerminalOf(ev: Record<string, unknown>): AiCreatedTerminal | null {
+  if (ev.type !== "toolResult" && ev.type !== "subagentToolResult") return null;
+  if (ev.ok !== true) return null;
+  const raw = ev.terminal;
+  if (!raw || typeof raw !== "object") return null;
+  const terminal = raw as Record<string, unknown>;
+  if (typeof terminal.tabId !== "string" || terminal.tabId === "") return null;
+  if (typeof terminal.sessionId !== "string" || terminal.sessionId === "") return null;
+  return {
+    tabId: terminal.tabId,
+    sessionId: terminal.sessionId,
+    title: typeof terminal.title === "string" && terminal.title !== "" ? terminal.title : undefined,
+  };
 }
 
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persistent" | "deny", string> = {
@@ -816,6 +841,30 @@ function AiChatTab({
     clearResyncState(generation);
   };
 
+  // maybeOpenAiCreatedTerminal opens a terminal_create foreground tab in the
+  // workspace, the same recipe as the background-sessions takeover. It fires
+  // only for events of the live run; historical replays never re-open old tabs.
+  const maybeOpenAiCreatedTerminal = (generation: number, ev: Record<string, unknown>, result: ApplyResult) => {
+    const current = activeRunRef.current;
+    if (!isCurrentAiRun(current, generation) || current.settled) return;
+    for (const candidate of [{ ev, accepted: result.accepted }, ...(result.drained ?? [])]) {
+      if (!candidate.accepted) continue;
+      const terminal = aiCreatedTerminalOf(candidate.ev);
+      if (!terminal) continue;
+      const st = useUi.getState();
+      const session = st.sessions.find((s) => s.id === terminal.sessionId);
+      st.addTab({
+        id: nextTabId(`term-${terminal.sessionId}`),
+        kind: "terminal",
+        title: terminal.title || session?.name || terminal.sessionId,
+        renamedByUser: terminal.title ? true : undefined,
+        sessionId: terminal.sessionId,
+        tabId: terminal.tabId,
+        closable: true,
+      });
+    }
+  };
+
   const replayRunEvents = async (
     generation: number,
     jobId: string,
@@ -828,6 +877,7 @@ function AiChatTab({
     for (const event of events) {
       const result = stream.pushEvent(generation, event as Record<string, unknown>);
       if (result.accepted) applied += 1;
+      maybeOpenAiCreatedTerminal(generation, event as Record<string, unknown>, result);
       if (result.terminal) {
         settleRestoredRun(generation);
       }
@@ -982,6 +1032,7 @@ function AiChatTab({
       }
       const result = stream.pushEvent(generation, ev);
       if (result.gap) resyncRun(generation, resumable.run.id);
+      maybeOpenAiCreatedTerminal(generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(generation);
       if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
@@ -1110,6 +1161,7 @@ function AiChatTab({
       }
       const result = stream.pushEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
+      maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(run.generation);
       if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);

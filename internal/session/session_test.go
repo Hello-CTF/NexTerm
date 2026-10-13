@@ -504,16 +504,112 @@ func TestCreateTabDetachedRouting(t *testing.T) {
 }
 
 func TestCreateTabRejectsCommandOnUnsupportedKind(t *testing.T) {
-	manager, _, _, connected := openTestSession(t, KindLocal)
+	manager, _, _, connected := openTestSession(t, KindWinRM)
 	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Command: "ls"}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("local command = %v; want ErrUnsupported", err)
+		t.Fatalf("winrm command = %v; want ErrUnsupported", err)
 	}
-	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Cols: 100, Rows: 40})
+	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID}); err != nil {
+		t.Fatalf("winrm create without command: %v", err)
+	}
+}
+
+func TestCreateTabRunsCommandOnLocalAndDevice(t *testing.T) {
+	t.Run("local", func(t *testing.T) {
+		manager, connector, _, connected := openTestSession(t, KindLocal)
+		info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Cols: 100, Rows: 40, Command: "kimi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Ephemeral || info.Cols != 100 || info.Rows != 40 {
+			t.Fatalf("local created info = %+v", info)
+		}
+		if got := connector.transport(0).channel(0).written(); !bytes.Equal(got, []byte("kimi\n")) {
+			t.Fatalf("local startup command written = %q", got)
+		}
+	})
+	t.Run("device", func(t *testing.T) {
+		provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+		manager := NewManager(Config{
+			Connector:       newFakeConnector(),
+			Terminals:       newFakeTerminalFactory(),
+			DurableResolver: &countingResolver{provider: provider},
+		})
+		t.Cleanup(func() { _ = manager.Close() })
+		connected, err := manager.Connect(context.Background(), Asset{ID: "device/dev-1", Kind: KindDevice})
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Command: "kimi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Durable {
+			t.Fatalf("device created info = %+v", info)
+		}
+		if got := provider.attachment(info.ID, 0).written(); !bytes.Equal(got, []byte("kimi\n")) {
+			t.Fatalf("device startup command written = %q", got)
+		}
+	})
+}
+
+func TestCreateTabLocalAttachDetachReaps(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Ephemeral || info.Cols != 100 || info.Rows != 40 {
-		t.Fatalf("local created info = %+v", info)
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-local"}); err != nil {
+		t.Fatalf("attach after create: %v", err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.Info().Subscribers; got != 1 {
+		t.Fatalf("subscribers after attach = %d", got)
+	}
+	if err := manager.DetachChannel("b-local"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("ephemeral tab after last detach: err=%v", err)
+	}
+}
+
+func TestCreateTabDeviceDurableAttach(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{provider: provider},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "device/dev-1", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Durable || info.Ephemeral || info.Subscribers != 0 {
+		t.Fatalf("device created info = %+v", info)
+	}
+	if provider.createCalls != 1 {
+		t.Fatalf("provider create calls = %d; want 1", provider.createCalls)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-device"}); err != nil {
+		t.Fatalf("attach after create: %v", err)
+	}
+	if err := manager.DetachChannel("b-device"); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatalf("durable tab must survive detach: %v", err)
+	}
+	if got := tab.Info().Subscribers; got != 0 {
+		t.Fatalf("subscribers after detach = %d", got)
 	}
 }
 

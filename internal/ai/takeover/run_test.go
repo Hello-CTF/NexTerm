@@ -224,6 +224,30 @@ func TestStaleExitCannotCancelNewerTakeover(t *testing.T) {
 	}
 }
 
+func TestSendKeysTabIDRejected(t *testing.T) {
+	chat := sequence(toolCallMessage(
+		namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true,"tab_id":"other-tab"}`),
+		doneCall("stopped"),
+	))
+	h := newHarness(t, chat)
+	stream := &agent.SliceStream{}
+	h.run(t, stream, RunArgs{})
+	events := waitClosed(t, stream)
+	result := waitEvent(t, stream, "toolResult")
+	if result.OK || !strings.Contains(result.Text, "终端接管只支持") {
+		t.Fatalf("result=%+v", result)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.aiWrites) != 0 {
+		t.Fatal("terminal was written")
+	}
+	done, _ := counts(events)
+	if done != 1 {
+		t.Fatal("takeover did not finish")
+	}
+}
+
 func TestAllowWriteFalseRejectsSendKeys(t *testing.T) {
 	chat := sequence(toolCallMessage(
 		namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`),

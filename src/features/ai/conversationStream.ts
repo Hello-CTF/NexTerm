@@ -15,6 +15,7 @@ import {
   type ApplyResult,
   type ChatItem,
   type ConversationState,
+  type DrainedEvent,
   type SteerDelivery,
 } from "./conversation";
 import {
@@ -219,21 +220,23 @@ export function createConversationStream(
     return result;
   };
 
-  const drainBuffer = (generation: number, fromSeq: number, terminal: ApplyResult["terminal"]): ApplyResult["terminal"] => {
+  const drainBuffer = (generation: number, fromSeq: number, terminal: ApplyResult["terminal"]): { terminal: ApplyResult["terminal"]; events: DrainedEvent[] } => {
     const buffer = reorderBuffers.get(generation);
-    if (!buffer) return terminal;
+    if (!buffer) return { terminal, events: [] };
     let next = fromSeq + 1;
     let result = terminal;
+    const events: DrainedEvent[] = [];
     while (buffer.has(next)) {
       const buffered = buffer.get(next) as Record<string, unknown>;
       buffer.delete(next);
-      const drained = applyEvent(generation, buffered);
+      const applied = applyEvent(generation, buffered);
+      events.push({ ev: buffered, accepted: applied.accepted });
       lastSequences.set(generation, next);
-      if (drained.terminal) result = drained.terminal;
+      if (applied.terminal) result = applied.terminal;
       next += 1;
     }
     if (buffer.size === 0) reorderBuffers.delete(generation);
-    return result;
+    return { terminal: result, events };
   };
 
   return {
@@ -311,8 +314,8 @@ export function createConversationStream(
       }
       const result = applyEvent(generation, ev);
       lastSequences.set(generation, seq);
-      const terminal = drainBuffer(generation, seq, result.terminal);
-      return { ...result, terminal };
+      const drained = drainBuffer(generation, seq, result.terminal);
+      return { ...result, terminal: drained.terminal, drained: drained.events };
     },
     resolveInteraction(generation, itemId, nonce, label) {
       mutate(() => {

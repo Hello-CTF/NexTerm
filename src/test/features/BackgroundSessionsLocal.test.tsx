@@ -83,13 +83,13 @@ function toastText(): string {
   return useUi.getState().toasts.map((t) => t.text).join("\n");
 }
 
-describe("BackgroundSessions hides local terminals", () => {
+describe("BackgroundSessions lists detached terminals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
   });
 
-  it("lists detached SSH tabs but never local ones", async () => {
+  it("lists detached SSH and local tabs, hiding attached and exited ones", async () => {
     mocks.listLive.mockResolvedValue([
       liveTab({ tabId: "tab-local", sessionKind: "local", sessionName: "本机" }),
       liveTab({ tabId: "tab-ssh", sessionKind: "ssh", sessionName: "远程 SSH" }),
@@ -102,10 +102,42 @@ describe("BackgroundSessions hides local terminals", () => {
     await waitFor(() => {
       expect(view?.container.textContent).toContain("远程 SSH");
     });
-    expect(view.container.textContent).not.toContain("本机");
+    expect(view.container.textContent).toContain("本机");
     expect(view.container.textContent).not.toContain("有人看着");
     expect(view.container.textContent).not.toContain("已结束");
     view.unmount();
+  });
+
+  it("restores a detached local tab on takeover", async () => {
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "tab-local", sessionKind: "local", sessionId: "s-local", sessionName: "本机", title: "AI 构建" }),
+    ]);
+    seed([{ id: "p", tabs: [], activeTabId: null }], "local");
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => {
+        expect(view?.container.textContent).toContain("AI 构建");
+      });
+      const button = [...view.container.querySelectorAll("button")].find(
+        (candidate) => candidate.textContent?.trim() === "接管",
+      );
+      expect(button).toBeDefined();
+      await act(async () => {
+        button?.click();
+        await flush();
+      });
+      const added = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === "tab-local");
+      expect(added?.kind).toBe("terminal");
+      expect(added?.sessionId).toBe("s-local");
+      expect(added?.title).toBe("AI 构建");
+    } finally {
+      view.unmount();
+    }
   });
 
   it("shows a custom backend title and restores it on takeover", async () => {
