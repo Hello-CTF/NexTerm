@@ -145,6 +145,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)
 			return ok && notification.OwnerID != "" && notification.OwnerID == userID
+		case ipc.TopicSyncStatus:
+			status, ok := event.Payload.(ipc.SyncStatusEvent)
+			return !ok || status.OwnerID == "" || status.OwnerID == userID
 		default:
 			return true
 		}

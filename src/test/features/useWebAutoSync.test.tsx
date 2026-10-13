@@ -48,9 +48,9 @@ describe("useDesktopAutoSync 同步后刷新视图缓存", () => {
     });
   });
 
-  it("sync://status 唤醒后端同步并失效 assets/groups/snippets/credentials/vault-status", async () => {
+  it("sync://status 唤醒后端同步并失效 assets/asset-search/groups/snippets/credentials/vault-status", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    for (const key of ["assets", "groups", "snippets", "credentials", "vault-status"]) {
+    for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"]) {
       qc.setQueryData([key], []);
     }
     view = mount(createElement(QueryClientProvider, { client: qc }, createElement(Probe)));
@@ -62,7 +62,7 @@ describe("useDesktopAutoSync 同步后刷新视图缓存", () => {
     await flush();
 
     expect(mocks.wake).toHaveBeenCalledTimes(1);
-    for (const key of ["assets", "groups", "snippets", "credentials", "vault-status"]) {
+    for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"]) {
       expect(qc.getQueryState([key])?.isInvalidated).toBe(true);
     }
     view.unmount();

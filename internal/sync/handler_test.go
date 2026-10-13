@@ -256,6 +256,9 @@ func TestObjectHandlerPushEmitsSyncStatus(t *testing.T) {
 	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
 		t.Fatalf("events=%v, want exactly one sync://status after a landing push", events)
 	}
+	if payload, ok := events[0].Payload.(ipc.SyncStatusEvent); !ok || payload.OwnerID != user.ID {
+		t.Fatalf("sync status payload = %+v, want owner %s", events[0].Payload, user.ID)
+	}
 
 	second := post(PushRequest{Protocol: ProtocolVersion, KnownHead: first.Head, Objects: []WireObject{{ID: "obj-1", Blob: []byte("x")}}})
 	if second.Applied != 0 {

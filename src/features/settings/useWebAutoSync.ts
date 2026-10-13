@@ -13,7 +13,7 @@ const SYNC_PERIOD_MS = 60_000;
 // After any sync round lands remote changes locally, refresh every synced view; without this the asset tree,
 // credentials and snippets keep showing pre-sync data until remount (the queries have no poll of their own).
 function invalidateSyncedViews(qc: QueryClient): void {
-  for (const key of ["assets", "groups", "snippets", "credentials", "vault-status"] as const) {
+  for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"] as const) {
     void qc.invalidateQueries({ queryKey: [key] });
   }
 }

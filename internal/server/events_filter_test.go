@@ -141,6 +141,10 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"other user notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "构建完成"}}, false},
 		{"ownerless notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{Text: "构建完成"}}, false},
 		{"foreign notification payload", ipc.Event{Event: ipc.TopicAINotification, Payload: map[string]any{"ownerId": "u-1"}}, false},
+		{"own sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-1"}}, true},
+		{"other user sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-2"}}, false},
+		{"unscoped sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}}, true},
+		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, true},
 	}
 	for _, tc := range cases {
 		if got := filter(tc.event); got != tc.want {

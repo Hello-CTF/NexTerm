@@ -37,6 +37,12 @@ type AINotificationEvent struct {
 	Text    string `json:"text"`
 }
 
+// SyncStatusEvent carries the owning account of a sync change when the emitter knows it; an empty OwnerID
+// means unscoped (legacy emitters) and passes the server event filter for every session.
+type SyncStatusEvent struct {
+	OwnerID string `json:"ownerId,omitempty"`
+}
+
 type AppErrorEvent struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

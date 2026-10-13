@@ -132,7 +132,7 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 	}
 	h.logger.Info("sync push", "user", userID, "received", len(request.Objects), "applied", applied, "skipped", skipped, "max_seq", maxSeq)
 	if applied > 0 {
-		_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, struct{}{})
+		_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, ipc.SyncStatusEvent{OwnerID: userID})
 	}
 	writeSyncJSON(w, http.StatusOK, PushResponse{
 		Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Applied: applied, Skipped: skipped,
