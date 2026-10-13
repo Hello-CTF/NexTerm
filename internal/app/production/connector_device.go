@@ -28,6 +28,9 @@ type DeviceConnectorConfig struct {
 	Dial      DeviceBridgeDialFunc
 	Digest    func(ctx context.Context, deviceID string) (string, error)
 	Authorize func(ctx context.Context, userID, deviceID string) error
+	// Platform resolves the agent's GOOS for the exec wrapper (windows selects PowerShell); nil means unknown
+	// and falls back to the POSIX default.
+	Platform func(ctx context.Context, deviceID string) (string, error)
 }
 
 // SetDeviceConnector injects the device session dialing surface; without it, device session connections report unsupported.
@@ -61,7 +64,12 @@ func (c *productionConnector) connectDevice(ctx context.Context, options product
 	dial := func(ctx context.Context, purpose string) (net.Conn, error) {
 		return config.Dial(ctx, options.DeviceID, purpose)
 	}
-	return device.New(options.DeviceID, digest, dial, generation), nil
+	platform := ""
+	if config.Platform != nil {
+		// Best-effort: an unknown platform falls back to the POSIX exec wrapper rather than blocking the session.
+		platform, _ = config.Platform(ctx, options.DeviceID)
+	}
+	return device.New(options.DeviceID, digest, dial, generation, platform), nil
 }
 
 // productionDurableResolver routes durable providers by transport: device transports connect directly to the device

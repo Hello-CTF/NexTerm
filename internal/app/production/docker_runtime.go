@@ -12,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
 
 func newProductionDockerService(sessions *session.Manager, database *store.Store) *docker.Service {
@@ -68,7 +69,13 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				}, err
 			})
 			opener := dockerCommandOpener{transport: transport}
-			return docker.NewCommandBackend(runner, opener, dockerFallbackShell(connected.Asset())), nil
+			shell := dockerFallbackShell(connected.Asset())
+			// Device agents know their real platform; windows devices must use the PowerShell quoting the
+			// transport's exec wrapper speaks (the asset-level fallback defaults to POSIX for devices).
+			if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
+				shell = docker.ShellPowerShell
+			}
+			return docker.NewCommandBackend(runner, opener, shell), nil
 		},
 	)
 	return docker.NewService(provider, docker.WithAuditor(docker.AuditorFunc(func(ctx context.Context, event docker.AuditEvent) error {

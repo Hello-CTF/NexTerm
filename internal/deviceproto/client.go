@@ -202,6 +202,7 @@ func (c *Client) WriteFile(ctx context.Context, path string, data []byte, backup
 		}
 		data = data[len(chunk):]
 	}
+	stream.drainStale()
 	if err := stream.send(FrameEnd, nil); err != nil {
 		return err
 	}
@@ -396,6 +397,15 @@ func (s *streamExchange) deliver(err error) {
 	}
 }
 
+// drainStale discards a queued reply right before a send+wait pair, so a stale reply from a non-conforming
+// peer cannot be consumed by the new wait (conforming servers send exactly one reply per request).
+func (s *streamExchange) drainStale() {
+	select {
+	case <-s.resp:
+	default:
+	}
+}
+
 func (s *streamExchange) fail(err error) {
 	s.mu.Lock()
 	if s.terminal == nil {
@@ -495,6 +505,7 @@ func (w *WriteStream) Sync() error {
 	if err := w.stream.ctx.Err(); err != nil {
 		return err
 	}
+	w.stream.drainStale()
 	if err := w.stream.send(FrameSync, nil); err != nil {
 		return err
 	}
@@ -503,6 +514,7 @@ func (w *WriteStream) Sync() error {
 
 func (w *WriteStream) Close() error {
 	w.closeOnce.Do(func() {
+		w.stream.drainStale()
 		w.closeErr = w.stream.send(FrameClose, nil)
 		if w.closeErr == nil {
 			w.closeErr = w.stream.wait()

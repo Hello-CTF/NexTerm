@@ -26,4 +26,7 @@ const (
 	// MaxWriteFileSize bounds the buffered payload of one WriteFile request;
 	// larger saves belong to the streaming OpenWrite path.
 	MaxWriteFileSize = 64 << 20
+	// MaxReadBytes bounds one ReadFile/ReadRange window; both are buffered in
+	// agent memory, so an uncapped MaxBytes would let any bridge client OOM the agent.
+	MaxReadBytes = 64 << 20
 )

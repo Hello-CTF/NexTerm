@@ -251,7 +251,8 @@ func run(args []string) int {
 		// writes a terminal_open audit; bridge and state digest come straight from
 		// the registry.
 		application.Services.SetDeviceConnector(&production.DeviceConnectorConfig{
-			Dial: fleetService.RequestDeviceBridgePurpose,
+			Dial:     fleetService.RequestDeviceBridgePurpose,
+			Platform: fleetService.DevicePlatform,
 			Digest: func(_ context.Context, deviceID string) (string, error) {
 				digest, ok := fleetService.DeviceStateDigest(deviceID)
 				if !ok || digest == "" {

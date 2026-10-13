@@ -605,3 +605,16 @@ func readUntilMarker(t *testing.T, attachment base.DurableAttachment, marker str
 	}
 	t.Fatalf("timed out waiting for %q; received %q", marker, received)
 }
+
+func TestExecCommandShellSelection(t *testing.T) {
+	windows := execCommand("windows", "docker ps")
+	if len(windows) != 4 || windows[0] != "powershell.exe" || windows[3] != "docker ps" {
+		t.Fatalf("windows wrapper = %v, want powershell.exe -NoProfile -Command", windows)
+	}
+	for _, platform := range []string{"", "linux", "darwin"} {
+		posix := execCommand(platform, "ls")
+		if len(posix) != 3 || posix[0] != "/bin/sh" || posix[1] != "-c" || posix[2] != "ls" {
+			t.Fatalf("%q wrapper = %v, want /bin/sh -c", platform, posix)
+		}
+	}
+}

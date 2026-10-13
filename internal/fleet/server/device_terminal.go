@@ -2,11 +2,14 @@ package fleetserver
 
 import (
 	"context"
+	"errors"
 	"net"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gorm"
 )
 
 // AuthorizeDeviceTerminal verifies userID's terminal access to deviceID (device owner, not revoked,
@@ -45,4 +48,17 @@ func (s *Service) RequestDeviceBridgePurpose(ctx context.Context, deviceID, purp
 // ok=false when the device is offline or has not reported one.
 func (s *Service) DeviceStateDigest(deviceID string) (string, bool) {
 	return s.registry.StateDigest(deviceID)
+}
+
+// DevicePlatform returns the agent's enrolled platform (GOOS) for the exec wrapper selection.
+func (s *Service) DevicePlatform(ctx context.Context, deviceID string) (string, error) {
+	deviceAgent := query.Use(s.db).DeviceAgent
+	row, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	return row.Platform, nil
 }

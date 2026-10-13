@@ -175,3 +175,21 @@ func TestConnectDeviceErrorMessageMentionsConfig(t *testing.T) {
 		t.Fatalf("unset connector error = %v; want the configuration hint", err)
 	}
 }
+
+func TestConnectDevicePassesPlatformToTransport(t *testing.T) {
+	connector := &productionConnector{}
+	connector.device.Store(&DeviceConnectorConfig{
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("not dialed in this test")
+		},
+		Digest:   func(_ context.Context, deviceID string) (string, error) { return "digest-" + deviceID, nil },
+		Platform: func(_ context.Context, _ string) (string, error) { return "windows", nil },
+	})
+	transport, err := connector.Connect(t.Context(), deviceAsset("dev-1"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := transport.(*device.Transport).Platform(); got != "windows" {
+		t.Fatalf("platform = %q, want windows", got)
+	}
+}

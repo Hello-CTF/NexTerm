@@ -32,11 +32,18 @@ type Transport struct {
 	digest     string
 	dial       DialFunc
 	generation uint64
+	platform   string
 	closed     atomic.Bool
 }
 
-func New(deviceID, digest string, dial DialFunc, generation uint64) *Transport {
-	return &Transport{deviceID: deviceID, digest: digest, dial: dial, generation: generation}
+// New builds the device transport; platform is the agent's GOOS when known ("windows" selects the
+// PowerShell exec wrapper, everything else defaults to POSIX sh).
+func New(deviceID, digest string, dial DialFunc, generation uint64, platform ...string) *Transport {
+	t := &Transport{deviceID: deviceID, digest: digest, dial: dial, generation: generation}
+	if len(platform) > 0 {
+		t.platform = platform[0]
+	}
+	return t
 }
 
 func (t *Transport) DeviceID() string   { return t.deviceID }
@@ -44,28 +51,36 @@ func (t *Transport) Kind() string       { return "device" }
 func (t *Transport) Generation() uint64 { return t.generation }
 func (t *Transport) IsAlive() bool      { return !t.closed.Load() }
 
-// Exec runs one non-interactive command through the device shell (`sh -c`) via the supervisor's non-PTY exec over
-// a terminal bridge, returning separated stdout/stderr and the exit code. Output beyond the supervisor's cap comes
-// back as partial buffers marked Truncated, mirroring the SSH exec output-limit behavior.
+// Platform returns the agent's GOOS when known (empty means unknown, POSIX default).
+func (t *Transport) Platform() string { return t.platform }
+
+// Exec runs one non-interactive command through the device shell via the supervisor's non-PTY exec over a
+// terminal bridge, returning separated stdout/stderr and the exit code (-1 with the signal name when the
+// process was killed by a signal, mirroring the SSH exec convention). Output beyond the supervisor's cap comes
+// back as partial buffers marked Truncated.
 func (t *Transport) Exec(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
 	if options.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
 		defer cancel()
 	}
-	stdout, stderr, exitCode, err := t.client().Exec(ctx, supervisor.ExecSpec{Command: []string{"/bin/sh", "-c", command}})
-	result := base.ExecResult{Stdout: string(stdout), Stderr: string(stderr)}
-	if exitCode >= 0 {
-		result.ExitCode = &exitCode
-	} else {
-		result.Signal = "terminated"
-	}
+	stdout, stderr, exitCode, signal, err := t.client().Exec(ctx, supervisor.ExecSpec{Command: execCommand(t.platform, command)})
+	result := base.ExecResult{Stdout: string(stdout), Stderr: string(stderr), ExitCode: &exitCode, Signal: signal}
 	if errors.Is(err, supervisor.ErrUnavailable) && len(result.Stdout)+len(result.Stderr) > 0 {
 		// Only the output cap can produce ErrUnavailable with buffered output; dial/spawn failures carry none.
 		result.Truncated = true
 		return result, nil
 	}
 	return result, err
+}
+
+// execCommand wraps a command line for the device shell: Windows agents get PowerShell (matching the docker
+// PowerShell quoting and the winrm exec convention), everything else defaults to POSIX `sh -c`.
+func execCommand(platform, command string) []string {
+	if platform == "windows" {
+		return []string{"powershell.exe", "-NoProfile", "-Command", command}
+	}
+	return []string{"/bin/sh", "-c", command}
 }
 
 // Ping probes device reachability with a supervisor list round-trip over a

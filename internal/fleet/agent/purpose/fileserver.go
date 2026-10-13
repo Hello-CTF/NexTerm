@@ -136,6 +136,9 @@ func (s *FileServer) serveReadFile(ctx context.Context, conn net.Conn, payload [
 	if err := deviceproto.UnmarshalPayload(payload, &msg); err != nil {
 		return deviceproto.WriteError(conn, err)
 	}
+	if msg.MaxBytes <= 0 || msg.MaxBytes > deviceproto.MaxReadBytes {
+		return deviceproto.WriteError(conn, fmt.Errorf("%w: maximum read size must be in (0, %d]", deviceproto.ErrInvalid, deviceproto.MaxReadBytes))
+	}
 	data, err := s.files.ReadFile(ctx, msg.Path, msg.MaxBytes)
 	if err != nil {
 		return deviceproto.WriteError(conn, err)
@@ -151,8 +154,8 @@ func (s *FileServer) serveReadRange(ctx context.Context, conn net.Conn, payload 
 	if msg.Offset < 0 {
 		return deviceproto.WriteError(conn, fmt.Errorf("%w: read offset must not be negative", deviceproto.ErrInvalid))
 	}
-	if msg.MaxBytes <= 0 {
-		return deviceproto.WriteError(conn, fmt.Errorf("%w: maximum read size must be positive", deviceproto.ErrInvalid))
+	if msg.MaxBytes <= 0 || msg.MaxBytes > deviceproto.MaxReadBytes {
+		return deviceproto.WriteError(conn, fmt.Errorf("%w: maximum read size must be in (0, %d]", deviceproto.ErrInvalid, deviceproto.MaxReadBytes))
 	}
 	file, err := os.Open(s.files.LocalPath(msg.Path))
 	if err != nil {

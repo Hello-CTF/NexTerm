@@ -169,6 +169,18 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if config.Desktop && sshConnector != nil {
 		sshConnector.device.Store(&DeviceConnectorConfig{
 			Dial: syncService.Remote().DialDeviceBridge,
+			Platform: func(ctx context.Context, deviceID string) (string, error) {
+				devices, err := syncService.Remote().ListDevices(ctx)
+				if err != nil {
+					return "", err
+				}
+				for _, listed := range devices.Devices {
+					if listed.ID == deviceID && listed.Agent != nil {
+						return listed.Agent.Platform, nil
+					}
+				}
+				return "", nil
+			},
 			Digest: func(ctx context.Context, deviceID string) (string, error) {
 				devices, err := syncService.Remote().ListDevices(ctx)
 				if err != nil {
