@@ -48,6 +48,7 @@ type runState struct {
 	terminal   *Event
 	finishedAt time.Time
 	cancelFn   adk.AgentCancelFunc
+	execCancel context.CancelFunc
 	cleanupErr error
 }
 
@@ -349,20 +350,23 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	params := &adk.ResumeParams{Targets: map[string]any{request.interrupt.TargetID: value}}
 	options := append([]adk.AgentRunOption(nil), opts...)
 	options = append(options, cancelOption, adk.WithCheckPointID(run.checkpointID))
+	// 恢复执行的 ctx: 携带调用方任务值 (修复重启恢复后值丢失), 不随传输取消
+	// (WithoutCancel); 取消经 run.execCancel 在 finish/Close 同步触发, run.ctx
+	// 身份不变, Done() 观察者不受影响。
+	resumeCtx := run.ctx
+	if ctx != nil {
+		execCtx, execCancel := context.WithCancel(context.WithoutCancel(ctx))
+		if run.execCancel != nil {
+			run.execCancel()
+		}
+		run.execCancel = execCancel
+		resumeCtx = execCtx
+	}
 	if err := m.persistLocked(run); err != nil {
 		run.mu.Unlock()
 		return Resume{}, nil, err
 	}
 	run.mu.Unlock()
-	// 恢复执行的 ctx: 携带调用方任务值 (修复重启恢复后值丢失), 不随传输取消
-	// (WithoutCancel), 随 run 取消而取消 (AfterFunc 挂到 run.ctx, run.ctx 身份
-	// 不变, Done() 观察者不受影响)。
-	resumeCtx := run.ctx
-	if ctx != nil {
-		execCtx, execCancel := context.WithCancel(context.WithoutCancel(ctx))
-		context.AfterFunc(run.ctx, execCancel)
-		resumeCtx = execCtx
-	}
 	iterator, resumeErr := resumer.ResumeWithParams(resumeCtx, run.checkpointID, params, options...)
 	if resumeErr == nil && iterator == nil {
 		resumeErr = errors.New("hitl: resumer returned a nil event stream")
@@ -478,11 +482,16 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 	run.terminal = &event
 	cancelFn := run.cancelFn
 	run.cancelFn = nil
+	execCancel := run.execCancel
+	run.execCancel = nil
 	persistErr := m.persistLocked(run)
 	run.mu.Unlock()
 	m.releaseNonces(nonces...)
 	m.sweepTerminal(m.now())
 	run.cancel()
+	if execCancel != nil {
+		execCancel()
+	}
 	if cancelExecution && cancelFn != nil {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
@@ -723,9 +732,14 @@ func (m *Manager) Close() error {
 				}
 			}
 		}
+		execCancel := run.execCancel
+		run.execCancel = nil
 		run.mu.Unlock()
 		if parked {
 			run.cancel()
+			if execCancel != nil {
+				execCancel()
+			}
 			continue
 		}
 		if _, err := m.finish(run, TerminalCanceled, "", true); err != nil && !errors.Is(err, ErrRunFinished) && firstErr == nil {
