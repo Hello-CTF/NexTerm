@@ -423,6 +423,7 @@ describe("packUploadAndExtract（入参校验）", () => {
 
   it("device 会话超过 64 MB 单次写入上限，在任何 IPC 前拒绝并建议逐文件上传", async () => {
     h.kind = "device";
+    h.web = false;
     const attempt = () => {
       const big = new File([new Uint8Array(0)], "big.bin");
       Object.defineProperty(big, "size", { value: MAX_PACK_BYTES_DEVICE + 1 });
@@ -437,6 +438,21 @@ describe("packUploadAndExtract（入参校验）", () => {
     await expect(attempt()).rejects.toThrow("单次写入上限 64.0 MB");
     await expect(attempt()).rejects.toThrow("逐文件");
     expect(h.calls).toEqual([]);
+  });
+
+  it("device 会话经 WEB 暂存流式上传不受 64 MB 上限", async () => {
+    h.kind = "device";
+    const big = new File([new Uint8Array(0)], "big.bin");
+    Object.defineProperty(big, "size", { value: 100 * 1024 * 1024 });
+    await packUploadAndExtract({
+      sessionId: "s1",
+      dir: "/data",
+      folderName: "photos",
+      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size }],
+      onProgress: () => {},
+    });
+    expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(true);
+    expect(h.calls.some((c) => c.startsWith("extract:"))).toBe(true);
   });
 
   it("ssh 会话 100 MB 不受 device 上限影响，正常进入打包流程", async () => {
