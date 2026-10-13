@@ -305,4 +305,31 @@ describe("terminal control resync compensation", () => {
     expect(overlayText("终端正由其他设备操作")).toBeNull();
     expect(overlayText("终端进程已结束")).toBeNull();
   });
+
+  it("applies a backend tab title from control events to the tab strip", async () => {
+    harness.listLive.mockResolvedValue([liveTab()]);
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+
+    deliverControl({
+      tabId: "kernel-1",
+      version: 2,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+      title: "构建机",
+    });
+
+    const tab = useUi
+      .getState()
+      .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
+    expect(tab?.title).toBe("构建机");
+    expect(tab?.renamedByUser).toBe(true);
+  });
 });

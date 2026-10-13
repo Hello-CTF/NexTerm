@@ -81,7 +81,8 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
       st.addTab({
         id: nextTabId(`term-${info.sessionId}`),
         kind: "terminal",
-        title: session?.name ?? info.sessionName,
+        title: info.title || session?.name || info.sessionName,
+        renamedByUser: info.title ? true : undefined,
         sessionId: info.sessionId,
         tabId: info.tabId,
         closable: true,
@@ -181,8 +182,8 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                   <td className="truncate font-medium text-neutral-200" title={t.sessionName}>
                     {t.sessionName}
                   </td>
-                  <td className="nx-mono text-neutral-400">
-                    {t.cols}×{t.rows}
+                  <td className="nx-mono text-neutral-400" title={t.title}>
+                    {t.title ?? `${t.cols}×${t.rows}`}
                   </td>
                   <td className="text-neutral-400">{ago(t.lastOutputMsAgo)}</td>
                   <td className="nx-right">

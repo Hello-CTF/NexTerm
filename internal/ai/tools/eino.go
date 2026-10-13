@@ -98,39 +98,50 @@ type TodoWriteArgs struct {
 type ExitPlanModeArgs struct {
 	Plan string `json:"plan" jsonschema:"required"`
 }
+type TerminalCreateArgs struct {
+	Title   string `json:"title,omitempty"`
+	Command string `json:"command,omitempty"`
+}
+type TerminalRenameArgs struct {
+	TabID string `json:"tab_id,omitempty"`
+	Title string `json:"title" jsonschema:"required"`
+}
 
 var einoNames = []string{
 	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
 	"shell_history",
 	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
 	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool, NotifyTool,
+	"terminal_create", "terminal_rename",
 }
 
 var einoDescriptions = map[string]string{
-	"exec_commands":  "在当前会话按顺序执行 shell 命令（1-20 条）。",
-	"read_file":      "读取 UTF-8 文本文件，并为后续写入记录内容版本。",
-	"write_file":     "以原子方式创建新文件，不覆盖已有文件；覆盖现有文件需用户授权并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
-	"list_dir":       "列出目录内容，最多 500 项。",
-	"search_files":   "按文件名 glob 或文件内容正则搜索，不经过 shell。",
-	"read_screen":    "读取当前作用域终端的可见屏幕及屏幕序号；传 since_seq 仅读取该序号之后的新输出，并按 max_bytes 分页。终端支持 OSC 133 时附带命令状态。",
-	"send_keys":      "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；否则发送后直接返回并说明结果未验证。",
-	"wait_for":       "等待当前终端最近 30 行匹配正则；传 since_seq 则只匹配该屏幕序号锚点之后的新输出（不会误命中旧内容）。可被任务取消。",
-	"shell_history":  "读取 NexTerm 所在本机的 shell 历史（zsh/bash/fish），返回最新 N 条（默认 50，最多 500）并已脱敏。仅读取本机且默认不同步；远端会话仍读取本机历史并明确标注。需要用户确认。",
-	"docker_ps":      "列出当前会话中的 Docker 容器。",
-	"docker_logs":    "读取容器日志并在本地按子串过滤。",
-	"docker_exec":    "在容器内使用 sh -c 执行命令。",
-	"docker_control": "启动、停止、重启或删除容器。",
-	"db_list_tables": "列出 MySQL 表。",
-	"db_describe":    "读取 MySQL 表字段和索引。",
-	"db_query":       "执行 SQL；写操作必须经过权限确认。",
-	"redis_scan":     "从 cursor 0 开始执行一次 Redis SCAN。",
-	"list_assets":    "列出可用连接资产。",
-	"ask_user":       "暂停代理并等待用户回答问题。",
-	"edit_file":      "精确替换文本并保留备份；现有文件为用户授权的非事务覆盖，可能覆盖确认后的外部修改；写入前必须读取。",
-	"todo_write":     "替换当前任务的完整待办列表。",
-	"exit_plan_mode": "提交计划供用户审核，不自动执行。",
-	ReminderTool:     "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
-	NotifyTool:       "向用户发送应用内通知，用于长任务完成或需要用户立即注意的事项；message 为通知内容（不超过 200 字），内容必须同时写进当轮回复正文，弹窗可能被错过。",
+	"exec_commands":   "在当前会话按顺序执行 shell 命令（1-20 条）。",
+	"read_file":       "读取 UTF-8 文本文件，并为后续写入记录内容版本。",
+	"write_file":      "以原子方式创建新文件，不覆盖已有文件；覆盖现有文件需用户授权并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
+	"list_dir":        "列出目录内容，最多 500 项。",
+	"search_files":    "按文件名 glob 或文件内容正则搜索，不经过 shell。",
+	"read_screen":     "读取当前作用域终端的可见屏幕及屏幕序号；传 since_seq 仅读取该序号之后的新输出，并按 max_bytes 分页。终端支持 OSC 133 时附带命令状态。",
+	"send_keys":       "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；否则发送后直接返回并说明结果未验证。",
+	"wait_for":        "等待当前终端最近 30 行匹配正则；传 since_seq 则只匹配该屏幕序号锚点之后的新输出（不会误命中旧内容）。可被任务取消。",
+	"shell_history":   "读取 NexTerm 所在本机的 shell 历史（zsh/bash/fish），返回最新 N 条（默认 50，最多 500）并已脱敏。仅读取本机且默认不同步；远端会话仍读取本机历史并明确标注。需要用户确认。",
+	"docker_ps":       "列出当前会话中的 Docker 容器。",
+	"docker_logs":     "读取容器日志并在本地按子串过滤。",
+	"docker_exec":     "在容器内使用 sh -c 执行命令。",
+	"docker_control":  "启动、停止、重启或删除容器。",
+	"db_list_tables":  "列出 MySQL 表。",
+	"db_describe":     "读取 MySQL 表字段和索引。",
+	"db_query":        "执行 SQL；写操作必须经过权限确认。",
+	"redis_scan":      "从 cursor 0 开始执行一次 Redis SCAN。",
+	"list_assets":     "列出可用连接资产。",
+	"ask_user":        "暂停代理并等待用户回答问题。",
+	"edit_file":       "精确替换文本并保留备份；现有文件为用户授权的非事务覆盖，可能覆盖确认后的外部修改；写入前必须读取。",
+	"todo_write":      "替换当前任务的完整待办列表。",
+	"exit_plan_mode":  "提交计划供用户审核，不自动执行。",
+	ReminderTool:      "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
+	NotifyTool:        "向用户发送应用内通知，用于长任务完成或需要用户立即注意的事项；message 为通知内容（不超过 200 字），内容必须同时写进当轮回复正文，弹窗可能被错过。",
+	"terminal_create": "在当前会话新建一个终端标签页（启动新 shell，需用户确认）；可选 title 设置标签标题，可选 command 作为启动命令（仅 ssh/docker 会话支持，其他类型会被拒绝）。返回新标签的 tab_id，之后用 send_keys/read_screen 配合该 id 操作。",
+	"terminal_rename": "重命名当前作用域的终端标签页；title 为新标题（必填），tab_id 缺省为当前标签。自定义标题不会被远程标题序列覆盖，后台会话重连后仍保留。",
 }
 
 func einoToolSchemas() []Schema {
@@ -206,6 +217,12 @@ func einoToolSchemas() []Schema {
 		},
 		NotifyTool: func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[NotifyArgs](NotifyTool, einoDescriptions[NotifyTool])
+		},
+		"terminal_create": func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[TerminalCreateArgs]("terminal_create", einoDescriptions["terminal_create"])
+		},
+		"terminal_rename": func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[TerminalRenameArgs]("terminal_rename", einoDescriptions["terminal_rename"])
 		},
 	}
 	result := make([]Schema, 0, len(einoNames))
@@ -394,6 +411,16 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 				return e.run(ctx, NotifyTool, input)
 			})
 		},
+		func() (tool.InvokableTool, error) {
+			return utils.InferTool("terminal_create", einoDescriptions["terminal_create"], func(ctx context.Context, input TerminalCreateArgs) (Output, error) {
+				return e.run(ctx, "terminal_create", input)
+			})
+		},
+		func() (tool.InvokableTool, error) {
+			return utils.InferTool("terminal_rename", einoDescriptions["terminal_rename"], func(ctx context.Context, input TerminalRenameArgs) (Output, error) {
+				return e.run(ctx, "terminal_rename", input)
+			})
+		},
 	}
 	result := make([]tool.BaseTool, 0, len(makers)+1)
 	for index, makeTool := range makers {
@@ -429,6 +456,17 @@ func (e *Execution) enabled(name string) bool {
 			return false
 		}
 		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
+	case "terminal_rename":
+		if _, ok := deps.Terminal.(RenameTerminal); !ok || e.Scope.TabID == "" {
+			return false
+		}
+		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
+	case "terminal_create":
+		if e.Scope.SessionID == "" {
+			return false
+		}
+		_, ok := deps.Terminal.(CreateTerminal)
+		return ok
 	case "shell_history":
 		return true
 	case "docker_ps":

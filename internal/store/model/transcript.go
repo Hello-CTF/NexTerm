@@ -40,6 +40,15 @@ type DurableTranscriptOffset struct {
 
 func (DurableTranscriptOffset) TableName() string { return "durable_transcript_offset" }
 
+type DurableTabTitle struct {
+	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
+	Title     string `gorm:"column:title;not null" json:"title"`
+	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
+	OwnerID   string `gorm:"column:owner_id;not null;default:'';index:idx_durable_tab_title_owner" json:"owner_id"`
+}
+
+func (DurableTabTitle) TableName() string { return "durable_tab_title" }
+
 type CredentialTombstone struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`
 	DeletedAt int64  `gorm:"column:deleted_at;not null" json:"deletedAt"`

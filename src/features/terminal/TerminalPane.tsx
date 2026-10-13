@@ -88,6 +88,23 @@ function findWorkspacePane(
   return null;
 }
 
+// A backend-owned custom title (rename via IPC or the AI terminal_rename tool)
+// is authoritative: it lands on the tab strip and locks out OSC title updates,
+// mirroring a local manual rename.
+function applyBackendTabTitle(storeTabId: string, title: string): void {
+  const st = useUi.getState();
+  for (const w of st.workspaces) {
+    for (const p of w.panes) {
+      const tab = p.tabs.find((t) => t.id === storeTabId);
+      if (!tab) continue;
+      if (tab.title !== title || tab.renamedByUser !== true) {
+        st.updateTab(storeTabId, { title, renamedByUser: true });
+      }
+      return;
+    }
+  }
+}
+
 function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   if (hasActiveOverlay()) return false;
   const active = document.activeElement;
@@ -504,7 +521,8 @@ export function TerminalPane({
     }
     if (p.cwd !== undefined) setCwd(p.cwd || null);
     if (p.durable !== undefined) setDurable(p.durable);
-  }, []);
+    if (p.title) applyBackendTabTitle(storeTabId, p.title);
+  }, [storeTabId]);
   useEffect(() => {
     setCwd(null);
     setDurable(false);
@@ -1082,7 +1100,7 @@ export function TerminalPane({
   };
 
   return (
-    <div ref={paneRef} className="nx-pane bg-term">
+    <div ref={paneRef} className="nx-pane bg-term @container/term">
       <div className="nx-toolbar">
         <span className="nx-toolbar-title">{title}</span>
         <span
@@ -1139,7 +1157,7 @@ export function TerminalPane({
         <div className="nx-spacer" />
 
         <button
-          className={`nx-btn nx-btn-ghost nx-btn-sm max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
+          className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={`搜索终端内容 (${searchBindingLabel})`}
           onClick={() => setSearchOpen((v) => !v)}
         >
@@ -1158,9 +1176,9 @@ export function TerminalPane({
 
         {blocksSupported && (
           <>
-            <span className="nx-divider-v max-[560px]:hidden" />
+            <span className="nx-divider-v @max-[560px]:hidden" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm max-[560px]:hidden"
+              className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
               title="定位到上一条命令"
               onClick={() => handleRef.current?.navigateBlock("prev")}
@@ -1168,7 +1186,7 @@ export function TerminalPane({
               <IconArrowUp size={13} />
             </button>
             <button
-              className="nx-icon-btn nx-icon-btn-sm max-[560px]:hidden"
+              className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
               title="定位到下一条命令"
               onClick={() => handleRef.current?.navigateBlock("next")}
@@ -1176,7 +1194,7 @@ export function TerminalPane({
               <IconArrowDown size={13} />
             </button>
             <button
-              className={`nx-btn nx-btn-sm max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+              className={`nx-btn nx-btn-sm @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
               title="命令块：折叠输出 / 复制 / 定位"
               onClick={toggleBlocksPanel}
             >
@@ -1281,6 +1299,7 @@ export function TerminalPane({
                   exited: info.exited,
                 });
                 if (info.encoding) setEncoding(info.encoding);
+                if (info.title) applyBackendTabTitle(storeTabId, info.title);
               }}
               onAttach={(id) => {
                 setKernelTabId(id);

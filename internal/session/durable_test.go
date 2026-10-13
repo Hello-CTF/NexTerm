@@ -18,6 +18,7 @@ var errFakeDurableIdentity = errors.New("fake durable identity changed")
 type fakeDurableProvider struct {
 	mu            sync.Mutex
 	records       map[string]*fakeDurableRecord
+	titles        map[string]string
 	createOptions []base.DurableCreateOptions
 	createCalls   int
 	attachCalls   int
@@ -46,7 +47,7 @@ type fakeDurableAttachment struct {
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
-	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord)}
+	return &fakeDurableProvider{records: make(map[string]*fakeDurableRecord), titles: make(map[string]string)}
 }
 
 func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
@@ -113,6 +114,24 @@ func (p *fakeDurableProvider) DeleteDurableTranscriptOffset(tabID string) {
 	if record := p.records[tabID]; record != nil {
 		record.transcribed = 0
 	}
+}
+
+func (p *fakeDurableProvider) DurableTabTitle(tabID string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.titles[tabID]
+}
+
+func (p *fakeDurableProvider) PersistDurableTabTitle(tabID string, title string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.titles[tabID] = title
+}
+
+func (p *fakeDurableProvider) DeleteDurableTabTitle(tabID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.titles, tabID)
 }
 
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
@@ -368,6 +387,44 @@ func TestDurableManagerRestartRecoveryDetachSurvivalAndExplicitKill(t *testing.T
 	}
 	if _, err := provider.Attach(context.Background(), info.ID); !errors.Is(err, durable.ErrNotFound) {
 		t.Fatalf("killed durable tab attach error = %v", err)
+	}
+}
+
+func TestDurableTabTitleSurvivesRestartAndDiesWithTab(t *testing.T) {
+	provider := newFakeDurableProvider()
+	first, _, _, firstSession := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, first, firstSession, "title-tab", "a-1", false)
+	if info.Title != "" {
+		t.Fatalf("fresh durable tab title = %q", info.Title)
+	}
+	renamed, err := first.RenameTab(context.Background(), info.ID, "构建机")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Title != "构建机" || provider.DurableTabTitle(info.ID) != "构建机" {
+		t.Fatalf("rename info = %+v, persisted = %q", renamed, provider.DurableTabTitle(info.ID))
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second, _, _, secondSession := newDurableTestManager(t, provider)
+	recovered := openDurableTestTab(t, second, secondSession, info.ID, "b-1", true)
+	if recovered.Title != "构建机" {
+		t.Fatalf("recovered title = %q", recovered.Title)
+	}
+	tab, err := second.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.Info().Title; got != "构建机" {
+		t.Fatalf("recovered tab info title = %q", got)
+	}
+	if err := second.CloseTab(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.DurableTabTitle(info.ID); got != "" {
+		t.Fatalf("title after kill = %q", got)
 	}
 }
 

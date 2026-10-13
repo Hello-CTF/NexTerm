@@ -205,6 +205,7 @@ export interface AttachedTabInfo {
   viewers: number;
   exited: boolean;
   encoding?: string;
+  title?: string;
 }
 
 export interface LiveTabInfo {
@@ -219,6 +220,7 @@ export interface LiveTabInfo {
   viewers: number;
   exited: boolean;
   lastOutputMsAgo: number;
+  title?: string;
 }
 
 export interface StreamResumeAnchor {
@@ -270,6 +272,14 @@ export const terminalApi = {
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
   closeTab: (tabId: string, mode?: "kill" | "detach") =>
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId() }),
+  renameTab: (tabId: string, title: string) =>
+    call<AttachedTabInfo>("terminal_rename_tab", { tabId, title }),
+  createTab: (sessionId: string, options?: { title?: string; command?: string }) =>
+    call<AttachedTabInfo>("terminal_create_tab", {
+      sessionId,
+      title: options?.title,
+      command: options?.command,
+    }),
 };
 
 export interface TranscriptSummary {

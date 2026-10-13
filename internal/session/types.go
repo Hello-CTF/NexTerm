@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -43,6 +44,7 @@ var (
 	ErrHidden               = errors.New("terminal hidden")
 	ErrTabExists            = errors.New("terminal tab already exists")
 	ErrInvalidOptions       = errors.New("invalid terminal options")
+	ErrInvalidTitle         = errors.New("invalid terminal tab title")
 )
 
 type Status string
@@ -141,6 +143,7 @@ type Config struct {
 	Durable           base.DurableProvider
 	DurableResolver   DurableResolver
 	TranscriptOffsets DurableTranscriptOffsetStore
+	TabTitles         DurableTabTitleStore
 	Hub               *hub.Hub
 	Emitter           Emitter
 	Transcripts       TranscriptSink
@@ -179,6 +182,7 @@ type TabInfo struct {
 	Durable      bool   `json:"durable,omitempty"`
 	Cwd          string `json:"cwd,omitempty"`
 	Encoding     string `json:"encoding,omitempty"`
+	Title        string `json:"title,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -214,6 +218,7 @@ type ControlEvent struct {
 	Version      uint64 `json:"version"`
 	Cwd          string `json:"cwd,omitempty"`
 	Durable      bool   `json:"durable,omitempty"`
+	Title        string `json:"title,omitempty"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {
@@ -311,6 +316,10 @@ type OpenTabOptions struct {
 	Term      string
 	Ephemeral bool
 	Durable   *DurableTabOptions
+	// Detached opens the tab without attaching a channel: ChannelID must be
+	// empty, the tab starts with no subscribers, and clients attach later via
+	// AttachTab. Used by CreateTab.
+	Detached bool
 }
 
 type DurableTabOptions struct {
@@ -357,6 +366,26 @@ func canonicalEncoding(encoding string) string {
 
 func validSize(cols, rows uint32) bool {
 	return cols > 0 && rows > 0 && cols <= 1024 && rows <= 1024
+}
+
+// maxTabTitleRunes bounds custom tab titles; the frontend sanitizer caps at
+// the same length.
+const maxTabTitleRunes = 80
+
+func normalizeTabTitle(title string) (string, error) {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return "", ErrInvalidTitle
+	}
+	if utf8.RuneCountInString(trimmed) > maxTabTitleRunes {
+		return "", ErrInvalidTitle
+	}
+	for _, r := range trimmed {
+		if r < 0x20 || r == 0x7f {
+			return "", ErrInvalidTitle
+		}
+	}
+	return trimmed, nil
 }
 
 func clientID(id string) string {

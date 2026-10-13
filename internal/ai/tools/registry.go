@@ -335,6 +335,10 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.readScreen(ctx, scope, call.Args)
 	case "send_keys":
 		return r.sendKeys(ctx, scope, call.Args)
+	case "terminal_create":
+		return r.terminalCreate(ctx, scope, call.Args)
+	case "terminal_rename":
+		return r.terminalRename(ctx, scope, call.Args)
 	case "wait_for":
 		return r.waitFor(ctx, scope, call.Args, 120)
 	case "shell_history":

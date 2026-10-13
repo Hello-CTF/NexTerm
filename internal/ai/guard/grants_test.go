@@ -62,14 +62,16 @@ func TestDeviceGrantKindsRestricted(t *testing.T) {
 		t.Fatalf("kinds=%v err=%v", kinds, err)
 	}
 	for operation, want := range map[string]GrantKind{
-		"send_keys":      GrantKindTerminalWrite,
-		"exec_commands":  GrantKindSessionExec,
-		"docker_control": "",
-		"docker_exec":    "",
-		"db_query":       "",
-		"write_file":     "",
-		"send_reminder":  "",
-		"read_screen":    "",
+		"send_keys":       GrantKindTerminalWrite,
+		"exec_commands":   GrantKindSessionExec,
+		"terminal_create": GrantKindSessionExec,
+		"terminal_rename": "",
+		"docker_control":  "",
+		"docker_exec":     "",
+		"db_query":        "",
+		"write_file":      "",
+		"send_reminder":   "",
+		"read_screen":     "",
 	} {
 		if got := OperationGrantKind(operation); got != want {
 			t.Fatalf("OperationGrantKind(%s) = %q, want %q", operation, got, want)

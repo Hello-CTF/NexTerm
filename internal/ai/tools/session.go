@@ -68,6 +68,21 @@ func (s *sessionTerminal) SessionAssetID(_ context.Context, sessionID string) (s
 	return session.Asset().ID, nil
 }
 
+func (s *sessionTerminal) Create(ctx context.Context, sessionID string, options CreateTerminalOptions) (CreatedTab, error) {
+	info, err := s.manager.CreateTab(ctx, session.CreateTabOptions{
+		SessionID: sessionID, Title: options.Title, Command: options.Command,
+	})
+	if err != nil {
+		return CreatedTab{}, err
+	}
+	return CreatedTab{TabID: info.ID, Title: info.Title}, nil
+}
+
+func (s *sessionTerminal) Rename(ctx context.Context, tabID, title string) error {
+	_, err := s.manager.RenameTab(ctx, tabID, title)
+	return err
+}
+
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	deps.Transport = manager.Transport
 	deps.Terminal = SessionTerminal(manager)

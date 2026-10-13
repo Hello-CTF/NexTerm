@@ -34,6 +34,30 @@ func TestTranscriptAppendChunksDurableOffsetPostgres(t *testing.T) {
 	}
 }
 
+func TestDurableTabTitleRoundtripPostgres(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+
+	if err := db.DurableTabTitleSet(ctx, "pg-title-tab", "构建机"); err != nil {
+		t.Fatal(err)
+	}
+	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "构建机" {
+		t.Fatalf("title after insert = %q, %v", title, err)
+	}
+	if err := db.DurableTabTitleSet(ctx, "pg-title-tab", "部署终端"); err != nil {
+		t.Fatal(err)
+	}
+	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "部署终端" {
+		t.Fatalf("title after conflict update = %q, %v", title, err)
+	}
+	if err := db.DurableTabTitleDelete(ctx, "pg-title-tab"); err != nil {
+		t.Fatal(err)
+	}
+	if title, err := db.DurableTabTitleGet(ctx, "pg-title-tab"); err != nil || title != "" {
+		t.Fatalf("title after delete = %q, %v", title, err)
+	}
+}
+
 func TestTranscriptHostsGroupByPostgres(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)

@@ -405,6 +405,118 @@ func TestDeadTransportTriggersAutomaticReconnect(t *testing.T) {
 	}
 }
 
+func TestRenameTabEmitsEventAndValidatesTitle(t *testing.T) {
+	connector := newFakeConnector()
+	terminals := newFakeTerminalFactory()
+	var mu sync.Mutex
+	var events []Event
+	manager := NewManager(Config{
+		Connector: connector, Terminals: terminals,
+		Emitter: EmitterFunc(func(_ context.Context, event Event) error {
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+			return nil
+		}),
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "asset-rename", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", "a-1")
+	mu.Lock()
+	events = nil
+	mu.Unlock()
+
+	info, err := manager.RenameTab(context.Background(), tab.ID, "部署机")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Title != "部署机" {
+		t.Fatalf("rename info = %+v", info)
+	}
+	if got := tab.Info().Title; got != "部署机" {
+		t.Fatalf("tab info title = %q", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var control *ControlEvent
+	for index := range events {
+		if events[index].Topic == TopicTerminalControl {
+			payload, ok := events[index].Payload.(ControlEvent)
+			if !ok {
+				t.Fatalf("control payload type = %T", events[index].Payload)
+			}
+			control = &payload
+		}
+	}
+	if control == nil {
+		t.Fatal("rename emitted no control event")
+	}
+	if control.TabID != tab.ID || control.Title != "部署机" {
+		t.Fatalf("control event = %+v", control)
+	}
+	for _, title := range []string{"", "   ", "bad\ttitle", "bad\ntitle", string(make([]byte, 81))} {
+		if _, err := manager.RenameTab(context.Background(), tab.ID, title); !errors.Is(err, ErrInvalidTitle) {
+			t.Fatalf("title %q: err=%v", title, err)
+		}
+	}
+	if _, err := manager.RenameTab(context.Background(), "missing-tab", "x"); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("missing tab err=%v", err)
+	}
+}
+
+func TestCreateTabDetachedRouting(t *testing.T) {
+	manager, connector, terminals, connected := openTestSession(t, KindSSH)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{
+		SessionID: connected.ID, Title: "构建机", Command: "make -j4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Title != "构建机" || info.Subscribers != 0 {
+		t.Fatalf("created info = %+v", info)
+	}
+	if info.Cols != 80 || info.Rows != 24 {
+		t.Fatalf("default size = %dx%d", info.Cols, info.Rows)
+	}
+	transport := connector.transport(0)
+	if transport.channelCount() != 1 {
+		t.Fatalf("pty channels = %d", transport.channelCount())
+	}
+	if got := transport.channel(0).written(); !bytes.Equal(got, []byte("make -j4\n")) {
+		t.Fatalf("startup command written = %q", got)
+	}
+	if terminals.terminal(info.ID) == nil {
+		t.Fatal("created tab has no terminal")
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1"}); err != nil {
+		t.Fatalf("attach after create: %v", err)
+	}
+
+	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Title: "\t"}); !errors.Is(err, ErrInvalidTitle) {
+		t.Fatalf("invalid title err=%v", err)
+	}
+	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: "missing"}); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("missing session err=%v", err)
+	}
+}
+
+func TestCreateTabRejectsCommandOnUnsupportedKind(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	if _, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Command: "ls"}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("local command err=%v", err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID, Cols: 100, Rows: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Ephemeral || info.Cols != 100 || info.Rows != 40 {
+		t.Fatalf("local created info = %+v", info)
+	}
+}
+
 func openTestSession(t *testing.T, kind string) (*Manager, *fakeConnector, *fakeTerminalFactory, *Session) {
 	t.Helper()
 	connector := newFakeConnector()

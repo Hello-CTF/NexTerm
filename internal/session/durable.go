@@ -28,4 +28,12 @@ type DurableTranscriptOffsetStore interface {
 	DeleteDurableTranscriptOffset(tabID string)
 }
 
+// DurableTabTitleStore persists custom tab titles of durable tabs so a
+// recovered tab keeps the title its user gave it across restarts.
+type DurableTabTitleStore interface {
+	DurableTabTitle(tabID string) string
+	PersistDurableTabTitle(tabID string, title string)
+	DeleteDurableTabTitle(tabID string)
+}
+
 type durableTranscriptOffsetSource = DurableTranscriptOffsetStore

@@ -177,6 +177,11 @@ type fakeTerminal struct {
 	outputSinceFunc func(seq uint64, maxBytes int) ([]byte, uint64, uint64, error)
 	assetKind       string
 	assetKindErr    error
+	createCalls     []CreateTerminalOptions
+	createResult    CreatedTab
+	createErr       error
+	renameCalls     [][2]string
+	renameErr       error
 }
 
 func (f *fakeTerminal) Snapshot(context.Context, string) (Screen, error) {
@@ -228,6 +233,27 @@ func (f *fakeTerminal) SessionAssetKind(context.Context, string) (string, error)
 		return "local", nil
 	}
 	return f.assetKind, nil
+}
+func (f *fakeTerminal) Create(_ context.Context, _ string, options CreateTerminalOptions) (CreatedTab, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return CreatedTab{}, f.createErr
+	}
+	f.createCalls = append(f.createCalls, options)
+	if f.createResult.TabID == "" {
+		return CreatedTab{TabID: "tab-new", Title: options.Title}, nil
+	}
+	return f.createResult, nil
+}
+func (f *fakeTerminal) Rename(_ context.Context, tabID, title string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.renameErr != nil {
+		return f.renameErr
+	}
+	f.renameCalls = append(f.renameCalls, [2]string{tabID, title})
+	return nil
 }
 
 type fakeDatabase struct {

@@ -43,7 +43,7 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
-	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
+	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrInvalidTitle), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
 		return ipc.WrapError(ipc.CodeBadParam, "参数错误: "+userMessage(err), err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return ipc.WrapError(ipc.CodeTimeout, userMessage(err), err)

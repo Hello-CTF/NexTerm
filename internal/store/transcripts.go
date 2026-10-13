@@ -16,6 +16,7 @@ import (
 type TranscriptRow = model.TranscriptRow
 type TranscriptChunkRow = model.TranscriptChunkRow
 type DurableTranscriptOffset = model.DurableTranscriptOffset
+type DurableTabTitle = model.DurableTabTitle
 
 const (
 	TranscriptChunkKindOutput = 0
@@ -482,6 +483,46 @@ func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID str
 	_, err := offset.WithContext(ctx).
 		Where(offset.DurableID.Eq(durableID)).
 		Where(ownerConditions(ctx, offset.TableName())...).
+		Delete()
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+func (s *Store) DurableTabTitleGet(ctx context.Context, durableID string) (string, error) {
+	title := query.Use(s.db).DurableTabTitle
+	row, err := title.WithContext(ctx).
+		Where(title.DurableID.Eq(durableID)).
+		Where(ownerConditions(ctx, title.TableName())...).
+		First()
+	if isNoRows(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	return row.Title, nil
+}
+
+func (s *Store) DurableTabTitleSet(ctx context.Context, durableID, value string) error {
+	now := ids.NowMS()
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "durable_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"title", "updated_at"}),
+		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("durable_tab_title", "owner_id"), Value: ipc.OwnerID(ctx)}}},
+	}).Create(&DurableTabTitle{DurableID: durableID, Title: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+func (s *Store) DurableTabTitleDelete(ctx context.Context, durableID string) error {
+	title := query.Use(s.db).DurableTabTitle
+	_, err := title.WithContext(ctx).
+		Where(title.DurableID.Eq(durableID)).
+		Where(ownerConditions(ctx, title.TableName())...).
 		Delete()
 	if err != nil {
 		return dbError(err)

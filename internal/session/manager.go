@@ -34,6 +34,7 @@ type Manager struct {
 	durable     base.DurableProvider
 	resolver    DurableResolver
 	offsets     DurableTranscriptOffsetStore
+	titles      DurableTabTitleStore
 	bus         *hub.Hub
 	ownsBus     bool
 	emitter     Emitter
@@ -120,6 +121,12 @@ func NewManager(config Config) *Manager {
 	if manager.offsets == nil {
 		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
 			manager.offsets = source
+		}
+	}
+	manager.titles = config.TabTitles
+	if manager.titles == nil {
+		if source, ok := config.Durable.(DurableTabTitleStore); ok {
+			manager.titles = source
 		}
 	}
 	manager.logger = config.Logger

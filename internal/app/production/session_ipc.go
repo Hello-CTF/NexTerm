@@ -103,6 +103,20 @@ type attachedTabDTO struct {
 	Viewers     int     `json:"viewers"`
 	Exited      bool    `json:"exited"`
 	Encoding    string  `json:"encoding,omitempty"`
+	Title       string  `json:"title,omitempty"`
+}
+
+type renameTerminalRequest struct {
+	TabID string `json:"tabId"`
+	Title string `json:"title"`
+}
+
+type createTerminalRequest struct {
+	SessionID string `json:"sessionId"`
+	Cols      uint32 `json:"cols"`
+	Rows      uint32 `json:"rows"`
+	Title     string `json:"title"`
+	Command   string `json:"command"`
 }
 
 type terminalWriteRequest struct {
@@ -135,6 +149,7 @@ type liveTabDTO struct {
 	Viewers         int     `json:"viewers"`
 	Exited          bool    `json:"exited"`
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
+	Title           string  `json:"title,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -439,6 +454,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
 						Cols: info.Cols, Rows: info.Rows, Controller: nullableProductionString(info.Controller),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited, LastOutputMSAgo: lastOutputMSAgo,
+						Title: info.Title,
 					})
 				}
 				return result, nil
@@ -519,6 +535,26 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					}
 				}
 				return nil, terminalIPCError(err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_rename_tab", func(ctx context.Context, _ *ipc.Call, input renameTerminalRequest) (attachedTabDTO, error) {
+				info, err := s.sessions.RenameTab(ctx, input.TabID, input.Title)
+				if err != nil {
+					return attachedTabDTO{}, terminalIPCError(err)
+				}
+				return attachedSessionTab(info), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_create_tab", func(ctx context.Context, _ *ipc.Call, input createTerminalRequest) (attachedTabDTO, error) {
+				info, err := s.sessions.CreateTab(context.WithoutCancel(ctx), session.CreateTabOptions{
+					SessionID: input.SessionID, Cols: input.Cols, Rows: input.Rows, Title: input.Title, Command: input.Command,
+				})
+				if err != nil {
+					return attachedTabDTO{}, terminalIPCError(err)
+				}
+				return attachedSessionTab(info), nil
 			})
 		},
 	}
@@ -610,7 +646,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Encoding: info.Encoding,
+		Encoding: info.Encoding, Title: info.Title,
 	}
 }
 
