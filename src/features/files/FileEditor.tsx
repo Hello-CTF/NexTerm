@@ -406,7 +406,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         >
           <IconSave size={13} />
           {saving ? "保存中…" : "保存"}
-          <span className="nx-kbd border-white/25 text-white/70 max-[560px]:hidden">{modHint()} S</span>
+          <span className={`nx-kbd max-[560px]:hidden ${dirty ? "border-white/25 text-white" : ""}`}>{modHint()} S</span>
         </button>
         {onClose && (
           <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器">

@@ -56,7 +56,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
         role="region"
         aria-label="软件更新"
       >
-        <IconDownload size={13} className="shrink-0 text-emerald-300" />
+        <IconDownload size={13} className="shrink-0 text-green-300" />
         <span className="min-w-0 truncate">
           已安装 <span className="font-medium text-neutral-100">v{installedVersion}</span>，重启应用后生效
         </span>

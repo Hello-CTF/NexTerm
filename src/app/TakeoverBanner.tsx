@@ -136,12 +136,12 @@ export function TakeoverBanner() {
         {mm}:{ss}
       </span>
       <span
-        className="shrink-0 text-red-300/70"
+        className="shrink-0 text-red-300"
         title="收回控制权将停止 AI 并退出接管；在终端内按任意键仅暂停接管，之后可恢复。"
       >
         {bindings.reclaimTakeover ? (
           <>
-            按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 收回控制权
+            按 <span className="nx-kbd border-red-500/40 bg-red-500/10 text-red-300">{reclaimLabel}</span> 收回控制权
           </>
         ) : (
           "可收回控制权"

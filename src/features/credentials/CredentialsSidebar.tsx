@@ -98,7 +98,7 @@ export function CredentialsSidebar() {
       </div>
 
       {locked && (
-        <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300/90">
+        <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
           <IconLock size={12} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate">已锁定 · 解锁后可查看</span>
           <button className="nx-btn nx-btn-xs nx-btn-outline" onClick={() => void unlock()}>
@@ -299,7 +299,7 @@ function FilterChip({
       onClick={onClick}
     >
       {label}
-      <span className={active ? "text-blue-400/70" : "text-neutral-600"}>{count}</span>
+      <span className={active ? "text-blue-300" : "text-neutral-500"}>{count}</span>
     </button>
   );
 }

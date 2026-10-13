@@ -1571,7 +1571,7 @@ function AppShell() {
             {vaultStatus.uninitialized ? (
               <button
                 type="button"
-                className="nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-amber-200"
+                className="nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-[var(--nx-fg-warning)]"
                 title="在「设置 → 凭据保护」中开启密码保护"
                 onClick={openVaultProtection}
               >

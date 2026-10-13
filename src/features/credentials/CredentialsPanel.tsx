@@ -102,7 +102,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
       </div>
 
       {locked && protectionOn && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300/90">
+        <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300">
           <IconLock size={13} />
           <span>凭据库已锁定 · 解锁后可查看与使用</span>
           <div className="nx-spacer" />
@@ -510,7 +510,7 @@ function CredentialDetail({
           )}
         </Section>
 
-        <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-600">
+        <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-500">
           <span>创建于 {formatTime(cred.createdAt)}</span>
           <span>最后修改 {formatTime(cred.updatedAt)}</span>
         </div>
@@ -574,7 +574,7 @@ function EmptyDetail({ hasAny, onNew }: { hasAny: boolean; onNew: () => void }) 
       <div className="text-[12.5px] text-neutral-400">
         {hasAny ? "在左侧选择一条凭据" : "还没有任何凭据"}
       </div>
-      <div className="text-[11.5px] text-neutral-600">
+      <div className="text-[11.5px] text-neutral-500">
         {hasAny ? "名称 · 值 · 引用它的资产 · 最后修改时间" : "新建资产时填的密码会自动存进来"}
       </div>
       <div className="mt-1 flex gap-2">

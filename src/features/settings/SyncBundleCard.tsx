@@ -486,7 +486,7 @@ export function SyncBundleCard() {
                 {exportSummary.groups} · 凭据 {exportSummary.creds}
               </div>
               {exportSummary.warnings.length > 0 && (
-                <ul className="mt-1 list-disc pl-4 text-[11.5px] text-amber-200">
+                <ul className="mt-1 list-disc pl-4 text-[11.5px]">
                   {exportSummary.warnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}

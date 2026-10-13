@@ -1341,7 +1341,7 @@ export function TerminalPane({
               className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/70 px-6 text-center backdrop-blur-[1px]"
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
-                <IconEye size={15} className="text-amber-300" />
+                <IconEye size={15} className="nx-term-overlay-warn text-amber-300" />
                 {control.exited
                   ? "终端进程已结束"
                   : control.controller
@@ -1350,7 +1350,7 @@ export function TerminalPane({
               </span>
               {control.exited ? (
                 <>
-                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
+                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                     只能查看最后的终端输出。请新建终端继续操作
                   </span>
                   <button
@@ -1364,7 +1364,7 @@ export function TerminalPane({
                 </>
               ) : (
                 <>
-                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
+                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                     {control.controller
                       ? "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，终端尺寸也会按你的窗口重排。"
                       : "多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后即可输入，终端尺寸会按你的窗口重排。"}
@@ -1423,10 +1423,10 @@ export function TerminalPane({
               className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/80 px-6 text-center backdrop-blur-[1px]"
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
-                <IconRefresh size={15} className="text-amber-300" />
+                <IconRefresh size={15} className="nx-term-overlay-warn text-amber-300" />
                 这个终端已失效
               </span>
-              <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
+              <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 所属连接已在服务端删除。重新连接将恢复原终端并回放输出；若原终端已结束，则在当前标签中打开新终端。历史输出可在「终端历史」中查看
               </span>
               <div className="flex items-center gap-2">

@@ -996,7 +996,7 @@ function GroupNode({
             />
           ))}
           {assets.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组 · 可拖资产进来）</div>
+            <div className="px-2 py-1.5 text-[11px] text-neutral-500">（空分组 · 可拖资产进来）</div>
           )}
         </div>
       )}
@@ -1823,7 +1823,7 @@ export function AssetEditor({
                             type="button"
                             className={`flex h-8 items-center justify-center rounded-md border ${
                               icon === name
-                                ? "border-blue-500/60 bg-blue-500/15 text-blue-200"
+                                ? "border-blue-500/60 bg-blue-500/15 text-blue-300"
                                 : "border-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-100"
                             }`}
                             title={name}
@@ -1955,7 +1955,7 @@ export function AssetEditor({
                   测试端口
                 </button>
                 {probe.status === "ok" && (
-                  <span className="text-[11.5px] text-emerald-400">端口可达</span>
+                  <span className="text-[11.5px] text-green-300">端口可达</span>
                 )}
                 {probe.status === "fail" && (
                   <span className="min-w-0 truncate text-[11.5px] text-red-400" title={probe.error}>

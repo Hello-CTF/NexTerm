@@ -320,7 +320,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   <span className="nx-badge">跳过 {applyResult.skipped}</span>
                 </div>
                 {applyResult.warnings.length > 0 && (
-                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300/90">
+                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
                     {applyResult.warnings.map((warning, index) => (
                       <div key={index}>{warning}</div>
                     ))}
@@ -493,7 +493,7 @@ function ActionBadge({ action }: { action: string }) {
 function Warnings({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
   return (
-    <div className="mt-1 text-[11px] text-amber-300/80">
+    <div className="mt-1 text-[11px] text-amber-300">
       {warnings.map((warning, index) => (
         <div key={index}>{warning}</div>
       ))}
@@ -591,7 +591,7 @@ function KeyRow({
           </span>
         </span>
         {item.path && (
-          <span className="hidden min-[460px]:inline truncate text-[11px] text-neutral-600" title={item.path}>
+          <span className="hidden min-[460px]:inline truncate text-[11px] text-neutral-500" title={item.path}>
             {item.path}
           </span>
         )}

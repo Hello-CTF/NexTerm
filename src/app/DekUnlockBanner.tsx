@@ -44,7 +44,7 @@ function WebDekUnlockBanner() {
 
   return (
     <div
-      className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-950 px-3 text-xs text-amber-100"
+      className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
       role="region"
       aria-label="数据密钥未解锁"
     >
@@ -221,7 +221,7 @@ function NativeVaultUnlockBanner() {
   if (offerEnable !== null) {
     return (
       <div
-        className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-950 px-3 text-xs text-amber-100"
+        className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
         role="region"
         aria-label={`启用${bioLabel}快捷解锁`}
       >
@@ -275,7 +275,7 @@ function NativeVaultUnlockBanner() {
 
   return (
     <div
-      className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-950 px-3 text-xs text-amber-100"
+      className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
       role="region"
       aria-label="凭据库已锁定"
     >
@@ -295,14 +295,14 @@ function NativeVaultUnlockBanner() {
         </span>
       )}
       {notice && !error && (
-        <span className="min-w-0 shrink truncate text-amber-200" role="status">
+        <span className="min-w-0 shrink truncate text-amber-300" role="status">
           {notice}
         </span>
       )}
       {canFaceUnlock &&
         (confirmDisable ? (
           <>
-            <span className="min-w-0 shrink truncate text-amber-200">关闭后下次需输入主密码解锁</span>
+            <span className="min-w-0 shrink truncate text-amber-300">关闭后下次需输入主密码解锁</span>
             <button
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm shrink-0"

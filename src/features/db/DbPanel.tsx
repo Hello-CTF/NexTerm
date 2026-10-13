@@ -458,7 +458,7 @@ function ResultTable({ result }: { result: QueryResult }) {
             <tr key={i}>
               {row.map((cell, j) => (
                 <td key={j} className="nx-mono max-w-64 truncate" title={String(cell ?? "NULL")}>
-                  {cell === null ? <span className="text-neutral-600">NULL</span> : String(cell)}
+                  {cell === null ? <span className="text-neutral-500">NULL</span> : String(cell)}
                 </td>
               ))}
             </tr>

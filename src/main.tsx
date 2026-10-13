@@ -14,6 +14,7 @@ import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
+import { forceResolvedTheme } from "./app/theme";
 import { PublicShareApp } from "./features/sharing/PublicShareApp";
 import { PublicPreviewApp } from "./features/sharing/PublicPreviewApp";
 
@@ -158,8 +159,10 @@ const publicPreviewToken =
   typeof window === "undefined" ? null : publicPreviewTokenFromPath(window.location.pathname);
 
 if (publicShareToken) {
+  forceResolvedTheme("dark");
   mount(<PublicShareApp token={publicShareToken} />);
 } else if (publicPreviewToken) {
+  forceResolvedTheme("dark");
   mount(<PublicPreviewApp token={publicPreviewToken} />);
 } else {
   void bootstrapApp();
