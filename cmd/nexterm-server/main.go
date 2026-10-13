@@ -222,10 +222,12 @@ func run(args []string) int {
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
 	var settings server.SettingStore
 	var audit server.AuditFunc
+	var assetOwner server.AssetOwnerFunc
 	var healthDB server.DBHealthSource
 	if application.Services.Store != nil {
 		settings = application.Services.Store
 		healthDB = application.Services.Store
+		assetOwner = application.Services.Store.AssetOwnerID
 		audit = func(ctx context.Context, source, kind string, payload map[string]any) error {
 			return application.Services.Store.AuditInsert(ctx, store.AuditInput{Source: source, Kind: kind, Payload: payload})
 		}
@@ -262,6 +264,7 @@ func run(args []string) int {
 		DB:             healthDB,
 		Settings:       settings,
 		AuditFunc:      audit,
+		AssetOwnerFunc: assetOwner,
 		Logger:         logger.Logger,
 		WebSocket:      webSocket,
 	})

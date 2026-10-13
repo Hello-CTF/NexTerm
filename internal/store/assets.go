@@ -40,6 +40,18 @@ func (s *Store) AssetGet(ctx context.Context, id string) (AssetRow, error) {
 	return *row, nil
 }
 
+func (s *Store) AssetOwnerID(ctx context.Context, id string) (string, error) {
+	asset := query.Use(s.db).AssetRow
+	row, err := asset.WithContext(ctx).Where(asset.ID.Eq(id)).First()
+	if isNoRows(err) {
+		return "", notFound("资产")
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	return row.OwnerID, nil
+}
+
 func (s *Store) AssetCreate(ctx context.Context, input AssetInput) (AssetRow, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return AssetRow{}, badParam(errString("资产名称不能为空"))

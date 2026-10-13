@@ -30,6 +30,7 @@ func TestNamedEventEnvelope(t *testing.T) {
 func TestEventTopicsRemainStable(t *testing.T) {
 	topics := []Topic{
 		TopicSessionStatus,
+		TopicConnectProgress,
 		TopicTerminalExit,
 		TopicTerminalThrottled,
 		TopicTerminalControl,
@@ -44,6 +45,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 	}
 	want := []string{
 		"session://status",
+		"session://connect-progress",
 		"terminal://exit",
 		"terminal://throttled",
 		"terminal://control",
