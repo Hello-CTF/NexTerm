@@ -120,7 +120,7 @@ func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*sch
 		if err != nil {
 			return "", err
 		}
-		texts = append(texts, fmt.Sprintf("【第 %d/%d 段】\n%s", index+1, len(chunks), text))
+		texts = append(texts, fmt.Sprintf("[Segment %d/%d]\n%s", index+1, len(chunks), text))
 	}
 	return h.mergeSummaries(ctx, texts)
 }
@@ -149,13 +149,13 @@ func (h *compactionHandler) mergeSummaries(ctx context.Context, texts []string) 
 	}
 	if len(combined) > h.summaryChunkBytes() {
 		combined, _ = prefixBytes(combined, h.summaryChunkBytes())
-		combined += "\n[摘要过长已截断]"
+		combined += "\n[Summary truncated for length]"
 	}
 	return combined, nil
 }
 
 func (h *compactionHandler) finalize(system, contextMsgs []*schema.Message, summary string, retainedReserve int) []*schema.Message {
-	summaryMessage := schema.UserMessage("[历史摘要]\n" + summary)
+	summaryMessage := schema.UserMessage("[History Summary]\n" + summary)
 	retained := retainRecentUnit(contextMsgs)
 	if retainedReserve > 0 {
 		budget := compactionTriggerTokens(h.window)*3 - estimatedMessages(system) - estimatedMessages([]*schema.Message{summaryMessage}) - retainedReserve
@@ -189,15 +189,15 @@ func summaryResponseText(response *schema.Message) (string, error) {
 }
 
 func historySummaryInstruction() string {
-	return "请把以上这段对话历史压缩成一份中文摘要。必须保留：1) 用户的关键要求、约束与偏好；2) 执行过的命令、工作目录、主机/容器/会话标识；3) 每个工具调用的结论（成功或失败、关键输出、报错与修复过程）；4) 涉及的文件路径与修改要点；5) 尚未完成的步骤与下一步计划。用分点短句书写，不要复述寒暄与重复输出。"
+	return "Compress the above conversation history into a Chinese summary. Must preserve: 1) the user's key requirements, constraints, and preferences; 2) the commands that were run, working directories, and host/container/session identifiers; 3) the outcome of each tool call (success or failure, key output, errors and how they were fixed); 4) the file paths involved and the key points of the modifications; 5) unfinished steps and the next-step plan. Write in short bullet points; do not repeat pleasantries or repeated output."
 }
 
 func summarySystemInstruction() string {
-	return "你是运维会话历史压缩器。只输出摘要正文，不要寒暄，不要复述指令。"
+	return "You are an ops session history compressor. Output only the summary body: no pleasantries, no restating of the instructions."
 }
 
 func summaryMergeInstruction() string {
-	return "以下多段摘要来自同一段会话历史的相邻片段，请合并为一份连续的中文摘要，保留全部关键事实（命令、路径、工具结论、未完成步骤），去掉重复内容："
+	return "The following summary segments come from adjacent fragments of the same session history; merge them into one continuous Chinese summary, preserving all key facts (commands, paths, tool outcomes, unfinished steps) and removing duplicates:"
 }
 
 func splitSystemPrefix(messages []*schema.Message) ([]*schema.Message, []*schema.Message) {
@@ -254,7 +254,7 @@ func summaryUnits(messages []*schema.Message) [][]*schema.Message {
 			continue
 		}
 		if message.Role == schema.Tool {
-			units = append(units, []*schema.Message{schema.UserMessage(fmt.Sprintf("[工具结果] %s(%s)\n%s", message.ToolName, message.ToolCallID, message.Content))})
+			units = append(units, []*schema.Message{schema.UserMessage(fmt.Sprintf("[Tool Result] %s(%s)\n%s", message.ToolName, message.ToolCallID, message.Content))})
 			continue
 		}
 		units = append(units, []*schema.Message{message})
@@ -271,11 +271,11 @@ func summaryUnitSegments(unit []*schema.Message, limit int) []*schema.Message {
 	if unit[0].Role == schema.Assistant {
 		role = schema.Assistant
 	}
-	pieceLimit := max(limit-len("[单条历史分段]")-16, 64)
+	pieceLimit := max(limit-len("[Single-Message Segment]")-16, 64)
 	pieces := splitTextForSummary(builder.String(), pieceLimit)
 	segments := make([]*schema.Message, 0, len(pieces))
 	for index, piece := range pieces {
-		content := fmt.Sprintf("[单条历史分段 %d/%d]\n%s", index+1, len(pieces), piece)
+		content := fmt.Sprintf("[Single-Message Segment %d/%d]\n%s", index+1, len(pieces), piece)
 		if role == schema.Assistant {
 			segments = append(segments, schema.AssistantMessage(content, nil))
 			continue
@@ -288,15 +288,15 @@ func summaryUnitSegments(unit []*schema.Message, limit int) []*schema.Message {
 func messageSummaryText(message *schema.Message) string {
 	var builder strings.Builder
 	if message.Role == schema.Tool {
-		fmt.Fprintf(&builder, "[工具结果] %s(%s)\n", message.ToolName, message.ToolCallID)
+		fmt.Fprintf(&builder, "[Tool Result] %s(%s)\n", message.ToolName, message.ToolCallID)
 	}
 	if message.ReasoningContent != "" {
-		builder.WriteString("[推理]\n")
+		builder.WriteString("[Reasoning]\n")
 		builder.WriteString(message.ReasoningContent)
 		builder.WriteString("\n")
 	}
 	for _, call := range message.ToolCalls {
-		fmt.Fprintf(&builder, "[工具调用] %s(%s): %s\n", call.Function.Name, call.ID, call.Function.Arguments)
+		fmt.Fprintf(&builder, "[Tool Call] %s(%s): %s\n", call.Function.Name, call.ID, call.Function.Arguments)
 	}
 	for _, part := range message.UserInputMultiContent {
 		if part.Type == schema.ChatMessagePartTypeText {
@@ -304,7 +304,7 @@ func messageSummaryText(message *schema.Message) string {
 			builder.WriteString("\n")
 			continue
 		}
-		builder.WriteString("[非文本内容]\n")
+		builder.WriteString("[Non-Text Content]\n")
 	}
 	for _, part := range message.AssistantGenMultiContent {
 		switch part.Type {
@@ -317,7 +317,7 @@ func messageSummaryText(message *schema.Message) string {
 				builder.WriteString("\n")
 			}
 		default:
-			builder.WriteString("[非文本内容]\n")
+			builder.WriteString("[Non-Text Content]\n")
 		}
 	}
 	if message.Content != "" {
@@ -401,12 +401,12 @@ func truncateContentsToBudget(messages []*schema.Message, budget int) []*schema.
 				continue
 			}
 			copied := *message
-			keep := len(copied.Content) - remaining - len("[历史已截断]") - 1
+			keep := len(copied.Content) - remaining - len("[History Truncated]") - 1
 			if keep < 0 {
 				keep = 0
 			}
 			text, _ := prefixBytes(copied.Content, keep)
-			copied.Content = text + "\n[历史已截断]"
+			copied.Content = text + "\n[History Truncated]"
 			remaining -= len(message.Content) - len(copied.Content)
 			result[index] = &copied
 		}

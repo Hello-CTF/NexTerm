@@ -59,7 +59,7 @@ func TestBuilderAssemblesAndCachesVolatileContext(t *testing.T) {
 	})
 	scope := tools.Scope{SessionID: "s", TabID: "t", ConnID: "c"}
 	first := builder.Build(context.Background(), scope, "selected")
-	for _, expected := range []string{"[会话上下文]", "[终端当前屏幕]", "visible", "recent", "[环境侦察快照]", "app.users", "web [running]", "selected"} {
+	for _, expected := range []string{"[Session Context]", "[Current Terminal Screen]", "visible", "recent", "[Environment Recon Snapshot]", "app.users", "web [running]", "selected"} {
 		if !strings.Contains(first.Volatile, expected) {
 			t.Errorf("missing %q in volatile context", expected)
 		}

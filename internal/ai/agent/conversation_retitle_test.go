@@ -86,13 +86,13 @@ func TestRetitleConversationKeepsPrefix(t *testing.T) {
 	if got := conversationTitleOf(t, storage, conversationID); got != "主机名: 清理临时文件" {
 		t.Fatalf("stored title = %q", got)
 	}
-	if !strings.Contains(chat.prompt, "现有标题：主机名: 旧主题") {
+	if !strings.Contains(chat.prompt, "Current title: 主机名: 旧主题") {
 		t.Fatalf("prompt missing current title: %q", chat.prompt)
 	}
 	if !strings.Contains(chat.prompt, "user: 帮我清理磁盘") || !strings.Contains(chat.prompt, "assistant: 好的，先看磁盘占用") {
 		t.Fatalf("prompt missing conversation context: %q", chat.prompt)
 	}
-	if !strings.Contains(chat.prompt, `"主机名: " 是标题的分组前缀`) {
+	if !strings.Contains(chat.prompt, `"主机名: " is the grouping prefix of the title`) {
 		t.Fatalf("prompt missing prefix instruction: %q", chat.prompt)
 	}
 }
@@ -111,7 +111,7 @@ func TestRetitleConversationDefaultTitleGeneratesFreely(t *testing.T) {
 	if got := conversationTitleOf(t, storage, conversationID); got != "磁盘清理" {
 		t.Fatalf("stored title = %q", got)
 	}
-	if strings.Contains(chat.prompt, "分组前缀") {
+	if strings.Contains(chat.prompt, "grouping prefix") {
 		t.Fatalf("default title should not carry prefix instruction: %q", chat.prompt)
 	}
 }

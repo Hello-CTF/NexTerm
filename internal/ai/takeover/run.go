@@ -228,7 +228,7 @@ func (m *Manager) initializeEino(state *runState) error {
 	}
 	runtime := &takeoverRuntime{
 		input: []*schema.Message{
-			schema.SystemMessage("你是 NexTerm 的终端接管助手。根据当前屏幕逐步完成用户指令。只能使用 read_screen、send_keys、wait_for 和 done。命令会真实写入终端；完成或无法继续时必须调用 done，并如实报告 success。中文回答。"),
+			schema.SystemMessage("You are the terminal takeover assistant of NexTerm. Complete the user's instruction step by step based on the current screen. You may only use read_screen, send_keys, wait_for, and done. Commands are really written into the terminal; when the task is complete or cannot continue, you must call done and report success truthfully. Answer in Chinese."),
 			schema.UserMessage(state.args.Instruction),
 		},
 		permission: permission, allowWrite: state.args.AllowWrite == nil || *state.args.AllowWrite,
@@ -239,8 +239,8 @@ func (m *Manager) initializeEino(state *runState) error {
 		return err
 	}
 	chatAgent, err := adk.NewChatModelAgent(state.ctx, &adk.ChatModelAgentConfig{
-		Name: "nexterm-takeover", Description: "终端接管助手",
-		Instruction: "根据每次模型调用前提供的新鲜终端屏幕执行动作，不要复述过期的屏幕。",
+		Name: "nexterm-takeover", Description: "Terminal takeover assistant",
+		Instruction: "Act on the fresh terminal screen provided before each model call; do not repeat stale screens back.",
 		Model:       chatModel, MaxIterations: state.args.MaxSteps,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: map[string]bool{"done": true}},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(ctx context.Context, agentState *adk.ChatModelAgentState) error {
@@ -252,7 +252,7 @@ func (m *Manager) initializeEino(state *runState) error {
 			if err := state.emit(ctx, agent.Event{Type: "screen", TabID: state.args.TabID, Text: screen.Text}); err != nil {
 				return err
 			}
-			agentState.Messages = append(agentState.Messages, schema.UserMessage(fmt.Sprintf("[当前终端]\n光标 (%d,%d)，空闲 %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
+			agentState.Messages = append(agentState.Messages, schema.UserMessage(fmt.Sprintf("[Current Terminal]\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
 			return nil
 		}}},
 	})
@@ -489,7 +489,7 @@ type TakeoverDoneArgs struct {
 }
 
 func (e *actionExecution) tools() ([]tool.BaseTool, error) {
-	readScreen, err := utils.InferTool("read_screen", "读取执行动作时的最新终端屏幕。", func(ctx context.Context, _ tools.EmptyArgs) (tools.Output, error) {
+	readScreen, err := utils.InferTool("read_screen", "Read the latest terminal screen at the moment of acting.", func(ctx context.Context, _ tools.EmptyArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "read_screen", func() (tools.Output, error) {
 			return e.readScreen(ctx)
 		})
@@ -497,7 +497,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	sendKeys, err := utils.InferTool("send_keys", "发送按键；enter 或 <enter> 会真实提交命令。", func(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
+	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command.", func(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "send_keys", func() (tools.Output, error) {
 			return e.sendKeys(ctx, input)
 		})
@@ -505,7 +505,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	waitFor, err := utils.InferTool("wait_for", "等待终端最近输出匹配正则。", func(ctx context.Context, input tools.WaitForArgs) (tools.Output, error) {
+	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex.", func(ctx context.Context, input tools.WaitForArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "wait_for", func() (tools.Output, error) {
 			output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
 			return output, err
@@ -514,7 +514,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	done, err := utils.InferTool("done", "结束接管并报告任务是否成功。", func(ctx context.Context, input TakeoverDoneArgs) (tools.Output, error) {
+	done, err := utils.InferTool("done", "End the takeover and report whether the task succeeded.", func(ctx context.Context, input TakeoverDoneArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "done", func() (tools.Output, error) {
 			return tools.Output{OK: input.Success, Text: input.Summary, ExitCode: 0, Plan: input.Summary}, nil
 		})

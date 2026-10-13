@@ -55,7 +55,7 @@ func TestVolatileTimeAnchorContextNotPersistedIntoMessageRows(t *testing.T) {
 	anchor := "2026-10-05T20:48:00+08:00"
 	volatileSeen := false
 	for _, message := range input {
-		if strings.Contains(message.Content, "[环境上下文]") && strings.Contains(message.Content, "[当前时间]") && strings.Contains(message.Content, anchor) {
+		if strings.Contains(message.Content, "[Environment Context]") && strings.Contains(message.Content, "[Current Time]") && strings.Contains(message.Content, anchor) {
 			volatileSeen = true
 		}
 	}
@@ -71,7 +71,7 @@ func TestVolatileTimeAnchorContextNotPersistedIntoMessageRows(t *testing.T) {
 		t.Fatalf("message rows = %+v", rows)
 	}
 	for _, row := range rows {
-		for _, forbidden := range []string{"[当前时间]", "[环境上下文]", anchor} {
+		for _, forbidden := range []string{"[Current Time]", "[Environment Context]", anchor} {
 			if strings.Contains(row.ContentJSON, forbidden) {
 				t.Errorf("volatile context %q leaked into %s message row: %q", forbidden, row.Role, row.ContentJSON)
 			}
