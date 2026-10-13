@@ -238,7 +238,12 @@ func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	})
 	dataDir := t.TempDir()
-	getenv := func(string) string { return dataDir }
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}
 	var stdout, stderr bytes.Buffer
 	if code := RunCLI([]string{"enroll", "--server", server.server.URL, "--code", "c"}, getenv, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("enroll = %d, %s", code, stderr.String())
@@ -266,7 +271,12 @@ func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
 		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
 	})
 	dataDir := t.TempDir()
-	getenv := func(string) string { return dataDir }
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}
 	var stdout, stderr bytes.Buffer
 	if code := RunCLI([]string{"enroll", "--server", server.server.URL, "--code", "c"}, getenv, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("enroll = %d, %s", code, stderr.String())
