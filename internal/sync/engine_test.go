@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
@@ -23,6 +24,7 @@ type testSyncServer struct {
 	*httptest.Server
 	db       *store.Store
 	accounts *account.Accounts
+	logins   atomic.Int64
 
 	failNextPushWith409 bool
 	dropObjectID        string
@@ -94,6 +96,7 @@ func (s *testSyncServer) maybeFailPush(next http.Handler) http.Handler {
 }
 
 func (s *testSyncServer) serveLogin(w http.ResponseWriter, r *http.Request) {
+	s.logins.Add(1)
 	var request struct {
 		Username string `json:"username"`
 		Password string `json:"password"`

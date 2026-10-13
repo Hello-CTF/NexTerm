@@ -17,6 +17,7 @@ import (
 
 const (
 	settingLink                 = "sync.link"
+	settingLinkSession          = "sync.link.session"
 	defaultBackgroundSyncPeriod = time.Minute
 )
 
@@ -193,10 +194,12 @@ func (s *Service) clearSyncBlocked() {
 	s.roundMu.Unlock()
 }
 
-// probeSavedLink 启动时对已保存的链接做一次连接探测(与 LinkSet 的探测同路径):
-// connected 即建立会话并刷新 VerifiedAt; mfa_required/reset_required 无法自动完成,
-// 如实记入 LastError 引导重新交互登录; 探测失败只记 LastError, 不阻塞启动。
-// 未配置或凭据库不可用(锁定/未初始化)时静默跳过, 由后台循环与解锁唤醒接手。
+// probeSavedLink 启动时对已保存的链接做一次连接探测: 持久会话(上次进程落盘)有效即
+// 免登恢复(不重新登录、不解 DEK 信封, MFA 账号不再挑战); 持久会话缺失/失效则走与
+// LinkSet 同路径的口令探测: connected 即建立会话并刷新 VerifiedAt; mfa_required/
+// reset_required 无法自动完成, 如实记入 LastError 引导重新交互登录; 探测失败只记
+// LastError, 不阻塞启动。未配置或凭据库不可用(锁定/未初始化)时静默跳过,
+// 由后台循环与解锁唤醒接手。
 func (s *Service) probeSavedLink(ctx context.Context) {
 	ctx = vault.WithBackground(ctx)
 	link, err := s.LinkGet(ctx)
@@ -217,6 +220,11 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 	}
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
+	if s.probePersistedSession(ctx, secret) {
+		s.recordProbe(ctx, nil)
+		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+		return
+	}
 	connect, err := s.engine.Connect(ctx, remoteConfigFromSecret(secret))
 	if err != nil {
 		s.recordProbe(ctx, err)
@@ -231,6 +239,27 @@ func (s *Service) probeSavedLink(ctx context.Context) {
 		}
 	}
 	_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})
+}
+
+// probePersistedSession 优先用落盘的持久会话恢复账号会话: me() 校验通过即免登恢复。
+// 信封与当前链接身份不一致(链接已改配)或服务端已吊销会话(401)时清除信封并回退
+// 口令重登; 网络等其余失败保留信封, 同样回退口令重登。
+func (s *Service) probePersistedSession(ctx context.Context, secret linkSecret) bool {
+	persisted, found := s.engine.loadPersistedSession(ctx)
+	if !found {
+		return false
+	}
+	if persisted.URL != secret.URL || persisted.Username != secret.Username {
+		s.engine.clearPersistedSession(ctx)
+		return false
+	}
+	if _, err := s.engine.restoreSession(ctx, remoteConfigFromSecret(secret), persisted); err != nil {
+		if errors.Is(err, errSessionExpired) {
+			s.engine.clearPersistedSession(ctx)
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
@@ -343,6 +372,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 			return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 		}
 	}
+	prevURL, prevUsername := secret.URL, secret.Username
 	if patch.URL != nil {
 		secret.URL = strings.TrimSpace(*patch.URL)
 	}
@@ -354,6 +384,10 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	}
 	if patch.Insecure != nil {
 		secret.Insecure = *patch.Insecure
+	}
+	// 链接身份变更即旧账号登出: 持久会话属于旧身份, 立即清除(成功重连会重写)。
+	if secret.URL != prevURL || secret.Username != prevUsername {
+		s.engine.clearPersistedSession(ctx)
 	}
 	encoded, err := json.Marshal(secret)
 	if err != nil {

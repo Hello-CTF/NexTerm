@@ -67,7 +67,7 @@ func (e *Engine) Connect(ctx context.Context, config RemoteConfig) (LinkConnectR
 		e.sessionMu.Unlock()
 		return LinkConnectResult{State: LinkConnectResetRequired}, nil
 	}
-	if _, err := e.establishSession(ctx, key, client, config.Password); err != nil {
+	if _, err := e.establishSession(ctx, config, client, config.Password); err != nil {
 		return LinkConnectResult{}, err
 	}
 	return LinkConnectResult{State: LinkConnectConnected}, nil
@@ -97,7 +97,7 @@ func (e *Engine) CompleteMFA(ctx context.Context, config RemoteConfig, code stri
 	if err := pending.client.loginTOTP(ctx, pending.ticket, code); err != nil {
 		return LinkConnectResult{}, err
 	}
-	if _, err := e.establishSession(ctx, key, pending.client, config.Password); err != nil {
+	if _, err := e.establishSession(ctx, config, pending.client, config.Password); err != nil {
 		return LinkConnectResult{}, err
 	}
 	e.clearPending(key)
@@ -126,7 +126,7 @@ func (e *Engine) CompleteResetPassword(ctx context.Context, config RemoteConfig,
 		}
 		return LinkConnectResult{}, err
 	}
-	if _, err := e.establishSession(ctx, key, pending.client, newPassword); err != nil {
+	if _, err := e.establishSession(ctx, config, pending.client, newPassword); err != nil {
 		return LinkConnectResult{}, err
 	}
 	e.clearPending(key)

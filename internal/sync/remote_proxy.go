@@ -277,6 +277,8 @@ func (p *RemoteProxy) ChangeMyPassword(ctx context.Context, oldPassword, newPass
 		return nil, err
 	}
 	p.service.updateLinkedPassword(ctx, oldPassword, newPassword)
+	// 改密后清除持久会话: 内存会话不受影响(服务端保留当前会话), 下次启动回退口令重登。
+	p.service.engine.clearPersistedSession(ctx)
 	return &RemotePasswordChangeResult{OK: true, RecoveryKey: recoveryKey}, nil
 }
 

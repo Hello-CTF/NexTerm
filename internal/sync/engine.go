@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -59,6 +60,19 @@ type remoteSession struct {
 	userID string
 	client *remoteClient
 	dek    []byte
+}
+
+// persistedSession 是落盘的账号同步会话信封内容(setting sync.link.session, enc:v1:
+// 凭据库信封, 与保存的链接口令同级保护), 使桌面端进程重启后免登恢复会话。
+// 安全姿态变化: 用户 DEK 随此首次落盘(此前仅内存持有); 这些字段永不进日志
+// (对齐 logSyncRound 只记计数不记载荷的惯例)。
+type persistedSession struct {
+	URL         string `json:"url"`
+	Username    string `json:"username"`
+	CookieToken string `json:"cookieToken"`
+	CSRFToken   string `json:"csrfToken"`
+	UserID      string `json:"userId"`
+	DEK         []byte `json:"dek"`
 }
 
 // Engine 是 v2 全量载荷对象协议的客户端引擎: 同一本地副本在未登录与登录后保持一致,
@@ -220,11 +234,12 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 	if outcome.resetRequired {
 		return nil, errReloginReset
 	}
-	return e.establishSession(ctx, key, client, config.Password)
+	return e.establishSession(ctx, config, client, config.Password)
 }
 
-// establishSession 在密码通道已通过后完成会话入职: 取身份与 DEK 信封、解包 DEK 并缓存会话。
-func (e *Engine) establishSession(ctx context.Context, key string, client *remoteClient, password string) (*remoteSession, error) {
+// establishSession 在密码通道已通过后完成会话入职: 取身份与 DEK 信封、解包 DEK、
+// 缓存会话并把会话落盘为持久会话。
+func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, client *remoteClient, password string) (*remoteSession, error) {
 	userID, err := client.me(ctx)
 	if err != nil {
 		return nil, err
@@ -238,9 +253,100 @@ func (e *Engine) establishSession(ctx context.Context, key string, client *remot
 		return nil, err
 	}
 	e.sessionMu.Lock()
-	defer e.sessionMu.Unlock()
-	e.session = &remoteSession{key: key, userID: userID, client: client, dek: dek}
-	return e.session, nil
+	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek}
+	session := e.session
+	e.sessionMu.Unlock()
+	e.persistSession(ctx, config, session)
+	return session, nil
+}
+
+// persistSession 把已建立的会话落盘为持久会话, 供下次进程启动免登恢复;
+// 落盘失败只记警告, 不影响已建立的内存会话。
+func (e *Engine) persistSession(ctx context.Context, config RemoteConfig, session *remoteSession) {
+	if e.vault == nil {
+		return
+	}
+	encoded, err := json.Marshal(persistedSession{
+		URL: config.URL, Username: config.Username,
+		CookieToken: session.client.cookieToken, CSRFToken: session.client.csrfToken,
+		UserID: session.userID, DEK: session.dek,
+	})
+	if err != nil {
+		e.logger.Warn("sync session persist failed", "error", err)
+		return
+	}
+	protected, err := e.vault.EncryptSecret(ctx, string(encoded))
+	if err != nil {
+		e.logger.Warn("sync session persist failed", "error", err)
+		return
+	}
+	if err := e.store.SettingSet(ctx, settingLinkSession, protected); err != nil {
+		e.logger.Warn("sync session persist failed", "error", err)
+	}
+}
+
+// loadPersistedSession 读取持久会话信封: 未保存或凭据库锁定/未初始化时按无持久会话处理
+// (锁定保持静默跳过); 信封损坏或无法解密时清除并记警告, 下次登录会重写。
+func (e *Engine) loadPersistedSession(ctx context.Context) (*persistedSession, bool) {
+	if e.vault == nil {
+		return nil, false
+	}
+	value, found, err := e.store.SettingGet(ctx, settingLinkSession)
+	if err != nil || !found || strings.TrimSpace(value) == "" {
+		return nil, false
+	}
+	plaintext, err := e.vault.DecryptSecret(ctx, value)
+	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit) {
+			return nil, false
+		}
+		e.logger.Warn("persisted sync session undecryptable; clearing", "error", err)
+		e.clearPersistedSession(ctx)
+		return nil, false
+	}
+	var session persistedSession
+	if err := json.Unmarshal([]byte(plaintext), &session); err != nil {
+		e.logger.Warn("persisted sync session corrupted; clearing", "error", err)
+		e.clearPersistedSession(ctx)
+		return nil, false
+	}
+	if session.CookieToken == "" || session.UserID == "" || len(session.DEK) == 0 {
+		e.clearPersistedSession(ctx)
+		return nil, false
+	}
+	return &session, true
+}
+
+func (e *Engine) clearPersistedSession(ctx context.Context) {
+	if err := e.store.SettingDelete(ctx, settingLinkSession); err != nil {
+		e.logger.Warn("persisted sync session clear failed", "error", err)
+	}
+}
+
+// restoreSession 用持久会话重建远端会话: me() 校验 cookie 仍有效且身份与保存的一致,
+// 成功即缓存会话(不重新登录、不解 DEK 信封); 失败由调用方决定清除或回退口令重登。
+func (e *Engine) restoreSession(ctx context.Context, config RemoteConfig, persisted *persistedSession) (*remoteSession, error) {
+	client, err := newRemoteClient(config)
+	if err != nil {
+		return nil, err
+	}
+	client.cookieToken = persisted.CookieToken
+	client.csrfToken = persisted.CSRFToken
+	userID, err := client.me(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if userID != persisted.UserID {
+		return nil, errSessionExpired
+	}
+	dek := make([]byte, len(persisted.DEK))
+	copy(dek, persisted.DEK)
+	e.sessionMu.Lock()
+	e.session = &remoteSession{key: remoteConfigKey(config), userID: userID, client: client, dek: dek}
+	session := e.session
+	e.sessionMu.Unlock()
+	return session, nil
 }
 
 func (e *Engine) dropSession(key string) {
