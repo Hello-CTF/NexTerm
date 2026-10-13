@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -71,6 +72,17 @@ func TestMain(m *testing.M) {
 		os.Exit(RunHelperCLI(os.Args[2:]))
 	}
 	os.Exit(m.Run())
+}
+
+func TestSessionEnvWindowsPassthrough(t *testing.T) {
+	if got := sessionEnv(nil); got != nil {
+		t.Fatalf("sessionEnv(nil) = %v, want nil (process environment inheritance)", got)
+	}
+	overrides := []string{"NEXTERM_TEST_SENTINEL=present"}
+	want := mergedEnv(overrides)
+	if got := sessionEnv(overrides); !slices.Equal(got, want) {
+		t.Fatalf("sessionEnv = %v, want mergedEnv passthrough %v", got, want)
+	}
 }
 
 func TestPipeListenDialRoundtrip(t *testing.T) {

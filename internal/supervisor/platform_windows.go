@@ -14,6 +14,10 @@ func defaultShellCommand(_ []string) []string {
 	return []string{"powershell.exe", "-NoLogo", "-NoProfile"}
 }
 
+func sessionEnv(overrides []string) []string {
+	return mergedEnv(overrides)
+}
+
 func envKeyEqual(existing, key string) bool {
 	return strings.EqualFold(existing, key)
 }

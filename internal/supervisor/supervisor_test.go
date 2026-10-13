@@ -374,6 +374,80 @@ func TestCreateValidation(t *testing.T) {
 	}
 }
 
+func TestSessionEnvInjectsTerminalDefaults(t *testing.T) {
+	unsetTerminalEnv(t)
+
+	environment := sessionEnv([]string{"PATH=/usr/bin"})
+	if got := environmentValue(environment, "TERM"); got != "xterm-256color" {
+		t.Fatalf("TERM = %q, want xterm-256color", got)
+	}
+	if got := environmentValue(environment, "COLORTERM"); got != "truecolor" {
+		t.Fatalf("COLORTERM = %q, want truecolor", got)
+	}
+	if got := environmentValue(environment, "LANG"); got != "C.UTF-8" {
+		t.Fatalf("LANG = %q, want C.UTF-8", got)
+	}
+	if got := environmentValue(environment, "PATH"); got != "/usr/bin" {
+		t.Fatalf("PATH override lost: %q", got)
+	}
+
+	withLocale := sessionEnv([]string{"LC_ALL=C"})
+	if got := environmentValue(withLocale, "LANG"); got != "" {
+		t.Fatalf("LANG = %q despite LC_ALL, want unset", got)
+	}
+}
+
+func TestSessionEnvRespectsExplicitValues(t *testing.T) {
+	unsetTerminalEnv(t)
+
+	environment := sessionEnv([]string{"TERM=vt100", "COLORTERM=ansi", "LANG=zh_CN.UTF-8"})
+	if got := environmentValue(environment, "TERM"); got != "vt100" {
+		t.Fatalf("TERM = %q, want vt100", got)
+	}
+	if got := environmentValue(environment, "COLORTERM"); got != "ansi" {
+		t.Fatalf("COLORTERM = %q, want ansi", got)
+	}
+	if got := environmentValue(environment, "LANG"); got != "zh_CN.UTF-8" {
+		t.Fatalf("LANG = %q, want zh_CN.UTF-8", got)
+	}
+
+	emptied := sessionEnv([]string{"TERM="})
+	if got := environmentValue(emptied, "TERM"); got != "xterm-256color" {
+		t.Fatalf("empty TERM = %q, want fallback xterm-256color", got)
+	}
+	occurrences := 0
+	for _, entry := range emptied {
+		if strings.HasPrefix(entry, "TERM=") {
+			occurrences++
+		}
+	}
+	if occurrences != 1 {
+		t.Fatalf("TERM entries = %d, want exactly one", occurrences)
+	}
+}
+
+func TestCreateInjectsTermWhenEnvironmentLacksIt(t *testing.T) {
+	unsetTerminalEnv(t)
+	supervisor := testSupervisor(t)
+	session, err := supervisor.Create(context.Background(), CreateOptions{
+		Command: []string{"/bin/sh", "-c", `printf 'term=%s\n' "${TERM:-unset}"`},
+		Cols:    80,
+		Rows:    24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Close() }()
+	output := string(readUntil(t, attachment, "\r\n"))
+	if !strings.Contains(output, "term=xterm-256color") {
+		t.Fatalf("session env output = %q, want injected TERM", output)
+	}
+}
+
 func TestPrivateDirsAndFiles(t *testing.T) {
 	root := t.TempDir()
 	exposed := filepath.Join(root, "exposed")
