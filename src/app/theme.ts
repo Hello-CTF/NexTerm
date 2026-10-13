@@ -11,6 +11,7 @@ const listeners = new Set<ThemeListener>();
 let localMode: ThemeMode | null = loadMode();
 let defaultMode: ThemeMode | null = null;
 let accountMode: ThemeMode | null = null;
+let forcedResolved: ResolvedTheme | null = null;
 let media: MediaQueryList | null = null;
 
 function parseThemeMode(value: unknown): ThemeMode | null {
@@ -39,7 +40,7 @@ function resolve(m: ThemeMode): ResolvedTheme {
 }
 
 function apply(): ResolvedTheme {
-  const resolved = resolve(currentMode());
+  const resolved = forcedResolved ?? resolve(currentMode());
   if (typeof document !== "undefined") {
     document.documentElement.dataset.nxTheme = resolved;
   }
@@ -48,7 +49,7 @@ function apply(): ResolvedTheme {
 
 function emit(): void {
   const mode = currentMode();
-  const resolved = resolve(mode);
+  const resolved = forcedResolved ?? resolve(mode);
   for (const listener of listeners) listener(mode, resolved);
 }
 
@@ -57,7 +58,15 @@ export function getThemeMode(): ThemeMode {
 }
 
 export function getResolvedTheme(): ResolvedTheme {
-  return resolve(currentMode());
+  return forcedResolved ?? resolve(currentMode());
+}
+
+// Public share/preview entries are self-contained dark pages: pin the resolved theme so the
+// system light palette never rewrites their hardcoded dark surfaces.
+export function forceResolvedTheme(next: ResolvedTheme): void {
+  forcedResolved = next;
+  apply();
+  emit();
 }
 
 export function setThemeMode(next: ThemeMode): void {

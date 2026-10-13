@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
@@ -137,6 +137,7 @@ function textPairs(theme: Map<string, string>): Pair[] {
     { label: "placeholder on input", fg: get("color-neutral-500"), bg: inputBg },
     { label: "red badge", fg: get("color-red-300"), bg: mix(get("color-red-500"), pane, 0.18) },
     { label: "green badge", fg: get("color-green-300"), bg: mix(get("color-green-500"), pane, 0.18) },
+    { label: "green status text on pane", fg: get("color-green-300"), bg: pane },
     { label: "amber badge", fg: get("color-amber-300"), bg: mix(get("color-amber-500"), pane, 0.18) },
     { label: "purple badge", fg: get("color-purple-300"), bg: mix(get("color-purple-500"), pane, 0.2) },
     { label: "blue accent on tint", fg: get("color-blue-300"), bg: mix(get("color-accent"), pane, 0.14) },
@@ -207,8 +208,9 @@ describe("semantic warning foreground", () => {
   for (const [name, theme, block] of themes) {
     const fg = semanticForeground(theme, block);
     const canvas = theme.get("color-neutral-950");
+    const pane = theme.get("color-neutral-900");
     const accent = theme.get("color-accent");
-    if (!canvas || !accent) throw new Error(`missing canvas/accent in ${name}`);
+    if (!canvas || !pane || !accent) throw new Error(`missing canvas/pane/accent in ${name}`);
     const selectedTint = mix(accent, canvas, 0.16);
 
     it(`${name}: --nx-fg-warning resolves (${fg})`, () => {
@@ -216,6 +218,9 @@ describe("semantic warning foreground", () => {
     });
     it(`${name}: warning on canvas >= 4.5:1`, () => {
       expect(contrast(fg, canvas)).toBeGreaterThanOrEqual(4.5);
+    });
+    it(`${name}: warning on pane >= 4.5:1`, () => {
+      expect(contrast(fg, pane)).toBeGreaterThanOrEqual(4.5);
     });
     it(`${name}: warning on selected tint >= 4.5:1`, () => {
       expect(contrast(fg, selectedTint)).toBeGreaterThanOrEqual(4.5);
@@ -226,5 +231,104 @@ describe("semantic warning foreground", () => {
     expect(semanticForeground(dark, ":root")).not.toBe(
       semanticForeground(light, ':root[data-nx-theme="light"]'),
     );
+  });
+});
+
+describe("light-theme status overrides", () => {
+  it("overrides the ai hitl waiting indicator to the warning foreground", () => {
+    expect(css).toContain(':root[data-nx-theme="light"] .nx-ai-hitl-waiting,');
+    expect(css).toContain(':root[data-nx-theme="light"] .nx-ai-hitl-waiting svg');
+  });
+
+  it("scopes the terminal overlay warning icon to light terminal surfaces", () => {
+    expect(css).toContain(':root[data-nx-theme="light"][data-nx-term-theme="light"] .nx-term-overlay-warn');
+  });
+
+  it("darkens the workspace status dots", () => {
+    expect(css).toContain(':root[data-nx-theme="light"] .nx-ws-status.is-ok');
+    expect(css).toContain(':root[data-nx-theme="light"] .nx-ws-status.is-warn');
+  });
+
+  it("keeps the hitl waiting warning readable on the light pane", () => {
+    const fg = semanticForeground(light, ':root[data-nx-theme="light"]');
+    const pane = light.get("color-neutral-900");
+    if (!pane) throw new Error("missing pane in the light palette");
+    expect(contrast(fg, pane)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("muted meta text stays at neutral-500", () => {
+  const files = [
+    "../features/db/DbPanel.tsx",
+    "../features/ai/AiSidebar.tsx",
+    "../features/ai/GrantPanel.tsx",
+    "../features/ai/UsageRing.tsx",
+    "../features/terminal/CommandBlockPanel.tsx",
+  ];
+  for (const file of files) {
+    it(`${file} avoids text-neutral-600`, () => {
+      const src = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(src).not.toContain("text-neutral-600");
+    });
+  }
+});
+
+describe("themed surfaces avoid washed-out text colors (source guard)", () => {
+  function tsxFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== "test") out.push(...tsxFiles(path));
+      } else if (entry.name.endsWith(".tsx")) {
+        out.push(path);
+      }
+    }
+    return out;
+  }
+
+  const bannedText = /\btext-(?:amber-100|amber-200|blue-200|emerald-\w+)/;
+  const bannedArbitraryHex = /\btext-\[#[0-9a-fA-F]{3,8}\]/;
+  const hardDarkPages = /src\/features\/sharing\/Public(?:Preview|Share)App\.tsx$/;
+
+  const neutral600Allowlist: ReadonlyArray<{ file: RegExp; line: RegExp }> = [
+    { file: /src\/app\/App\.tsx$/, line: /data-wails-drag-region/ },
+    { file: /src\/features\/settings\/AuditView\.tsx$/, line: /text-neutral-600">—/ },
+    { file: /src\/features\/settings\/CommandLogView\.tsx$/, line: /text-neutral-600">—/ },
+    { file: /src\/features\/forward\/ForwardPanel\.tsx$/, line: /text-neutral-600">[:→]/ },
+    { file: /src\/features\/files\/FileTree\.tsx$/, line: /text-neutral-600">\// },
+    { file: /src\/features\/files\/MountPanel\.tsx$/, line: /text-neutral-600">→|IconDrive/ },
+    { file: /src\/features\/files\/LogViewer\.tsx$/, line: /w-12 shrink-0 select-none text-right/ },
+    { file: /src\/features\/docker\/DockerPanel\.tsx$/, line: /等待日志|test\(line\)/ },
+    { file: /src\/features\/docker\/ContainerInsight\.tsx$/, line: /text-neutral-600">\/|IconFile/ },
+    { file: /src\/features\/credentials\/CredentialsPanel\.tsx$/, line: /tracking-\[0\.3em\]/ },
+    { file: /src\/features\/explorer\/AssetTree\.tsx$/, line: /IconChevronRight size=\{12\} className="shrink-0 text-neutral-600"/ },
+  ];
+
+  function allowedNeutral600(file: string, line: string): boolean {
+    if (hardDarkPages.test(file)) return true;
+    return neutral600Allowlist.some((entry) => entry.file.test(file) && entry.line.test(line));
+  }
+
+  const colorViolations: string[] = [];
+  const neutralViolations: string[] = [];
+  for (const file of tsxFiles("src")) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((text, index) => {
+      if ((bannedText.test(text) || bannedArbitraryHex.test(text)) && !hardDarkPages.test(file)) {
+        colorViolations.push(`${file}:${index + 1}`);
+      }
+      if (text.includes("text-neutral-600") && !allowedNeutral600(file, text)) {
+        neutralViolations.push(`${file}:${index + 1}`);
+      }
+    });
+  }
+
+  it("bans text-amber-100/amber-200/blue-200/emerald-* and arbitrary text hex outside the forced-dark public pages", () => {
+    expect(colorViolations).toEqual([]);
+  });
+
+  it("bans text-neutral-600 outside the decorative allowlist", () => {
+    expect(neutralViolations).toEqual([]);
   });
 });

@@ -270,7 +270,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       )}
 
       {readOnly && (
-        <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-amber-400/80">
+        <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
           当前账号不是超管：设备授权与授权规则由超管统一管理，此处仅可查看。
         </div>
       )}
@@ -310,7 +310,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                 ))}
             </div>
             {grant ? (
-              <div className="mt-0.5 text-[10.5px] text-emerald-400/90">
+              <div className="mt-0.5 text-[10.5px] text-green-300">
                 已授权：{grant.kinds.map((k) => KIND_LABEL[k]).join("、")}
               </div>
             ) : readOnly ? (
@@ -331,7 +331,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                     </button>
                   );
                 })}
-                <span className="self-center text-[10px] text-neutral-600">未授权</span>
+                <span className="self-center text-[10px] text-neutral-500">未授权</span>
               </div>
             )}
           </div>
@@ -361,7 +361,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200" title={ruleScopeText(rule)}>
             {assetName(rule.deviceId)} · {ruleScopeText(rule)}
           </span>
-          <span className={`shrink-0 text-[10.5px] ${rule.expiresAt !== 0 && rule.expiresAt <= now ? "text-red-400/90" : "text-neutral-500"}`}>
+          <span className={`shrink-0 text-[10.5px] ${rule.expiresAt !== 0 && rule.expiresAt <= now ? "text-red-300" : "text-neutral-500"}`}>
             {ruleExpiryText(rule, now)}
           </span>
           {!readOnly && (
@@ -445,7 +445,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
                   {ruleBusy ? "保存中…" : "添加"}
                 </button>
               </div>
-              <div className="mt-1 text-[10px] leading-relaxed text-neutral-600">
+              <div className="mt-1 text-[10px] leading-relaxed text-neutral-500">
                 {RULE_ACTION_OPTIONS.find((o) => o.value === ruleAction)?.hint}
               </div>
             </div>

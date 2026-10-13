@@ -61,7 +61,7 @@ export function CommandBlockPanel({
   };
 
   return (
-    <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950/70">
+    <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950">
       <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <IconList size={13} className="text-neutral-500" />
         <span className="text-[11.5px] font-semibold text-neutral-200">命令块</span>
@@ -103,22 +103,22 @@ export function CommandBlockPanel({
                   >
                     {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
                   </button>
-                  <span className="mt-0.5 w-5 shrink-0 text-right font-mono text-[10.5px] text-blue-300/70">
+                  <span className="mt-0.5 w-5 shrink-0 text-right font-mono text-[10.5px] text-blue-300">
                     #{b.index}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                       {b.command}
                       {!b.reliable && (
-                        <span className="ml-1 text-amber-300/80" title="命令含控制字符，识别出的文本可能不准确">
+                        <span className="ml-1 text-amber-300" title="命令含控制字符，识别出的文本可能不准确">
                           ?
                         </span>
                       )}
                     </div>
-                    <div className="mt-0.5 font-mono text-[10px] text-neutral-600">
+                    <div className="mt-0.5 font-mono text-[10px] text-neutral-500">
                       {clockOf(b.startedAt)} · {durationOf(b)}
                       {b.exitCode !== null && (
-                        <span className={b.exitCode === 0 ? "text-emerald-400/80" : "text-red-400/80"}>
+                        <span className={b.exitCode === 0 ? "text-green-300" : "text-red-300"}>
                           {" "}
                           · exit {b.exitCode}
                         </span>

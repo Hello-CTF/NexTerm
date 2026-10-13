@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMatchMediaStub } from "./setup";
 
@@ -161,5 +162,38 @@ describe("theme store wiring", () => {
     expect(useUi.getState().themeMode).toBe("light");
     expect(useUi.getState().resolvedTheme).toBe("light");
     expect(document.documentElement.dataset.nxTheme).toBe("light");
+  });
+});
+
+describe("public entries", () => {
+  it("pins the forced theme through later system changes", async () => {
+    const media = installMatchMedia(false);
+    const theme = await loadTheme();
+    theme.initTheme();
+
+    theme.forceResolvedTheme("dark");
+    expect(theme.getResolvedTheme()).toBe("dark");
+    expect(document.documentElement.dataset.nxTheme).toBe("dark");
+
+    media.set(true);
+    expect(theme.getResolvedTheme()).toBe("dark");
+    expect(document.documentElement.dataset.nxTheme).toBe("dark");
+  });
+
+  it("emits the forced theme to subscribers", async () => {
+    installMatchMedia(true);
+    const theme = await loadTheme();
+    theme.initTheme();
+    const seen: [string, string][] = [];
+    theme.subscribeTheme((m, r) => seen.push([m, r]));
+
+    theme.forceResolvedTheme("dark");
+    expect(seen).toEqual([["system", "dark"]]);
+  });
+
+  it("forces dark in both public mount branches", () => {
+    const main = readFileSync("src/main.tsx", "utf8");
+    expect(main).toMatch(/if \(publicShareToken\) \{\s*forceResolvedTheme\("dark"\);/);
+    expect(main).toMatch(/else if \(publicPreviewToken\) \{\s*forceResolvedTheme\("dark"\);/);
   });
 });

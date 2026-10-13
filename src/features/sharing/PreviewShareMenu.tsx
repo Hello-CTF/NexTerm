@@ -226,8 +226,8 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
           </div>
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           {createdUrl && (
-            <div className="mt-2 rounded-md border border-emerald-900/60 bg-emerald-950/40 p-2">
-              <p className="break-all text-xs text-emerald-300">{createdUrl}</p>
+            <div className="mt-2 rounded-md border border-green-500/20 bg-green-500/10 p-2">
+              <p className="break-all text-xs text-green-300">{createdUrl}</p>
               <button
                 type="button"
                 className="mt-1 rounded-md bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
@@ -249,7 +249,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
                       <span
                         className={
                           permission === "read_write"
-                            ? "rounded-full bg-emerald-900/60 px-2 py-0.5 text-emerald-300"
+                            ? "nx-badge nx-badge-green"
                             : "rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400"
                         }
                       >

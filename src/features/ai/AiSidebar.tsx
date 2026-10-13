@@ -2216,13 +2216,13 @@ function AiChatTab({
 
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5 [padding-bottom:calc(0.625rem+var(--nx-kb-inset,0px))]">
         {planMode && (
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/90">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300">
             <IconList size={10} className="shrink-0" />
             <span className="truncate">计划模式 · {PLAN_MODE_HINT}</span>
           </div>
         )}
         {editing && (
-          <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">
+          <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-300">
             <IconEdit size={10} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
               {editSubmitting ? "正在编辑并重新发送…" : "编辑并重新发送将删除此消息后的消息和运行记录"}
@@ -2277,11 +2277,11 @@ function AiChatTab({
         )}
         {busy && hitlWaiting && (
           <div
-            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-200/90 [@media(max-height:480px)]:sr-only"
+            className="nx-ai-hitl-waiting mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300 [@media(max-height:480px)]:sr-only"
             role="status"
             aria-live="polite"
           >
-            <IconAlert size={10} className="shrink-0 text-amber-300/90" />
+            <IconAlert size={10} className="shrink-0 text-amber-300" />
             <span className="truncate">{hitlWaiting}</span>
           </div>
         )}
@@ -2767,7 +2767,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
         )}
         <IconBot size={11} className="shrink-0 text-neutral-500" />
         <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-        <span className="shrink-0 text-neutral-600">
+        <span className="shrink-0 text-neutral-500">
           {timeline.text.length} 字 · {timeline.tools.length} 个工具
         </span>
         <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
@@ -2791,7 +2791,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
               <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
               {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">出错</span> : null}
               {tool.summary ? (
-                <span className="min-w-0 flex-1 truncate text-neutral-600" title={tool.summary}>
+                <span className="min-w-0 flex-1 truncate text-neutral-500" title={tool.summary}>
                   {tool.summary}
                 </span>
               ) : null}

@@ -70,7 +70,7 @@ export function UpdateCard() {
         </p>
       )}
       {blockReason && (
-        <p className="mb-2 text-[12px] text-amber-300/90">{blockReason}</p>
+        <p className="mb-2 text-[12px] text-amber-300">{blockReason}</p>
       )}
       {verdict === "check-failed" && (
         <div className="nx-alert nx-alert-danger mb-2 flex items-start gap-2">

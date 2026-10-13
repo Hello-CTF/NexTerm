@@ -311,6 +311,22 @@
   --nx-cm-fallback: #4b5260;
 }
 
+:root[data-nx-theme="light"] .nx-ws-status.is-ok {
+  color: var(--color-green-600);
+}
+:root[data-nx-theme="light"] .nx-ws-status.is-warn {
+  color: var(--nx-fg-warning);
+}
+
+:root[data-nx-theme="light"] .nx-ai-hitl-waiting,
+:root[data-nx-theme="light"] .nx-ai-hitl-waiting svg {
+  color: var(--nx-fg-warning);
+}
+
+:root[data-nx-theme="light"][data-nx-term-theme="light"] .nx-term-overlay-warn {
+  color: var(--nx-fg-warning);
+}
+
 @layer base {
   :root {
     color-scheme: dark;

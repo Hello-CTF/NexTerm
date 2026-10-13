@@ -70,7 +70,7 @@ export function ImportReportView({
         </p>
       )}
       {data.warnings.length > 0 && (
-        <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">
+        <ul className="mt-2 list-disc pl-4 text-[11.5px]">
           {data.warnings.map((w, i) => (
             <li key={i}>{w}</li>
           ))}

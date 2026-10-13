@@ -46,6 +46,12 @@ function ringTone(percent: number): string {
   return "text-green-400";
 }
 
+function labelTone(percent: number): string {
+  if (percent >= 85) return "text-red-400";
+  if (percent >= 60) return "text-[var(--nx-fg-warning)]";
+  return "text-green-300";
+}
+
 export interface SceneUsage {
   runs: number;
   tokensIn: number;
@@ -197,7 +203,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
           strokeWidth={STROKE}
           strokeLinecap="round"
           strokeDasharray="2 3"
-          className="text-neutral-600"
+          className="text-neutral-500"
         />
       )}
       <text
@@ -205,7 +211,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
         y={center + size * 0.11}
         textAnchor="middle"
         fontSize={Math.max(6, size * 0.32)}
-        className={hasData ? ringTone(used) : "text-neutral-600"}
+        className={hasData ? labelTone(used) : "text-neutral-500"}
         fill="currentColor"
       >
         {hasData ? used.toFixed(0) : "–"}
