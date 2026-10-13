@@ -57,14 +57,18 @@ func enrollWSAgent(t *testing.T, f *httpFixture, owner *account.User, name strin
 	return enrollAgent(t, f, owner, name)
 }
 
-func dialRelay(t *testing.T, f *httpFixture, deviceID string, cookie *http.Cookie) *websocket.Conn {
+func dialRelay(t *testing.T, f *httpFixture, deviceID string, cookie *http.Cookie, purpose string) *websocket.Conn {
 	t.Helper()
 	options := &websocket.DialOptions{}
 	if cookie != nil {
 		options.HTTPHeader = http.Header{"Cookie": []string{cookie.Name + "=" + cookie.Value}}
 	}
 	options.CompressionMode = websocket.CompressionContextTakeover
-	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+"/fleet/devices/"+deviceID+"/bridge", options)
+	url := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/fleet/devices/" + deviceID + "/bridge"
+	if purpose != "" {
+		url += "?purpose=" + purpose
+	}
+	conn, response, err := websocket.Dial(context.Background(), url, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +320,7 @@ func TestDeviceBridgeRelayAuthorization(t *testing.T) {
 		t.Fatalf("hello = %+v", response)
 	}
 
-	relayConn := dialRelay(t, f, deviceID, ownerSession.cookie)
+	relayConn := dialRelay(t, f, deviceID, ownerSession.cookie, "")
 	request := readControlMessage(t, control, 5*time.Second)
 	if request.Type != "bridge" || request.BridgeID == "" {
 		t.Fatalf("control message = %+v, want bridge request", request)
@@ -553,7 +557,60 @@ func TestDeviceBridgeRelayPurposePreCheck(t *testing.T) {
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=file", nil, session, ""); response.status != http.StatusForbidden {
 		t.Fatalf("unadvertised file relay: HTTP %d %v", response.status, response.body)
 	}
+	for _, purpose := range []string{"listen", "accept"} {
+		if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose="+purpose, nil, session, ""); response.status != http.StatusForbidden {
+			t.Fatalf("unadvertised %s relay: HTTP %d %v", purpose, response.status, response.body)
+		}
+	}
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=bogus", nil, session, ""); response.status != http.StatusBadRequest {
 		t.Fatalf("unknown purpose relay: HTTP %d %v", response.status, response.body)
+	}
+}
+
+// Remote-forward bridges: an agent advertising listen/accept serves both purposes through the relay - the control
+// request echoes the purpose, pairing requires the same echo, and both audit under the forward_open family.
+func TestDeviceBridgeRelayListenAcceptPurposes(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "relay-listen")
+	deviceID, secret := enrollWSAgent(t, f, owner, "relay-listen-box")
+	session := f.session(t, owner)
+
+	control := dialDeviceWS(t, f)
+	if response := helloDevice(t, control, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+		Capabilities: []string{agent.PurposeTerminal, "file", "forward", "listen", "accept"},
+	}); response.Type != "hello_ok" {
+		t.Fatalf("hello = %+v", response)
+	}
+	defer func() { _ = control.Close(websocket.StatusNormalClosure, "") }()
+
+	for _, purpose := range []string{"listen", "accept"} {
+		relayConn := dialRelay(t, f, deviceID, session.cookie, purpose)
+		request := readControlMessage(t, control, 5*time.Second)
+		if request.Type != "bridge" || request.BridgeID == "" || request.Purpose != purpose {
+			t.Fatalf("%s control message = %+v, want %s bridge request", purpose, request, purpose)
+		}
+		bridgeWS := dialDeviceWS(t, f)
+		if response := helloDevice(t, bridgeWS, agent.HelloMessage{
+			Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+			BridgeID: request.BridgeID, Purpose: purpose,
+		}); response.Type != "hello_ok" {
+			t.Fatalf("%s bridge hello = %+v", purpose, response)
+		}
+		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := relayConn.Write(writeCtx, websocket.MessageBinary, []byte("ping-"+purpose)); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		_, raw, err := bridgeWS.Read(writeCtx)
+		cancel()
+		if err != nil || string(raw) != "ping-"+purpose {
+			t.Fatalf("%s agent read = %q %v", purpose, raw, err)
+		}
+	}
+
+	audits := auditPayloadRows(t, f.service.db, auditSourceFleet, auditKindDeviceTerminal)
+	if len(audits) != 2 || audits[0]["action"] != "forward_open" || audits[1]["action"] != "forward_open" {
+		t.Fatalf("listen/accept audits = %v; want two forward_open", audits)
 	}
 }

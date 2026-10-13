@@ -22,7 +22,7 @@ Keep this file limited to hot-path rules: the project map, hard constraints, qua
 - `internal/session`, `internal/terminal`, `internal/pty`, `internal/supervisor`, `internal/transport/{base,ssh,winrm,local,device}`: the terminal/session stack; SSH sessions are daemonized and re-attachable.
 - `internal/server`, `internal/account`, `internal/sync`: browser-mode HTTP server, account system, end-to-end encrypted asset sync.
 - `internal/ai/`: AI assistant (agent loop, tools, guard, memory, providers, cron).
-- `internal/fleet/{server,agent}`, `internal/deviceproto`, `internal/fleet/agent/purpose`: device enrollment, heartbeat, metrics, remote terminal; the device bridge wire protocol and the agent-side file/dial purpose servers.
+- `internal/fleet/{server,agent}`, `internal/deviceproto`, `internal/fleet/agent/purpose`: device enrollment, heartbeat, metrics, remote terminal; the device bridge wire protocol and the agent-side file/dial/listen/accept purpose servers.
 - `internal/store`, `internal/db`, `internal/vault`, `internal/keys`, `internal/biometric`: GORM data layer, encrypted credential vault, OS keychain / biometric unlock.
 - `internal/sharing`, `internal/update`, `internal/forward`, `internal/mount`, `internal/docker`, `internal/fs`: host sharing and public preview links, desktop auto-update, port forwarding, remote mounts, Docker management, file services.
 - `src/`: React 19 frontend; `src/ipc/bindings/**` is wails3-generated (see "Generated bindings").

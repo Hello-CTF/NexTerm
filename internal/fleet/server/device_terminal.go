@@ -38,7 +38,7 @@ func (s *Service) RequestDeviceBridge(ctx context.Context, deviceID string) (net
 	return s.registry.RequestBridge(ctx, deviceID, agent.PurposeTerminal)
 }
 
-// RequestDeviceBridgePurpose dials a bridge of one advertised non-terminal purpose (file/forward) for an authorized
+// RequestDeviceBridgePurpose dials a bridge of one advertised non-terminal purpose (file/forward/listen/accept) for an authorized
 // device session; authorization was decided at session connection time (same semantics as RequestDeviceBridge).
 func (s *Service) RequestDeviceBridgePurpose(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
 	return s.registry.RequestBridge(ctx, deviceID, purpose)

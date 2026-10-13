@@ -1,11 +1,14 @@
 // Package device adapts fleet device bridges to the session transport
 // surface. A bridge is a net.Conn to the device agent selected by purpose:
 // "terminal" carries the supervisor protocol to the device's supervisor
-// helper, while "file" and "forward" speak the deviceproto protocol to the
-// agent's file and dial servers, giving the transport its filesystem and
-// dialer capabilities. Exec runs non-interactive commands through the
-// supervisor's non-PTY exec (docker CLI backend, AI exec_commands); PTY
-// channels stay unsupported because tabs are supervisor durable sessions.
+// helper, while "file", "forward", "listen", and "accept" speak the
+// deviceproto protocol to the agent's purpose servers, giving the transport
+// its filesystem, dialer, and remote listen capabilities. Remote port
+// forwards run one listen bridge per remote listener plus one accept bridge
+// per inbound connection (SSH tcpip-forward parity). Exec runs
+// non-interactive commands through the supervisor's non-PTY exec (docker CLI
+// backend, AI exec_commands); PTY channels stay unsupported because tabs are
+// supervisor durable sessions.
 package device
 
 import (
@@ -23,8 +26,10 @@ import (
 // DialFunc opens one bridge connection of the given purpose to the device:
 // deviceproto.PurposeTerminal reaches the supervisor helper,
 // deviceproto.PurposeFile the file server, deviceproto.PurposeForward the
-// dial server. Each operation dials a fresh bridge, mirroring the SSH
-// daemon's exec-channel dial.
+// dial server, deviceproto.PurposeListen the listen server, and
+// deviceproto.PurposeAccept claims one accepted inbound connection. Each
+// operation dials a fresh bridge, mirroring the SSH daemon's exec-channel
+// dial.
 type DialFunc func(ctx context.Context, purpose string) (net.Conn, error)
 
 type Transport struct {

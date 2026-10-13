@@ -14,7 +14,7 @@ import (
 )
 
 // DeviceBridgeDialFunc opens one bridge of the given purpose to a device, keyed by device ID:
-// "terminal" reaches the supervisor helper, "file"/"forward" reach the agent's purpose servers.
+// "terminal" reaches the supervisor helper, "file"/"forward"/"listen"/"accept" reach the agent's purpose servers.
 type DeviceBridgeDialFunc func(ctx context.Context, deviceID, purpose string) (net.Conn, error)
 
 // DeviceConnectorConfig is the dialing surface for device sessions, injected by the wiring layer per host: Dial opens a
