@@ -103,6 +103,7 @@ import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
 import { DekUnlockBanner } from "./DekUnlockBanner";
+import { DeviceSessionBoundary } from "../features/fleet/DeviceSessionBoundary";
 import { getUpdateState } from "./useUpdate";
 import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
@@ -1297,6 +1298,7 @@ function AppShell() {
       <TakeoverBanner />
       <UpdateBanner onOpenSettings={openSettings} />
       <DekUnlockBanner />
+      <DeviceSessionBoundary />
 
       <div className="flex min-h-0 flex-1">
         <nav

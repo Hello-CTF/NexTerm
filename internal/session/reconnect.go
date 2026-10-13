@@ -62,6 +62,11 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		m.mu.Unlock()
 		return ErrUnsupported
 	}
+	if !sessionOwnerAllowed(session, userIDFromContext(ctx)) {
+		session.mu.Unlock()
+		m.mu.Unlock()
+		return ErrForbidden
+	}
 	if session.closed {
 		session.mu.Unlock()
 		m.mu.Unlock()

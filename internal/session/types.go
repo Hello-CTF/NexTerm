@@ -39,6 +39,7 @@ var (
 	ErrInvalidSize          = errors.New("invalid terminal size")
 	ErrStaleGeneration      = errors.New("stale session generation")
 	ErrAssetSessionConflict = errors.New("asset already has an active session")
+	ErrForbidden            = errors.New("forbidden")
 	ErrHidden               = errors.New("terminal hidden")
 	ErrTabExists            = errors.New("terminal tab already exists")
 	ErrInvalidOptions       = errors.New("invalid terminal options")
@@ -371,4 +372,14 @@ func clientID(id string) string {
 func userIDFromContext(ctx context.Context) string {
 	userID, _ := ipc.UserIDFromContext(ctx)
 	return userID
+}
+
+// sessionOwnerAllowed 报告请求者是否可访问会话: 设备伪资产 ID 是确定性的,
+// 无属主闸则跨用户零授权可达, 设备会话必须按属主隔离; 双端皆空 (桌面/后台)
+// 行为不变。调用方须持有 session.mu。
+func sessionOwnerAllowed(session *Session, requester string) bool {
+	if session.asset.Kind != KindDevice {
+		return true
+	}
+	return session.userID == "" || requester == "" || session.userID == requester
 }

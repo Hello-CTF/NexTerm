@@ -180,11 +180,18 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		return nil, ErrSessionClosed
 	}
 	if existing := m.sessions[m.byAsset[asset.ID]]; existing != nil {
+		requester := userIDFromContext(ctx)
 		existing.mu.Lock()
+		owner := existing.userID
 		status := existing.status
 		done := existing.connectDone
 		existing.mu.Unlock()
 		m.mu.Unlock()
+		// 命中既有会话不再经过 connector 授权, 必须按属主拦截: 设备伪资产 ID 是
+		// 确定性的, 无此闸跨用户可零授权搭上他人会话 (双端皆空时行为不变)。
+		if owner != "" && requester != "" && owner != requester {
+			return nil, ErrForbidden
+		}
 		if status != StatusConnecting {
 			return existing, nil
 		}
