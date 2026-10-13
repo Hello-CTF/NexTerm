@@ -59,6 +59,7 @@ extern void processApplicationEvent(unsigned int, void* data);
     }
     UIWindow *sceneWindow = [[UIWindow alloc] initWithWindowScene:windowScene];
     sceneWindow.backgroundColor = legacyWindow.backgroundColor ?: [UIColor whiteColor];
+    sceneWindow.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     UIViewController *rootVC = legacyWindow.rootViewController;
     if (rootVC == nil) {
         rootVC = [[UIViewController alloc] init];

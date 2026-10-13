@@ -8,6 +8,9 @@
         <!-- Status bar color. -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 深色界面配浅色系统栏图标, 透明栏下保证状态栏与导航条可读 -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <!-- Window background -->
         <item name="android:windowBackground">@color/wails_background</item>
     </style>
