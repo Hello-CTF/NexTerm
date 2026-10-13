@@ -21,6 +21,8 @@ func environment(extra map[string]string, terminal bool, term string) []string {
 		if environmentValue(env, "COLORTERM") == "" {
 			env = setEnvironment(env, "COLORTERM", "truecolor")
 		}
+	} else if runtime.GOOS != "windows" && environmentValue(env, "TERM") == "" {
+		env = setEnvironment(env, "TERM", "xterm-256color")
 	}
 	if localeMissing(env) {
 		env = setEnvironment(env, "LANG", utf8Locale)

@@ -66,6 +66,23 @@ func TestExecTimeoutKillsProcessTree(t *testing.T) {
 	assertProcessGone(t, pid)
 }
 
+func TestExecInjectsTermWhenEnvironmentLacksIt(t *testing.T) {
+	if value, ok := os.LookupEnv("TERM"); ok {
+		t.Cleanup(func() { _ = os.Setenv("TERM", value) })
+	}
+	if err := os.Unsetenv("TERM"); err != nil {
+		t.Fatal(err)
+	}
+	transport := unixTransport(t)
+	result, err := transport.Exec(context.Background(), `printf 'term=%s' "${TERM:-unset}"`, base.ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "term=xterm-256color" {
+		t.Fatalf("exec TERM = %q, want injected xterm-256color", result.Stdout)
+	}
+}
+
 func TestExecParentExitStillCleansChildren(t *testing.T) {
 	transport := unixTransport(t)
 	pidPath := filepath.Join(t.TempDir(), "orphan.pid")
