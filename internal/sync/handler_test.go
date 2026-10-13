@@ -215,3 +215,53 @@ func TestWithUserIDSharesIPCKey(t *testing.T) {
 		t.Fatalf("ipc UserIDFromContext = %q %v", userID, ok)
 	}
 }
+
+func TestObjectHandlerPushEmitsSyncStatus(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	user, err := account.New(db.GORM()).CreateUser(ctx, "handler-emit-"+ids.New(), "test", "handler-pw-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = WithUserID(ctx, user.ID)
+	handler := NewObjectHandler(db.GORM(), db.Backend(), nil)
+	var events []ipc.Event
+	handler.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+		events = append(events, event)
+		return nil
+	})
+	post := func(payload PushRequest) PushResponse {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/sync/v2/push", bytes.NewReader(body)).WithContext(ctx)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("push status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var response PushResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	first := post(PushRequest{Protocol: ProtocolVersion, KnownHead: genesisHead(user.ID), Objects: []WireObject{{ID: "obj-1", Blob: []byte("x")}}})
+	if len(events) != 1 || events[0].Event != ipc.TopicSyncStatus {
+		t.Fatalf("events=%v, want exactly one sync://status after a landing push", events)
+	}
+
+	second := post(PushRequest{Protocol: ProtocolVersion, KnownHead: first.Head, Objects: []WireObject{{ID: "obj-1", Blob: []byte("x")}}})
+	if second.Applied != 0 {
+		t.Fatalf("identical re-push applied=%d, want 0", second.Applied)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events=%v, a no-op push must not emit", events)
+	}
+}

@@ -73,6 +73,7 @@ type IDsResponse struct {
 type ObjectHandler struct {
 	store  *objectStore
 	logger *slog.Logger
+	events ipc.Emitter
 }
 
 func NewObjectHandler(db *gorm.DB, backend store.Backend, logger *slog.Logger) *ObjectHandler {
@@ -130,6 +131,9 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	h.logger.Info("sync push", "user", userID, "received", len(request.Objects), "applied", applied, "skipped", skipped, "max_seq", maxSeq)
+	if applied > 0 {
+		_ = ipc.Emit(r.Context(), h.events, ipc.TopicSyncStatus, struct{}{})
+	}
 	writeSyncJSON(w, http.StatusOK, PushResponse{
 		Protocol: ProtocolVersion, Head: head, MaxSeq: maxSeq, Applied: applied, Skipped: skipped,
 	})

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { syncApi } from "../../ipc/commands";
 import { listenEvent } from "../../ipc/events";
 import { WEB } from "../../ipc/env";
@@ -9,9 +10,18 @@ import { runWebSync, WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESU
 
 const SYNC_PERIOD_MS = 60_000;
 
+// After any sync round lands remote changes locally, refresh every synced view; without this the asset tree,
+// credentials and snippets keep showing pre-sync data until remount (the queries have no poll of their own).
+function invalidateSyncedViews(qc: QueryClient): void {
+  for (const key of ["assets", "groups", "snippets", "credentials", "vault-status"] as const) {
+    void qc.invalidateQueries({ queryKey: [key] });
+  }
+}
+
 export function useWebAutoSync() {
   const userId = useAuth((s) => s.user?.id);
   const dek = useAuth((s) => s.dek);
+  const qc = useQueryClient();
 
   useEffect(() => {
     if (!WEB || !userId || !dek) return;
@@ -34,6 +44,7 @@ export function useWebAutoSync() {
           if (result.applied + result.pushed > 0) {
             useUi.getState().bumpModelProfilesRevision();
             registerAccountPreferenceStore(createHttpPreferenceStore());
+            invalidateSyncedViews(qc);
           }
           window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
         }
@@ -65,10 +76,11 @@ export function useWebAutoSync() {
       window.removeEventListener(WEB_SYNC_REQUEST_EVENT, request);
       unlisten?.();
     };
-  }, [dek, userId]);
+  }, [dek, qc, userId]);
 }
 
 export function useDesktopAutoSync() {
+  const qc = useQueryClient();
   useEffect(() => {
     if (WEB) return;
     let disposed = false;
@@ -77,6 +89,7 @@ export function useDesktopAutoSync() {
       if (disposed) return;
       useUi.getState().bumpModelProfilesRevision();
       registerAccountPreferenceStore(createHttpPreferenceStore());
+      invalidateSyncedViews(qc);
       void syncApi.wake().catch(() => undefined);
     };
     void listenEvent("sync://status", wake).then((off) => {
@@ -87,5 +100,5 @@ export function useDesktopAutoSync() {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [qc]);
 }
