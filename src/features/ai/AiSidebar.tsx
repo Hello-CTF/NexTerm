@@ -27,6 +27,7 @@ import { answerInput, confirmationInput } from "./aiWire";
 import {
   historyToItems,
   pendingInteraction,
+  type ApplyResult,
   type ChatItem,
   type ConfirmItem,
   type QuestionItem,
@@ -843,23 +844,25 @@ function AiChatTab({
   // maybeOpenAiCreatedTerminal opens a terminal_create foreground tab in the
   // workspace, the same recipe as the background-sessions takeover. It fires
   // only for events of the live run; historical replays never re-open old tabs.
-  const maybeOpenAiCreatedTerminal = (generation: number, ev: Record<string, unknown>, accepted: boolean) => {
-    if (!accepted) return;
-    const terminal = aiCreatedTerminalOf(ev);
-    if (!terminal) return;
+  const maybeOpenAiCreatedTerminal = (generation: number, ev: Record<string, unknown>, result: ApplyResult) => {
     const current = activeRunRef.current;
     if (!isCurrentAiRun(current, generation) || current.settled) return;
-    const st = useUi.getState();
-    const session = st.sessions.find((s) => s.id === terminal.sessionId);
-    st.addTab({
-      id: nextTabId(`term-${terminal.sessionId}`),
-      kind: "terminal",
-      title: terminal.title || session?.name || terminal.sessionId,
-      renamedByUser: terminal.title ? true : undefined,
-      sessionId: terminal.sessionId,
-      tabId: terminal.tabId,
-      closable: true,
-    });
+    for (const candidate of [{ ev, accepted: result.accepted }, ...(result.drained ?? [])]) {
+      if (!candidate.accepted) continue;
+      const terminal = aiCreatedTerminalOf(candidate.ev);
+      if (!terminal) continue;
+      const st = useUi.getState();
+      const session = st.sessions.find((s) => s.id === terminal.sessionId);
+      st.addTab({
+        id: nextTabId(`term-${terminal.sessionId}`),
+        kind: "terminal",
+        title: terminal.title || session?.name || terminal.sessionId,
+        renamedByUser: terminal.title ? true : undefined,
+        sessionId: terminal.sessionId,
+        tabId: terminal.tabId,
+        closable: true,
+      });
+    }
   };
 
   const replayRunEvents = async (
@@ -874,7 +877,7 @@ function AiChatTab({
     for (const event of events) {
       const result = stream.pushEvent(generation, event as Record<string, unknown>);
       if (result.accepted) applied += 1;
-      maybeOpenAiCreatedTerminal(generation, event as Record<string, unknown>, result.accepted);
+      maybeOpenAiCreatedTerminal(generation, event as Record<string, unknown>, result);
       if (result.terminal) {
         settleRestoredRun(generation);
       }
@@ -1029,7 +1032,7 @@ function AiChatTab({
       }
       const result = stream.pushEvent(generation, ev);
       if (result.gap) resyncRun(generation, resumable.run.id);
-      maybeOpenAiCreatedTerminal(generation, ev, result.accepted);
+      maybeOpenAiCreatedTerminal(generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(generation);
       if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
@@ -1158,7 +1161,7 @@ function AiChatTab({
       }
       const result = stream.pushEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
-      maybeOpenAiCreatedTerminal(run.generation, ev, result.accepted);
+      maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(run.generation);
       if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);

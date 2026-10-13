@@ -355,6 +355,29 @@ describe("AiSidebar terminal_create 自动打开", () => {
     expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
   });
 
+  it("重排缓冲释放的 terminal_create 结果也会自动打开，且不重复", async () => {
+    const channel = await sendMessage();
+    const toolResult = {
+      type: "toolResult",
+      id: "call-1",
+      ok: true,
+      summary: "已创建终端标签页",
+      text: "已创建并在前台展示终端标签页（tab_id=tab-9），AI 正在其中工作，用户可随时接管输入",
+      exitCode: 0,
+      terminal: { tabId: "tab-9", sessionId: "s1" },
+      seq: 3,
+    };
+    channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create", seq: 1 });
+    channel.onEvent(toolResult);
+    await flush();
+    expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
+    channel.onEvent({ type: "status", phase: "thinking", seq: 2 });
+    await flushUntil(() => workspaceTabs().some((t) => t.tabId === "tab-9"));
+    channel.onEvent(toolResult);
+    await flush();
+    expect(workspaceTabs().filter((t) => t.tabId === "tab-9")).toHaveLength(1);
+  });
+
   it("历史运行回放不重新打开标签", async () => {
     view!.unmount();
     mocks.runs.mockResolvedValue([

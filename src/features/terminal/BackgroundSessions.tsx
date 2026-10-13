@@ -19,7 +19,7 @@ function persistenceFootnote(): string {
   if (TRANSPORT === "web") {
     return "终端进程在服务端运行，关闭页面或更换设备后仍会保留。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
   }
-  return "SSH 持久终端由本机后台服务保持运行，其他已分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
+  return "SSH 持久终端由本机后台服务、设备终端由设备上的后台服务保持运行，退出应用后仍可接管；本机（local）等其他分离终端会随应用退出而结束。「接管」将恢复原终端并回放离开期间的输出，不会新建 shell";
 }
 
 function runningCopy(count: number): string {
@@ -231,7 +231,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={4} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的 SSH 终端标签不会终止进程，之后可在此接管
+                    关闭运行中的 SSH 终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管
                   </div>
                 </td>
               </tr>

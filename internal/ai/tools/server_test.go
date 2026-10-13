@@ -135,7 +135,7 @@ func TestTerminalCreateToolExecution(t *testing.T) {
 
 func TestTerminalCreateDescriptionDocumentsCommandKinds(t *testing.T) {
 	description := einoDescriptions["terminal_create"]
-	for _, want := range []string{"ssh/docker/local/device", "send_keys 传 tab_id"} {
+	for _, want := range []string{"ssh/docker/local/device", "send_keys 传 tab_id", "标准输入"} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("terminal_create description missing %q: %q", want, description)
 		}
