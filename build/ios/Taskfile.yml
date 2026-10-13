@@ -148,6 +148,13 @@ tasks:
           fi
         fi
       - |
+        # Compile the launch screen storyboard; Info.plist names it in
+        # UILaunchStoryboardName, and it must exist before codesign seals the bundle.
+        STORYBOARD=build/ios/xcode/main/LaunchScreen.storyboard
+        if [ -f "$STORYBOARD" ]; then
+          xcrun ibtool --compile "{{.BIN_DIR}}/{{.APP_NAME}}.app/LaunchScreen.storyboardc" "$STORYBOARD"
+        fi
+      - |
         # Sign the bundle. Ad-hoc ("-") works on the simulator only; device
         # builds need a real identity (and usually entitlements + profile).
         # Entitlements are only applied to device builds - simulator bundles
@@ -285,18 +292,23 @@ tasks:
     sources:
       - build/config.yml
       - build/appicon.png
+      - build/ios/LaunchScreen.storyboard
+      - build/ios/LaunchIcon.imageset/Contents.json
     generates:
       - build/ios/xcode/main/main.m
+      - build/ios/xcode/main/LaunchScreen.storyboard
       - build/ios/xcode/main/Assets.xcassets/**/*
-      - build/ios/xcode/project.pbxproj
+      - build/ios/xcode/main.xcodeproj/project.pbxproj
     cmds:
-      # The launch screen must not show the product description: blank
-      # info.description so the generated storyboard omits the subtitle label.
+      - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
+      # The generated launch screen shows the product name as a text label;
+      # overlay the icon-only storyboard and its LaunchIcon image set.
+      - cp build/ios/LaunchScreen.storyboard build/ios/xcode/main/LaunchScreen.storyboard
       - |
-        TMP_CONFIG=$(mktemp)
-        sed -E 's/^([[:space:]]*)description:.*/\1description: ""/' build/config.yml > "$TMP_CONFIG"
-        wails3 ios xcode:gen -outdir build/ios/xcode -config "$TMP_CONFIG"
-        rm -f "$TMP_CONFIG"
+        LAUNCH_SET=build/ios/xcode/main/Assets.xcassets/LaunchIcon.imageset
+        mkdir -p "$LAUNCH_SET"
+        cp build/ios/LaunchIcon.imageset/Contents.json "$LAUNCH_SET/Contents.json"
+        cp build/ios/xcode/main/Assets.xcassets/AppIcon.appiconset/icon-1024.png "$LAUNCH_SET/icon-1024.png"
 
   run:
     summary: Run the application in iOS Simulator
@@ -331,6 +343,11 @@ tasks:
           if [ -f "$APP_BUNDLE/assetcatalog_generated_info.plist" ]; then
             /usr/libexec/PlistBuddy -c "Merge $APP_BUNDLE/assetcatalog_generated_info.plist" "$APP_BUNDLE/Info.plist" || true
           fi
+        fi
+      - |
+        STORYBOARD=build/ios/xcode/main/LaunchScreen.storyboard
+        if [ -f "$STORYBOARD" ]; then
+          xcrun ibtool --compile "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/LaunchScreen.storyboardc" "$STORYBOARD"
         fi
       - codesign --force --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
       - |
