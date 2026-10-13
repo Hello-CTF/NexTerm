@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -31,7 +32,13 @@ func (s *Service) AuthorizeDeviceTerminal(ctx context.Context, userID, deviceID 
 // RequestDeviceBridge dials a bridge to the device supervisor helper for an authorized device session;
 // authorization was decided at session connection time, so the bridge itself is not audited again (same semantics as registry.RequestBridge).
 func (s *Service) RequestDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {
-	return s.registry.RequestBridge(ctx, deviceID)
+	return s.registry.RequestBridge(ctx, deviceID, agent.PurposeTerminal)
+}
+
+// RequestDeviceBridgePurpose dials a bridge of one advertised non-terminal purpose (file/forward) for an authorized
+// device session; authorization was decided at session connection time (same semantics as RequestDeviceBridge).
+func (s *Service) RequestDeviceBridgePurpose(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
+	return s.registry.RequestBridge(ctx, deviceID, purpose)
 }
 
 // DeviceStateDigest returns the supervisor state digest reported by the device control channel hello;

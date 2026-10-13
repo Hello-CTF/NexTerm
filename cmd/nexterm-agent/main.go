@@ -3,9 +3,19 @@ package main
 import (
 	"os"
 
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
+
+func init() {
+	fleetagent.PurposeHandlerWirer = func(r *fleetagent.Runtime) {
+		dial := purpose.BridgeDialerFunc(r.DialPurposeBridge)
+		r.RegisterPurposeHandler(deviceproto.PurposeFile, purpose.NewFileServer(dial).Serve)
+		r.RegisterPurposeHandler(deviceproto.PurposeForward, purpose.NewDialServer(dial).Serve)
+	}
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))

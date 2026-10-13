@@ -226,7 +226,7 @@ func TestDeviceBridgePairing(t *testing.T) {
 	}
 	paired := make(chan bridgeOutcome, 1)
 	go func() {
-		conn, err := f.service.registry.RequestBridge(context.Background(), deviceID)
+		conn, err := f.service.registry.RequestBridge(context.Background(), deviceID, agent.PurposeTerminal)
 		if err != nil {
 			paired <- bridgeOutcome{err: err}
 			return
@@ -235,8 +235,8 @@ func TestDeviceBridgePairing(t *testing.T) {
 	}()
 
 	request := readControlMessage(t, control, 5*time.Second)
-	if request.Type != "bridge" || request.BridgeID == "" {
-		t.Fatalf("control message = %+v, want bridge request", request)
+	if request.Type != "bridge" || request.BridgeID == "" || request.Purpose != "terminal" {
+		t.Fatalf("control message = %+v, want terminal bridge request", request)
 	}
 
 	bridgeWS := dialDeviceWS(t, f)
@@ -515,5 +515,18 @@ func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {
 	row, err = deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
 	if err != nil || row.AppVersion != "9.9.9" {
 		t.Fatalf("agent app_version = %q err=%v, want unchanged 9.9.9", row.AppVersion, err)
+	}
+}
+
+// Old-peer compatibility: a hello carrying fields unknown to this build parses without error, and the new
+// purpose/capabilities fields round-trip; peers ignoring unknown fields see the same contract as before.
+func TestDeviceHelloIgnoresUnknownFields(t *testing.T) {
+	var hello agent.HelloMessage
+	payload := `{"type":"hello","protocol":1,"device_id":"d","secret":"s","purpose":"file","capabilities":["terminal","file"],"future_field":{"x":1}}`
+	if err := json.Unmarshal([]byte(payload), &hello); err != nil {
+		t.Fatal(err)
+	}
+	if hello.Purpose != "file" || len(hello.Capabilities) != 2 || hello.Capabilities[1] != "file" {
+		t.Fatalf("hello = %+v", hello)
 	}
 }

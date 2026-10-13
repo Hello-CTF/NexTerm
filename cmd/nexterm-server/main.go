@@ -16,7 +16,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	production "github.com/Hello-CTF/NexTerm/internal/app/production"
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
@@ -27,6 +29,14 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
+
+func init() {
+	fleetagent.PurposeHandlerWirer = func(r *fleetagent.Runtime) {
+		dial := purpose.BridgeDialerFunc(r.DialPurposeBridge)
+		r.RegisterPurposeHandler(deviceproto.PurposeFile, purpose.NewFileServer(dial).Serve)
+		r.RegisterPurposeHandler(deviceproto.PurposeForward, purpose.NewDialServer(dial).Serve)
+	}
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -241,7 +251,7 @@ func run(args []string) int {
 		// writes a terminal_open audit; bridge and state digest come straight from
 		// the registry.
 		application.Services.SetDeviceConnector(&production.DeviceConnectorConfig{
-			Dial: fleetService.RequestDeviceBridge,
+			Dial: fleetService.RequestDeviceBridgePurpose,
 			Digest: func(_ context.Context, deviceID string) (string, error) {
 				digest, ok := fleetService.DeviceStateDigest(deviceID)
 				if !ok || digest == "" {

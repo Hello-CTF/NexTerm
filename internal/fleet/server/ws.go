@@ -32,6 +32,9 @@ type controlMessage struct {
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
+	// Purpose selects the bridge service; empty means terminal. Non-terminal purposes are requested only
+	// from agents that advertised them in hello capabilities, so old agents never see them.
+	Purpose string `json:"purpose,omitempty"`
 }
 
 func writeControlJSON(ctx context.Context, conn *websocket.Conn, message controlMessage) error {
@@ -103,7 +106,7 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 // Online is recorded only after hello_ok is written (a failed handshake produces no online); offline is recorded only when the conn is still the currently registered
 // connection (unregistration of a replaced old connection, or after service shutdown swapped the table, is rejected by the Registry).
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
-	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest)
+	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest, hello.Capabilities)
 	defer func() {
 		if s.registry.UnregisterControl(hello.DeviceID, conn) {
 			s.deviceOffline(hello.DeviceID)
@@ -129,7 +132,7 @@ func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMess
 // supervisor byte stream.
 func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessage) {
 	bridge := newWSConn(conn)
-	deliver, err := s.registry.PairBridge(hello.DeviceID, hello.BridgeID, bridge)
+	deliver, err := s.registry.PairBridge(hello.DeviceID, hello.BridgeID, hello.Purpose, bridge)
 	if err != nil {
 		_ = writeControlJSON(context.Background(), conn, controlMessage{
 			Type: "error", Code: "not_found", Message: "桥接请求不存在或已超时",

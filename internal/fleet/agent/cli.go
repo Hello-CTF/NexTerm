@@ -29,6 +29,11 @@ var (
 	cliRuntimeFactory = func(store *Store, dataDir string, prober *Prober, manager ServiceManager) (*Runtime, error) {
 		return New(Options{Store: store, DataDir: dataDir, Prober: prober, Manager: manager})
 	}
+	// PurposeHandlerWirer is called by cliRun right after the runtime is built so the composition root can register
+	// non-terminal bridge purpose handlers; the servers live in internal/fleet/agent/purpose, which imports this
+	// package, so they cannot be wired from here.
+	PurposeHandlerWirer func(r *Runtime)
+
 	// cliServicePrefix is set by RunCLIWithServicePrefix: embedded distributions (e.g. the nexterm-server
 	// agent subcommand) generate service commands with a subcommand prefix; the standalone nexterm-agent always leaves it empty.
 	cliServicePrefix []string
@@ -227,6 +232,9 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	if err != nil {
 		fmt.Fprintln(stderr, "agent run:", err)
 		return ExitError
+	}
+	if PurposeHandlerWirer != nil {
+		PurposeHandlerWirer(agentRuntime)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

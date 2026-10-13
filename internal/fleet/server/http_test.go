@@ -411,7 +411,7 @@ func TestFleetHTTPDeviceListStateDigest(t *testing.T) {
 
 	// After the control channel hello reports the digest, it is delivered with the list (the only source of the browser supervisor hello)
 	_, controlServer := wsPair(t)
-	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc")
+	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc", nil)
 	if agent := agentViewOf(); agent["state_digest"] != "digest-abc" {
 		t.Fatalf("agent view state_digest=%v", agent)
 	}

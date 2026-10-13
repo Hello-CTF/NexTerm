@@ -30,10 +30,10 @@ func TestRuntimeComputeStateDigest(t *testing.T) {
 	if agentRuntime.stateDigest != want {
 		t.Fatalf("stateDigest = %q, want %q", agentRuntime.stateDigest, want)
 	}
-	if hello := agentRuntime.hello(""); hello.StateDigest != want {
+	if hello := agentRuntime.hello("", ""); hello.StateDigest != want {
 		t.Fatalf("hello state digest = %q, want %q", hello.StateDigest, want)
 	}
-	if hello := agentRuntime.hello("bridge-1"); hello.StateDigest != want {
+	if hello := agentRuntime.hello("bridge-1", PurposeTerminal); hello.StateDigest != want {
 		t.Fatalf("bridge hello state digest = %q, want %q", hello.StateDigest, want)
 	}
 }
