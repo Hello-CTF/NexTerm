@@ -78,7 +78,7 @@ func TestEventBrokerReplayAppliesFilter(t *testing.T) {
 	}
 }
 
-func TestDeviceStatusFilterScopesToOwner(t *testing.T) {
+func TestEventFilterScopesDeviceStatusAndNotificationToOwner(t *testing.T) {
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -103,19 +103,26 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 	t.Cleanup(func() { _ = fleet.Close() })
 	server := &Server{fleet: fleet}
 
-	if filter := server.deviceStatusFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); filter == nil {
+	if filter := server.eventFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); filter == nil {
 		t.Fatal("superadmin must be scoped to owned devices")
 	} else if filter(ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}) {
 		t.Fatal("superadmin received another user's device event")
 	}
-	if filter := server.deviceStatusFilter(nil); filter != nil {
+	if filter := server.eventFilter(nil); filter != nil {
 		t.Fatal("identity-less connection (open deployment) must not be filtered")
 	}
-	if filter := (&Server{}).deviceStatusFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser}); filter != nil {
-		t.Fatal("filter without fleet service must not be installed")
+	if filter := (&Server{}).eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser}); filter == nil {
+		t.Fatal("signed-in connection must install the filter even without fleet service")
+	} else {
+		if !filter(ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}) {
+			t.Fatal("device events must pass through when no fleet service is configured")
+		}
+		if filter(ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "x"}}) {
+			t.Fatal("AI notification must stay owner-scoped without fleet service")
+		}
 	}
 
-	filter := server.deviceStatusFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser})
+	filter := server.eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser})
 	if filter == nil {
 		t.Fatal("plain user filter is nil")
 	}
@@ -129,6 +136,10 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"unknown device", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "missing", Online: true}}, false},
 		{"other topic", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, true},
 		{"foreign payload", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: map[string]any{"deviceId": "dev-1"}}, false},
+		{"own notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-1", Text: "构建完成"}}, true},
+		{"other user notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "构建完成"}}, false},
+		{"ownerless notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{Text: "构建完成"}}, false},
+		{"foreign notification payload", ipc.Event{Event: ipc.TopicAINotification, Payload: map[string]any{"ownerId": "u-1"}}, false},
 	}
 	for _, tc := range cases {
 		if got := filter(tc.event); got != tc.want {

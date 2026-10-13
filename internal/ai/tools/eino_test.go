@@ -2,7 +2,12 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestExecutionToolsFollowScopeCapabilities(t *testing.T) {
@@ -43,5 +48,41 @@ func TestExecutionToolsFollowScopeCapabilities(t *testing.T) {
 		if names[unavailable] {
 			t.Errorf("%s exposed in mixed scope: %v", unavailable, names)
 		}
+	}
+}
+
+func TestNotifyRunsWithoutConfirmation(t *testing.T) {
+	for _, mode := range []guard.Mode{guard.ReadWrite, guard.ReadOnly, guard.Unattended} {
+		t.Run(string(mode), func(t *testing.T) {
+			var delivered []string
+			execution := &Execution{
+				JobID: "job-notify",
+				Registry: NewRegistry(Dependencies{Notify: func(_ context.Context, text string) error {
+					delivered = append(delivered, text)
+					return nil
+				}}),
+				Permission: guard.Config{Mode: mode},
+				Memory:     guard.NewMemory(),
+			}
+			einoTools, err := execution.Tools()
+			if err != nil {
+				t.Fatal(err)
+			}
+			node, err := compose.NewToolNode(context.Background(), &compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := schema.AssistantMessage("", []schema.ToolCall{{ID: "call-1", Function: schema.FunctionCall{Name: NotifyTool, Arguments: `{"message":"构建完成"}`}}})
+			messages, err := node.Invoke(context.Background(), message)
+			if err != nil {
+				t.Fatalf("notify must not require confirmation: %v", err)
+			}
+			if len(delivered) != 1 || delivered[0] != "构建完成" {
+				t.Fatalf("delivered=%v", delivered)
+			}
+			if len(messages) != 1 || !strings.Contains(messages[0].Content, `"ok":true`) {
+				t.Fatalf("tool result = %+v", messages)
+			}
+		})
 	}
 }

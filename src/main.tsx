@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
-import { listenEvent, EVENTS, EventVersionGate, type AppErrorEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
@@ -75,6 +75,10 @@ function wireDesktopShell(): void {
 
   void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
     useUi.getState().pushToast("error", p.message);
+  });
+
+  void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
+    useUi.getState().pushToast("info", `AI 通知：${p.text}`);
   });
 
   if (!WEB) {

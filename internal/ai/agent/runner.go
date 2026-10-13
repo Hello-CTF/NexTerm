@@ -13,6 +13,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -127,15 +128,20 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	conversationID := args.ConversationID
-	var err error
+	ownerID := ""
 	if conversationID == "" {
 		row, createErr := r.store.ConvCreate(ctx, AutoTitle(args.Message), map[string]any{"scope": args.Scope})
 		if createErr != nil {
 			return StartResponse{}, createErr
 		}
 		conversationID = row.ID
-	} else if _, err = r.store.ConvGet(ctx, conversationID); err != nil {
-		return StartResponse{}, err
+		ownerID = row.OwnerID
+	} else {
+		row, getErr := r.store.ConvGet(ctx, conversationID)
+		if getErr != nil {
+			return StartResponse{}, getErr
+		}
+		ownerID = row.OwnerID
 	}
 	args.ConversationID = conversationID
 	if args.ModelProfileID == "" && r.config.Profiles != nil {
@@ -151,6 +157,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	jobContext = tools.WithNotifyOwner(jobContext, ownerID)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
 	if err != nil {
@@ -428,7 +435,7 @@ func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 		return ErrJobNotFound
 	}
 	resumer := current.eino.runner
-	_, iterator, err := r.hitl.Resume(context.Background(), resumer, answer)
+	_, iterator, err := r.hitl.Resume(current.ctx, resumer, answer)
 	if err != nil {
 		current.pendingMu.Unlock()
 		return mapResumeError(err)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/cloudwego/eino/components/model"
@@ -322,5 +323,43 @@ func TestConcurrentJobsTerminalRace(t *testing.T) {
 		if done != 1 || failed != 0 {
 			t.Fatalf("done=%d error=%d", done, failed)
 		}
+	}
+}
+
+func TestNotifyToolReceivesConversationOwner(t *testing.T) {
+	chat := sequenceModel(
+		toolCallMessage(namedToolCall("n1", "notify", `{"message":"构建完成"}`)),
+		schema.AssistantMessage("已通知", nil),
+	)
+	type delivery struct {
+		owner string
+		text  string
+	}
+	var mu sync.Mutex
+	var deliveries []delivery
+	deps := tools.Dependencies{Notify: func(ctx context.Context, text string) error {
+		mu.Lock()
+		deliveries = append(deliveries, delivery{owner: tools.NotifyOwnerID(ctx), text: text})
+		mu.Unlock()
+		return nil
+	}}
+	runner, storage := testRunner(t, chat, deps, 0)
+	conversation, err := storage.ConvCreate(ipc.WithUserID(context.Background(), "user-1"), "owned", map[string]any{"scope": tools.Scope{SessionID: "session"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &SliceStream{}
+	if _, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversation.ID, Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream)); err != nil {
+		t.Fatal(err)
+	}
+	events := waitClosed(t, stream)
+	done, failed := terminalCounts(events)
+	if done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d", done, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deliveries) != 1 || deliveries[0].text != "构建完成" || deliveries[0].owner != "user-1" {
+		t.Fatalf("deliveries=%+v", deliveries)
 	}
 }

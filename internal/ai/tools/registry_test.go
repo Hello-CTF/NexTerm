@@ -1,15 +1,16 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 )
 
-func TestRegistryExactly23Tools(t *testing.T) {
+func TestRegistryExactly24Tools(t *testing.T) {
 	t.Parallel()
 	schemas := toolSchemas()
-	if len(schemas) != 23 {
+	if len(schemas) != 24 {
 		t.Fatalf("tool count=%d: %v", len(schemas), schemas)
 	}
 	seen := map[string]bool{}
@@ -23,7 +24,7 @@ func TestRegistryExactly23Tools(t *testing.T) {
 			t.Errorf("%s not dispatchable", schema.Name)
 		}
 	}
-	if !PlanAllowed("redis_scan") || PlanAllowed("exec_commands") || PlanAllowed("write_file") || PlanAllowed(ReminderTool) {
+	if !PlanAllowed("redis_scan") || !PlanAllowed(NotifyTool) || PlanAllowed("exec_commands") || PlanAllowed("write_file") || PlanAllowed(ReminderTool) {
 		t.Fatal("incorrect plan policy")
 	}
 }
@@ -69,5 +70,42 @@ func TestEncodeSemanticKeys(t *testing.T) {
 	encoded, err = EncodeKeys("<unknown>", false)
 	if err != nil || string(encoded) != "<unknown>" {
 		t.Fatalf("unknown tag should stay literal: %q err=%v", encoded, err)
+	}
+}
+
+func TestNotifyDeliversThroughDependency(t *testing.T) {
+	t.Parallel()
+	var delivered []string
+	registry := NewRegistry(Dependencies{Notify: func(_ context.Context, text string) error {
+		delivered = append(delivered, text)
+		return nil
+	}})
+	result := registry.Execute(context.Background(), "job", Scope{}, Call{ID: "c1", Name: NotifyTool, Args: json.RawMessage(`{"message":" 构建完成 "}`)}, nil)
+	if !result.OK {
+		t.Fatalf("notify failed: %s", result.Text)
+	}
+	if len(delivered) != 1 || delivered[0] != "构建完成" {
+		t.Fatalf("delivered=%v", delivered)
+	}
+	if !strings.Contains(result.Text, "写进当轮回复") {
+		t.Fatalf("result must remind the model to repeat the notice in the reply: %q", result.Text)
+	}
+}
+
+func TestNotifyValidationAndMissingService(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry(Dependencies{})
+	if result := registry.Execute(context.Background(), "job", Scope{}, Call{ID: "c1", Name: NotifyTool, Args: json.RawMessage(`{"message":"x"}`)}, nil); result.OK || !strings.Contains(result.Text, "通知服务未配置") {
+		t.Fatalf("nil dependency: %+v", result)
+	}
+	registry = NewRegistry(Dependencies{Notify: func(context.Context, string) error { return nil }})
+	for name, args := range map[string]string{
+		"blank":    `{"message":"  "}`,
+		"overlong": `{"message":"` + strings.Repeat("长", notifyMessageMax+1) + `"}`,
+	} {
+		result := registry.Execute(context.Background(), "job", Scope{}, Call{ID: "c1", Name: NotifyTool, Args: json.RawMessage(args)}, nil)
+		if result.OK {
+			t.Fatalf("%s message must be rejected", name)
+		}
 	}
 }
