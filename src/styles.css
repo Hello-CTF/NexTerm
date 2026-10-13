@@ -2500,6 +2500,15 @@
     position: absolute;
     inset: -4px;
   }
+
+  .nx-ai-tabstrip {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .nx-ai-tabstrip .nx-tab {
+    font-size: 12px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
