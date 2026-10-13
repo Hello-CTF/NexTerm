@@ -135,6 +135,85 @@ func TestSSHJumpChainThreeHops(t *testing.T) {
 	}
 }
 
+func TestSSHJumpConnectProgressStages(t *testing.T) {
+	first := newTestSSHServer(t, nil)
+	second := newTestSSHServer(t, nil)
+	target := newTestSSHServer(t, nil)
+
+	store := NewMemoryHostKeyStore()
+	auth := AuthConfig{Method: AuthPassword, Password: "secret"}
+	firstCfg := testClientConfig(t, first, auth)
+	firstCfg.HostKeys = store
+	secondCfg := testClientConfig(t, second, auth)
+	secondCfg.HostKeys = store
+	secondCfg.Jump = &firstCfg
+	targetCfg := testClientConfig(t, target, auth)
+	targetCfg.HostKeys = store
+	targetCfg.Jump = &secondCfg
+
+	var events []ConnectProgress
+	targetCfg.Progress = func(progress ConnectProgress) {
+		events = append(events, progress)
+	}
+	client, err := Connect(context.Background(), targetCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	at := func(stage ConnectStage, hop int, cfg Config) ConnectProgress {
+		return ConnectProgress{Stage: stage, Hop: hop, Hops: 2, Host: cfg.Host, Port: cfg.Port}
+	}
+	want := []ConnectProgress{
+		at(ConnectStageAuth, 0, targetCfg),
+		at(ConnectStageAuth, 2, secondCfg),
+		at(ConnectStageAuth, 1, firstCfg),
+		at(ConnectStageDial, 1, firstCfg),
+		at(ConnectStageHandshake, 1, firstCfg),
+		at(ConnectStageChannel, 2, secondCfg),
+		at(ConnectStageHandshake, 2, secondCfg),
+		at(ConnectStageChannel, 0, targetCfg),
+		at(ConnectStageHandshake, 0, targetCfg),
+	}
+	if !slices.Equal(events, want) {
+		t.Fatalf("progress events = %+v, want %+v", events, want)
+	}
+}
+
+func TestSSHJumpConnectProgressStopsAtFailedHop(t *testing.T) {
+	jump := newTestSSHServer(t, nil)
+	target := newTestSSHServer(t, nil)
+
+	store := NewMemoryHostKeyStore()
+	auth := AuthConfig{Method: AuthPassword, Password: "secret"}
+	jumpCfg := testClientConfig(t, jump, auth)
+	jumpCfg.HostKeys = store
+	targetCfg := testClientConfig(t, target, auth)
+	targetCfg.HostKeys = store
+	dead := deadEndpoint(t)
+	targetCfg.Host = dead.host
+	targetCfg.Port = dead.port
+	targetCfg.Jump = &jumpCfg
+
+	var events []ConnectProgress
+	targetCfg.Progress = func(progress ConnectProgress) {
+		events = append(events, progress)
+	}
+	if _, err := Connect(context.Background(), targetCfg); err == nil {
+		t.Fatal("connect through the jump to a dead endpoint unexpectedly succeeded")
+	}
+	want := []ConnectProgress{
+		{Stage: ConnectStageAuth, Hop: 0, Hops: 1, Host: dead.host, Port: dead.port},
+		{Stage: ConnectStageAuth, Hop: 1, Hops: 1, Host: jumpCfg.Host, Port: jumpCfg.Port},
+		{Stage: ConnectStageDial, Hop: 1, Hops: 1, Host: jumpCfg.Host, Port: jumpCfg.Port},
+		{Stage: ConnectStageHandshake, Hop: 1, Hops: 1, Host: jumpCfg.Host, Port: jumpCfg.Port},
+		{Stage: ConnectStageChannel, Hop: 0, Hops: 1, Host: dead.host, Port: dead.port},
+	}
+	if !slices.Equal(events, want) {
+		t.Fatalf("progress events = %+v, want %+v", events, want)
+	}
+}
+
 func TestSSHJumpHostKeyVerificationPerHop(t *testing.T) {
 	jump := newTestSSHServer(t, nil)
 	target := newTestSSHServer(t, nil)

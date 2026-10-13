@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
-import { listenEvent, EVENTS, EventVersionGate, type AppErrorEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
@@ -54,15 +54,23 @@ function mount(node: React.ReactNode): void {
 function wireDesktopShell(): void {
   void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
     if (!eventVersions.accept(p.sessionId, p.version)) return;
-    const { sessions, setSessions, pushToast } = useUi.getState();
+    const { sessions, setSessions, pushToast, setConnectProgress } = useUi.getState();
     setSessions(
       sessions.map((s) =>
         s.id === p.sessionId ? { ...s, status: p.status as never } : s,
       ),
     );
+    if (p.status !== "connecting" && p.status !== "reconnecting") {
+      const assetId = sessions.find((s) => s.id === p.sessionId)?.assetId;
+      if (assetId) setConnectProgress(assetId, null);
+    }
     if (p.status === "failed" && p.error) {
       pushToast("error", `会话失败：${p.error}`);
     }
+  });
+
+  void listenEvent<ConnectProgressEvent>(EVENTS.connectProgress, (p) => {
+    useUi.getState().setConnectProgress(p.assetId, p);
   });
 
   void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
@@ -75,6 +83,10 @@ function wireDesktopShell(): void {
 
   void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
     useUi.getState().pushToast("error", p.message);
+  });
+
+  void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
+    useUi.getState().pushToast("info", `AI 通知：${p.text}`);
   });
 
   if (!WEB) {

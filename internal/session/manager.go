@@ -15,6 +15,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
+const defaultSlowConsumerGrace = 30 * time.Second
+
 type Manager struct {
 	mu               sync.Mutex
 	sessions         map[string]*Session
@@ -23,6 +25,7 @@ type Manager struct {
 	channelTabs      map[string]string
 	throttleVersions map[string]uint64
 	throttleChannels map[string]map[string]bool
+	slowKicks        map[string]*time.Timer
 	closed           bool
 	started          bool
 
@@ -41,11 +44,12 @@ type Manager struct {
 	hookMu        sync.RWMutex
 	userInputHook func(string)
 
-	idleTimeout      time.Duration
-	sweepInterval    time.Duration
-	reconnectMax     int
-	reconnectBackoff []time.Duration
-	defaultReplay    int
+	idleTimeout       time.Duration
+	sweepInterval     time.Duration
+	reconnectMax      int
+	reconnectBackoff  []time.Duration
+	defaultReplay     int
+	slowConsumerGrace time.Duration
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -63,6 +67,7 @@ func NewManager(config Config) *Manager {
 		channelTabs:      make(map[string]string),
 		throttleVersions: make(map[string]uint64),
 		throttleChannels: make(map[string]map[string]bool),
+		slowKicks:        make(map[string]*time.Timer),
 		connector:        config.Connector,
 		terminals:        config.Terminals,
 		durable:          config.Durable,
@@ -96,6 +101,10 @@ func NewManager(config Config) *Manager {
 	}
 	if manager.defaultReplay <= 0 {
 		manager.defaultReplay = 4 << 20
+	}
+	manager.slowConsumerGrace = config.SlowConsumerGrace
+	if manager.slowConsumerGrace <= 0 {
+		manager.slowConsumerGrace = defaultSlowConsumerGrace
 	}
 	if config.Hub == nil {
 		manager.bus = hub.New(hub.Options{
@@ -548,6 +557,10 @@ func (m *Manager) Close() error {
 	m.closeOnce.Do(func() {
 		m.mu.Lock()
 		m.closed = true
+		for channelID, timer := range m.slowKicks {
+			timer.Stop()
+			delete(m.slowKicks, channelID)
+		}
 		sessions := make([]string, 0, len(m.sessions))
 		for id := range m.sessions {
 			sessions = append(sessions, id)
@@ -597,8 +610,33 @@ func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
 	set[channelID] = true
 	m.throttleVersions[tabID]++
 	version := m.throttleVersions[tabID]
+	if m.slowKicks[channelID] == nil {
+		m.slowKicks[channelID] = time.AfterFunc(m.slowConsumerGrace, func() { m.kickSlowConsumer(channelID) })
+	}
 	m.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, InflightBytes: queuedBytes, Version: version})
+}
+
+// kickSlowConsumer 在背压宽限到期后踢出仍不消费的通道: 复查与摘除在同一把
+// m.mu 下完成 (无复查-drain 竞态窗口), producer.Close 后客户端走既有重连 +
+// DiscardPending + 重放恢复; 其他 subscriber 的队列互不影响。宽限内已 drain
+// 或已 detach 的通道被复查拦下 (slowKicks 项不存在或背压标记已清)。
+func (m *Manager) kickSlowConsumer(channelID string) {
+	m.mu.Lock()
+	if m.slowKicks[channelID] == nil {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.slowKicks, channelID)
+	tabID := m.channelTabs[channelID]
+	if tabID == "" || !m.throttleChannels[tabID][channelID] {
+		m.mu.Unlock()
+		return
+	}
+	_, cleanup := m.detachChannelLocked(channelID)
+	m.mu.Unlock()
+	m.logger.Warn("slow terminal consumer kicked after backpressure grace", "channel", channelID, "tab", tabID, "grace", m.slowConsumerGrace)
+	cleanup()
 }
 
 func (m *Manager) onDrain(channelID string, queuedBytes int) {
@@ -621,6 +659,10 @@ func (m *Manager) clearThrottleChannelLocked(tabID, channelID string) (bool, uin
 		return false, 0
 	}
 	delete(set, channelID)
+	if timer := m.slowKicks[channelID]; timer != nil {
+		timer.Stop()
+		delete(m.slowKicks, channelID)
+	}
 	if len(set) > 0 {
 		return false, 0
 	}

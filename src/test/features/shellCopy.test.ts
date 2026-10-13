@@ -17,10 +17,11 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import { modHint, setMacPlatform } from "../../app/platform";
-import { sessionStatusText, useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
+import { connectProgressText, connectStageText, sessionStatusText, useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
 import { setFileEditorDirty } from "../../features/files/editorGuards";
 import { describeError } from "../../ui/errorText";
 import type { SessionInfo } from "../../ipc/commands";
+import type { ConnectProgressEvent } from "../../ipc/events";
 
 function terminal(id = "terminal", sessionId = "s"): AppTab {
   return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true };
@@ -116,6 +117,31 @@ describe("sessionStatusText", () => {
     expect(sessionStatusText("failed")).toBe("连接失败");
     expect(sessionStatusText("disconnected")).toBe("已断开");
     expect(sessionStatusText(undefined)).toBe("已断开");
+  });
+});
+
+describe("connectProgressText", () => {
+  const at = (stage: string, hop: number, hops = 0): ConnectProgressEvent => ({
+    assetId: "a1",
+    stage,
+    hop,
+    hops,
+    host: "10.0.0.8",
+    port: 22,
+  });
+
+  it("连接阶段映射为中文文案", () => {
+    expect(connectStageText("auth")).toBe("准备认证");
+    expect(connectStageText("dial")).toBe("TCP 拨号");
+    expect(connectStageText("channel")).toBe("经跳板打开通道");
+    expect(connectStageText("handshake")).toBe("SSH 握手认证");
+    expect(connectStageText("unexpected")).toBe("unexpected");
+  });
+
+  it("目标主机与第几跳可区分", () => {
+    expect(connectProgressText(at("dial", 0))).toBe("目标主机 · TCP 拨号");
+    expect(connectProgressText(at("handshake", 1, 2))).toBe("跳板 1/2 · SSH 握手认证");
+    expect(connectProgressText(at("channel", 2, 2))).toBe("跳板 2/2 · 经跳板打开通道");
   });
 });
 

@@ -219,15 +219,21 @@ export interface LiveTabInfo {
   lastOutputMsAgo: number;
 }
 
+export interface StreamResumeAnchor {
+  seq: number;
+  epoch: string;
+}
+
 export const terminalApi = {
   attach: (sessionId: string, cols: number, rows: number, channel: unknown) =>
     call<string>("terminal_attach", { sessionId, cols, rows, channel, clientId: clientId() }),
-  attachTab: (tabId: string, channel: unknown, replayBytes?: number) =>
+  attachTab: (tabId: string, channel: unknown, replayBytes?: number, resume?: StreamResumeAnchor) =>
     call<AttachedTabInfo>("terminal_attach_tab", {
       tabId,
       replayBytes,
       channel,
       clientId: clientId(),
+      ...(resume ? { fromSeq: resume.seq, fromEpoch: resume.epoch } : {}),
     }),
   write: (tabId: string, data: Uint8Array) =>
     call<void>("terminal_write", {

@@ -4,12 +4,6 @@ import (
 	"bytes"
 	"context"
 	"sync"
-	"sync/atomic"
-)
-
-const (
-	InflightPause = 4 * 1024 * 1024
-	InflightDrop  = 16 * 1024 * 1024
 )
 
 type Sink interface {
@@ -114,52 +108,4 @@ func (f *Fanout) Send(ctx context.Context, data []byte) bool {
 		delivered = true
 	}
 	return delivered
-}
-
-type Inflight struct {
-	v  atomic.Int64
-	mu sync.Mutex
-	ch chan struct{}
-}
-
-func NewInflight() *Inflight {
-	return &Inflight{ch: make(chan struct{})}
-}
-
-func (i *Inflight) Load() int64 { return i.v.Load() }
-
-func (i *Inflight) Add(n int64) { i.v.Add(n) }
-
-func (i *Inflight) SubSaturating(n int64) {
-	for {
-		cur := i.v.Load()
-		next := cur - n
-		if next < 0 {
-			next = 0
-		}
-		if i.v.CompareAndSwap(cur, next) {
-			break
-		}
-	}
-	i.mu.Lock()
-	close(i.ch)
-	i.ch = make(chan struct{})
-	i.mu.Unlock()
-}
-
-func (i *Inflight) WaitBelow(ctx context.Context, limit int64) error {
-	for i.v.Load() > limit {
-		i.mu.Lock()
-		ch := i.ch
-		i.mu.Unlock()
-		if i.v.Load() <= limit {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ch:
-		}
-	}
-	return nil
 }

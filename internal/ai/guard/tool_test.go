@@ -32,7 +32,7 @@ func TestSendKeysUsesActualSubmitBehavior(t *testing.T) {
 
 func TestRegisteredToolGuardCoverage(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode"} {
+	for _, name := range []string{"read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify"} {
 		if got := classifyToolForTest(name, `{}`); got.Risk != Safe {
 			t.Errorf("%s: got %v", name, got)
 		}

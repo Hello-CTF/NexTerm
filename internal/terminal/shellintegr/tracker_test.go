@@ -161,7 +161,7 @@ func TestRecordingAndReplayPreserveWrapperOutput(t *testing.T) {
 	if got := ring.Dump(0); !bytes.Equal(got, stream) {
 		t.Fatal("ring dump differs from shell output")
 	}
-	replayed, start := ring.ReplayFrom(0, 0)
+	replayed, start, _ := ring.ReplayFrom(0, 0)
 	if start != 0 || !bytes.Equal(replayed, stream) {
 		t.Fatal("ring replay differs from shell output")
 	}

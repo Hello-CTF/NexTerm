@@ -18,6 +18,23 @@ import (
 
 var nextGeneration atomic.Uint64
 
+type ConnectStage string
+
+const (
+	ConnectStageAuth      ConnectStage = "auth"
+	ConnectStageDial      ConnectStage = "dial"
+	ConnectStageChannel   ConnectStage = "channel"
+	ConnectStageHandshake ConnectStage = "handshake"
+)
+
+type ConnectProgress struct {
+	Stage ConnectStage
+	Hop   int
+	Hops  int
+	Host  string
+	Port  int
+}
+
 type Client struct {
 	ssh          *gossh.Client
 	generation   uint64
@@ -38,16 +55,35 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 		host, port := configErrorEndpoint(cfg, err)
 		return nil, newConnectError(ErrorKindConfig, "configuration", host, port, "", err)
 	}
-	return connect(ctx, validated, 0)
+	return connect(ctx, validated, 0, countJumps(validated), validated.Progress)
 }
 
-func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
+func countJumps(cfg Config) int {
+	hops := 0
+	for jump := cfg.Jump; jump != nil; jump = jump.Jump {
+		hops++
+	}
+	return hops
+}
+
+func connect(ctx context.Context, cfg Config, depth, hops int, progress func(ConnectProgress)) (*Client, error) {
 	if depth > maxJumpDepth {
 		return nil, newConnectError(ErrorKindConfig, "configuration", cfg.Host, cfg.Port, "", fmt.Errorf("SSH jump chain exceeds %d hops", maxJumpDepth))
 	}
 	connectCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 
+	report := func(stage ConnectStage) {
+		if progress == nil {
+			return
+		}
+		hop := 0
+		if depth > 0 {
+			hop = hops - depth + 1
+		}
+		progress(ConnectProgress{Stage: stage, Hop: hop, Hops: hops, Host: cfg.Host, Port: cfg.Port})
+	}
+	report(ConnectStageAuth)
 	auth, closers, err := authentication(connectCtx, cfg.Auth)
 	if err != nil {
 		return nil, newConnectError(ErrorKindAuth, "authentication setup", cfg.Host, cfg.Port, "", err)
@@ -71,22 +107,25 @@ func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
 	var netConn net.Conn
 	var jumpClient *Client
 	if cfg.Jump != nil {
-		jumpClient, err = connect(ctx, *cfg.Jump, depth+1)
+		jumpClient, err = connect(ctx, *cfg.Jump, depth+1, hops, progress)
 		if err != nil {
 			return nil, err
 		}
+		report(ConnectStageChannel)
 		netConn, err = jumpClient.ssh.DialContext(connectCtx, "tcp", target)
 		if err != nil {
 			jumpClient.Close()
 			return nil, classifyJumpDialError(cfg.Host, cfg.Port, endpointString(cfg.Jump.Host, cfg.Jump.Port), err)
 		}
 	} else {
+		report(ConnectStageDial)
 		netConn, err = dialSSH(connectCtx, cfg, cfg.Host, cfg.Port)
 		if err != nil {
 			return nil, classifyDialError(cfg.Host, cfg.Port, err)
 		}
 	}
 	stop := context.AfterFunc(connectCtx, func() { netConn.Close() })
+	report(ConnectStageHandshake)
 	conn, channels, requests, err := gossh.NewClientConn(netConn, target, sshConfig)
 	stopped := stop()
 	if err == nil && !stopped && connectCtx.Err() != nil {

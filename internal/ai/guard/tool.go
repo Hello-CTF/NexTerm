@@ -9,7 +9,7 @@ import (
 
 func ClassifyTool(name string, args json.RawMessage, config Config) Ruling {
 	ruling := classifyTool(name, args, config)
-	if name == "ask_user" || name == "todo_write" || name == "exit_plan_mode" {
+	if name == "ask_user" || name == "todo_write" || name == "exit_plan_mode" || name == "notify" {
 		return ruling
 	}
 	if matchDangerArgs(args, config.DangerRules) {
@@ -68,7 +68,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		fields = map[string]json.RawMessage{}
 	}
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode":
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify":
 		return Allow()
 	case "write_file", "edit_file":
 		if matchDangerRule(stringField(fields, "path"), config.DangerRules) {

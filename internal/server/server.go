@@ -34,6 +34,10 @@ type SettingStore interface {
 // AuditFunc 写审计记录; 由装配层桥接到 store.AuditInsert。
 type AuditFunc func(ctx context.Context, source, kind string, payload map[string]any) error
 
+// AssetOwnerFunc 按资产 ID 查属主用户 ID (不受调用方 owner 作用域限制),
+// 供 /ws/events 按归属过滤敏感事件; 由装配层桥接到 store.AssetOwnerID。
+type AssetOwnerFunc func(ctx context.Context, assetID string) (string, error)
+
 // DBHealthSource 是 /healthz 暴露的非秘密数据库元数据来源。
 type DBHealthSource interface {
 	Backend() store.Backend
@@ -55,6 +59,7 @@ type Config struct {
 	Blobs          *BlobStore
 	Settings       SettingStore
 	AuditFunc      AuditFunc
+	AssetOwnerFunc AssetOwnerFunc
 	Static         http.Handler
 	Vault          Vault
 	VaultStatus    func(context.Context) (any, error)
@@ -97,6 +102,7 @@ type Server struct {
 	webSocket       WebSocketConfig
 	preferences     *account.Preferences
 	audit           AuditFunc
+	assetOwner      AssetOwnerFunc
 	fleet           *fleetserver.Service
 	previews        *sharing.Service
 	spectator       PreviewSpectator
@@ -242,7 +248,7 @@ func New(config Config) (*Server, error) {
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
-		audit: config.AuditFunc, fleet: config.Fleet,
+		audit: config.AuditFunc, fleet: config.Fleet, assetOwner: config.AssetOwnerFunc,
 		previews: config.Previews, spectator: config.Spectator,
 		previewResolve:            account.NewLoginThrottle(),
 		previewRevalidateInterval: defaultPreviewRevalidateInterval,

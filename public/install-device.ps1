@@ -1,7 +1,7 @@
 ﻿# NexTerm 设备 agent 一键接入 (Windows)。
 # 用法: iex "& { $(iwr -useb https://<server>/install-device.ps1) } -Server <接入地址> -Code <接入码> -Version <版本> [-Insecure] [-DataDir <目录>]"
-# 支持 Windows AMD64/ARM64, 需要 PowerShell 5.1+ 并以管理员身份运行 (安装 NexTermAgent 系统服务)。
-# 二进制与同 release 的 SHA256SUMS 校验通过后才安装并 enroll, 最后 sc.exe 安装系统服务。
+# 支持 Windows AMD64/ARM64, 需要 PowerShell 5.1+; 免管理员: 以当前用户注册登录自启计划任务 (schtasks, 无窗口后台运行)。
+# 二进制与同 release 的 SHA256SUMS 校验通过后才安装并 enroll, 最后注册 NexTermAgent 计划任务。
 #Requires -Version 5.1
 
 [CmdletBinding()]
@@ -30,11 +30,6 @@ if ($PSVersionTable.PSVersion -lt [version]'5.1') {
 
 if ($Version -notmatch '^[0-9A-Za-z.-]+$') {
   Fail "非法 -Version: $Version"
-}
-
-$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
-  Fail '安装 NexTermAgent 系统服务需要管理员权限 (sc.exe create), 请右键"以管理员身份运行" PowerShell 后重试'
 }
 
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -91,6 +86,13 @@ try {
     Fail "发布包 $Asset 根目录缺少 nexterm-agent.exe"
   }
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  if (Test-Path $Target) {
+    # v1.x 迁移: 旧版以 sc.exe 系统服务运行, 先尽力停删 (非管理员会失败, 忽略);
+    # 运行中映像不可覆盖但可改名, 先改名再拷贝, 保证任何权限下都能换上新二进制。
+    & sc.exe stop NexTermAgent 2>$null | Out-Null
+    & sc.exe delete NexTermAgent 2>$null | Out-Null
+    Move-Item -Path $Target -Destination "$Target.old" -Force -ErrorAction SilentlyContinue
+  }
   Copy-Item -Path $Extracted -Destination $Target -Force
 
   $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -116,10 +118,10 @@ try {
     Fail "设备注册失败 (exit $LASTEXITCODE)"
   }
 
-  Write-Host '==> 安装系统服务 NexTermAgent (sc.exe, 服务以 SYSTEM 账户运行)'
+  Write-Host '==> 注册计划任务 NexTermAgent (登录自启, 当前用户, 免管理员, 无窗口)'
   & $Target install --data-dir $DataDir
   if ($LASTEXITCODE -ne 0) {
-    Fail "服务安装失败 (exit $LASTEXITCODE), 请确认以管理员身份运行"
+    Fail "计划任务注册失败 (exit $LASTEXITCODE)"
   }
 
   Write-Host "==> 完成。数据目录: $DataDir"

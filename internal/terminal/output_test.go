@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"runtime"
 	"sync"
 	"testing"
@@ -102,69 +101,6 @@ func TestOutputVisibleAgainFlushesPromptly(t *testing.T) {
 	}
 }
 
-func TestOutputConsumeFlushesOnClose(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	sink := &memSink{}
-	o.Attach("a", sink)
-	o.SetVisible(false)
-	chunks := make(chan []byte, 2)
-	chunks <- []byte("one")
-	chunks <- []byte("two")
-	close(chunks)
-	if err := o.Consume(context.Background(), chunks); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(sink.Bytes(), []byte("onetwo")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
-}
-
-func TestOutputThrottlePauseResumeAndCancel(t *testing.T) {
-	tab := newTestTab(t)
-	throttled := make(chan int64, 4)
-	o := newTestOutput(t, tab, WithThrottleHandler(func(n int64) { throttled <- n }))
-	sink := &memSink{}
-	o.Attach("a", sink)
-	o.Inflight().Add(InflightPause + 1000)
-
-	ctx := context.Background()
-	done := make(chan error, 1)
-	go func() { done <- o.Chunk(ctx, []byte("z")) }()
-	select {
-	case <-done:
-		t.Fatal("chunk should block above InflightPause")
-	case <-time.After(40 * time.Millisecond):
-	}
-	select {
-	case n := <-throttled:
-		if n < InflightPause {
-			t.Fatalf("throttle callback n = %d", n)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("throttle callback not fired")
-	}
-	o.Inflight().SubSaturating(2000)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("chunk did not resume")
-	}
-	if !bytes.Equal(sink.Bytes(), []byte("z")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
-
-	o.Inflight().Add(InflightPause + 1000)
-	cctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := o.Chunk(cctx, []byte("q")); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestOutputAttachReplayNoGapNoDuplicate(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
@@ -231,9 +167,9 @@ func TestOutputAttachFromSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &memSink{}
-	next, attached, err := o.AttachFrom(ctx, "a", sink, 4, 0)
-	if err != nil || next != 10 || !attached {
-		t.Fatalf("next = %d attached = %v err = %v", next, attached, err)
+	next, clamped, attached, err := o.AttachFrom(ctx, "a", sink, 4, 0)
+	if err != nil || next != 10 || clamped || !attached {
+		t.Fatalf("next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
 	}
 	if err := o.Chunk(ctx, []byte("X")); err != nil {
 		t.Fatal(err)
@@ -242,12 +178,32 @@ func TestOutputAttachFromSequence(t *testing.T) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}
 	sinkC := &memSink{}
-	next, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
-	if err != nil || next != 11 || !attached {
-		t.Fatalf("beyond-total next = %d attached = %v err = %v", next, attached, err)
+	next, clamped, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
+	if err != nil || next != 11 || clamped || !attached {
+		t.Fatalf("beyond-total next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
 	}
 	if len(sinkC.Frames()) != 0 {
 		t.Fatalf("sinkC replay = %q", sinkC.Bytes())
+	}
+}
+
+func TestOutputAttachFromClampedAnchor(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	ctx := context.Background()
+	if err := o.Chunk(ctx, make([]byte, ScrollbackBytes+1)); err != nil {
+		t.Fatal(err)
+	}
+	sink := &memSink{}
+	next, clamped, attached, err := o.AttachFrom(ctx, "a", sink, 0, 0)
+	if err != nil || !clamped || !attached {
+		t.Fatalf("next = %d clamped = %v attached = %v err = %v", next, clamped, attached, err)
+	}
+	if next != tab.LatestSeq() {
+		t.Fatalf("next = %d, want latest %d", next, tab.LatestSeq())
+	}
+	if got := sink.Bytes(); !bytes.Equal(got, tab.Dump(0)) || len(got) != ScrollbackBytes {
+		t.Fatalf("clamped replay len = %d, want full ring %d", len(got), ScrollbackBytes)
 	}
 }
 
@@ -264,7 +220,7 @@ func TestOutputAttachFromBoundedReplayCatchUp(t *testing.T) {
 		if round > 10 {
 			t.Fatal("catch-up did not converge")
 		}
-		next, attached, err := o.AttachFrom(ctx, "b", sink, seq, 3)
+		next, _, attached, err := o.AttachFrom(ctx, "b", sink, seq, 3)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,53 +258,5 @@ func TestOutputAttachReplayFailureNotAttached(t *testing.T) {
 	}
 	if o.SubscriberCount() != 0 {
 		t.Fatal("failed sink must not be attached")
-	}
-}
-
-func TestPumpReader(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	sink := &memSink{}
-	o.Attach("a", sink)
-	r, w := io.Pipe()
-	go func() {
-		_, _ = w.Write([]byte("hello "))
-		_, _ = w.Write([]byte("pump"))
-		_ = w.Close()
-	}()
-	if err := PumpReader(context.Background(), r, o); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(sink.Bytes(), []byte("hello pump")) {
-		t.Fatalf("sink = %q", sink.Bytes())
-	}
-	if o.Inflight().Load() != 0 {
-		t.Fatalf("inflight = %d", o.Inflight().Load())
-	}
-}
-
-type errReader struct{ err error }
-
-func (e errReader) Read([]byte) (int, error) { return 0, e.err }
-
-func TestPumpReaderReadError(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	boom := errors.New("pty died")
-	if err := PumpReader(context.Background(), errReader{err: boom}, o); !errors.Is(err, boom) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestPumpReaderCancellation(t *testing.T) {
-	tab := newTestTab(t)
-	o := newTestOutput(t, tab)
-	r, w := io.Pipe()
-	defer w.Close()
-	defer r.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := PumpReader(ctx, r, o); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v", err)
 	}
 }

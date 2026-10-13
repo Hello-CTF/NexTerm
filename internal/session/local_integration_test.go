@@ -33,6 +33,10 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 		t.Fatal(err)
 	}
 	receiver := bindTestReceiver(t, manager, "b-1")
+	anchor := receiveTestAnchor(t, receiver)
+	if anchor.Expired || anchor.ControlBytes != len(replayClear) {
+		t.Fatalf("anchor = %+v, want fresh full replay with %d control bytes", anchor, len(replayClear))
+	}
 	assertFrameData(t, receiver, replayClear)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -93,6 +97,7 @@ func TestRealLocalPTYOpenResizeDetachReopenAndClose(t *testing.T) {
 			t.Fatal(err)
 		}
 		receiver := bindTestReceiver(t, manager, channelID)
+		receiveTestAnchor(t, receiver)
 		assertFrameData(t, receiver, replayClear)
 		frame := receiveTestFrame(t, receiver)
 		if !bytes.Contains(frame.Data, marker) {

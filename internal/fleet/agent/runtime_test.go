@@ -1,18 +1,23 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
 
@@ -451,6 +456,193 @@ func TestRuntimeProtocolMismatchIsFatal(t *testing.T) {
 	err := agentRuntime.Run(ctx)
 	if err != ErrProtocolMismatch {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+}
+
+func mismatchControl(serverVersion string) func(conn *websocket.Conn, hello HelloMessage) {
+	return func(conn *websocket.Conn, hello HelloMessage) {
+		if err := writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "protocol 2 required", ServerVersion: serverVersion}); err != nil {
+			_ = conn.Close(websocket.StatusProtocolError, "write failed")
+		}
+	}
+}
+
+func newUpgradeTestRuntime(t *testing.T, dataDir string, entries []BaseURLEntry, upgrader *Upgrader) *Runtime {
+	t.Helper()
+	prober, err := NewProber(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime, err := New(Options{
+		Store:        StoreAt(dataDir),
+		DataDir:      dataDir,
+		Prober:       prober,
+		Manager:      &fakeManager{},
+		Collector:    fakeCollector{},
+		EnsureHelper: func(context.Context) error { return nil },
+		Upgrader:     upgrader,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agentRuntime
+}
+
+func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
+	version := "1.2.3"
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version))
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	binary := []byte("new-agent-binary")
+	archive := buildReleaseArchive(t, runtime.GOOS, binary)
+	release := newReleaseServer(t, map[string][]byte{
+		"/v" + version + "/" + asset:             archive,
+		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
+	})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var replaced []stagedReplace
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: target,
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := agentRuntime.Run(ctx)
+	if !errors.Is(err, errUpgradeStaged) {
+		t.Fatalf("Run = %v, want errUpgradeStaged", err)
+	}
+	if len(replaced) != 1 || replaced[0].targetPath != target {
+		t.Fatalf("scheduleReplace calls = %+v", replaced)
+	}
+	content, readErr := os.ReadFile(replaced[0].newPath)
+	if readErr != nil || !bytes.Equal(content, binary) {
+		t.Fatalf("staged binary = %q, %v", content, readErr)
+	}
+	config, loadErr := StoreAt(dataDir).Load()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if config.DeviceID != testConfig().DeviceID || config.Secret != testConfig().Secret {
+		t.Fatalf("enroll credentials must survive self-upgrade, got device_id=%s", config.DeviceID)
+	}
+}
+
+func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
+	version := "9.9.9"
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch after retry exhaustion", err)
+	}
+	if got := release.requestCount("/v" + version + "/"); got != 3 {
+		t.Fatalf("upgrade attempts = %d, want 3", got)
+	}
+}
+
+func TestRuntimeSelfUpgradeCancelDuringDownloadStopsCleanly(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("1.2.3"))
+	downloadStarted := make(chan struct{})
+	var startOnce sync.Once
+	release := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(downloadStarted) })
+		<-r.Context().Done()
+	}))
+	t.Cleanup(release.Close)
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 1, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+	select {
+	case <-downloadStarted:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the upgrade download to start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run = %v, want clean stop on cancel during the self-upgrade download", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for Run to stop after cancel")
+	}
+}
+
+func TestRuntimeEmbeddedDistributionSkipsSelfUpgrade(t *testing.T) {
+	previous := cliServicePrefix
+	cliServicePrefix = []string{"agent"}
+	t.Cleanup(func() { cliServicePrefix = previous })
+
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("9.9.9"))
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, nil)
+	if agentRuntime.upgrader != nil {
+		t.Fatal("embedded distribution must not get a default upgrader")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+}
+
+func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl(version.Version))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+	if got := release.requestCount("/"); got != 0 {
+		t.Fatalf("same-version target must skip the download, got %d requests", got)
 	}
 }
 

@@ -116,7 +116,7 @@ func TestChannelHandshakeConfigAndRevoke(t *testing.T) {
 
 func TestChannelVersionMismatchIsFatal(t *testing.T) {
 	fake := newWSFake(t, func(conn *websocket.Conn, hello HelloMessage) error {
-		return writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "protocol 2 required"})
+		return writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "protocol 2 required", ServerVersion: "9.9.9"})
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -125,6 +125,9 @@ func TestChannelVersionMismatchIsFatal(t *testing.T) {
 	if !errors.As(err, &serverError) || serverError.Code != "version_mismatch" {
 		t.Fatalf("DialChannel = %v, want version_mismatch ServerError", err)
 	}
+	if serverError.ServerVersion != "9.9.9" {
+		t.Fatalf("ServerVersion = %q, want the server-reported version for self-upgrade", serverError.ServerVersion)
+	}
 }
 
 func TestChannelMidRunVersionMismatch(t *testing.T) {
@@ -132,7 +135,7 @@ func TestChannelMidRunVersionMismatch(t *testing.T) {
 		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok"}); err != nil {
 			return err
 		}
-		return writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "please upgrade"})
+		return writeServerMessage(conn, serverMessage{Type: "error", Code: "version_mismatch", Message: "please upgrade", ServerVersion: "9.9.9"})
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -143,6 +146,10 @@ func TestChannelMidRunVersionMismatch(t *testing.T) {
 	err = channel.Run(ctx, channelHandlers{})
 	if !errors.Is(err, ErrProtocolMismatch) {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+	var mismatch *ProtocolMismatchError
+	if !errors.As(err, &mismatch) || mismatch.ServerVersion != "9.9.9" {
+		t.Fatalf("Run = %v, want ProtocolMismatchError carrying server version 9.9.9", err)
 	}
 }
 

@@ -15,11 +15,22 @@ const harness = vi.hoisted(() => ({
     scrollToBottom: ReturnType<typeof vi.fn>;
     element: HTMLElement | null;
     resize: ReturnType<typeof vi.fn>;
+    write: (data: unknown, callback?: () => void) => void;
+    writeln: (line?: unknown) => void;
     fireScroll: () => void;
   }>,
   observers: [] as Array<() => void>,
   frames: new Map<number, () => void>(),
-  channels: [] as Array<{ onBytes: (bytes: Uint8Array) => void }>,
+  channels: [] as Array<{
+    onBytes: (bytes: Uint8Array) => void;
+    onControl?: (control: {
+      type: string;
+      epoch: string;
+      streamSeq: number;
+      controlBytes?: number;
+      expired?: boolean;
+    }) => void;
+  }>,
   reopen: null as (() => void) | null,
   geometry: { widthPx: 360, heightPx: 400 },
   attach: vi.fn(),
@@ -150,8 +161,17 @@ vi.mock("../../ipc/commands", () => ({
 }));
 vi.mock("../../ipc/events", () => ({
   channelIdOf: () => "channel-1",
-  createBinaryChannel: (onBytes: (bytes: Uint8Array) => void) => {
-    const channel = { onBytes };
+  createBinaryChannel: (
+    onBytes: (bytes: Uint8Array) => void,
+    onControl?: (control: {
+      type: string;
+      epoch: string;
+      streamSeq: number;
+      controlBytes?: number;
+      expired?: boolean;
+    }) => void,
+  ) => {
+    const channel = { onBytes, onControl };
     harness.channels.push(channel);
     return channel;
   },
@@ -506,5 +526,98 @@ describe("XtermView terminal interaction", () => {
 
     expect(harness.resize).not.toHaveBeenCalled();
     expect(harness.flush).not.toHaveBeenCalled();
+  });
+});
+
+describe("XtermView stream anchors", () => {
+  const anchor = (overrides: Record<string, unknown> = {}) => ({
+    type: "nexterm.stream-anchor",
+    epoch: "e1",
+    streamSeq: 100,
+    ...overrides,
+  });
+  const attachedInfo = {
+    tabId: "tab-new",
+    cols: 90,
+    rows: 30,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+  };
+
+  it("resumes from the consumed sequence when the channel reopens", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    act(() => {
+      channel.onControl?.(anchor());
+      channel.onBytes(new Uint8Array(50));
+    });
+    harness.attachTab.mockClear().mockResolvedValue(attachedInfo);
+
+    harness.reopen?.();
+    await flushWork();
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, {
+      seq: 150,
+      epoch: "e1",
+    });
+  });
+
+  it("does not duplicate in-flight bytes rendered before the resumed stream arrives", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    const term = harness.terminals[0];
+    const written: number[] = [];
+    term.write = (data: unknown, callback?: () => void) => {
+      if (data instanceof Uint8Array) written.push(...data);
+      callback?.();
+    };
+    act(() => {
+      channel.onControl?.(anchor());
+      channel.onBytes(new Uint8Array([1, 2, 3]));
+    });
+    harness.attachTab.mockClear().mockResolvedValue(attachedInfo);
+    harness.reopen?.();
+    await flushWork();
+
+    act(() => {
+      channel.onBytes(new Uint8Array([4, 5]));
+      channel.onControl?.(anchor({ streamSeq: 103 }));
+      channel.onBytes(new Uint8Array([4, 5, 6, 7]));
+    });
+
+    expect(written).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("announces an expired anchor only after the clear-screen control bytes", async () => {
+    await show(props());
+    const channel = harness.channels[0];
+    const term = harness.terminals[0];
+    const notices: string[] = [];
+    term.writeln = (line) => {
+      notices.push(String(line));
+    };
+
+    act(() => {
+      channel.onControl?.(anchor({ streamSeq: 0, controlBytes: 11, expired: true }));
+    });
+    expect(notices).toEqual([]);
+
+    act(() => {
+      channel.onBytes(new Uint8Array(11));
+      channel.onBytes(new Uint8Array([65]));
+    });
+    expect(notices).toEqual(["\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m"]);
+  });
+
+  it("reopens without a resume anchor when the stream never carried one", async () => {
+    await show(props());
+    harness.attachTab.mockClear().mockResolvedValue(attachedInfo);
+
+    harness.reopen?.();
+    await flushWork();
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1);
   });
 });

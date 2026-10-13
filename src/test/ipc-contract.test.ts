@@ -145,7 +145,7 @@ describe("IPC facade 静态契约", () => {
     expect(calls.filter((call) => call.nested)).toEqual([]);
   });
 
-  it("事件钉值: EVENTS 十一个通道与 layout://changed 保持不变", () => {
+  it("事件钉值: EVENTS 十二个通道与 layout://changed 保持不变", () => {
     const block = /export const EVENTS = \{([^}]*)\}/.exec(eventsSource)?.[1] ?? "";
     const entries = [...block.matchAll(/^  (\w+): "([^"]+)",$/gm)].map((match) => [
       match[1],
@@ -153,6 +153,7 @@ describe("IPC facade 静态契约", () => {
     ]);
     expect(entries).toEqual([
       ["sessionStatus", "session://status"],
+      ["connectProgress", "session://connect-progress"],
       ["terminalExit", "terminal://exit"],
       ["terminalThrottled", "terminal://throttled"],
       ["terminalControl", "terminal://control"],
@@ -160,6 +161,7 @@ describe("IPC facade 静态契约", () => {
       ["updateProgress", "update://progress"],
       ["dockerStats", "docker://stats"],
       ["aiEvent", "ai://event"],
+      ["aiNotification", "ai://notification"],
       ["appError", "app://error"],
       ["deepLink", "app://deep-link"],
       ["deviceStatus", "device://status"],

@@ -21,6 +21,7 @@ export interface IpcChannel<T = unknown> {
 
 export const EVENTS = {
   sessionStatus: "session://status",
+  connectProgress: "session://connect-progress",
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
@@ -28,6 +29,7 @@ export const EVENTS = {
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
+  aiNotification: "ai://notification",
   appError: "app://error",
   deepLink: "app://deep-link",
   deviceStatus: "device://status",
@@ -69,6 +71,16 @@ export interface FsProgressEvent {
   error?: string;
 }
 
+// 与 Go ipc.ConnectProgressEvent 对齐; hop 0 表示目标主机, 1..hops 表示第几跳板。
+export interface ConnectProgressEvent {
+  assetId: string;
+  stage: string;
+  hop: number;
+  hops: number;
+  host: string;
+  port: number;
+}
+
 // 与 Go update.Progress 对齐; phase 区分 download 与 install 阶段。
 export interface UpdateProgressEvent {
   taskId: string;
@@ -92,6 +104,12 @@ export interface AppErrorEvent {
   message: string;
 }
 
+// AI notify 工具推送的应用内通知; ownerId 为会话属主, 服务端按身份过滤, 桌面端直接本地投递。
+export interface AINotificationEvent {
+  ownerId: string;
+  text: string;
+}
+
 // 设备控制通道上下线推送; 只含设备 ID 与在线状态, 可见范围仍由
 // /fleet/devices 的 owner/超管过滤决定, 视图对不在清单内的设备 ID 直接忽略。
 export interface DeviceStatusEvent {
@@ -99,11 +117,38 @@ export interface DeviceStatusEvent {
   online: boolean;
 }
 
+export interface StreamAnchorControl {
+  type: string;
+  epoch: string;
+  streamSeq: number;
+  controlBytes?: number;
+  expired?: boolean;
+}
+
+export const STREAM_ANCHOR_TYPE = "nexterm.stream-anchor";
+
+function isStreamAnchor(raw: unknown): raw is StreamAnchorControl {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    (raw as { type?: unknown }).type === STREAM_ANCHOR_TYPE &&
+    typeof (raw as { epoch?: unknown }).epoch === "string" &&
+    typeof (raw as { streamSeq?: unknown }).streamSeq === "number"
+  );
+}
+
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
+  onControl?: (control: StreamAnchorControl) => void,
 ): IpcChannel<unknown> {
   const channel = WEB ? newBinaryChannel() : newWailsChannel();
-  channel.onmessage = (raw) => decodeBytes(raw, onBytes);
+  channel.onmessage = (raw) => {
+    if (isStreamAnchor(raw)) {
+      onControl?.(raw);
+      return;
+    }
+    decodeBytes(raw, onBytes);
+  };
   return channel;
 }
 

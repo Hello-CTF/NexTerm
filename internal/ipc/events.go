@@ -9,6 +9,7 @@ type Topic string
 
 const (
 	TopicSessionStatus     Topic = "session://status"
+	TopicConnectProgress   Topic = "session://connect-progress"
 	TopicTerminalExit      Topic = "terminal://exit"
 	TopicTerminalThrottled Topic = "terminal://throttled"
 	TopicTerminalControl   Topic = "terminal://control"
@@ -20,6 +21,7 @@ const (
 	TopicLayoutChanged     Topic = "layout://changed"
 	TopicDeviceStatus      Topic = "device://status"
 	TopicUpdateProgress    Topic = "update://progress"
+	TopicAINotification    Topic = "ai://notification"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")
@@ -28,9 +30,25 @@ type LayoutChangedEvent struct {
 	Revision int64 `json:"revision"`
 }
 
+// AINotificationEvent 是 AI notify 工具发出的应用内通知; OwnerID 为会话属主,
+// 服务端按订阅者身份过滤(空属主不下发), 桌面端无身份直接本地投递。
+type AINotificationEvent struct {
+	OwnerID string `json:"ownerId"`
+	Text    string `json:"text"`
+}
+
 type AppErrorEvent struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type ConnectProgressEvent struct {
+	AssetID string `json:"assetId"`
+	Stage   string `json:"stage"`
+	Hop     int    `json:"hop"`
+	Hops    int    `json:"hops"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
 }
 
 // DeviceStatusEvent 是设备控制通道上下线通知; 只带设备 ID 与在线状态,

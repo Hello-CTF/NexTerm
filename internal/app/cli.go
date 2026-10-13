@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -34,6 +35,7 @@ type Invocation struct {
 	DBDSN          string
 	DBPasswordFile string
 	DBMaxOpenConns int
+	PprofAddr      string
 	SyncOnly       bool
 	RequireVault   bool
 	Help           bool
@@ -53,6 +55,7 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		DB:             valueOr(getenv("NEXTERM_DB"), "sqlite"),
 		DBDSN:          getenv("NEXTERM_DB_DSN"),
 		DBPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
+		PprofAddr:      getenv(pprof.EnvAddr),
 	}
 	dbMaxOpenConnsEnv := getenv("NEXTERM_DB_MAX_OPEN_CONNS")
 	commandSeen := false
@@ -126,6 +129,8 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 					return Invocation{}, fmt.Errorf("invalid --db-max-open-conns value %q (want a positive integer)", value)
 				}
 				invocation.DBMaxOpenConns = parsed
+			case "--pprof-addr":
+				invocation.PprofAddr = value
 			}
 			continue
 		}
@@ -149,6 +154,9 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 	}
 	if !invocation.Help && !invocation.Version {
 		if err := ValidateListenAddress(invocation.Listen); err != nil {
+			return Invocation{}, err
+		}
+		if _, err := pprof.NormalizeAddr(invocation.PprofAddr); err != nil {
 			return Invocation{}, err
 		}
 		switch invocation.Auth {
@@ -220,6 +228,9 @@ Flags:
   --db-max-open-conns N  Postgres pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
+  --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);
+                      disabled by default, loopback only (a bare ":PORT" binds 127.0.0.1)
+                      unless an explicit wildcard like 0.0.0.0 is given
   --version           Print the version
   -h, --help          Print this help
 `, program, defaultCommand)
@@ -228,7 +239,7 @@ Flags:
 func isStringFlag(name string) bool {
 	switch name {
 	case "--listen", "--data-dir", "--web-root", "--master-key-file", "--auth",
-		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns":
+		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns", "--pprof-addr":
 		return true
 	default:
 		return false

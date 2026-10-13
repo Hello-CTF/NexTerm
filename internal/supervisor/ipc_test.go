@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -176,6 +177,50 @@ func TestIPCReattachReplayWithoutDuplication(t *testing.T) {
 	}
 	if string(recording) != output {
 		t.Fatalf("wire replay diverges from recording:\nreplay: %q\nrecord: %q", output, recording)
+	}
+}
+
+// TestIPCAttachFromStreamsRecordingOffset proves the wire-level resume: the
+// daemon seeks into the recording and the stream delivers only bytes from the
+// requested offset onward.
+func TestIPCAttachFromStreamsRecordingOffset(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	ctx := context.Background()
+
+	id := ids.New()
+	if _, err := client.Create(ctx, CreateOptions{
+		ID:      id,
+		Command: []string{"/bin/sh", "-c", `printf 'one two three\n'`},
+		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := client.Attach(ctx, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := readToEOF(t, probe)
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	offset := uint64(strings.Index(string(full), "two"))
+	if offset == 0 {
+		t.Fatalf("recording %q does not contain the marker", full)
+	}
+
+	stream, err := client.AttachFrom(ctx, id, nil, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	if got, want := readToEOF(t, stream), []byte("two three\r\n"); !bytes.Equal(got, want) {
+		t.Fatalf("resumed stream = %q, want %q", got, want)
+	}
+
+	if _, err := client.AttachFrom(ctx, id, nil, uint64(len(full))+1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("attach beyond recording = %v, want ErrInvalidInput", err)
 	}
 }
 

@@ -202,6 +202,7 @@ type Dependencies struct {
 	DockerActionAudited bool
 	Audit               func(context.Context, AuditEntry) error
 	Reminders           ReminderScheduler
+	Notify              func(context.Context, string) error
 	Grants              *guard.Grants
 
 	Outcome      *outcome.Ledger

@@ -9,7 +9,7 @@ import (
 )
 
 // ServiceManager installs and inspects the autostart service for the agent:
-// a per-user systemd unit, a launchd agent, or a Windows system service.
+// a per-user systemd unit, a launchd agent, or a Windows scheduled task.
 // Implementations must report honestly when the service manager is
 // unavailable (for example no user systemd bus): Installed reflects the unit
 // file on disk while Enabled/Active stay false and LastError explains why.

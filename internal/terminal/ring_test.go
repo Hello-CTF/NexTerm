@@ -54,21 +54,25 @@ func TestRingReplayFrom(t *testing.T) {
 	r := NewRing(8)
 	r.Push([]byte("0123456789"))
 
-	data, start := r.ReplayFrom(4, 0)
-	if start != 4 || !bytes.Equal(data, []byte("456789")) {
-		t.Fatalf("replay(4) start=%d data=%q", start, data)
+	data, start, clamped := r.ReplayFrom(4, 0)
+	if start != 4 || clamped || !bytes.Equal(data, []byte("456789")) {
+		t.Fatalf("replay(4) start=%d clamped=%v data=%q", start, clamped, data)
 	}
-	data, start = r.ReplayFrom(0, 0)
-	if start != 2 || !bytes.Equal(data, []byte("23456789")) {
-		t.Fatalf("replay(0) start=%d data=%q", start, data)
+	data, start, clamped = r.ReplayFrom(0, 0)
+	if start != 2 || !clamped || !bytes.Equal(data, []byte("23456789")) {
+		t.Fatalf("replay(0) start=%d clamped=%v data=%q", start, clamped, data)
 	}
-	data, start = r.ReplayFrom(6, 2)
-	if start != 6 || !bytes.Equal(data, []byte("67")) {
-		t.Fatalf("replay(6,2) start=%d data=%q", start, data)
+	data, start, clamped = r.ReplayFrom(2, 0)
+	if start != 2 || clamped || !bytes.Equal(data, []byte("23456789")) {
+		t.Fatalf("replay(2) start=%d clamped=%v data=%q", start, clamped, data)
 	}
-	data, start = r.ReplayFrom(99, 0)
-	if start != 10 || len(data) != 0 {
-		t.Fatalf("replay(99) start=%d data=%q", start, data)
+	data, start, clamped = r.ReplayFrom(6, 2)
+	if start != 6 || clamped || !bytes.Equal(data, []byte("67")) {
+		t.Fatalf("replay(6,2) start=%d clamped=%v data=%q", start, clamped, data)
+	}
+	data, start, clamped = r.ReplayFrom(99, 0)
+	if start != 10 || clamped || len(data) != 0 {
+		t.Fatalf("replay(99) start=%d clamped=%v data=%q", start, clamped, data)
 	}
 }
 
@@ -124,7 +128,7 @@ func TestRingAgainstReferenceModel(t *testing.T) {
 					}
 				}
 				seq := total/2 + uint64(rng.Intn(cap+2))
-				data, start := r.ReplayFrom(seq, 0)
+				data, start, clamped := r.ReplayFrom(seq, 0)
 				wantStart := seq
 				base := total - uint64(len(model))
 				if wantStart < base {
@@ -132,6 +136,9 @@ func TestRingAgainstReferenceModel(t *testing.T) {
 				}
 				if wantStart > total {
 					wantStart = total
+				}
+				if wantClamped := seq < base; clamped != wantClamped {
+					t.Fatalf("step %d: replay(%d) clamped=%v want %v", step, seq, clamped, wantClamped)
 				}
 				if start != wantStart || !bytes.Equal(data, model[start-base:]) {
 					t.Fatalf("step %d: replay(%d) start=%d want %d", step, seq, start, wantStart)

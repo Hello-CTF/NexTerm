@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -318,7 +319,7 @@ func TestRegistryRecoveryAfterGracefulClose(t *testing.T) {
 func TestVersionsMonotonicFloor(t *testing.T) {
 	supervisor := testSupervisor(t)
 	session := testScriptSession(t, supervisor, `sleep 5`)
-	attachment, err := session.attach()
+	attachment, err := session.attach(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,5 +414,42 @@ func TestWaitContextCancel(t *testing.T) {
 	cancel()
 	if err := session.Wait(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Wait with canceled context = %v", err)
+	}
+}
+
+// TestAttachFromOffset proves a resumed attachment seeks into the recording:
+// the stream starts at the requested absolute offset, NextSeq tracks it, and
+// an offset beyond the recording size is rejected instead of silently
+// clamping.
+func TestAttachFromOffset(t *testing.T) {
+	supervisor := testSupervisor(t)
+	session := testScriptSession(t, supervisor, `printf 'one two three\n'`)
+	probe, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := readToEOF(t, probe)
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	offset := uint64(strings.Index(string(full), "two"))
+	if offset == 0 {
+		t.Fatalf("recording %q does not contain the marker", full)
+	}
+
+	resumed, err := supervisor.AttachFrom(context.Background(), session.ID(), offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resumed.Close() }()
+	if resumed.NextSeq() != offset {
+		t.Fatalf("resumed NextSeq = %d, want %d", resumed.NextSeq(), offset)
+	}
+	if got, want := readToEOF(t, resumed), []byte("two three\r\n"); !bytes.Equal(got, want) {
+		t.Fatalf("resumed stream = %q, want %q", got, want)
+	}
+
+	if _, err := supervisor.AttachFrom(context.Background(), session.ID(), uint64(len(full))+1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("attach beyond recording = %v, want ErrInvalidInput", err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
@@ -169,11 +171,16 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("run", stderr)
 	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
+	pprofAddr := set.String("pprof-addr", "", "pprof 监听地址 (默认 NEXTERM_PPROF_ADDR, 仅回环, 显式 0.0.0.0 除外)")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
 	dir, err := resolveDataDir(*dataDir, getenv)
 	if err != nil {
+		fmt.Fprintln(stderr, "agent run:", err)
+		return ExitUsage
+	}
+	if _, err := pprof.NormalizeAddr(pprof.ResolveAddr(*pprofAddr, getenv)); err != nil {
 		fmt.Fprintln(stderr, "agent run:", err)
 		return ExitUsage
 	}
@@ -191,6 +198,16 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitError
 	}
 	defer unlock()
+	pprofServer, err := pprof.Start(slog.New(slog.NewTextHandler(stderr, nil)), pprof.ResolveAddr(*pprofAddr, getenv))
+	if err != nil {
+		fmt.Fprintln(stderr, "agent run:", err)
+		return ExitError
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = pprofServer.Close(shutdownCtx)
+	}()
 	store := StoreAt(dir)
 	config, err := store.Load()
 	if errors.Is(err, ErrNotEnrolled) {
@@ -218,11 +235,14 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	switch {
 	case err == nil:
 		return ExitOK
+	case errors.Is(err, errUpgradeStaged):
+		fmt.Fprintln(stdout, "agent: 协议版本不兼容, 已从官方 release 下载并校验新版本, 延迟替换脚本将完成升级并拉起服务")
+		return ExitOK
 	case errors.Is(err, ErrRevoked):
 		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
-		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 请升级本程序")
+		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 自升级不可用或已失败, 请用 install-device.sh 重装")
 		return ExitProtocol
 	default:
 		fmt.Fprintln(stderr, "agent run:", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
 )
 
@@ -93,6 +94,9 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 		})
 		if response.Type != "error" || response.Code != "version_mismatch" {
 			t.Fatalf("hello response = %+v", response)
+		}
+		if response.ServerVersion != version.Version {
+			t.Fatalf("version_mismatch frame must carry the server version for agent self-upgrade, got %q", response.ServerVersion)
 		}
 	})
 	t.Run("密钥错误得到 forbidden", func(t *testing.T) {

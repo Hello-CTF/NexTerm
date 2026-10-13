@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -22,6 +23,22 @@ var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 type subscriber struct {
 	client   string
 	producer *hub.Producer
+	co       *outCoalescer
+}
+
+const streamAnchorType = "nexterm.stream-anchor"
+
+// streamAnchor 是 attach 输出流的首帧 (hub JSON 帧), 告知客户端本段流的序号
+// 锚点: streamSeq 是首个非控制字节对应的 ring 绝对序号, controlBytes 是流首部
+// 不计入序号的控制字节数 (清屏转义); expired 表示客户端锚点未被采纳, 本次
+// 已回退为全量清屏重放。客户端按 streamSeq + max(0, 已收字节 - controlBytes)
+// 得出已消费序号, 重连时经 AttachOptions.FromSeq/FromEpoch 带回续传。
+type streamAnchor struct {
+	Type         string `json:"type"`
+	Epoch        string `json:"epoch"`
+	StreamSeq    uint64 `json:"streamSeq"`
+	ControlBytes int    `json:"controlBytes,omitempty"`
+	Expired      bool   `json:"expired,omitempty"`
 }
 
 type Tab struct {
@@ -61,6 +78,7 @@ type Tab struct {
 	commandState    shellintegr.CommandState
 	pendingCmd      *pendingCommand
 	durableFed      int64
+	streamEpoch     string
 
 	catchUpRemaining int64
 
@@ -263,6 +281,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
+		streamEpoch: ids.New(),
 	}
 	if options.Durable != nil {
 		if m.offsets != nil {
@@ -387,6 +406,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, err
 	}
 	if replaced {
+		old.co.teardown(old.producer)
 		_ = old.producer.Close()
 	}
 	attached := false
@@ -399,14 +419,17 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
 		return TabInfo{}, err
 	}
-	if clear {
-		if err := producer.SendBinary(attachCtx, replayClear); err != nil {
+	anchor, control, replay := m.planAttachReplay(tab, options, clear)
+	if anchor != nil {
+		frame, _ := json.Marshal(anchor)
+		if err := producer.SendJSON(attachCtx, frame); err != nil {
 			return TabInfo{}, err
 		}
 	}
-	var replay []byte
-	if options.ReplayBytes > 0 {
-		replay = tab.terminal.Dump(options.ReplayBytes)
+	if len(control) > 0 {
+		if err := producer.SendBinary(attachCtx, control); err != nil {
+			return TabInfo{}, err
+		}
 	}
 	for len(replay) > 0 {
 		size := min(len(replay), 64<<10)
@@ -428,7 +451,11 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, ErrTabClosed
 	}
 	client := clientID(options.ClientID)
-	tab.subscribers[options.ChannelID] = subscriber{client: client, producer: producer}
+	tab.subscribers[options.ChannelID] = subscriber{
+		client:   client,
+		producer: producer,
+		co:       newOutCoalescer(func() { m.flushSubscriberOutput(tab.ID, options.ChannelID) }),
+	}
 	if tab.controller == "" {
 		if tab.controlled && tab.grid != nil {
 			if err := tab.grid.Claim(); err != nil {
@@ -447,6 +474,50 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	attached = true
 	m.emit(attachCtx, TopicTerminalControl, event)
 	return info, nil
+}
+
+// planAttachReplay 计算一次 attach 要发送的输出流: 客户端锚点 (FromSeq +
+// FromEpoch) 可采纳时从该偏移续传, 不发清屏控制字节; 锚点缺失、纪元不符、
+// 已滚出 ring 或缺口超过 ReplayBytes 上限时回退既有的清屏+全量重放并把锚点
+// 标记为 expired。终端不带序号追踪时锚点为 nil, 不发锚点帧。
+func (m *Manager) planAttachReplay(tab *Tab, options AttachOptions, clear bool) (*streamAnchor, []byte, []byte) {
+	core, ok := tab.terminal.(interface {
+		ReplayFrom(uint64, int) ([]byte, uint64, bool)
+		LatestSeq() uint64
+	})
+	if !ok {
+		var replay []byte
+		if options.ReplayBytes > 0 {
+			replay = tab.terminal.Dump(options.ReplayBytes)
+		}
+		if clear {
+			return nil, replayClear, replay
+		}
+		return nil, nil, replay
+	}
+	anchor := &streamAnchor{Type: streamAnchorType, Epoch: tab.streamEpoch}
+	if options.FromSeq > 0 {
+		anchor.Expired = true
+		if options.FromEpoch == anchor.Epoch {
+			data, start, clamped := core.ReplayFrom(options.FromSeq, 0)
+			gap := core.LatestSeq() - start
+			if !clamped && (options.ReplayBytes == 0 || gap <= uint64(options.ReplayBytes)) {
+				anchor.Expired = false
+				anchor.StreamSeq = start
+				return anchor, nil, data
+			}
+		}
+	}
+	var replay []byte
+	if options.ReplayBytes > 0 {
+		replay = tab.terminal.Dump(options.ReplayBytes)
+	}
+	anchor.StreamSeq = core.LatestSeq() - uint64(len(replay))
+	if clear {
+		anchor.ControlBytes = len(replayClear)
+		return anchor, replayClear, replay
+	}
+	return anchor, nil, replay
 }
 
 func (m *Manager) releaseChannelReservation(tabID, channelID string) {
@@ -501,12 +572,20 @@ func (t *Tab) ScreenSeq() uint64 {
 
 func (m *Manager) DetachChannel(channelID string) error {
 	m.mu.Lock()
+	_, cleanup := m.detachChannelLocked(channelID)
+	m.mu.Unlock()
+	cleanup()
+	return nil
+}
+
+// detachChannelLocked 在 m.mu 下摘除通道注册并返回解锁后执行的清理动作
+// (producer 关闭、事件发射、ephemeral tab 回收), DetachChannel 与
+// kickSlowConsumer 共用, 保证复查与摘除原子。
+func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	tab := m.tabs[m.channelTabs[channelID]]
 	if tab == nil {
 		delete(m.channelTabs, channelID)
-		m.mu.Unlock()
-		_ = m.bus.CloseChannel(channelID)
-		return nil
+		return "", func() { _ = m.bus.CloseChannel(channelID) }
 	}
 	tab.mu.Lock()
 	subscriber, attached := tab.subscribers[channelID]
@@ -517,21 +596,23 @@ func (m *Manager) DetachChannel(channelID string) error {
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
+	tabID := tab.ID
 	tab.mu.Unlock()
-	m.mu.Unlock()
-	if attached {
-		_ = subscriber.producer.Close()
-	} else {
-		_ = m.bus.CloseChannel(channelID)
+	return tabID, func() {
+		if attached {
+			subscriber.co.teardown(subscriber.producer)
+			_ = subscriber.producer.Close()
+		} else {
+			_ = m.bus.CloseChannel(channelID)
+		}
+		m.emit(context.Background(), TopicTerminalControl, event)
+		if throttleRecovered {
+			m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
+		}
+		if attached && empty && ephemeral {
+			_ = m.CloseTab(tabID)
+		}
 	}
-	m.emit(context.Background(), TopicTerminalControl, event)
-	if throttleRecovered {
-		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
-	}
-	if attached && empty && ephemeral {
-		return m.CloseTab(tab.ID)
-	}
-	return nil
 }
 
 func (m *Manager) DetachClient(tabID, client string) error {
@@ -582,6 +663,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	for _, subscriber := range detached {
+		subscriber.co.teardown(subscriber.producer)
 		_ = subscriber.producer.Close()
 	}
 	if len(detached) > 0 {
@@ -902,6 +984,7 @@ func (m *Manager) closeTabResources(tab *Tab) {
 		}
 		m.mu.Unlock()
 		for _, subscriber := range subscribers {
+			subscriber.co.teardown(subscriber.producer)
 			_ = subscriber.producer.Close()
 		}
 		if channel != nil {
@@ -954,7 +1037,12 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	}
 	tab.mu.Unlock()
 	for _, subscriber := range subscribers {
-		err := subscriber.producer.SendBinary(feedCtx, data)
+		batch, sendNow := subscriber.co.add(data)
+		if !sendNow {
+			continue
+		}
+		err := subscriber.producer.SendBinary(feedCtx, batch)
+		subscriber.co.sent()
 		if errors.Is(err, hub.ErrClosed) || errors.Is(err, hub.ErrReplaced) {
 			continue
 		}
@@ -963,6 +1051,31 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		}
 	}
 	return nil
+}
+
+// flushSubscriberOutput 是合并窗口到点的 flush: 与 feed 一样在 feedGate 下
+// 取缓冲批次并发送, 保持与实时输出/重放帧的相对顺序。
+func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return
+	}
+	if err := tab.lockFeed(context.Background()); err != nil {
+		return
+	}
+	defer tab.unlockFeed()
+	tab.mu.Lock()
+	subscriber, ok := tab.subscribers[channelID]
+	tab.mu.Unlock()
+	if !ok {
+		return
+	}
+	batch := subscriber.co.take()
+	if len(batch) == 0 {
+		return
+	}
+	_ = subscriber.producer.SendBinary(tab.ctx, batch)
+	subscriber.co.sent()
 }
 
 func (m *Manager) startPump(tab *Tab, channel *channelHandle, generation uint64) bool {

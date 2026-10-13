@@ -30,6 +30,7 @@ func TestNamedEventEnvelope(t *testing.T) {
 func TestEventTopicsRemainStable(t *testing.T) {
 	topics := []Topic{
 		TopicSessionStatus,
+		TopicConnectProgress,
 		TopicTerminalExit,
 		TopicTerminalThrottled,
 		TopicTerminalControl,
@@ -41,9 +42,11 @@ func TestEventTopicsRemainStable(t *testing.T) {
 		TopicLayoutChanged,
 		TopicDeviceStatus,
 		TopicUpdateProgress,
+		TopicAINotification,
 	}
 	want := []string{
 		"session://status",
+		"session://connect-progress",
 		"terminal://exit",
 		"terminal://throttled",
 		"terminal://control",
@@ -55,6 +58,7 @@ func TestEventTopicsRemainStable(t *testing.T) {
 		"layout://changed",
 		"device://status",
 		"update://progress",
+		"ai://notification",
 	}
 	for index := range want {
 		if string(topics[index]) != want[index] {

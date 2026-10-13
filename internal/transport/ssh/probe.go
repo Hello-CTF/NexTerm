@@ -131,7 +131,7 @@ func dialProbeChain(ctx context.Context, cfg Config) (net.Conn, bool, error) {
 		}
 		return conn, false, nil
 	}
-	jumpClient, err := connect(ctx, *cfg.Jump, 0)
+	jumpClient, err := connect(ctx, *cfg.Jump, 0, 0, nil)
 	if err != nil {
 		return nil, false, err
 	}
