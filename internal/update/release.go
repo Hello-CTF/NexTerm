@@ -90,8 +90,8 @@ func (m *Manager) fetchChecksums(ctx context.Context, release Release) (map[stri
 	return sums, nil
 }
 
-// selectRelease 在非 draft release 中选出高于当前版本的最新一个; 是否接受
-// prerelease 由当前版本通道决定 (见 acceptsPrerelease)。
+// selectRelease picks the latest non-draft release above the current version; whether
+// prereleases are accepted is decided by the current version channel (see acceptsPrerelease).
 func selectRelease(releases []Release, current string) (Release, bool) {
 	acceptPre := acceptsPrerelease(current)
 	var best Release

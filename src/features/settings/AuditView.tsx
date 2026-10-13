@@ -29,7 +29,7 @@ const FILTERS: { value: SourceFilter; label: string }[] = [
   { value: "fleet", label: "设备" },
 ];
 
-// fleet 设备审计 kind 的中文标签 (audit_log.asset_id 落的是设备 ID)。
+// Chinese labels for fleet device audit kinds (audit_log.asset_id holds the device ID).
 const KIND_LABELS: Record<string, string> = {
   device_enroll: "设备接入",
   device_online: "设备上线",
@@ -120,8 +120,8 @@ export function AuditView() {
   const loadSeq = useRef(0);
   const fetchedRef = useRef(0);
 
-  // 设备清单只用于"按设备过滤"下拉 (WEB 账号模式); 桌面端/未登录
-  // 一律不请求, 过滤入口整体隐藏。401 会触发全局会话过期事件, 未登录绝不能发。
+  // The device list only feeds the "filter by device" dropdown (WEB account mode); desktop/logged-out
+  // never requests it, and the filter entry is hidden entirely. A 401 would trigger the global session-expired event, so it must never fire when logged out.
   useEffect(() => {
     if (!WEB || !user) return;
     let cancelled = false;
@@ -138,8 +138,8 @@ export function AuditView() {
     };
   }, [user]);
 
-  // 选中设备时按 assetId 查该设备的完整时间线 (来源筛选让位);
-  // 未选中时维持按来源筛选。
+  // With a device selected, query that device's full timeline by assetId (the source filter yields);
+  // with none selected, keep filtering by source.
   const queryArgs = useCallback(
     (src: SourceFilter, device: string): Record<string, unknown> =>
       device ? { assetId: device } : { source: src || undefined },

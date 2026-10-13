@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面端账号同步控制台: 逐条对比数据来自 sync_compare IPC(Go 侧判定),
-// 挂载后自动加载一次, 「刷新对比」重新拉取并反映最新行, 失败如实展示且可重试,
-// 收集告警与云端对象数随结果呈现。
+// Desktop account sync console: per-row compare data comes from the sync_compare IPC (decided Go-side),
+// loads once on mount, "Refresh compare" refetches and reflects the latest rows, failures surface as-is and can be retried,
+// collect warnings and cloud object counts render with the result.
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

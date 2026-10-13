@@ -28,11 +28,11 @@ type subscriber struct {
 
 const streamAnchorType = "nexterm.stream-anchor"
 
-// streamAnchor 是 attach 输出流的首帧 (hub JSON 帧), 告知客户端本段流的序号
-// 锚点: streamSeq 是首个非控制字节对应的 ring 绝对序号, controlBytes 是流首部
-// 不计入序号的控制字节数 (清屏转义); expired 表示客户端锚点未被采纳, 本次
-// 已回退为全量清屏重放。客户端按 streamSeq + max(0, 已收字节 - controlBytes)
-// 得出已消费序号, 重连时经 AttachOptions.FromSeq/FromEpoch 带回续传。
+// streamAnchor is the first frame of an attach output stream (hub JSON frame), telling the client this segment's sequence
+// anchor: streamSeq is the ring absolute sequence number of the first non-control byte, controlBytes is the number of
+// control bytes at the stream head that do not count toward the sequence (clear-screen escape); expired means the client
+// anchor was not adopted and this attach fell back to a full clear-screen replay. The client computes the consumed
+// sequence as streamSeq + max(0, bytes received - controlBytes) and brings it back via AttachOptions.FromSeq/FromEpoch on reconnect.
 type streamAnchor struct {
 	Type         string `json:"type"`
 	Epoch        string `json:"epoch"`
@@ -63,8 +63,8 @@ type Tab struct {
 	subscribers  map[string]subscriber
 	controller   string
 	controlled   bool
-	// guestLease/guestLeaseUntil 记录预览访客控制的租约持有者与到期时刻:
-	// controller 因断线被 orphan 清理后租约仍保留至到期 (断线宽限), 到期惰性清理。
+	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
+	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
 	guestLease      string
 	guestLeaseUntil time.Time
 	hidden          bool
@@ -487,10 +487,10 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	return info, nil
 }
 
-// planAttachReplay 计算一次 attach 要发送的输出流: 客户端锚点 (FromSeq +
-// FromEpoch) 可采纳时从该偏移续传, 不发清屏控制字节; 锚点缺失、纪元不符、
-// 已滚出 ring 或缺口超过 ReplayBytes 上限时回退既有的清屏+全量重放并把锚点
-// 标记为 expired。终端不带序号追踪时锚点为 nil, 不发锚点帧。
+// planAttachReplay computes the output stream to send for one attach: when the client anchor (FromSeq +
+// FromEpoch) is adoptable, it resumes from that offset without clear-screen control bytes; when the anchor is
+// missing, the epoch mismatches, it has rolled out of the ring, or the gap exceeds the ReplayBytes limit, it falls
+// back to the existing clear-screen + full replay and marks the anchor expired. Terminals without sequence tracking have a nil anchor and no anchor frame is sent.
 func (m *Manager) planAttachReplay(tab *Tab, options AttachOptions, clear bool) (*streamAnchor, []byte, []byte) {
 	core, ok := tab.terminal.(interface {
 		ReplayFrom(uint64, int) ([]byte, uint64, bool)
@@ -589,9 +589,9 @@ func (m *Manager) DetachChannel(channelID string) error {
 	return nil
 }
 
-// detachChannelLocked 在 m.mu 下摘除通道注册并返回解锁后执行的清理动作
-// (producer 关闭、事件发射、ephemeral tab 回收), DetachChannel 与
-// kickSlowConsumer 共用, 保证复查与摘除原子。
+// detachChannelLocked removes the channel registration under m.mu and returns the cleanup action to run after unlocking
+// (producer close, event emission, ephemeral tab reaping); shared by DetachChannel and kickSlowConsumer,
+// keeping the recheck and the removal atomic.
 func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	tab := m.tabs[m.channelTabs[channelID]]
 	if tab == nil {
@@ -1064,8 +1064,8 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	return nil
 }
 
-// flushSubscriberOutput 是合并窗口到点的 flush: 与 feed 一样在 feedGate 下
-// 取缓冲批次并发送, 保持与实时输出/重放帧的相对顺序。
+// flushSubscriberOutput is the flush when a coalescing window fires: like feed, it takes the buffered batch and sends under feedGate,
+// preserving relative order with live output and replay frames.
 func (m *Manager) flushSubscriberOutput(tabID, channelID string) {
 	tab, err := m.Tab(tabID)
 	if err != nil {

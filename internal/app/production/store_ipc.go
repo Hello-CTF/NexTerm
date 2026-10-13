@@ -312,8 +312,8 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 			})
 		},
 		func() error {
-			// 路径来自桌面端系统对话框; desktop 为 false(nexterm-server 装配)时一律拒绝,
-			// 任意路径读不能经服务端 /rpc 到达, web 端经浏览器文件选择直接获得内容。
+			// Paths come from the desktop system dialog; when desktop is false (nexterm-server assembly), they are always refused,
+			// so arbitrary path reads cannot reach through the server-side /rpc, and the web side gets content via browser file selection.
 			return ipc.Register(dispatcher, "asset_read_key_file", func(_ context.Context, _ *ipc.Call, input idRequest) (string, error) {
 				if !desktop {
 					return "", ipc.NewError(ipc.CodeUnsupported, "读取本地密钥文件只在桌面端可用")
@@ -495,10 +495,9 @@ func productionSnippetDTO(row store.SnippetRow) snippetDTO {
 	}
 }
 
-// commandLogUserFilter 返回命令日志查询生效的 userId 过滤: 服务端装配
-// (desktop=false)下, 已登录调用者一律强制收敛为自己的 userId,
-// 客户端自报过滤不被信任; 桌面端与无身份的开放部署
-// (auth=off / loopback 免登录 / 网关)保持客户端给定过滤。
+// commandLogUserFilter returns the userId filter in effect for command log queries: in the server-side assembly
+// (desktop=false), a logged-in caller is always forced down to their own userId, and client-reported filters are not
+// trusted; desktop and identity-less open deployments (auth=off / loopback login-free / gateway) keep the client-given filter.
 func commandLogUserFilter(ctx context.Context, desktop bool, requested *string) *string {
 	if desktop {
 		return requested

@@ -65,7 +65,7 @@ type Config struct {
 	DB       *gorm.DB
 	Accounts *account.Accounts
 	AuthOff  bool
-	// Events 是可选的事件出口 (EventBroker); nil 时上下线只落审计不推送。
+	// Events is the optional event outlet (EventBroker); when nil, online/offline only writes audits and does not push.
 	Events ipc.Emitter
 }
 
@@ -75,15 +75,15 @@ type Service struct {
 	authOff    bool
 	now        func() int64
 	enrollGate *account.LoginThrottle
-	// shareResolveGate 限流匿名公开链接 resolve, 随机 token 洪水不能刷爆 audit_log。
+	// shareResolveGate rate-limits anonymous public link resolves, so random token floods cannot flood audit_log.
 	shareResolveGate *account.LoginThrottle
 	registry         *Registry
 	sharing          *sharing.Service
 	events           ipc.Emitter
 
-	// presenceMu 保护 onlineDevices: 设备上下线事件与审计只在真实状态迁移时
-	// 产生一次, 顶替重连 (旧连接注销时已被顶替) 与服务关停 (Close 换空表) 不会
-	// 刷出重复或额外事件。
+	// presenceMu guards onlineDevices: device online/offline events and audits are produced only once per real state transition,
+	// and replacement reconnects (the old connection's unregistration is already replaced) and service shutdown (Close swaps in an empty table) never
+	// emit duplicate or extra events.
 	presenceMu    sync.Mutex
 	onlineDevices map[string]bool
 
@@ -101,15 +101,15 @@ func WithNow(now func() int64) Option {
 	}
 }
 
-// WithEvents 覆盖事件出口 (装配层传 EventBroker); nil 表示只落审计不推送。
+// WithEvents overrides the event outlet (the wiring layer passes EventBroker); nil means only audits are written, nothing is pushed.
 func WithEvents(events ipc.Emitter) Option {
 	return func(s *Service) {
 		s.events = events
 	}
 }
 
-// WithShareRevalidateInterval 覆盖空闲分享连接的周期复查间隔 (测试用小间隔
-// 加速吊销/过期生效; 生产默认 defaultShareRevalidateInterval)。
+// WithShareRevalidateInterval overrides the periodic recheck interval for idle share connections (tests use a small interval
+// to speed up revocation/expiry taking effect; production default defaultShareRevalidateInterval).
 func WithShareRevalidateInterval(interval time.Duration) Option {
 	return func(s *Service) {
 		if interval > 0 {
@@ -118,9 +118,9 @@ func WithShareRevalidateInterval(interval time.Duration) Option {
 	}
 }
 
-// SetSharePublicPage 注入公开分享页的 SPA 静态入口 (装配层把配置好的 static
-// handler 传入): 普通 GET /share/public/{token} 由它直接服务页面, 不做 token
-// 校验/审计。nil 表示未配置静态入口, 普通 GET 一律 404。
+// SetSharePublicPage injects the SPA static entry for the public share page (the wiring layer passes the configured static
+// handler): plain GET /share/public/{token} is served the page directly by it, with no token
+// verification/auditing. nil means no static entry is configured, and plain GET always 404s.
 func (s *Service) SetSharePublicPage(handler http.Handler) {
 	s.sharePublicPage = handler
 }
@@ -250,8 +250,8 @@ type auditPayload struct {
 	URL       string `json:"url,omitempty"`
 }
 
-// audit 写 fleet 审计; payload 带设备 ID 时同步落 asset_id 列, 审计视图即可按
-// 设备过滤出完整时间线 (接入/上线/离线/吊销/切换接入地址), 无需解析 payload_json。
+// audit writes a fleet audit; when the payload carries a device ID the asset_id column is populated as well, so the audit view can filter
+// a complete per-device timeline (enroll/online/offline/revoke/switch access address) without parsing payload_json.
 func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -270,9 +270,9 @@ func (s *Service) audit(ctx context.Context, kind string, payload auditPayload) 
 	return nil
 }
 
-// deviceOnline/deviceOffline 是设备上下线的唯一出口: 只在真实状态迁移时写审计并
-// 推送 device://status, 重复调用 (顶替重连的注销/注册交错) 直接忽略。
-// 调用方可能已持有取消的 ctx (控制通道断开路径), 这里统一用后台 ctx 完成落库与推送。
+// deviceOnline/deviceOffline are the only exit points for device presence: they write an audit and push device://status only on real state transitions,
+// and repeated calls (the unregister/register interleave of a replacement reconnect) are ignored outright.
+// The caller may already hold a canceled ctx (control channel disconnect path); a background ctx is used uniformly here to finish the database write and the push.
 func (s *Service) deviceOnline(deviceID string) {
 	s.transitionPresence(deviceID, true)
 }
@@ -323,8 +323,8 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	return &deviceGrant{deviceID: deviceID, userID: device.UserID, revoked: device.RevokedAt != nil}, nil
 }
 
-// authorize 是 fleet 设备动作的唯一授权点: 仅设备 owner 放行,
-// 已吊销设备一律拒绝; 每次判定 (放行或拒绝) 都写审计。
+// authorize is the single authorization point for fleet device actions: only the device owner is allowed,
+// and revoked devices are always denied; every decision (allow or deny) is written to the audit log.
 func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	outcome, reason := "allow", ""
@@ -347,7 +347,7 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	return grant, nil
 }
 
-// canAccess 与 authorize 同一套 owner 规则, 供只读路径使用, 不写审计。
+// canAccess follows the same owner rules as authorize, for read-only paths, and writes no audit.
 func (s *Service) canAccess(ctx context.Context, identity *account.Identity, deviceID string) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	if err != nil {
@@ -362,8 +362,8 @@ func (s *Service) canAccess(ctx context.Context, identity *account.Identity, dev
 	return grant, nil
 }
 
-// DeviceOwnerID 返回设备归属用户 ID, 供事件出口按 owner 过滤 device://status
-// 推送; 设备不存在时返回错误。
+// DeviceOwnerID returns the owning user ID of the device, for the event outlet to filter device://status
+// pushes by owner; it returns an error when the device does not exist.
 func (s *Service) DeviceOwnerID(ctx context.Context, deviceID string) (string, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	if err != nil {
@@ -425,7 +425,7 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := query.Use(tx)
 		enrollCode := q.DeviceEnrollCode
-		// 原子认领注册码: 仅未消费且未过期的行可被更新, 并发消费只有一个成功。
+		// Atomically claim the enroll code: only an unconsumed, unexpired row can be updated, and only one of concurrent consumes succeeds.
 		claimed, err := enrollCode.WithContext(ctx).
 			Where(enrollCode.CodeHash.Eq(hashSecret(code)), enrollCode.ConsumedAt.IsNull(), enrollCode.ExpiresAt.Gt(now)).
 			Update(enrollCode.ConsumedAt, now)
@@ -484,8 +484,8 @@ func (s *Service) ConsumeEnrollCode(ctx context.Context, code, name, platform, a
 	}, nil
 }
 
-// AuthenticateAgent 校验设备凭证三元组绑定 (device_id + secret + purpose),
-// 凭证与设备任一吊销或过期即拒绝; 通过后回写 last_used_at/last_seen_at。
+// AuthenticateAgent verifies the device credential triple binding (device_id + secret + purpose);
+// a revoked or expired credential or device is denied; on success it writes back last_used_at/last_seen_at.
 func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string) (string, error) {
 	syncCredential := query.Use(s.db).SyncCredential
 	credential, err := syncCredential.WithContext(ctx).
@@ -635,14 +635,14 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 		return err
 	}
 	s.registry.KickDevice(deviceID)
-	// 吊销即掉线: 控制通道被踢后不会再有注销回调 (KickDevice 已摘表),
-	// 这里补一次离线迁移, 让审计时间线与 device://status 推送保持完整。
+	// Revocation means offline: after the control channel is kicked there is no more unregistration callback (KickDevice already removed it from the table),
+	// so one offline transition is made up here, keeping the audit timeline and the device://status push complete.
 	s.deviceOffline(deviceID)
 	return nil
 }
 
-// AgentDesiredConfig 返回服务端期望的 agent 配置; metrics 间隔是产品固定值
-// (schema 无按设备列), 与 enroll 下发保持一致。
+// AgentDesiredConfig returns the agent config the server desires; the metrics interval is a product-fixed value
+// (the schema has no per-device column), kept consistent with what enroll delivers.
 func (s *Service) AgentDesiredConfig(ctx context.Context, deviceID string) (AgentConfig, error) {
 	deviceAgent := query.Use(s.db).DeviceAgent
 	agent, err := deviceAgent.WithContext(ctx).Where(deviceAgent.DeviceID.Eq(deviceID)).First()
@@ -659,7 +659,7 @@ func (s *Service) AgentDesiredConfig(ctx context.Context, deviceID string) (Agen
 	}, nil
 }
 
-// AgentConfig 是服务端期望的 agent 运行配置。
+// AgentConfig is the agent runtime config the server desires.
 type AgentConfig struct {
 	DesiredAutostart  bool
 	MetricsIntervalMS int64
@@ -851,16 +851,16 @@ func (s *Service) DeviceMetrics(ctx context.Context, identity *account.Identity,
 	return samples, nil
 }
 
-// RollupMetrics 把超过原始保留期 (48h) 的指标聚合成小时桶 (保留 30d),
-// 再清理过期的原始行与小时桶; 重复执行结果一致。
-// 只聚合完整小时桶: cutoff 向下对齐到小时边界, 聚合与原始行删除共享同一 cutoff,
-// 边界桶保留到下一轮整体处理, 跨批次不会整桶覆盖丢失样本。
+// RollupMetrics aggregates metrics past the raw retention period (48h) into hourly buckets (kept 30d),
+// then cleans up expired raw rows and hourly buckets; repeated runs are idempotent.
+// Only complete hour buckets are aggregated: the cutoff is aligned down to the hour boundary, and aggregation and raw-row deletion share the same cutoff,
+// so boundary buckets are kept whole until the next round, and samples are never lost to whole-bucket overwrites across batches.
 func (s *Service) RollupMetrics(ctx context.Context) error {
 	now := s.now()
 	rawCutoff := now - rawMetricsRetention.Milliseconds()
 	rollupCutoff := (rawCutoff / metricsHourMS) * metricsHourMS
 	hourlyCutoff := now - hourlyMetricsRetention.Milliseconds()
-	// 聚合 INSERT...SELECT 与条件 DELETE 无法用 gen query 表达, 事务内直接执行。
+	// The aggregation INSERT...SELECT and the conditional DELETE cannot be expressed with gen query, so they execute directly inside the transaction.
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`INSERT INTO device_metrics_hourly(device_id, bucket_ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, uptime_s, sample_count)
 SELECT device_id, (ts/3600000)*3600000, avg(cpu_pct), avg(mem_used), max(mem_total), avg(disk_used), max(disk_total), max(uptime_s), count(*)
@@ -887,7 +887,7 @@ sample_count = excluded.sample_count`,
 	return nil
 }
 
-// UpdateServiceState 回写 agent 上报的服务实际状态 (installed/enabled/active)。
+// UpdateServiceState writes back the service state actually reported by the agent (installed/enabled/active).
 func (s *Service) UpdateServiceState(ctx context.Context, deviceID string, state ServiceState) error {
 	encoded, err := json.Marshal(state)
 	if err != nil {
@@ -905,7 +905,7 @@ func (s *Service) UpdateServiceState(ctx context.Context, deviceID string, state
 	return nil
 }
 
-// SetCurrentURL 记录 agent 切换后的当前接入地址并写 failover 审计。
+// SetCurrentURL records the agent's current access address after a switch and writes a failover audit.
 func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := query.Use(tx)
@@ -937,7 +937,7 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 	return nil
 }
 
-// Close 断开全部设备控制通道与桥接 (服务关停)。
+// Close disconnects all device control channels and bridges (service shutdown).
 func (s *Service) Close() error {
 	s.registry.Close()
 	return nil

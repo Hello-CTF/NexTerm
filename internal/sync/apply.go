@@ -14,9 +14,9 @@ import (
 const CommandApplyObjects = "sync_apply_objects"
 
 const (
-	// maxApplyObjectsPerCall 单次应用对象数上限, 超出由调用方分批。
+	// maxApplyObjectsPerCall caps objects per apply call; callers batch beyond it.
 	maxApplyObjectsPerCall = 256
-	// maxApplyObjectBytes 单对象明文上限, 与 maxSyncObjectBytes 对齐(64MiB 会话内容 + JSON/base64 余量)。
+	// maxApplyObjectBytes caps a single object's plaintext, aligned with maxSyncObjectBytes (64MiB transcript content + JSON/base64 headroom).
 	maxApplyObjectBytes = maxSyncObjectBytes
 )
 
@@ -26,7 +26,7 @@ const (
 	ApplyResultSkipped   = "skipped"
 )
 
-// ApplyObject 是浏览器已解密的一个同步对象; 服务端只按明文应用, 不接收口令或 DEK。
+// ApplyObject is one sync object already decrypted by the browser; the server applies plaintext only and never receives passwords or DEKs.
 type ApplyObject struct {
 	ID      string          `json:"id"`
 	Kind    string          `json:"kind"`
@@ -116,7 +116,7 @@ func (e *Engine) applyPlainObjects(ctx context.Context, request ApplyObjectsRequ
 	return result, nil
 }
 
-// applyPlainObject 校验并应用单个明文对象; 校验失败隔离为该对象的 skipped + 警告, 不阻断整批。
+// applyPlainObject validates and applies a single plaintext object; validation failures are isolated as that object's skipped + warning and do not block the whole batch.
 func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userIDs ...string) ApplyObjectResult {
 	entry := ApplyObjectResult{ID: object.ID, Kind: object.Kind, Result: ApplyResultSkipped}
 	reject := func(format string, args ...any) ApplyObjectResult {
@@ -156,8 +156,8 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 	return entry
 }
 
-// canonicalApplyPayload 把传输载荷严格解码到对应协议结构并重新编码为规范 JSON:
-// identical 字节判定与 equal-revision LWW 哈希都以规范载荷为准, 与来源设备的编码无关。
+// canonicalApplyPayload strictly decodes the transport payload into the corresponding protocol struct and re-encodes it as canonical JSON:
+// identical byte decisions and equal-revision LWW hashes are based on the canonical payload, independent of the source device's encoding.
 func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 	var decoded any
 	switch object.Kind {
@@ -229,7 +229,7 @@ func firstUserID(ids []string) string {
 	return ""
 }
 
-// applyDecryptedObject 按种类应用一个已解密对象, 拉取合并与浏览器明文应用共用同一套 apply 语义。
+// applyDecryptedObject applies one decrypted object by kind; pull-merge and browser plaintext application share the same apply semantics.
 func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
 	switch kind {
 	case KindGroup:

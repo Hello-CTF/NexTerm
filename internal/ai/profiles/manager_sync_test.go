@@ -82,7 +82,7 @@ func TestDeleteWithOptInWritesUserTombstone(t *testing.T) {
 
 func TestDeleteWithoutIdentityWritesNoTombstone(t *testing.T) {
 	database := openStore(t)
-	// 即使某用户已开启 opt-in, 无身份的删除路径(桌面直连/匿名)也不立碑
+	// Even with some user having opted in, the identity-less delete path (desktop direct / anonymous) writes no tombstone
 	if err := database.SetAIProfileSyncOptIn(context.Background(), "u-a", true); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestDeleteOptInIsolatedPerUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := seedProfile(t, manager, "isolated")
-	// A 开 B 关: B 的删除走 B 自己的 opt-in(关), 不立碑
+	// A on, B off: B's delete follows B's own opt-in (off), so no tombstone
 	ctxB := ipc.WithUserID(context.Background(), "u-b")
 	if err := database.SetAIProfileSyncOptIn(ctxB, "u-b", false); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestDeleteOptInIsolatedPerUser(t *testing.T) {
 	}
 }
 
-// fakeSyncSettings 实现 profiles.Settings + opt-in 读取 + 墓碑记录, 用于记录失败路径。
+// fakeSyncSettings implements profiles.Settings + opt-in reads + tombstone recording, for the record-failure path.
 type fakeSyncSettings struct {
 	values    map[string]string
 	recordErr error
@@ -146,7 +146,7 @@ func (f *fakeSyncSettings) SyncTombstoneRecord(_ context.Context, _, _ string, _
 	return f.recordErr
 }
 
-// atomicSyncSettings 在 fakeSyncSettings 之上实现原子删除接口(生产 store 的 AIProfilesDeleteTx 同形)。
+// atomicSyncSettings implements the atomic delete interface on top of fakeSyncSettings (same shape as the production store's AIProfilesDeleteTx).
 type atomicSyncSettings struct {
 	*fakeSyncSettings
 	deleteErr error
@@ -175,7 +175,7 @@ func TestDeletePropagatesTombstoneRecordFailure(t *testing.T) {
 	}
 }
 
-// M165 R2: 原子删除: 首次墓碑写失败整体回滚(档案仍在), 恢复后重试删除并补记墓碑, 删除收敛。
+// M165 R2: atomic delete: the first tombstone write failure rolls back as a whole (profile remains); after recovery the delete is retried and the tombstone recorded, converging.
 func TestDeleteAtomicRetryAfterFailureConverges(t *testing.T) {
 	settings := &atomicSyncSettings{
 		fakeSyncSettings: &fakeSyncSettings{values: map[string]string{"sync.optin.ai_profile.u-a": "1"}},

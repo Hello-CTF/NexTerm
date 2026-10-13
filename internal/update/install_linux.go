@@ -14,8 +14,8 @@ import (
 	"strings"
 )
 
-// applyInstall 从 deb (data.tar.gz 内的 usr/bin/nexterm-desktop) 解出
-// nexterm-desktop, 原子替换当前可执行文件 (rename 覆盖运行中的 exe 在 Linux 上安全)。
+// applyInstall extracts nexterm-desktop from the deb (usr/bin/nexterm-desktop inside data.tar.gz),
+// atomically replacing the current executable (renaming over a running exe is safe on Linux).
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	file, err := os.Open(archive)
 	if err != nil {
@@ -77,8 +77,8 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	return nil
 }
 
-// debDataTarGz 定位 deb (ar 容器) 里的 data.tar.gz 成员并返回其内容流;
-// 只解析本仓库打包产出的短名 GNU ar 成员, 其余布局直接报错。
+// debDataTarGz locates the data.tar.gz member in the deb (ar container) and returns its content stream;
+// it only parses the short-name GNU ar members produced by this repo's packaging, and errors on any other layout.
 func debDataTarGz(file *os.File) (io.Reader, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, err

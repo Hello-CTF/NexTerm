@@ -19,7 +19,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// testSyncServer 是 M116 账号路由 + v2 同步路由的最小 faithful 复刻, 供端到端测试使用。
+// testSyncServer is a minimal faithful replica of the M116 account routes + v2 sync routes, for end-to-end tests.
 type testSyncServer struct {
 	*httptest.Server
 	db       *store.Store
@@ -29,7 +29,7 @@ type testSyncServer struct {
 	failNextPushWith409 bool
 	dropObjectID        string
 	afterIDs            func()
-	// authBypassUserID 非空时登录跳过口令校验(PG 测试专用: account 的 COLLATE NOCASE 未适配 PostgreSQL)。
+	// authBypassUserID, when non-empty, skips password verification at login (PG tests only: account's COLLATE NOCASE is not adapted to PostgreSQL).
 	authBypassUserID string
 }
 
@@ -50,7 +50,7 @@ func newTestSyncServer(t *testing.T) *testSyncServer {
 	return newTestSyncServerOn(t, db)
 }
 
-// newTestSyncServerOn 在指定存储上搭建测试服务端; PG 回归用真实 PostgreSQL 存储。
+// newTestSyncServerOn builds the test server on the given store; PG regression uses a real PostgreSQL store.
 func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	t.Helper()
 	server := &testSyncServer{db: db, accounts: account.New(db.GORM())}
@@ -66,7 +66,7 @@ func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
 	return server
 }
 
-// maybePostIDs 在 ids 服务后执行一次性动作(丢弃对象行/并发更新), 用于构造对账边界场景。
+// maybePostIDs runs a one-shot action after the ids service (drop an object row / concurrent update) to construct reconciliation edge scenarios.
 func (s *testSyncServer) maybePostIDs(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r)
@@ -83,7 +83,7 @@ func (s *testSyncServer) maybePostIDs(next http.Handler) http.Handler {
 	})
 }
 
-// maybeFailPush 让下一次推送返回 409, 用于验证引擎的真实冲突重试路径。
+// maybeFailPush makes the next push return 409, for verifying the engine's real conflict retry path.
 func (s *testSyncServer) maybeFailPush(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.failNextPushWith409 {

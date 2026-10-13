@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// M125 R3 端到端验收:M141 collect 消费(P1-1)、applySet 去重与二次收敛(P1-2)、
-// transcript endedAt 修订与内容补全(P1-3)。全部经真实 SyncCard 交互与真实加解密。
+// M125 R3 end-to-end acceptance: M141 collect consumption (P1-1), applySet dedup and second-round convergence (P1-2),
+// transcript endedAt revision and content completion (P1-3). All through real SyncCard interaction and real encryption.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -124,8 +124,8 @@ function seedAuthed() {
   });
 }
 
-// remoteFixtureWire 直接密封真实 Go json.Marshal 产出的 fixture 字节(src/test/auth-sync-fixtures.ts),
-// 不用 JS JSON.stringify 复刻布局,避免同源自证。
+// remoteFixtureWire seals the real Go json.Marshal-produced fixture bytes directly (src/test/auth-sync-fixtures.ts),
+// not replicating the layout with JS JSON.stringify, avoiding same-origin self-proof.
 async function remoteFixtureWire(id: string, kind: import("../features/auth/crypto").SyncObjectKind, fixture: string, seq: number) {
   const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../features/auth/crypto");
   return { id, seq, blob: bytesToBase64(await sealSyncObject(DEK, base64ToBytes(fixture), id, kind)) };
@@ -219,16 +219,16 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
 
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id).sort()).toEqual(["a-del", "c-del", "c1", "g-del"]);
-    // 软删资产带 deletedAt 载荷
+    // Soft-deleted asset carries a deletedAt payload
     const assetPayload = await openPushed(objects.find((o) => o.id === "a-del")!, "asset");
     expect(assetPayload.deletedAt).toBe(150);
     expect(assetPayload.name).toBe("old-01");
-    // 两类墓碑载荷与 tombstoneObject 对齐
+    // Both tombstone payload kinds align with tombstoneObject
     const groupTomb = await openPushed(objects.find((o) => o.id === "g-del")!, "tombstone");
     expect(groupTomb).toEqual({ targetKind: "group", deletedAt: 300 });
     const credTomb = await openPushed(objects.find((o) => o.id === "c-del")!, "tombstone");
     expect(credTomb).toEqual({ targetKind: "credential", deletedAt: 400 });
-    // 凭据载荷携带明文 secret(credentialObject 形状)
+    // The credential payload carries the plaintext secret (credentialObject shape)
     const credPayload = await openPushed(objects.find((o) => o.id === "c1")!, "credential");
     expect(credPayload).toEqual({ id: "c1", name: "生产口令", kind: "password", secret: "s3cret", updatedAt: 50 });
   });
@@ -294,7 +294,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(text()).toContain("凭据「锁定凭据」凭据库未解锁，未进入本次对比与推送");
     expect(text()).toContain("凭据「不可用凭据」凭据库不可用，未进入本次对比与推送");
     expect(text()).toContain("凭据「解密失败凭据」解密失败，未进入本次对比与推送");
-    // 推送集合为空,不发起 push
+    // The push set is empty, no push is fired
     expect(text()).toContain("待推送 0 项");
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -334,7 +334,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
 
 describe("applySet 去重与二次同步收敛(P1-2)", () => {
   it("已一致(同 hash)对象不进入 applySet,不重复调用 applyObjects", async () => {
-    // 远端是真实 Go fixture 字节;本机 collect 收集同一资产,载荷与 Go 逐字节一致 → 同 hash
+    // The remote is real Go fixture bytes; local collect gathers the same asset, payload byte-identical to Go -> same hash
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
@@ -358,7 +358,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
   });
 
   it("remote-deleted 墓碑(group)应用一次后,二次同步不再重复应用/推送", async () => {
-    // 本机有存活分组 g-del(修订 100);云端墓碑 deletedAt 500 胜出(group 墓碑是后端支持的删除传播路径)
+    // Local has a live group g-del (revision 100); the cloud tombstone deletedAt 500 wins (group tombstones are the backend-supported deletion propagation path)
     let tombstoneApplied = false;
     mocks.groupList.mockImplementation(async () => {
       if (tombstoneApplied) return [];
@@ -384,7 +384,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(mocks.applyObjects).toHaveBeenCalledWith([
       { id: "g-del", kind: "tombstone", payload: { targetKind: "group", deletedAt: 500 } },
     ]);
-    // 应用后本机留下同内容墓碑,与云端一致:两个集合都归零,不再发起任何写
+    // After applying, the local side keeps an identical-content tombstone, consistent with the cloud: both sets drop to zero, no more writes are fired
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     await flushUntil(() => text().includes("当前待应用 0 项"));
     expect(text()).toContain("已一致");
@@ -395,7 +395,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
   });
 
   it("远端软删资产(带 deletedAt 的 assetObject)应用后,二次同步不再重复应用/推送", async () => {
-    // 资产删除走软删 assetObject(asset 墓碑后端不支持);远端 deletedAt 150 > 本机修订 100
+    // Asset deletion goes through the soft-deleted assetObject (asset tombstones are not supported by the backend); remote deletedAt 150 > local revision 100
     const liveAsset = {
       id: "a-del", groupId: "g1", kind: "ssh", name: "old <&> 01", host: "10.0.0.8", port: 22,
       username: "root", authKind: "password", keyPath: "/home/u/.ssh/id_ed25519", credId: "c-1",
@@ -423,7 +423,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(objects[0].id).toBe("a-del");
     expect(objects[0].kind).toBe("asset");
     expect(objects[0].payload.deletedAt).toBe(150);
-    // 应用后本机软删资产与远端逐字节一致:第二轮 apply/push 均为空
+    // After applying, the local soft-deleted asset is byte-identical to the remote: the second apply/push round is empty
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     await flushUntil(() => text().includes("当前待应用 0 项"));
     expect(text()).toContain("已一致");
@@ -433,8 +433,8 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
   });
 
   it("revealed 凭据应用成功后,第二轮 apply/push 均为空(真实 Go fixture 字节)", async () => {
-    // 远端凭据是 Go fixture 字节(名称/秘密含 <>& 与 U+2028);应用后本机 revealed 凭据重新收集,
-    // 载荷与 Go 逐字节一致 → 已一致,不再 apply/push
+    // The remote credential is Go fixture bytes (name/secret contain <>& and U+2028); after applying, the local revealed credential is recollected,
+    // payload byte-identical to Go -> already consistent, no more apply/push
     let applied = false;
     mocks.collectCredentials.mockImplementation(async () => {
       if (applied) {
@@ -488,7 +488,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
     ]);
     mocks.transcriptList.mockResolvedValue([SUMMARY_OMITTED]);
-    // 远端完整内容是真实 Go json.Marshal 字节(fixture),不是 JS 复刻
+    // The remote full content is real Go json.Marshal bytes (fixture), not a JS replica
     const wire = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
@@ -500,7 +500,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
-    // 本机省略版不得覆盖云端完整版:不进推送集合,进应用集合
+    // The local omitted version must not overwrite the cloud full version: it does not enter the push set, it enters the apply set
     expect(text()).toContain("待推送 0 项");
     expect(text()).toContain("当前待应用 1 项");
     await runAutoSync();
@@ -536,7 +536,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["t1"]);
-    // 推送明文与 Go fixture 逐字节一致(本机完整内容即 Go 布局)
+    // The pushed plaintext is byte-identical to the Go fixture (the local full content is the Go layout)
     const { openSyncObject, base64ToBytes } = await import("../features/auth/crypto");
     const plaintext = await openSyncObject(DEK, base64ToBytes(objects[0].blob), "t1", "transcript");
     expect(new TextDecoder().decode(plaintext)).toBe(new TextDecoder().decode(base64ToBytes(GO_SYNC_FIXTURES.transcriptBasic!)));
@@ -551,7 +551,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
       nextSeq: 2, done: true, totalBytes: 3,
     });
-    // 云端是同记录的不同内容(endedAt 2 < 本机 10),远端为真实 Go fixture 字节
+    // The cloud has different content for the same record (endedAt 2 < local 10); the remote is real Go fixture bytes
     const wire = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
@@ -560,19 +560,19 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     mounted = mountSyncCard();
     openDetails();
     await flushUntil(() => text().includes("web-01 的会话记录"));
-    // 本机 endedAt 更大 → 本机较新,推送;远端不进入应用集合
+    // The local endedAt is larger -> local is newer, push; the remote does not enter the apply set
     expect(text()).toContain("本机较新");
     expect(text()).toContain("当前待应用 0 项");
     expect(text()).toContain("待推送 1 项");
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
-    // 推送明文与 Go fixture(transcriptEnded10)逐字节一致
+    // The pushed plaintext is byte-identical to the Go fixture (transcriptEnded10)
     const pushedObjects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     const { openSyncObject, base64ToBytes } = await import("../features/auth/crypto");
     const pushedPlaintext = await openSyncObject(DEK, base64ToBytes(pushedObjects[0].blob), "t1", "transcript");
     expect(new TextDecoder().decode(pushedPlaintext)).toBe(new TextDecoder().decode(base64ToBytes(GO_SYNC_FIXTURES.transcriptEnded10!)));
-    // 推送成功后云端即本机内容(Go fixture 字节):二次同步两边一致,不再推送也不应用
+    // After a successful push the cloud equals the local content (Go fixture bytes): both sides are consistent on the second sync, no more push or apply
     const wire2 = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptEnded10!, 2);
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire2], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });

@@ -9,12 +9,12 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
 
-// KindRemote 标记远程会话壳: 无本地进程、无 transport, 输出由推流方 (桌面端)
-// 经 FeedRemote 推入, 只读订阅 (Spectator/预览) 与真实终端标签页同路径取流。
+// KindRemote marks a remote session shell: no local process, no transport; output is pushed in by the feeder (desktop)
+// via FeedRemote, and read-only subscriptions (Spectator/preview) take the stream via the same path as real terminal tabs.
 const KindRemote = "remote"
 
-// MaxRemoteSessionsPerUser 是单账号同时存活的远程会话壳上限, 防止壳只建不收
-// 耗尽内存; 显式结束 (CloseRemote) 或空闲回收后释放名额。
+// MaxRemoteSessionsPerUser caps concurrently live remote session shells per account, preventing shells from being
+// created but never reaped until memory runs out; explicit end (CloseRemote) or idle reaping frees the slot.
 const MaxRemoteSessionsPerUser = 32
 
 var (
@@ -22,9 +22,9 @@ var (
 	ErrRemoteFeedAttached = errors.New("remote session already has an active feed")
 )
 
-// RemoteSessionOptions 是注册远程会话壳的入参: OwnerID 即归属账号 (归属校验与
-// 预览创建共用 TabOwner); Title/AssetID 只是元数据 (展示用), 不参与 byAsset
-// 去重 — 壳不经过 Connect, asset.ID 永不注册进 m.byAsset, 避免与真实资产冲突。
+// RemoteSessionOptions holds the inputs for registering a remote session shell: OwnerID is the owning account (ownership checks share
+// TabOwner with preview creation); Title/AssetID are metadata only (for display) and do not participate in byAsset
+// dedup - shells skip Connect, so asset.ID is never registered in m.byAsset, avoiding conflicts with real assets.
 type RemoteSessionOptions struct {
 	OwnerID string
 	Title   string
@@ -33,10 +33,10 @@ type RemoteSessionOptions struct {
 	Rows    uint32
 }
 
-// RegisterRemoteSession 在会话 hub 里注册一个无本地进程的终端标签页: 内存终端
-// 模型即输出缓冲与快照源, 之后 FeedRemote 推入的输出既更新屏幕 (Spectator 首帧
-// 快照) 又按既有 feed 路径广播给订阅者。壳的会话 status 恒为 connected, 生命周期
-// 由 EndRemote/CloseRemote 或空闲回收终结。
+// RegisterRemoteSession registers a terminal tab with no local process in the session hub: the in-memory terminal
+// model is the output buffer and snapshot source, and output pushed in by FeedRemote later both updates the screen
+// (the Spectator first-frame snapshot) and broadcasts to subscribers via the existing feed path. The shell's session
+// status is always connected, and its lifecycle ends via EndRemote/CloseRemote or idle reaping.
 func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessionOptions) (TabInfo, error) {
 	if options.OwnerID == "" {
 		return TabInfo{}, errors.New("remote session owner is empty")
@@ -88,8 +88,8 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 	}
 	tab.feedGate <- struct{}{}
-	// 壳没有 transport, 终端模型对查询序列 (如 DA) 的应答无处可去, 直接丢弃;
-	// 推流方的本地终端已在自己一侧应答过。
+	// The shell has no transport, so the terminal model's responses to query sequences (e.g. DA) have nowhere to go and are dropped;
+	// the feeder's local terminal already answered them on its own side.
 	terminal.SetResponseHandler(func([]byte) {})
 
 	m.mu.Lock()
@@ -131,8 +131,8 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 	return info, nil
 }
 
-// remoteTab 取出标签页并校验它是存活的远程壳; 之后各操作共用这一入口,
-// 保证普通终端标签页不会被远程通道误写。
+// remoteTab fetches the tab and verifies it is a live remote shell; later operations share this entry point,
+// ensuring normal terminal tabs are never mistakenly written through remote channels.
 func (m *Manager) remoteTab(tabID string) (*Tab, error) {
 	tab, err := m.Tab(tabID)
 	if err != nil {
@@ -155,8 +155,8 @@ func (s *Session) touchRemoteActivity() {
 	s.mu.Unlock()
 }
 
-// remoteWatchingLocked 报告壳是否有订阅观看者 (Spectator/预览 viewer);
-// 调用方须持有 session.mu, 取 tab.mu 的顺序与 detachChannelsLocked 一致。
+// remoteWatchingLocked reports whether the shell has subscribed watchers (Spectator/preview viewers);
+// the caller must hold session.mu, and the tab.mu acquisition order matches detachChannelsLocked.
 func (s *Session) remoteWatchingLocked() bool {
 	for _, tab := range s.tabs {
 		tab.mu.Lock()
@@ -169,7 +169,7 @@ func (s *Session) remoteWatchingLocked() bool {
 	return false
 }
 
-// RemoteSessionInfo 返回远程壳的标签页信息; 非远程壳返回 ErrUnsupported。
+// RemoteSessionInfo returns the remote shell's tab info; non-remote shells return ErrUnsupported.
 func (m *Manager) RemoteSessionInfo(tabID string) (TabInfo, error) {
 	tab, err := m.remoteTab(tabID)
 	if err != nil {
@@ -178,8 +178,8 @@ func (m *Manager) RemoteSessionInfo(tabID string) (TabInfo, error) {
 	return tab.Info(), nil
 }
 
-// FeedRemote 把推流方的一帧远程输出推入壳: 更新屏幕模型并广播给全部订阅者
-// (Spectator 收到的是与真实终端一致的二进制输出帧)。end 之后拒绝再推。
+// FeedRemote pushes one frame of remote output from the feeder into the shell: it updates the screen model and broadcasts to all subscribers
+// (Spectators receive binary output frames identical to a real terminal). Pushes are rejected after end.
 func (m *Manager) FeedRemote(ctx context.Context, tabID string, data []byte) error {
 	tab, err := m.remoteTab(tabID)
 	if err != nil {
@@ -199,8 +199,8 @@ func (m *Manager) FeedRemote(ctx context.Context, tabID string, data []byte) err
 	return nil
 }
 
-// EndRemote 标记远程壳结束 (推流方终端已退出): 与真实进程退出同语义 — 标签页
-// 保留、快照仍可被新订阅者读取, 只是不再接受新输出。重复调用是幂等 no-op。
+// EndRemote marks the remote shell as ended (the feeder's terminal has exited): same semantics as a real process exit - the tab is
+// kept and the snapshot stays readable by new subscribers, but no new output is accepted. Repeated calls are an idempotent no-op.
 func (m *Manager) EndRemote(tabID string, exitCode *int) error {
 	tab, err := m.remoteTab(tabID)
 	if err != nil {
@@ -221,8 +221,8 @@ func (m *Manager) EndRemote(tabID string, exitCode *int) error {
 	return nil
 }
 
-// ResizeRemote 调整远程壳的屏幕尺寸 (推流方终端 resize 时同步), 快照随之反映
-// 新尺寸; 与交互式 Resize 不同, 壳没有 grid 协商, 直接改模型。
+// ResizeRemote adjusts the remote shell's screen size (synced when the feeder terminal resizes), and the snapshot reflects the
+// new size; unlike interactive Resize, the shell has no grid negotiation and the model is changed directly.
 func (m *Manager) ResizeRemote(ctx context.Context, tabID string, cols, rows uint32) error {
 	if !validSize(cols, rows) {
 		return ErrInvalidSize
@@ -248,9 +248,9 @@ func (m *Manager) ResizeRemote(ctx context.Context, tabID string, cols, rows uin
 	return nil
 }
 
-// AttachRemoteFeed 占用壳的推流口: 同一壳同一时间只允许一条推流连接, 防止两条
-// 流交错写花屏幕; 占用期间空闲回收挂起 (连接本身即活动)。返回壳所属会话供
-// DetachRemoteFeed 成对释放。
+// AttachRemoteFeed occupies the shell's feed slot: only one feed connection is allowed per shell at a time, preventing two
+// streams from interleaving and corrupting the screen; idle reaping is suspended while occupied (the connection itself is activity).
+// It returns the shell's owning session for DetachRemoteFeed to release in pairs.
 func (m *Manager) AttachRemoteFeed(tabID string) (*Session, error) {
 	tab, err := m.remoteTab(tabID)
 	if err != nil {
@@ -276,8 +276,8 @@ func (m *Manager) AttachRemoteFeed(tabID string) (*Session, error) {
 	return session, nil
 }
 
-// DetachRemoteFeed 释放推流口并把空闲计时重置到断连时刻: 断线后壳保留,
-// 可重连续推, 直到空闲超时回收。
+// DetachRemoteFeed releases the feed slot and resets the idle timer to the disconnect moment: after a disconnect the shell is kept,
+// can reattach and resume feeding, until idle timeout reaps it.
 func (m *Manager) DetachRemoteFeed(session *Session) {
 	if session == nil {
 		return
@@ -290,8 +290,8 @@ func (m *Manager) DetachRemoteFeed(session *Session) {
 	session.mu.Unlock()
 }
 
-// CloseRemote 显式终结远程壳: 整个会话连同标签页从 hub 移除, 订阅通道随之
-// 关闭 (只读预览 viewer 收到 ended)。与 EndRemote 不同, 快照不再保留。
+// CloseRemote explicitly ends the remote shell: the whole session with its tabs is removed from the hub and subscriber
+// channels close (read-only preview viewers see ended). Unlike EndRemote, the snapshot is not preserved.
 func (m *Manager) CloseRemote(tabID string) error {
 	tab, err := m.remoteTab(tabID)
 	if err != nil {
@@ -300,8 +300,8 @@ func (m *Manager) CloseRemote(tabID string) error {
 	return m.reap(tab.SessionID)
 }
 
-// reapRemote 是空闲回收对远程壳的收割路径: 与 reap 同语义, 但候选条件是
-// "无推流连接且距上次活动已超时", 并以候选时刻的活动时间戳复查防误收。
+// reapRemote is the idle-reap path for remote shells: same semantics as reap, but the candidacy condition is
+// "no feed connection and timed out since last activity", rechecked against the activity timestamp at candidacy to avoid mistaken reaping.
 func (m *Manager) reapRemote(id string, activity time.Time) error {
 	m.mu.Lock()
 	session := m.sessions[id]

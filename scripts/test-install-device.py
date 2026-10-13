@@ -140,7 +140,8 @@ class Harness:
     """一个 hermetic 沙箱: stub PATH + 假 HOME + 本地 fixture release。"""
 
     def __init__(self, with_curl: bool = True, with_wget: bool = False, sums_builder=None, with_sha256sum: bool = True, bad_layout: bool = False):
-        # 沙箱放 /var/tmp (磁盘): /tmp 常是容量受限的 tmpfs, 装不下下载演练。
+        # Sandbox lives on /var/tmp (disk): /tmp is often a size-limited tmpfs
+        # that cannot hold the download drill.
         self._tmp = tempfile.TemporaryDirectory(prefix="install-device-test-", dir=os.environ.get("TMPDIR") or "/var/tmp")
         base = pathlib.Path(self._tmp.name)
         self.stub_dir = base / "stub"
@@ -189,7 +190,8 @@ class Harness:
         hashes = {}
         for os_name, arch in ALL_ASSETS:
             name = asset_name(VERSION, os_name, arch)
-            # 契约: tar 根仅含 nexterm-agent; bad_layout 模拟套目录的旧布局, 必须被拒。
+            # Contract: tar root contains only nexterm-agent; bad_layout
+            # simulates the old nested-directory layout and must be refused.
             member = f"NexTerm-agent_{VERSION}_{os_name}_{arch}/nexterm-agent" if bad_layout and (os_name, arch) == ("linux", "amd64") else "nexterm-agent"
             info = tarfile.TarInfo(member)
             info.size = len(binary)

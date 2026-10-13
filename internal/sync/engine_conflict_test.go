@@ -8,7 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// 真实 HTTP: 过期 head 的推送必须映射为 errHeadMismatch, 而不是普通 IPC 错误。
+// Real HTTP: pushing with a stale head must map to errHeadMismatch, not a generic IPC error.
 func TestRemoteClientPushStaleHeadGetsConflict(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -30,7 +30,7 @@ func TestRemoteClientPushStaleHeadGetsConflict(t *testing.T) {
 	if _, err := client.push(ctx, genesisHead(userID), []WireObject{{ID: ids.New(), Blob: []byte("v1")}}); err != nil {
 		t.Fatal(err)
 	}
-	// 再用过期 head 推送: 必须得到 errHeadMismatch 而非普通 IPC 错误。
+	// Pushing again with a stale head: it must yield errHeadMismatch, not a generic IPC error.
 	err = func() error {
 		_, err := client.push(ctx, genesisHead(userID), []WireObject{{ID: ids.New(), Blob: []byte("v2")}})
 		return err
@@ -40,7 +40,7 @@ func TestRemoteClientPushStaleHeadGetsConflict(t *testing.T) {
 	}
 }
 
-// 引擎在真实 409 后必须重拉并冲突重试, 最终收敛。
+// After a real 409 the engine must re-pull and retry the conflict, converging in the end.
 func TestEngineRetriesOnReal409Conflict(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -50,7 +50,7 @@ func TestEngineRetriesOnReal409Conflict(t *testing.T) {
 	putDeviceGroup(t, deviceA, ids.New(), nil, "A 分组", 100)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 
-	// B 首次推送被服务端以 409 拒绝一次; 引擎必须重试成功并计入冲突。
+	// B's first push is rejected by the server with 409 once; the engine must retry successfully and count the conflict.
 	server.failNextPushWith409 = true
 	putDeviceGroup(t, deviceB, ids.New(), nil, "B 分组", 100)
 	report, err := deviceB.engine.Sync(context.Background(), deviceB.config(server, "alice", "alice-pw-123"))

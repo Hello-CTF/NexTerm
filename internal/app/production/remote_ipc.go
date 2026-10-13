@@ -7,8 +7,8 @@ import (
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
-// 远程代理命令: 桌面端经已登录的服务端账号调用 fleet/分享/账号 API。
-// 会话与 401 重登由 sync.Service.Remote() 代理面供应。
+// Remote proxy commands: the desktop calls fleet/sharing/account APIs through a logged-in server account.
+// Sessions and 401 re-login are supplied by the sync.Service.Remote() proxy surface.
 
 type remoteDeviceRequest struct {
 	DeviceID string `json:"deviceId"`

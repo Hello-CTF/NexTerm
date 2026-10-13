@@ -7,7 +7,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// opt-out 后重新 opt-in 被拒绝: 服务端墓碑保持, 本地记录保留, 不再重推删除。
+// Re-opt-in after opt-out is rejected: the server-side tombstone stays, the local record is kept, and the deletion is not re-pushed.
 func TestEngineTranscriptReOptInRejectedAfterOptOut(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -21,7 +21,7 @@ func TestEngineTranscriptReOptInRejectedAfterOptOut(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A opt-out: 墓碑推送, B 端副本被清除。
+	// A opts out: the tombstone is pushed and B's copy is cleared.
 	if err := deviceA.db.TranscriptSetSyncOptIn(ctx, transcriptID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestEngineTranscriptReOptInRejectedAfterOptOut(t *testing.T) {
 		t.Fatalf("opt-out transcript still on B: %v", err)
 	}
 
-	// A 重新 opt-in 被拒绝; 墓碑与本地记录保持, 后续同步不重推删除。
+	// A re-opts-in and is rejected; the tombstone and the local record stay, and later syncs do not re-push the deletion.
 	if err := deviceA.db.TranscriptSetSyncOptIn(ctx, transcriptID, true); err == nil {
 		t.Fatal("re-opt-in after opt-out must be rejected")
 	}
@@ -43,7 +43,7 @@ func TestEngineTranscriptReOptInRejectedAfterOptOut(t *testing.T) {
 	if reportA.Pushed != 0 {
 		t.Fatalf("rejected re-opt-in must not re-push: %+v", reportA)
 	}
-	// B 端副本保持删除。
+	// B's copy stays deleted.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, err := deviceB.db.TranscriptGet(ctx, transcriptID); !isNotFound(err) {
 		t.Fatalf("B copy resurrected: %v", err)
@@ -64,8 +64,8 @@ func assertDeviceTombstone(t *testing.T, device *testDevice, id, kind string) {
 	}
 }
 
-// 旧墓碑 + 较新对象: 较新 group/snippet/凭据胜过旧墓碑后必须清除本地墓碑,
-// 后续收集不得再由墓碑覆盖对象或回推删除, 双设备收敛后空闲同步零推送。
+// Stale tombstone plus newer object: after a newer group/snippet/credential beats the old tombstone, the local tombstone must be cleared,
+// later collection must not overwrite the object with the tombstone or re-push the deletion, and idle sync pushes nothing after both devices converge.
 func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -82,7 +82,7 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 删除三者并同步, 墓碑到达服务端。
+	// A deletes all three and syncs; the tombstones reach the server.
 	if err := deviceA.db.GroupDelete(ctx, groupID); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 
-	// B 离线编辑出较新版本并推送, 覆盖服务端墓碑。修订号取未来时间, 保证胜过墓碑的真实删除时间。
+	// B edits newer versions offline and pushes, overwriting the server-side tombstone. Revisions are set in the future to guarantee beating the tombstone's real deletion time.
 	future := ids.NowMS() + 3600_000
 	putDeviceGroup(t, deviceB, groupID, nil, "B 的新分组", future)
 	putDeviceSnippet(t, deviceB, snippetID, "B 的新片段", "new-body", future)
@@ -104,7 +104,7 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 	}
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 拉取: 较新对象胜过旧墓碑并被应用, 本地墓碑必须被清除。
+	// A pulls: the newer object beats the stale tombstone and is applied; the local tombstone must be cleared.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	group, err := deviceA.db.GroupGet(ctx, groupID)
 	if err != nil || group.Name != "B 的新分组" {
@@ -120,7 +120,7 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 		t.Fatalf("credential must exist on A: %v", err)
 	}
 
-	// 服务端必须保留对象而非墓碑: A 第二轮零推送, B 保持静默。
+	// The server must keep the object, not the tombstone: A's second round pushes nothing and B stays quiescent.
 	reportA := syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if reportA.Pushed != 0 {
 		t.Fatalf("idle sync must not re-push tombstones: %+v", reportA)

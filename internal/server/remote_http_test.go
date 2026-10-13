@@ -15,7 +15,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// createRemoteViaAPI 经管理端点建远程会话壳, 返回 session_id。
+// createRemoteViaAPI creates a remote session shell via the management endpoint, returning the session_id.
 func createRemoteViaAPI(t *testing.T, f *previewFixture, session *accountTestSession, title string) string {
 	t.Helper()
 	call := f.call(t, http.MethodPost, "/share/remote-sessions", map[string]any{"title": title, "cols": 80, "rows": 24}, session, session.csrf, nil)
@@ -36,7 +36,7 @@ func remoteFeedHeaders(session *accountTestSession) http.Header {
 	return header
 }
 
-// dialRemoteFeed 以指定请求头连推流 WS; 成功返回连接, 失败返回握手状态码。
+// dialRemoteFeed connects to the feed WS with the given request headers; on success it returns the connection, on failure the handshake status code.
 func dialRemoteFeed(t *testing.T, httpURL, id string, header http.Header) (*websocket.Conn, int) {
 	t.Helper()
 	conn, handshake, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(httpURL, "http")+"/share/remote-sessions/"+id+"/feed", &websocket.DialOptions{HTTPHeader: header})
@@ -53,8 +53,8 @@ func dialRemoteFeed(t *testing.T, httpURL, id string, header http.Header) (*webs
 	return conn, http.StatusSwitchingProtocols
 }
 
-// TestRemoteSessionManagementEndpoints 钉住远程壳管理面的鉴权与归属: 未登录
-// 401, 缺 CSRF 403, 他人推流/删除/建预览 403, 属主全通; 删除后推流 404。
+// TestRemoteSessionManagementEndpoints pins the remote shell management surface's auth and ownership: not logged in
+// 401, missing CSRF 403, others' feed/delete/preview-create 403, owner all-pass; feed after delete is 404.
 func TestRemoteSessionManagementEndpoints(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -70,7 +70,7 @@ func TestRemoteSessionManagementEndpoints(t *testing.T) {
 	}
 	id := createRemoteViaAPI(t, f, alice, "alice-terminal")
 
-	// 推流 WS 握手: 无凭据 401, 缺 CSRF 403, 非属主 403, 属主 101。
+	// Feed WS handshake: no credentials 401, missing CSRF 403, non-owner 403, owner 101.
 	if _, status := dialRemoteFeed(t, f.http.URL, id, nil); status != http.StatusUnauthorized {
 		t.Fatalf("anonymous feed handshake = %d, want 401", status)
 	}
@@ -88,18 +88,18 @@ func TestRemoteSessionManagementEndpoints(t *testing.T) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// 非属主在壳上建预览/删壳: 403。
+	// Non-owner creating a preview on / deleting the shell: 403.
 	if call := f.call(t, http.MethodPost, "/share/previews", map[string]any{"session_id": id, "ttl_ms": 60_000}, bob, bob.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("non-owner preview create status = %d, want 403", call.status)
 	}
 	if call := f.call(t, http.MethodDelete, "/share/remote-sessions/"+id, nil, bob, bob.csrf, nil); call.status != http.StatusForbidden {
 		t.Fatalf("non-owner delete status = %d, want 403", call.status)
 	}
-	// 缺 CSRF 的删除: 403。
+	// Delete with missing CSRF: 403.
 	if call := f.call(t, http.MethodDelete, "/share/remote-sessions/"+id, nil, alice, "", nil); call.status != http.StatusForbidden {
 		t.Fatalf("missing csrf delete status = %d, want 403", call.status)
 	}
-	// 属主删除: 200; 之后推流握手 404。
+	// Owner delete: 200; the feed handshake afterwards is 404.
 	if call := f.call(t, http.MethodDelete, "/share/remote-sessions/"+id, nil, alice, alice.csrf, nil); call.status != http.StatusOK {
 		t.Fatalf("owner delete status = %d body = %v", call.status, call.body)
 	}
@@ -108,8 +108,8 @@ func TestRemoteSessionManagementEndpoints(t *testing.T) {
 	}
 }
 
-// TestRemoteFeedPreviewEndToEnd 钉住完整链路: 建壳 → 建预览 → 推流 → 匿名
-// viewer 看到 快照 + 实时输出; 推流断线后壳保留, 重连可续推。
+// TestRemoteFeedPreviewEndToEnd pins the full path: create shell -> create preview -> feed -> anonymous
+// viewer sees snapshot + live output; after the feed disconnects the shell is kept and reconnecting can resume feeding.
 func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -124,8 +124,8 @@ func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("hello-remote\r\n$ ")); err != nil {
 		t.Fatal(err)
 	}
-	// 推流帧经服务端读循环异步喂入屏幕模型; viewer 首帧快照在 attach 时生成,
-	// 必须等输出落进模型再打开 viewer, 否则快照可能为空。
+	// Feed frames are fed into the screen model asynchronously by the server read loop; the viewer's first-frame snapshot is
+	// generated at attach time, so the viewer must only be opened after the output has landed in the model, or the snapshot may be empty.
 	waitFor(t, func() bool {
 		snapshot, err := f.manager.TerminalSnapshot(id)
 		return err == nil && strings.Contains(strings.Join(snapshot.Lines, "\n"), "hello-remote")
@@ -151,7 +151,7 @@ func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 		t.Fatalf("snapshot lines = %v", lines)
 	}
 
-	// 实时增量: 推流帧原样到达 viewer (二进制)。
+	// Live increments: feed frames arrive at the viewer verbatim (binary).
 	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("increment-7\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 		t.Fatalf("live frame = kind %v %q", frame.kind, frame.data)
 	}
 
-	// 断线保留壳: 重连后续推, viewer 继续收。
+	// Disconnect keeps the shell: reconnect and resume feeding, and the viewer keeps receiving.
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 	reconnected, status := dialRemoteFeed(t, f.http.URL, id, remoteFeedHeaders(alice))
 	if status != http.StatusSwitchingProtocols {
@@ -176,8 +176,8 @@ func TestRemoteFeedPreviewEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRemoteFeedEndKeepsSnapshot: end 控制帧关闭写入方向 (连接正常关闭, 再推
-// 握手 409), 壳与最终屏幕保留 — 新开匿名预览仍能拿到含既有输出的快照。
+// TestRemoteFeedEndKeepsSnapshot: the end control frame closes the write direction (connection closes normally, feeding again
+// gets a 409 handshake), and the shell with its final screen is kept - a fresh anonymous preview still gets a snapshot with the existing output.
 func TestRemoteFeedEndKeepsSnapshot(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -195,7 +195,7 @@ func TestRemoteFeedEndKeepsSnapshot(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, endFrame); err != nil {
 		t.Fatal(err)
 	}
-	// end 后服务端正常关闭连接。
+	// After end, the server closes the connection normally.
 	readCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, _, err := conn.Read(readCtx); err == nil {
@@ -222,8 +222,8 @@ func TestRemoteFeedEndKeepsSnapshot(t *testing.T) {
 	}
 }
 
-// TestRemoteFeedConflictAndBadFrames: 同一壳第二条推流握手 409; 非法控制帧
-// 收到 bad_param 错误帧并被关闭。
+// TestRemoteFeedConflictAndBadFrames: a second feed handshake on the same shell gets 409; an invalid control frame
+// receives a bad_param error frame and is closed.
 func TestRemoteFeedConflictAndBadFrames(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -260,7 +260,7 @@ func TestRemoteFeedConflictAndBadFrames(t *testing.T) {
 	}
 }
 
-// TestRemoteFeedResize: resize 控制帧同步壳尺寸, 之后的预览快照反映新尺寸。
+// TestRemoteFeedResize: the resize control frame syncs the shell size, and subsequent preview snapshots reflect the new size.
 func TestRemoteFeedResize(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -292,7 +292,7 @@ func TestRemoteFeedResize(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionLimitRejected: 单账号壳数超上限返回 403。
+// TestRemoteSessionLimitRejected: exceeding the per-account shell limit returns 403.
 func TestRemoteSessionLimitRejected(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.createUser(t, "alice")
@@ -306,8 +306,8 @@ func TestRemoteSessionLimitRejected(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionsAbsentInSyncOnly: sync-only 部署不挂远程壳端点 (与预览同
-// 生命周期); auth=off 由 accountGuard 统一拒绝账号路由, 既有测试已覆盖。
+// TestRemoteSessionsAbsentInSyncOnly: sync-only deployments do not mount remote shell endpoints (same lifecycle as previews);
+// auth=off uniformly rejects account routes via accountGuard, covered by existing tests.
 func TestRemoteSessionsAbsentInSyncOnly(t *testing.T) {
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {

@@ -6,17 +6,17 @@ import (
 	"time"
 )
 
-// GrantRulesSettingKey 持久化路径级授权规则；与设备级授权同处设置存储，无需迁移。
+// GrantRulesSettingKey persists path-level grant rules; it shares the settings storage with device-level grants, so no migration is needed.
 const GrantRulesSettingKey = "ai.grant_rules"
 
-// Resource 描述一次待授权调用的动作与主路径，供路径级规则匹配。
+// Resource describes the action and primary path of a call awaiting authorization, for path-level rule matching.
 type Resource struct {
 	Action string `json:"action"`
 	Path   string `json:"path,omitempty"`
 }
 
-// GrantRule 是一条持久的细粒度允许规则：某设备上某动作的限定范围。
-// Path 为空表示该动作不限路径（整设备该动作）；ExpiresAt 为 0 表示永久。
+// GrantRule is a persistent fine-grained allow rule: a limited scope for an action on a device.
+// An empty Path means the action is not path-limited (whole-device for that action); ExpiresAt 0 means permanent.
 type GrantRule struct {
 	ID        string `json:"id"`
 	DeviceID  string `json:"deviceId"`
@@ -34,19 +34,20 @@ var ruleActions = map[string]struct{}{
 	"send_keys":     {},
 }
 
-// RuleActionSupported 报告动作是否支持路径级授权规则。
+// RuleActionSupported reports whether the action supports path-level grant rules.
 func RuleActionSupported(action string) bool {
 	_, ok := ruleActions[action]
 	return ok
 }
 
-// RuleActionNeedsPath 报告该动作的规则是否必须限定路径范围。
+// RuleActionNeedsPath reports whether the action's rules must be limited to a path scope.
 func RuleActionNeedsPath(action string) bool {
 	return action == "write_file" || action == "edit_file"
 }
 
-// DirPattern 从文件路径推导授权范围：所在目录及其全部子内容（/var/log/app.log → /var/log/**）。
-// 根目录与无目录路径退化为精确匹配，避免意外放大到整盘。
+// DirPattern derives the grant scope from a file path: the containing directory and all its
+// sub-content (/var/log/app.log -> /var/log/**). Root-level and directory-less paths degrade to
+// exact matching, avoiding accidental widening to the whole disk.
 func DirPattern(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -59,8 +60,9 @@ func DirPattern(path string) string {
 	return path[:index] + "/**"
 }
 
-// NormalizePath 返回规则匹配与执行共用的规范化路径：去首尾空白并 path.Clean。
-// 第二个返回值为 false 表示规范化后路径仍含 .. 段（越界），调用方必须直接拒绝。
+// NormalizePath returns the normalized path shared by rule matching and execution: trims surrounding
+// whitespace and applies path.Clean. The second return value false means the normalized path still
+// contains a .. segment (out of bounds); the caller must reject it outright.
 func NormalizePath(p string) (string, bool) {
 	p = strings.TrimSpace(p)
 	if p == "" {
@@ -75,10 +77,11 @@ func NormalizePath(p string) (string, bool) {
 	return cleaned, true
 }
 
-// MatchPath 按段匹配路径模式：整段相等匹配，段内支持 * 与 ?，** 跨任意段（含零段）。
-// 模式与路径都先经 NormalizePath 规范化，匹配使用与执行相同的规范化路径；
-// 规范化后仍含 .. 的越界路径不匹配任何规则，** 不会吞掉 ..。
-// 空模式匹配任意路径（动作级授权）。
+// MatchPath matches a path pattern segment by segment: whole segments match exactly, * and ? are
+// supported within a segment, and ** spans any number of segments (including zero). Pattern and path
+// are both normalized via NormalizePath first; matching uses the same normalized path as execution.
+// Out-of-bounds paths still containing .. after normalization match no rule; ** never swallows ...
+// An empty pattern matches any path (action-level grant).
 func MatchPath(pattern, value string) bool {
 	if pattern == "" {
 		return true
@@ -138,12 +141,12 @@ func matchSegment(pattern, value string) bool {
 	return len(value) == 0
 }
 
-// Expired 报告规则在给定时刻是否已过期；ExpiresAt 为 0 表示永久不过期。
+// Expired reports whether the rule has expired at the given time; ExpiresAt 0 means it never expires.
 func (r GrantRule) Expired(now time.Time) bool {
 	return r.ExpiresAt != 0 && now.UnixMilli() >= r.ExpiresAt
 }
 
-// Covers 报告规则是否覆盖给定动作与路径（不考虑设备归属与过期）。
+// Covers reports whether the rule covers the given action and path (ignoring device ownership and expiry).
 func (r GrantRule) Covers(action, path string) bool {
 	return r.Action == action && MatchPath(r.Path, path)
 }

@@ -14,7 +14,7 @@ func TestSyncTombstoneTriggerMillisecondPrecision(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
 
-	// 同秒内更新并删除: 触发器必须写入毫秒级 deleted_at, 且不小于 updated_at。
+	// Update and delete within the same second: the trigger must write a millisecond-level deleted_at, not below updated_at.
 	groupID := ids.New()
 	if _, err := db.GroupUpsert(ctx, groupID, nil, "precision", 0, 1, ids.NowMS()); err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestTranscriptSyncOptInRules(t *testing.T) {
 		t.Fatalf("missing transcript: %v", err)
 	}
 
-	// opt-out 写墓碑, opt-in 不写。
+	// opt-out writes a tombstone, opt-in does not.
 	if err := db.TranscriptSetSyncOptIn(ctx, endedID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestTranscriptSyncOptInRules(t *testing.T) {
 		t.Fatalf("opt-out failed: %+v err=%v", activeRow, err)
 	}
 
-	// opt-out 后重新 opt-in 必须在 store 层被拒绝, 不能留下重推循环。
+	// Re-opt-in after opt-out must be rejected at the store layer, leaving no re-push loop.
 	if err := db.TranscriptSetSyncOptIn(ctx, endedID, true); err == nil {
 		t.Fatal("re-opt-in after opt-out must be rejected")
 	}

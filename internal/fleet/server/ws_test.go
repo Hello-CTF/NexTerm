@@ -126,8 +126,8 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 func TestDeviceWSAuthOffRejected(t *testing.T) {
 	f := newHTTPFixture(t, true)
 
-	// --auth=off 下整个 fleet 关闭: HTTP 层 403, WS 无法升级 (无需真实设备,
-	// guard 在鉴权之前拒绝)。
+	// Under --auth=off the whole fleet is closed: HTTP gets 403, WS cannot upgrade (no real device needed;
+	// the guard rejects before auth).
 	response := f.call(t, "POST", "/agent/sync", map[string]any{"device_id": "x", "secret": "y"}, nil, "")
 	if response.status != http.StatusForbidden {
 		t.Fatalf("sync under auth=off: HTTP %d %v", response.status, response.body)
@@ -176,7 +176,7 @@ func TestDeviceRevokeKicksControlChannel(t *testing.T) {
 	if message.Type != "revoke" {
 		t.Fatalf("control message = %+v, want revoke", message)
 	}
-	// 吊销帧之后连接被关闭, agent 按合同停止且不再重连。
+	// After the revoke frame the connection is closed; the agent stops per the contract and never reconnects.
 	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, _, err := control.Read(readCtx); err == nil {
@@ -258,7 +258,7 @@ func TestDeviceBridgePairing(t *testing.T) {
 		t.Fatal("RequestBridge did not pair")
 	}
 
-	// 字节透明: 桥接两侧各写一个二进制消息, 对端原样收到。
+	// Byte transparency: each side of the bridge writes one binary message, and the peer receives it as-is.
 	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := bridgeWS.Write(writeCtx, websocket.MessageBinary, []byte("from-agent")); err != nil {
@@ -298,16 +298,16 @@ func TestDeviceBridgeRelayAuthorization(t *testing.T) {
 	other := f.createUser(t, "relay-other")
 	deviceID, secret := enrollWSAgent(t, f, owner, "relay-box")
 
-	// 无会话: HTTP 401, WS 无法升级。
+	// No session: HTTP 401, WS cannot upgrade.
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, nil, ""); response.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous relay: HTTP %d %v", response.status, response.body)
 	}
-	// 非 owner: 403 且写审计。
+	// Non-owner: 403 and an audit is written.
 	otherSession := f.session(t, other)
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge", nil, otherSession, ""); response.status != http.StatusForbidden {
 		t.Fatalf("non-owner relay: HTTP %d %v", response.status, response.body)
 	}
-	// owner 会话 + 在线控制通道: 升级成功并完成桥接配对。
+	// Owner session + online control channel: the upgrade succeeds and bridge pairing completes.
 	ownerSession := f.session(t, owner)
 	control := dialDeviceWS(t, f)
 	if response := helloDevice(t, control, agent.HelloMessage{
@@ -344,7 +344,7 @@ func TestDeviceBridgeRelayRequiresTerminalEnabled(t *testing.T) {
 	deviceID, _ := enrollWSAgent(t, f, owner, "terminal-off-box")
 	session := f.session(t, owner)
 
-	// 直接关闭终端授权位 (产品当前无 HTTP 入口改 terminal_enabled, 这里验证守卫本身)。
+	// Turn off the terminal authorization bit directly (the product currently has no HTTP entry to change terminal_enabled; this verifies the guard itself).
 	deviceAgent := query.Use(f.service.db).DeviceAgent
 	if _, err := deviceAgent.WithContext(context.Background()).Where(deviceAgent.DeviceID.Eq(deviceID)).
 		UpdateColumns(map[string]any{"terminal_enabled": false}); err != nil {
@@ -356,7 +356,7 @@ func TestDeviceBridgeRelayRequiresTerminalEnabled(t *testing.T) {
 	}
 }
 
-// presenceCapture 捕获 device://status 推送, 供上下线断言。
+// presenceCapture captures device://status pushes for online/offline assertions.
 type presenceCapture struct {
 	mu     sync.Mutex
 	events []ipc.DeviceStatusEvent
@@ -395,7 +395,7 @@ func (c *presenceCapture) waitFor(t *testing.T, count int) []ipc.DeviceStatusEve
 	return nil
 }
 
-// requireNoPresenceEvent 断言窗口期内没有新事件 (顶替重连/关停不去重时会漏出)。
+// requireNoPresenceEvent asserts that no new events arrive within the window (leaks would appear if replacement reconnects/shutdown were not deduplicated).
 func (c *presenceCapture) requireNoPresenceEvent(t *testing.T, want int) {
 	t.Helper()
 	time.Sleep(300 * time.Millisecond)
@@ -421,7 +421,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 		t.Fatalf("online audit asset_ids=%v", ids)
 	}
 
-	// 顶替重连: 旧连接被服务端拆连, 但设备始终在线, 不产生任何新事件。
+	// Replacement reconnect: the old connection is torn down by the server, but the device stays online the whole time and produces no new events.
 	replacement := dialDeviceWS(t, f)
 	helloDevice(t, replacement, hello)
 	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -431,7 +431,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	}
 	capture.requireNoPresenceEvent(t, 1)
 
-	// 顶替后的连接断开: 恰好一个离线事件与一条离线审计。
+	// The replaced connection drops: exactly one offline event and one offline audit.
 	_ = replacement.Close(websocket.StatusNormalClosure, "")
 	events = capture.waitFor(t, 2)
 	if events[1].DeviceID != deviceID || events[1].Online {
@@ -441,7 +441,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 		t.Fatalf("offline audit asset_ids=%v", ids)
 	}
 
-	// 重新接入是真实迁移: 再次上线。
+	// Reconnecting is a real transition: online again.
 	reconnected := dialDeviceWS(t, f)
 	helloDevice(t, reconnected, hello)
 	events = capture.waitFor(t, 3)
@@ -449,7 +449,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 		t.Fatalf("第三个事件 = %+v, want 设备重新上线", events[2])
 	}
 
-	// 吊销踢线: KickDevice 已摘表, 注销回调不再触发, 由吊销路径补记离线。
+	// Revocation kick: KickDevice already removed the table entry, so the unregistration callback never fires; the revocation path makes up the offline record.
 	session := f.session(t, owner)
 	if response := f.call(t, "POST", "/fleet/devices/"+deviceID+"/revoke", nil, session, session.csrf); response.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", response.status, response.body)
@@ -466,7 +466,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	}
 }
 
-// 服务关停不刷离线: Registry.Close 换空表后再注销拿不到当前连接, 全部静默。
+// Service shutdown produces no offline flurry: after Registry.Close swaps in the empty table, unregistration can no longer get the current connection, so all stays silent.
 func TestDevicePresenceShutdownSilent(t *testing.T) {
 	capture := &presenceCapture{}
 	f := newHTTPFixture(t, false, WithEvents(capture))

@@ -198,8 +198,8 @@ export function AssetTree() {
     return map;
   }, [visible]);
 
-  // 设备分区锚定在「当前设备/本地终端」(内置 local 资产) 之后、其他资产/分组之前;
-  // 设备不纳入资产搜索, 搜索时不渲染分区。内置资产缺失时退化为渲染在首位。
+  // The device section is anchored after "current device/local terminal" (the builtin local asset) and before other assets/groups;
+  // devices are excluded from asset search, so the section is not rendered while searching. Falls back to rendering first when the builtin asset is missing.
   const ungrouped = byGroup.get(null) ?? [];
   const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
   const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];

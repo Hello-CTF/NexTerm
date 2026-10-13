@@ -1,10 +1,12 @@
 package main
 
-// check-conflict-columns 校验 ON CONFLICT upsert 里 conflictTargetColumn /
-// conflictOwnerColumn 的表名参数与同一语句 Create(&T) 的目标模型表名一致。
-// 错位在 PostgreSQL 上是 42702/42P01 运行期错误, 已有两次先例。
+// check-conflict-columns verifies that in ON CONFLICT upserts the table name
+// arguments of conflictTargetColumn / conflictOwnerColumn match the target
+// model table of Create(&T) in the same statement.
+// A mismatch surfaces on PostgreSQL as a 42702/42P01 runtime error; there
+// have been two precedents.
 //
-// 动态解析表名的形态(stmt.Schema.Table)直接豁免。
+// Forms with dynamically resolved table names (stmt.Schema.Table) are exempt.
 
 import (
 	"fmt"
@@ -131,9 +133,11 @@ func main() {
 	fmt.Printf("check-conflict-columns: 全部一致(%d 处无法静态确定需人工留意)\n", unresolved)
 }
 
-// nthStringArg 取调用第 n 个字符串字面量参数, 找不到返回 ""。
+// nthStringArg returns the n-th string literal argument of a call, or "" when
+// not found.
 func nthStringArg(text string, start, want int) string {
-	// 动态解析(stmt.Schema.Table)不算字符串参数, 返回哨兵由调用方豁免。
+	// Dynamic resolution (stmt.Schema.Table) is not a string argument; return a
+	// sentinel for the caller to exempt.
 	if strings.HasPrefix(text[start:], "stmt.Schema.Table") {
 		return "__dynamic__"
 	}
@@ -170,7 +174,8 @@ func nthStringArg(text string, start, want int) string {
 	return ""
 }
 
-// createTargetType 从 conflict 标记位置向前找同一语句的 Create(&T) 目标类型。
+// createTargetType finds the Create(&T) target type of the same statement by
+// scanning back from the conflict marker position.
 func createTargetType(text string, from int) string {
 	window := text[from:min(len(text), from+3000)]
 	idx := indexCreate(window)
@@ -192,7 +197,8 @@ func createTargetType(text string, from int) string {
 	return name
 }
 
-// indexCreate 找第一个 Create( 调用(忽略空白与换行), 返回其首个参数表达式起点。
+// indexCreate finds the first Create( call (ignoring whitespace and newlines)
+// and returns the start of its first argument expression.
 func indexCreate(window string) int {
 	idx := strings.Index(window, "Create(&")
 	if idx < 0 {
@@ -201,7 +207,8 @@ func indexCreate(window string) int {
 	return idx + len("Create(&")
 }
 
-// declareType 在同一函数体内回溯简单变量名的模型类型声明。
+// declareType traces back the model type declaration of a simple variable
+// name within the same function body.
 func declareType(prefix, name string) string {
 	fnStart := strings.LastIndex(prefix, "\nfunc ")
 	if fnStart < 0 {
@@ -212,7 +219,7 @@ func declareType(prefix, name string) string {
 		typ string
 	}
 	var found *tail
-	// 形参与局部声明: "name store.X" / "name model.X" / "name X{Big}"
+	// Parameters and local declarations: "name store.X" / "name model.X" / "name X{Big}"
 	for _, decl := range strings.Split(body, "\n") {
 		idx := strings.Index(decl, name+" ")
 		if idx < 0 {
@@ -235,7 +242,7 @@ func declareType(prefix, name string) string {
 	if found != nil {
 		return found.typ
 	}
-	// 赋值声明: "name := X{" / "name := store.X{"
+	// Assignment declarations: "name := X{" / "name := store.X{"
 	needle := name + " := "
 	if idx := strings.LastIndex(body, needle); idx >= 0 {
 		rest := strings.TrimPrefix(strings.TrimSpace(body[idx+len(needle):]), "store.")

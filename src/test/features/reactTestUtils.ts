@@ -26,8 +26,8 @@ export function mount(node: ReactNode): MountedView {
   };
 }
 
-// mountWithClient 供依赖 react-query 的视图使用 (如桌面账号身份查询);
-// retry:false 让查询错误立刻落定, 不拖慢断言。
+// mountWithClient is for views that depend on react-query (e.g. the desktop account identity query);
+// retry:false makes query errors settle immediately, not slowing assertions.
 export function mountWithClient(node: ReactNode): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, node));

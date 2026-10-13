@@ -8,8 +8,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 链接登录的三态结果: connected 会话可用; mfa_required 待提交 TOTP 码;
-// reset_required 待提交新密码完成强制改密。
+// Link login tri-state results: connected means the session is usable; mfa_required awaits a TOTP code;
+// reset_required awaits a new password to complete the forced change.
 const (
 	LinkConnectConnected     = "connected"
 	LinkConnectMFARequired   = "mfa_required"
@@ -23,15 +23,15 @@ type LinkConnectResult struct {
 	RecoveryKey  string
 }
 
-// 需要人工重新交互登录的两种如实状态: 自动探测(启动探测与 401 重登)无法完成,
-// 记入 LastError 由设置页引导用户走 LinkSet 的分步入职。
+// The two truthful states that require manual interactive re-login: automatic probes (startup probe and 401 re-login) cannot complete them,
+// so they are recorded in LastError and the settings page guides the user through LinkSet's step-by-step onboarding.
 var (
 	errReloginMFA   = ipc.NewError(ipc.CodeForbidden, "账号已开启两步验证：请先在同步设置中完成验证")
 	errReloginReset = ipc.NewError(ipc.CodeForbidden, "账号密码已被管理员重置：请先在同步设置中完成密码重置")
 )
 
-// pendingLinkLogin 是密码已通过、待第二因子或强制改密的中间态: 客户端已按
-// 服务端合同持有票据(MFA)或受限会话 cookie+CSRF(reset_required)。
+// pendingLinkLogin is the intermediate state after the password has passed but a second factor or forced password change is pending: the client holds
+// the ticket (MFA) or the restricted session cookie+CSRF (reset_required) per the server contract.
 type pendingLinkLogin struct {
 	client *remoteClient
 	ticket string
@@ -41,8 +41,8 @@ func remoteConfigKey(config RemoteConfig) string {
 	return config.URL + "\x00" + config.Username
 }
 
-// Connect 用保存的口令同步探测登录: 成功即建立并缓存会话; MFA/强制改密则
-// 挂起中间态, 由 CompleteMFA / CompleteResetPassword 完成入职。
+// Connect probes login synchronously with the saved password: on success the session is established and cached; MFA/forced password change
+// parks the intermediate state for CompleteMFA / CompleteResetPassword to finish onboarding.
 func (e *Engine) Connect(ctx context.Context, config RemoteConfig) (LinkConnectResult, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
@@ -85,7 +85,7 @@ func (e *Engine) clearPending(key string) {
 	delete(e.pending, key)
 }
 
-// CompleteMFA 提交 TOTP 码完成第二步入职; 口令未变, DEK 仍用保存的口令解包。
+// CompleteMFA submits a TOTP code to finish the second onboarding step; the password is unchanged, so the DEK is still unwrapped with the saved password.
 func (e *Engine) CompleteMFA(ctx context.Context, config RemoteConfig, code string) (LinkConnectResult, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
@@ -104,9 +104,9 @@ func (e *Engine) CompleteMFA(ctx context.Context, config RemoteConfig, code stri
 	return LinkConnectResult{State: LinkConnectConnected}, nil
 }
 
-// CompleteResetPassword 提交新密码完成强制改密入职: 管理员重置已删除服务端
-// DEK 信封, 这里用新口令签发全新 DEK 信封上传(与 WEB completeResetRequired 同语义,
-// 旧密文不可恢复, 靠本地副本后续重新同步)。当前受限会话被服务端保留, 改密后即正式会话。
+// CompleteResetPassword submits a new password to finish forced-password-change onboarding: the admin reset deleted the server-side
+// DEK envelope, so a brand-new DEK envelope is issued with the new password and uploaded here (same semantics as WEB completeResetRequired;
+// old ciphertext is unrecoverable and relies on the local replica re-syncing later). The server keeps the current restricted session, which becomes a formal session after the change.
 func (e *Engine) CompleteResetPassword(ctx context.Context, config RemoteConfig, newPassword string) (LinkConnectResult, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
@@ -133,9 +133,9 @@ func (e *Engine) CompleteResetPassword(ctx context.Context, config RemoteConfig,
 	return LinkConnectResult{State: LinkConnectConnected, RecoveryKey: recoveryKey}, nil
 }
 
-// remoteCall 是类型化远端方法的会话供应与 401 重登环: 语义与 Sync 一致
-// (ensureSession 缓存复用, 401 dropSession 后用保存的口令重登), 并以 opMu
-// 与同步轮次互斥, 避免 dropSession 清空 DEK 时 syncOnce 仍在使用。
+// remoteCall is the session supply and 401 re-login loop for typed remote methods: same semantics as Sync
+// (ensureSession cache reuse, 401 dropSession then re-login with the saved password), and it is mutually exclusive
+// with sync rounds via opMu, so a dropSession clearing the DEK cannot race a running syncOnce.
 func (e *Engine) remoteCall(ctx context.Context, config RemoteConfig, fn func(ctx context.Context, client *remoteClient) error) error {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()

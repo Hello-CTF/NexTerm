@@ -451,7 +451,7 @@ function useAiToastInset(active: boolean): void {
   }, [active]);
 }
 
-// LazyAuthGate 仅在 WEB 下加载账号门,避免桌面端把 auth store 拉进终端等测试的 env mock。
+// LazyAuthGate loads the account gate only under WEB, so the desktop does not pull the auth store into env mocks of terminal tests.
 function LazyAuthGate() {
   const [gate, setGate] = useState<React.ComponentType | null>(null);
   useEffect(() => {
@@ -469,7 +469,7 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
-// LazyDevicesView 同理:设备管理经 auth store 引 env,懒加载避免拖进桌面端测试的模块图。
+// LazyDevicesView likewise: device management reaches env through the auth store, so lazy loading keeps it out of the desktop test module graph.
 function LazyDevicesView() {
   const [view, setView] = useState<React.ComponentType | null>(null);
   useEffect(() => {
@@ -486,9 +486,9 @@ function LazyDevicesView() {
   return <View />;
 }
 
-// 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel 的
-// queryKey 对齐(资产/分组/凭据/片段/搜索/凭据库状态)。auth 转换时统一重置: 登录前
-// 这些请求全部吃到 401(分组资产不显示), 换账号则不能把上一个会话的缓存漏给下一个。
+// Account-level query keys, aligned with the queryKeys of AssetTree/CredentialsSidebar/CredentialsPanel
+// (assets/groups/credentials/snippets/search/vault status). Reset together on auth transitions: before login
+// these requests all hit 401 (grouped assets hidden), and on account switch the previous session's cache must not leak into the next.
 const ACCOUNT_QUERY_KEYS = [
   ["assets"],
   ["groups"],
@@ -543,8 +543,8 @@ function AppShell() {
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const queryClient = useQueryClient();
-  // 状态栏凭据库状态直接订阅共享的 ["vault-status"] query, 与设置页同源;
-  // 不再维护本地 state + 序号守卫的分叉副本。
+  // The status bar vault state subscribes directly to the shared ["vault-status"] query, same source as the settings page;
+  // no more forked copy maintained via local state + sequence guards.
   const vaultQuery = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
   const vaultStatus = vaultQuery.data
     ? {
@@ -605,7 +605,7 @@ function AppShell() {
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
   const landscapeFull = useLandscapeFullScreen();
-  // 横屏全屏时宽度往往大于 overlay 阈值, 强制侧栏走 overlay, 避免挤压全屏终端。
+  // In landscape fullscreen the width often exceeds the overlay threshold; force sidebars into overlay to avoid squeezing the fullscreen terminal.
   const overlaySidebars = viewport.overlaySidebars || landscapeFull;
   const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
   const leftDockOpen = overlaySidebars ? overlayDock === "left" && leftOpen : leftOpen;
@@ -642,8 +642,8 @@ function AppShell() {
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
 
-  // 手机上进终端标签自动收起侧栏, 切回非终端标签恢复。只动会话级 overlayDock:
-  // leftOpen/rightOpen 按用户持久化并跨端同步, 写它会丢偏好还会联动对端。
+  // On phones, entering a terminal tab auto-collapses the sidebar; switching back to a non-terminal tab restores it. Only the session-level overlayDock is touched:
+  // leftOpen/rightOpen are user-persisted and synced across devices; writing them would lose preferences and propagate to the other end.
   const rememberedOverlayDock = useRef<"left" | "right" | null>(null);
   const prevActiveKind = useRef<string | null>(null);
   const activeTabKind = active?.kind ?? null;
@@ -778,8 +778,8 @@ function AppShell() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
-  // 会话列表的 auth 守卫(迟到响应丢弃/登出清空)在 store 的 resyncSessions/resetSessions 里。
-  // 凭据库状态由上方共享 vault-status query 的 resetQueries 一并清空重取, 这里不再单独维护。
+  // The session list auth guard (drop late responses / clear on logout) lives in the store's resyncSessions/resetSessions.
+  // Vault state is cleared and refetched by resetQueries on the shared vault-status query above; nothing extra is maintained here.
   const openVaultProtection = useCallback(() => {
     openSettings();
     setVaultProtectionSeq((n) => n + 1);
@@ -841,7 +841,7 @@ function AppShell() {
       return;
     }
     if (ws?.assetId && ws.kind !== "db") {
-      // 设备工作区的 assetId 是伪资产 (device/<deviceId>), 资产表查不到, 走设备连接。
+      // A device workspace's assetId is a pseudo asset (device/<deviceId>) not found in the asset table; go through device connect.
       if (ws.assetKind === "device") {
         const outcome = await connectDevice({
           id: ws.assetId.slice("device/".length),
@@ -1097,8 +1097,8 @@ function AppShell() {
     startUnreadTracking();
   }, []);
 
-  // 桌面端启动后静默检查一次更新: 不弹 toast, 有更新时由 UpdateBanner 呈现;
-  // 检查完成后按版本与防重门控弹一次更新提醒(见 updatePrompt)。
+  // After desktop startup, check for updates once silently: no toast; UpdateBanner presents any update.
+  // After the check completes, prompt once per version with dedup gating (see updatePrompt).
   useEffect(() => {
     if (TRANSPORT !== "desktop") return;
     void getUpdateState()
@@ -1110,11 +1110,11 @@ function AppShell() {
     void useUi.getState().resyncSessions({ silent: true });
   }, []);
 
-  // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的账号级请求全部
-  // 吃到 401; resetQueries 会取消在途的旧 fetch 再重取(invalidateQueries 在 data 为空时会
-  // 并入旧 fetch, 401 照样落账)。反方向(登出/会话过期回 login)重置同一组键并清空会话
-  // 列表与凭据库状态, 避免上一个会话的数据漏给下一个账号。toast 不做 ready 全清:
-  // 8s/3.5s 自动消失已是有限生命周期, 终端/文件/AI 与非 401 错误在登录后仍是有效反馈。
+  // With auth=on, when login/register/init brings the gate to ready, account-level requests issued while mounted behind the gate
+  // all hit 401; resetQueries cancels in-flight old fetches and refetches (invalidateQueries joins the old fetch when data is empty,
+  // and the 401 still lands). The reverse direction (logout/session expiry back to login) resets the same key set and clears the session
+  // list and vault state, so the previous session's data cannot leak into the next account. Toasts are not all cleared on ready:
+  // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
   useEffect(() => {
     if (!WEB) return;
     let cancelled = false;

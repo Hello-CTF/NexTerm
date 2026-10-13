@@ -1,24 +1,24 @@
-// Package biometric 提供 iOS/Android 生物识别评估与安全存储,
-// 用于面容/指纹快捷解锁: 解锁材料为凭据库主密码, 验证成功后走既有 vault_unlock 路径。
+// Package biometric provides iOS/Android biometric evaluation and secure storage
+// for face/fingerprint quick unlock: the unlock material is the credential vault master password, and after successful verification it takes the existing vault_unlock path.
 package biometric
 
 import "errors"
 
-// ErrUnavailable 表示当前平台不支持生物识别解锁(非 iOS/Android 或设备无面容/指纹)。
+// ErrUnavailable means the current platform does not support biometric unlock (not iOS/Android, or the device has no face/fingerprint).
 var ErrUnavailable = errors.New("当前设备不支持生物识别解锁")
 
-// ErrNoMaterial 表示安全存储中尚未保存解锁材料。
+// ErrNoMaterial means no unlock material has been saved in secure storage yet.
 var ErrNoMaterial = errors.New("尚未保存生物识别解锁材料")
 
-// Status 汇总生物识别能力与解锁材料状态, 供前端决定是否展示入口。
+// Status summarizes biometric capability and unlock material state, so the frontend can decide whether to show the entry point.
 type Status struct {
 	Available   bool `json:"available"`
 	CanEvaluate bool `json:"canEvaluate"`
 	HasMaterial bool `json:"hasMaterial"`
 }
 
-// materialAccount 是解锁材料在安全存储中的固定 account, service 为应用标识。
+// materialAccount is the fixed account of the unlock material in secure storage; service is the app identifier.
 const materialAccount = "biometric-unlock"
 
-// evaluateReason 是系统面容验证弹窗中展示的用途说明。
+// evaluateReason is the usage description shown in the system face verification prompt.
 const evaluateReason = "解锁 NexTerm 数据密钥"

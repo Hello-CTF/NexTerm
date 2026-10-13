@@ -613,7 +613,7 @@ func TestSlowConsumerDrainedWithinGraceIsNotKicked(t *testing.T) {
 		t.Fatalf("drained consumer was kicked: %+v", info)
 	}
 
-	// 再背压起新计时器, drain 后同样不被踢。
+	// Backpressure starts a new timer again; after draining, the channel is likewise not kicked.
 	paused.Store(true)
 	stop2, wg2 := flood()
 	reentry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))

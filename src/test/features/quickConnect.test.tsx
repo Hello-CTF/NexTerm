@@ -14,7 +14,7 @@ import {
 } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
-  // 快速连接(临时连接)是桌面端能力; web 模式的隐藏行为见 quickConnectWeb.test.tsx。
+  // Quick connect (ad-hoc connection) is a desktop capability; web-mode hiding behavior is covered in quickConnectWeb.test.tsx.
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
     list: vi.fn(),

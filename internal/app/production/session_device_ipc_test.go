@@ -101,8 +101,8 @@ func TestProductionDeviceSessionEndToEnd(t *testing.T) {
 	writeDurableTestCommand(t, production, tabID, "device-e2e-marker", "client-a")
 	waitForProductionOutput(t, stream, "device-e2e-marker")
 
-	// 断开后重连 (与前端 reconnectSessionAndWait 同路径): durable 标签经设备
-	// daemon 重 attach, 重连后重新 attach_tab 接管, 输入输出恢复。
+	// Reconnect after a disconnect (same path as the frontend reconnectSessionAndWait): durable tabs re-attach via the device
+	// daemon, attach_tab takes over after reconnect, and input/output resume.
 	requireProductionNull(t, dispatchDurableTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`, "", "client-a"))
 	reconnectResponse := dispatchDurableTest(t, production, "session_reconnect", `{"sessionId":"`+connected.ID+`"}`, "", "client-a")
 	var started bool
@@ -145,7 +145,7 @@ func TestProductionDeviceConnectValidationAndConfig(t *testing.T) {
 		t.Fatalf("empty deviceId = %+v, want bad_param", response)
 	}
 
-	// 授权拒绝经 session_connect_device 原样透传 (owner/吊销/终端开关的拒绝文案)。
+	// Authorization rejections pass through session_connect_device verbatim (owner/revocation/terminal-switch rejection texts).
 	production.Services.SetDeviceConnector(&DeviceConnectorConfig{
 		Dial:   func(context.Context, string) (net.Conn, error) { return nil, errors.New("dial must not run") },
 		Digest: func(context.Context, string) (string, error) { return "digest", nil },

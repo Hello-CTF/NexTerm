@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-// scheduleDeferredReplace 以隐藏窗口的 powershell 启动延迟替换脚本: 脚本等待
-// 本进程退出后完成二进制切换, 失败路径自动回滚旧二进制。
+// scheduleDeferredReplace starts the deferred replacement script via powershell with a hidden window: the script waits for
+// this process to exit, then completes the binary switch, and automatically rolls back to the old binary on failure.
 func scheduleDeferredReplace(newPath, targetPath string) error {
 	script, err := os.CreateTemp(filepath.Dir(newPath), ".nexterm-replace-*.ps1")
 	if err != nil {

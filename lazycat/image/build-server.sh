@@ -19,8 +19,10 @@ esac
 echo "[lzc-build] 仓库根: $ROOT"
 echo "[lzc-build] 目标架构: ${LZC_ARCH}（linux/${LZC_ARCH}，Go 交叉编译）"
 
-# 版本解析：NEXTERM_RELEASE_VERSION 优先，其次当前提交恰好落在 tag 上；解析到就同时
-# 注入 package.yml 与 build.mjs（二进制烙同一版本），解析不到显式恢复 0.0.0 占位。
+# Version resolution: NEXTERM_RELEASE_VERSION first, else the current commit
+# sitting exactly on a tag; when resolved, inject it into both package.yml and
+# build.mjs (binary stamped with the same version), otherwise explicitly
+# restore the 0.0.0 placeholder.
 LZC_VERSION="${NEXTERM_RELEASE_VERSION:-}"
 if [ -z "$LZC_VERSION" ]; then
   LZC_VERSION="$(git -C "$ROOT" describe --exact-match --tags HEAD 2>/dev/null | sed 's/^v//' || true)"

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 桌面端分享卡 · 已登录: 主机分享创建/吊销与公开链接列表/吊销全部走 remote* 代理
-// (remote_share_* / remote_fleet_devices), 视图与 WEB 同构; 角色经 adminUsers 探测。
+// Desktop share card - logged in: host share create/revoke and public link list/revoke all go through the remote* proxies
+// (remote_share_* / remote_fleet_devices), the view is isomorphic with WEB; the role is probed via adminUsers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flushUntil, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
@@ -249,7 +249,7 @@ describe("分享卡片 · 桌面端已登录", () => {
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard() as HTMLElement;
-    // hs-1 本人授予 + hs-2 本人接收: 两条都可吊销 (owner_id === userId 或设备持有人)
+    // hs-1 granted by me + hs-2 received by me: both can be revoked (owner_id === userId or device holder)
     const grantedRow = [...card.querySelectorAll("div.border-b")].find((d) => d.textContent?.includes("分享给 alice")) as HTMLElement;
     click([...grantedRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
     await flushUntil(() => mocks.revokeHostShare.mock.calls.length === 1);

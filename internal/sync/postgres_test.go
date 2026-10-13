@@ -10,15 +10,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 本文件的测试全部跑在真实 PostgreSQL 上, 由 NEXTERM_TEST_PG_DSN 门控;
-// 未配置 DSN 时逐测试 SKIP, 不得视为已验证。
+// All tests in this file run against real PostgreSQL, gated by NEXTERM_TEST_PG_DSN;
+// without a configured DSN each test SKIPs and must not be counted as verified.
 
 func newPostgresSyncStore(t *testing.T) *store.Store {
 	t.Helper()
 	return dbtest.NewFixture(t).OpenStore(t)
 }
 
-// createPostgresSyncUser 插入 app_user 行满足 user_sync_object/user_sync_head 的外键。
+// createPostgresSyncUser inserts an app_user row to satisfy the user_sync_object/user_sync_head foreign keys.
 func createPostgresSyncUser(t *testing.T, ctx context.Context, db *store.Store) string {
 	t.Helper()
 	userID := "pg-user-" + ids.New()
@@ -60,21 +60,21 @@ func TestPostgresObjectStorePushPullAndHeadConflict(t *testing.T) {
 	if err != nil || applied != 2 || skipped != 0 || maxSeq != 2 {
 		t.Fatalf("push applied=%d skipped=%d maxSeq=%d err=%v", applied, skipped, maxSeq, err)
 	}
-	// 过期 head 推送必须整体拒绝(head 冲突)。
+	// A push with a stale head must be rejected as a whole (head conflict).
 	if _, _, _, _, err := objectStore.push(ctx, userID, genesisHead(userID), []WireObject{{ID: "obj-c", Blob: []byte("v2")}}); err != errHeadMismatch {
 		t.Fatalf("stale head push err=%v, want errHeadMismatch", err)
 	}
-	// 同内容重复推送: 幂等跳过, head 与 seq 不变。
+	// Re-pushing the same content: idempotent skip, head and seq unchanged.
 	applied, skipped, head2, maxSeq2, err := objectStore.push(ctx, userID, head, objects)
 	if err != nil || applied != 0 || skipped != 2 || head2 != head || maxSeq2 != maxSeq {
 		t.Fatalf("idempotent push applied=%d skipped=%d headSame=%v maxSeq=%d err=%v", applied, skipped, head2 == head, maxSeq2, err)
 	}
-	// 拉取按 seq 升序且游标完成。
+	// Pull is ascending by seq with the cursor complete.
 	pulled, _, pulledMaxSeq, nextSeq, done, err := objectStore.pull(ctx, userID, 0, nil, 0)
 	if err != nil || len(pulled) != 2 || pulled[0].ID != "obj-a" || pulled[1].ID != "obj-b" || !done || pulledMaxSeq != 2 || nextSeq != 2 {
 		t.Fatalf("pulled=%+v done=%v maxSeq=%d nextSeq=%d err=%v", pulled, done, pulledMaxSeq, nextSeq, err)
 	}
-	// 对账清单携带 blob 哈希。
+	// The reconciliation list carries blob hashes.
 	entries, _, _, err := objectStore.idList(ctx, userID)
 	if err != nil || len(entries) != 2 || entries[0].BlobHash != hashBlobHex([]byte("blob-a")) || entries[1].BlobHash != hashBlobHex([]byte("blob-b")) {
 		t.Fatalf("entries=%+v err=%v", entries, err)
@@ -92,7 +92,7 @@ func TestPostgresObjectStoreConcurrentPush(t *testing.T) {
 		t.Fatal("head did not advance")
 	}
 	assertSeqContiguous(t, ctx, objectStore, userID, 32)
-	// 全量拉回: 对象内容一一对应, 无丢失无错序。
+	// Full pull: object contents correspond one-to-one, nothing lost or misordered.
 	pulled, _, maxSeq, nextSeq, done, err := objectStore.pull(ctx, userID, 0, nil, 0)
 	if err != nil || len(pulled) != 32 || !done || maxSeq != 32 || nextSeq != 32 {
 		t.Fatalf("pulled=%d done=%v maxSeq=%d nextSeq=%d err=%v", len(pulled), done, maxSeq, nextSeq, err)
@@ -223,7 +223,7 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 		t.Fatalf("deviceB secret=%q err=%v", secret, err)
 	}
 
-	// A 删除片段: 墓碑经服务端(PG 触发器落 sync_tombstone)推送到 B, B 端副本被清除。
+	// A deletes the snippet: the tombstone reaches B via the server (PG trigger writes sync_tombstone), and B's copy is cleared.
 	if err := deviceA.db.SnippetDelete(ctx, snippetID); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestPostgresEngineSyncE2E(t *testing.T) {
 	if _, err := deviceB.db.SnippetGet(ctx, snippetID); !isNotFound(err) {
 		t.Fatalf("snippet must be tombstoned on B: %v", err)
 	}
-	// 双端收敛后空闲同步零推送。
+	// After both sides converge, idle sync pushes nothing.
 	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pulled+report.Applied+report.Pushed != 0 {
 		t.Fatalf("deviceA must be quiescent: %+v", report)
 	}

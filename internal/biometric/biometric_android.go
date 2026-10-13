@@ -11,9 +11,9 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Android 实现复用 wails 移动桥: 解锁材料(凭据库主密码)存
-// EncryptedSharedPreferences(Android Keystore 主密钥加密), 验证走
-// BiometricPrompt(生物识别或锁屏凭据), 结果经 "common:biometric" 事件回流。
+// The Android implementation reuses the wails mobile bridge: the unlock material (credential vault master password) is stored
+// in EncryptedSharedPreferences (encrypted with the Android Keystore master key), verification goes through
+// BiometricPrompt (biometrics or lock screen credential), and results flow back via the "common:biometric" event.
 
 const biometricEvent = "common:biometric"
 
@@ -24,7 +24,7 @@ var authenticateMu sync.Mutex
 func Current() (Status, error) {
 	_, found, err := application.Android.SecureGet(materialAccount)
 	if err != nil {
-		// Keystore/加密存储初始化失败视为能力不可用, 不阻塞密码解锁路径
+		// Keystore/encrypted storage init failure counts as capability unavailable; the password unlock path is not blocked
 		return Status{Available: false}, nil
 	}
 	return Status{Available: true, CanEvaluate: true, HasMaterial: found}, nil
@@ -55,8 +55,8 @@ func Disable() error {
 	return application.Android.SecureDelete(materialAccount)
 }
 
-// authenticate 弹出系统 BiometricPrompt 并同步等待结果: 桥接是异步事件,
-// 这里注册一次性监听后以 channel 回收, 互斥保证同时只有一个弹窗在途。
+// authenticate shows the system BiometricPrompt and waits synchronously for the result: the bridge is an async event,
+// so a one-shot listener is registered here and the result is collected via a channel; the mutex guarantees only one prompt is in flight.
 func authenticate(reason string) error {
 	authenticateMu.Lock()
 	defer authenticateMu.Unlock()

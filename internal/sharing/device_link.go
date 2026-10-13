@@ -13,10 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// DeviceLink 把一台 daemon 设备在限定时间内分享给无账号访客: 与绑定单个
-// 实时会话的 Link 不同, 访客每次打开都在设备上经 host agent 新建终端, 链接
-// 本身不依附任何既有会话。not_before 之前链接不可用 (延迟生效); owner_id 是
-// 授予者 (设备 owner 或代管的 owner)。
+// DeviceLink shares a daemon device with account-less visitors for a limited time: unlike a
+// Link bound to a single live session, the visitor opens a new terminal on the device via the host agent on every open, and the link
+// itself is not tied to any existing session. The link is unavailable before not_before (delayed effect); owner_id is the
+// grantor (the device owner or the owner they manage).
 type DeviceLink struct {
 	ID             string
 	OwnerID        string
@@ -29,10 +29,10 @@ type DeviceLink struct {
 	LastAccessedAt int64
 }
 
-// CreateDeviceLink 为 daemon 设备创建公开分享链接。默认只读; write 显式为
-// true 时才授予读写。notBeforeMS 是生效时刻 (unix 毫秒; <=0 表示立即生效,
-// 早于当前时刻的一律按当前时刻收敛); 生效时刻必须早于过期时刻。原始 token
-// 只在本次返回, 库中只存哈希。
+// CreateDeviceLink creates a public share link for a daemon device. Read-only by default; read_write is granted
+// only when write is explicitly true. notBeforeMS is the effect time (unix milliseconds; <=0 means effective immediately,
+// anything earlier than now converges to now); the effect time must be earlier than the expiry time. The raw token
+// is returned only in this response; only its hash is stored.
 func (s *Service) CreateDeviceLink(ctx context.Context, identity *account.Identity, deviceID string, write bool, notBeforeMS int64, ttl time.Duration) (*DeviceLink, string, error) {
 	if _, err := s.authorize(ctx, identity, deviceID, "create", auditKindDeviceLinkCreate); err != nil {
 		return nil, "", err
@@ -82,9 +82,9 @@ func (s *Service) CreateDeviceLink(ctx context.Context, identity *account.Identi
 	return link, token, nil
 }
 
-// ResolveDeviceLink 用公开 token 换取授权快照; 无效、未生效、过期、已吊销或
-// 设备不可达一律拒绝并写审计, 不区分无效与不存在。返回的 Grant 不带 SessionID
-// (数据面据此新建终端而不是 attach 既有会话)。
+// ResolveDeviceLink exchanges a public token for an authorization snapshot; invalid, not-yet-valid, expired, revoked, or
+// unreachable-device cases are all denied with an audit record, without distinguishing invalid from nonexistent. The returned Grant carries no SessionID
+// (the data plane creates a new terminal from it instead of attaching to an existing session).
 func (s *Service) ResolveDeviceLink(ctx context.Context, token string) (*Grant, error) {
 	notFound := func() (*Grant, error) {
 		auditErr := s.audit(ctx, auditKindDeviceLinkAccess, auditPayload{Action: "access", Requester: "", Outcome: "deny", Reason: "not_found"})
@@ -167,8 +167,8 @@ func (s *Service) ResolveDeviceLink(ctx context.Context, token string) (*Grant, 
 	}, nil
 }
 
-// RevokeDeviceLink 吊销设备公开链接; owner 可执行, 重复吊销不
-// 报错。吊销只影响本行, 同设备的会话链接与其他设备链接不受影响。
+// RevokeDeviceLink revokes a device public link; the owner may do this, and repeated revocation does not
+// error. Revocation affects only this row; session links on the same device and other device links are unaffected.
 func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	deviceShareLink := query.Use(s.db).DeviceShareLink
 	row, err := deviceShareLink.WithContext(ctx).Where(deviceShareLink.ID.Eq(linkID)).First()
@@ -196,8 +196,8 @@ func (s *Service) RevokeDeviceLink(ctx context.Context, identity *account.Identi
 	return nil
 }
 
-// ListDeviceLinks 返回 owner 创建的设备公开链接; 仅 owner 可见。不含
-// token 哈希。
+// ListDeviceLinks returns the device public links created by the owner; only the owner can see them. Token hashes are
+// not included.
 func (s *Service) ListDeviceLinks(ctx context.Context, identity *account.Identity) ([]*DeviceLink, error) {
 	deviceShareLink := query.Use(s.db).DeviceShareLink
 	rows, err := deviceShareLink.WithContext(ctx).
@@ -224,11 +224,11 @@ func (s *Service) ListDeviceLinks(ctx context.Context, identity *account.Identit
 	return links, nil
 }
 
-// revalidateDeviceLink 是 RevalidateDeviceLink 的内部实现, 额外返回机器可读
-// 的拒绝原因 ("revoked"/"expired"/"not_yet_valid"/"device_revoked"/
-// "owner_mismatch"/"not_found"), 供输入路径写审计。重查前先用
-// checkDeviceBinding 校验当前设备归属与吊销状态, 再按当前行刷新权限与有效期
-// (权限收缩即时生效), 不信任签发时的快照。
+// revalidateDeviceLink is the internal implementation of RevalidateDeviceLink; it additionally returns a machine-readable
+// denial reason ("revoked"/"expired"/"not_yet_valid"/"device_revoked"/
+// "owner_mismatch"/"not_found") for the input path to write audits. Before revalidating it uses
+// checkDeviceBinding to verify current device ownership and revocation state, then refreshes permission and expiry from the current row
+// (permission shrinkage takes effect immediately), never trusting the snapshot from issuance.
 func (s *Service) revalidateDeviceLink(ctx context.Context, grant *Grant) (*Grant, string, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 {
 		return nil, "not_found", ipc.NewError(ipc.CodeForbidden, "分享链接无效")
@@ -280,9 +280,9 @@ func (s *Service) revalidateDeviceLink(ctx context.Context, grant *Grant) (*Gran
 	return &refreshed, "", nil
 }
 
-// RevalidateDeviceLink 按 ShareIDs 重查设备链接行并校验设备绑定: 吊销、过期、
-// 未生效或绑定不一致的行一律剔除; 全部失效则拒绝。返回刷新后的 Grant (权限
-// 与过期时间以当前行为准), 供连接路径与 agent recheck 使用。
+// RevalidateDeviceLink re-reads device link rows by ShareIDs and verifies device binding: revoked, expired,
+// not-yet-valid, or binding-mismatched rows are all dropped; if everything is invalid it denies. Returns the refreshed Grant (permission
+// and expiry follow the current rows), for use by the connection path and agent recheck.
 func (s *Service) RevalidateDeviceLink(ctx context.Context, grant *Grant) (*Grant, error) {
 	refreshed, _, err := s.revalidateDeviceLink(ctx, grant)
 	return refreshed, err
@@ -307,11 +307,11 @@ func deviceLinkDenyMessage(reason string) string {
 	}
 }
 
-// NewDeviceLinkGate 为设备公开链接连接建立执行 Gate: 逐块以
-// RevalidateDeviceLink 按当前行刷新授权 (吊销/过期/未生效/设备吊销即双向
-// 停止, 权限收缩即时作用于输入方向), 输入方向在 Write 前再经
-// RevalidateDeviceLinkInput 审计并强制 read_write。重查带短 TTL 缓存, 空闲
-// 连接由集成层的周期 Check 兜住。
+// NewDeviceLinkGate builds the enforcement Gate for device public link connections: per block it refreshes the authorization
+// from current rows via RevalidateDeviceLink (revocation/expiry/not-yet-valid/device revocation stops both directions
+// immediately, and permission shrinkage applies to the input direction at once), and the input direction additionally goes through
+// RevalidateDeviceLinkInput for auditing and read_write enforcement before Write. Revalidation carries a short TTL cache; idle
+// connections are covered by the integration layer's periodic Check.
 func (s *Service) NewDeviceLinkGate(grant *Grant, options ...GateOption) *Gate {
 	wired := []GateOption{
 		WithRevalidateTTL(linkRevalidateTTL),
@@ -325,9 +325,9 @@ func (s *Service) NewDeviceLinkGate(grant *Grant, options ...GateOption) *Gate {
 	return NewGate(grant, append(wired, options...)...)
 }
 
-// RevalidateDeviceLinkInput 是设备公开链接输入路径的服务端强制点: 每次输入
-// 都按当前行重查 (吊销/过期/绑定) 并要求 read_write, 不信任签发时的 Grant
-// 快照; 每次判定都写审计 (按设备/时间窗口聚合, 见 auditInputAggregated)。
+// RevalidateDeviceLinkInput is the server-side enforcement point of the device public link input path: every input
+// is re-read from the current row (revocation/expiry/binding) and required to be read_write, never trusting the Grant
+// snapshot from issuance; every decision is written to the audit log (aggregated by device/time window, see auditInputAggregated).
 func (s *Service) RevalidateDeviceLinkInput(ctx context.Context, grant *Grant) (*Grant, error) {
 	refreshed, reason, err := s.revalidateDeviceLink(ctx, grant)
 	if err == nil && !refreshed.Permission.AllowsWrite() {

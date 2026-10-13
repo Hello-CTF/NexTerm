@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面端账号同步登录的分步入职: linkSet 返回 mfa_required 时进入 TOTP 第二步
-// (动态码或恢复码), reset_required 时进入强制改密 (完成后一次性展示恢复密钥,
-// 复制确认后才能进入); 两分支的错误内联展示并可重试, 「返回」回到登录表单。
+// Desktop account-sync login stepped onboarding: linkSet returning mfa_required enters the TOTP second step
+// (OTP or recovery code), reset_required enters the forced password change (one-time recovery key display after completion,
+// entry only after copy confirmation); errors in both branches surface inline and can be retried, "Back" returns to the login form.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -121,7 +121,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
     await mountAndLogin();
     await flushUntil(() => document.body.textContent?.includes("两步验证") ?? false);
 
-    // 主表单隐藏, 只留动态码输入
+    // The main form is hidden, only the OTP input remains
     expect(document.querySelector("#sync-url")).toBeNull();
     expect(document.body.textContent).toContain("恢复码");
 
@@ -148,7 +148,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
     await flushUntil(() => document.body.textContent?.includes("动态码错误") ?? false);
     expect(document.body.textContent).not.toContain("立即同步");
 
-    // 「返回」回主表单后可重新登录
+    // After "Back" returns to the main form, logging in again works
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "返回") as HTMLButtonElement);
     await flushUntil(() => document.querySelector("#sync-url") !== null);
     expect(document.body.textContent).not.toContain("动态码错误");
@@ -201,12 +201,12 @@ describe("桌面端登录 · reset_required 分支", () => {
     await flushUntil(() => document.body.textContent?.includes("恢复密钥（仅显示一次）") ?? false);
 
     expect(mocks.resetPassword).toHaveBeenCalledWith("new-password-1");
-    // 默认掩码: 密钥本体不出现在页面上
+    // Masked by default: the key itself does not appear on the page
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
     const finish = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement;
     expect(finish.disabled).toBe(true);
 
-    // 显示切换可见密钥, 复制后才能进入
+    // The show toggle reveals the key; entry is allowed only after copying
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "显示") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes(RECOVERY_KEY) ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement);

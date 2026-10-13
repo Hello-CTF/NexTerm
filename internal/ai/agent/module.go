@@ -13,9 +13,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// guardGrantMutation 在服务端装配(ServerMode)下把设备授权/授权规则的变更收敛为
-// 超管: 授权状态按账号隔离, 但当前仅超管可变更。桌面端与无身份的
-// 开放部署(auth=off / loopback 免登录)保持原行为。
+// guardGrantMutation under server assembly (ServerMode) restricts device grant /
+// grant rule mutations to super admins: grant state is isolated per account, but
+// currently only super admins may change it. Desktop and identity-less open
+// deployments (auth=off / loopback login-exempt) keep the original behavior.
 func (r *Runner) guardGrantMutation(ctx context.Context) error {
 	if !r.config.ServerMode {
 		return nil

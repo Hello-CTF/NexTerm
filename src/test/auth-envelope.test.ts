@@ -20,7 +20,7 @@ import {
   wrapDEKWithRecovery,
 } from "../features/auth/crypto";
 
-// 真实 Go 端 vault.GenerateUserDEKEnvelopes 产物(scripts/syncv2-helper gen-dek,一次性生成)。
+// Real Go-side vault.GenerateUserDEKEnvelopes output (scripts/syncv2-helper gen-dek, generated once).
 const GO_FIXTURE = {
   password: "test-password-123",
   dekHex: "c26ae1b3822f6f6dc4da86e69b7d5e8fde0b0fa29ddd6481716db07fcce032ad",
@@ -57,7 +57,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     const envelope = await wrapDEKWithRecovery(canonical, dek);
     const opened = await unwrapDEKWithRecovery(canonical, envelope);
     expect(bytesToHex(opened)).toBe(bytesToHex(dek));
-    // 规范化(带分隔符与小写输入)后仍可解包
+    // Can still unwrap after normalization (input with separators and lowercase)
     const formatted = formatRecoveryKey(canonical);
     const opened2 = await unwrapDEKWithRecovery(normalizeRecoveryKey(formatted.toLowerCase()), envelope);
     expect(bytesToHex(opened2)).toBe(bytesToHex(dek));
@@ -68,7 +68,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     const canonical = generateRecoveryKey();
     const hash = await recoveryKeyHash(canonical);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
-    // 规范化后散列不变
+    // Hash unchanged after normalization
     expect(await recoveryKeyHash(formatRecoveryKey(canonical))).toBe(hash);
     expect(await recoveryKeyHash(canonical.toLowerCase())).toBe(hash);
   });
@@ -90,13 +90,13 @@ describe("同步对象加解密与 AAD 绑定", () => {
     const opened = await openSyncObject(dek, blob, "a1", "asset");
     expect(new TextDecoder().decode(opened)).toBe(new TextDecoder().decode(plaintext));
 
-    // 换 id 解不开
+    // Changing the id fails to open
     await expect(openSyncObject(dek, blob, "a2", "asset")).rejects.toThrow();
-    // 换 kind 解不开
+    // Changing the kind fails to open
     await expect(openSyncObject(dek, blob, "a1", "group")).rejects.toThrow();
-    // 换密钥解不开
+    // Changing the key fails to open
     await expect(openSyncObject(generateDEK(), blob, "a1", "asset")).rejects.toThrow();
-    // 篡改密文解不开
+    // Tampered ciphertext fails to open
     const tampered = blob.slice();
     tampered[tampered.length - 1] ^= 1;
     await expect(openSyncObject(dek, tampered, "a1", "asset")).rejects.toThrow();
@@ -123,7 +123,7 @@ describe("base64 互操作", () => {
     const data = new Uint8Array([0x09, 0x54, 0xaa, 0x80, 0xc4, 0xe4, 0x41, 0xfe]);
     expect(bytesToBase64(data)).toBe("CVSqgMTkQf4=");
     expect(base64ToBytes("CVSqgMTkQf4=")).toEqual(data);
-    // Go fixture 中的信封可直接解码
+    // Envelopes from the Go fixture decode directly
     expect(base64ToBytes(GO_FIXTURE.kdfSalt).length).toBe(16);
     expect(base64ToBytes(GO_FIXTURE.dekEnvelope).length).toBe(60);
   });

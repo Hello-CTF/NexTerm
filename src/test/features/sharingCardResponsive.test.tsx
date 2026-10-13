@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-// M233 窄屏结构回归: 320px 真实布局下分享行内容盒只有 ~176px, 有效期/最近访问
-// 时间戳 (en-US 格式可达 ~188px) 带 shrink-0 时单行即溢出。本测试守住行内收缩
-// 合同: 行可折行, 时间戳与方向文本可收缩换行 (完整信息不裁剪), 吊销按钮与徽章
-// 保持 shrink-0 常驻, 主机名截断保留 title 完整值入口。
+// M233 narrow-screen structural regression: at 320px real layout the share row content box is only ~176px; expiry / last-access
+// timestamps (en-US format can reach ~188px) with shrink-0 overflow on a single line. This test pins the in-row shrink
+// contract: the row may wrap, timestamps and direction text may shrink and wrap (full information is not clipped), the revoke
+// button and badge stay shrink-0 permanently, and truncated hostnames keep the full value available via title.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";

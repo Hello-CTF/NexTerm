@@ -7,9 +7,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
 
-// hello 上报的 state digest 必须与设备端 supervisor 按同一规则
-// (sha256(identity\x00绝对状态目录)) 推导, 否则代管 attach/create 过不了
-// helper 的 hello 校验。
+// The state digest reported in hello must be derived by the same rule as the device-side supervisor
+// (sha256(identity\x00absolute state directory)); otherwise managed attach/create cannot pass
+// the helper's hello verification.
 func TestRuntimeComputeStateDigest(t *testing.T) {
 	dataDir := t.TempDir()
 	agentRuntime := newTestRuntime(t, dataDir, []BaseURLEntry{{URL: "http://127.0.0.1:1"}}, &fakeManager{})

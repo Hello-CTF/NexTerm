@@ -53,7 +53,7 @@ func (request *dekEnvelopeRequest) toEnvelopes() *vault.UserDEKEnvelopes {
 	}
 }
 
-// validate 在任何账号写入之前调用, 避免信封缺失导致半初始化状态。
+// validate is called before any account write, avoiding a half-initialized state from missing envelopes.
 func (request *dekEnvelopeRequest) validate() error {
 	if len(request.DEKEnvelope) == 0 || len(request.KDFSalt) == 0 || request.KDFParams == "" ||
 		len(request.RecoveryEnvelope) == 0 || request.RecoveryHash == "" {
@@ -180,8 +180,9 @@ type accountStatusView struct {
 	Auth             string `json:"auth"`
 }
 
-// effectiveAuthMode 上报有效访问控制模式而非配置值: loopback 模式监听非回环地址时
-// 等同 on(与 authRequired 的推导和 README 口径一致), 浏览器端据此决定是否允许匿名。
+// effectiveAuthMode reports the effective access-control mode, not the configured value: loopback mode listening on a
+// non-loopback address equals on (consistent with authRequired derivation and the README), and the browser side
+// uses it to decide whether anonymous is allowed.
 func (s *Server) effectiveAuthMode() string {
 	if s.options.Auth == AuthLoopback && !core.LoopbackListen(s.options.Listen) {
 		return AuthOn
@@ -213,7 +214,7 @@ type accountInitRequest struct {
 type accountSessionView struct {
 	User      accountUserView `json:"user"`
 	CSRFToken string          `json:"csrf_token"`
-	// MFARequired 随会话下发 mfa_required 策略, 前端据此把未绑定会话引入强制绑定门。
+	// MFARequired delivers the mfa_required policy with the session, letting the frontend gate unbound sessions into forced binding.
 	MFARequired bool `json:"mfa_required"`
 }
 
@@ -247,7 +248,7 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 }
 
 func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
-	// 平台托管模式下没有码可消费: 账号由首个经网关到达的请求自动建立。
+	// In platform-managed mode there is no code to consume: the account is created automatically by the first request arriving through the gateway.
 	if s.options.Auth == AuthPlatform {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "当前为平台托管模式（--auth=platform）：账号随平台登录自动建立，不需要初始化码"))
 		return
@@ -275,12 +276,12 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 	s.writeAccountSession(w, r, user, "")
 }
 
-// servePlatformSession 把「已经过前置网关认证」的请求升级为一个真实账号会话。
+// servePlatformSession upgrades a request that "already passed the front gateway's auth" into a real account session.
 //
-// 平台模式的信任根是网关注入的请求头（NEXTERM_GATEWAY_AUTH）：能走到这里就说明平台
-// 已经完成了登录认证。但那个头只说「过了门」、不说「是谁」，所以这里维持一个保留的
-// 单所有者账号 —— 首个这样的请求创建它并签发会话，之后每次打开顺手续用。用户既不抄
-// 初始化码，也不需要口令。
+// The trust root of platform mode is the gateway-injected request header (NEXTERM_GATEWAY_AUTH): reaching here means the platform
+// has already completed login authentication. But that header only says "passed the gate", not "who it is", so a reserved
+// single-owner account is kept here - the first such request creates it and issues a session, and subsequent opens reuse it.
+// The user neither copies an init code nor needs a password.
 func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 	if s.options.Auth != AuthPlatform {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "当前部署不是平台托管模式"))
@@ -290,7 +291,7 @@ func (s *Server) servePlatformSession(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "缺少网关凭据：请从平台入口访问"))
 		return
 	}
-	// 已有有效会话就续用, 避免每次刷新都新开一行会话。
+	// An existing valid session is reused, avoiding a new session row on every refresh.
 	if token, ok := sessionCookie(r); ok {
 		if identity, err := s.accounts.ValidateSession(r.Context(), token); err == nil {
 			if user, err := s.accounts.GetUser(r.Context(), identity.UserID); err == nil {
@@ -524,7 +525,7 @@ type accountDEKView struct {
 	RecoveryHash     string `json:"recovery_hash"`
 }
 
-// serveAccountDEKGet 只返回加密信封; 明文 DEK 永不出服务端(服务端本身不持有)。
+// serveAccountDEKGet returns only encrypted envelopes; the plaintext DEK never leaves the server (the server does not hold it).
 func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	envelopes, err := s.accounts.GetUserDEKEnvelopes(r.Context(), identity.UserID)
@@ -541,7 +542,7 @@ func (s *Server) serveAccountDEKGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// serveAccountDEKUpload 供管理员创建的用户在首次登录后上传初始信封; 已存在时拒绝覆盖。
+// serveAccountDEKUpload lets users created by an admin upload their initial envelope after first login; overwriting an existing one is refused.
 func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	var request dekEnvelopeRequest
@@ -666,7 +667,7 @@ type accountAdminSettingsView struct {
 	MFARequired      bool `json:"mfa_required"`
 }
 
-// accountAdminSettingsPutRequest 用指针区分「未携带」(保持不变)与「空串」(清除)。
+// accountAdminSettingsPutRequest uses pointers to distinguish "not carried" (keep unchanged) from "empty string" (clear).
 type accountAdminSettingsPutRequest struct {
 	RegistrationOpen bool  `json:"registration_open"`
 	MFARequired      *bool `json:"mfa_required"`

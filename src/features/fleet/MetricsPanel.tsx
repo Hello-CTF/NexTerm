@@ -1,7 +1,7 @@
-// 设备指标面板: 设备管理视图与资产树「设备」分区共用。数据来自
-// /fleet/devices/:id/metrics (近 24 小时采样), 含 CPU 趋势线 (MetricsChart)、
-// CPU/内存/磁盘最新值与进度条、运行时长、采样数; 加载/错误(可重试)/空态
-// 三态齐备, 手动刷新重新拉取。
+// Device metrics panel: shared by the device management view and the asset tree "devices" section. Data comes from
+// /fleet/devices/:id/metrics (last 24 hours of samples), including the CPU trend line (MetricsChart),
+// latest CPU/memory/disk values with progress bars, uptime and sample count; loading/error(retryable)/empty
+// states are all covered, and manual refresh refetches.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetMetricsSample } from "../../ipc/fleetApi";

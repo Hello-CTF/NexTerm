@@ -9,11 +9,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
-// SpectateSnapshotType 是只读预览通道首帧的 type 值, 前端据此渲染当前屏幕。
+// SpectateSnapshotType is the type value of the read-only preview channel's first frame; the frontend renders the current screen from it.
 const SpectateSnapshotType = "snapshot"
 
-// spectateSnapshot 是只读预览通道的首帧 (JSON 文本帧): 当前屏幕的纯文本行
-// 与光标位置, 不含滚动历史与字符属性; 之后通道上只有实时输出 (二进制帧)。
+// spectateSnapshot is the first frame of a read-only preview channel (JSON text frame): the current screen's plain text lines
+// and cursor position, without scrollback or character attributes; afterwards the channel carries only live output (binary frames).
 type spectateSnapshot struct {
 	Type      string   `json:"type"`
 	Lines     []string `json:"lines"`
@@ -28,10 +28,10 @@ type SpectateOptions struct {
 	ChannelID string
 }
 
-// AttachSpectator 以只读方式订阅标签页输出: feed 锁内先把当前屏幕快照写进
-// 通道再注册订阅, 快照与后续实时输出之间无缺口无重复。观看者不取得控制权,
-// 不参与 grid 协商, 输入路径对它的通道不存在; 离线/断开走既有
-// DetachChannel 清理。快照不含字符属性 (服务端屏幕模型只存文本)。
+// AttachSpectator subscribes to a tab's output read-only: inside the feed lock the current screen snapshot is written to the
+// channel before the subscription is registered, so there is neither a gap nor duplication between the snapshot and later live output.
+// The watcher does not take control, does not participate in grid negotiation, and has no input path to its channel; offline/disconnect
+// cleanup goes through the existing DetachChannel. The snapshot carries no character attributes (the server-side screen model stores text only).
 func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options SpectateOptions) (TabInfo, error) {
 	if options.ChannelID == "" {
 		return TabInfo{}, hub.ErrInvalidChannel
@@ -132,9 +132,9 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	return info, nil
 }
 
-// TabOwner 返回打开该标签页所属会话的账号用户 ID; 桌面本地或后台会话为 ""。
-// tab.session 在 OpenTab 创建时写入后不再变化, 与 runPump 一样免 tab.mu 读取,
-// 避免与既有 session.mu -> tab.mu 的取锁顺序倒置。
+// TabOwner returns the account user ID of the session that opened the tab; "" for desktop-local or background sessions.
+// tab.session is written at OpenTab creation and never changes, so like runPump it is read without tab.mu,
+// avoiding an inversion of the existing session.mu -> tab.mu lock order.
 func (m *Manager) TabOwner(tabID string) (string, error) {
 	tab, err := m.Tab(tabID)
 	if err != nil {

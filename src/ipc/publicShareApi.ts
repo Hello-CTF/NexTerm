@@ -30,7 +30,7 @@ export function publicShareWsUrl(token: string): string {
   return wsUrl(`/share/public/${encodeURIComponent(token)}`);
 }
 
-// 输入方向只对显式 read_write 放行; 合同里任何其他值一律按只读处理。
+// Input direction is allowed only for explicit read_write; any other value in the contract is treated as read-only.
 function parsePermission(value: unknown): PublicSharePermission {
   return value === "read_write" ? "read_write" : "read";
 }

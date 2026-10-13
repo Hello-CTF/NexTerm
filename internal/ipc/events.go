@@ -30,8 +30,8 @@ type LayoutChangedEvent struct {
 	Revision int64 `json:"revision"`
 }
 
-// AINotificationEvent 是 AI notify 工具发出的应用内通知; OwnerID 为会话属主,
-// 服务端按订阅者身份过滤(空属主不下发), 桌面端无身份直接本地投递。
+// AINotificationEvent is an in-app notification emitted by the AI notify tool; OwnerID is the session owner,
+// the server filters by subscriber identity (empty owner is not delivered), and the desktop delivers locally when it has no identity.
 type AINotificationEvent struct {
 	OwnerID string `json:"ownerId"`
 	Text    string `json:"text"`
@@ -51,8 +51,8 @@ type ConnectProgressEvent struct {
 	Port    int    `json:"port"`
 }
 
-// DeviceStatusEvent 是设备控制通道上下线通知; 只带设备 ID 与在线状态,
-// 设备清单本身仍由 /fleet/devices 按 owner/超管边界过滤。
+// DeviceStatusEvent is the device control channel's online/offline notification; it carries only the device ID and online state,
+// the device list itself is still filtered by /fleet/devices along the owner/admin boundary.
 type DeviceStatusEvent struct {
 	DeviceID string `json:"deviceId"`
 	Online   bool   `json:"online"`

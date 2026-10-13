@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 前端载荷构造与 Go json.Marshal 的逐字节对齐验证。fixtures 是真实 Go encoding/json 输出
-// (结构体逐字段拷贝自 internal/sync/object.go),覆盖 sessionId 位置、零 chunk 省略 content、
-// <>& HTML 转义、U+2028/U+2029 与多语言文本;不是用 JS 逻辑自证。
+// Verifies byte-for-byte alignment between frontend payload construction and Go json.Marshal. Fixtures are real Go encoding/json output
+// (structs copied field by field from internal/sync/object.go), covering sessionId position, content omitted for zero chunks,
+// <>& HTML escaping, U+2028/U+2029 and multilingual text; not self-proven with JS logic.
 import { describe, expect, it } from "vitest";
 import type { TranscriptChunk, TranscriptSummary } from "../ipc/commands";
 import type { SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../ipc/types";

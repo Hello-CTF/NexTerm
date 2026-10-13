@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 共享对比行组件: 汇总统计、状态徽章(含桌面端新增的「无法解密」)、
-// 折叠交互、读取占位与错误隐藏、空态文案、kind 缺失时不渲染类型标。
+// Shared compare row component: summary stats, status badges (including the desktop-only "undecryptable"),
+// collapse interaction, read placeholders and hidden errors, empty-state text, no type badge rendered when kind is missing.
 import { afterEach, describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { clickButton, flush, mount, type MountedView } from "./features/reactTestUtils";
@@ -62,7 +62,7 @@ describe("CompareDetails 行渲染", () => {
       d.textContent?.includes("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
     );
     if (!undecryptable) throw new Error("undecryptable row not found");
-    // 仅名称与徽章两个 span; 普通行还有类型标第三个。
+    // Only the name and badge spans; a normal row also has a third span for the type badge.
     expect(undecryptable.querySelectorAll("span").length).toBe(2);
     const normal = [...mounted.container.querySelectorAll<HTMLElement>("div.border-b")].find((d) =>
       d.textContent?.includes("web-01"),

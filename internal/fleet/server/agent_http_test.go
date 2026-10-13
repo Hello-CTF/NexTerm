@@ -12,7 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 )
 
-// enrollAgent 走完整的签发+兑换流程, 返回设备凭证。
+// enrollAgent goes through the full issue+redeem flow and returns the device credentials.
 func enrollAgent(t *testing.T, f *httpFixture, owner *account.User, name string) (deviceID, secret string) {
 	t.Helper()
 	session := f.session(t, owner)
@@ -158,7 +158,7 @@ func TestAgentCurrentURLRecordsFailover(t *testing.T) {
 }
 
 func TestAgentSyncUsesAgentWireShape(t *testing.T) {
-	// 合同对齐: handler 必须直接消费 agent.SyncRequest 的线格式 (含 omitempty 字段名)。
+	// Contract alignment: the handler must consume the wire format of agent.SyncRequest directly (including omitempty field names).
 	payload := `{"device_id":"d","secret":"s","sample":{"ts":1,"cpu_pct":0.5,"mem_used":1,"mem_total":2,"disk_used":3,"disk_total":4,"uptime_s":5},"service_state":{"installed":true,"enabled":false,"active":true,"last_reconcile_at":7,"last_error":"x"}}`
 	var request agent.SyncRequest
 	decoder := json.NewDecoder(strings.NewReader(payload))

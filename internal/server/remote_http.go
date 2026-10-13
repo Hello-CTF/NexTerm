@@ -12,15 +12,15 @@ import (
 )
 
 const (
-	// remoteFeedReadLimit 是推流 WS 单条消息读上限: 输出帧是一帧一喂, 上限只
-	// 兜住异常大消息; 缓冲边界另有 hub 订阅队列 (512 帧/16MiB, 背压阻塞) 与
-	// 终端模型滚动环兜底。
+	// remoteFeedReadLimit is the per-message read limit for the feed WS: output frames are fed one at a time, and the limit only
+	// catches abnormally large messages; buffer boundaries are additionally backed by the hub subscription queue
+	// (512 frames/16MiB, backpressure blocking) and the terminal model's scroll ring.
 	remoteFeedReadLimit = 1 << 20
 )
 
-// RemoteSessionRegistry 是远程会话壳对 HTTP 层暴露的管理面: 壳注册、推流、
-// 结束、归属查询。session.Manager 实现它; 装配层把同一个 Manager 同时注入
-// Config.Spectator, 服务端据此挂载 /share/remote-sessions 一组端点。
+// RemoteSessionRegistry is the management surface remote session shells expose to the HTTP layer: shell registration, feeding,
+// ending, and ownership lookup. session.Manager implements it; the wiring layer injects the same Manager into
+// Config.Spectator, and the server mounts the /share/remote-sessions endpoints accordingly.
 type RemoteSessionRegistry interface {
 	RegisterRemoteSession(context.Context, session.RemoteSessionOptions) (session.TabInfo, error)
 	RemoteSessionInfo(string) (session.TabInfo, error)
@@ -40,9 +40,9 @@ type remoteSessionCreateRequest struct {
 	Rows    uint32 `json:"rows"`
 }
 
-// serveRemoteSessionCreate 处理 POST /share/remote-sessions: 为当前账号注册一个
-// 远程会话壳 (无本地进程的服务端终端标签页), 返回的 session_id 可直接用于
-// POST /share/previews 建只读预览, 也是推流/删除路径里的 {id}。
+// serveRemoteSessionCreate handles POST /share/remote-sessions: register a remote session shell (a server-side
+// terminal tab with no local process) for the current account; the returned session_id can be used directly for
+// POST /share/previews to create a read-only preview, and is also the {id} in the feed/delete paths.
 func (s *Server) serveRemoteSessionCreate(w http.ResponseWriter, r *http.Request) {
 	var request remoteSessionCreateRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
@@ -70,8 +70,8 @@ func (s *Server) serveRemoteSessionCreate(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// remoteFeedControlFrame 是推流 WS 上唯一的文本帧形态 (控制帧); 输出数据走二
-// 进制帧, 字节原样进入终端模型, 与 hub 内部二进制输出帧一致。
+// remoteFeedControlFrame is the only text frame form on the feed WS (control frame); output data goes in binary
+// frames, with bytes entering the terminal model verbatim, consistent with hub internal binary output frames.
 type remoteFeedControlFrame struct {
 	Type     string `json:"type"`
 	ExitCode *int   `json:"exit_code"`
@@ -79,10 +79,10 @@ type remoteFeedControlFrame struct {
 	Rows     uint32 `json:"rows"`
 }
 
-// serveRemoteSessionFeed 处理 GET /share/remote-sessions/{id}/feed (WS): 桌面端
-// 把本地终端输出推进远程壳。仅壳的创建者可推; 同一壳只允许一条活跃推流连接。
-// 连接是单向的: 服务端只读不推 (除终止前的错误帧); 断线保留壳可重连续推,
-// end 控制帧按进程退出语义关闭写入方向 (快照保留)。
+// serveRemoteSessionFeed handles GET /share/remote-sessions/{id}/feed (WS): the desktop pushes local terminal output
+// into the remote shell. Only the shell's creator may feed, and only one active feed connection is allowed per shell.
+// The connection is one-way: the server only reads and never pushes (except the error frame before termination); a disconnect
+// keeps the shell and can reattach to resume feeding, and the end control frame closes the write direction per process-exit semantics (snapshot preserved).
 func (s *Server) serveRemoteSessionFeed(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	tabID := r.PathValue("id")
@@ -144,8 +144,8 @@ func (s *Server) serveRemoteSessionFeed(w http.ResponseWriter, r *http.Request) 
 	s.pumpRemoteFeed(ctx, conn, tabID)
 }
 
-// pumpRemoteFeed 是推流读循环: 二进制帧 = 输出数据 (原样喂壳), 文本帧 = 控制
-// 帧 (end/resize); 任何读错误即断开 (壳保留), 协议错误先下发错误帧再关闭。
+// pumpRemoteFeed is the feed read loop: binary frames are output data (fed to the shell verbatim), text frames are control
+// frames (end/resize); any read error disconnects (the shell is kept), and protocol errors deliver an error frame before closing.
 func (s *Server) pumpRemoteFeed(ctx context.Context, conn *websocket.Conn, tabID string) {
 	for {
 		kind, data, err := conn.Read(ctx)
@@ -195,8 +195,8 @@ func (s *Server) failRemoteFeedWith(conn *websocket.Conn, code, message string) 
 	_ = conn.Close(websocket.StatusPolicyViolation, "remote feed failed")
 }
 
-// remoteFeedTermination 把推流错误映射为可下发给推流方的终止码; 内部错误不
-// 携带细节 (避免泄露内部状态)。
+// remoteFeedTermination maps feed errors to termination codes deliverable to the feeder; internal errors carry
+// no details (avoiding leaking internal state).
 func remoteFeedTermination(err error) (string, string) {
 	switch {
 	case errors.Is(err, session.ErrTabNotFound), errors.Is(err, session.ErrTabClosed):
@@ -207,8 +207,8 @@ func remoteFeedTermination(err error) (string, string) {
 	return "internal", "推流暂时不可用"
 }
 
-// serveRemoteSessionDelete 处理 DELETE /share/remote-sessions/{id}: 显式终结
-// 远程壳, 会话连同标签页从 hub 移除, 其上的只读预览流随之终止。仅创建者可删。
+// serveRemoteSessionDelete handles DELETE /share/remote-sessions/{id}: explicitly end the remote shell,
+// removing the session with its tabs from the hub and terminating read-only preview streams on it. Only the creator may delete.
 func (s *Server) serveRemoteSessionDelete(w http.ResponseWriter, r *http.Request) {
 	identity := accountIdentityFrom(r.Context())
 	tabID := r.PathValue("id")

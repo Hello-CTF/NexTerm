@@ -15,7 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// probeEventRecorder 记录启动探测与后台轮发出的 sync 状态事件。
+// probeEventRecorder records sync status events emitted by the startup probe and background rounds.
 type probeEventRecorder struct {
 	mu     stdsync.Mutex
 	events []ipc.Event
@@ -48,7 +48,7 @@ func openLinkStore(t *testing.T) *store.Store {
 	return db
 }
 
-// seedSavedLink 以指定主密码初始化凭据库并保存一份完整链接, 模拟上一次运行留下的配置。
+// seedSavedLink initializes the vault with the given master password and saves a complete link, simulating config left by a previous run.
 func seedSavedLink(t *testing.T, db *store.Store, masterPassword, url, username, password string) {
 	t.Helper()
 	ctx := context.Background()
@@ -64,8 +64,8 @@ func seedSavedLink(t *testing.T, db *store.Store, masterPassword, url, username,
 	}
 }
 
-// restartService 在同一存储上重新 Load 凭据库并新建 Service, 模拟桌面端进程重启:
-// 新 Engine 的会话缓存为空, 链接配置从 settings 重新解密读出。
+// restartService re-Loads the vault on the same store and builds a new Service, simulating a desktop process restart:
+// the new Engine's session cache is empty and the link config is re-decrypted from settings.
 func restartService(t *testing.T, db *store.Store, events *probeEventRecorder) (*Service, *vault.Vault) {
 	t.Helper()
 	reloaded := vault.Load(context.Background(), db)
@@ -143,7 +143,7 @@ func TestServiceStartProbeFailureRecordsLastError(t *testing.T) {
 	service, _ := restartService(t, db, events)
 	startProbeService(t, service)
 
-	// 只有启动探测会在此场景发出事件(会话永不建立, 后台轮无变更不广播)。
+	// Only the startup probe emits an event in this scenario (the session is never established, and changeless background rounds do not broadcast).
 	waitForCondition(t, "startup probe did not run", func() bool {
 		return events.count() > 0
 	})
@@ -223,7 +223,7 @@ func TestServiceStartConnectsAfterVaultUnlock(t *testing.T) {
 	}
 	startProbeService(t, service)
 
-	// 锁定期内探测与后台轮都静默跳过: 不发事件、不记错误。
+	// During the locked period both the probe and background rounds silently skip: no events, no recorded errors.
 	time.Sleep(100 * time.Millisecond)
 	if events.count() != 0 {
 		t.Fatal("probe must stay silent while the vault is locked")
@@ -244,8 +244,8 @@ func TestServiceStartConnectsAfterVaultUnlock(t *testing.T) {
 	})
 }
 
-// 首轮登录把 {cookie, CSRF, userID, DEK} 落盘为 enc:v1: 信封; 重启后凭信封免登恢复,
-// 服务端不再收到 /auth/login, 恢复的 DEK 与服务端信封解出的一致, 同步轮真实可用。
+// The first login persists {cookie, CSRF, userID, DEK} as an enc:v1: envelope; after a restart the envelope restores the session without login,
+// the server sees no further /auth/login, the restored DEK matches what the server envelope unwraps to, and a sync round genuinely works.
 func TestServiceStartRestoresPersistedSession(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -286,7 +286,7 @@ func TestServiceStartRestoresPersistedSession(t *testing.T) {
 	}
 }
 
-// 持久 cookie 被服务端吊销(401): 清除信封并回退现有口令重登; 重登重写信封后再次重启仍免登。
+// The persistent cookie is revoked server-side (401): the envelope is cleared and the existing password re-login is used as fallback; the re-login rewrites the envelope, and a further restart still restores without login.
 func TestServiceStartFallsBackToPasswordLoginWhenPersistedSessionRevoked(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -324,7 +324,7 @@ func TestServiceStartFallsBackToPasswordLoginWhenPersistedSessionRevoked(t *test
 	}
 }
 
-// MFA 账号完成一次交互入职后会话落盘; 重启凭持久会话自动连接, 不再走 /auth/login 也不再挑战 MFA。
+// An MFA account persists the session after one interactive onboarding; after a restart the persisted session auto-connects with no /auth/login and no MFA challenge.
 func TestServiceStartRestoresPersistedSessionForMFAAccount(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -367,7 +367,7 @@ func TestServiceStartRestoresPersistedSessionForMFAAccount(t *testing.T) {
 	}
 }
 
-// 主密码库锁定读不出持久会话信封: 探测与后台轮保持静默跳过, 不发事件、不记错误、不尝试登录。
+// A locked master-password vault cannot read the persisted session envelope: probe and background rounds keep silently skipping with no events, no recorded errors, and no login attempt.
 func TestServiceStartSkipsPersistedSessionWhileVaultLocked(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -400,8 +400,8 @@ func TestServiceStartSkipsPersistedSessionWhileVaultLocked(t *testing.T) {
 	}
 }
 
-// 主动改密后持久会话清除(内存会话仍在, 服务端保留当前会话); 保存的链接口令同步更新,
-// 下次启动回退新口令重登并重新落盘。
+// A proactive password change clears the persisted session (the in-memory session stays, and the server keeps the current session); the saved link password is updated too,
+// and the next start falls back to re-login with the new password and re-persists.
 func TestPersistedSessionClearedOnPasswordChange(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -434,7 +434,7 @@ func TestPersistedSessionClearedOnPasswordChange(t *testing.T) {
 	}
 }
 
-// 改配链接身份(URL/用户名)即旧账号登出: 持久会话立即清除, 与探测失败与否无关。
+// Reconfiguring the link identity (URL/username) logs the old account out: the persisted session is cleared immediately, regardless of probe outcome.
 func TestPersistedSessionClearedOnLinkIdentityChange(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)
@@ -451,8 +451,8 @@ func TestPersistedSessionClearedOnLinkIdentityChange(t *testing.T) {
 	}
 }
 
-// 管理员重置吊销全部会话: 重启探测清除失效信封并回退口令重登(reset_required 如实记录);
-// 完成强制改密入职后新会话与新 DEK 重新落盘, 再次重启免登恢复。
+// An admin reset revokes all sessions: the restart probe clears the stale envelope and falls back to password re-login (reset_required recorded truthfully);
+// after forced-password-change onboarding completes, the new session and new DEK are persisted again, and a further restart restores without login.
 func TestPersistedSessionReplacedOnLinkResetPassword(t *testing.T) {
 	ctx := context.Background()
 	db := openLinkStore(t)

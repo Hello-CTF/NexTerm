@@ -51,14 +51,14 @@ func TestFleetRoutesMounted(t *testing.T) {
 	_, httpServer := newTestHTTP(t, config)
 	client := httpServer.Client()
 
-	// agent 合同路由已挂载: 凭证无效得到 403 (而不是 404 重定向/未注册)。
+	// Agent contract routes are mounted: invalid credentials get 403 (not a 404 redirect/unregistered).
 	if status := postJSON(t, client, httpServer.URL+"/agent/sync", `{"device_id":"x","secret":"y"}`); status != http.StatusForbidden {
 		t.Fatalf("/agent/sync status = %d, want 403", status)
 	}
 	if status := postJSON(t, client, httpServer.URL+"/agent/current-url", `{"device_id":"x","secret":"y","url":"https://a.example.com","reason":"failover"}`); status != http.StatusForbidden {
 		t.Fatalf("/agent/current-url status = %d, want 403", status)
 	}
-	// 用户态 fleet 路由已挂载: 无会话得到 401。
+	// User-mode fleet routes are mounted: no session gets 401.
 	response, err := client.Get(httpServer.URL + "/fleet/devices")
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestFleetRoutesMounted(t *testing.T) {
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("/fleet/devices status = %d, want 401", response.StatusCode)
 	}
-	// 图片与 v2 同步路由保持原样: /healthz 仍公开。
+	// Image and v2 sync routes stay as-is: /healthz remains public.
 	health, err := client.Get(httpServer.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestFleetRoutesAbsentInSyncOnly(t *testing.T) {
 	_, httpServer := newTestHTTP(t, config)
 	client := httpServer.Client()
 
-	// 同步模式不挂 fleet: 路由不存在 (mux 落到 404, 而不是 401/403)。
+	// Sync mode does not mount fleet: the routes do not exist (mux falls through to 404, not 401/403).
 	if status := postJSON(t, client, httpServer.URL+"/agent/sync", `{"device_id":"x","secret":"y"}`); status != http.StatusNotFound {
 		t.Fatalf("/agent/sync (sync-only) status = %d, want 404", status)
 	}

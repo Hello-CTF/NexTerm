@@ -21,8 +21,8 @@ type mfaTicket struct {
 	expiresAt time.Time
 }
 
-// mfaTicketStore 保存「密码已通过、待第二因子」的一次性票据(仅内存)。
-// 重启即失效,用户重新输入密码即可;票据随机 256 位,不可枚举。
+// mfaTicketStore holds one-time tickets for "password passed, second factor pending" (memory only).
+// A restart invalidates them and the user simply re-enters the password; tickets are random 256-bit values, not enumerable.
 type mfaTicketStore struct {
 	mu      sync.Mutex
 	entries map[string]*mfaTicket
@@ -91,7 +91,7 @@ func mfaThrottleKey(r *http.Request, ticket string) string {
 	return "mfa|" + ticket + "|" + clientIP(r)
 }
 
-// serveAccountTOTPLogin 是已绑定 TOTP 用户的第二步入职: 票据 + 动态码(或恢复码)换会话。
+// serveAccountTOTPLogin is the second onboarding step for TOTP-bound users: ticket + TOTP code (or recovery code) in exchange for a session.
 func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	var request accountTOTPLoginRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
@@ -156,7 +156,7 @@ type accountTOTPSetupView struct {
 }
 
 type accountTOTPSetupRequest struct {
-	// Reverify 是已绑定用户的换绑重验凭据: 当前动态码、恢复码或登录密码。
+	// Reverify is the re-verification credential for rebinding a bound user: current TOTP code, recovery code, or login password.
 	Reverify string `json:"reverify"`
 }
 
@@ -167,7 +167,7 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	// 换绑重验凭可能被爆破(动态码 6 位), 必须限流; 绑定成功后才允许下一次尝试。
+	// The rebind re-verification credential can be brute-forced (6-digit TOTP code), so it must be throttled; the next attempt is allowed only after a successful bind.
 	key := "mfa-setup|" + identity.UserID
 	if !s.accountThrottle.mfa.Allow(key) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
@@ -175,7 +175,7 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, uri, err := s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
 	if err != nil {
-		// 未携带重验凭据是客户端流程问题, 不计入爆破限流; 错误凭据才计。
+		// A missing re-verification credential is a client flow problem and is not counted toward brute-force throttling; only wrong credentials count.
 		if request.Reverify != "" {
 			s.accountThrottle.mfa.RecordFailure(key)
 		}
@@ -197,7 +197,7 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 		writeAccountFailure(w, err)
 		return
 	}
-	// 确认码是 6 位数字,必须限流防爆破; 绑定成功后才允许下一次绑定尝试。
+	// The confirmation code is a 6-digit number and must be throttled against brute force; the next bind attempt is allowed only after a successful bind.
 	key := "mfa-confirm|" + identity.UserID
 	if !s.accountThrottle.mfa.Allow(key) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))

@@ -7,8 +7,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// 桌面匿名直连下 KindOptIn 回退引擎已登录会话 (preferenceUserID 同型):
-// get/set 归属引擎会话用户, /rpc 注入身份优先于引擎会话, 引擎会话清空后回到匿名语义。
+// With a desktop anonymous direct connection, KindOptIn falls back to the engine's logged-in session (same shape as preferenceUserID):
+// get/set belong to the engine session user, the /rpc injected identity takes precedence over the engine session, and clearing the engine session reverts to anonymous semantics.
 func TestKindOptInEngineSessionFallback(t *testing.T) {
 	instance := newTestInstance(t, false)
 	engine := instance.service.engine
@@ -16,7 +16,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 	engine.session = &remoteSession{key: "k", userID: "u-engine"}
 	engine.sessionMu.Unlock()
 
-	// 匿名 ctx 经引擎会话读到归属用户的默认开启状态
+	// The anonymous ctx reads the owning user's default-on state via the engine session.
 	view, err := instance.service.KindOptInGet(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 		t.Fatalf("engine session user should see defaults on: %+v", view)
 	}
 
-	// 匿名 set 写入引擎会话用户
+	// Anonymous set writes the engine session user.
 	view, err = instance.service.KindOptInSet(context.Background(), KindOptInPatch{KnownHost: boolPtr(false)})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 		t.Fatalf("set via engine session failed: %+v", view)
 	}
 
-	// 写入归属引擎会话用户, 不污染其他用户
+	// The write goes to the engine session user without polluting other users.
 	other, err := instance.service.KindOptInGet(WithUserID(context.Background(), "u-other"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 		t.Fatalf("u-other must keep defaults on: %+v", other)
 	}
 
-	// /rpc 注入身份优先于引擎会话
+	// The /rpc injected identity takes precedence over the engine session.
 	ctxView, err := instance.service.KindOptInGet(WithUserID(context.Background(), "u-other"))
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 		t.Fatalf("context identity write must not leak into engine session user: %+v", engineView)
 	}
 
-	// 引擎会话清空后回到匿名语义: get 全 false, set forbidden
+	// With the engine session cleared, anonymous semantics return: get is all false, set is forbidden.
 	engine.sessionMu.Lock()
 	engine.session = nil
 	engine.sessionMu.Unlock()

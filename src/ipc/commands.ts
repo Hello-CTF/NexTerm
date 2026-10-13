@@ -30,8 +30,8 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 const CSRF_HEADER = "X-NexTerm-CSRF";
 
-// auth=on 下服务端对 cookie 会话的一切 POST(含 /rpc 读命令)强制校验 CSRF 头,
-// 拒绝形状固定为 403 + { code:"forbidden", message 含 "CSRF" }。
+// With auth=on, the server enforces the CSRF header on every POST of a cookie session (including /rpc read commands);
+// the rejection shape is always 403 + { code:"forbidden", message contains "CSRF" }.
 function isCsrfRejection(status: number, text: string): boolean {
   if (status !== 403) return false;
   try {
@@ -57,15 +57,15 @@ function postRpc(payload: string, csrf: string | null): Promise<Response> {
   });
 }
 
-// 冷启动 csrf_token 尚未经 /auth/me 取回时, 并发首刷 /rpc 裸发会全部 403 再各自补救。
-// token 缺失时先共享一次 me(): 所有等待者共用同一 promise, me 只并发一次;
-// 成败都只试这一次, 失败(未登录 401 / auth=off 恒失败)由下方 403 重试路径兜底,
-// 避免无会话部署形态下每个 /rpc 都重复预取。token 已存在时不进此分支。
+// On cold start, before the csrf_token is fetched via /auth/me, concurrent first /rpc calls would all 403 if sent bare and then each recover.
+// When the token is missing, share one me() first: all waiters share the same promise, so me runs at most once concurrently;
+// success or failure is tried only this once; failure (401 not logged in / auth=off always fails) is covered by the 403 retry path below,
+// avoiding repeated prefetch for every /rpc in sessionless deployments. Skip this branch when the token already exists.
 let csrfBootstrap: Promise<unknown> | null = null;
 
 function bootstrapCsrfToken(): Promise<unknown> {
   if (!csrfBootstrap) {
-    // 与 callWeb 一样动态加载 authApi, 避免静态环。
+    // Dynamically load authApi like callWeb does, to avoid a static cycle.
     csrfBootstrap = import("./authApi").then(({ authApi }) => authApi.me().catch(() => null));
   }
   return csrfBootstrap;
@@ -79,7 +79,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
     ...(channel === undefined ? {} : { channel }),
     ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
   });
-  // 延迟加载 authApi: commands 与 authApi 互相引用, 动态加载避免静态环。
+  // Lazily load authApi: commands and authApi reference each other; dynamic import avoids a static cycle.
   const { authApi, getCsrfToken } = await import("./authApi");
   if (getCsrfToken() === null) {
     await bootstrapCsrfToken();
@@ -87,8 +87,8 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   let res = await postRpc(requestPayload, getCsrfToken());
   let text = await res.text();
   if (isCsrfRejection(res.status, text)) {
-    // 会话可能已轮换导致旧令牌失效:经 /auth/me 刷新并重试同一请求,只此一次。
-    // CSRF 拒绝发生在中间件、未触达命令 handler,重试不会产生重复副作用。
+    // The session may have rotated and invalidated the old token: refresh via /auth/me and retry the same request, only once.
+    // CSRF rejection happens in middleware before the command handler, so retrying has no duplicate side effects.
     await authApi.me();
     res = await postRpc(requestPayload, getCsrfToken());
     text = await res.text();
@@ -125,9 +125,9 @@ export interface BiometricUnlockResult {
   message?: string;
 }
 
-// 生物识别快捷解锁(iOS/Android): 解锁材料为凭据库主密码, iOS 存 Keychain(绑定当前
-// 面容集的访问控制), Android 存 Keystore 加密的 EncryptedSharedPreferences;
-// 验证由系统生物识别弹窗完成; 其他平台 status.available 恒 false。
+// Biometric quick unlock (iOS/Android): the unlock material is the credential vault master password; iOS stores it in the Keychain
+// (access control bound to the current Face ID set), Android in Keystore-encrypted EncryptedSharedPreferences;
+// verification happens in the system biometric prompt; on other platforms status.available is always false.
 export const biometricApi = {
   status: () => call<BiometricStatus>("biometric_status"),
   unlock: () => call<BiometricUnlockResult>("biometric_unlock"),

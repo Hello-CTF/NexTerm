@@ -41,7 +41,7 @@ type LinkResetPasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
-// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)、AI 模型档案、AI 权限和外观快捷键默认开启。
+// KindOptIn is the per-account-user isolated sync opt-in view: known_host (host trust), AI model profiles, AI permissions, and appearance shortcuts are enabled by default.
 type KindOptIn struct {
 	KnownHost    bool `json:"knownHost"`
 	AIProfile    bool `json:"aiProfile"`
@@ -56,8 +56,8 @@ type KindOptInPatch struct {
 	Preferences  *bool `json:"preferences,omitempty"`
 }
 
-// kindOptInUserID 解析 opt-in 归属用户: 优先 /rpc 会话注入的身份; 桌面端匿名
-// 直连回退到引擎持有的已登录账号会话 (与 preferenceUserID 同一回退)。
+// kindOptInUserID resolves the owning user of the opt-in: the /rpc session-injected identity takes precedence; desktop anonymous
+// direct connections fall back to the logged-in account session held by the engine (same fallback as preferenceUserID).
 func (s *Service) kindOptInUserID(ctx context.Context) (string, bool) {
 	if userID, ok := UserIDFromContext(ctx); ok && userID != "" {
 		return userID, true
@@ -70,7 +70,7 @@ func (s *Service) kindOptInUserID(ctx context.Context) (string, bool) {
 	return "", false
 }
 
-// KindOptInGet 返回归属用户的 opt-in; 无身份(匿名且桌面引擎未登录)返回全 false(默认关), 不报错。
+// KindOptInGet returns the owning user's opt-in; with no identity (anonymous and desktop engine not logged in) it returns all false (default off) without error.
 func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
@@ -95,7 +95,7 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, Preferences: preferences}, nil
 }
 
-// KindOptInSet 只写归属用户自己的 opt-in; 无身份(匿名且桌面引擎未登录)一律 forbidden, 不接受客户端上报 userID(跨用户写入无从发生)。
+// KindOptInSet only writes the owning user's own opt-in; with no identity (anonymous and desktop engine not logged in) it is always forbidden, and client-reported userIDs are not accepted (cross-user writes cannot happen).
 func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindOptIn, error) {
 	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
@@ -193,12 +193,12 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.WriteBundleFileWithOptions(ctx, input.Path, input.Content, BundleWriteOptions{Password: input.Password})
 			})
 		},
-		// 资产包摘要/导出/导入: 桌面端与服务器端同一实现, 操作当前后端资产库;
-		// 会话与 CSRF 由 /rpc 传输层在账号模式下把关, 离线共享工作区(无账号)保持匿名可用。
+		// Asset bundle digest/export/import: one implementation shared by desktop and server, operating on the current backend's asset store;
+		// session and CSRF are enforced by the /rpc transport layer in account mode; offline shared workspaces (no account) stay anonymously usable.
 		func() error {
 			return s.registerBundleCommands(dispatcher)
 		},
-		// 浏览器收集读取: 离线共享工作区(无账号)保持匿名可用, 会话与 CSRF 由 /rpc 传输层在账号模式下把关。
+		// Browser collect reads: offline shared workspaces (no account) stay anonymously usable; session and CSRF are enforced by the /rpc transport layer in account mode.
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandCollectAssets, func(ctx context.Context, _ *ipc.Call, input CollectAssetsRequest) (CollectAssetsResult, error) {
 				return s.CollectAssets(ctx, input)
@@ -234,8 +234,8 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.CollectPreferences(ctx)
 			})
 		},
-		// 同步 opt-in 读写: 用户身份由 /rpc 会话注入(UserIDFromContext), 桌面匿名直连
-		// 回退引擎已登录会话(kindOptInUserID), 均无身份时 get 全 false、set forbidden。
+		// Sync opt-in read/write: the user identity is injected by the /rpc session (UserIDFromContext); desktop anonymous direct connections
+		// fall back to the engine's logged-in session (kindOptInUserID); with neither identity, get returns all false and set is forbidden.
 		func() error {
 			return ipc.Register(dispatcher, CommandKindOptInGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (KindOptIn, error) {
 				return s.KindOptInGet(ctx)
@@ -272,7 +272,7 @@ func (s *Service) requireDesktop() error {
 	return nil
 }
 
-// registerBundleCommands 注册资产包三命令; 主命令面与对端命令面共用同一组处理器。
+// registerBundleCommands registers the three asset bundle commands; the main command surface and the peer command surface share the same handlers.
 func (s *Service) registerBundleCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
@@ -299,7 +299,7 @@ func (s *Service) registerBundleCommands(dispatcher *ipc.Dispatcher) error {
 	return nil
 }
 
-// PeerDispatcher 返回同步对端命令面(资产包三命令), 供 surface probe 枚举与同步专用部署挂载。
+// PeerDispatcher returns the sync peer command surface (the three asset bundle commands) for surface probe enumeration and sync-only deployment mounting.
 func (s *Service) PeerDispatcher() (*ipc.Dispatcher, error) {
 	dispatcher := ipc.NewDispatcher()
 	if err := s.registerBundleCommands(dispatcher); err != nil {

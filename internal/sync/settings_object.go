@@ -15,13 +15,13 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// aiProfilesStoreVersion 与 internal/ai/profiles.StoreVersion 对齐; 更高版本由更新的应用所有, 同步不得改写。
+// aiProfilesStoreVersion aligns with internal/ai/profiles.StoreVersion; higher versions are owned by newer apps and sync must not rewrite them.
 const aiProfilesStoreVersion = 1
 
-// errAIProfilesCorrupt 区分「档案数据损坏」(跳过并告警)与数据库错误(整轮失败)。
+// errAIProfilesCorrupt distinguishes "corrupt profile data" (skip and warn) from database errors (fail the whole round).
 var errAIProfilesCorrupt = errors.New("AI 模型档案数据损坏")
 
-// aiProfileRecord 是 ai.models 设置中的持久化形态(无修订号), 字段与 profiles.Profile 完全一致。
+// aiProfileRecord is the persisted form in the ai.models setting (no revision); fields exactly match profiles.Profile.
 type aiProfileRecord struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -81,7 +81,7 @@ func (s aiProfilesState) find(id string) (aiProfileRecord, bool) {
 	return aiProfileRecord{}, false
 }
 
-// ensureActive 与 profiles.Manager 同款: 当前激活档案缺失时回退到首个档案。
+// ensureActive mirrors profiles.Manager: fall back to the first profile when the active one is missing.
 func (s *aiProfilesState) ensureActive() {
 	if s.ActiveID != nil {
 		if _, exists := s.find(*s.ActiveID); exists {
@@ -116,8 +116,8 @@ func (s *aiProfilesState) remove(id string) bool {
 	return false
 }
 
-// aiProfilesLoad 读取 ai.models 设置; 修订号即设置行的 updated_at(整档案共享一个 LWW 时钟)。
-// found=false 表示设置不存在, 调用方按空档案、修订号 0 处理。
+// aiProfilesLoad reads the ai.models setting; the revision is the setting row's updated_at (all profiles share one LWW clock).
+// found=false means the setting does not exist; callers treat it as empty profiles with revision 0.
 func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bool, error) {
 	setting := query.Use(e.store.GORM()).Setting
 	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(store.AIProfilesSettingKeyForUser(ipc.OwnerID(ctx)))).First()
@@ -140,7 +140,7 @@ func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bo
 	return state, row.UpdatedAt, true, nil
 }
 
-// aiProfilesSave 整体写回 ai.models 设置并原样保留指定修订号; 与清除同 ID 删除墓碑同一事务。
+// aiProfilesSave writes the ai.models setting back as a whole, preserving the given revision verbatim; clearing the same-ID deletion tombstone happens in the same transaction.
 func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, updatedAt int64, clearTombstoneID string) error {
 	encoded, err := json.Marshal(state)
 	if err != nil {
@@ -166,8 +166,8 @@ func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, upda
 	})
 }
 
-// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, 其余一律经凭据库解密,
-// 非信封或无法解密统一报解密失败。
+// revealAIProfileKey restores the persisted form to payload plaintext: an empty string passes through, everything else is decrypted via the vault;
+// non-envelope or undecryptable values uniformly report a decryption failure.
 func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string, error) {
 	if stored == "" {
 		return "", nil
@@ -178,7 +178,7 @@ func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string,
 	return e.vault.DecryptSecret(ctx, stored)
 }
 
-// protectAIProfileKey 把载荷明文转为落盘信封; 调用方必须已通过 requireVault 把关。
+// protectAIProfileKey turns payload plaintext into the persisted envelope; the caller must already have passed requireVault.
 func (e *Engine) protectAIProfileKey(ctx context.Context, plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
@@ -201,9 +201,9 @@ func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostR
 	return *row, true, nil
 }
 
-// knownHostTombstoneMetaPrefix 是 known_host 冲突墓碑三元组元数据的 setting 键前缀。
-// sync_tombstone 表只有 (id, kind, deleted_at), 三元组必须侧存, 否则再传播的墓碑退化为
-// 用户删除语义, 下游设备会把胜出的较新化身误删。元数据跟随修订号最大者(由写入门保证)。
+// knownHostTombstoneMetaPrefix is the setting key prefix for known_host conflict-tombstone triple metadata.
+// The sync_tombstone table only has (id, kind, deleted_at), so the triple must be stored on the side; otherwise a re-propagated tombstone degrades to
+// user-deletion semantics and downstream devices would mistakenly delete the newer winning incarnation. Metadata follows the highest revision (guaranteed by the write gate).
 const knownHostTombstoneMetaPrefix = "sync.kh_tombstone."
 
 type knownHostTombstoneMeta struct {
@@ -227,10 +227,10 @@ func knownHostTombstoneMetaKeyForUser(ctx context.Context, id string) string {
 	return knownHostTombstoneMetaPrefixForUser(ctx) + id
 }
 
-// knownHostTombstoneRecordTx 在事务内写入/合并 known_host 墓碑: sync_tombstone 按
-// scalarMax 合并修订号; 冲突三元组元数据仅在本次修订号不落后于现有墓碑时写入(用户删除
-// 传 nil, 表示清除元数据)。门条件在墓碑合并后求值, 因此等价于「新修订号 >= 旧修订号」,
-// 两个不同三元组的冲突墓碑并发落地时, 元数据确定性地跟随修订号最大者, 不拼出混合墓碑。
+// knownHostTombstoneRecordTx writes/merges a known_host tombstone in a transaction: sync_tombstone merges revisions via
+// scalarMax; conflict triple metadata is written only when this revision is not behind the existing tombstone (user deletion
+// passes nil, meaning clear metadata). The gate is evaluated after the tombstone merge, so it equals "new revision >= old revision";
+// when conflict tombstones of two different triples land concurrently, the metadata deterministically follows the highest revision, never mixing tombstones.
 func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *gorm.DB, id string, deletedAt int64, conflict *knownHostTombstoneMeta) error {
 	if err := tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
@@ -272,7 +272,7 @@ func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *gorm.DB, id
 	return nil
 }
 
-// knownHostTombstoneMetas 读取当前用户的 known_host 冲突墓碑元数据, 供墓碑再传播时还原三元组。
+// knownHostTombstoneMetas reads the current user's known_host conflict-tombstone metadata for restoring the triple when tombstones are re-propagated.
 func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownHostTombstoneMeta, error) {
 	prefix := knownHostTombstoneMetaPrefixForUser(ctx)
 	values, err := e.store.SettingListPrefix(ctx, prefix)
@@ -290,11 +290,12 @@ func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownH
 	return metas, nil
 }
 
-// knownHostTombstoneLoser 为三元组冲突的败者按胜者修订号立碑(已存在的更晚墓碑保留)。
-// 同 ID 的本地存活行(与败者不同三元组的化身)不得与同 ID 墓碑共存: 对象槽位二义会使
-// 服务端不收敛, 后续同 ID 墓碑也会误删它。化身在同一事务内让出原 ID——信任内容以全新 ID
-// 原样保留(修订号不变, 不产生重复对象), 原 ID 立碑给远端败者; 其他设备拉取该墓碑时
-// 本地已无原 ID 行, 只合并墓碑记录, 不会触碰 re-ID 后的化身。
+// knownHostTombstoneLoser tombstones the loser of a triple conflict at the winner's revision (an existing later tombstone is kept).
+// A local live row with the same ID (an incarnation with a different triple than the loser) must not coexist with a same-ID tombstone: the ambiguous
+// object slot would keep the server from converging, and a later same-ID tombstone would mistakenly delete it. The incarnation yields its original ID
+// in the same transaction - the trusted content is preserved verbatim under a fresh ID (same revision, no duplicate object), and the original ID is
+// tombstoned for the remote loser; when other devices pull that tombstone, the original-ID row is already gone locally, so they only merge the tombstone
+// record and never touch the re-IDed incarnation.
 func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostObject, incarnation *store.KnownHostRow, winnerAddedAt int64) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		knownHost := query.Use(tx).KnownHostRow
@@ -319,9 +320,9 @@ func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostO
 	})
 }
 
-// knownHostReincarnationID 为化身生成新 ID: 内容与 addedAt 不变, 但新载荷必须在同修订号
-// 哈希决胜中必胜旧载荷。其他设备上的旧 ID 副本遇到 re-ID 对象时因此只能走 displaced
-// 路径(保留新 ID), 不会反向把新 ID 墓碑化; 新旧 ID 同毁的路径被构造性排除。
+// knownHostReincarnationID generates a new ID for the incarnation: content and addedAt stay unchanged, but the new payload must beat the old payload
+// in the same-revision hash tiebreak. Old-ID replicas on other devices therefore only take the displaced path (keeping the new ID) when meeting the
+// re-IDed object and never tombstone the new ID in reverse; the path destroying both old and new IDs is constructively excluded.
 func (e *Engine) knownHostReincarnationID(incarnation *store.KnownHostRow) (string, error) {
 	oldPayload, err := marshalObject(knownHostObject{
 		ID: incarnation.ID, Host: incarnation.Host, Port: incarnation.Port, KeyType: incarnation.KeyType,
@@ -345,7 +346,7 @@ func (e *Engine) knownHostReincarnationID(incarnation *store.KnownHostRow) (stri
 	}
 }
 
-// knownHostUpsert 按 ID 幂等写入并保留对端修订号 added_at; 三元组冲突的败者行与其墓碑在同一事务清除。
+// knownHostUpsert writes idempotently by ID and preserves the peer revision added_at; the loser row of a triple conflict and its tombstone are cleared in the same transaction.
 func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string) error {
 	return e.store.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		knownHost := query.Use(tx).KnownHostRow

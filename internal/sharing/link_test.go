@@ -471,7 +471,7 @@ func TestLinkGateStopsAfterRevocation(t *testing.T) {
 	}
 }
 
-// TTL 内的块沿用缓存快照继续流动, 吊销在 TTL 后的下一次重查生效。
+// Blocks within the TTL keep flowing on the cached snapshot; revocation takes effect on the next revalidation after the TTL.
 func TestLinkGateRevocationTakesEffectAfterTTL(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")

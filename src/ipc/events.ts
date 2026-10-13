@@ -71,7 +71,7 @@ export interface FsProgressEvent {
   error?: string;
 }
 
-// 与 Go ipc.ConnectProgressEvent 对齐; hop 0 表示目标主机, 1..hops 表示第几跳板。
+// Aligned with Go ipc.ConnectProgressEvent; hop 0 is the target host, 1..hops is the Nth jump host.
 export interface ConnectProgressEvent {
   assetId: string;
   stage: string;
@@ -81,7 +81,7 @@ export interface ConnectProgressEvent {
   port: number;
 }
 
-// 与 Go update.Progress 对齐; phase 区分 download 与 install 阶段。
+// Aligned with Go update.Progress; phase distinguishes the download and install stages.
 export interface UpdateProgressEvent {
   taskId: string;
   phase?: string;
@@ -104,14 +104,14 @@ export interface AppErrorEvent {
   message: string;
 }
 
-// AI notify 工具推送的应用内通知; ownerId 为会话属主, 服务端按身份过滤, 桌面端直接本地投递。
+// In-app notification pushed by the AI notify tool; ownerId is the session owner, the server filters by identity, the desktop delivers locally.
 export interface AINotificationEvent {
   ownerId: string;
   text: string;
 }
 
-// 设备控制通道上下线推送; 只含设备 ID 与在线状态, 可见范围仍由
-// /fleet/devices 的 owner/超管过滤决定, 视图对不在清单内的设备 ID 直接忽略。
+// Device control channel online/offline push; carries only the device ID and online state, visibility is still governed by
+// the owner/super-admin filter of /fleet/devices; views ignore device IDs not in the list.
 export interface DeviceStatusEvent {
   deviceId: string;
   online: boolean;

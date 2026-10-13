@@ -21,17 +21,17 @@ const (
 	auditKindPreviewInput  = "share_preview_input"
 )
 
-// 预览链接的拒绝原因哨兵: 订阅通道据此把终止原因映射为可下发的错误码,
-// 不必匹配消息文本。
+// Denial-reason sentinels for preview links: the subscribe channel maps termination reasons to deliverable error codes from these,
+// without matching message text.
 var (
 	ErrPreviewInvalid = ipc.NewError(ipc.CodeForbidden, "分享链接无效")
 	ErrPreviewRevoked = ipc.NewError(ipc.CodeForbidden, "分享链接已吊销")
 	ErrPreviewExpired = ipc.NewError(ipc.CodeForbidden, "分享链接已过期")
 )
 
-// PreviewLink 是一条远程预览链接: 绑定服务端会话 Manager 里的一个终端
-// 标签页 (session_id 即 tab ID), 获得链接的人匿名打开视图, 看到当前屏幕与后续
-// 实时输出; 默认只读, 创建时显式开写才允许输入。过期/吊销语义与 share_link 一致。
+// PreviewLink is a remote preview link: it binds one terminal
+// tab in the server-side session Manager (session_id is the tab ID); whoever holds the link anonymously opens a view and sees the current screen and subsequent
+// live output; read-only by default, input is allowed only when write is explicitly enabled at creation. Expiry/revocation semantics match share_link.
 type PreviewLink struct {
 	ID             string
 	OwnerID        string
@@ -43,8 +43,8 @@ type PreviewLink struct {
 	LastAccessedAt int64
 }
 
-// PreviewGrant 是预览授权的快照: 校验通过后交给订阅通道, 绑定预览 ID、
-// 标签页、权限与过期时间。不含设备 (预览不经过设备代理)。
+// PreviewGrant is the snapshot of a preview authorization: after verification it is handed to the subscribe channel, binding the preview ID,
+// tab, permission, and expiry. It carries no device (previews do not go through the device agent).
 type PreviewGrant struct {
 	ShareID    string     `json:"share_id"`
 	SessionID  string     `json:"session_id"`
@@ -53,8 +53,8 @@ type PreviewGrant struct {
 	ExpiresAt  int64      `json:"expires_at"`
 }
 
-// previewPermission 把库存权限档归一到协议两档: 只有严格等于 read_write 才
-// 放行写, 空值或未知档位一律按只读处理。
+// previewPermission normalizes the stored permission level to the protocol's two levels: only a strict read_write
+// match allows writes; empty or unknown levels are always treated as read-only.
 func previewPermission(raw string) Permission {
 	if Permission(raw) == PermissionReadWrite {
 		return PermissionReadWrite
@@ -62,10 +62,10 @@ func previewPermission(raw string) Permission {
 	return PermissionRead
 }
 
-// CreatePreviewLink 为服务端托管的一个终端标签页创建预览链接。默认只读;
-// write 显式为 true 时才授予读写。原始 token 只在本次返回, 库中只存哈希。
-// 标签页归属与存在性由调用方 (HTTP 路由) 校验。链接行与 create 审计在同一
-// 事务提交: 审计写入失败即整体回滚, 不留下无审计的匿名链接。
+// CreatePreviewLink creates a preview link for one server-hosted terminal tab. Read-only by default;
+// read_write is granted only when write is explicitly true. The raw token is returned only in this response; only its hash is stored.
+// Tab ownership and existence are verified by the caller (the HTTP route). The link row and the create audit commit in the same
+// transaction: an audit write failure rolls back everything, leaving no anonymous link without an audit.
 func (s *Service) CreatePreviewLink(ctx context.Context, identity *account.Identity, sessionID string, write bool, ttl time.Duration) (*PreviewLink, string, error) {
 	if sessionID == "" {
 		return nil, "", ipc.BadParam(errors.New("会话 ID 不能为空"))
@@ -107,8 +107,8 @@ func (s *Service) CreatePreviewLink(ctx context.Context, identity *account.Ident
 	return link, token, nil
 }
 
-// writeAuditTx 在事务内写审计行, 行格式与 writeAudit 一致; 失败时返回错误,
-// 由所在事务回滚全部写入。
+// writeAuditTx writes an audit row inside a transaction, in the same row format as writeAudit; on failure it returns an error
+// and the surrounding transaction rolls back all writes.
 func (s *Service) writeAuditTx(ctx context.Context, tx *gorm.DB, kind string, payload auditPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -121,8 +121,8 @@ func (s *Service) writeAuditTx(ctx context.Context, tx *gorm.DB, kind string, pa
 	return nil
 }
 
-// ResolvePreview 用公开 token 换取授权快照; 无效、过期或已吊销一律拒绝
-// 并写审计, 不区分无效与不存在。
+// ResolvePreview exchanges a public token for an authorization snapshot; invalid, expired, or revoked cases are all denied
+// with an audit record, without distinguishing invalid from nonexistent.
 func (s *Service) ResolvePreview(ctx context.Context, token string) (*PreviewGrant, error) {
 	sharePreviewLink := query.Use(s.db).SharePreviewLink
 	row, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.TokenHash.Eq(hashSecret(token))).First()
@@ -172,8 +172,8 @@ func (s *Service) ResolvePreview(ctx context.Context, token string) (*PreviewGra
 	}, nil
 }
 
-// revalidatePreview 是 RevalidatePreview 的内部实现, 额外返回机器可读的拒绝
-// 原因 ("not_found"/"revoked"/"expired"), 供输入路径写审计。
+// revalidatePreview is the internal implementation of RevalidatePreview; it additionally returns a machine-readable denial
+// reason ("not_found"/"revoked"/"expired") for the input path to write audits.
 func (s *Service) revalidatePreview(ctx context.Context, grant *PreviewGrant) (*PreviewGrant, string, error) {
 	if grant == nil || grant.ShareID == "" {
 		return nil, "not_found", ErrPreviewInvalid
@@ -200,18 +200,18 @@ func (s *Service) revalidatePreview(ctx context.Context, grant *PreviewGrant) (*
 	return &refreshed, "", nil
 }
 
-// RevalidatePreview 按当前行重查预览授权: 吊销、过期或行不存在即拒绝, 返回
-// 刷新后的授权 (权限与过期时间以当前行为准, 权限收缩即时生效), 供订阅通道的
-// 周期复查使用, 不信任签发时快照。
+// RevalidatePreview re-reads the preview authorization from the current row: revoked, expired, or missing rows are denied; it returns
+// the refreshed authorization (permission and expiry follow the current row, and permission shrinkage takes effect immediately), for the subscribe channel's
+// periodic recheck, never trusting the snapshot from issuance.
 func (s *Service) RevalidatePreview(ctx context.Context, grant *PreviewGrant) (*PreviewGrant, error) {
 	refreshed, _, err := s.revalidatePreview(ctx, grant)
 	return refreshed, err
 }
 
-// RevalidatePreviewInput 是预览输入路径的服务端强制点: 每次输入都按当前行
-// 重查 (吊销/过期/绑定) 并要求 read_write, 不信任签发时的授权快照, 权限收缩
-// 即时生效; 每次判定 (放行或拒绝) 都写审计 (按会话/时间窗口聚合, 见
-// auditInputAggregated)。
+// RevalidatePreviewInput is the server-side enforcement point of the preview input path: every input is re-read from the current row
+// (revocation/expiry/binding) and required to be read_write, never trusting the authorization snapshot from issuance; permission shrinkage
+// takes effect immediately; every decision (allow or deny) is written to the audit log (aggregated by session/time window, see
+// auditInputAggregated).
 func (s *Service) RevalidatePreviewInput(ctx context.Context, grant *PreviewGrant) (*PreviewGrant, error) {
 	refreshed, reason, err := s.revalidatePreview(ctx, grant)
 	if err == nil && !refreshed.Permission.AllowsWrite() {
@@ -239,8 +239,8 @@ func (s *Service) RevalidatePreviewInput(ctx context.Context, grant *PreviewGran
 	return refreshed, nil
 }
 
-// RevokePreviewLink 吊销预览链接; owner 可执行, 重复吊销
-// 不报错。每次判定都写含 share_id 的审计。
+// RevokePreviewLink revokes a preview link; the owner may do this, and repeated revocation
+// does not error. Every decision is recorded in an audit entry carrying the share_id.
 func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	sharePreviewLink := query.Use(s.db).SharePreviewLink
 	row, err := sharePreviewLink.WithContext(ctx).Where(sharePreviewLink.ID.Eq(linkID)).First()
@@ -271,8 +271,8 @@ func (s *Service) RevokePreviewLink(ctx context.Context, identity *account.Ident
 	return nil
 }
 
-// ListPreviewLinks 返回 owner 创建的预览链接; 仅 owner 可见。
-// 不含 token 哈希。
+// ListPreviewLinks returns the preview links created by the owner; only the owner can see them.
+// Token hashes are not included.
 func (s *Service) ListPreviewLinks(ctx context.Context, identity *account.Identity) ([]*PreviewLink, error) {
 	sharePreviewLink := query.Use(s.db).SharePreviewLink
 	rows, err := sharePreviewLink.WithContext(ctx).

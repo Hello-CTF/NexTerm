@@ -1,7 +1,7 @@
-// 个人账号卡片:当前用户、修改密码(重包裹 DEK)、两步验证(TOTP)、恢复密钥、设备管理、退出登录。
-// 未登录时是设置页唯一的登录入口(WEB);桌面端身份来自「账号同步」link 的服务端会话
-// (见 ../auth/desktopAccount.ts),登录后渲染账号信息/改密/设备管理(均走 remoteAccountApi 代理),
-// TOTP 与配对码添加设备代理未覆盖,如实隐藏并注明浏览器管理;未登录不渲染,登录入口在 SyncCard。
+// Personal account card: current user, change password (re-wrap DEK), two-factor auth (TOTP), recovery key, device management, logout.
+// Logged out, it is the settings page's only login entry (WEB); the desktop identity comes from the "account sync" link server session
+// (see ../auth/desktopAccount.ts); after login it renders account info/password change/device management (all via the remoteAccountApi proxy);
+// TOTP and pairing-code device add are not covered by the proxy, so they are honestly hidden with a browser-management note; renders nothing when logged out - the login entry is in SyncCard.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -32,7 +32,7 @@ export function AuthCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
   const sessionUser = useAuth((s) => s.user);
-  // 桌面端身份来自「账号同步」link 的服务端会话(useAuth 在桌面不持有用户)。
+  // The desktop identity comes from the "account sync" link server session (useAuth holds no user on desktop).
   const desktopAccount = useDesktopAccount();
   const user = DESKTOP ? desktopAccount : sessionUser;
   const status = useAuth((s) => s.status);
@@ -41,8 +41,8 @@ export function AuthCard() {
   const pendingRecoveryKey = useAuth((s) => s.pendingRecoveryKey);
   const clearPendingRecoveryKey = useAuth((s) => s.clearPendingRecoveryKey);
 
-  // 平台托管模式(懒猫): 账号随平台登录自动建立, 用户手里没有口令, 也不该有"退出"。
-  // 退出后下一次刷新会被平台会话重新接管, 留着只会让人以为"登出"生效了。
+  // Platform-hosted mode (Lazycat): the account is auto-established with the platform login; the user holds no password and should not have a "logout".
+  // The next refresh after logout would be taken over by the platform session again; keeping the button only makes people think "logout" worked.
   const platformManaged = status?.auth === "platform";
 
   const [devices, setDevices] = useState<AccountDevice[] | null>(null);
@@ -82,7 +82,7 @@ export function AuthCard() {
     setPwdBusy(true);
     try {
       if (DESKTOP) {
-        // 桌面: DEK 重包裹在 Go 侧引擎会话内完成, 恢复密钥仅本次响应下发, 当场展示。
+        // Desktop: the DEK re-wrap happens inside the Go engine session; the recovery key is issued only in this response, so show it immediately.
         const r = await remoteAccountApi.changePassword(oldPassword, newPassword);
         if (r.recoveryKey) {
           useAuth.setState({ pendingRecoveryKey: { formatted: r.recoveryKey, canonical: r.recoveryKey } });
@@ -130,11 +130,11 @@ export function AuthCard() {
   };
 
   if (!user) {
-    // 桌面端没有账号门,登录按钮只会打开一个不存在的门:整卡不渲染,登录入口在 SyncCard。
+    // The desktop has no account gate; a login button would only open a gate that does not exist: the whole card does not render, and the login entry is in SyncCard.
     if (!authAvailable()) return null;
     if (status?.auth === "platform") {
-      // 平台托管模式下没有可填的东西: 账号随平台登录自动建立。走到这里说明平台会话没建立
-      // (典型是从服务端口直连、绕开了平台入口), 给出原因而不是死按钮。
+      // Nothing to fill in under platform-hosted mode: the account is auto-established with the platform login. Reaching here means the platform session was not established
+      // (typically direct access to the server port, bypassing the platform entry); give the reason instead of a dead button.
       return (
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
@@ -149,7 +149,7 @@ export function AuthCard() {
       );
     }
     if (status?.auth === "off") {
-      // auth=off 下 /auth/* 全部 403(store.refresh 合成 auth=off 状态),任何登录/初始化入口都是死路。
+      // With auth=off, all /auth/* calls 403 (store.refresh synthesizes the auth=off state); any login/init entry would be a dead end.
       return (
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
@@ -163,7 +163,7 @@ export function AuthCard() {
       );
     }
     if (status && !status.initialized) {
-      // 未初始化(loopback 免登录实例匿名可直达这里): 显式初始化入口,供想要账号的用户使用。
+      // Uninitialized (anonymous users of a loopback passwordless instance can reach here directly): explicit init entry for users who want an account.
       return (
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
@@ -481,8 +481,8 @@ export function AuthCard() {
   );
 }
 
-// TotpCard 管理当前账号的 TOTP 两步验证: 开启(密钥/otpauth URI → 确认码 → 一次性恢复码)、
-// 关闭(需当前动态码或恢复码)。服务端只存加密密钥与恢复码散列, 恢复码明文只展示一次。
+// TotpCard manages TOTP two-factor auth for the current account: enable (secret/otpauth URI → confirm code → one-time recovery codes),
+// disable (requires the current dynamic code or a recovery code). The server stores only the encrypted secret and recovery-code hashes; recovery-code plaintext is shown once.
 function TotpCard() {
   const { pushToast } = useUi();
   const [status, setStatus] = useState<TotpStatus | null>(null);

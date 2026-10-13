@@ -57,8 +57,8 @@ func warningsContain(warnings []string, substr string) bool {
 	return false
 }
 
-// 凭据库锁定只延迟凭据, 不再整轮失败: 资产/片段照常推送; 对端凭据未到时降级应用(清引用)
-// 但不记对账也不回推降级版本, 解锁补推凭据后对端自动恢复引用。
+// A locked vault only defers credentials and no longer fails the whole round: assets/snippets push as usual; the peer applies degraded
+// (reference cleared) when the credential has not arrived, but does not reconcile or push the degraded version back; once unlock pushes the credential, the peer restores the reference automatically.
 func TestEngineCredentialDeferredWhileVaultLocked(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -105,7 +105,7 @@ func TestEngineCredentialDeferredWhileVaultLocked(t *testing.T) {
 	if _, err := deviceB.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
 		t.Fatalf("credential must not exist on deviceB yet: %v", err)
 	}
-	// 降级形态不得回推: 云端资产对象必须保持带引用的原始版本。
+	// The degraded form must not be pushed back: the cloud asset object must keep the pristine version with the reference.
 	if credID := serverAssetCredID(t, server, "alice", "alice-pw-123", assetID); credID == nil || *credID != credentialID {
 		t.Fatalf("server asset must keep the pristine cred reference: %+v", credID)
 	}
@@ -138,8 +138,8 @@ func TestEngineCredentialDeferredWhileVaultLocked(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-// 拉取侧: 凭据对象在凭据库锁定时不应用也不记对账, 解锁后下一轮自动重拉应用;
-// 资产先到时降级清除引用, 凭据到达后自动恢复。
+// Pull side: credential objects are neither applied nor reconciled while the vault is locked; the next round after unlock re-pulls and applies automatically;
+// an asset arriving first gets its reference cleared by degradation and restored automatically once the credential arrives.
 func TestEngineCredentialPullDeferredWhileVaultLocked(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -186,7 +186,7 @@ func TestEngineCredentialPullDeferredWhileVaultLocked(t *testing.T) {
 	if err != nil || secret != "s3cret-拉取" {
 		t.Fatalf("deviceB secret=%q err=%v", secret, err)
 	}
-	// 补拉顺序不定(凭据与资产同批补拉): 再同步一轮, 资产引用必然恢复。
+	// Catch-up order is unspecified (credential and asset catch up in the same batch): one more sync round must restore the asset reference.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	asset, err = deviceB.db.AssetGet(ctx, assetID)
 	if err != nil {
@@ -200,8 +200,8 @@ func TestEngineCredentialPullDeferredWhileVaultLocked(t *testing.T) {
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 }
 
-// 浏览器明文应用路径: 凭据未到时降级清除引用(外键约束不允许悬空), 凭据到达后
-// 重应用同一资产经降级形态判定自动恢复引用, 之后逐字节一致。
+// Browser plaintext apply path: the reference is cleared by degradation when the credential has not arrived (the FK constraint forbids dangling); after the credential arrives,
+// re-applying the same asset restores the reference automatically via the degraded-form check, and the bytes then match exactly.
 func TestApplyAssetRestoresCredentialReference(t *testing.T) {
 	instance := newTestInstance(t, true)
 	ctx := context.Background()
@@ -274,8 +274,8 @@ func (h *recordCountingHandler) count(message string) int {
 	return count
 }
 
-// 凭据库锁定导致后台同步暂停时: 轮次状态如实记录(此前静默跳过), 每段连续暂停期只记一行日志,
-// 解锁恢复后再锁定重新记一行。
+// When a locked vault pauses background sync: the round status records it truthfully (previously a silent skip), each contiguous pause period logs exactly one line,
+// and re-locking after an unlock-recovery logs a fresh line.
 func TestSyncBackgroundNotesVaultBlocked(t *testing.T) {
 	handler := &recordCountingHandler{}
 	instance := newTestInstance(t, true, WithLogger(slog.New(handler)))

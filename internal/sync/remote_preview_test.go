@@ -17,9 +17,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// remoteSessionFixture 在 remoteAPIFixture 的真实账号面上加远程会话壳路由的
-// canned 复刻: 会话校验走 session 中间件 (cookie 缺失/无效一律 401), 写端点
-// 强制 CSRF; feed 推流 WS 记录握手头并回显二进制消息。
+// remoteSessionFixture adds a canned replica of the remote session shell routes on top of remoteAPIFixture's real account surface:
+// session validation goes through the session middleware (missing/invalid cookie is always 401), write endpoints
+// enforce CSRF; the feed streaming WS records handshake headers and echoes binary messages.
 type remoteSessionFixture struct {
 	*remoteAPIFixture
 
@@ -113,8 +113,8 @@ func (f *remoteSessionFixture) serveFeed(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// TestRemoteSessionTypedMethods 钉住远程壳/预览创建的类型化方法合同: 请求载荷
-// 与服务端路由同形 (snake_case), 响应解码完整 (含一次性 token)。
+// TestRemoteSessionTypedMethods pins the typed-method contract of remote shell/preview creation: request payloads
+// are shaped like the server routes (snake_case), and responses decode fully (including the one-time token).
 func TestRemoteSessionTypedMethods(t *testing.T) {
 	fixture := newRemoteSessionFixture(t)
 	fixture.createUser(t, "alice", "alice-pw-123")
@@ -175,8 +175,8 @@ func TestRemoteSessionTypedMethods(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionFeedDialRoundTrip 钉住推流 WS 拨号: 握手携带 cookie+CSRF,
-// 建连后消息级读写可用, 会话缓存复用不重复登录。
+// TestRemoteSessionFeedDialRoundTrip pins the feed WS dialing: the handshake carries cookie+CSRF,
+// message-level reads and writes work after connecting, and the cached session is reused without repeated logins.
 func TestRemoteSessionFeedDialRoundTrip(t *testing.T) {
 	fixture := newRemoteSessionFixture(t)
 	fixture.createUser(t, "alice", "alice-pw-123")
@@ -208,8 +208,8 @@ func TestRemoteSessionFeedDialRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRemoteSessionFeedDialReLoginAfterRevoke 服务端吊销会话后, 缓存 cookie 首次
-// 拨号吃 401, remoteCall 的 dropSession 重登环必须重登并完成拨号。
+// TestRemoteSessionFeedDialReLoginAfterRevoke: after the server revokes the session, the first dial with the cached cookie gets a 401,
+// and remoteCall's dropSession re-login loop must re-login and complete the dial.
 func TestRemoteSessionFeedDialReLoginAfterRevoke(t *testing.T) {
 	fixture := newRemoteSessionFixture(t)
 	userID := fixture.createUser(t, "alice", "alice-pw-123")

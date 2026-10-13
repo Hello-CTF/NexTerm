@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// matchAsset 按 GOOS/GOARCH 选择 release 资产; 版本号段不固定, 用前缀加后缀
-// 锚定 (Linux 桌面包前缀 NexTerm-desktop_, 避免误匹配 NexTerm-server_ 包)。
+// matchAsset selects the release asset by GOOS/GOARCH; the version segment position is not fixed, so prefix plus suffix
+// anchoring is used (the Linux desktop package prefix NexTerm-desktop_ avoids mismatched NexTerm-server_ packages).
 func matchAsset(release Release, goos, goarch string) (Asset, bool) {
 	var prefix, suffix string
 	switch goos + "/" + goarch {
@@ -81,8 +81,8 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-// verifyChecksumFile 用 release 的 SHA256SUMS 校验下载文件; 缺失条目或摘要不符
-// 一律报错, 调用方不得继续安装。
+// verifyChecksumFile verifies the downloaded file against the release's SHA256SUMS; a missing entry or digest mismatch
+// is always an error, and the caller must not proceed with the install.
 func verifyChecksumFile(path, assetName string, sums map[string]string) error {
 	expected, ok := sums[assetName]
 	if !ok {

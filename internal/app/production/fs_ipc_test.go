@@ -235,8 +235,8 @@ func (f *fakeStagedBlobResolver) ResolveStagedPath(rel, userID string) (string, 
 	return filepath.Join(f.dir, name), nil
 }
 
-// 服务端装配下 fs_upload/fs_download 的 localPath 是 Stage/Reserve 响应里的相对
-// id/name, 必须经 StagedBlobResolver 解析为暂存文件; 绝对路径与未知引用一律拒绝。
+// In the server-side assembly, localPath of fs_upload/fs_download is the relative id/name from a Stage/Reserve response
+// and must be resolved to a staged file via StagedBlobResolver; absolute paths and unknown references are always refused.
 func TestProductionFSStagedLocalPathResolution(t *testing.T) {
 	events := &fsEventRecorder{}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {

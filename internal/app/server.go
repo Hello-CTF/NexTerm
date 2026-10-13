@@ -153,7 +153,7 @@ func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOn
 		return
 	}
 	mode := auth
-	// 非回环监听下 loopback 等同 on, 与 server 端 effectiveAuthMode 口径一致。
+	// On a non-loopback listen, loopback equals on, consistent with the server-side effectiveAuthMode.
 	if mode == AuthLoopback {
 		mode = AuthOn
 	}

@@ -12,7 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// newSyncRPCFixture 装配真实同步服务对端命令面(PeerDispatcher)与账号体系的测试服务器。
+// newSyncRPCFixture assembles a test server with the real sync service peer command surface (PeerDispatcher) and the account system.
 func newSyncRPCFixture(t *testing.T, syncOnly bool) (*accountFixture, *ipc.Dispatcher) {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())

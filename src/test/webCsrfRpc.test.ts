@@ -77,7 +77,7 @@ describe("web /rpc CSRF 传输", () => {
     useWebTransport();
     const calls = captureFetch((url) => {
       if (url.includes("/auth/me")) {
-        // auth=off 由 accountGuard 统一 403 拒绝账号路由
+        // auth=off: accountGuard uniformly rejects account routes with 403
         return {
           status: 403,
           body: JSON.stringify({
@@ -97,7 +97,7 @@ describe("web /rpc CSRF 传输", () => {
     const rpcCalls = calls.filter((call) => call.url === "/rpc");
     expect(rpcCalls).toHaveLength(2);
     expect(rpcCalls[0].headers["X-NexTerm-CSRF"]).toBeUndefined();
-    // 预取只发生一次, 失败结果被记住, 后续 /rpc 直接发出不再重复预取
+    // Prefetch happens only once, the failure result is remembered, later /rpc goes out directly without prefetching again
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(1);
   });
 
@@ -130,7 +130,7 @@ describe("web /rpc CSRF 传输", () => {
       commands.sessionApi.list(),
       commands.vaultApi.status(),
     ]);
-    // me 未返回前: /auth/me 只发出一次, 三个 /rpc 全部在等待, 一个都还没发出
+    // Before me returns: /auth/me fired only once, all three /rpc are waiting, none sent yet
     await vi.waitFor(() => {
       expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(1);
     });
@@ -176,12 +176,12 @@ describe("web /rpc CSRF 传输", () => {
     });
     expect(dispatchEvent).toHaveBeenCalled();
 
-    // 后续调用不被挂起也不重复预取: 直接裸发 /rpc, 经 403 重试路径后同样抛错
+    // Later calls are neither suspended nor re-prefetched: /rpc goes out bare and errors the same way through the 403 retry path
     await expect(commands.sessionApi.list()).rejects.toMatchObject({
       code: "forbidden",
       message: "会话无效或缺失",
     });
-    // /auth/me 共 3 次: 1 次共享预取 + 两次请求各 1 次 403 重试刷新
+    // /auth/me fired 3 times in total: 1 shared prefetch + 1 refresh per request via the 403 retry path
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(3);
     expect(calls.filter((call) => call.url === "/rpc")).toHaveLength(2);
   });

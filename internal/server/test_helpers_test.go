@@ -85,7 +85,7 @@ func newTestAccounts(t *testing.T) *account.Accounts {
 	return account.New(database.GORM())
 }
 
-// newRealSyncService 装配一个真实的 v2 同步服务(内存库+已解锁凭据库), 供需要同步模块的集成测试使用。
+// newRealSyncService assembles a real v2 sync service (in-memory store + unlocked vault) for integration tests needing the sync module.
 func newRealSyncService(t *testing.T) (*store.Store, *vault.Vault, *syncservice.Service) {
 	t.Helper()
 	ctx := context.Background()

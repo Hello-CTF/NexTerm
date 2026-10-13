@@ -39,7 +39,7 @@ type ActionMenuItem = Extract<MenuItem, { kind: "item" }>;
 const MARGIN = 8;
 const COARSE_POINTER_QUERY = "(pointer: coarse)";
 
-// 不引用 app/platform 的 useCoarsePointer: 多个终端测试对 platform 的局部 mock 未导出它。
+// Does not use useCoarsePointer from app/platform: several terminal tests partially mock platform without exporting it.
 function subscribeCoarsePointer(callback: () => void): () => void {
   const query = window.matchMedia(COARSE_POINTER_QUERY);
   query.addEventListener("change", callback);
@@ -384,7 +384,7 @@ function ContextMenuSheet({
   const [closing, setClosing] = useState(false);
   const [prevState, setPrevState] = useState(state);
   if (prevState !== state) {
-    // 换菜单时回到第一级并复位拖动状态
+    // Return to the first level and reset drag state when the menu changes
     setPrevState(state);
     setLevels([]);
     setDragOffset(0);

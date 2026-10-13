@@ -99,13 +99,13 @@ function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
   return true;
 }
 
-// 桌面端只读预览依赖已登录的服务端账号 (「账号同步」link): 共享单例轮询
-// syncApi.status, 首个订阅的 TerminalPane 启动, 全部卸载后停止; 登录/断开
-// 最多 PREVIEW_STATUS_POLL_MS 内反映到入口显隐。TerminalPane 的挂载环境不保证
-// 有 react-query Provider, 故不走 useQuery。Transport 只有 web/desktop 两值,
-// 这里只用 WEB 表达 (部分既有测试的 env mock 不含 DESKTOP 导出)。未登录桌面
-// 返回 false, TerminalPane 不渲染预览菜单入口, 即门控公式
-// (WEB || (DESKTOP && 已登录)) && kernelTabId。
+// Desktop read-only preview depends on a logged-in server account ("account sync" link): a shared singleton polls
+// syncApi.status; the first subscribing TerminalPane starts it and it stops after all unmount; login/disconnect
+// reflects in the entry's visibility within at most PREVIEW_STATUS_POLL_MS. TerminalPane's mount environment does not guarantee
+// a react-query Provider, so useQuery is not used. Transport has only web/desktop values;
+// only WEB is used here (some existing tests' env mocks lack the DESKTOP export). A logged-out desktop
+// returns false and TerminalPane does not render the preview menu entry, i.e. the gating formula
+// (WEB || (DESKTOP && logged in)) && kernelTabId.
 const PREVIEW_STATUS_POLL_MS = 5_000;
 
 let previewStatusLoggedIn = false;

@@ -47,7 +47,7 @@ func (e *Execution) grantDeviceID(ctx context.Context) string {
 	return ResolveGrantDeviceID(ctx, e.Registry, e.Scope)
 }
 
-// resourceForCall 提取调用授权所需的动作与主路径：文件写入类动作带路径，其余动作仅按名匹配。
+// resourceForCall extracts the action and primary path needed for call authorization: file-writing actions carry a path; other actions match by name only.
 func resourceForCall(call Call) guard.Resource {
 	resource := guard.Resource{Action: call.Name}
 	switch call.Name {
@@ -62,8 +62,8 @@ func resourceForCall(call Call) guard.Resource {
 	return resource
 }
 
-// normalizeWritePathArgs 在工具入口规范化 write_file/edit_file 的路径参数：
-// 授权匹配与执行使用同一规范化路径；规范化后仍含 .. 的越界路径直接拒绝。
+// normalizeWritePathArgs normalizes write_file/edit_file path arguments at the tool entry:
+// grant matching and execution use the same normalized path; out-of-bounds paths still containing .. after normalization are rejected outright.
 func normalizeWritePathArgs(args json.RawMessage) (json.RawMessage, error) {
 	var fields struct {
 		Path string `json:"path"`
@@ -94,8 +94,8 @@ func normalizeWritePathArgs(args json.RawMessage) (json.RawMessage, error) {
 	return normalized, nil
 }
 
-// persistentRulePattern 推导「永久允许」将写入规则的路径范围：
-// 文件写入类限定到所在目录树，其余动作不限路径（整设备该动作）。
+// persistentRulePattern derives the path scope an "always allow" decision writes into the rule:
+// file-writing actions are limited to their directory tree; other actions are not path-limited (whole-device for that action).
 func persistentRulePattern(resource guard.Resource) string {
 	if guard.RuleActionNeedsPath(resource.Action) {
 		return guard.DirPattern(resource.Path)
@@ -103,9 +103,10 @@ func persistentRulePattern(resource guard.Resource) string {
 	return ""
 }
 
-// persistPermanentGrant 把「永久允许」决策落成持久规则；任何一步无法安全确定
-// 范围（非 NeedsConfirm 裁定、未配置授权、设备身份不可解析）都拒绝并返回错误，
-// 调用方按失败关闭处理，不会执行操作。
+// persistPermanentGrant turns an "always allow" decision into a persistent rule; any step that
+// cannot safely determine the scope (non-NeedsConfirm ruling, grants not configured, device
+// identity unresolvable) is rejected with an error, and the caller treats it as fail-closed
+// without executing the operation.
 func (e *Execution) persistPermanentGrant(ctx context.Context, state InteractionState) error {
 	if state.Info.Risk != "needs_confirm" {
 		return errors.New("该操作必须逐次确认，不支持永久授权")

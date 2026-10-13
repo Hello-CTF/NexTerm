@@ -36,15 +36,15 @@ type eventSubscription struct {
 	queue chan []byte
 	done  chan struct{}
 	once  sync.Once
-	// filter 为 nil 表示全量接收; 非 nil 时 Emit 与重放都逐事件判定,
-	// 被拒事件不下发 (如 device://status 按订阅者身份过滤)。
+	// filter nil means receive everything; when non-nil, both Emit and replay judge each event,
+	// and rejected events are not delivered (e.g. device://status filtered by subscriber identity).
 	filter func(ipc.Event) bool
 }
 
 type bufferedEvent struct {
 	id   uint64
 	data []byte
-	// event 保留原始事件, 供订阅重放时按订阅者 filter 重新判定。
+	// event keeps the original event for re-judging against the subscriber's filter during replay.
 	event ipc.Event
 }
 

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 桌面端账号同步控制台: 登录 (link 已建立) 后展示同步状态/同步内容开关/立即同步;
-// 未登录只有登录卡, 不出现同步控制台也不读 opt-in。
+// Desktop account sync console: after login (link established) shows sync status / sync-content toggles / sync now;
+// logged out shows only the login card, no sync console and no opt-in reads.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -104,7 +104,7 @@ describe("桌面端账号同步控制台", () => {
     expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
     expect(consoleCard?.textContent).toContain("登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。");
     expect(consoleCard?.textContent).toContain("「立即同步」立刻触发一轮，不等下一分钟。");
-    // 桌面数据通道拿不到云端对象计数: 如实不显示该行
+    // The desktop data channel cannot get the cloud object count: the row is honestly not shown
     expect(consoleCard?.textContent).not.toContain("个对象");
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(

@@ -11,7 +11,7 @@ func TestRollupRunnerSchedulesMetricsRetention(t *testing.T) {
 	owner := f.createUser(t, "rollup-owner")
 	deviceID, _ := enrollAgent(t, f, owner, "rollup-box")
 
-	// 插入一条超过原始保留期 (48h) 的原始指标, 等聚合进小时桶并清理。
+	// Insert one raw metric older than the raw retention period (48h), waiting for it to roll into the hourly bucket and be cleaned up.
 	old := time.Now().Add(-49 * time.Hour).UnixMilli()
 	if err := f.service.RecordMetrics(context.Background(), deviceID, MetricsSample{
 		TS: old, CPUPct: 20, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5,

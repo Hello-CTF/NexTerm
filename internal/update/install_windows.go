@@ -13,9 +13,9 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// applyInstall 运行 NSIS 静默安装 (/S, MUI2 页面在静默模式下自动跳过)。
-// 当前运行的就是安装目标时, NSIS 无法覆盖正在运行的可执行文件,
-// 先把当前 exe 改名为 .old, 安装失败时回滚; 散装副本不动原文件, 装完重启到安装版。
+// applyInstall runs the NSIS silent install (/S; MUI2 pages are auto-skipped in silent mode).
+// When the currently running exe is the install target, NSIS cannot overwrite the running executable,
+// so the current exe is first renamed to .old and rolled back on install failure; loose copies leave the original file alone and restart into the installed version.
 func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	target, inPlace := installTargetFor(m.ExePath, registeredInstallTarget(), defaultInstallDir(), canonicalExeName())
 	if !inPlace {

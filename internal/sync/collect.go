@@ -22,7 +22,7 @@ const (
 	maxCollectLimit     = 512
 )
 
-// 凭据秘密读取结果: 浏览器未请求 reveal 时为 withheld; 锁定/不可用必须明确给出, 不得静默丢凭据。
+// Credential secret read results: withheld when the browser did not request reveal; locked/unavailable must be reported explicitly, never silently dropping credentials.
 const (
 	CollectSecretWithheld    = "withheld"
 	CollectSecretRevealed    = "revealed"
@@ -31,7 +31,7 @@ const (
 	CollectSecretError       = "error"
 )
 
-// CollectAsset 字段与 assetObject 载荷同名对齐, 浏览器可直接组装 M117 载荷。
+// CollectAsset fields align by name with the assetObject payload, so the browser can assemble M117 payloads directly.
 type CollectAsset struct {
 	ID          string  `json:"id"`
 	GroupID     *string `json:"groupId,omitempty"`
@@ -52,8 +52,8 @@ type CollectAsset struct {
 	DeletedAt   *int64  `json:"deletedAt,omitempty"`
 }
 
-// CollectTombstone 条目与 tombstoneObject 语义对齐: id 即对象 id, deletedAt 即 LWW 修订号;
-// known_host 冲突墓碑额外携带原败者三元组, 用户主动删除墓碑则无。
+// CollectTombstone entries align semantically with tombstoneObject: id is the object id, deletedAt is the LWW revision;
+// known_host conflict tombstones additionally carry the original loser triple, user-initiated deletion tombstones do not.
 type CollectTombstone struct {
 	ID         string `json:"id"`
 	TargetKind string `json:"targetKind"`
@@ -63,7 +63,7 @@ type CollectTombstone struct {
 	KeyType    string `json:"keyType,omitempty"`
 }
 
-// CollectCredential 只含元数据与明确状态的 secret; 服务端无 vault 时秘密不可得但条目不丢。
+// CollectCredential carries metadata plus an explicitly stated secret; without a vault on the server the secret is unavailable but the entry is kept.
 type CollectCredential struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -118,7 +118,7 @@ func collectLimit(requested int) int {
 	return requested
 }
 
-// collectPage 在按 ID 升序的完整清单上切一页: afterId 为上一页最后一条的 ID, 稳定不丢不重。
+// collectPage cuts one page from the full list sorted by ascending ID: afterId is the last entry's ID of the previous page, stable with no loss or duplication.
 func collectPage[T any](entries []T, idOf func(T) string, afterID string, limit int) (page []T, hasMore bool, nextAfterID string) {
 	start := 0
 	if afterID != "" {
@@ -147,7 +147,7 @@ func collectAssetFromRow(row store.AssetRow) CollectAsset {
 	}
 }
 
-// CollectAssets 按 M117 collect 语义列出资产: 排除内置与「当前设备」, includeDeleted 显式控制软删。
+// CollectAssets lists assets per M117 collect semantics: excludes built-ins and the "current device"; includeDeleted explicitly controls soft-deleted rows.
 func (s *Service) CollectAssets(ctx context.Context, request CollectAssetsRequest) (CollectAssetsResult, error) {
 	rows, err := s.store.AssetList(ctx, request.IncludeDeleted)
 	if err != nil {
@@ -165,8 +165,8 @@ func (s *Service) CollectAssets(ctx context.Context, request CollectAssetsReques
 	return CollectAssetsResult{Assets: page, HasMore: hasMore, NextAfterID: nextAfterID}, nil
 }
 
-// CollectTombstones 合并 sync_tombstone 与 credential_tombstone; 同 ID 冲突时凭据墓碑胜出,
-// 与 collectLocalObjects 以 ID 为键的覆盖语义一致。
+// CollectTombstones merges sync_tombstone and credential_tombstone; on same-ID conflicts the credential tombstone wins,
+// matching collectLocalObjects' overwrite semantics keyed by ID.
 func (s *Service) CollectTombstones(ctx context.Context, request CollectTombstonesRequest) (CollectTombstonesResult, error) {
 	merged := map[string]CollectTombstone{}
 	knownHostMetas, err := s.engine.knownHostTombstoneMetas(ctx)
@@ -202,7 +202,7 @@ func (s *Service) CollectTombstones(ctx context.Context, request CollectTombston
 	return CollectTombstonesResult{Tombstones: page, HasMore: hasMore, NextAfterID: nextAfterID}, nil
 }
 
-// collectSecretState 评估 vault 可读性: 无 vault 或未初始化 = unavailable, 锁定 = locked。
+// collectSecretState assesses vault readability: no vault or uninitialized = unavailable, locked = locked.
 func (s *Service) collectSecretState() string {
 	if s.vault == nil {
 		return CollectSecretUnavailable
@@ -217,8 +217,8 @@ func (s *Service) collectSecretState() string {
 	return CollectSecretRevealed
 }
 
-// CollectCredentials 列出凭据元数据; 只有 revealSecrets 且设备 vault 已解锁时才经既有
-// vault reveal 路径附带明文, 服务端不得代理解密, 也不得经同步链路发送口令或 DEK。
+// CollectCredentials lists credential metadata; plaintext is attached via the existing vault reveal path only when revealSecrets is set and the device vault is unlocked,
+// the server must never decrypt on the device's behalf, and passwords or DEKs must never travel the sync link.
 func (s *Service) CollectCredentials(ctx context.Context, request CollectCredentialsRequest) (CollectCredentialsResult, error) {
 	rows, err := s.store.CredentialList(ctx)
 	if err != nil {
@@ -246,7 +246,7 @@ func (s *Service) CollectCredentials(ctx context.Context, request CollectCredent
 	return CollectCredentialsResult{Credentials: page, HasMore: hasMore, NextAfterID: nextAfterID}, nil
 }
 
-// CollectKnownHost 字段与 knownHostObject 载荷同名对齐; addedAt 即 LWW 修订号, 删除经 tombstone 清单收敛。
+// CollectKnownHost fields align by name with the knownHostObject payload; addedAt is the LWW revision, deletions converge via the tombstone list.
 type CollectKnownHost struct {
 	ID          string `json:"id"`
 	Host        string `json:"host"`
@@ -256,7 +256,7 @@ type CollectKnownHost struct {
 	AddedAt     int64  `json:"addedAt"`
 }
 
-// CollectAIProfile 只含档案字段与明确状态的 apiKey; apiKeySet 区分「无密钥」与「密钥被扣留」。
+// CollectAIProfile carries only profile fields and an explicitly stated apiKey; apiKeySet distinguishes "no key" from "key withheld".
 type CollectAIProfile struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -322,8 +322,8 @@ func (s *Service) CollectKnownHosts(ctx context.Context, request CollectKnownHos
 	return CollectKnownHostsResult{KnownHosts: page, HasMore: hasMore, NextAfterID: nextAfterID}, nil
 }
 
-// CollectAIProfiles 列出 AI 模型档案; 只有 revealSecrets 且设备凭据库已解锁时才附带 apiKey 明文,
-// 与凭据收集同一套 reveal/locked/withheld/error 语义, 服务端不得代理解密。
+// CollectAIProfiles lists AI model profiles; apiKey plaintext is attached only when revealSecrets is set and the device vault is unlocked,
+// with the same reveal/locked/withheld/error semantics as credential collection; the server must never decrypt on the device's behalf.
 func (s *Service) CollectAIProfiles(ctx context.Context, request CollectAIProfilesRequest) (CollectAIProfilesResult, error) {
 	state, revision, _, err := s.engine.aiProfilesLoad(ctx)
 	if err != nil {

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// 设备会话账号边界测试: 身份变化关掉设备类工作区并断开会话, 旧账号 shell 不留给新账号;
-// 非设备工作区不受影响; mount 时同身份不误清。
+// Device-session account boundary tests: an identity change closes device-type workspaces and disconnects sessions, no old-account shell is left for the new account;
+// non-device workspaces are unaffected; same identity on mount is not wrongly cleared.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";

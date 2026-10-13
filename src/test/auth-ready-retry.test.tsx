@@ -5,9 +5,9 @@ import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
-// M209 真实 auth=on 浏览器证据: 门后应用 mounted 即发 /rpc(无 cookie)全部 401,
-// 登录成功后资产树/凭据库停在登录前错误态。这里用真实 AssetTree
-// 钉住 gate 转换后的重取(含分组/凭据/片段)与在途竞态隔离; toast 不做 ready 全清。
+// M209 real auth=on browser evidence: once the gated app mounts it fires /rpc (no cookie) and gets 401 across the board,
+// and after login the asset tree / credential vault stay in the pre-login error state. Uses a real AssetTree
+// to pin the refetch after the gate transition (groups / credentials / snippets) and in-flight race isolation; toasts are not all cleared on ready.
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
@@ -64,7 +64,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 避免真实 argon2id(生产参数一次数秒): DEK 解包打桩, 其余保持真实。
+// Avoid real argon2id (production params take seconds per run): stub DEK unwrap, keep everything else real.
 vi.mock("../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../features/auth/crypto")>();
   return {
@@ -190,8 +190,8 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   authed = false;
   mocks.status.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
-  // me 按会话真实性返回: 登录成功后(含 AuthGate 挂载触发的迟到 refresh)/auth/me 必须有效,
-  // 否则迟到的 401 会把 gate 打回 login, 掩盖被测行为。
+  // me follows session reality: after login (including the late refresh triggered by AuthGate mounting) /auth/me must be valid,
+  // otherwise the late 401 knocks the gate back to login and masks the behavior under test.
   mocks.me.mockImplementation(() =>
     authed
       ? Promise.resolve({ user: ADMIN, csrf_token: "csrf-1" })
@@ -242,13 +242,13 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
   it("gate 进 ready 后资产树(含分组)/凭据/片段/凭据库状态全部恢复, toast 不做全清", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
-    // 登录前: 资产树停在 401 错误态, 状态栏凭据库不可用
+    // Before login: asset tree sits in the 401 error state, status bar vault unavailable
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).toContain("访问令牌无效或缺失");
     expect(vaultStatusText()).toContain("凭据库不可用");
     expect(text()).not.toContain("web-01");
 
-    // 登录前留下的 toast: 认证上下文 401 一条、非 401 布局错误一条、非认证终端错误一条
+    // Toasts left over from before login: one auth-context 401, one non-401 layout error, one non-auth terminal error
     act(() => {
       useUi.getState().pushToast("error", "布局同步失败：访问令牌无效或缺失");
       useUi.getState().pushToast("error", "布局同步失败：daemon 未响应");
@@ -260,7 +260,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     await login();
     expect(useAuth.getState().gate).toBe("ready");
 
-    // 登录后: 分组与分组内资产都回来(防分组资产隐藏), 凭据/片段计数恢复
+    // Groups and assets inside groups all come back after login (guard against group assets being hidden), credential/snippet counts recover
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
     expect(assetTreeFooterCount("凭据库（左栏查看）")).toBe("");
@@ -268,7 +268,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(vaultStatusText()).toContain("凭据库已解锁");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
 
-    // toast 不做 ready 全清: 非认证错误与非 401 布局错误在登录后仍是有效反馈, 全部保留
+    // Toasts are not all cleared on ready: non-auth errors and non-401 layout errors remain valid feedback after login, all kept
     const toasts = useUi.getState().toasts;
     expect(toasts.filter((t) => t.kind === "error").map((t) => t.text)).toEqual([
       "布局同步失败：访问令牌无效或缺失",
@@ -288,7 +288,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     authed = false;
     await logout();
     expect(useAuth.getState().gate).toBe("login");
-    // 换账号方向: 旧账号的资产/会话/凭据库状态不能残留
+    // Account-switch direction: no asset/session/vault state of the old account may linger
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).not.toContain("web-01");
     expect(useUi.getState().sessions).toEqual([]);
@@ -309,12 +309,12 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
     expect(vaultStatusText()).toContain("凭据库已解锁");
 
-    // 旧账号的慢请求经头部刷新按钮发出并在途, 随后登出
+    // The old account's slow request goes out via the header refresh button and stays in flight, then logout happens
     const staleSessions = deferred<(typeof SESSION)[]>();
     const staleVault = deferred<{ initialized: boolean; unlocked: boolean }>();
     mocks.sessionList.mockImplementation(() => staleSessions.promise);
-    // 只有刷新按钮发出的那一次请求挂在途; 登出后 resetQueries 触发的重取属于新会话,
-    // 真实服务端会给 401, 不能让它也挂在旧账号的响应上。
+    // Only the one request fired by the refresh button stays in flight; the refetch triggered by resetQueries after logout
+    // belongs to the new session - the real server would answer 401, so it must not hang on the old account's response either.
     let staleVaultTaken = false;
     mocks.vaultStatus.mockImplementation(() => {
       if (!staleVaultTaken) {
@@ -334,8 +334,8 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(useAuth.getState().gate).toBe("login");
     expect(useUi.getState().sessions).toEqual([]);
 
-    // 迟到的旧账号响应现在才到: 会话列表序号已递增, vault-status 在途 fetch 已被
-    // resetQueries 取消, 两边的回写都必须被丢弃
+    // The late old-account responses arrive only now: the session list seq has already advanced, and the in-flight
+    // vault-status fetch was cancelled by resetQueries; both write-backs must be discarded
     await act(async () => {
       staleSessions.resolve([SESSION]);
       staleVault.resolve({ initialized: true, unlocked: true });
@@ -355,7 +355,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
 
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
-    // 首屏资产查询与凭据库状态请求仍在途(慢 401): 树还停在加载骨架, 状态栏还是占位
+    // First-screen asset query and vault status request still in flight (slow 401): the tree is still on the loading skeleton, the status bar still shows the placeholder
     expect(text()).not.toContain("web-01");
     expect(
       [...document.querySelectorAll('[role="alert"]')].some((el) =>
@@ -369,7 +369,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     await flushUntil(() => text().includes("web-01"));
     await flushUntil(() => vaultStatusText().includes("凭据库已解锁"));
 
-    // 迟到的登录前响应现在才到: 查询结果被丢弃, 状态栏不被旧 401 覆盖
+    // The late pre-login responses arrive only now: query results are discarded, the status bar is not overwritten by the old 401
     await act(async () => {
       staleAssets.reject(UNAUTH);
       staleVault.reject(UNAUTH);

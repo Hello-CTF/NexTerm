@@ -45,9 +45,9 @@ type HelloMessage struct {
 	Platform   string `json:"platform"`
 	AppVersion string `json:"app_version"`
 	BridgeID   string `json:"bridge_id,omitempty"`
-	// StateDigest 是设备端 supervisor 状态目录摘要 (sha256(identity\x00dir)),
-	// 服务端代管 attach/create 会话时以此通过 helper 的 hello 校验; 摘要本身
-	// 不是凭据, 只标识设备上的状态目录。
+	// StateDigest is the device-side supervisor state directory digest (sha256(identity\x00dir)),
+	// with which the server passes the helper's hello verification for managed attach/create sessions; the digest itself
+	// is not a credential, it only identifies the state directory on the device.
 	StateDigest string `json:"state_digest,omitempty"`
 }
 
@@ -62,9 +62,9 @@ type serverMessage struct {
 	BridgeID          string `json:"bridge_id,omitempty"`
 }
 
-// ProtocolMismatchError 是 version_mismatch 控制帧的运行期错误形态:
-// errors.Is(err, ErrProtocolMismatch) 恒真, ServerVersion 携带 server 上报的
-// 版本号 (旧 server 不携带时为空), 供自升级解析目标版本。
+// ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
+// errors.Is(err, ErrProtocolMismatch) is always true, and ServerVersion carries the version reported by the server
+// (empty when an old server does not carry one), for self-upgrade to resolve the target version.
 type ProtocolMismatchError struct {
 	ServerVersion string
 }

@@ -8,22 +8,22 @@ import (
 	"time"
 )
 
-// DefaultRollupInterval 是指标聚合的默认调度间隔; 小时桶边界由
-// RollupMetrics 的 cutoff 对齐保证, 间隔只影响聚合延迟不影响正确性。
+// DefaultRollupInterval is the default scheduling interval of metrics rollup; the hour-bucket boundary is
+// guaranteed by the cutoff alignment in RollupMetrics, and the interval only affects rollup latency, not correctness.
 const DefaultRollupInterval = time.Hour
 
 const defaultRollupAttemptTimeout = 5 * time.Minute
 
-// RollupStatus 是最近一次聚合尝试的结果, 形状对齐 store/app 的 retention 状态。
+// RollupStatus is the result of the most recent rollup attempt, shaped to match the retention status of store/app.
 type RollupStatus struct {
 	LastAttemptAt time.Time
 	LastSuccessAt time.Time
 	LastError     string
 }
 
-// RollupRunner 定时执行 raw->hourly 指标聚合, 生命周期镜像 internal/app 的
-// RetentionRunner: 单 goroutine 顺序写库 (与 retention 共用同一 *sql.DB 的
-// 单写者语义), 间隔调度, 单次尝试带超时, Start/Shutdown 幂等可等。
+// RollupRunner periodically runs raw->hourly metrics rollup, its lifecycle mirroring internal/app's
+// RetentionRunner: a single goroutine writes to the database sequentially (sharing the single-writer semantics of the same *sql.DB as retention),
+// scheduled at intervals, each attempt with a timeout, and Start/Shutdown are idempotent and waitable.
 type RollupRunner struct {
 	service        *Service
 	interval       time.Duration

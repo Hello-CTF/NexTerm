@@ -32,7 +32,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 避免真实 argon2id(生产参数一次数秒):信封生成/解包全部打桩,其余保持真实。
+// Avoid real argon2id (production params take seconds per run): stub all envelope generation/unwrapping, keep the rest real.
 vi.mock("../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../features/auth/crypto")>();
   return {

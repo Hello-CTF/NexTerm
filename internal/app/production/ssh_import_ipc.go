@@ -340,9 +340,9 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 	return plan, nil
 }
 
-// guardServerImportPath 把服务端装配(nexterm-server, desktop=false)下的导入路径限制在
-// 当前用户 home 的 .ssh 目录内, 拒绝越界路径, 任意路径读不能经服务端 /rpc 到达;
-// 桌面端路径来自系统对话框, 不过限。
+// guardServerImportPath restricts import paths to the current user's home .ssh directory in the server-side assembly
+// (nexterm-server, desktop=false), rejecting out-of-bounds paths so arbitrary path reads cannot reach through the server-side /rpc;
+// desktop paths come from system dialogs and are not restricted.
 func (p *sshImportPlanner) guardServerImportPath(path string) error {
 	if p.desktop {
 		return nil

@@ -66,13 +66,13 @@ func TestDeviceLinkCreateWithNotBeforeAndWrite(t *testing.T) {
 		t.Fatalf("expiresAt = %d, want created + 6h", link.ExpiresAt)
 	}
 
-	// 生效时刻不早于过期时刻一律拒绝。
+	// An effect time at or after the expiry time is always rejected.
 	if _, _, err := fixture.service.CreateDeviceLink(context.Background(), fixture.identity(owner), deviceID, false, fixture.now+time.Hour.Milliseconds(), 30*time.Minute); err == nil {
 		t.Fatal("not_before at/after expiry must be rejected")
 	} else {
 		requireIPCCode(t, err, ipc.CodeBadParam)
 	}
-	// 过去的生效时刻按当前时刻收敛 (立即生效)。
+	// A past effect time converges to the current time (effective immediately).
 	past, _, err := fixture.service.CreateDeviceLink(context.Background(), fixture.identity(owner), deviceID, false, fixture.now-time.Hour.Milliseconds(), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestDeviceLinkResolveNotYetValid(t *testing.T) {
 	}
 
 	fixture.now = notBefore
-	// 时间推进后同步刷新心跳, 否则 staleness 窗口会把代理判离线。
+	// After time advances, refresh the heartbeat as well, otherwise the staleness window judges the agent offline.
 	fixture.setAgentOnline(t, deviceID, true)
 	if _, err := fixture.service.ResolveDeviceLink(context.Background(), token); err != nil {
 		t.Fatalf("link must resolve at not_before: %v", err)
@@ -417,7 +417,7 @@ func TestDeviceLinkPermissionShrinkStopsInput(t *testing.T) {
 		t.Fatalf("input must flow before shrink: %v", err)
 	}
 
-	// 权限收缩 (read_write -> read) 按当前行即时生效: 输入停止, 输出授权仍在。
+	// Permission shrinkage (read_write -> read) takes effect immediately from the current row: input stops, output authorization remains.
 	deviceShareLink := query.Use(fixture.db).DeviceShareLink
 	if _, err := deviceShareLink.WithContext(context.Background()).Where(deviceShareLink.DeviceID.Eq(deviceID)).UpdateColumns(map[string]any{"permission": string(PermissionRead)}); err != nil {
 		t.Fatal(err)
@@ -499,7 +499,7 @@ func TestDeviceLinkGateStopsOnRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Gate 时钟独立于服务时钟: 递增即越过 TTL 缓存窗口, 触发对当前行的真实重查。
+	// The Gate clock is independent of the service clock: incrementing it crosses the TTL cache window and triggers a real revalidation against the current row.
 	gateNow := time.Now().UnixMilli()
 	gate := fixture.service.NewDeviceLinkGate(grant, WithGateNow(func() int64 { return gateNow }))
 

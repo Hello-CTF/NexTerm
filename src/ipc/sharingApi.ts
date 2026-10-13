@@ -1,8 +1,8 @@
-// /share/* 管理路由的浏览器端 HTTP 客户端, 与 authApi/fleetApi 共用同一会话
-// cookie 与 CSRF 头 (request 直接复用, 401 同样走 SESSION_EXPIRED_EVENT)。
-// 仅 WEB 传输可用: 桌面端无账号体系, 由视图层给出显式不可用态。
-// 合同对齐 internal/fleet/server/sharing_http.go: 列表/吊销响应不含任何 token;
-// 公开链接的创建入口不在本切片 (由实时会话侧提供), 这里只有列表与吊销。
+// Browser-side HTTP client for /share/* admin routes; shares the same session
+// cookie and CSRF header with authApi/fleetApi (request is reused directly, 401 also goes through SESSION_EXPIRED_EVENT).
+// WEB transport only: the desktop has no account system, so the view layer shows an explicit unavailable state.
+// Contract aligned with internal/fleet/server/sharing_http.go: list/revoke responses carry no token;
+// the create entry for public links is not in this slice (provided by the realtime session side); only list and revoke live here.
 
 import { request } from "./authApi";
 

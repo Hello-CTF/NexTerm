@@ -14,10 +14,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// HostShare 把一台 daemon 主机分享给一个注册用户: recipient 可在有效期内
-// 随时通过 host agent 新建终端, 全程不接触 owner 的密码或密钥。owner_id 是
-// 授予者 (设备 owner), 同一 (owner, device, recipient)
-// 三元组只有一行, 不同授予者的分享相互独立。
+// HostShare shares a daemon host with one registered user: the recipient can open new terminals
+// through the host agent at any time while the share is valid, never touching the owner's password or keys. owner_id is the
+// grantor (the device owner); each (owner, device, recipient)
+// triple has exactly one row, and shares from different grantors are independent.
 type HostShare struct {
 	ID                string
 	OwnerID           string
@@ -31,11 +31,11 @@ type HostShare struct {
 	RevokedAt         int64
 }
 
-// CreateHostShare 把设备分享给注册用户。仅设备 owner  可授予;
-// 目标设备必须是 daemon 主机且代理在线; recipient 按用户名精确解析 (大小写
-// 不敏感), 不能是设备 owner 本人。重复授予同一三元组会刷新权限与有效期并解除吊销。
-// 设备授权与审计 (authorize) 先于用户名解析: 越权请求一律 403 并写 deny 审计,
-// 不泄露接收者是否存在。
+// CreateHostShare shares a device with a registered user. Only the device owner may grant;
+// the target device must be a daemon host with its agent online; the recipient is resolved by exact username (case-
+// insensitive) and cannot be the device owner themself. Re-granting the same triple refreshes permission and expiry and lifts revocation.
+// Device authorization and auditing (authorize) happen before username resolution: unauthorized requests always get 403 with a deny audit,
+// never revealing whether the recipient exists.
 func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identity, deviceID, recipientUsername string, write bool, ttl time.Duration) (*HostShare, error) {
 	grant, err := s.authorize(ctx, identity, deviceID, "create", auditKindHostCreate)
 	if err != nil {
@@ -106,7 +106,7 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 	return share, nil
 }
 
-// ListHostShares 返回与 identity 相关的分享 (授予的或接收的); 仅 owner 可见。
+// ListHostShares returns the shares related to the identity (granted or received); only the owner can see them.
 func (s *Service) ListHostShares(ctx context.Context, identity *account.Identity) ([]*HostShare, error) {
 	hostShare := query.Use(s.db).HostShare
 	rows, err := hostShare.WithContext(ctx).
@@ -153,8 +153,8 @@ func (s *Service) ListHostShares(ctx context.Context, identity *account.Identity
 	return shares, nil
 }
 
-// RevokeHostShare 吊销主机分享: 授予者、设备 owner  可执行,
-// 重复吊销不报错。吊销只影响本行, 同设备的其他分享不受影响。
+// RevokeHostShare revokes a host share: the grantor or the device owner may do this,
+// and repeated revocation does not error. Revocation affects only this row; other shares on the same device are unaffected.
 func (s *Service) RevokeHostShare(ctx context.Context, identity *account.Identity, shareID string) error {
 	hostShare := query.Use(s.db).HostShare
 	row, err := hostShare.WithContext(ctx).Where(hostShare.ID.Eq(shareID)).First()
@@ -200,10 +200,10 @@ type hostShareRow struct {
 	expiresAt  int64
 }
 
-// unionHostShares 在有效分享行上按权限级别计算并集: read_write 只由仍提供
-// read_write 的行支撑, 有效期取这些行的最大 expires_at; 无有效 read_write
-// 行时回退 read (同样取 read 行的最大有效期)。短权限行不会提前终止更长的高
-// 权限授权, 不同授予者的分享互不影响。
+// unionHostShares computes the union of valid share rows by permission level: read_write is only backed by rows still offering
+// read_write, and the expiry is the max expires_at of those rows; with no valid read_write
+// row it falls back to read (likewise taking the max expiry of read rows). A short-permission row never terminates a longer high-
+// permission grant early, and shares from different grantors do not affect each other.
 func unionHostShares(rows []hostShareRow) (Permission, int64, []string) {
 	permission := PermissionRead
 	for _, row := range rows {
@@ -223,7 +223,7 @@ func unionHostShares(rows []hostShareRow) (Permission, int64, []string) {
 	return permission, expiresAt, ids
 }
 
-// loadValidHostShares 读取 (device, recipient) 下全部未吊销未过期的分享行。
+// loadValidHostShares reads all unrevoked, unexpired share rows under (device, recipient).
 func (s *Service) loadValidHostShares(ctx context.Context, deviceID, recipientID string) ([]hostShareRow, error) {
 	hostShare := query.Use(s.db).HostShare
 	rows, err := hostShare.WithContext(ctx).
@@ -241,10 +241,10 @@ func (s *Service) loadValidHostShares(ctx context.Context, deviceID, recipientID
 	return shares, nil
 }
 
-// AuthorizeTerminalOpen 校验注册用户能否通过 host agent 在设备上新建终端:
-// 设备未吊销、存在至少一个未过期未吊销的分享、daemon 在线, 全部满足才
-// 返回授权快照并写审计; 多个有效分享叠加时按 unionHostShares 的级别并集
-// 计算权限与有效期。
+// AuthorizeTerminalOpen verifies that a registered user may open a new terminal on the device through the host agent:
+// the device is not revoked, at least one unexpired unrevoked share exists, and the daemon is online; only when all hold does it
+// return the authorization snapshot and write an audit; with multiple valid shares stacked, permission and expiry are computed
+// by the level union of unionHostShares.
 func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.Identity, deviceID string) (*Grant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	deny := func(reason string, decision error) (*Grant, error) {
@@ -299,11 +299,11 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 	}, nil
 }
 
-// RevalidateHostAccess 按 ShareIDs 重查 host 分享行并校验设备/接收者绑定:
-// 先用 checkDeviceBinding 校验当前设备归属与吊销状态, 再剔除吊销或过期的
-// 分享行并对剩余行重算并集 (权限可能收缩为 read, 有效期以仍支撑该权限级别
-// 的行为准); 全部失效则拒绝。返回刷新后的 Grant, 供服务端输入检查与 agent
-// recheck 共用, 不信任签发时快照。
+// RevalidateHostAccess re-reads host share rows by ShareIDs and verifies device/recipient binding:
+// it first uses checkDeviceBinding to verify current device ownership and revocation state, then drops revoked or expired
+// share rows and recomputes the union over the remaining rows (permission may shrink to read, and the expiry follows the rows still backing that permission level);
+// if everything is invalid it denies. Returns the refreshed Grant, shared by the server-side input check and the agent
+// recheck, never trusting the snapshot from issuance.
 func (s *Service) RevalidateHostAccess(ctx context.Context, grant *Grant) (*Grant, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 || grant.Recipient == "" {
 		return nil, ipc.NewError(ipc.CodeForbidden, "没有该设备的有效分享")
@@ -364,10 +364,10 @@ func hostShareDenyMessage(reason string) string {
 	}
 }
 
-// NewHostGate 为注册分享终端建立执行 Gate: 逐块以 RevalidateHostAccess 按
-// 当前行刷新授权; 权限收缩 (read_write -> read) 即时生效 — 输入停止, 输出
-// 在有效 read 行下继续; 分享或设备吊销即双向停止。后续连接切片应通过本
-// 构造建立数据通路, 而不是直接持有 Grant 快照。
+// NewHostGate builds the enforcement Gate for registered share terminals: per block it refreshes the authorization from current rows
+// via RevalidateHostAccess; permission shrinkage (read_write -> read) takes effect immediately - input stops, output
+// continues under valid read rows; share or device revocation stops both directions. Future connection slices should build their data path through this
+// constructor instead of holding a Grant snapshot directly.
 func (s *Service) NewHostGate(grant *Grant, options ...GateOption) *Gate {
 	wired := []GateOption{
 		WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {

@@ -16,8 +16,8 @@ func stubWindowsTaskUser(t *testing.T, account string) {
 	t.Cleanup(func() { windowsTaskUser = restore })
 }
 
-// xmlCaptureRunner 在 /Create 调用时截取传给 schtasks 的 XML 文件内容
-// (Install 返回后临时文件即被删除), 其余命令转交 fakeRunner。
+// xmlCaptureRunner captures the XML file content passed to schtasks on /Create calls
+// (the temp file is deleted once Install returns); all other commands go to fakeRunner.
 type xmlCaptureRunner struct {
 	*fakeRunner
 	xml         []byte

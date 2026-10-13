@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 桌面端账号同步卡片的状态自刷新: 后台自动同步(启动探测/解锁唤醒/周期轮)建立会话或
-// 记录探测失败后经既有 sync://status 事件广播, 已挂载卡片收到事件即重查 linkGet/status,
-// 「待同步」徽标自动变「已登录」, 失败时 LastError 自动上屏。
+// Desktop account-sync card state self-refresh: background auto-sync (startup probe / unlock wake / periodic poll) establishes a session or
+// records a probe failure, then broadcasts via the existing sync://status event; a mounted card refetches linkGet/status on the event,
+// the "pending sync" badge automatically becomes "logged in", and LastError surfaces automatically on failure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

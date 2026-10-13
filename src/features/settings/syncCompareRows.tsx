@@ -1,8 +1,8 @@
 import { useId, useState } from "react";
 import { IconChevronDown, IconChevronRight } from "../../ui/icons";
 
-// 账号同步逐条对比的共享行视图: 网页版 CompareConsole(浏览器本地计算) 与桌面
-// DesktopSyncConsole(sync_compare IPC) 共用同一套徽章/汇总/列表, 保证两端展示一致。
+// Shared row view for account sync per-row comparison: the web CompareConsole (computed locally in the browser) and the desktop
+// DesktopSyncConsole (sync_compare IPC) share the same badges/summary/list, keeping both ends consistent.
 
 export type CompareRowState =
   | "local-only"
@@ -14,8 +14,8 @@ export type CompareRowState =
   | "remote-deleted"
   | "remote-undecryptable";
 
-// CompareRowView 是行渲染所需的最小形状; 网页版内部 Row(携带 local/remote 明细)与
-// 桌面端 sync_compare 返回行都结构化兼容它。
+// CompareRowView is the minimal shape needed to render a row; both the web-internal Row (carrying local/remote details) and the
+// desktop sync_compare returned rows are structurally compatible with it.
 export interface CompareRowView {
   id: string;
   kind: string;
@@ -57,7 +57,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
   }
 }
 
-// compareSummary 汇总行: rows 为 null 表示仍在读取; 全部一致时不显示差异段。
+// compareSummary summary line: rows null means still reading; the diff segment is hidden when everything matches.
 export function compareSummary(rows: CompareRowView[] | null): string {
   if (!rows) return "读取中…";
   if (rows.length === 0) return "本机与云端都还没有可同步的内容";
@@ -68,8 +68,8 @@ export function compareSummary(rows: CompareRowView[] | null): string {
   );
 }
 
-// CompareDetails 是「对比详情」折叠块: 标题按钮 + 汇总 + 行列表(差异在前由数据侧保证)。
-// rows 为 null 表示尚无数据(读取中); error 为 true 时隐藏读取占位(错误已由告警区呈现)。
+// CompareDetails is the "compare details" collapsible block: title button + summary + row list (diffs first, guaranteed by the data side).
+// rows null means no data yet (reading); error true hides the reading placeholder (the error is already presented in the alert area).
 export function CompareDetails({ rows, error }: { rows: CompareRowView[] | null; error?: boolean }) {
   const panelId = useId();
   const [open, setOpen] = useState(false);

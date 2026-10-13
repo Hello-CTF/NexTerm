@@ -50,7 +50,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   const selected = list.find((c) => c.id === credId) ?? null;
 
   const qc = useQueryClient();
-  // 空密码库没有锁定概念: 直接静默解锁, 不展示锁定横幅。
+  // A passwordless vault has no lock concept: unlock silently right away, no lock banner.
   useEffect(() => {
     if (!passwordlessLocked) return;
     vaultApi

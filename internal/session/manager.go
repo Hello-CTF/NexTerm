@@ -187,8 +187,8 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		done := existing.connectDone
 		existing.mu.Unlock()
 		m.mu.Unlock()
-		// 命中既有会话不再经过 connector 授权, 必须按属主拦截: 设备伪资产 ID 是
-		// 确定性的, 无此闸跨用户可零授权搭上他人会话 (双端皆空时行为不变)。
+		// Hitting an existing session skips connector authorization, so it must be intercepted by owner: device pseudo-asset IDs are
+		// deterministic, and without this gate a cross-user requester could attach to someone else's session with zero authorization (behavior unchanged when both sides are empty).
 		if owner != "" && requester != "" && owner != requester {
 			return nil, ErrForbidden
 		}
@@ -513,8 +513,8 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 	for _, session := range m.sessions {
 		session.mu.Lock()
 		if session.asset.Kind == KindRemote {
-			// 远程壳没有 "无标签页" 的空闲形态: 空闲 = 无推流连接、无订阅
-			// 观看者, 且距上次推流/管理活动超时; 任一条件不满足不收割。
+			// Remote shells have no "no tabs" idle form: idle means no feed connection, no subscribed watchers,
+			// and a timeout since the last feed/management activity; if any condition fails, the shell is not reaped.
 			if !session.closed && session.remoteFeeds == 0 && !session.remoteWatchingLocked() && !session.remoteActivity.IsZero() && now.Sub(session.remoteActivity) >= m.idleTimeout {
 				remoteCandidates = append(remoteCandidates, remoteCandidate{id: session.ID, activity: session.remoteActivity})
 			}
@@ -624,10 +624,10 @@ func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
 	m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, InflightBytes: queuedBytes, Version: version})
 }
 
-// kickSlowConsumer 在背压宽限到期后踢出仍不消费的通道: 复查与摘除在同一把
-// m.mu 下完成 (无复查-drain 竞态窗口), producer.Close 后客户端走既有重连 +
-// DiscardPending + 重放恢复; 其他 subscriber 的队列互不影响。宽限内已 drain
-// 或已 detach 的通道被复查拦下 (slowKicks 项不存在或背压标记已清)。
+// kickSlowConsumer kicks a channel that still is not consuming after the backpressure grace expires: the recheck and the removal complete
+// under the same m.mu (no recheck-drain race window); after producer.Close the client recovers via the existing reconnect +
+// DiscardPending + replay path, and other subscribers' queues are unaffected. Channels that drained or detached during the grace
+// are stopped by the recheck (no slowKicks entry or the backpressure mark already cleared).
 func (m *Manager) kickSlowConsumer(channelID string) {
 	m.mu.Lock()
 	if m.slowKicks[channelID] == nil {

@@ -221,7 +221,7 @@ func TestShellHistoryLabelsRemoteScope(t *testing.T) {
 	if !local.OK || strings.Contains(local.Text, "远端资产") {
 		t.Fatalf("local text=%q", local.Text)
 	}
-	// 找不到的 AssetID fail closed 按远端处理
+	// Unresolvable AssetID fails closed and is treated as remote
 	unknown := registry.Execute(context.Background(), "job", Scope{AssetID: "missing"}, shellHistoryCall(0), nil)
 	if !unknown.OK || !strings.Contains(unknown.Text, "远端资产") {
 		t.Fatalf("unknown asset must fail closed: %q", unknown.Text)
@@ -279,7 +279,7 @@ func TestShellHistoryRemoteScopeForcesConfirmEvenWhenRemembered(t *testing.T) {
 }
 
 func TestShellHistoryRemoteSessionForcesConfirmWithoutAssetID(t *testing.T) {
-	// 真实侧边栏只传 sessionId/tabId：远端判定必须走服务端 session asset kind。
+	// The real sidebar passes only sessionId/tabId: remote detection must go through the server-side session asset kind.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
@@ -319,19 +319,19 @@ func TestShellHistoryKindResolutionFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	// kind 解析失败按远端处理
+	// Kind resolution failure is treated as remote
 	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKindErr: errors.New("boom")}})
 	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
 	if !result.OK || !strings.Contains(result.Text, "远端资产") {
 		t.Fatalf("resolution failure must fail closed: %+v", result)
 	}
-	// 有会话但终端不支持 kind 解析：同样按远端处理
+	// Session present but the terminal lacks kind resolution: also treated as remote
 	registry = NewRegistry(Dependencies{Terminal: legacyTerminal{}})
 	result = registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
 	if !result.OK || !strings.Contains(result.Text, "远端资产") {
 		t.Fatalf("missing kind capability must fail closed: %+v", result)
 	}
-	// 无会话上下文的纯本机对话：本机标注，无远端警告
+	// Purely local conversation without session context: local label, no remote warning
 	result = registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if !result.OK || strings.Contains(result.Text, "远端资产") {
 		t.Fatalf("session-less scope should stay local: %+v", result)

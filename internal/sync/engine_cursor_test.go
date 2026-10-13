@@ -8,8 +8,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// f/x/h 反例: 补拉 ID 的高 seq 不得把游标推进跳过未返回的低 seq 游标对象,
-// next_seq/cursor_done 只能由游标对象计算。
+// f/x/h counterexample: a catch-up ID's high seq must not advance the cursor past unreturned low-seq cursor objects,
+// next_seq/cursor_done may only be computed from cursor objects.
 func TestObjectStoreCursorProgressIndependentOfIDLookup(t *testing.T) {
 	ctx, store, userID := newObjectStoreUser(t)
 	blobs := []WireObject{
@@ -20,7 +20,7 @@ func TestObjectStoreCursorProgressIndependentOfIDLookup(t *testing.T) {
 	if _, _, _, _, err := store.push(ctx, userID, genesisHead(userID), blobs); err != nil {
 		t.Fatal(err)
 	}
-	// 预算只容纳 f 与补拉 h: x 被预算跳过, 但 next_seq 必须停在 f 的 seq, cursor_done=false。
+	// The budget only fits f plus catch-up h: x is skipped by the budget, but next_seq must stop at f's seq with cursor_done=false.
 	pulled, _, maxSeq, nextSeq, cursorDone, err := store.pull(ctx, userID, 0, []string{"h"}, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestObjectStoreCursorProgressIndependentOfIDLookup(t *testing.T) {
 	if cursorDone {
 		t.Fatal("cursorDone=true with cursor seq2 missing; id-lookup seq must not fake cursor completion")
 	}
-	// 后续页必须仍返回 x 并仅由游标推进。
+	// Later pages must still return x, advanced only by the cursor.
 	pulled, _, _, nextSeq, cursorDone, err = store.pull(ctx, userID, nextSeq, nil, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestObjectStoreCursorProgressIndependentOfIDLookup(t *testing.T) {
 	}
 }
 
-// ids 后并发更新 x: 引擎必须经游标流拉回 x 并完成 LWW, 本地旧 revision 不得覆盖远端新 revision。
+// x updated concurrently after ids: the engine must pull x back via the cursor stream and complete LWW; the stale local revision must not overwrite the newer remote revision.
 func TestEngineCursorPullPreventsOverwrite(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -69,11 +69,11 @@ func TestEngineCursorPullPreventsOverwrite(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 有一个待推送的旧 revision 修改(比 B 将创建的 revision 旧, 但与本地已同步版本不同)。
+	// A has a pending push of an old-revision edit (older than the revision B will create, but different from the synced local version).
 	putDeviceSnippet(t, deviceA, snippetX, "x", "stale-local-"+bigBody, 200)
 
-	// ids 响应之后 B 才更新 x 与 h 到更高 revision 并推送: x 不在 A 的 unreconciled 中,
-	// 只能由游标流在分页后续页拉回; 旧客户端会用补拉 h 的高 seq 跳过 x 并覆盖它。
+	// B updates x and h to a higher revision and pushes only after the ids response: x is not in A's unreconciled,
+	// so it can only be pulled back by the cursor stream in a later page; the old client would skip x via catch-up h's high seq and overwrite it.
 	future := ids.NowMS() + 3600_000
 	server.afterIDs = func() {
 		putDeviceSnippet(t, deviceB, snippetX, "x", "new-"+bigBody, future)
@@ -81,7 +81,7 @@ func TestEngineCursorPullPreventsOverwrite(t *testing.T) {
 		syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	}
 
-	// 调小单页预算强制 x 进入下一页; 引擎必须耗尽分页并 LWW, 不得用 stale-local 覆盖 B 的新 revision。
+	// Shrink the single-page budget to force x into the next page; the engine must exhaust pagination and LWW, never overwriting B's new revision with stale-local.
 	original := maxPullBytes
 	maxPullBytes = 1 << 20
 	defer func() { maxPullBytes = original }()
@@ -107,7 +107,7 @@ func TestEngineCursorPullPreventsOverwrite(t *testing.T) {
 	}
 }
 
-// stall: 补拉 ID 持续缺失时, 本轮必须在 collect/push 前退出, push 次数为零。
+// stall: while a catch-up ID stays missing, the round must exit before collect/push with zero pushes.
 func TestEngineStallPreventsPush(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -120,12 +120,12 @@ func TestEngineStallPreventsPush(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 更新分组产生新 blob 哈希, 使 B 端该对象进入 unreconciled; B 同时有一个待推送修改。
+	// A updates the group, producing a new blob hash that puts the object into B's unreconciled; B also has a pending push.
 	putDeviceGroup(t, deviceA, groupID, nil, "A 分组-新版", 300)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	putDeviceGroup(t, deviceB, groupID, nil, "B 待推分组", 200)
 
-	// ids 之后服务端丢弃该对象行, 补拉持续缺失: 本轮必须 stall 且零推送。
+	// The server drops the object row after ids, so the catch-up stays missing: the round must stall with zero pushes.
 	server.dropObjectID = groupID
 	report, err := deviceB.engine.Sync(ctx, deviceB.config(server, "alice", "alice-pw-123"))
 	if err == nil {
@@ -134,7 +134,7 @@ func TestEngineStallPreventsPush(t *testing.T) {
 	if report.Pushed != 0 {
 		t.Fatalf("stall must prevent any push this round: %+v", report)
 	}
-	// 服务端对象行已被丢弃, B 的待推对象未被覆盖性推送。
+	// The server object row was dropped, so B's pending object was not pushed over it.
 	var count int
 	if err := server.db.DB().QueryRowContext(ctx, "SELECT count(*) FROM user_sync_object").Scan(&count); err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestEngineStallPreventsPush(t *testing.T) {
 	}
 }
 
-// 超过 4096 个 unreconciled ID 必须全部经内层分批对账, 不得被外层截断丢弃。
+// More than 4096 unreconciled IDs must all be reconciled via inner batching and must not be truncated or dropped by the outer layer.
 func TestEngineLargeUnreconciledSetConverges(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -152,7 +152,7 @@ func TestEngineLargeUnreconciledSetConverges(t *testing.T) {
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
 
-	// A 先建立会话, 然后直接推送 4096+500 个对象。
+	// A establishes the session first, then pushes 4096+500 objects directly.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	userID := deviceA.engine.session.userID
 	const total = maxPullIDLookup + 500
@@ -175,7 +175,7 @@ func TestEngineLargeUnreconciledSetConverges(t *testing.T) {
 		}
 	}
 
-	// B 对全部对象未对账(unreconciled 超过 4096), 必须全部拉回后才允许 push。
+	// B has reconciled none of the objects (unreconciled exceeds 4096); all must be pulled back before push is allowed.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	var count int
 	if err := server.db.DB().QueryRowContext(ctx, "SELECT count(*) FROM user_sync_object WHERE user_id = ?", userID).Scan(&count); err != nil {
@@ -184,7 +184,7 @@ func TestEngineLargeUnreconciledSetConverges(t *testing.T) {
 	if count != total {
 		t.Fatalf("server objects=%d, want %d", count, total)
 	}
-	// B 端 sync_state 必须覆盖全部对象(无被截断丢弃)。
+	// B's sync_state must cover every object (nothing truncated or dropped).
 	var synced int
 	if err := deviceB.db.DB().QueryRowContext(ctx, "SELECT count(*) FROM sync_state WHERE user_id = ?", deviceB.engine.session.userID).Scan(&synced); err != nil {
 		t.Fatal(err)

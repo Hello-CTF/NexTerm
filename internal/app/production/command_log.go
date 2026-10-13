@@ -8,8 +8,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// commandLogSink 把会话层观察到的命令落入 command_log 表; 错误只记日志,
-// 不打断终端数据面。
+// commandLogSink persists commands observed by the session layer into the command_log table; errors are only logged
+// and never interrupt the terminal data plane.
 type commandLogSink struct {
 	database *store.Store
 	logger   *slog.Logger

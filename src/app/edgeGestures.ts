@@ -11,8 +11,8 @@ interface EdgeGestureHandlers {
   closeOverlay: () => void;
 }
 
-// 只在屏幕左右缘 20pt 内起手才识别为拉侧栏手势, 其余触摸原样留给终端与列表滚动;
-// overlay 打开后从遮罩/面板内反向滑动(或点遮罩)收起。仅触屏(coarse/mobile), 桌面不受影响。
+// Recognize a sidebar-pull gesture only when the touch starts within 20pt of the left/right screen edge; other touches pass through to terminal and list scrolling;
+// once the overlay is open, swipe back from the scrim/panel (or tap the scrim) to collapse. Touch screens only (coarse/mobile); desktop is unaffected.
 export function useEdgeGestures(handlers: EdgeGestureHandlers): void {
   const ref = useRef(handlers);
   ref.current = handlers;
@@ -38,7 +38,7 @@ export function useEdgeGestures(handlers: EdgeGestureHandlers): void {
       if (!t) return;
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      // 边缘水平滑动成立后拦截, 免得 xterm 同时当文本选择处理
+      // Intercept once the edge horizontal swipe is established, so xterm does not also treat it as text selection
       if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) e.preventDefault();
     };
     const onTouchEnd = (e: TouchEvent) => {

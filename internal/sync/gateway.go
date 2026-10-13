@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// 网关认证是守护进程与服务端之间的内部链路凭据, 与令牌时代无关, 独立于同步协议保留。
+// Gateway auth is the internal link credential between the daemon and the server, unrelated to the token era, kept independent of the sync protocol.
 const (
 	GatewayAuthHeader = "X-NexTerm-Gateway-Auth"
 )

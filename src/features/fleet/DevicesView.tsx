@@ -1,10 +1,10 @@
-// 设备管理视图 (FLEET149): 账号模式下的真实设备管理界面。
-// 数据全部来自 /fleet/* 真实 HTTP 合同 (见 internal/fleet/server/http.go):
-// 设备列表由服务端按角色过滤 (超管看全部+owner, 普通用户只看自己的);
-// 桌面端经「账号同步」link 的服务端会话代理同一批合同 (remote_fleet_*),
-// 未登录给「登录服务端账号后可用」的引导视图并指向「设置 → 账号同步」, 不发任何请求。
-// 指标面板在 ./MetricsPanel (含 CPU 24h 趋势线 ./MetricsChart), 此处直接复用,
-// 不另实现图表逻辑。
+// Device management view (FLEET149): the real device management UI in account mode.
+// All data comes from the real /fleet/* HTTP contracts (see internal/fleet/server/http.go):
+// the server filters the device list by role (superadmins see all + owner, regular users only their own);
+// the desktop proxies the same contracts (remote_fleet_*) through the "account sync" link server session;
+// logged out, a "log in to a server account to use this" guide view points to "Settings -> Account sync", and no request is issued.
+// The metrics panel lives in ./MetricsPanel (with the CPU 24h trend line in ./MetricsChart), reused directly here;
+// no separate chart logic is implemented.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
@@ -40,10 +40,10 @@ const ENROLL_TTL_OPTIONS = [
   { label: "1 小时", ms: 60 * 60_000 },
 ];
 
-// 数据目录与仓库 per-user 约定一致 (platform.desktopDataDir: XDG_DATA_HOME
-// 或 ~/.local/share), 普通用户可写, 适配 systemd --user / launchd per-user。
-// 双引号让 shell 在调用前展开: NEXTERM_DATA_DIR 最优先 (与文案的覆盖承诺一致,
-// CLI 中 flag 优先于 env, 必须把覆盖嵌进 flag 值), 其次 XDG_DATA_HOME, 最后 $HOME。
+// The data directory matches the repo's per-user convention (platform.desktopDataDir: XDG_DATA_HOME
+// or ~/.local/share), writable by regular users, fitting systemd --user / launchd per-user.
+// Double quotes let the shell expand before invocation: NEXTERM_DATA_DIR takes top priority (matching the copy's override promise;
+// in the CLI flags beat env, so the override must be embedded into the flag value), then XDG_DATA_HOME, finally $HOME.
 const AGENT_DATA_DIR = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
 
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
@@ -93,8 +93,8 @@ function FleetUnsupported() {
   );
 }
 
-// openAccountSyncSettings 打开设置标签并滚动到「账号同步」分区; 设置页异步挂载,
-// 轮询等待目标节点出现, 约 1 秒后放弃。
+// openAccountSyncSettings opens the settings tab and scrolls to the "account sync" section; the settings page mounts asynchronously,
+// so poll for the target node and give up after about 1 second.
 function openAccountSyncSettings(attempt = 0): void {
   if (attempt === 0) {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
@@ -122,7 +122,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
   const [busy, setBusy] = useState(false);
   const revoked = device.revoked_at !== 0;
   const agent = device.agent;
-  // 心跳判定的在线用于徽章提示文案: 事件驱动的在线以控制通道为准。
+  // Heartbeat-determined online state feeds the badge hint text: event-driven online state defers to the control channel.
   const heartbeatOnline = agent ? isOnline(agent.last_seen_at || device.last_seen_at, now) : false;
 
   const revoke = async () => {
@@ -165,8 +165,8 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
     }
   };
 
-  // reconcile 语义 (internal/fleet/agent/runtime.go): desired=true 对齐 installed&&enabled,
-  // active 只是进程此刻是否运行, 单独展示, 不参与漂移判断。
+  // reconcile semantics (internal/fleet/agent/runtime.go): desired=true aligns with installed&&enabled,
+  // active is only whether the process is running right now, shown separately and not part of drift judgment.
   const serviceState = agent?.service_state;
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
   const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
@@ -325,24 +325,24 @@ export function DevicesView() {
   const [ttlMs, setTtlMs] = useState(ENROLL_TTL_OPTIONS[1].ms);
   const [issued, setIssued] = useState<{ code: string; expiresAt: number } | null>(null);
   const [issuing, setIssuing] = useState(false);
-  // serverVersion 是 /healthz 的真实服务端版本 (一键安装 --version 用);
-  // null 表示不可用, 一键安装指令整段隐藏, 绝不伪造版本。
+  // serverVersion is the real server version from /healthz (used for one-click install --version);
+  // null means unavailable, and the whole one-click install section hides - never fabricate a version.
   const [serverVersion, setServerVersion] = useState<string | null>(null);
-  // presence 是 device://status 事件的实时信号 (设备 ID → 在线状态 + 收到时间)。
-  // 超过心跳阈值后回落到心跳判定 (轮询兜底), 与既有展示语义一致。
+  // presence is the realtime signal from device://status events (device ID -> online state + receive time).
+  // Past the heartbeat threshold it falls back to the heartbeat determination (polling fallback), consistent with existing display semantics.
   const [presence, setPresence] = useState<Record<string, { online: boolean; at: number }>>({});
   const loadSeq = useRef(0);
   const baseUrlsSeq = useRef(0);
   const versionSeq = useRef(0);
-  // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离签发在途的
-  // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
+  // accountEpoch bumps only on account switch (manual refresh leaves it alone), isolating in-flight issuance
+  // then/catch/finally: late completions from an old account never write into the new account's view.
   const accountEpoch = useRef(0);
 
   const isAdmin = account.isAdmin;
   const userId = account.userId;
 
-  // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (设备/base URL/一次性接入码),
-  // 并递增 loadSeq 使旧账号的晚到响应失效; AuthGate 只是 overlay, 登出再登录不会卸载本 pane。
+  // Account-scope isolation: when user.id changes, reset all account state (devices/base URLs/one-time enroll codes) during render,
+  // and bump loadSeq to invalidate late responses from the old account; AuthGate is only an overlay, so logout/login does not unmount this pane.
   const [scopedUserId, setScopedUserId] = useState(userId);
   if (scopedUserId !== userId) {
     setScopedUserId(userId);
@@ -406,9 +406,9 @@ export function DevicesView() {
     load();
   }, [userId, load]);
 
-  // 轮询兜底: WEB 靠事件流保持实时, 每 60 秒静默刷新一次收敛丢失/断线;
-  // 桌面没有 /ws/events 通道, 在线状态只靠轮询, 加密到 30 秒。
-  // 静默刷新不碰 loading 态, 避免周期性打扰界面。
+  // Polling fallback: WEB stays realtime via the event stream and silently refreshes every 60s to converge losses/disconnects;
+  // the desktop has no /ws/events channel, so online state relies on polling alone, tightened to 30 seconds.
+  // Silent refreshes do not touch the loading state, avoiding periodic UI disturbance.
   const poll = useCallback(() => {
     const seq = ++loadSeq.current;
     fleetClient()
@@ -425,9 +425,9 @@ export function DevicesView() {
     return () => clearInterval(timer);
   }, [userId, poll]);
 
-  // device://status 实时上下线: 只写入 presence, 徽章与终端按钮随渲染更新;
-  // 不在当前账号设备清单内的 ID (他人设备) 不会被渲染, 自然忽略。
-  // 仅 WEB 有该事件通道, 桌面端只靠上面的轮询。
+  // device://status realtime online/offline: only writes presence; badges and terminal buttons update on render;
+  // IDs not in the current account's device list (other users' devices) are never rendered and are naturally ignored.
+  // Only WEB has this event channel; the desktop relies on the polling above.
   useEffect(() => {
     if (!WEB || !userId) return;
     let cancelled = false;
@@ -445,13 +445,13 @@ export function DevicesView() {
     };
   }, [userId]);
 
-  // 事件 WS 重连并错过事件 (resync) 时立即刷新, 不等下一轮轮询。
+  // Refresh immediately when the event WS reconnects and may have missed events (resync), without waiting for the next poll round.
   useEffect(() => {
     if (!WEB || !userId) return;
     return onEventsResync(() => load());
   }, [userId, load]);
 
-  // 有效在线 = 实时事件优先 (心跳阈值内), 否则回落心跳判定; 非 agent 设备恒离线。
+  // Effective online = realtime event first (within the heartbeat threshold), otherwise fall back to the heartbeat determination; non-agent devices are always offline.
   const onlineOf = (d: FleetDevice): boolean => {
     if (!d.agent) return false;
     const p = presence[d.id];
@@ -459,8 +459,8 @@ export function DevicesView() {
     return isOnline(d.agent.last_seen_at || d.last_seen_at, now);
   };
 
-  // 打开接入面板时经 /healthz 读取真实服务端版本 (一键安装的 --version);
-  // 失败或空串都归为 null: 一键安装指令整段隐藏, 绝不伪造版本。
+  // Read the real server version from /healthz when opening the enroll panel (for one-click install --version);
+  // failure or an empty string both map to null: the one-click install section hides entirely, never fabricating a version.
   useEffect(() => {
     if (!enrollOpen || !userId) return;
     const seq = ++versionSeq.current;

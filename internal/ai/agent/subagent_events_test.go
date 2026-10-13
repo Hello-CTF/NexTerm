@@ -83,7 +83,7 @@ func TestSubagentEventsMergeIntoParentStreamWithOrderedSeq(t *testing.T) {
 	doneAt := indexOfEvent(events, func(event Event) bool { return event.Type == "subagentDone" })
 	resultAt := indexOfEvent(events, func(event Event) bool { return event.Type == "toolResult" && event.ID == "sp-1" })
 	terminalAt := indexOfEvent(events, func(event Event) bool { return event.Type == "done" })
-	// 子任务事件经 manager goroutine 直发, 与 toolCall 的先后随调度竞争, 不作断言。
+	// Subagent events are sent directly via the manager goroutine; their ordering against toolCall is a scheduling race, so no assertion.
 	if toolCallAt < 0 {
 		t.Fatal("missing toolCall event for sp-1")
 	}

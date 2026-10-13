@@ -11,7 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// TestSyncCompareCommandRegistered 装配层接线: sync_compare 随 sync 模块注册到生产 dispatcher。
+// TestSyncCompareCommandRegistered: wiring-layer connection - sync_compare is registered to the production dispatcher with the sync module.
 func TestSyncCompareCommandRegistered(t *testing.T) {
 	production := newUpdateTestProduction(t, true, nil)
 	for _, registered := range production.Dispatcher.Commands() {
@@ -22,8 +22,8 @@ func TestSyncCompareCommandRegistered(t *testing.T) {
 	t.Fatal("production is missing sync_compare")
 }
 
-// TestSyncCompareCommandWithoutLinkRejected 未配置同步链接时业务层如实拒绝(bad_param),
-// 证明命令经 dispatcher 真实到达 sync.Service.Compare。
+// TestSyncCompareCommandWithoutLinkRejected: with no sync link configured, the business layer truthfully rejects (bad_param),
+// proving the command really reaches sync.Service.Compare through the dispatcher.
 func TestSyncCompareCommandWithoutLinkRejected(t *testing.T) {
 	production := newUpdateTestProduction(t, true, nil)
 	response := dispatchHostKeyTest(t, production, "sync_compare", `null`)
@@ -38,7 +38,7 @@ func TestSyncCompareCommandWithoutLinkRejected(t *testing.T) {
 	}
 }
 
-// TestSyncCompareCommandNonDesktopRejected 非桌面端(服务器模式)拒绝: 对比依赖桌面引擎会话。
+// TestSyncCompareCommandNonDesktopRejected: non-desktop (server mode) is rejected - comparison depends on the desktop engine session.
 func TestSyncCompareCommandNonDesktopRejected(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)

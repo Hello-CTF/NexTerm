@@ -84,7 +84,7 @@ func TestConnectDeviceAuthorizeUserIDFromOptions(t *testing.T) {
 			return nil
 		},
 	})
-	// 重连在后台 ctx 运行 (无 userID): 授权回退读 IPC 层写入资产 options 的认证用户。
+	// Reconnect runs in a background ctx (no userID): authorization falls back to reading the authenticated user the IPC layer wrote into asset options.
 	asset := deviceAsset("dev-1")
 	asset.Options = map[string]any{"deviceId": "dev-1", "userId": "u-1"}
 	if _, err := connector.Connect(ctx, asset, 2); err != nil {

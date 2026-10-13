@@ -1,4 +1,4 @@
-// 设备管理视图的展示格式化助手: 字节/时长/相对时间。
+// Display formatting helpers for the device management view: bytes/duration/relative time.
 
 export { formatTime, formatBytes } from "../../ui/format";
 
@@ -24,7 +24,7 @@ export function relativeTime(ms: number, now: number): string {
   return `${Math.floor(delta / 86_400_000)} 天前`;
 }
 
-// 心跳阈值: agent 默认 60s 上报一次指标, 3 分钟内有心跳即视为在线。
+// Heartbeat threshold: the agent reports metrics every 60s by default; a heartbeat within 3 minutes counts as online.
 export const ONLINE_THRESHOLD_MS = 180_000;
 
 export function isOnline(lastSeenAt: number, now: number): boolean {

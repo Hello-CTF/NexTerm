@@ -1,7 +1,7 @@
-// 桌面端经已登录服务端账号调远程 API 的绑定: 方法签名与 WEB 版 fleetApi.ts /
-// sharingApi.ts / authApi.ts 的对应方法同形同返回类型, 视图层按 TRANSPORT 切换。
-// 命令在 internal/app/production/remote_ipc.go 注册; 会话与 401 重登由
-// internal/sync 的 RemoteProxy 代理面供应(桌面端内存持有 cookie+CSRF)。
+// Desktop bindings that call remote APIs through a logged-in server account: method signatures mirror the WEB
+// fleetApi.ts / sharingApi.ts / authApi.ts counterparts with the same return types; the view layer switches on TRANSPORT.
+// Commands are registered in internal/app/production/remote_ipc.go; the session and 401 re-login are supplied by
+// the RemoteProxy facade in internal/sync (cookie+CSRF held in desktop memory).
 
 import { call } from "./commands";
 import type { AccountLink } from "./types";
@@ -9,8 +9,8 @@ import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsSampl
 import type { HostShareView, ShareLinkView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
 
-// RemoteLinkResult 是 sync_link_set / sync_link_mfa / sync_link_reset_password 的返回:
-// AccountLink 视图之外附带连接三态, MFA 分支携带票据, 强制改密完成携带一次性恢复密钥。
+// RemoteLinkResult is the return of sync_link_set / sync_link_mfa / sync_link_reset_password:
+// beyond the AccountLink view it carries the three-state connect status; the MFA branch carries a ticket, forced password change completion carries a one-time recovery key.
 export interface RemoteLinkResult extends AccountLink {
   connect: "" | "connected" | "mfa_required" | "reset_required";
   mfaTicket?: string;
@@ -18,8 +18,8 @@ export interface RemoteLinkResult extends AccountLink {
   recoveryKey?: string;
 }
 
-// remoteLinkApi 是账号连接登录流程的入口: linkSet 保存并探测登录,
-// mfa / resetPassword 完成两步验证与强制改密入职(会话建立后内存持有 cookie+CSRF)。
+// remoteLinkApi is the entry to the account link login flow: linkSet saves and probes the login,
+// mfa / resetPassword complete two-factor verification and forced password change onboarding (cookie+CSRF held in memory once the session is established).
 export const remoteLinkApi = {
   linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
     call<RemoteLinkResult>("sync_link_set", { args: patch }),
@@ -30,8 +30,8 @@ export const remoteLinkApi = {
     call<RemoteLinkResult>("sync_link_reset_password", { args: { newPassword } }),
 };
 
-// SyncCompareRow 是 sync_compare 的逐条对比行: state 取值与网页版对比详情一致,
-// remote-undecryptable 表示云端对象用当前数据密钥解不开(如实呈现, 非错误)。
+// SyncCompareRow is a per-row comparison of sync_compare: state values match the web compare detail;
+// remote-undecryptable means the cloud object cannot be decrypted with the current data key (shown as-is, not an error).
 export interface SyncCompareRow {
   id: string;
   kind: string;
@@ -41,14 +41,14 @@ export interface SyncCompareRow {
   updatedAtRemote?: number;
 }
 
-// syncCompareApi 是桌面端账号同步的逐条对比入口: Go 侧用引擎会话 DEK 解云端对象,
-// 与本机收集结果按网页版同一套 LWW 规则判定状态(见 internal/sync/compare.go)。
+// syncCompareApi is the desktop account sync per-row comparison entry: the Go side decrypts cloud objects with the engine session DEK,
+// then judges states against the local collection using the same LWW rules as the web (see internal/sync/compare.go).
 export const syncCompareApi = {
   compare: () => call<{ rows: SyncCompareRow[]; warnings?: string[]; remote: number }>("sync_compare"),
 };
 
-// RemotePreviewLinkView 对齐 src/features/sharing/previewApi.ts 的 PreviewLinkView
-// (此处独立声明, 避免 ipc 层反向依赖 features 层)。
+// RemotePreviewLinkView mirrors PreviewLinkView in src/features/sharing/previewApi.ts
+// (declared independently here to avoid the ipc layer depending on the features layer).
 export interface RemotePreviewLinkView {
   id: string;
   owner_id: string;
@@ -59,24 +59,24 @@ export interface RemotePreviewLinkView {
   last_accessed_at?: number;
 }
 
-// RemoteShareLinkCreateResult 是创建公开链接的响应: 唯一携带一次性 token 的入口,
-// token 只用于当场拼公开 URL, 不写日志、不持久化、不进 web storage。
+// RemoteShareLinkCreateResult is the create-public-link response: the only entry that carries the one-time token;
+// the token is used only to assemble the public URL on the spot - never logged, persisted, or put into web storage.
 export interface RemoteShareLinkCreateResult extends ShareLinkView {
   token: string;
 }
 
-// RemotePreviewCreateResult 是 preview_share_create 的返回: 桌面中继已用账号连接的
-// 服务端地址拼好公开 url; token 只在创建当场持有, 不落盘; sessionId 是远程壳 id,
-// 「进行中的预览」列表 (remoteSharingApi.previewLinks) 按它过滤当前 tab 的链接。
+// RemotePreviewCreateResult is the return of preview_share_create: the desktop relay has already assembled the public url
+// from the account link's server address; the token is held only at creation time, never persisted; sessionId is the remote shell id,
+// which the "active previews" list (remoteSharingApi.previewLinks) uses to filter the current tab's link.
 export interface RemotePreviewCreateResult {
   token: string;
   url: string;
   sessionId: string;
 }
 
-// remotePreviewApi 是桌面端只读预览的中继入口: create 建远程壳+预览链接并启动
-// 输出中继 (单 tab 单条活跃中继, 重复创建返回既有链接); active 查 tab 当前中继的
-// 壳 id。列表/吊销复用 remoteSharingApi.previewLinks / revokePreviewLink。
+// remotePreviewApi is the desktop read-only preview relay entry: create builds a remote shell + preview link and starts
+// output relaying (one active relay per tab; repeated creates return the existing link); active queries the shell id of the tab's
+// current relay. List/revoke reuse remoteSharingApi.previewLinks / revokePreviewLink.
 export const remotePreviewApi = {
   create: (tabId: string, ttlMs: number) =>
     call<RemotePreviewCreateResult>("preview_share_create", { args: { tabId, ttlMs } }),
@@ -138,17 +138,17 @@ export const remoteAccountApi = {
   adminCreateUser: (username: string, password: string, displayName: string) =>
     call<{ user: AccountUser }>("remote_account_admin_create_user", { args: { username, password, displayName } }),
 
-  // state 仅支持 disabled(禁用) 与 reset_required(强制改密), 与服务端仅有的两个状态动作对应。
+  // state supports only disabled and reset_required, matching the server's only two state actions.
   adminSetUserState: (userId: string, state: "disabled" | "reset_required") =>
     call<{ ok: boolean }>("remote_account_admin_set_user_state", { args: { userId, state } }),
 
-  // changePassword 返回一次性恢复密钥(仅本次响应下发), 视图层必须当场展示。
+  // changePassword returns a one-time recovery key (issued only in this response); the view layer must show it immediately.
   changePassword: (oldPassword: string, newPassword: string) =>
     call<{ ok: boolean; recoveryKey?: string }>("remote_account_change_password", { args: { oldPassword, newPassword } }),
 };
 
 export const remoteHealthApi = {
-  // serverVersion 读 /healthz 的真实服务端版本。返回空串表示版本不可用:
-  // 调用方必须隐藏依赖版本的 UI, 不得伪造版本。
+  // serverVersion reads the real server version from /healthz. An empty string means the version is unavailable:
+  // callers must hide version-dependent UI, never fabricate a version.
   serverVersion: () => call<string>("remote_healthz"),
 };

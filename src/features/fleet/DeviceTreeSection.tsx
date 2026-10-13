@@ -1,14 +1,14 @@
-// 资产树「设备」分区: 把服务端接入设备以只读分区形式挂进资产树。
-// 设备不是 asset 表记录: 不参与资产搜索/CRUD/同步, 不可编辑、不可删除、
-// 不可拖入分组, 也没有跨设备拖拽; 行的视觉与键盘/点击行为对齐普通资产
-// (role=treeitem, 单击/双击/Enter 打开远程终端, 不再有单独的「终端」按钮)。
-// 未登录不渲染且不发任何请求; 已吊销设备不显示 (不是灰显)。吊销需两个
-// warning 确认 (第二个明确「凭证立即失效, 从资产中移除且不可恢复」),
-// 成功后立即把设备从分区移除。
-// 收敛节奏与设备管理视图一致: WEB 每 60s / 桌面每 30s 轮询兜底 (上线/新接入/
-// 他处吊销随刷新收敛), WEB 另订阅 device://status 实时翻转在线状态
-// (事件阈值内以事件为准, 否则回落心跳判定), 事件 WS 重连 resync 时立即重取;
-// 桌面无事件通道, 只依赖轮询。
+// Asset tree "devices" section: mounts server-enrolled devices into the asset tree as a read-only section.
+// Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
+// cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
+// (role=treeitem, single/double click/Enter opens a remote terminal, no separate "terminal" button).
+// Renders nothing and issues no requests when logged out; revoked devices are not shown (not even grayed out). Revocation requires two
+// warning confirmations (the second explicitly states "credentials become invalid immediately, removed from assets and unrecoverable"),
+// and the device is removed from the section immediately on success.
+// Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
+// revoked elsewhere converge on refresh), WEB additionally subscribes to device://status for realtime online flips
+// (events win within the event threshold, otherwise heartbeat determination), and refetches immediately on event WS reconnect resync;
+// the desktop has no event channel and relies on polling alone.
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -57,8 +57,8 @@ export function DeviceTreeSection() {
   const [menu, setMenu] = useState<{ x: number; y: number; device: FleetDevice } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  // presence 是 device://status 事件的实时信号 (设备 ID → 在线状态 + 收到时间),
-  // 超过心跳阈值后回落到心跳判定, 与设备管理视图同语义; 桌面无事件通道, 恒为空。
+  // presence is the realtime signal from device://status events (device ID -> online state + receive time),
+  // falling back to the heartbeat determination past the heartbeat threshold, same semantics as the device management view; always empty on desktop (no event channel).
   const [presence, setPresence] = useState<Record<string, { online: boolean; at: number }>>({});
 
   const devicesQuery = useQuery({
@@ -66,7 +66,7 @@ export function DeviceTreeSection() {
     queryFn: () => fleetClient().devices(),
     enabled: Boolean(userId),
     refetchOnWindowFocus: false,
-    // 与设备管理视图同节奏: WEB 靠事件流保持实时, 60s 轮询兜底; 桌面无事件通道, 30s。
+    // Same cadence as the device management view: WEB stays realtime via the event stream with 60s polling fallback; desktop has no event channel, 30s.
     refetchInterval: WEB ? 60_000 : 30_000,
   });
 
@@ -80,8 +80,8 @@ export function DeviceTreeSection() {
     setPresence({});
   }, [userId]);
 
-  // device://status 实时上下线: 只写入 presence, 徽章与行禁用态随渲染更新;
-  // 不在当前账号设备清单内的 ID (他人设备) 不会被渲染, 自然忽略。仅 WEB 有该通道。
+  // device://status realtime online/offline: only writes presence; badges and row disabled states update on render;
+  // IDs not in the current account's device list (other users' devices) are never rendered and are naturally ignored. WEB only.
   useEffect(() => {
     if (!WEB || !userId) return;
     let cancelled = false;
@@ -99,7 +99,7 @@ export function DeviceTreeSection() {
     };
   }, [userId]);
 
-  // 事件 WS 重连并错过事件 (resync) 时立即重取, 不等下一轮轮询。
+  // Refetch immediately when the event WS reconnects and may have missed events (resync), without waiting for the next poll round.
   useEffect(() => {
     if (!WEB || !userId) return;
     return onEventsResync(() => {
@@ -109,7 +109,7 @@ export function DeviceTreeSection() {
 
   if (!userId) return null;
 
-  // 有效在线 = 实时事件优先 (心跳阈值内), 否则回落心跳判定; 非 agent 设备恒离线。
+  // Effective online = realtime event first (within the heartbeat threshold), otherwise fall back to the heartbeat determination; non-agent devices are always offline.
   const onlineOf = (d: FleetDevice): boolean => {
     if (!d.agent) return false;
     const p = presence[d.id];

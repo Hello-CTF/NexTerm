@@ -65,11 +65,11 @@ function SyncBody() {
   return <DesktopLinkCard />;
 }
 
-// ---------- 桌面端:账号登录与同步 ----------
+// ---------- Desktop: account login and sync ----------
 
-// LinkStep 是桌面登录的分步状态机: linkSet 返回 connected 之外的
-// mfa_required / reset_required 时进入对应入职步骤, 强制改密完成后
-// 先一次性展示恢复密钥 (recovery) 再进入已登录态。
+// LinkStep is the desktop login step state machine: when linkSet returns mfa_required / reset_required
+// instead of connected, enter the corresponding onboarding step; after the forced password change completes,
+// show the recovery key once (recovery) before entering the logged-in state.
 type LinkStep =
   | { kind: "form" }
   | { kind: "mfa" }
@@ -112,7 +112,7 @@ function DesktopLinkCard() {
     return Promise.all([
       syncApi.linkGet().then((l) => {
         setLink(l);
-        // 初次加载用已保存链接回填 URL/用户名/insecure;密码保持空白;不覆盖未保存编辑
+        // On first load, backfill URL/username/insecure from the saved link; the password stays blank; unsaved edits are not overwritten
         setDraft((d) => (draftEdited ? d : { ...d, url: l.url, username: l.username, insecure: l.insecure }));
       }),
       syncApi.status().then((s) => setStatus(s)),
@@ -121,7 +121,7 @@ function DesktopLinkCard() {
 
   useEffect(() => {
     void load();
-    // 后台自动同步建立会话或记录探测失败时经 sync://status 广播, 卡片随之自动刷新。
+    // When background auto-sync establishes the session or records a probe failure, it broadcasts via sync://status and the card auto-refreshes.
     let unlisten: (() => void) | undefined;
     void listenEvent("sync://status", () => void load()).then((off) => {
       unlisten = off;
@@ -508,11 +508,11 @@ function DesktopLinkCard() {
   );
 }
 
-// ---------- 桌面端:账号同步 ----------
+// ---------- Desktop: account sync ----------
 
-// DesktopSyncConsole 桌面登录 (link 已建立) 后展示: 同步内容开关 (kindOptInGet/Set)、
-// 同步状态 (账号验证时间/已应用云端序号/最近错误)、手动触发 (sync_wake 唤醒后台同步循环)
-// 与逐条对比详情 (sync_compare: Go 侧用引擎会话 DEK 解云端对象, 与网页版同一套判定)。
+// DesktopSyncConsole is shown after desktop login (link established): sync content switches (kindOptInGet/Set),
+// sync status (account verified time/applied cloud seq/latest error), manual trigger (sync_wake wakes the background sync loop),
+// and per-row comparison details (sync_compare: the Go side decrypts cloud objects with the engine session DEK, same judgment as the web).
 function DesktopSyncConsole() {
   const { pushToast } = useUi();
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -577,7 +577,7 @@ function DesktopSyncConsole() {
     try {
       await syncApi.wake();
       pushToast("success", "已触发一轮后台同步");
-      // 同步在后台循环里异步执行, 稍后重取状态与对比反映结果。
+      // Sync runs asynchronously in the background loop; refetch status and comparison shortly to reflect the result.
       window.setTimeout(() => {
         void load();
         void loadCompare();
@@ -674,7 +674,7 @@ function DesktopSyncConsole() {
   );
 }
 
-// ---------- Web 端:账号同步 ----------
+// ---------- Web: account sync ----------
 
 interface LocalEntity {
   id: string;
@@ -707,7 +707,7 @@ interface RemoteState {
 
 const TRANSCRIPT_MAX_CONTENT_BYTES = 64 << 20;
 
-// readTranscriptAll 按 done/nextSeq 分页读完全部内容;读取失败显式抛出,不吞成空数组。
+// readTranscriptAll reads all content paginated by done/nextSeq; read failures throw explicitly and are never swallowed into an empty array.
 async function readTranscriptAll(id: string): Promise<TranscriptChunk[]> {
   const chunks: TranscriptChunk[] = [];
   let afterSeq = 0;
@@ -731,7 +731,7 @@ async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
     for (const t of summaries) {
       if (!t.syncOptIn || t.active || t.endedAt === null) continue;
       let content: TranscriptChunk[] | null = null;
-      // contentOmitted 只按真实超限语义使用(>64MiB 仅元数据);未超限必须分页读全,不得把多页内容标成完整。
+      // contentOmitted is used only with the real over-limit semantics (>64MiB is metadata-only); under the limit, everything must be paged in - multi-page content must not be marked complete.
       if (!t.contentOmitted && t.bytes > TRANSCRIPT_MAX_CONTENT_BYTES) {
         content = null;
       } else if (!t.contentOmitted) {
@@ -850,11 +850,11 @@ async function localEntity(
   return { id, kind, name, updatedAt, deletedAt, payload, payloadHash: await objectPayloadHash(utf8Bytes(marshalSyncPayload(payload))) };
 }
 
-// loadLocalEntities 经 M141 collect RPC 收集完整本地副本: 软删资产、两类墓碑与凭据都进入对比,
-// 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,较新存活对象压过旧墓碑,存活 transcript 最后)。
-// 读不到明文的凭据(locked/unavailable/error)明确记入 warnings,不静默遗漏。
-// 可选同步种类按账号用户开关收集(默认开启): 开启才进入对比与推送;
-// 档案 apiKey 被扣留(locked/unavailable/error)同样只记 warning; 无密钥档案(apiKeySet=false)不受凭据库锁定影响。
+// loadLocalEntities collects the full local copy via the M141 collect RPC: soft-deleted assets, both tombstone kinds and credentials all enter the comparison,
+// in the same order and keys as internal/sync collectLocalObjects (same ID: later write wins; newer live objects beat old tombstones; surviving transcripts go last).
+// Credentials whose plaintext cannot be read (locked/unavailable/error) are explicitly recorded in warnings, never silently dropped.
+// Optional sync kinds are collected per the account user's switches (default on): only enabled ones enter comparison and push;
+// a profile apiKey withheld (locked/unavailable/error) likewise only records a warning; keyless profiles (apiKeySet=false) are unaffected by vault lock.
 async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
   const warnings: string[] = [];
   const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, preferences] = await Promise.all([
@@ -903,7 +903,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     byId.set(p.id, await localEntity(p.id, "preference", p.key, p.updatedAt, null, preferencePayload(p)));
   }
   for (const t of tombstones) {
-    // 已禁用种类的墓碑不参与对比与推送: 禁用同步不得删除远端对象
+    // Tombstones of disabled kinds stay out of comparison and push: disabled sync must not delete remote objects
     if (t.targetKind === "known_host" && !optIn.knownHost) continue;
     if (t.targetKind === "ai_profile" && !optIn.aiProfile) continue;
     if (t.targetKind === "ai_permission" && !optIn.aiPermission) continue;
@@ -923,8 +923,8 @@ function revisionOf(updatedAt: number, deletedAt: number | null): number {
   return deletedAt !== null && deletedAt > updatedAt ? deletedAt : updatedAt;
 }
 
-// remoteKindVisible 按 opt-in 过滤远端对象: 禁用种类既不应用也不参与对比;
-// 可选种类的远端墓碑按其 targetKind 同样受开关约束(禁用同步不得删除远端/本地对象)。
+// remoteKindVisible filters remote objects by opt-in: disabled kinds are neither applied nor compared;
+// remote tombstones of optional kinds are likewise governed by their targetKind switch (disabled sync must not delete remote/local objects).
 function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncKindOptIn): boolean {
   if (kind === "known_host") return optIn.knownHost;
   if (kind === "ai_profile") return optIn.aiProfile;
@@ -1031,7 +1031,7 @@ interface Row {
   remote?: RemoteObject;
 }
 
-// computeWinners 返回需要推送的本机对象集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜)。
+// computeWinners returns the set of local objects that need pushing: local-only, or local wins (including revision ties broken by payload hash).
 function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEntity[] {
   const remoteById = new Map(remote.map((r) => [r.id, r]));
   return local.filter((e) => {
@@ -1040,8 +1040,8 @@ function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEnti
   });
 }
 
-// sealAll 按 kind 依赖序把 winner 对象加密成线上形态(与 Go objectKindRank 对齐:
-// AI 权限与偏好排在普通墓碑之前, 会话记录仍最后)。
+// sealAll encrypts winner objects into wire form in kind dependency order (aligned with Go objectKindRank:
+// AI permissions and preferences rank before plain tombstones, transcripts still go last).
 async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
   const rank = (k: SyncObjectKind) => {
     switch (k) {
@@ -1067,8 +1067,8 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
   return objects;
 }
 
-// localWins 复刻 M117 merge.go 的 LWW 裁决:修订号大者胜,平手按载荷 sha256 字典序决胜。
-// 载荷完全一致(同 hash)时本地无需推送(覆盖相同内容)。
+// localWins replicates the LWW ruling of M117 merge.go: the higher revision wins; ties break by payload sha256 lexicographic order.
+// With identical payloads (same hash), the local side needs no push (overwriting identical content).
 function localWins(l: LocalEntity, r: RemoteObject): boolean {
   if (l.payloadHash === r.payloadHash) return false;
   if (l.kind === "transcript") return transcriptLocalWins(l, r);
@@ -1078,8 +1078,8 @@ function localWins(l: LocalEntity, r: RemoteObject): boolean {
   return l.payloadHash > r.payloadHash;
 }
 
-// transcriptLocalWins 按会话记录的 endedAt/不可变与内容补全语义裁决:完整内容胜过省略版
-// (本机省略、云端完整时远端胜,走应用补全),否则按 endedAt 比较,平手按载荷 hash 决胜。
+// transcriptLocalWins rules by transcript endedAt/immutability and content-completion semantics: complete content beats the omitted version
+// (when local is omitted and the cloud is complete, the remote wins and application completes it); otherwise compare by endedAt, ties broken by payload hash.
 function transcriptLocalWins(l: LocalEntity, r: RemoteObject): boolean {
   const lp = l.payload as { contentOmitted?: boolean; endedAt?: number };
   const rp = JSON.parse(r.plaintext) as { contentOmitted?: boolean; endedAt?: number };
@@ -1240,7 +1240,7 @@ function WebSyncConsole() {
   const user = useAuth((s) => s.user);
   const dek = useAuth((s) => s.dek);
 
-  // 未登录时整卡不渲染:设置页只有 AuthCard「账号」一个登录入口,不在同步卡重复放登录按钮。
+  // The whole card renders nothing when logged out: the settings page has only one login entry in AuthCard "account"; no duplicate login button in the sync card.
   if (!user) return null;
   if (!dek) return <UnlockDEKCard />;
   return <CompareConsole />;

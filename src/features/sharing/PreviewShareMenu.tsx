@@ -1,12 +1,12 @@
-// 预览链接创建入口 (会话/终端分享菜单): 为当前终端标签页创建匿名可开的预览链接。
-// 默认只读: 观看者看到当前屏幕与后续实时输出, 不能输入; WEB 端可勾选「允许控制」
-// 让观看者获得输入权限 (write 随创建请求发出)。链接有过期与吊销。
-// 与主机分享 (host_share 登录账号间分享) 和设备公开链接是不同入口。token 只在
-// 创建成功当场持有用于拼公开 URL, 不写日志、不持久化、不进 web storage。
-// 数据源按 TRANSPORT 分流: WEB 直连 previewApi (服务端托管 tab 同 id); 桌面走
-// 远程中继 — 创建经 preview_share_create (建远程壳+链接+起输出中继), 列表按
-// 当前 tab 活跃中继的壳 id 过滤 remoteSharingApi.previewLinks, 吊销同远程。
-// 桌面中继创建的预览第一期暂不支持控制, 勾选框禁用并常驻只读。
+// Preview link creation entry (session/terminal share menu): creates an anonymously openable preview link for the current terminal tab.
+// Read-only by default: viewers see the current screen and subsequent live output but cannot input; on WEB, an "allow control" checkbox
+// grants viewers input permission (write is sent with the create request). Links expire and can be revoked.
+// This is a different entry from host shares (host_share, between logged-in accounts) and device public links. The token is held only
+// at creation success to assemble the public URL - never logged, persisted, or put into web storage.
+// Data sources switch by TRANSPORT: WEB talks to previewApi directly (server-hosted tab with the same id); desktop goes through the
+// remote relay - create via preview_share_create (remote shell + link + output relay), the list filters remoteSharingApi.previewLinks by the
+// current tab's active relay shell id, and revoke likewise goes remote.
+// Previews created by the desktop relay do not support control in the first phase: the checkbox is disabled and permanently read-only.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -22,8 +22,8 @@ import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
 import { IconGlobe } from "../../ui/icons";
 
-// 有效期选项全部落在服务端 minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内;
-// 默认 1 小时与服务端 defaultLinkTTL 对齐, 创建时总是显式带 ttl_ms。
+// All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
+// the 1h default aligns with the server defaultLinkTTL, and ttl_ms is always sent explicitly on create.
 const PREVIEW_TTL_OPTIONS = [
   { label: "15 分钟", ms: 15 * 60_000 },
   { label: "1 小时", ms: 60 * 60_000 },
@@ -37,7 +37,7 @@ function activePreviews(links: PreviewLinkView[], tabId: string): PreviewLinkVie
   return links.filter((link) => link.session_id === tabId && !link.revoked_at && link.expires_at > now);
 }
 
-// 进行中的链接可能带 permission 字段 (read/read_write); 缺失或未知值一律按只读展示。
+// Active links may carry a permission field (read/read_write); missing or unknown values are always displayed as read-only.
 function previewPermission(link: PreviewLinkView): "read" | "read_write" {
   const raw = (link as PreviewLinkView & { permission?: unknown }).permission;
   return raw === "read_write" ? "read_write" : "read";
@@ -74,7 +74,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
         if (epoch !== epochRef.current || unmountedRef.current) return;
         setLinks(activePreviews(result.links ?? [], tabId));
       } else {
-        // 桌面: 链接挂在远程壳上, 先查当前 tab 活跃中继的壳 id 再过滤。
+        // Desktop: links hang off remote shells; query the current tab's active relay shell id first, then filter.
         const active = await remotePreviewApi.active(tabId);
         if (!active.sessionId) {
           if (epoch !== epochRef.current || unmountedRef.current) return;
@@ -86,7 +86,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
         setLinks(activePreviews(result.links ?? [], active.sessionId));
       }
     } catch {
-      // 列表失败不打断创建入口; 下一次打开面板会重试。
+      // A list failure does not break the create entry; the next panel open retries.
     }
   }, [tabId]);
 
@@ -130,7 +130,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
         if (epoch !== epochRef.current || unmountedRef.current) return;
         setCreatedUrl(previewPublicUrl(link.token));
       } else {
-        // 桌面中继创建的预览第一期暂不支持控制, 创建签名保持 (tabId, ttlMs)。
+        // Previews created by the desktop relay do not support control in the first phase; the create signature stays (tabId, ttlMs).
         const created = await remotePreviewApi.create(tabId, ttlMs);
         if (epoch !== epochRef.current || unmountedRef.current) return;
         setCreatedUrl(created.url);

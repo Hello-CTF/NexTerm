@@ -13,11 +13,11 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// totpKeyMu 串行化同一进程内的「读不到则创建」路径, 避免并发首用写出两把不同的密钥。
+// totpKeyMu serializes the "read-or-create" path within a process, so concurrent first use never writes two different keys.
 var totpKeyMu sync.Mutex
 
-// WithTOTPKeyFile 把 TOTP 全局存储密钥放到库外 0600 文件(与服务器主密钥文件同一保护级别)。
-// path 为空时 TOTP 加解密不可用: 整库泄露不得顺带泄露 TOTP 密钥, 未配置必须 fail-closed。
+// WithTOTPKeyFile stores the TOTP global storage key in an out-of-database 0600 file (same protection level as the server master key file).
+// When path is empty TOTP encryption is unavailable: a full database leak must not leak the TOTP key, so unconfigured fails closed.
 func WithTOTPKeyFile(path string) Option {
 	return func(a *Accounts) {
 		a.totpKeyPath = path

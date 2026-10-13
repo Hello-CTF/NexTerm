@@ -35,7 +35,7 @@ func TestWithRequestTimeoutsCutsStalledBodyRead(t *testing.T) {
 	if _, err := fmt.Fprintf(connection, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 100\r\n\r\na"); err != nil {
 		t.Fatal(err)
 	}
-	// 只发 1 字节后停发, 超过 readIdle 后服务端读必须被判超时。
+	// Only 1 byte is sent before stalling; after readIdle passes, the server-side read must be judged timed out.
 	_ = connection.SetReadDeadline(time.Now().Add(5 * time.Second))
 	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestWithRequestTimeoutsCutsBlockedWrite(t *testing.T) {
 	if _, err := fmt.Fprintf(connection, "GET / HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
-	// 客户端一直不读, 服务端 socket 写阻塞超过 writeIdle 后必须被切断。
+	// The client never reads; after the server-side socket write blocks beyond writeIdle, it must be cut.
 	select {
 	case err := <-writeErr:
 		if err == nil {
@@ -102,8 +102,8 @@ func TestWithRequestTimeoutsWebSocketSurvivesPastHeaderDeadline(t *testing.T) {
 		}
 		_ = connection.Write(context.Background(), messageType, append([]byte("echo:"), data...))
 	})))
-	// 与线上一致: 请求头读 deadline 由 ReadHeaderTimeout 设置, hijack 后必须被清除,
-	// 否则长连接在握手后第一个 deadline 到期时就被误杀。
+	// Consistent with production: the request-header read deadline is set by ReadHeaderTimeout and must be cleared after hijack,
+	// otherwise long-lived connections are mistakenly killed when the first deadline expires after the handshake.
 	server.Config.ReadHeaderTimeout = idle
 	server.Start()
 	defer server.Close()
@@ -115,7 +115,7 @@ func TestWithRequestTimeoutsWebSocketSurvivesPastHeaderDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close(websocket.StatusNormalClosure, "")
-	// 空闲远超 idle 与 ReadHeaderTimeout 后再收发, 连接必须仍然存活。
+	// Idle far beyond idle and ReadHeaderTimeout, then send and receive: the connection must still be alive.
 	time.Sleep(6 * idle)
 	if err := connection.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
 		t.Fatal(err)

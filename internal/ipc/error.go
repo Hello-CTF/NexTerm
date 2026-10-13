@@ -25,7 +25,7 @@ const (
 	CodeBadMasterPass    Code = "bad_master_password"
 	CodeDecrypt          Code = "decrypt"
 	CodeForbidden        Code = "forbidden"
-	// CodeMFAEnrollmentRequired 表示 mfa_required 策略下未绑定会话被限制在绑定相关路由。
+	// CodeMFAEnrollmentRequired means that under the mfa_required policy, unenrolled sessions are restricted to enrollment-related routes.
 	CodeMFAEnrollmentRequired Code = "mfa_enrollment_required"
 	CodeNotController         Code = "not_controller"
 	CodeNeedsConfirm          Code = "needs_confirm"

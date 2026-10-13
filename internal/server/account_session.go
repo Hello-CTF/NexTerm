@@ -21,8 +21,8 @@ const (
 	csrfPurpose       = "nexterm-csrf-v1"
 	maxAccountBody    = 64 << 10
 
-	// 会话与 CSRF 失败统一给出刷新或重新登录的下一步, server 与 fleet 两侧措辞保持一致。
-	// CSRF 文案必须保留 "CSRF" 关键字: 前端 isCsrfRejection (src/ipc/commands.ts, webFiles.ts) 靠它识别并自动刷新重试。
+	// Session and CSRF failures uniformly give the next step (refresh or re-login); wording stays consistent across server and fleet.
+	// The CSRF text must keep the "CSRF" keyword: the frontend isCsrfRejection (src/ipc/commands.ts, webFiles.ts) relies on it to detect and auto-refresh/retry.
 	sessionReloginMessage = "会话无效或缺失，请重新登录"
 	csrfRefreshMessage    = "CSRF 校验失败：页面已过期，请刷新后重试"
 )
@@ -38,8 +38,8 @@ func accountIdentityFrom(ctx context.Context) *account.Identity {
 	return identity
 }
 
-// accountCSRFToken 为每个会话派生无状态 CSRF 令牌: HMAC(sessionID)。
-// 会话被吊销或过期后令牌同步失效; 服务端无需额外存储。
+// accountCSRFToken derives a stateless CSRF token per session: HMAC(sessionID).
+// The token expires in step when the session is revoked or expires; the server needs no extra storage.
 func accountCSRFToken(sessionID string) string {
 	mac := hmac.New(sha256.New, []byte(sessionID))
 	mac.Write([]byte(csrfPurpose))
@@ -115,9 +115,9 @@ func ipThrottleKey(r *http.Request, scope string) string {
 	return scope + "|" + clientIP(r)
 }
 
-// accountGuard 将会话 cookie 解析为服务端派生身份。
-// cookie 缺失或无效都匿名放行; 会话要求由 requireAccountSession 把关,
-// 避免过期 cookie 阻断 login 等公共路由的重新登录。
+// accountGuard resolves the session cookie into a server-derived identity.
+// Missing or invalid cookies both pass through anonymously; session requirements are enforced by requireAccountSession,
+// so an expired cookie cannot block re-login on public routes such as login.
 func (s *Server) accountGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -134,7 +134,7 @@ func (s *Server) accountGuard(next http.Handler) http.Handler {
 	})
 }
 
-// resetRequiredAllowedPaths 列出 reset_required 会话在完成密码重置前唯一可用的路由。
+// resetRequiredAllowedPaths lists the only routes a reset_required session may use before completing the password reset.
 var resetRequiredAllowedPaths = map[string]bool{
 	"/auth/me":         true,
 	"/auth/password":   true,
@@ -148,7 +148,7 @@ func resetRequiredLocked(r *http.Request) bool {
 	return identity != nil && identity.State == account.StateResetRequired && !resetRequiredAllowedPaths[r.URL.Path]
 }
 
-// mfaEnrollAllowedPaths 列出 mfa_required 策略下未绑定会话在完成 TOTP 绑定前唯一可用的路由。
+// mfaEnrollAllowedPaths lists the only routes an unbound session may use under the mfa_required policy before completing TOTP binding.
 var mfaEnrollAllowedPaths = map[string]bool{
 	"/auth/me":           true,
 	"/auth/totp":         true,
@@ -158,7 +158,7 @@ var mfaEnrollAllowedPaths = map[string]bool{
 	"/auth/logout-all":   true,
 }
 
-// mfaEnrollLocked 落实 mfa_required 强制语义: 未绑定会话除绑定所需路由外一律 403。
+// mfaEnrollLocked enforces the mfa_required semantics: unbound sessions get 403 on everything except the routes needed for binding.
 func (s *Server) mfaEnrollLocked(r *http.Request) (bool, error) {
 	if mfaEnrollAllowedPaths[r.URL.Path] {
 		return false, nil
@@ -166,9 +166,9 @@ func (s *Server) mfaEnrollLocked(r *http.Request) (bool, error) {
 	return s.mfaEnrollmentLockedFor(r, accountIdentityFrom(r.Context()))
 }
 
-// requireAccountSession 要求已通过 accountGuard 解析出会话身份。
-// reset_required 会话仅限完成重置所需路由, 其余一律 403;
-// mfa_required 策略下的未绑定会话仅限完成 TOTP 绑定所需路由, 其余一律 403。
+// requireAccountSession requires a session identity already resolved by accountGuard.
+// reset_required sessions are limited to the routes needed to complete the reset, everything else is 403;
+// unbound sessions under the mfa_required policy are limited to the routes needed to complete TOTP binding, everything else is 403.
 func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if accountIdentityFrom(r.Context()) == nil {
@@ -203,7 +203,7 @@ func (s *Server) requireSuperadmin(next http.Handler) http.Handler {
 	})
 }
 
-// requireAccountCSRF 校验 cookie 会话的状态变更请求携带与会话绑定的 CSRF 令牌。
+// requireAccountCSRF verifies that state-changing requests of a cookie session carry the CSRF token bound to the session.
 func (s *Server) requireAccountCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := accountIdentityFrom(r.Context())
@@ -224,8 +224,8 @@ func (s *Server) accountClosed() bool {
 	return s.options.Auth == AuthOff
 }
 
-// ValidateAuthOffBounds 落实 --auth=off 硬边界: 只要存在任何用户账号就拒绝启动。
-// off 只允许映射到本地共享工作区, 不得在有账号体系的库上隐式降级运行。
+// ValidateAuthOffBounds enforces the --auth=off hard boundary: startup is refused as long as any user account exists.
+// off is only allowed to map to a local shared workspace; it must not run implicitly degraded on a database with an account system.
 func ValidateAuthOffBounds(ctx context.Context, accounts *account.Accounts) error {
 	count, err := accounts.CountUsers(ctx)
 	if err != nil {

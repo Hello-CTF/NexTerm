@@ -11,8 +11,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// bridgeWaitTimeout 是服务端等待 agent 出站拨号桥接的上限; agent 侧
-// ensureHelper 最长 30s, 余量覆盖拨号与 TLS 握手。
+// bridgeWaitTimeout is the upper bound the server waits for the agent to dial a bridge outbound; the agent-side
+// ensureHelper takes at most 30s, and the headroom covers dialing and the TLS handshake.
 const bridgeWaitTimeout = 60 * time.Second
 
 var (
@@ -22,9 +22,9 @@ var (
 
 type controlChannel struct {
 	conn *websocket.Conn
-	// stateDigest 是 agent 在 hello 里上报的设备端 supervisor 状态摘要;
-	// 分享代管数据通路用它通过桥接 helper 的 hello 校验。摘要由设备凭证
-	// 认证的 hello 携带, 不含凭据材料。
+	// stateDigest is the device-side supervisor state digest the agent reports in hello;
+	// the managed-share data path uses it to pass the bridge helper's hello verification. The digest is carried by the hello
+	// authenticated with device credentials and contains no credential material.
 	stateDigest string
 }
 
@@ -32,8 +32,8 @@ type pendingBridge struct {
 	deviceID string
 	result   chan bridgeResult
 
-	// delivered 与 abandoned 由 Registry.mu 保护: "放弃等待"与"交付连接"
-	// 必须互斥, 否则等待方离开后 conn 会进无人消费的 channel 而泄漏。
+	// delivered and abandoned are guarded by Registry.mu: "abandon waiting" and "deliver the connection"
+	// must be mutually exclusive, otherwise the conn would land in a channel nobody consumes after the waiter leaves and leak.
 	delivered bool
 	abandoned bool
 }
@@ -43,8 +43,8 @@ type bridgeResult struct {
 	err  error
 }
 
-// Registry 跟踪设备控制通道与桥接配对: 单设备单控制连接 (新连接顶替旧连接),
-// 桥接按 bridge_id 一次性配对, 吊销时踢掉控制连接与该设备的全部桥接。
+// Registry tracks device control channels and bridge pairing: one control connection per device (a new connection replaces the old one),
+// bridges pair one-shot by bridge_id, and revocation kicks the control connection plus all of the device's bridges.
 type Registry struct {
 	mu       sync.Mutex
 	controls map[string]*controlChannel
@@ -60,10 +60,10 @@ func NewRegistry() *Registry {
 	}
 }
 
-// RegisterControl 注册设备控制通道; 同设备已有连接时被顶替关闭。
-// 顶替是服务端单方面拆连, 用 CloseNow: 优雅关闭握手会阻塞新连接的
-// hello_ok 写出 (对端可能已不在读取)。
-// 返回 true 表示发生了顶替 (设备此前已在线, 不算新的上线迁移)。
+// RegisterControl registers a device control channel; an existing connection for the same device is replaced and closed.
+// Replacement is a unilateral server-side teardown, so it uses CloseNow: a graceful close handshake would block the new connection's
+// hello_ok write (the peer may have stopped reading).
+// Returning true means a replacement happened (the device was previously online, so this is not a new online transition).
 func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest string) (replaced bool) {
 	r.mu.Lock()
 	previous := r.controls[deviceID]
@@ -75,9 +75,9 @@ func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateD
 	return previous != nil
 }
 
-// UnregisterControl 仅当 conn 仍是当前注册连接时才移除, 避免旧连接误删新注册。
-// 返回 true 表示 conn 就是当前注册连接并被移除 (设备真正掉线); 顶替后的旧连接
-// 或服务关停 (Close 已换空表) 时返回 false, 调用方不得据此记离线。
+// UnregisterControl removes the registration only when conn is still the currently registered connection, so an old connection never deletes a new registration.
+// Returning true means conn was the current registered connection and was removed (a real device offline); a replaced old connection,
+// or service shutdown (Close already swapped the table), returns false, and callers must not record offline from it.
 func (r *Registry) UnregisterControl(deviceID string, conn *websocket.Conn) (removed bool) {
 	r.mu.Lock()
 	if current := r.controls[deviceID]; current != nil && current.conn == conn {
@@ -97,16 +97,16 @@ func (r *Registry) control(deviceID string) *websocket.Conn {
 	return nil
 }
 
-// AgentOnline 报告设备控制通道当前是否已注册 (agent 进程在线的实时信号,
-// 比 device_agent.last_seen_at 的 staleness 窗口更及时)。
+// AgentOnline reports whether the device control channel is currently registered (a real-time signal of the agent process being online,
+// more timely than the staleness window of device_agent.last_seen_at).
 func (r *Registry) AgentOnline(deviceID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.controls[deviceID] != nil
 }
 
-// StateDigest 返回设备控制通道 hello 上报的 supervisor 状态摘要;
-// 设备离线或未上报时第二个返回值为 false。
+// StateDigest returns the supervisor state digest reported by the device control channel hello;
+// the second return value is false when the device is offline or has not reported one.
 func (r *Registry) StateDigest(deviceID string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -117,7 +117,7 @@ func (r *Registry) StateDigest(deviceID string) (string, bool) {
 	return channel.stateDigest, true
 }
 
-// PushControl 向设备控制通道写入一帧 JSON; 设备离线或写入失败返回 false。
+// PushControl writes one JSON frame to the device control channel; it returns false when the device is offline or the write fails.
 func (r *Registry) PushControl(deviceID string, message controlMessage) bool {
 	conn := r.control(deviceID)
 	if conn == nil {
@@ -128,8 +128,8 @@ func (r *Registry) PushControl(deviceID string, message controlMessage) bool {
 	return writeControlJSON(writeCtx, conn, message) == nil
 }
 
-// KickDevice 吊销闭环: 控制通道收到 revoke 帧后关闭, 该设备的全部桥接一并关闭。
-// revoke 帧写出后同样 CloseNow 拆连, 不等对端的关闭握手。
+// KickDevice is the revocation closed loop: the control channel closes after receiving the revoke frame, and all of the device's bridges close with it.
+// After the revoke frame is written, the teardown also uses CloseNow, without waiting for the peer's close handshake.
 func (r *Registry) KickDevice(deviceID string) {
 	r.mu.Lock()
 	control := r.controls[deviceID]
@@ -153,11 +153,11 @@ func (r *Registry) KickDevice(deviceID string) {
 	}
 }
 
-// RequestBridge 通过设备控制通道请求一条桥接并等待 agent 出站拨号配对,
-// 返回的 net.Conn 承载 supervisor 协议字节流 (二进制帧, 字节透明)。
-// 等待方 ctx 取消或超时即放弃: 在同一锁下与 deliver 互斥决定 conn 归属,
-// 已交付的 conn 会被取走并关闭, 未交付的标记放弃后 deliver 改为关闭连接,
-// 保证 conn/goroutine/agent 侧 WS 与 helper 子进程都不会泄漏。
+// RequestBridge requests a bridge over the device control channel and waits for the agent's outbound dial to pair,
+// returning a net.Conn carrying the supervisor protocol byte stream (binary frames, byte-transparent).
+// When the waiter's ctx is canceled or times out it abandons: the conn's ownership is decided against deliver under the same lock,
+// an already-delivered conn is taken out and closed, and after the abandoned mark later delivers close the connection instead,
+// so neither conn/goroutine nor the agent-side WS and helper subprocess ever leak.
 func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn, error) {
 	conn := r.control(deviceID)
 	if conn == nil {
@@ -168,8 +168,8 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 	r.mu.Lock()
 	r.pending[bridgeID] = request
 	r.mu.Unlock()
-	// pending 表项必须全路径清理: 成功交付与"已交付后放弃"的 drain 路径
-	// 不会显式删除, 靠这个 defer 兜底 (abandon 路径的重复删除无害)。
+	// The pending table entry must be cleaned up on every path: the successful-delivery and the "abandon after delivery" drain paths
+	// do not delete explicitly, so this defer is the backstop (a duplicate delete on the abandon path is harmless).
 	defer func() {
 		r.mu.Lock()
 		delete(r.pending, bridgeID)
@@ -191,9 +191,9 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 		return result.conn, nil
 	case <-waitCtx.Done():
 	}
-	// 放弃路径: 与 deliver 在同一锁下竞争。deliver 已发生 (conn 在 channel
-	// 里, 其发送在置位后必然完成) -> 取走并关闭; 否则标记放弃, 之后的
-	// deliver 会改为关闭连接。
+	// Abandon path: races deliver under the same lock. If deliver already happened (the conn is in the channel,
+	// its send guaranteed to complete after the flag is set) -> take it out and close; otherwise mark abandoned, and any later
+	// deliver closes the connection instead.
 	r.mu.Lock()
 	if request.delivered {
 		r.mu.Unlock()
@@ -208,10 +208,10 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 	return nil, errDeviceOffline
 }
 
-// PairBridge 校验并登记 agent 出站桥接, 返回交付函数; 调用方写出 hello_ok
-// 后再交付, 保证 agent 先读到握手应答、再读到 supervisor 字节流 (websocket
-// 按连接保序, 但交付与握手应答分属两个 goroutine, 必须显式排序)。
-// bridgeID 未知、设备不匹配或请求已取消时返回错误 (连接由调用方负责关闭与报错)。
+// PairBridge verifies and registers an agent outbound bridge, returning the deliver function; the caller delivers only after
+// writing hello_ok, guaranteeing the agent reads the handshake response before the supervisor byte stream (websocket
+// preserves order per connection, but delivery and the handshake response come from two goroutines and must be explicitly ordered).
+// An unknown bridgeID, a device mismatch, or an already-canceled request returns an error (the caller is responsible for closing the conn and reporting).
 func (r *Registry) PairBridge(deviceID, bridgeID string, conn *wsConn) (func(), error) {
 	r.mu.Lock()
 	request := r.pending[bridgeID]
@@ -235,14 +235,14 @@ func (r *Registry) PairBridge(deviceID, bridgeID string, conn *wsConn) (func(), 
 		}
 		request.delivered = true
 		r.mu.Unlock()
-		// 容量 1 且只交付一次, 发送不会阻塞; 放弃方的 drain 必然收到。
+		// Capacity 1 and delivered only once, so the send never blocks; the abandoning party's drain is guaranteed to receive it.
 		request.result <- bridgeResult{conn: conn}
 	}
 	return deliver, nil
 }
 
-// unregisterAndClose 把桥接从活动表移除并关闭, 用于交付前发现等待方已放弃
-// 的清理路径。
+// unregisterAndClose removes the bridge from the active table and closes it, used on the cleanup path when the waiter is found
+// to have abandoned before delivery.
 func (r *Registry) unregisterAndClose(conn *wsConn) {
 	r.mu.Lock()
 	if current := r.bridges[conn.bridgeID]; current == conn {
@@ -252,7 +252,7 @@ func (r *Registry) unregisterAndClose(conn *wsConn) {
 	_ = conn.Close()
 }
 
-// UnregisterBridge 桥接关闭时从活动表中移除。
+// UnregisterBridge removes the bridge from the active table when it closes.
 func (r *Registry) UnregisterBridge(conn *wsConn) {
 	r.mu.Lock()
 	if current := r.bridges[conn.bridgeID]; current == conn {
@@ -261,7 +261,7 @@ func (r *Registry) UnregisterBridge(conn *wsConn) {
 	r.mu.Unlock()
 }
 
-// Close 关闭全部控制连接与桥接 (服务关停)。
+// Close closes all control connections and bridges (service shutdown).
 func (r *Registry) Close() {
 	r.mu.Lock()
 	controls := r.controls

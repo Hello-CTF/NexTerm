@@ -5,9 +5,9 @@ import { syncApi } from "../ipc/commands";
 
 const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 
-// 账号级偏好的存储接口; Web 走 /auth/preferences, 桌面走同步 IPC。
-// 键名与 internal/account/preferences.go 的扁平白名单逐一对齐(如 input.selectionAutoCopy、
-// appearance.terminalFontSize、keybinding.newTerminal);注册前只有设备本地值,不冒充账号级覆盖。
+// Storage interface for account-level preferences; Web goes through /auth/preferences, desktop through sync IPC.
+// Keys align one by one with the flat whitelist in internal/account/preferences.go (e.g. input.selectionAutoCopy,
+// appearance.terminalFontSize, keybinding.newTerminal); before registration only device-local values exist, no fake account-level overrides.
 export interface AccountPreferenceView {
   defaults: Record<string, unknown>;
   overrides: Record<string, unknown>;
@@ -19,8 +19,8 @@ export interface AccountPreferenceStore {
   deleteOverrides(keys: string[]): Promise<void>;
 }
 
-// createHttpPreferenceStore 是生产用的账号偏好存储; Web 动态引入 authApi,
-// 避免 keybindings→preferences→authApi 的静态链把账号模块拉进无关测试的 env mock。
+// createHttpPreferenceStore is the production account preference store; Web dynamically imports authApi,
+// so the static chain keybindings→preferences→authApi does not pull the account module into unrelated tests' env mocks.
 export function createHttpPreferenceStore(): AccountPreferenceStore {
   return {
     async getView() {
@@ -62,8 +62,8 @@ function syncThemePreferenceLayers(): void {
   setThemePreferenceLayers(accountDefaults[THEME_MODE_PREFERENCE_KEY], accountOverrides[THEME_MODE_PREFERENCE_KEY]);
 }
 
-// registerAccountPreferenceStore 在登录/注册/初始化完成后注册账号偏好存储,登出/401 时注销。
-// 异步读取带代次保护:旧账号晚到的响应不得覆盖新账号已经加载的状态。
+// registerAccountPreferenceStore registers the account preference store after login/register/init completes, and unregisters on logout/401.
+// Async reads carry generation protection: late responses from an old account must not overwrite the new account's loaded state.
 export function registerAccountPreferenceStore(store: AccountPreferenceStore | null): void {
   registerGeneration += 1;
   const generation = registerGeneration;
@@ -91,17 +91,17 @@ export function getAccountPreferenceStore(): AccountPreferenceStore | null {
   return accountStore;
 }
 
-// getAccountOverrides 返回线上扁平键的账号覆盖记录(如 keybinding.newTerminal)。
+// getAccountOverrides returns the account override record of wire flat keys (e.g. keybinding.newTerminal).
 export function getAccountOverrides(): Record<string, unknown> {
   return accountOverrides;
 }
 
-// getAccountDefaults 返回线上扁平键的服务端全局默认记录(超管 /admin/preferences)。
+// getAccountDefaults returns the server global default record of wire flat keys (superadmin /admin/preferences).
 export function getAccountDefaults(): Record<string, unknown> {
   return accountDefaults;
 }
 
-// patchAccountOverrideCache 在写回/清除后同步本地缓存,不必等下一次全量加载。
+// patchAccountOverrideCache syncs the local cache after write-back/clear, without waiting for the next full load.
 export function patchAccountOverrideCache(set: Record<string, unknown>, clear: string[]): void {
   for (const key of clear) delete accountOverrides[key];
   Object.assign(accountOverrides, set);
@@ -121,7 +121,7 @@ export function subscribeAccountOverrides(listener: () => void): () => void {
   };
 }
 
-// mergeWithDefaults 把安全全局默认与覆盖合并:账号覆盖优先于设备本地值。
+// mergeWithDefaults merges the safe global defaults with overrides: account overrides take precedence over device-local values.
 export function mergeWithDefaults<T extends object>(defaults: T, ...layers: (Partial<T> | undefined)[]): T {
   const out = { ...defaults };
   for (const layer of layers) {
@@ -130,7 +130,7 @@ export function mergeWithDefaults<T extends object>(defaults: T, ...layers: (Par
   return out;
 }
 
-// preferenceValue 按 内置默认 < 服务端全局默认 < 设备本地 < 账号覆盖 的次序解析单个扁平键。
+// preferenceValue resolves a single flat key in the order builtin default < server global default < device local < account override.
 function preferenceValue<T>(key: string, local: T | undefined, builtin: T): T {
   if (key in accountOverrides) return accountOverrides[key] as T;
   if (local !== undefined) return local;
@@ -138,7 +138,7 @@ function preferenceValue<T>(key: string, local: T | undefined, builtin: T): T {
   return builtin;
 }
 
-// rebuildSnapshots 在账号覆盖加载/清除后,按合并值重建 input/appearance/terminal 快照并应用外观。
+// rebuildSnapshots rebuilds the input/appearance/terminal snapshots from merged values after account overrides load/clear, and applies appearance.
 function rebuildSnapshots(): void {
   prefs = load();
   appearance = loadAppearance();
@@ -183,7 +183,7 @@ export function setSelectionAutoCopy(value: boolean): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
   } catch {
   }
-  // 账号级覆盖:注册后写往 user_setting 后端(M140),实现跨设备同步
+  // Account-level override: after registration, written to the user_setting backend (M140) for cross-device sync
   if (accountStore) {
     void accountStore.putOverrides({ [INPUT_SELECTION_AUTO_COPY_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [INPUT_SELECTION_AUTO_COPY_KEY]: value }, []);
@@ -238,7 +238,7 @@ export function setTerminalCloseAction(value: TerminalCloseAction): void {
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify(terminalPrefs));
   } catch {
   }
-  // 账号级覆盖:注册后写往 user_setting 后端,实现跨设备同步
+  // Account-level override: after registration, written to the user_setting backend for cross-device sync
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_CLOSE_ACTION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_CLOSE_ACTION_KEY]: value }, []);
@@ -285,12 +285,12 @@ const DEFAULT_APPEARANCE: AppearancePrefs = {
 
 const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
 
-// 与 platform.ts 的 isMobile 同一判定; 不引用 platform 是因为多个终端测试对 platform 的局部 mock 未导出 isMobile。
+// Same detection as isMobile in platform.ts; platform is not imported because several terminal tests partially mock platform without exporting isMobile.
 function isMobileDevice(): boolean {
   return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
 }
 
-// builtinAppearance 返回字段的内置默认; 移动端终端默认字号比桌面小一档。
+// builtinAppearance returns the builtin default of a field; the mobile terminal default font size is one step smaller than desktop.
 function builtinAppearance(field: keyof AppearancePrefs): number | string {
   if (field === "terminalFontSize" && isMobileDevice()) return MOBILE_DEFAULT_TERMINAL_FONT_SIZE;
   return DEFAULT_APPEARANCE[field];
@@ -405,7 +405,7 @@ function commitAppearance(next: AppearancePrefs): void {
     localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
   } catch {
   }
-  // 账号级覆盖:注册后写往 user_setting 后端(M140),实现跨设备同步
+  // Account-level override: after registration, written to the user_setting backend (M140) for cross-device sync
   if (accountStore && changedFields.length > 0) {
     const set: Record<string, unknown> = {};
     for (const field of changedFields) set[APPEARANCE_PREF_KEYS[field]] = next[field];
@@ -439,7 +439,7 @@ export function setTerminalTheme(value: TerminalThemePref): void {
   commitAppearance({ ...appearance, terminalTheme: value });
 }
 
-// resetAppearancePrefs 清设备本地值并清除账号外观覆盖,回退到内置/服务端全局默认。
+// resetAppearancePrefs clears device-local values and removes account appearance overrides, falling back to builtin/server global defaults.
 export function resetAppearancePrefs(): void {
   try {
     localStorage.removeItem(APPEARANCE_KEY);

@@ -14,7 +14,7 @@ func TestUserIDContextRoundtrip(t *testing.T) {
 	if !ok || userID != "u-1" {
 		t.Fatalf("UserIDFromContext = %q, %v", userID, ok)
 	}
-	// 空串身份视为未注入, 调用方按无身份处理
+	// An empty identity counts as not injected; callers treat it as no identity
 	if _, ok := UserIDFromContext(WithUserID(context.Background(), "")); ok {
 		t.Fatal("empty user ID must not count as an identity")
 	}

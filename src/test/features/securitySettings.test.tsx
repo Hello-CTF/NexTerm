@@ -117,7 +117,7 @@ vi.mock("../../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 解锁路径避免真实 argon2id(生产参数一次数秒),只替换 unwrap;其余加解密保持真实。
+// The unlock path avoids real argon2id (production params take seconds per run); only unwrap is replaced, the rest of the encryption stays real.
 vi.mock("../../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../features/auth/crypto")>();
   return {
@@ -378,7 +378,7 @@ describe("SyncCard（Web 账号同步）", () => {
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("当前未登录");
-    // 全卡只有一个登录按钮(AuthCard 账号卡);WebSyncConsole 不再渲染第二个登录入口
+    // The whole card has only one login button (the AuthCard account card); WebSyncConsole no longer renders a second login entry
     const loginButtons = [...mounted.container.querySelectorAll("button")].filter(
       (b) => b.textContent?.trim() === "登录",
     );
@@ -423,7 +423,7 @@ describe("SyncCard（Web 账号同步）", () => {
       ],
       hasMore: false,
     });
-    // 远端:a1 较新(修订 250 > 200),另有一个云端独有的 a3
+    // Remote: a1 is newer (revision 250 > 200), plus one cloud-only a3
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     const blobA1 = await sealSyncObject(
@@ -460,9 +460,9 @@ describe("SyncCard（Web 账号同步）", () => {
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("云端较新"); // a1 云端修订更新
-    expect(text).toContain("仅云端"); // a3 仅云端
-    expect(text).toContain("仅本机"); // g1/db-02 仅本机
+    expect(text).toContain("云端较新"); // a1 has a newer cloud revision
+    expect(text).toContain("仅云端"); // a3 is cloud-only
+    expect(text).toContain("仅本机"); // g1/db-02 are local-only
   });
 
   it("推送调用 /sync/v2/push 使用最新 head", async () => {
@@ -478,7 +478,7 @@ describe("SyncCard（Web 账号同步）", () => {
       hasMore: false,
     });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
-    // 推送成功后服务端 head 推进到 head-9,后续 ids 应反映同一 head
+    // After a successful push the server head advances to head-9; later ids should reflect the same head
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
     mounted = mountSyncCard();
@@ -487,7 +487,7 @@ describe("SyncCard（Web 账号同步）", () => {
 
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
-    // 推送前取服务端最新 head(此处 mock 为 head-9)作为 known_head,而不是空字符串
+    // Fetch the server's latest head before pushing (mocked here as head-9) as known_head, instead of an empty string
     expect(mocks.syncPush).toHaveBeenCalledWith(
       "head-9",
       expect.arrayContaining([
@@ -508,7 +508,7 @@ describe("SyncCard（Web 账号同步）", () => {
       ],
       hasMore: false,
     });
-    // 远端 a1 修订 300 > 本机 200 → 云端较新,不应推送
+    // Remote a1 revision 300 > local 200 -> cloud is newer, must not be pushed
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     const blob = await sealSyncObject(
@@ -524,7 +524,7 @@ describe("SyncCard（Web 账号同步）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
-    // 按钮计数为 0(winner 集合为空),且不应触发推送
+    // The button count is 0 (the winner set is empty), and no push should be triggered
     expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
@@ -576,7 +576,7 @@ describe("SyncCard（Web 账号同步）", () => {
       const changed = idsCalls >= 4;
       return { protocol: 2, entries: [], head: changed ? "head-1" : "head-0", max_seq: changed ? 1 : 0 };
     });
-    // 第一次推送真实返回 409 异常;重试以新 head 成功
+    // The first push really returns a 409 error; the retry succeeds with the new head
     mocks.syncPush
       .mockRejectedValueOnce(new AuthApiError("forbidden", "同步头不一致", 409))
       .mockResolvedValueOnce({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
@@ -594,7 +594,7 @@ describe("SyncCard（Web 账号同步）", () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
-    // 本机 a1 修订 200;云端 a1 修订 300(他端更新),head 从 head-0 变 head-1
+    // Local a1 revision 200; cloud a1 revision 300 (updated elsewhere), head changes from head-0 to head-1
     const remotePayload = { id: "a1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 };
     const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(remotePayload)), "a1", "asset");
     mocks.collectAssets.mockResolvedValue({
@@ -616,7 +616,7 @@ describe("SyncCard（Web 账号同步）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
-    // 云端较新,winner 为空,不应推送
+    // Cloud is newer, the winner set is empty, no push should happen
     expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
@@ -664,7 +664,7 @@ describe("SyncCard（Web 账号同步）", () => {
         startedAt: 1, endedAt: 2, bytes: 6, chunks: 3, truncated: false, active: false, syncOptIn: true, contentOmitted: false,
       },
     ]);
-    // 第一页 done=false,第二页 done=true;必须读全两页才推送
+    // First page done=false, second page done=true; both pages must be read fully before pushing
     mocks.transcriptRead.mockImplementation(async (_id: string, afterSeq: number) => {
       if (afterSeq === 0) {
         return { chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }], nextSeq: 2, done: false, totalBytes: 6 };
@@ -688,7 +688,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mocks.transcriptRead).toHaveBeenCalledTimes(2);
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
-    // 推送的 blob 解码后应含全部 3 个 chunk
+    // The pushed blob should decode to all 3 chunks
     const pushed = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     const t1 = pushed.find((o) => o.id === "t1");
     expect(t1).toBeDefined();
@@ -713,7 +713,7 @@ describe("SyncCard（Web 账号同步）", () => {
     };
     mocks.transcriptList.mockResolvedValue([summary]);
     mocks.transcriptRead.mockResolvedValue({ chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }], nextSeq: 2, done: true, totalBytes: 3 });
-    // 远端已有相同记录,载荷是真实 Go json.Marshal 字节(fixture);本机构造与其逐字节一致
+    // The remote already has the same record, the payload is real Go json.Marshal bytes (fixture); the local construction is byte-identical to it
     const blob = await sealSyncObject(dek, base64ToBytes(GO_SYNC_FIXTURES.transcriptBasic!), "t1", "transcript");
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "t1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
@@ -721,7 +721,7 @@ describe("SyncCard（Web 账号同步）", () => {
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
-    // 已一致,winner 与 applySet 均为空,不推送也不重复应用
+    // Already consistent, both the winner set and applySet are empty: no push, no repeated apply
     expect(mounted.container.textContent).toContain("待推送 0 项");
     expect(mounted.container.textContent).toContain("当前待应用 0 项");
   });
@@ -748,7 +748,7 @@ describe("SyncCard（Web 账号同步）", () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
-    // 本机 a1 修订 200;云端 a1 修订 300(云端较新),另有一个仅云端的 a2
+    // Local a1 revision 200; cloud a1 revision 300 (cloud newer), plus one cloud-only a2
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
@@ -832,7 +832,7 @@ describe("SyncCard（Web 账号同步）", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    // 等远端对象加载完成(凭据行出现),按钮才会变为「拉取并应用 (1)」可用
+    // Wait for the remote objects to finish loading (the credential row appears) before the button becomes available as "拉取并应用 (1)"
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前待应用 1 项"));
     await runAutoSync();

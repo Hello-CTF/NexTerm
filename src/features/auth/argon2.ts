@@ -1,5 +1,5 @@
-// argon2id(RFC 9106, v=19) 纯 TS 实现,逐行对齐 golang.org/x/crypto/argon2 v0.57.0,
-// 供浏览器端解包账号 DEK 信封;与 Go 端 vault.WrapUserDEK/UnwrapUserDEK 互通。
+// Pure TS argon2id (RFC 9106, v=19) implementation, line-by-line aligned with golang.org/x/crypto/argon2 v0.57.0,
+// for unwrapping account DEK envelopes in the browser; interoperates with the Go vault.WrapUserDEK/UnwrapUserDEK.
 
 const BLOCK_QWORDS = 128;
 const BLOCK_UINT32 = BLOCK_QWORDS * 2;
@@ -48,7 +48,7 @@ function add64(alo: number, ahi: number, blo: number, bhi: number): [number, num
   return [lo, hi];
 }
 
-// (a*b) mod 2^64,a、b 均为 uint32。
+// (a*b) mod 2^64, where a and b are both uint32.
 function mul32to64(a: number, b: number): [number, number] {
   const a0 = a & 0xffff;
   const a1 = a >>> 16;
@@ -72,7 +72,7 @@ function blamkaAdd(xlo: number, xhi: number, ylo: number, yhi: number): [number,
   return add64(slo, shi, dlo, dhi);
 }
 
-// BLAKE2b 原始哈希(1..64 字节输出),密钥为空。
+// BLAKE2b raw hash (1..64 byte output), unkeyed.
 export function blake2b(input: Uint8Array, outLen: number): Uint8Array {
   const h = new Uint32Array(16);
   for (let i = 0; i < 8; i++) {
@@ -96,7 +96,7 @@ export function blake2b(input: Uint8Array, outLen: number): Uint8Array {
     for (let i = 0; i < 16; i++) v[i] = h[i];
     for (let i = 0; i < 16; i++) v[i + 16] = IV[i];
 
-    // 计数器 = 已压缩的真实字节数(最后一块按实际长度计,不是填充后的 128)
+    // Counter = real bytes compressed so far (the last block counts its actual length, not the padded 128)
     const newLo = (tLo + byteCount) >>> 0;
     if (newLo < tLo) tHi = (tHi + 1) >>> 0;
     tLo = newLo;
@@ -170,7 +170,7 @@ export function blake2b(input: Uint8Array, outLen: number): Uint8Array {
   return out;
 }
 
-// argon2 变长哈希 H':Go blake2bHash 的对应实现。
+// argon2 variable-length hash H': counterpart of Go blake2bHash.
 function blake2bHash(outLen: number, input: Uint8Array): Uint8Array {
   const lenPrefix = new Uint8Array(4);
   new DataView(lenPrefix.buffer).setUint32(0, outLen, true);
@@ -196,8 +196,8 @@ function blake2bHash(outLen: number, input: Uint8Array): Uint8Array {
   return out;
 }
 
-// blamka 轮:P 作用于 16 个 qword。paired=false 时第 k 个在 off+k*stride(行,stride=2);
-// paired=true 时为成对列模式 (2i, 2i+1, 2i+16, 2i+17, …),第 k 个在 off+(k>>1)*stride+(k&1)*2。
+// blamka round: P operates on 16 qwords. With paired=false, the k-th is at off+k*stride (row mode, stride=2);
+// with paired=true it is paired-column mode (2i, 2i+1, 2i+16, 2i+17, ...), the k-th at off+(k>>1)*stride+(k&1)*2.
 function blamkaRound(t: Uint32Array, off: number, stride: number, paired: boolean): void {
   const o: number[] = new Array<number>(16);
   for (let k = 0; k < 16; k++) {
@@ -279,7 +279,7 @@ function blamkaRound(t: Uint32Array, off: number, stride: number, paired: boolea
   t[o[15]] = v15l; t[o[15] + 1] = v15h;
 }
 
-// fill_block:out = P(x^y)(^ 旧 out,xor 为 true 时);Go processBlockGeneric 的对应实现。
+// fill_block: out = P(x^y) (^ old out when xor is true); counterpart of Go processBlockGeneric.
 function fillBlock(out: Uint32Array, outOff: number, x: Uint32Array, xOff: number, y: Uint32Array, yOff: number, xor: boolean): void {
   const t = new Uint32Array(BLOCK_UINT32);
   for (let i = 0; i < BLOCK_UINT32; i++) {

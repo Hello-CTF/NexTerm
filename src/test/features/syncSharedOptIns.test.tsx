@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-// 共享同步内容开关区 (features/settings/syncOptIns): 网页版与桌面版「账号同步」控制台
-// 共同渲染 SyncOptInSection, 四路开关的标题/说明/摘要唯一文案来源就是该模块。
-// 本文件钉住这份文案 (网页版既有措辞), 并源码级断言 SyncCard 两处控制台都走共享组件、
-// 不再硬编码任一路开关文案, 防止两端再次写分叉。
+// Shared sync-content toggles section (features/settings/syncOptIns): the web and desktop "Account Sync" consoles
+// both render SyncOptInSection; that module is the single source of the four toggles' title/description/summary copy.
+// This file pins that copy (the web version's existing wording) and asserts at source level that both SyncCard consoles
+// use the shared component and no longer hardcode any toggle copy, keeping the two ends from diverging again.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flush, mount, type MountedView } from "./reactTestUtils";
@@ -44,7 +44,7 @@ describe("SyncOptInSection 共享开关区", () => {
     expect(rendered[1]).toBe("同步 AI 模型档案默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。");
     expect(rendered[2]).toBe("同步 AI 权限与拦截规则默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。");
     expect(rendered[3]).toBe("同步外观与快捷键默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。");
-    // 渲染结果与导出常量逐字一致: 两个控制台拿到的就是这同一份
+    // Rendered output matches the exported constants verbatim: both consoles get this exact same copy
     for (const [i, item] of SYNC_OPT_IN_ITEMS.entries()) {
       expect(rendered[i]).toBe(item.label + item.hint);
     }

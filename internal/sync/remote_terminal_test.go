@@ -16,9 +16,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// bridgeWSFixture 在 remoteAPIFixture 的真实账号面上加 GET /fleet/devices/{id}/bridge
-// 回显路由: 会话校验走 fixture 的 session 中间件 (cookie 缺失/无效一律 401),
-// 升级成功后二进制消息原样回显。
+// bridgeWSFixture adds a GET /fleet/devices/{id}/bridge echo route on top of remoteAPIFixture's real account surface:
+// session validation goes through the fixture's session middleware (missing/invalid cookie is always 401),
+// and binary messages are echoed verbatim after a successful upgrade.
 type bridgeWSFixture struct {
 	*remoteAPIFixture
 	failNextDial atomic.Bool
@@ -99,8 +99,8 @@ func TestDialDeviceBridgeRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDialDeviceBridgeReLoginAfterRevoke 服务端吊销会话后, 缓存 cookie 首次拨号
-// 吃 401, remoteCall 的 dropSession 重登环必须用保存的口令重登并完成拨号。
+// TestDialDeviceBridgeReLoginAfterRevoke: after the server revokes the session, the first dial with the cached cookie gets a 401,
+// and remoteCall's dropSession re-login loop must re-login with the saved password and complete the dial.
 func TestDialDeviceBridgeReLoginAfterRevoke(t *testing.T) {
 	fixture := newBridgeWSFixture(t)
 	userID := fixture.createUser(t, "alice", "alice-pw-123")

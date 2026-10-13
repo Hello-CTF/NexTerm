@@ -22,7 +22,7 @@ import {
   type WorkspaceKind,
 } from "./store";
 
-// 预设只保存挂在资产会话上的标签; 全局工具标签(设置/审计/后台会话等)不进预设。
+// Presets save only tabs attached to asset sessions; global tool tabs (settings/audit/background sessions etc.) are not saved.
 const PRESET_TAB_KINDS: ReadonlySet<PaneKind> = new Set<PaneKind>([
   "terminal",
   "files",
@@ -96,7 +96,7 @@ function sanitizePresetTab(raw: unknown): LayoutPresetTab | null {
   if (typeof kind !== "string" || !PRESET_TAB_KINDS.has(kind as PaneKind)) return null;
   const k = kind as PaneKind;
   const sessionId = optStr(raw.sessionId);
-  // db 标签靠工作区 assetId 重连拿新 connId, 其余标签恢复都需要会话。
+  // db tabs get a new connId by reconnecting via the workspace assetId; all other tab restores need a session.
   if (k !== "db" && !sessionId) return null;
   return {
     kind: k,
@@ -264,7 +264,7 @@ interface RestoreContext {
 function buildRestoredTab(t: LayoutPresetTab, ctx: RestoreContext): AppTab | null {
   if (t.kind === "terminal") {
     const live = t.tabId ? ctx.liveByTabId.get(t.tabId) : undefined;
-    // 守护终端仍存活: 直接接管原 tabId, 不新开 shell。
+    // Daemon terminal still alive: take over the original tabId directly instead of opening a new shell.
     if (live && !live.exited) {
       return {
         id: nextTabId(`term-${live.sessionId}`),
@@ -354,14 +354,14 @@ async function runApplyLayoutPreset(id: string, target: LayoutPresetTarget): Pro
   try {
     for (const t of await terminalApi.listLive()) liveByTabId.set(t.tabId, t);
   } catch {
-    // 列表不可用时按没有守护终端处理, 走重连。
+    // When the list is unavailable, treat it as no daemon terminals and go through reconnect.
   }
   let sessions = useUi.getState().sessions;
   try {
     sessions = await sessionApi.list();
     useUi.getState().setSessions(sessions);
   } catch {
-    // 沿用本地已有的会话列表。
+    // Keep using the locally available session list.
   }
 
   let session = pw.sessionId
@@ -405,7 +405,7 @@ async function runApplyLayoutPreset(id: string, target: LayoutPresetTarget): Pro
       null;
     if (ws?.kind === "tools") ws = null;
   } else {
-    // 新工作区遵守「一个会话一个工作区」的既有约定: 会话已打开时就地重建。
+    // A new workspace honors the existing "one session per workspace" convention: rebuild in place when the session is already open.
     ws =
       (session && st1.workspaces.find((w) => w.sessionId === session.id)) ||
       (connId && st1.workspaces.find((w) => w.connId === connId)) ||
@@ -516,7 +516,7 @@ async function runApplyLayoutPreset(id: string, target: LayoutPresetTarget): Pro
   }
 }
 
-// choosePresetTargetAndApply 给命令面板这类只有一个动作位的入口用: 先问落到哪里。
+// choosePresetTargetAndApply is for entries like the command palette that have only one action slot: ask where to apply first.
 export async function choosePresetTargetAndApply(id: string): Promise<void> {
   const preset = useUi.getState().layoutPresets.find((p) => p.id === id);
   if (!preset) return;

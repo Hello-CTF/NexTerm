@@ -8,9 +8,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// AuthorizeDeviceTerminal 校验 userID 对 deviceID 的终端访问 (设备 owner、未吊销、
-// 终端开关打开) 并写 terminal_open 审计, 规则与桥端点一致。设备会话
-// (session_connect_device) 的每次连接与重连尝试各调用一次。
+// AuthorizeDeviceTerminal verifies userID's terminal access to deviceID (device owner, not revoked,
+// terminal switch on) and writes a terminal_open audit, with the same rules as the bridge endpoint. Device sessions
+// (session_connect_device) call it once per connection and per reconnection attempt.
 func (s *Service) AuthorizeDeviceTerminal(ctx context.Context, userID, deviceID string) error {
 	if userID == "" {
 		return ipc.NewError(ipc.CodeForbidden, "会话无效或缺失，请重新登录")
@@ -28,14 +28,14 @@ func (s *Service) AuthorizeDeviceTerminal(ctx context.Context, userID, deviceID 
 	return nil
 }
 
-// RequestDeviceBridge 为已授权的设备会话拨一条到设备 supervisor helper 的桥;
-// 授权在会话连接时已判定, 桥本身不再重复审计 (与 registry.RequestBridge 同语义)。
+// RequestDeviceBridge dials a bridge to the device supervisor helper for an authorized device session;
+// authorization was decided at session connection time, so the bridge itself is not audited again (same semantics as registry.RequestBridge).
 func (s *Service) RequestDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {
 	return s.registry.RequestBridge(ctx, deviceID)
 }
 
-// DeviceStateDigest 返回设备控制通道 hello 上报的 supervisor 状态摘要;
-// 设备离线或未上报时 ok=false。
+// DeviceStateDigest returns the supervisor state digest reported by the device control channel hello;
+// ok=false when the device is offline or has not reported one.
 func (s *Service) DeviceStateDigest(deviceID string) (string, bool) {
 	return s.registry.StateDigest(deviceID)
 }

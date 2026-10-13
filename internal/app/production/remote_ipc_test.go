@@ -120,7 +120,7 @@ func TestRemoteCommandsDesktopFlow(t *testing.T) {
 		t.Fatalf("empty deviceId = %+v, want bad_param", response)
 	}
 
-	// 会话被服务端吊销后: 下一次远端调用触发 401, 代理面必须用保存口令重登成功。
+	// After the server revokes the session: the next remote call triggers a 401, and the proxy surface must re-login with the saved password successfully.
 	if err := accounts.revokeAllSessions(context.Background(), "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestRemoteLinkMFACommandFlow(t *testing.T) {
 		t.Fatalf("fleet devices after mfa = %+v", fleetDevices)
 	}
 
-	// reset_required 分支: 管理员重置后重新登录必须进入 reset_required, 改密后 connected。
+	// reset_required branch: after an admin reset, re-login must enter reset_required, and the password change leads to connected.
 	if err := accounts.adminResetUser(context.Background(), "alice"); err != nil {
 		t.Fatal(err)
 	}

@@ -152,8 +152,9 @@ export function XtermView(props: XtermViewProps) {
     );
     termRef.current = term;
     term.open(hostRef.current);
-    // xterm 对处理的按键一律 preventDefault + stopPropagation, 终端聚焦时 window 级监听
-    // 收不到任何按键; 命中应用级键位的按键在此放行, 冒泡到 window 交给 App 处理。
+    // xterm always preventDefault + stopPropagation on keys it handles, so window-level listeners
+    // receive no keys while the terminal is focused; keys matching app-level keybindings are let through here,
+    // bubbling to window for App to handle.
     term.attachCustomKeyEventHandler((event) => {
       if (event.repeat || event.isComposing || event.keyCode === 229) return true;
       return matchAppKeybinding(event) === null;
@@ -217,11 +218,11 @@ export function XtermView(props: XtermViewProps) {
       },
       updateLinesBelow,
     );
-    // 输出流序号锚点: 服务端每次 attach 先下发锚点帧, 之后本段流的字节连续对应
-    // ring 序号 streamSeq + max(0, 已收字节 - controlBytes)。重连 attach 时把该
-    // 序号与纪元带回 (fromSeq/fromEpoch), 服务端从偏移续传不再清屏全量重放。
-    // skipLeading 处理重连决策与服务器处理之间到达的在途帧: 它们已被渲染, 新流
-    // 从 fromSeq 重发的前缀要跳过, 避免重复输出。
+    // Output stream sequence anchor: on every attach the server first delivers an anchor frame, after which this stream segment's bytes
+    // map continuously to ring sequence streamSeq + max(0, bytes received - controlBytes). A reconnecting attach brings the
+    // sequence and epoch back (fromSeq/fromEpoch), and the server resumes from the offset instead of clearing the screen for a full replay.
+    // skipLeading handles in-flight frames that arrived between the reconnect decision and server processing: they were already rendered,
+    // so the prefix the new stream resends from fromSeq must be skipped to avoid duplicate output.
     let streamAnchor: { epoch: string; seq: number; control: number } | null = null;
     let streamBytes = 0;
     let skipLeading = 0;
@@ -410,13 +411,13 @@ export function XtermView(props: XtermViewProps) {
       onCopied: (text) => onSelectionCopyRef.current?.(text, null),
       onError: (error) => onSelectionCopyRef.current?.("", error),
     });
-    // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板/拖放
-    // 走文本粘贴路径, 图片字节永远不会成为按键输入。多行文本粘贴先弹确认, 单行交还默认处理。
+    // Clipboard images and image drag-drop: only pure image payloads are intercepted for the upload flow; mixed clipboards/drag-drops containing plain text
+    // go through the text paste path, so image bytes never become key input. Multi-line text paste asks for confirmation first; single lines go back to default handling.
     const pasteHost = hostRef.current;
     let lastTouchX = 0;
     let lastTouchY = 0;
     let touchSeen = false;
-    // capture 阶段跟踪手指位置: xterm 的触摸选择在 target 阶段处理, 不冒泡也能拿到坐标。
+    // Track finger position at the capture phase: xterm's touch selection is handled at the target phase, so coordinates are available even without bubbling.
     const trackTouch = (event: TouchEvent) => {
       const touch = event.touches[0] ?? event.changedTouches[0];
       if (!touch) return;

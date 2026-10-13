@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// WEB 门控: 服务端把 canInstall 报成 true, 前端仍不得显示安装按钮(应用内安装仅桌面端),
-// 也不得显示桌面端更新横幅。
+// WEB gating: even when the server reports canInstall as true, the frontend must not show the install button (in-app install is desktop-only),
+// nor the desktop update banner.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";

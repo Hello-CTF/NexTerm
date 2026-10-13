@@ -44,7 +44,7 @@ func DesktopPaths(override string) (Paths, error) {
 	return NewPaths(dataDir), nil
 }
 
-// Android 应用进程没有 HOME，包名即进程名，私有目录路径可确定拼出。
+// Android app processes have no HOME; the package name is the process name, so the private directory path can be derived deterministically.
 func androidFilesDir() (string, bool) {
 	raw, err := os.ReadFile("/proc/self/cmdline")
 	if err != nil {

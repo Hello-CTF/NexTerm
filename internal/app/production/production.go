@@ -34,8 +34,8 @@ type RetentionConfig = core.RetentionConfig
 var NewRetentionRunner = core.NewRetentionRunner
 var StoreRetentionPolicy = core.StoreRetentionPolicy
 
-// ScreenInsets 是系统栏(状态栏/导航条/刘海)在四边的占用, 单位 dp。
-// 由桌面端以 wails Screen API 注入实现, server 为 nil 时 system_insets 命令不注册。
+// ScreenInsets is the system bar (status bar/navigation bar/notch) occupation on the four edges, in dp.
+// Injected by the desktop via the wails Screen API; when server is nil, the system_insets command is not registered.
 type ScreenInsets struct {
 	Top    int `json:"top"`
 	Bottom int `json:"bottom"`

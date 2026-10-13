@@ -1,6 +1,6 @@
-// 设备会话的能力降级提示: 设备终端经 supervisor v2 桥接运行, 协议只有终端
-// 会话帧, 没有文件与转发通道, 文件浏览/磁盘挂载/端口转发的面板统一给显式
-// 降级说明, 不让后端 unsupported 错误裸漏到查询行。
+// Capability degradation notice for device sessions: device terminals run bridged via supervisor v2, whose protocol has only terminal
+// session frames - no file or forward channels - so the file browsing/disk mount/port forwarding panels uniformly show an explicit
+// degradation notice instead of letting backend unsupported errors leak raw into query rows.
 
 export function DeviceSessionNotice({ feature }: { feature: string }) {
   return (

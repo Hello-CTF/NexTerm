@@ -8,7 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// preferenceUpdateRequest 用 set/clear 表达覆盖写入与「清除以继承默认」。
+// preferenceUpdateRequest uses set/clear to express overwrite writes and "clear to inherit the default".
 type preferenceUpdateRequest struct {
 	Set   map[string]json.RawMessage `json:"set"`
 	Clear []string                   `json:"clear"`
@@ -20,8 +20,8 @@ type preferenceScopeView struct {
 	Effective map[string]json.RawMessage `json:"effective"`
 }
 
-// mountPreferenceRoutes 挂载账号级偏好路由; 与账号路由一样在 --auth=off 下整体关闭,
-// 不引入隐式用户或隐式超管, 共享工作区继续走各端本地偏好。
+// mountPreferenceRoutes mounts account-level preference routes; like the account routes they are fully disabled under --auth=off,
+// introducing no implicit user or implicit superadmin, and shared workspaces keep using per-end local preferences.
 func (s *Server) mountPreferenceRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /auth/preferences", s.accountGuard(s.requireAccountSession(http.HandlerFunc(s.servePreferencesGet))))
 	mux.Handle("PUT /auth/preferences", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(http.HandlerFunc(s.servePreferencesPut)))))
@@ -51,7 +51,7 @@ func (s *Server) writePreferenceScope(w http.ResponseWriter, r *http.Request, us
 	})
 }
 
-// servePreferencesGet 返回会话用户的 默认+覆盖+生效 三层偏好。
+// servePreferencesGet returns the session user's three preference layers: defaults + overrides + effective.
 func (s *Server) servePreferencesGet(w http.ResponseWriter, r *http.Request) {
 	if s.preferences == nil {
 		s.preferencesUnavailable(w)
@@ -60,7 +60,7 @@ func (s *Server) servePreferencesGet(w http.ResponseWriter, r *http.Request) {
 	s.writePreferenceScope(w, r, accountIdentityFrom(r.Context()).UserID)
 }
 
-// servePreferencesPut 只写当前会话用户自己的覆盖, 用户标识只取自服务端会话。
+// servePreferencesPut writes only the current session user's own overrides; the user identity comes from the server session only.
 func (s *Server) servePreferencesPut(w http.ResponseWriter, r *http.Request) {
 	if s.preferences == nil {
 		s.preferencesUnavailable(w)

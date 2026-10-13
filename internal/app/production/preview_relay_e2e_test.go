@@ -22,8 +22,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// previewRelayE2EServer 装配带只读预览的真实服务端: 真账号签发/CSRF、真
-// sharing.Service、真 session.Manager 远程壳宿主, 经 hub adapter 供观众通道。
+// previewRelayE2EServer assembles a real server with read-only previews: real account issuing/CSRF, a real
+// sharing.Service, a real session.Manager as the remote shell host, with audience channels provided via a hub adapter.
 func newPreviewRelayE2EServer(t *testing.T) (*httptest.Server, *session.Manager) {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
@@ -94,7 +94,7 @@ func readRelayE2EText(t *testing.T, conn *websocket.Conn) map[string]any {
 	return frame
 }
 
-// readRelayE2EBinaryUntil 读帧直到出现包含 marker 的二进制输出帧。
+// readRelayE2EBinaryUntil reads frames until a binary output frame containing the marker appears.
 func readRelayE2EBinaryUntil(t *testing.T, conn *websocket.Conn, marker string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -107,10 +107,10 @@ func readRelayE2EBinaryUntil(t *testing.T, conn *websocket.Conn, marker string) 
 	t.Fatalf("viewer never saw %q", marker)
 }
 
-// TestPreviewRelayEndToEnd 钉住桌面只读预览全链路: 登录 → 开本地 tab →
-// preview_share_create 建壳+链接+中继 → 匿名 viewer 拿 ready/快照 → 本地输出
-// 实时到达 → 中继启动后的输出进入壳模型 (新 viewer 快照可见) → tab 退出 →
-// end+DELETE: 壳从服务端消失, viewer 收到 ended, Active 清空。
+// TestPreviewRelayEndToEnd pins the desktop read-only preview full path: login -> open local tab ->
+// preview_share_create (shell + link + relay) -> anonymous viewer gets ready/snapshot -> local output
+// arrives live -> output after the relay starts lands in the shell model (visible in new viewer snapshots) -> tab exits ->
+// end+DELETE: the shell disappears from the server, the viewer receives ended, Active is cleared.
 func TestPreviewRelayEndToEnd(t *testing.T) {
 	httpServer, shells := newPreviewRelayE2EServer(t)
 	production := newUpdateTestProduction(t, true, nil)
@@ -170,7 +170,7 @@ func TestPreviewRelayEndToEnd(t *testing.T) {
 	}
 	readRelayE2EBinaryUntil(t, viewer, marker)
 
-	// 中继推入的字节已建成壳的屏幕模型: 新 viewer 的首帧快照应包含标记。
+	// The bytes the relay pushed have built up the shell's screen model: a new viewer's first-frame snapshot should contain the marker.
 	secondViewer := dialRelayE2EViewer(t, httpServer.URL, created.Token)
 	if ready := readRelayE2EText(t, secondViewer); ready["type"] != "ready" {
 		t.Fatalf("second ready = %v", ready)
@@ -204,7 +204,7 @@ func TestPreviewRelayEndToEnd(t *testing.T) {
 	for {
 		kind, payload := readRelayE2EFrame(t, viewer)
 		if kind != websocket.MessageText {
-			// 退出回显等残余输出帧, 跳过等终止帧。
+			// Residual output frames such as the exit echo; skip them and wait for the termination frame.
 			continue
 		}
 		var frame map[string]any

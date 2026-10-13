@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-// PreviewShareMenu 创建入口: 创建预览链接、当场展示并复制公开 URL、列出进行中的
-// 预览并吊销。默认只读 (说明文案明示); token 只在创建响应里出现一次。
+// PreviewShareMenu creation entry: create a preview link, show and copy the public URL on the spot, list in-progress
+// previews and revoke them. Read-only by default (stated in the description copy); the token appears only once, in the creation response.
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flush, clickButton, type MountedView } from "./reactTestUtils";

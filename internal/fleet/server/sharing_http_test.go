@@ -25,10 +25,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// shareTestAgent 是进程内假 agent: 控制通道 hello 上报真实 state digest,
-// 桥接请求经 agent.BridgePipe (与 runtime.handleBridge 同一通路) 接到一个
-// 真实的进程内 supervisor server, 因此分享数据面全链路 (viewer WS ->
-// Gate -> 桥接 -> supervisor 协议) 都是真实实现。
+// shareTestAgent is an in-process fake agent: the control channel hello reports a real state digest,
+// and bridge requests go through agent.BridgePipe (the same path as runtime.handleBridge) to a
+// real in-process supervisor server, so the whole share data plane (viewer WS ->
+// Gate -> bridge -> supervisor protocol) is the real implementation.
 type shareTestAgent struct {
 	fixture    *httpFixture
 	deviceID   string
@@ -128,7 +128,7 @@ func (a *shareTestAgent) stop() {
 	_ = a.supervisor.Close()
 }
 
-// createSession 直接在假 agent 的 supervisor 上建会话 (公开链接的分享目标)。
+// createSession creates a session directly on the fake agent's supervisor (the share target of public links).
 func (a *shareTestAgent) createSession(t *testing.T, command ...string) string {
 	t.Helper()
 	client := supervisor.NewClient(a.socketPath, a.stateDir)
@@ -175,8 +175,8 @@ func (a *shareTestAgent) requireSession(t *testing.T, id string) {
 	}
 }
 
-// shareConnCollector 持续读 viewer WS (阻塞读, 不用超时读 — 超时读会毒化
-// coder/websocket 连接), 把消息分到 data/text 通道, 关闭/错误进 errCh。
+// shareConnCollector continuously reads the viewer WS (blocking reads, no timeout reads - a timeout read poisons the
+// coder/websocket connection), splitting messages into the data/text channels, with closes/errors going to errCh.
 type shareConnCollector struct {
 	conn *websocket.Conn
 
@@ -231,7 +231,7 @@ type shareReadTimeoutError struct{}
 
 func (*shareReadTimeoutError) Error() string { return "share read timed out" }
 
-// expectReady 读 ready 控制帧并校验权限声明。
+// expectReady reads the ready control frame and verifies the permission declaration.
 func (c *shareConnCollector) expectReady(t *testing.T, permission string) shareReadyFrame {
 	t.Helper()
 	frame := c.next(10 * time.Second)
@@ -251,7 +251,7 @@ func (c *shareConnCollector) expectReady(t *testing.T, permission string) shareR
 	return ready
 }
 
-// expectOutput 累积二进制输出直到包含 substr 或超时。
+// expectOutput accumulates binary output until it contains substr or times out.
 func (c *shareConnCollector) expectOutput(t *testing.T, substr string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -272,7 +272,7 @@ func (c *shareConnCollector) expectOutput(t *testing.T, substr string, timeout t
 	t.Fatalf("output %q never contained %q", seen, substr)
 }
 
-// drain 在输入前消费完已经到达的输出, 避免把上一条命令的尾随字节误判成新输出。
+// drain consumes all output already arrived before input, so trailing bytes of the previous command are not mistaken for new output.
 func (c *shareConnCollector) drain(t *testing.T, duration time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(duration)
@@ -287,7 +287,7 @@ func (c *shareConnCollector) drain(t *testing.T, duration time.Duration) {
 	}
 }
 
-// expectSilent 断言 duration 内没有任何二进制输出 (用于只读/收缩后输入被丢弃)。
+// expectSilent asserts that no binary output arrives within duration (used when input is discarded under read-only/after shrinkage).
 func (c *shareConnCollector) expectSilent(t *testing.T, duration time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(duration)
@@ -305,7 +305,7 @@ func (c *shareConnCollector) expectSilent(t *testing.T, duration time.Duration) 
 	}
 }
 
-// expectErrorFrame 读到一个 error 控制帧并返回其内容。
+// expectErrorFrame reads one error control frame and returns its content.
 func (c *shareConnCollector) expectErrorFrame(t *testing.T, timeout time.Duration) shareErrorFrame {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -329,7 +329,7 @@ func (c *shareConnCollector) expectErrorFrame(t *testing.T, timeout time.Duratio
 	return shareErrorFrame{}
 }
 
-// expectClosed 排空滞留消息后断言连接在 timeout 内被关闭。
+// expectClosed drains pending messages, then asserts the connection is closed within timeout.
 func (c *shareConnCollector) expectClosed(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -345,7 +345,7 @@ func (c *shareConnCollector) expectClosed(t *testing.T, timeout time.Duration) {
 	t.Fatal("connection was not closed in time")
 }
 
-// collectOutput 累积 duration 内的全部二进制输出并返回。
+// collectOutput accumulates all binary output within duration and returns it.
 func (c *shareConnCollector) collectOutput(t *testing.T, duration time.Duration) []byte {
 	t.Helper()
 	deadline := time.Now().Add(duration)
@@ -407,9 +407,9 @@ func expectShareViewerStatus(t *testing.T, f *httpFixture, path string, want int
 	}
 }
 
-// dialShareViewerStatus 发起 WS 握手并返回服务端拒绝的 HTTP 状态码; 握手
-// 意外成功返回 0。用于断言 token/auth 把关只在 upgrade 路径生效 (普通 GET
-// 已被 SPA 分流接管)。
+// dialShareViewerStatus starts a WS handshake and returns the HTTP status code the server rejects with; 0
+// if the handshake unexpectedly succeeds. Used to assert that token/auth gating only applies on the upgrade path (plain GETs
+// are taken over by the SPA diversion).
 func dialShareViewerStatus(t *testing.T, f *httpFixture, path string) int {
 	t.Helper()
 	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+path, nil)
@@ -452,7 +452,7 @@ func TestShareLinkManagement(t *testing.T) {
 	sessionID := device.createSession(t, "sh", "-c", "echo READY; exec cat")
 	ownerSession := f.session(t, owner)
 
-	// 匿名与 CSRF 边界。
+	// Anonymous and CSRF boundaries.
 	if call := f.call(t, "GET", "/share/links", nil, nil, ""); call.status != http.StatusUnauthorized {
 		t.Fatalf("anonymous list: HTTP %d", call.status)
 	}
@@ -465,17 +465,17 @@ func TestShareLinkManagement(t *testing.T) {
 		t.Fatal("empty token")
 	}
 
-	// 非 owner 吊销被拒且写审计。
+	// Non-owner revoke is rejected with an audit written.
 	otherSession := f.session(t, other)
 	if call := f.call(t, "POST", "/share/links/"+linkID+"/revoke", nil, otherSession, otherSession.csrf); call.status != http.StatusForbidden {
 		t.Fatalf("other revoke: HTTP %d", call.status)
 	}
-	// 非 owner 的列表为空。
+	// The non-owner's list is empty.
 	if call := f.call(t, "GET", "/share/links", nil, otherSession, ""); call.status != http.StatusOK || len(call.body["links"].([]any)) != 0 {
 		t.Fatalf("other list: HTTP %d %v", call.status, call.body)
 	}
 
-	// owner 列表含该链接且绝不携带 token/hash。
+	// The owner list contains the link and never carries token/hash.
 	call := f.call(t, "GET", "/share/links", nil, ownerSession, "")
 	if call.status != http.StatusOK {
 		t.Fatalf("owner list: HTTP %d %v", call.status, call.body)
@@ -497,7 +497,7 @@ func TestShareLinkManagement(t *testing.T) {
 	if call := f.call(t, "POST", "/share/links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("owner revoke: HTTP %d %v", call.status, call.body)
 	}
-	// 吊销后 token 立即不可用 (审计 reason=revoked); 把关走 WS upgrade 路径。
+	// After revocation the token is instantly unusable (audit reason=revoked); the gate goes through the WS upgrade path.
 	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
 		t.Fatalf("revoked resolve: HTTP %d", status)
 	}
@@ -525,7 +525,7 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 		_, _ = w.Write([]byte(page))
 	}))
 
-	// 有效/无效 token 的普通 GET 都直接拿到 SPA: 不校验 token, 不写审计。
+	// Plain GETs with valid/invalid tokens both get the SPA directly: no token verification, no audit.
 	for _, path := range []string{"/share/public/" + token, "/share/public/not-a-token"} {
 		response, err := f.client.Get(f.http.URL + path)
 		if err != nil {
@@ -547,7 +547,7 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 		t.Fatalf("plain GET wrote share_link_access audit rows: %v", rows)
 	}
 
-	// 静态入口收到的路径固定为 "/" (不做 token 路径的文件查找), query 保留。
+	// The path the static entry receives is pinned to "/" (no file lookup on token paths), with the query preserved.
 	request, err := http.NewRequest(http.MethodGet, f.http.URL+"/share/public/not-a-token?next=1", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -561,7 +561,7 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 		t.Fatalf("static entry got path %q rawPath %q query %q, want /, empty, next=1", gotPath, gotRawPath, gotRawQuery)
 	}
 
-	// upgrade 路径的 token 把关不变: 无效 token 的 WS 握手仍 403。
+	// Token gating on the upgrade path is unchanged: a WS handshake with an invalid token still gets 403.
 	if status := dialShareViewerStatus(t, f, "/share/public/not-a-token"); status != http.StatusForbidden {
 		t.Fatalf("invalid token WS handshake = %d, want 403", status)
 	}
@@ -569,7 +569,7 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 
 func TestSharePublicPageWithoutStaticEntry(t *testing.T) {
 	f := newHTTPFixture(t, false)
-	// 未配置静态入口: 普通 GET 404; upgrade 合同不受影响 (无效 token 仍 403)。
+	// Without a configured static entry: plain GET 404s; the upgrade contract is unaffected (invalid token still 403).
 	response, err := f.client.Get(f.http.URL + "/share/public/whatever")
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +600,7 @@ func TestSharePublicTerminalReadOnly(t *testing.T) {
 	collector.expectOutput(t, "READY-42", 10*time.Second)
 
 	collector.drain(t, 100*time.Millisecond)
-	// 只读: 输入被静默丢弃, 连接保持, 无任何输出。
+	// Read-only: input is silently discarded, the connection stays up, and no output is produced.
 	collector.sendBinary(t, []byte("echo nope-42\n"))
 	collector.expectSilent(t, 1500*time.Millisecond)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -622,7 +622,7 @@ func TestSharePublicTerminalReadWriteAndInputAudit(t *testing.T) {
 	collector.sendBinary(t, []byte("echo hello-42\n"))
 	collector.expectOutput(t, "hello-42", 10*time.Second)
 
-	// 输入动作已写审计 (allow), 且不携带 token。
+	// The input action was audited (allow) and carries no token.
 	inputs := auditPayloads(t, f, "share_link_input")
 	if len(inputs) == 0 {
 		t.Fatal("no share_link_input audit rows")
@@ -665,7 +665,7 @@ func TestSharePublicTerminalRevokeStopsStream(t *testing.T) {
 	}
 	collector.expectClosed(t, 5*time.Second)
 
-	// 吊销后新连接在升级前即被拒。
+	// After revocation, new connections are rejected before the upgrade.
 	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
 		t.Fatalf("resolve after revoke: HTTP %d", status)
 	}
@@ -681,7 +681,7 @@ func TestSharePublicTerminalExpiryStopsStream(t *testing.T) {
 
 	conn := dialShareViewer(t, f, "/share/public/"+token, nil)
 	collector := watchShareConn(conn)
-	// 只读链接走 discardInput 路径, 覆盖读 ctx 取消误杀连接的回归 (SHARE138)。
+	// The read-only link goes through the discardInput path, covering the regression where a canceled read ctx kills the connection (SHARE138).
 	collector.expectReady(t, "read")
 
 	shareLink := query.Use(f.service.db).ShareLink
@@ -706,7 +706,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	ownerSession := f.session(t, owner)
 	recipientSession := f.session(t, recipient)
 
-	// 无分享的注册用户打开被拒 (403, 写审计)。
+	// A registered user without a share is denied open (403, with an audit written).
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, f.session(t, stranger), ""); call.status != http.StatusForbidden {
 		t.Fatalf("stranger open: HTTP %d %v", call.status, call.body)
 	}
@@ -721,7 +721,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 		t.Fatalf("host share view = %v", call.body)
 	}
 
-	// recipient 列表可见 (作为接收方), 列表行携带双方用户名。
+	// The recipient sees the share in the list (as the recipient), and list rows carry both usernames.
 	listCall := f.call(t, "GET", "/share/host-shares", nil, recipientSession, "")
 	if listCall.status != http.StatusOK || len(listCall.body["shares"].([]any)) != 1 {
 		t.Fatalf("recipient list: HTTP %d %v", listCall.status, listCall.body)
@@ -738,7 +738,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 		t.Fatal("host terminal ready has no session id")
 	}
 
-	// 输入产生输出: 先启动一个持续输出循环, 随后收缩权限。
+	// Input produces output: first start a continuous output loop, then shrink the permission.
 	collector.sendBinary(t, []byte("while true; do echo tick; sleep 0.2; done\n"))
 	collector.expectOutput(t, "tick", 10*time.Second)
 
@@ -749,7 +749,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 		t.Fatalf("shrink share: HTTP %d %v", call.status, call.body)
 	}
 
-	// 收缩生效后输入被丢弃, 已有输出继续流动。
+	// After the shrink takes effect, input is discarded and existing output keeps flowing.
 	time.Sleep(600 * time.Millisecond)
 	collector.sendBinary(t, []byte("echo nope-42\n"))
 	output := collector.collectOutput(t, 1500*time.Millisecond)
@@ -761,7 +761,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 
-	// 吊销后打开被拒。
+	// After revocation, open is denied.
 	call = f.call(t, "GET", "/share/host-shares", nil, ownerSession, "")
 	if call.status != http.StatusOK {
 		t.Fatalf("owner host list: HTTP %d", call.status)
@@ -787,7 +787,7 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 	device := startShareTestAgent(t, f, owner, "byname-box")
 	ownerSession := f.session(t, owner)
 
-	// 普通设备 owner 用用户名创建 (大小写不敏感), 全程不需要用户目录权限。
+	// A plain device owner creates by username (case-insensitive), with no user-directory permission needed throughout.
 	call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "ByName-Recipient", "write": false, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf)
@@ -798,21 +798,21 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 		t.Fatalf("host share view = %v", call.body)
 	}
 
-	// 无效用户名: 既有 not_found 安全错误, 不创建分享。
+	// Unknown username: the existing not_found safe error, and no share is created.
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf); call.status != http.StatusNotFound {
 		t.Fatalf("unknown recipient: HTTP %d %v", call.status, call.body)
 	}
 
-	// 禁用接收者: 既有 forbidden 安全错误 (sharing 层判定并写审计), 不创建分享。
+	// Disabled recipient: the existing forbidden safe error (decided and audited by the sharing layer), and no share is created.
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "byname-disabled", "write": false, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf); call.status != http.StatusForbidden {
 		t.Fatalf("disabled recipient: HTTP %d %v", call.status, call.body)
 	}
 
-	// 非设备 owner 的普通用户不能在该设备上创建 (服务端 仅设备 owner 把关)。
+	// A plain user who is not the device owner cannot create on that device (the server gates on device owner only).
 	strangerSession := f.session(t, stranger)
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "byname-recipient", "write": false, "ttl_ms": 3600000,
@@ -820,21 +820,21 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 		t.Fatalf("stranger create: HTTP %d %v", call.status, call.body)
 	}
 
-	// 越权 + 不存在用户名: 授权与 deny 审计先于用户名解析, 仍 403 not_owner
-	// (不得退化成无审计的 404, 不泄露接收者是否存在)。
+	// Unauthorized + nonexistent username: authorization and the deny audit come before username resolution, so it is still 403 not_owner
+	// (never degrading into an unaudited 404, never revealing whether the recipient exists).
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
 		"device_id": device.deviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
 	}, strangerSession, strangerSession.csrf); call.status != http.StatusForbidden {
 		t.Fatalf("stranger create with unknown recipient: HTTP %d %v", call.status, call.body)
 	}
 
-	// 失败路径没有留下分享行: 列表仍只有最初一条。
+	// The failure paths left no share rows: the list still has only the original one.
 	listCall := f.call(t, "GET", "/share/host-shares", nil, ownerSession, "")
 	if listCall.status != http.StatusOK || len(listCall.body["shares"].([]any)) != 1 {
 		t.Fatalf("owner host list: HTTP %d %v", listCall.status, listCall.body)
 	}
 
-	// 审计语义保持: 成功创建一条带 share_id 的 allow; 两次越权各一条 deny/not_owner。
+	// Audit semantics hold: one allow with share_id for the successful creation; one deny/not_owner for each of the two unauthorized attempts.
 	audits := auditPayloads(t, f, "host_share_create")
 	allowWithShare, denyNotOwner := 0, 0
 	for _, payload := range audits {
@@ -870,11 +870,11 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	collector := watchShareConn(conn)
 	collector.expectReady(t, "read_write")
 
-	// agent 掉线: 已建立的分享流随桥接断开而停止。
+	// Agent offline: the established share stream stops with the bridge disconnecting.
 	device.stop()
 	collector.expectClosed(t, 10*time.Second)
 
-	// 掉线后打开/新建一律 503 (探针即时判离线, 不等 last_seen 过期)。
+	// Opens/creates after offline always get 503 (the probe judges offline instantly, without waiting for last_seen to expire).
 	expectShareViewerStatus(t, f, "/share/public/"+token, http.StatusServiceUnavailable)
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusServiceUnavailable {
 		t.Fatalf("offline host open: HTTP %d %v", call.status, call.body)
@@ -910,8 +910,8 @@ func TestShareRoutesAuthOff(t *testing.T) {
 	}
 }
 
-// 对端接受 WS 后永不读: 内核写缓冲填满后, 写 viewer 必须在超时内失败返回,
-// 而不是把输出泵与连接拆除无限期挂死 (吊销也因此无法落地)。
+// The peer accepts the WS and never reads: once the kernel write buffer fills up, writing to the viewer must fail and return
+// within the timeout, instead of hanging the output pump and the connection teardown indefinitely (which would also prevent revocation from landing).
 func TestShareViewerWriteTimeoutUnblocksStalledViewer(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -946,7 +946,7 @@ func TestShareViewerWriteTimeoutUnblocksStalledViewer(t *testing.T) {
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// 会话公开链接与设备公开链接共用同一限流: 随机 token 首次 403, 随后 429。
+// Session public links and device public links share the same rate limit: a random token gets 403 on first try, then 429.
 func TestSharePublicLinkResolveRateLimited(t *testing.T) {
 	f := newHTTPFixture(t, false)
 	if status := dialShareViewerStatus(t, f, "/share/public/not-a-token"); status != http.StatusForbidden {

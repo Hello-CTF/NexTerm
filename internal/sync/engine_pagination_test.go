@@ -8,8 +8,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
-// 两个大 snippet 的远端新 revision 分布在两页时, 引擎必须在推送前耗尽分页并完成 LWW,
-// 不得用本地旧对象覆盖未拉取页的新数据; 收敛后空闲同步零推送。
+// When the remote new revisions of two large snippets span two pages, the engine must drain pagination and complete LWW before pushing,
+// never overwriting unpulled pages of new data with stale local objects; idle sync pushes nothing after convergence.
 func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -25,13 +25,13 @@ func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// B 把两个对象都更新到更高 revision 并推送; 两个密文的线上成本之和超过单页预算。
+	// B updates both objects to a higher revision and pushes; the combined wire cost of the two ciphertexts exceeds the single-page budget.
 	future := ids.NowMS() + 3600_000
 	putDeviceSnippet(t, deviceB, snippet1, "大片段一-新版", "new-"+bigBody, future)
 	putDeviceSnippet(t, deviceB, snippet2, "大片段二-新版", "new-"+bigBody, future)
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 
-	// A 同步: 必须耗尽两页并完成 LWW, 不得用本地旧对象覆盖远端新 revision。
+	// A syncs: it must drain both pages and complete LWW, never overwriting the remote new revision with stale local objects.
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	snippetRows, err := deviceA.db.SnippetList(ctx)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestEngineDrainsPaginationBeforePush(t *testing.T) {
 		t.Fatalf("deviceA snippets=%v, want exactly the two new revisions", contents)
 	}
 
-	// 收敛后空闲同步零推送。
+	// After convergence, idle sync pushes nothing.
 	reportA := syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if reportA.Pulled+reportA.Applied+reportA.Pushed != 0 {
 		t.Fatalf("deviceA idle sync not quiescent: %+v", reportA)

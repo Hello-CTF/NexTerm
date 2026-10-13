@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-// 预览 WS 协议契约: ready 帧携带真实 permission 与可选 lease_ms, control 帧
-// 下发租约状态, viewer 输入是二进制帧 (sendInput), error 帧里 code:"read_only"
-// 是非终止提示, 连接继续。token 只做 URL 拼接, 不进 web storage。
+// Preview WS protocol contract: the ready frame carries the real permission and optional lease_ms, control frames
+// deliver lease state, viewer input is a binary frame (sendInput), and an error frame with code:"read_only"
+// is a non-terminal notice and the connection continues. The token is only used for URL assembly, never web storage.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {

@@ -744,8 +744,10 @@ function packageDarwin(binary, goarch) {
   return dmg;
 }
 
-// 公证是可选增强:只有配置了 App Store Connect API 密钥(notarytool key 认证)才提交;
-// 自签证书无法通过公证,未配置凭据时保持 ad-hoc 分发现状。
+// Notarization is an optional enhancement: submit only when App Store Connect
+// API credentials (notarytool key auth) are configured; self-signed
+// certificates cannot pass notarization, so without credentials the existing
+// ad-hoc distribution stays.
 function notarizeDmg(dmg) {
   const keyPath = process.env.NEXTERM_MACOS_NOTARY_KEY_PATH;
   const keyId = process.env.NEXTERM_MACOS_NOTARY_KEY_ID;

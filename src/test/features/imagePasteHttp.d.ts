@@ -1,5 +1,5 @@
-// 与 src/test/nodeFs.d.ts 同一模式: tsconfig 不加载 @types/node,
-// 为 imagePasteHttp 契约测试提供最小 node:http 类型面。
+// Same pattern as src/test/nodeFs.d.ts: tsconfig does not load @types/node,
+// so this provides the minimal node:http type surface for the imagePasteHttp contract tests.
 declare module "node:http" {
   export interface IncomingMessage {
     method?: string;

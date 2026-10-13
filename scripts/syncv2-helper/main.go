@@ -1,5 +1,6 @@
-// syncv2-helper 为 scripts/e2e-harness 提供 v2 同步协议的真实密码学原语,
-// 使验收 harness 以独立二进制完成账号 DEK 信封与对象信封的加解密。
+// syncv2-helper provides the v2 sync protocol's real cryptographic primitives
+// for scripts/e2e-harness, letting the acceptance harness encrypt/decrypt
+// account DEK envelopes and object envelopes as a standalone binary.
 package main
 
 import (

@@ -10,8 +10,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 本文件的测试全部跑在真实 PostgreSQL 上, 由 NEXTERM_TEST_PG_DSN 门控;
-// 未配置 DSN 时逐测试 SKIP, 不得视为已验证。
+// All tests in this file run against real PostgreSQL, gated by NEXTERM_TEST_PG_DSN;
+// without a configured DSN each test SKIPs and must not be counted as verified.
 
 func TestPostgresApplyKnownHostAndAIProfile(t *testing.T) {
 	instance := newPostgresTestInstance(t, true)
@@ -101,7 +101,7 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 		t.Fatalf("deviceB key=%q err=%v", key, err)
 	}
 
-	// A 删除已知主机与档案: 墓碑经服务端(PG)推送到 B, B 端副本被清除且不复活。
+	// A deletes the known host and profile: tombstones are pushed to B via the server (PG), and B's copies are cleared without revival.
 	deleteDeviceKnownHost(t, deviceA, hostID, ids.NowMS())
 	deleteDeviceAIProfile(t, deviceA, profileID, ids.NowMS())
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")

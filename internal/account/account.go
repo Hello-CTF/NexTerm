@@ -19,7 +19,7 @@ type Accounts struct {
 	writeMu     sync.Mutex
 }
 
-// userTable 集中账号表名, 便于后续存储后端调整。
+// userTable centralizes the account table name for future storage backend changes.
 const userTable = "app_user"
 
 type Option func(*Accounts)

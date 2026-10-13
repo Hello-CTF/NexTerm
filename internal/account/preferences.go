@@ -12,7 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// PreferenceStore 是 setting 表的最小读写子集, 由装配层以 *store.Store 注入。
+// PreferenceStore is the minimal read/write subset of the setting table, injected by the wiring layer as *store.Store.
 type PreferenceStore interface {
 	SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error
 	SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error)
@@ -23,7 +23,7 @@ type preferenceTombstoneRecorder interface {
 	PreferencesSyncOptIn(ctx context.Context, userID string) (bool, error)
 }
 
-// 偏好以命名空间键存入 setting 表: 全局默认只有超管可写, 用户覆盖只能由本人读写。
+// Preferences are stored in the setting table as namespaced keys: global defaults are writable only by the super admin, user overrides only by their owner.
 const (
 	preferenceDefaultPrefix = "prefs.default."
 	preferenceUserPrefix    = "prefs.user."
@@ -69,7 +69,7 @@ type preferenceSpec struct {
 	strings []string
 }
 
-// preferenceSpecs 是允许读写的全部偏好键白名单; DEK、密码、凭据与任意键一律不在其中。
+// preferenceSpecs is the whitelist of all readable/writable preference keys; DEK, password, credential, and arbitrary keys are never included.
 var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.uiFontPreset":     {kind: preferenceKindHalfRange, min: 8, max: 32},
 	"appearance.uiFontScale":      {kind: preferenceKindEnumFloat, floats: []float64{1, 1.25, 1.5, 1.75, 2}},
@@ -91,7 +91,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.lockVault":        {kind: preferenceKindBinding},
 }
 
-// PreferenceKeys 返回白名单键的副本, 供 HTTP 层与测试枚举声明的偏好。
+// PreferenceKeys returns a copy of the whitelist keys, for the HTTP layer and tests to enumerate declared preferences.
 func PreferenceKeys() []string {
 	keys := make([]string, 0, len(preferenceSpecs))
 	for key := range preferenceSpecs {
@@ -110,8 +110,8 @@ var preferenceBindingModifiers = map[string]bool{
 	"Mod": true, "Primary": true, "Ctrl": true, "Meta": true, "Shift": true, "Alt": true,
 }
 
-// normalizePreferenceBinding 校验键位绑定串: 修饰键去重、Mod/Primary/Ctrl/Meta 至多一个、
-// 裸键仅限命名键与 F 键, 输出规范化顺序(Mod,Primary,Ctrl,Meta,Shift,Alt+key)。
+// normalizePreferenceBinding validates a key binding string: modifiers are deduplicated, at most one of Mod/Primary/Ctrl/Meta,
+// the bare key is limited to named keys and F keys, and the output uses the canonical order (Mod,Primary,Ctrl,Meta,Shift,Alt+key).
 func normalizePreferenceBinding(input string) (string, bool) {
 	if input == "" {
 		return "", false
@@ -172,7 +172,7 @@ func isPreferenceFKey(raw string) bool {
 	return len(raw) == 2 || raw[1] != '0'
 }
 
-// validatePreferenceValue 校验并规范化单个值, 返回可入库的 JSON 文本。
+// validatePreferenceValue validates and normalizes a single value, returning JSON text ready for storage.
 func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 	spec, ok := preferenceSpecs[key]
 	if !ok {
@@ -241,7 +241,7 @@ func invalidPreferenceValue(key string) error {
 	return ipc.BadParam(fmt.Errorf("参数错误: 偏好 %q 的值不合法", key))
 }
 
-// preferenceUpdate 把 set/clear 翻译成一次原子写入的命名空间键。
+// preferenceUpdate translates set/clear into one atomic write of namespaced keys.
 func preferenceUpdate(prefix string, set map[string]json.RawMessage, clear []string) (map[string]string, []string, error) {
 	values := map[string]string{}
 	for key, raw := range set {
@@ -269,7 +269,7 @@ func NewPreferences(store PreferenceStore) *Preferences {
 	return &Preferences{store: store}
 }
 
-// preferenceList 列出命名空间下已设置的键值, 值为入库的 JSON 文本。
+// preferenceList lists the key/value pairs set under a namespace; values are the stored JSON text.
 func (p *Preferences) preferenceList(ctx context.Context, prefix string) (map[string]json.RawMessage, error) {
 	stored, err := p.store.SettingListPrefix(ctx, prefix)
 	if err != nil {
@@ -329,7 +329,7 @@ func (p *Preferences) UpdateUserOverrides(ctx context.Context, userID string, se
 	return updated, nil
 }
 
-// MergePreferences 以「覆盖优先于默认」合成生效值; 显式 null(解绑)也是有效覆盖。
+// MergePreferences merges effective values with "override wins over default"; an explicit null (unbind) is also a valid override.
 func MergePreferences(defaults, overrides map[string]json.RawMessage) map[string]json.RawMessage {
 	merged := make(map[string]json.RawMessage, len(defaults)+len(overrides))
 	for key, value := range defaults {

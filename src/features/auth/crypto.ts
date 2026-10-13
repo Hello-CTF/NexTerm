@@ -1,5 +1,5 @@
-// 账号 DEK 信封与同步对象加解密,与 internal/vault(userdek.go) 和 internal/sync(object.go) 互通。
-// DEK 明文只存在于调用方内存,不落盘、不上行;服务端只存信封与密文。
+// Account DEK envelope and sync object encryption/decryption, interoperating with internal/vault (userdek.go) and internal/sync (object.go).
+// DEK plaintext exists only in caller memory: never persisted, never uploaded; the server stores only envelopes and ciphertext.
 
 import { argon2idKey } from "./argon2";
 
@@ -13,11 +13,11 @@ const userDEKAAD = "nexterm/go/user-dek/v1";
 const userDEKRecoveryAAD = "nexterm/go/user-dek-recovery/v1";
 const objectAADPrefix = "nexterm/go/sync-object/v1";
 
-// 与 Go internal/sync/object.go 的 objectKinds 枚举顺序一致(AAD 绑定 kind, 错误 kind 必然解不开)。
+// Same enum order as objectKinds in Go internal/sync/object.go (AAD binds kind; a wrong kind never decrypts).
 export const SYNC_OBJECT_KINDS = ["group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile", "ai_permission", "preference"] as const;
 export type SyncObjectKind = (typeof SYNC_OBJECT_KINDS)[number];
 
-// Go vault.userDEKKDFDefaults:Time/MemoryKiB/Threads 的 JSON 形为 {"t":3,"m":65536,"p":4}。
+// Go vault.userDEKKDFDefaults: the JSON form of Time/MemoryKiB/Threads is {"t":3,"m":65536,"p":4}.
 const KDF_DEFAULTS = { t: 3, m: 65536, p: 4 };
 
 const KDF_LIMITS = { maxTime: 16, maxMemoryKiB: 2 * 1024 * 1024, maxThreads: 16, minMemoryKiB: 8 * 1024 };
@@ -67,7 +67,7 @@ async function importAesKey(key: Uint8Array, usage: "encrypt" | "decrypt"): Prom
   return requireSubtle().importKey("raw", key as unknown as BufferSource, { name: "AES-GCM" }, false, [usage]);
 }
 
-// seal 输出 nonce(12B) || ciphertext || tag(16B),与 Go vault.seal 的 append(nonce, ciphertext...) 一致。
+// seal outputs nonce(12B) || ciphertext || tag(16B), matching Go vault.seal's append(nonce, ciphertext...).
 export async function aesGcmSeal(key: Uint8Array, plaintext: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
   const nonce = randomBytes(NONCE_LENGTH);
   const subtle = requireSubtle();
@@ -104,7 +104,7 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
   return bytesToHex(new Uint8Array(digest));
 }
 
-// ---- KDF 参数(与 Go vault.UserDEKKDFParams 的 JSON 对应) ----
+// ---- KDF params (JSON counterpart of Go vault.UserDEKKDFParams) ----
 
 export interface KdfParams {
   t: number;
@@ -138,7 +138,7 @@ async function deriveUserKEK(password: string, salt: Uint8Array, params: KdfPara
   return argon2idKey(utf8Bytes(password), salt, params.t, params.m, params.p, DEK_LENGTH);
 }
 
-// ---- DEK 信封(与 Go vault.WrapUserDEK/UnwrapUserDEK 对应) ----
+// ---- DEK envelope (counterpart of Go vault.WrapUserDEK/UnwrapUserDEK) ----
 
 export interface DekEnvelopes {
   dekEnvelope: Uint8Array;
@@ -175,8 +175,8 @@ export async function unwrapDEKWithPassword(password: string, envelope: Uint8Arr
   return dek;
 }
 
-// 恢复密钥 KEK = base32 解码出的 20 字节右侧补 12 个 0 到 32 字节;解码失败时用规范串的 UTF-8 字节右侧补 0。
-// 与 Go vault.recoveryKeyMaterial + copy(kek.bytes[:], key) 对齐。
+// Recovery key KEK = the 20 bytes from base32 decoding, right-padded with 12 zeros to 32 bytes; on decode failure, the canonical string's UTF-8 bytes right-padded with zeros.
+// Aligned with Go vault.recoveryKeyMaterial + copy(kek.bytes[:], key).
 function recoveryKeyMaterial(canonical: string): Uint8Array {
   const key = new Uint8Array(DEK_LENGTH);
   const decoded = base32Decode(canonical);
@@ -209,7 +209,7 @@ export async function unwrapDEKWithRecovery(canonicalRecoveryKey: string, envelo
   return dek;
 }
 
-// ---- 恢复密钥(与 Go vault.GenerateRecoveryKey/FormatRecoveryKey/NormalizeRecoveryKey/RecoveryKeyHash 对应) ----
+// ---- Recovery key (counterpart of Go vault.GenerateRecoveryKey/FormatRecoveryKey/NormalizeRecoveryKey/RecoveryKeyHash) ----
 
 export function generateRecoveryKey(): string {
   return base32Encode(randomBytes(RECOVERY_KEY_BYTES));
@@ -232,7 +232,7 @@ export async function recoveryKeyHash(canonical: string): Promise<string> {
   return sha256Hex(utf8Bytes(normalizeRecoveryKey(canonical)));
 }
 
-// base32 标准字母表、无填充,与 Go base32.StdEncoding.WithPadding(NoPadding) 一致。
+// Standard base32 alphabet, no padding, matching Go base32.StdEncoding.WithPadding(NoPadding).
 function base32Encode(data: Uint8Array): string {
   let bits = 0;
   let value = 0;
@@ -268,7 +268,7 @@ function base32Decode(text: string): Uint8Array | null {
   return new Uint8Array(out);
 }
 
-// ---- 同步对象(与 internal/sync/object.go 的 sealObject/openObject 对应) ----
+// ---- Sync objects (counterpart of sealObject/openObject in internal/sync/object.go) ----
 
 function objectAAD(id: string, kind: string): Uint8Array {
   return utf8Bytes(`${objectAADPrefix}\x00${id}\x00${kind}`);
@@ -285,7 +285,7 @@ export async function openSyncObject(dek: Uint8Array, blob: Uint8Array, id: stri
   return aesGcmOpen(dek, blob, objectAAD(id, kind));
 }
 
-// tryOpenSyncObject 按固定 kind 枚举尝试解密;全部失败说明密钥不匹配或数据被篡改。
+// tryOpenSyncObject tries decryption across the fixed kind enum; if all fail, the key does not match or the data was tampered with.
 export async function tryOpenSyncObject(
   dek: Uint8Array,
   blob: Uint8Array,
@@ -296,7 +296,7 @@ export async function tryOpenSyncObject(
       const plaintext = await openSyncObject(dek, blob, id, kind);
       return { kind, plaintext };
     } catch {
-      // 尝试下一个 kind
+      // Try the next kind
     }
   }
   throw new CryptoError("decrypt", "凭据解密失败（密钥不匹配或数据损坏）");

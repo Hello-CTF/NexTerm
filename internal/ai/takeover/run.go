@@ -540,8 +540,8 @@ func (e *actionExecution) decide(ctx context.Context, ruling guard.Ruling) guard
 	return guard.Decide(e.runtime.permission, ruling, e.state.memory)
 }
 
-// persistPermanentGrant 把「永久允许」决策落成 send_keys 的持久规则；
-// 任何一步无法安全确定范围都拒绝，调用方按失败关闭处理。
+// persistPermanentGrant turns an "always allow" decision into a persistent send_keys rule;
+// any step that cannot safely determine the scope is rejected, and the caller treats it as fail-closed.
 func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools.InteractionState) error {
 	if state.Info.Risk != "needs_confirm" {
 		return errors.New("该操作必须逐次确认，不支持永久授权")

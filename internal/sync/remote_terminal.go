@@ -13,14 +13,14 @@ import (
 	"github.com/coder/websocket"
 )
 
-// 设备终端桥 (GET /fleet/devices/{id}/bridge) 与远程会话推流端点 (GET
-// /share/remote-sessions/{id}/feed) 共用一个带会话凭据的 WS 拨号助手: 握手
-// 同时携带会话 cookie 与 CSRF 头 (推流端点强制校验 CSRF), 鉴权在升级时完成,
-// 建连后服务端不再复查会话, 因此拨号只在 remoteCall 锁内完成握手, 返回的
-// 连接独立存活, 不长期占用 opMu。
+// The device terminal bridge (GET /fleet/devices/{id}/bridge) and the remote session feed endpoint (GET
+// /share/remote-sessions/{id}/feed) share one WS dial helper carrying session credentials: the handshake
+// carries both the session cookie and the CSRF header (the feed endpoint enforces CSRF), auth completes during the upgrade,
+// and the server does not re-check the session after connecting, so dialing only completes the handshake inside the remoteCall lock; the returned
+// connection lives independently and does not hold opMu long-term.
 
-// DialDeviceBridge 用已登录会话对服务端设备桥端点完成 WS 升级并返回字节流连接;
-// 401 走 remoteCall 的 dropSession 重登环, 与类型化远端方法同一语义。
+// DialDeviceBridge completes the WS upgrade against the server device bridge endpoint with the logged-in session and returns a byte-stream connection;
+// 401 goes through remoteCall's dropSession re-login loop, same semantics as the typed remote methods.
 func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID string) (net.Conn, error) {
 	if deviceID == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "deviceId 不能为空")
@@ -40,9 +40,9 @@ func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID string) (ne
 	return conn, nil
 }
 
-// RemoteSessionFeedDial 用已登录会话对远程壳推流端点完成 WS 升级, 返回消息级
-// 连接: 二进制帧 = 输出字节原样, 文本帧 = 控制帧 ({"type":"end"}/{"type":"resize"})。
-// 401 走 remoteCall 的 dropSession 重登环, 与类型化远端方法同一语义。
+// RemoteSessionFeedDial completes the WS upgrade against the remote shell feed endpoint with the logged-in session, returning a message-level
+// connection: binary frames carry output bytes verbatim, text frames are control frames ({"type":"end"}/{"type":"resize"}).
+// 401 goes through remoteCall's dropSession re-login loop, same semantics as the typed remote methods.
 func (p *RemoteProxy) RemoteSessionFeedDial(ctx context.Context, sessionID string) (*websocket.Conn, error) {
 	if sessionID == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "sessionId 不能为空")
@@ -70,8 +70,8 @@ func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID string) (n
 	return websocket.NetConn(context.Background(), conn, websocket.MessageBinary), nil
 }
 
-// dialRemoteWS 用内存中的会话凭据 (cookie+CSRF) 对 path 完成 WS 升级; 握手失败
-// 映射成 ipc.Error (401 触发 remoteCall 重登, 其余透传 rpcErr 终态文案)。
+// dialRemoteWS completes the WS upgrade against path with the in-memory session credentials (cookie+CSRF); handshake failures
+// map to ipc.Error (401 triggers remoteCall re-login, others pass through the rpcErr final text).
 func (c *remoteClient) dialRemoteWS(ctx context.Context, path, endpoint string) (*websocket.Conn, error) {
 	header := http.Header{}
 	if c.cookieToken != "" {
@@ -94,8 +94,8 @@ func (c *remoteClient) dialRemoteWS(ctx context.Context, path, endpoint string) 
 	return conn, nil
 }
 
-// wsUpgradeError 把 WS 端点升级失败的 HTTP 响应映射成 ipc.Error: 401 触发
-// remoteCall 的重登, 其余状态优先透传服务端 rpcErr 的终态文案。
+// wsUpgradeError maps a failed WS endpoint upgrade HTTP response to ipc.Error: 401 triggers
+// remoteCall's re-login, other statuses preferentially pass through the server rpcErr final text.
 func wsUpgradeError(response *http.Response, endpoint string) error {
 	if response.StatusCode == http.StatusUnauthorized {
 		return errSessionExpired

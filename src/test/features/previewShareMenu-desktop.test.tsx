@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
-// 桌面端预览链接: PreviewShareMenu 按 TRANSPORT 分流 — 创建走 preview_share_create
-// 中继 (展示后端拼好的 url), 列表/吊销走 remoteSharingApi 并按当前 tab 活跃中继
-// 的壳 id 过滤; 「允许控制」勾选在桌面禁用 (桌面中继创建的预览第一期暂不支持控制),
-// 创建签名保持 (tabId, ttlMs); TerminalPane 入口的登录门控 hook 在未登录桌面返回
-// false (隐藏入口)。
+// Desktop preview links: PreviewShareMenu dispatches by TRANSPORT - creation goes through the preview_share_create
+// relay (showing the backend-assembled url), list/revoke go through remoteSharingApi filtered by the shell id of the
+// active relay of the current tab; the "allow control" checkbox is disabled on desktop (previews created by the desktop
+// relay do not support control in the first phase), the creation signature stays (tabId, ttlMs); the login-gating hook
+// of the TerminalPane entry returns false on logged-out desktop (hiding the entry).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { clickButton, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";

@@ -1,17 +1,17 @@
-// 终端分享卡片 (SHARE158): 账号模式下的真实分享管理界面。
-// 数据全部来自真实 HTTP 合同 (internal/fleet/server/sharing_http.go 与 http.go):
-// - 主机分享 (POST/GET /share/host-shares + /share/host-shares/{id}/revoke):
-//   注册用户把接入设备 (装有设备 agent 的主机) 分享给另一个注册用户, 对方在有效期内经
-//   设备 agent 新建终端, 全程不接触主机密码或私钥。创建体收 recipient_username, 由服务端
-//   精确解析 (大小写不敏感), 前端不需要用户目录 (/admin/users 仅超管),
-//   普通设备 owner 与超管同一创建路径; 有效期选项全部落在服务端 1 分钟-30 天
-//   边界内。
-// - 公开链接 (GET /share/links + /share/links/{id}/revoke): 本切片只有列表与
-//   吊销, 没有创建入口, 也不展示任何 token (列表合同不含 token, 一次性 token
-//   只可能来自真实创建响应)。
-// 列表由服务端按 owner/superadmin 过滤; 桌面端经「账号同步」link 的服务端会话
-// 代理同一批合同 (remote_share_*), 未登录给「登录服务端账号后可用」的引导卡
-// 并指向「账号同步」分区, 不发任何请求。
+// Terminal share card (SHARE158): the real share management UI in account mode.
+// All data comes from real HTTP contracts (internal/fleet/server/sharing_http.go and http.go):
+// - Host shares (POST/GET /share/host-shares + /share/host-shares/{id}/revoke):
+//   a registered user shares an enrolled device (a host with the device agent) with another registered user, who opens
+//   terminals via the device agent within the TTL, never touching the host password or private keys. The create body takes recipient_username,
+//   resolved exactly by the server (case-insensitive); the frontend needs no user directory (/admin/users is superadmin-only),
+//   and plain device owners share the same create path as superadmins; all TTL options fall within the server-side 1 minute-30 day
+//   bounds.
+// - Public links (GET /share/links + /share/links/{id}/revoke): this slice only has list and
+//   revoke, no create entry, and shows no token (the list contract carries no token; a one-time token
+//   can only come from a real create response).
+// The server filters the list by owner/superadmin; the desktop proxies the same contracts (remote_share_*) through the
+// "account sync" link server session; logged out, a "log in to a server account to use this" guide card
+// points to the "account sync" section, and no request is issued.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetDevice } from "../../ipc/fleetApi";
@@ -36,8 +36,8 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-// 有效期选项全部落在服务端 minShareTTL(1 分钟)-maxShareTTL(30 天) 边界内;
-// 默认 24 小时与服务端 defaultHostShareTTL 对齐, 提交时总是显式带 ttl_ms。
+// All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
+// the 24h default aligns with the server defaultHostShareTTL, and ttl_ms is always sent explicitly on submit.
 const SHARE_TTL_OPTIONS = [
   { label: "1 小时", ms: 60 * 60_000 },
   { label: "6 小时", ms: 6 * 60 * 60_000 },
@@ -50,7 +50,7 @@ function shortId(id: string): string {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
 }
 
-// permissionBadge 对合同外的一律按只读展示 (与 publicShareApi 的解析口径一致)。
+// permissionBadge displays anything outside the contract as read-only (consistent with publicShareApi's parsing).
 function permissionBadge(permission: SharePermission): { text: string; tone: string } {
   return permission === "read_write" ? { text: "读写", tone: "nx-badge-amber" } : { text: "只读", tone: "" };
 }
@@ -88,7 +88,7 @@ function ShareUnsupported() {
 }
 
 function ShareLoginHint() {
-  // 未登录不放第二个登录按钮(唯一登录入口在「账号」卡);只说明这一节需要什么。
+  // Logged out, no second login button here (the only login entry is the "account" card); this section only states what it needs.
   return (
     <section className="nx-card">
       <div className="mb-1 flex items-center gap-2">
@@ -118,7 +118,7 @@ function ShareAuthOff() {
 export function ShareCard() {
   const authStatus = useAuth((s) => s.status);
   const account = useFleetAccount();
-  // auth=off 只有 WEB 能感知 (桌面登录本身依赖账号体系, 登录即隐含 auth=on)。
+  // auth=off is only detectable on WEB (desktop login itself relies on the account system; logging in implies auth=on).
   if (WEB && authStatus?.auth === "off") return <ShareAuthOff />;
   if (account.loading) {
     return (
@@ -154,12 +154,12 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const [createError, setCreateError] = useState<string | null>(null);
 
   const loadSeq = useRef(0);
-  // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离创建/吊销在途的
-  // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
+  // accountEpoch bumps only on account switch (manual refresh leaves it alone), isolating in-flight create/revoke
+  // then/catch/finally: late completions from an old account never write into the new account's view.
   const accountEpoch = useRef(0);
 
-  // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (列表/创建表单),
-  // 并递增 loadSeq 使旧账号的晚到响应失效; AuthGate 只是 overlay, 登出再登录不会卸载本卡片。
+  // Account-scope isolation: when user.id changes, reset all account state (list/create form) during render,
+  // and bump loadSeq to invalidate late responses from the old account; AuthGate is only an overlay, so logout/login does not unmount this card.
   const [scopedUserId, setScopedUserId] = useState(userId);
   if (scopedUserId !== userId) {
     setScopedUserId(userId);
@@ -226,7 +226,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
   }, []);
 
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
-  // 服务端要求分享目标是接入设备 (device_agent 行 + 终端开启), 已吊销设备不可分享。
+  // The server requires share targets to be enrolled devices (device_agent row + terminal enabled); revoked devices cannot be shared.
   const shareableDevices = (devices ?? []).filter((d) => d.revoked_at === 0 && d.agent && d.agent.terminal_enabled);
 
   const submitCreate = async () => {
@@ -253,7 +253,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
   };
 
   const revokeHostShare = async (share: HostShareView) => {
-    // epoch 必须在弹出确认前捕获: 确认框打开期间账号切换时, 旧账号的行不得在新会话被吊销。
+    // The epoch must be captured before the confirmation opens: if the account switches while the dialog is open, the old account's row must not be revoked in the new session.
     const epoch = accountEpoch.current;
     const ok = await ask(
       `吊销这条主机分享？\n\n「${share.recipient_username}」将无法再通过此分享在「${deviceName(share.device_id)}」上新建终端，进行中的连接也会尽快断开。`,
@@ -273,7 +273,7 @@ function ShareManagement({ userId, isAdmin }: { userId: string; isAdmin: boolean
   };
 
   const revokeLink = async (link: ShareLinkView) => {
-    // epoch 必须在弹出确认前捕获 (同 revokeHostShare)。
+    // The epoch must be captured before the confirmation opens (same as revokeHostShare).
     const epoch = accountEpoch.current;
     const ok = await ask("吊销这条公开链接？\n\n链接立即失效，持有链接的人将无法再打开对应会话。", {
       title: "吊销公开链接",

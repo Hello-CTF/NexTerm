@@ -72,11 +72,11 @@ const SESSION = {
   createdAt: 0,
 };
 const FRESH_SESSION = { ...SESSION, id: "s2", status: "connected" };
-// 重连成功后会话 id 不变; 后端 reconnect 先把状态置 reconnecting, 前端轮询读到终态。
+// After a successful reconnect the session id is unchanged; the backend reconnect first sets the state to reconnecting, and frontend polling reads the terminal state.
 const RECONNECTED_SESSION = { ...SESSION, status: "connected" as const };
 
-// 重连发起前置为旧状态, reconnect 被调用后 list 才读到 connected,
-// 避免 App 挂载时的 list 把会话刷成 connected 而走 alive 快速路径。
+// The list reads the old state until reconnect is called and only then reads connected,
+// so the App-mount list cannot flip the session to connected and take the alive fast path.
 function listUntilReconnectThenConnected(): void {
   mocks.sessionList.mockImplementation(async () =>
     mocks.reconnect.mock.calls.length > 0 ? [RECONNECTED_SESSION] : [SESSION],

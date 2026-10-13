@@ -68,10 +68,10 @@ func drainControlEvents(events chan ControlEvent) {
 	}
 }
 
-// TestWriteGuestTakesControlAndWrites 钉住基本路径: 无控制者时访客写入即取得
-// 控制权 (controller=guest, grid 与 Claim 同语义, 发控制事件), 字节落到 PTY
-// 通道, 同一访客再次写入是续租 (租约到期时刻前进, 不重复发事件); 租约过期后
-// 同一访客仍可续租恢复。
+// TestWriteGuestTakesControlAndWrites pins the basic path: with no controller, a guest write takes
+// control (controller=guest, grid same semantics as Claim, emits a control event), bytes land in the PTY
+// channel, and a second write from the same guest renews the lease (expiry advances, no repeated event); after
+// lease expiry the same guest can still renew and resume.
 func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 	events := make(chan ControlEvent, 64)
 	manager, connector := newGuestControlManager(t, events)
@@ -103,7 +103,7 @@ func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 		t.Fatalf("control event controller = %q, want preview-share1", event.Controller)
 	}
 
-	// 同一访客续租: 到期时刻前进, 不再发控制事件。
+	// The same guest renews: the expiry advances and no control event is emitted again.
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("pwd\n"), 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 	default:
 	}
 
-	// 租约过期后同一访客仍可写入恢复。
+	// After lease expiry the same guest can still write and resume.
 	forceExpireGuestLease(t, tab)
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("again\n"), time.Minute); err != nil {
 		t.Fatal(err)
@@ -130,8 +130,8 @@ func TestWriteGuestTakesControlAndWrites(t *testing.T) {
 	}
 }
 
-// TestWriteGuestOwnerActive 钉住所有者活跃仲裁: controller 被他人占有时访客
-// 写入返回 ErrGuestControlOwner, 字节不落通道, 不记录租约。
+// TestWriteGuestOwnerActive pins owner-active arbitration: when the controller is held by someone else, a guest
+// write returns ErrGuestControlOwner, bytes do not reach the channel, and no lease is recorded.
 func TestWriteGuestOwnerActive(t *testing.T) {
 	manager, connector := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -157,9 +157,9 @@ func TestWriteGuestOwnerActive(t *testing.T) {
 	}
 }
 
-// TestWriteGuestGuestBusyUntilLeaseExpiry 钉住访客间仲裁: 控制中的访客挡回
-// 其他访客 (ErrGuestControlOwner); 其断线后 controller 被 orphan 清理但租约
-// 仍在, 其他访客得 ErrGuestControlBusy; 租约过期被惰性清理后可立即接管。
+// TestWriteGuestGuestBusyUntilLeaseExpiry pins guest-to-guest arbitration: the controlling guest turns away
+// other guests (ErrGuestControlOwner); after its disconnect the controller is orphan-cleaned but the lease
+// remains, so other guests get ErrGuestControlBusy; once the lease expires and is lazily cleared, they can take over immediately.
 func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	manager, connector := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -210,8 +210,8 @@ func TestWriteGuestGuestBusyUntilLeaseExpiry(t *testing.T) {
 	}
 }
 
-// TestWriteGuestOwnerClaimPreempts 钉住所有者夺回: Claim 立即清访客租约并接管,
-// 访客再写入即得 ErrGuestControlOwner。
+// TestWriteGuestOwnerClaimPreempts pins the owner reclaiming: Claim immediately clears the guest lease and takes over,
+// and a further guest write gets ErrGuestControlOwner.
 func TestWriteGuestOwnerClaimPreempts(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -243,8 +243,8 @@ func TestWriteGuestOwnerClaimPreempts(t *testing.T) {
 	}
 }
 
-// TestReleaseGuest 钉住释放语义: 交还控制权 (grid 观察者语义 + 控制事件) 并
-// 清租约; 重复调用与不相关访客调用都是幂等 no-op; 释放后其他访客立即接管。
+// TestReleaseGuest pins the release semantics: control is handed back (grid observer semantics + control event) and
+// the lease is cleared; repeated calls and calls from unrelated guests are idempotent no-ops; other guests take over immediately after release.
 func TestReleaseGuest(t *testing.T) {
 	events := make(chan ControlEvent, 64)
 	manager, _ := newGuestControlManager(t, events)
@@ -296,9 +296,9 @@ func TestReleaseGuest(t *testing.T) {
 	}
 }
 
-// TestWriteGuestDisconnectCleanup 钉住断线交互: 访客订阅通道断开时 orphan 清理
-// 摘掉 controller 但保留租约 (重连宽限), 同一访客可立即恢复, 其他访客被 busy
-// 挡住, ReleaseGuest 显式清租约后其他访客立即可写。
+// TestWriteGuestDisconnectCleanup pins the disconnect interaction: when a guest's subscription channel drops, orphan cleanup
+// removes the controller but keeps the lease (reconnect grace), the same guest can resume immediately, other guests are blocked
+// by busy, and after ReleaseGuest explicitly clears the lease other guests can write immediately.
 func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -324,7 +324,7 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 		t.Fatalf("lease after disconnect = %q, want preview-share1 (grace window)", lease)
 	}
 
-	// 同一访客在宽限窗内恢复控制。
+	// The same guest resumes control within the grace window.
 	if err := manager.WriteGuest(ctx, tab.ID, "preview-share1", []byte("x"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 		t.Fatalf("controller after resume = %q", info.Controller)
 	}
 
-	// 再次断线后显式释放租约, 其他访客立即接管。
+	// After another disconnect, an explicit lease release lets other guests take over immediately.
 	if _, err := manager.AttachSpectator(ctx, tab.ID, SpectateOptions{ClientID: "preview-share1", ChannelID: "spec-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -357,8 +357,8 @@ func TestWriteGuestDisconnectCleanup(t *testing.T) {
 	}
 }
 
-// TestWriteGuestUnsupportedKinds 钉住能力边界: KindRemote 壳与非 ptyBacked
-// (WinRM) 标签页一律 ErrUnsupported, 即使 controller 空闲或被占有。
+// TestWriteGuestUnsupportedKinds pins the capability boundary: KindRemote shells and non-ptyBacked
+// (WinRM) tabs always return ErrUnsupported, even when the controller is free or held.
 func TestWriteGuestUnsupportedKinds(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -384,7 +384,7 @@ func TestWriteGuestUnsupportedKinds(t *testing.T) {
 	}
 }
 
-// TestWriteGuestClosedTab 钉住关闭边界: 标签页关闭后写与释放都拒绝。
+// TestWriteGuestClosedTab pins the closed boundary: after a tab closes, both write and release are rejected.
 func TestWriteGuestClosedTab(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()
@@ -404,8 +404,8 @@ func TestWriteGuestClosedTab(t *testing.T) {
 	}
 }
 
-// TestWriteGuestConcurrentArbitration 并发摇动访客写/释放与所有者
-// Claim/Release, 配合 -race 暴露租约字段的并发访问问题。
+// TestWriteGuestConcurrentArbitration shakes guest write/release against owner
+// Claim/Release concurrently, exposing concurrent access issues in the lease fields with -race.
 func TestWriteGuestConcurrentArbitration(t *testing.T) {
 	manager, _ := newGuestControlManager(t, nil)
 	ctx := context.Background()

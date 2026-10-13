@@ -13,8 +13,8 @@ const saveHandles = new Map<string, FileHandleLike>();
 
 const CSRF_HEADER = "X-NexTerm-CSRF";
 
-// auth=on 下服务端对 cookie 会话的 POST/DELETE 强制校验 CSRF 头,
-// 拒绝形状固定为 403 + { code:"forbidden", message 含 "CSRF" }(与 commands.ts 同一约定)。
+// With auth=on, the server enforces the CSRF header on POST/DELETE of cookie sessions;
+// the rejection shape is always 403 + { code:"forbidden", message contains "CSRF" } (same convention as commands.ts).
 function isCsrfRejection(status: number, text: string): boolean {
   if (status !== 403) return false;
   try {
@@ -29,11 +29,11 @@ function isCsrfRejection(status: number, text: string): boolean {
   }
 }
 
-// csrfFetch 在 authedFetch 之上携带账号会话 CSRF 头; 精确 CSRF 403 时经 /auth/me
-// 刷新并重试同一请求一次。CSRF 拒绝发生在 requireAuth 中间件、未触达 blob handler,
-// 重试不会重复暂存/预留/删除; 其他 403 原样返回给调用方, 不重试。
+// csrfFetch carries the account session CSRF header on top of authedFetch; on an exact CSRF 403 it refreshes
+// via /auth/me and retries the same request once. CSRF rejection happens in the requireAuth middleware before
+// the blob handler, so the retry does not duplicate stage/reserve/delete; other 403s are returned as-is, no retry.
 async function csrfFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  // 延迟加载 authApi: webFiles 与 authApi 互相引用, 动态加载避免静态环。
+  // Lazily load authApi: webFiles and authApi reference each other; dynamic import avoids a static cycle.
   const { authApi, getCsrfToken } = await import("./authApi");
   const send = (csrf: string | null): Promise<Response> =>
     authedFetch(url, {

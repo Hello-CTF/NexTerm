@@ -8,12 +8,12 @@ import (
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
 
-// mfaEnrollLockedMessage 是 mfa_required 锁定会话的统一拒绝文案。
+// mfaEnrollLockedMessage is the uniform rejection text for mfa_required locked sessions.
 const mfaEnrollLockedMessage = "管理员已要求启用两步验证：完成 TOTP 绑定前，该账号只能使用绑定相关功能"
 
-// mfaEnrollmentLockedFor 判定指定会话身份是否被 mfa_required 策略锁定(未绑定)。
-// reset_required 会话由改密流程单独约束, 两者不叠加(先改密再绑定)。
-// 网关分支无账号会话身份, 不适用该策略。
+// mfaEnrollmentLockedFor decides whether the given session identity is locked by the mfa_required policy (unbound).
+// reset_required sessions are constrained separately by the password-change flow; the two do not stack (change password first, then bind).
+// The gateway branch has no account session identity, so the policy does not apply.
 func (s *Server) mfaEnrollmentLockedFor(r *http.Request, identity *account.Identity) (bool, error) {
 	if identity == nil || identity.MFAEnabled || identity.State == account.StateResetRequired {
 		return false, nil
@@ -57,7 +57,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 						return
 					}
 					ctx := withAccountIdentity(r.Context(), identity)
-					// 同步 opt-in 等按账号用户隔离的设备端状态经 ipc.UserIDFromContext 读取会话身份, 不接受客户端自报
+					// Per-account-user isolated device-side state such as sync opt-in reads the session identity via ipc.UserIDFromContext; client-reported values are not accepted.
 					ctx = ipc.WithUserID(ctx, identity.UserID)
 					ctx = ipc.WithRole(ctx, string(identity.Role))
 					next.ServeHTTP(w, r.WithContext(ctx))
@@ -78,8 +78,8 @@ func unsafeAccountMethod(r *http.Request) bool {
 	}
 }
 
-// authorizeWebSocket 校验 WS 连接; 返回的 identity 仅覆盖账号会话分支,
-// 网关分支无用户身份(返回 nil)。
+// authorizeWebSocket authenticates a WS connection; the returned identity only covers the account session branch,
+// and the gateway branch has no user identity (returns nil).
 func (s *Server) authorizeWebSocket(r *http.Request) (*account.Identity, bool) {
 	if !s.authRequired {
 		return nil, true

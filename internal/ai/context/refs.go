@@ -23,8 +23,9 @@ type RefSpec struct {
 
 type RefFileReader func(ctx context.Context, sessionID, path string) (string, error)
 
-// RenderRefs 把 @ 引用对象展开为注入模型的真实内容：终端标签取当前屏幕（尾截断保留最新输出），
-// 会话取连接摘要，文件取内容（头截断）。整体受 RefTotalRunes 预算限制，逐项失败后标注原因继续。
+// RenderRefs expands @-referenced objects into real content injected into the model: terminal tabs take
+// the current screen (tail-truncated to keep the latest output), sessions take the connection summary,
+// and files take content (head-truncated). All subject to the RefTotalRunes budget; per-item failures are annotated and skipped.
 func (b *Builder) RenderRefs(ctx context.Context, refs []RefSpec, readFile RefFileReader) string {
 	if len(refs) == 0 {
 		return ""

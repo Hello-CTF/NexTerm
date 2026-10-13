@@ -166,7 +166,7 @@ func TestFleetHTTPOffMode(t *testing.T) {
 	}
 }
 
-// mfa_required 策略下未绑定会话在 fleet 面同样被锁: 绑定只能走主服务 /auth/totp*。
+// Under the mfa_required policy, unenrolled sessions are likewise locked on the fleet surface: enrollment can only go through the main service /auth/totp*.
 func TestFleetHTTPMFAEnrollLock(t *testing.T) {
 	fixture := newHTTPFixture(t, false)
 	alice := fixture.createUser(t, "alice")
@@ -404,12 +404,12 @@ func TestFleetHTTPDeviceListStateDigest(t *testing.T) {
 		return devices[0].(map[string]any)["agent"].(map[string]any)
 	}
 
-	// 控制通道未注册 (设备离线) 时不下发摘要
+	// No digest is delivered while the control channel is unregistered (device offline)
 	if agent := agentViewOf(); agent["state_digest"] != nil {
 		t.Fatalf("offline agent view carries state_digest: %v", agent)
 	}
 
-	// 控制通道 hello 上报摘要后随列表下发 (浏览器 supervisor hello 的唯一来源)
+	// After the control channel hello reports the digest, it is delivered with the list (the only source of the browser supervisor hello)
 	_, controlServer := wsPair(t)
 	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc")
 	if agent := agentViewOf(); agent["state_digest"] != "digest-abc" {

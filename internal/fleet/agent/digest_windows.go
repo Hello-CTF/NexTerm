@@ -4,8 +4,8 @@ package agent
 
 import "golang.org/x/sys/windows"
 
-// currentIdentity 返回与 internal/supervisor 一致的 windows 用户标识
-// (当前进程令牌的用户 SID 串), 用于计算 hello 上报的 supervisor 状态摘要。
+// currentIdentity returns the windows user identifier consistent with internal/supervisor
+// (the user SID string of the current process token), used to compute the supervisor state digest reported in hello.
 func currentIdentity() (string, error) {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {

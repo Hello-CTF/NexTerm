@@ -6,9 +6,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 )
 
-// serveAgentSync 处理 POST /agent/sync: 设备凭证鉴权 + 指标落库 + 服务状态回写,
-// 响应携带服务端期望配置 (desired_autostart / metrics_interval_ms / terminal_enabled)。
-// 凭证或设备已吊销一律 403, agent 按合同视同吊销停止。
+// serveAgentSync handles POST /agent/sync: device credential auth + metrics persistence + service state write-back,
+// with the response carrying the server-desired config (desired_autostart / metrics_interval_ms / terminal_enabled).
+// Bad credentials or a revoked device always get 403, and the agent treats that as revoked and stops per the contract.
 func (s *Service) serveAgentSync(w http.ResponseWriter, r *http.Request) {
 	var request agent.SyncRequest
 	if err := decodeFleetJSON(w, r, &request); err != nil {
@@ -64,8 +64,8 @@ type agentCurrentURLRequest struct {
 	Reason   string `json:"reason"`
 }
 
-// serveAgentCurrentURL 处理 POST /agent/current-url: 记录 agent 切换后的当前
-// 接入地址并写 failover 审计。
+// serveAgentCurrentURL handles POST /agent/current-url: records the agent's current access address after a switch
+// and writes a failover audit.
 func (s *Service) serveAgentCurrentURL(w http.ResponseWriter, r *http.Request) {
 	var request agentCurrentURLRequest
 	if err := decodeFleetJSON(w, r, &request); err != nil {

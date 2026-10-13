@@ -41,7 +41,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
   };
 });
 
-// 避免真实 argon2id(生产参数一次数秒):信封生成/解包全部打桩,其余保持真实。
+// Avoid real argon2id (production params take seconds per run): stub all envelope generation/unwrapping, keep the rest real.
 vi.mock("../features/auth/crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("../features/auth/crypto")>();
   return {
@@ -171,7 +171,7 @@ describe("mfa_required 强制绑定门(store)", () => {
 describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
   it("自动开始绑定: 确认动态码 → 展示恢复码 → 保存后进入应用", async () => {
     useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
-    // AuthGate 挂载时会 refresh(): me() 返回未绑定 + mfa_required 会话, 门停在强制绑定页。
+    // AuthGate runs refresh() on mount: me() returns an unbound + mfa_required session, so the gate stays on the forced-binding page.
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     mocks.totpSetup.mockResolvedValue({ secret: "SECRETSECRETSECRETSECRETSECRETSEC", otpauth_uri: "otpauth://totp/NexTerm:bob?secret=SECRET&issuer=NexTerm" });
     mounted = mount(createElement(AuthGate));
@@ -333,7 +333,7 @@ describe("mfa_enrollment_required 全局事件", () => {
     );
     await expect(request("GET", "/auth/dek")).rejects.toMatchObject({ code: "mfa_enrollment_required" });
     await flushUntil(() => useAuth.getState().gate === "mfa_enroll");
-    // 已绑定会话不误伤
+    // Already-bound sessions are not affected
     useAuth.setState({ gate: "ready", user: BOUND_USER });
     await expect(request("GET", "/auth/dek")).rejects.toMatchObject({ code: "mfa_enrollment_required" });
     expect(useAuth.getState().gate).toBe("ready");

@@ -20,15 +20,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 会话 cookie 与 CSRF 头是与 internal/server 账号路由约定的线上常量。
+// Session cookie and CSRF header are wire constants agreed with the internal/server account routes.
 const (
 	sessionCookieName = "nexterm_session"
 	csrfHeaderName    = "X-NexTerm-CSRF"
-	// accountStateResetRequired 是账号视图 user.state 的线上常量(internal/account StateResetRequired)。
+	// accountStateResetRequired is the wire constant for the account view user.state (internal/account StateResetRequired).
 	accountStateResetRequired = "reset_required"
 )
 
-// errSessionExpired 表示服务端会话已失效, 客户端需要用保存的口令重新登录。
+// errSessionExpired means the server-side session is no longer valid; the client must re-login with the saved password.
 var errSessionExpired = errors.New("sync session expired")
 
 type remoteClient struct {
@@ -38,7 +38,7 @@ type remoteClient struct {
 	csrfToken   string
 }
 
-// RemoteConfig 是一次同步所需的远端账号连接参数。
+// RemoteConfig holds the remote account connection parameters needed for one sync.
 type RemoteConfig struct {
 	URL      string
 	Username string
@@ -64,8 +64,8 @@ type accountSessionView struct {
 	CSRFToken string `json:"csrf_token"`
 }
 
-// loginOutcome 是 /auth/login 的 200 响应分类: 已建立会话(可区分是否强制改密)或 MFA 挑战。
-// MFA 挑战不携带会话 cookie, 凭 ticket 走 /auth/totp/login 换正式会话。
+// loginOutcome classifies the /auth/login 200 response: an established session (optionally with forced password change) or an MFA challenge.
+// The MFA challenge carries no session cookie; the ticket is exchanged for a formal session via /auth/totp/login.
 type loginOutcome struct {
 	established   bool
 	resetRequired bool
@@ -112,7 +112,7 @@ func (c *remoteClient) login(ctx context.Context, username, password string) (*l
 	}, nil
 }
 
-// loginTOTP 用 MFA 挑战票据 + 动态码(或一次性恢复码)换正式会话。
+// loginTOTP exchanges the MFA challenge ticket + a TOTP code (or a one-time recovery code) for a formal session.
 func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error {
 	body, err := json.Marshal(map[string]string{"ticket": ticket, "code": code})
 	if err != nil {
@@ -139,7 +139,7 @@ func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error
 	return c.holdSession(response, session.CSRFToken)
 }
 
-// holdSession 把登录响应的会话 cookie 与 CSRF 令牌收入内存。
+// holdSession takes the login response's session cookie and CSRF token into memory.
 func (c *remoteClient) holdSession(response *http.Response, csrfToken string) error {
 	cookie := ""
 	for _, candidate := range response.Cookies() {
@@ -259,8 +259,8 @@ func (c *remoteClient) get(ctx context.Context, path string, out any) error {
 	}
 }
 
-// request 执行任意方法的 JSON 请求并保留 HTTP 状态, 语义与 do 一致:
-// err 仅覆盖传输层失败, 业务失败以状态码+rpcErr 返回。写请求自动携带 CSRF 头。
+// request executes a JSON request with any method and preserves the HTTP status, same semantics as do:
+// err covers transport-level failures only; business failures return status code + rpcErr. Write requests automatically carry the CSRF header.
 func (c *remoteClient) request(ctx context.Context, method, path string, payload, out any) (int, *ipc.Error, error) {
 	var body io.Reader
 	if payload != nil {
@@ -281,8 +281,8 @@ func (c *remoteClient) request(ctx context.Context, method, path string, payload
 	return c.do(request, out, true)
 }
 
-// api 是类型化远端方法的统一出口: 200 解码成功, 401 交给调用方的重登流程,
-// 其余状态映射成 ipc.Error。
+// api is the unified exit for typed remote methods: 200 decodes success, 401 goes to the caller's re-login flow,
+// other statuses map to ipc.Error.
 func (c *remoteClient) api(ctx context.Context, method, path string, payload, out any) error {
 	status, rpcErr, err := c.request(ctx, method, path, payload, out)
 	if err != nil {
@@ -298,9 +298,9 @@ func (c *remoteClient) api(ctx context.Context, method, path string, payload, ou
 	}
 }
 
-// remoteAPIError 把远端账号/舰队/分享路由的失败映射成 ipc.Error:
-// 服务端下发的 rpcErr 代码原样透传(其 message 已是面向用户的终态文案),
-// 无 rpcErr 时按状态码归类。
+// remoteAPIError maps failures of remote account/fleet/sharing routes to ipc.Error:
+// server-issued rpcErr codes pass through verbatim (their message is already the final user-facing text),
+// otherwise failures are classified by status code.
 func remoteAPIError(status int, rpcErr *ipc.Error) error {
 	if rpcErr != nil {
 		return ipc.NewError(rpcErr.Code, rpcErr.Message)
@@ -352,8 +352,8 @@ func (c *remoteClient) post(ctx context.Context, path string, payload, out any, 
 	return c.do(request, out, csrf)
 }
 
-// do 执行请求并保留 HTTP 状态: err 仅覆盖传输层失败, 业务失败以状态码+rpcErr 返回,
-// 保证 409 等语义状态能到达调用方的映射逻辑(如 errHeadMismatch)。
+// do executes the request and preserves the HTTP status: err covers transport-level failures only; business failures return status code + rpcErr,
+// so semantic statuses like 409 reach the caller's mapping logic (e.g. errHeadMismatch).
 func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.Error, error) {
 	if c.cookieToken != "" {
 		request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookieToken})
@@ -443,7 +443,7 @@ func isLocalOrPrivate(hostname string) bool {
 	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
 }
 
-// 同步客户端按 insecure 缓存复用: Transport 内含连接池, 每请求新建会耗尽端口并丢失 keep-alive。
+// Sync HTTP clients are cached and reused by insecure: the Transport holds a connection pool; creating one per request would exhaust ports and lose keep-alive.
 var (
 	secureSyncHTTPClient   = newSyncHTTPClient(false)
 	insecureSyncHTTPClient = newSyncHTTPClient(true)

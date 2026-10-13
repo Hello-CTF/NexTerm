@@ -23,7 +23,7 @@ export function installLongPressContextMenu(): void {
         return;
       }
       const el = event.target instanceof Element ? event.target : null;
-      // xterm 区域的长按是它自带的文本选择, 不能抢占
+      // Long-press inside xterm is its own text selection; do not intercept
       if (!el || el.closest(".xterm")) return;
       const touch = event.touches[0];
       startX = touch.clientX;
@@ -65,7 +65,7 @@ export function installLongPressContextMenu(): void {
   window.addEventListener("touchend", cancel, { passive: true });
   window.addEventListener("touchcancel", cancel, { passive: true });
 
-  // 菜单已弹出时吞掉抬手后的那次 click, 避免误触发选中/激活
+  // Swallow the click right after lifting the finger when the menu is already open, to avoid accidental select/activate
   window.addEventListener(
     "click",
     (event) => {

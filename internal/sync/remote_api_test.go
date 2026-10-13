@@ -25,8 +25,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// remoteAPIFixture 是账号 + fleet/share 路由的最小 faithful 复刻: 会话签发/校验与
-// CSRF 派生走真实 account.Accounts, 业务路由返回与服务端合同同形的 canned 载荷。
+// remoteAPIFixture is a minimal faithful replica of the account + fleet/share routes: session issuing/validation and
+// CSRF derivation go through the real account.Accounts, while business routes return canned payloads shaped like the server contracts.
 type remoteAPIFixture struct {
 	*httptest.Server
 	db       *store.Store
@@ -99,7 +99,7 @@ func (f *remoteAPIFixture) createUser(t *testing.T, username, password string) s
 	return user.ID
 }
 
-// bindTOTP 为用户完成真实 TOTP 绑定, 返回 base32 密钥(测试端据此生成动态码)。
+// bindTOTP completes a real TOTP binding for the user and returns the base32 secret (the test side generates TOTP codes from it).
 func (f *remoteAPIFixture) bindTOTP(t *testing.T, username, password string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -511,7 +511,7 @@ func (f *remoteAPIFixture) serveHealthz(w http.ResponseWriter, _ *http.Request) 
 	writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "nexterm-server", "version": "9.9.9-test"})
 }
 
-// serveFail 按路径里的状态码回失败: ?rpc=bad_param 时携带 rpcErr 形状, 否则裸状态码。
+// serveFail returns a failure with the status code from the path: with ?rpc=bad_param it carries an rpcErr shape, otherwise a bare status code.
 func (f *remoteAPIFixture) serveFail(w http.ResponseWriter, r *http.Request) {
 	var status int
 	if _, err := fmt.Sscanf(r.PathValue("status"), "%d", &status); err != nil {
@@ -560,7 +560,7 @@ func TestRemoteAPIListDevicesSendsSessionCookie(t *testing.T) {
 		t.Fatalf("owner = %+v", devices.Devices[0].Owner)
 	}
 
-	// 无会话 cookie 的裸客户端必须被 401 拒绝并映射为 errSessionExpired。
+	// A bare client without a session cookie must be rejected with 401 and mapped to errSessionExpired.
 	bare := &remoteClient{base: fixture.URL}
 	if _, err := bare.ListDevices(context.Background()); !errors.Is(err, errSessionExpired) {
 		t.Fatalf("bare ListDevices err = %v, want errSessionExpired", err)
@@ -606,7 +606,7 @@ func TestRemoteAPIWriteCarriesCSRF(t *testing.T) {
 		t.Fatalf("write CSRF header = %q, want session token", seen)
 	}
 
-	// 只有 cookie 没有 CSRF 令牌的写请求必须被服务端 403 拒绝并映射为 forbidden。
+	// A write request with the cookie but no CSRF token must be rejected by the server with 403 and mapped to forbidden.
 	stale := &remoteClient{base: fixture.URL, cookieToken: client.cookieToken}
 	if _, err := stale.PutBaseURLs(context.Background(), entries); err == nil {
 		t.Fatal("write without CSRF token must fail")
@@ -640,7 +640,7 @@ func TestRemoteAPIErrorMapping(t *testing.T) {
 		requireCode(t, err, tc.code)
 	}
 
-	// rpcErr 透传服务端 message; 401 映射为 errSessionExpired。
+	// rpcErr passes through the server message; 401 maps to errSessionExpired.
 	err := client.api(ctx, http.MethodGet, "/fail/403?rpc=forbidden", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "服务端业务失败") {
 		t.Fatalf("rpcErr message not propagated: %v", err)
@@ -702,7 +702,7 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 		t.Fatalf("healthz = %q, %v", version, err)
 	}
 
-	// 非超管调 admin 路由: 服务端 403 透传。
+	// A non-admin calling an admin route: the server 403 passes through.
 	requireCode(t, func() error {
 		_, err := client.AdminListUsers(ctx)
 		return err
@@ -720,7 +720,7 @@ func TestRemoteCallReloginOn401(t *testing.T) {
 	device := newTestDevice(t)
 	config := RemoteConfig{URL: fixture.URL, Username: "alice", Password: "alice-pw-123"}
 
-	// 首次 fleet 调用被 401: remoteCall 必须 dropSession 并用保存口令重登后成功。
+	// The first fleet call gets a 401: remoteCall must dropSession and re-login with the saved password, then succeed.
 	fixture.failNextDevices401.Store(true)
 	var devices *RemoteFleetDevices
 	err := device.engine.remoteCall(context.Background(), config, func(ctx context.Context, client *remoteClient) error {
@@ -741,7 +741,7 @@ func TestRemoteCallReloginOn401(t *testing.T) {
 		t.Fatalf("logins = %d, want 2 (initial + re-login after 401)", got)
 	}
 
-	// 会话已缓存: 第二次调用不再重登。
+	// The session is cached: the second call does not re-login.
 	err = device.engine.remoteCall(context.Background(), config, func(ctx context.Context, client *remoteClient) error {
 		_, err := client.ListDevices(ctx)
 		return err

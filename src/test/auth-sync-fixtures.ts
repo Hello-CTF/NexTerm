@@ -1,5 +1,5 @@
-// Go json.Marshal 真实输出,结构体定义逐字段拷贝自 internal/sync/object.go(字段顺序与 tag 完全一致),
-// 由一次性生成程序经 Go encoding/json 产出(base64 编码,解码即线上载荷字节):
+// Real Go json.Marshal output; struct definitions copied field by field from internal/sync/object.go (field order and tags exactly the same),
+// produced by a one-off generator through Go encoding/json (base64-encoded; decoding yields the wire payload bytes):
 //
 //	type transcriptObject struct {
 //		ID             string                  `json:"id"`
@@ -8,8 +8,8 @@
 //		...
 //	}
 //
-// 覆盖: sessionId 位置、零 chunk 省略 content、<>& HTML 转义、U+2028/U+2029、多语言文本。
-// 前端载荷构造必须与这些字节逐字节一致,否则跨端 payload hash 永不相同。
+// Coverage: sessionId position, content omitted for zero chunks, <>& HTML escaping, U+2028/U+2029, multilingual text.
+// Frontend payload construction must match these bytes byte for byte, otherwise the cross-end payload hash will never match.
 export const GO_SYNC_FIXTURES: Record<string, string> = {
   transcriptBasic: "eyJpZCI6InQxIiwic2Vzc2lvbklkIjoiczEiLCJhc3NldElkIjoiYTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjEsImVuZGVkQXQiOjIsImJ5dGVzIjozLCJjaHVua3MiOjEsInRydW5jYXRlZCI6ZmFsc2UsImNvbnRlbnQiOlt7InNlcSI6MSwidGFiSWQiOiJ0YWItMSIsInRzIjoxLCJkYXRhIjoiQVFJRCJ9XX0=",
   transcriptEnded10: "eyJpZCI6InQxIiwic2Vzc2lvbklkIjoiczEiLCJhc3NldElkIjoiYTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjksImVuZGVkQXQiOjEwLCJieXRlcyI6MywiY2h1bmtzIjoxLCJ0cnVuY2F0ZWQiOmZhbHNlLCJjb250ZW50IjpbeyJzZXEiOjEsInRhYklkIjoidGFiLTEiLCJ0cyI6MSwiZGF0YSI6IkFRSUQifV19",
@@ -25,7 +25,7 @@ export const GO_SYNC_FIXTURES: Record<string, string> = {
   snippet: "eyJpZCI6InMtMSIsImdyb3VwSWQiOiJnMSIsIm5hbWUiOiLluLjnlKgiLCJib2R5IjoibHMgLWxhIFx1MDAzY1x1MDAyNlx1MDAzZSIsInNvcnQiOjAsImNyZWF0ZWRBdCI6MSwidXBkYXRlZEF0IjoyfQ==",
   tombstoneGroup: "eyJ0YXJnZXRLaW5kIjoiZ3JvdXAiLCJkZWxldGVkQXQiOjUwMH0=",
   tombstoneCredential: "eyJ0YXJnZXRLaW5kIjoiY3JlZGVudGlhbCIsImRlbGV0ZWRBdCI6NDAwfQ==",
-  // M165: knownHostObject/aiProfileObject 的真实 Go json.Marshal 产出(结构体逐字段拷贝自 internal/sync/object.go)。
+  // M165: real Go json.Marshal output for knownHostObject/aiProfileObject (structs copied field by field from internal/sync/object.go).
   knownHostBasic: "eyJpZCI6ImtoLTEiLCJob3N0IjoiMTAuMC4wLjkiLCJwb3J0IjoyMiwia2V5VHlwZSI6InNzaC1lZDI1NTE5IiwiZmluZ2VycHJpbnQiOiJTSEEyNTY6NVZhNXcySzdiaDIrNU5tNEV3dlgwbjhRVjJjN0NYV3EzUjZlM2QzdzRYayIsImFkZGVkQXQiOjE3MDAwMDAwMDAwMDB9",
   aiProfileFull: "eyJpZCI6InAtMSIsIm5hbWUiOiLnlJ/kuqcgXHUwMDNj5qGj5qGIXHUwMDNlIFx1MDAyNiBtb3JlIiwiYmFzZVVybCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tL3YxIiwiYXBpS2V5Ijoic2stbGl2ZVx1MDAzY1x1MDAzZVx1MDAyNlx1MjAyOGtleSIsIm1vZGVsIjoiZ3B0LTRvIiwiZmFsbGJhY2tNb2RlbCI6ImdwdC00by1taW5pIiwidGVtcGVyYXR1cmUiOjAuNywiY29udGV4dFdpbmRvdyI6MTI4MDAwLCJtYXhUb2tlbnMiOjQwOTYsInByb3h5IjoiaHR0cDovLzEyNy4wLjAuMTo3ODkwIiwic3RyZWFtIjp0cnVlLCJyZXF1ZXN0VGltZW91dFNlY29uZHMiOjYwLCJpZGxlVGltZW91dFNlY29uZHMiOjMwMCwiY2lyY3VpdEZhaWx1cmVUaHJlc2hvbGQiOjUsImNpcmN1aXRDb29sZG93blNlY29uZHMiOjMwLCJ1cGRhdGVkQXQiOjE3MDAwMDAwMDEwMDB9",
   aiProfileMinimal: "eyJpZCI6InAtMiIsIm5hbWUiOiJtaW5pbWFsIiwiYmFzZVVybCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tL3YxIiwiYXBpS2V5IjoiIiwibW9kZWwiOiJtIiwidGVtcGVyYXR1cmUiOjAsImNvbnRleHRXaW5kb3ciOjgxOTIsInByb3h5IjpudWxsLCJzdHJlYW0iOmZhbHNlLCJ1cGRhdGVkQXQiOjE3MDAwMDAwMDIwMDB9",

@@ -13,8 +13,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// pushAllConcurrently 模拟多设备同时推送: 每个 worker 推送一批互不相同对象,
-// head 冲突时重读重试。所有批次必须最终全部应用。
+// pushAllConcurrently simulates multiple devices pushing at once: each worker pushes a batch of distinct objects,
+// re-reading and retrying on head conflict. All batches must eventually be applied.
 func pushAllConcurrently(t *testing.T, ctx context.Context, objectStore *objectStore, userID string, workers, perWorker int) string {
 	t.Helper()
 	var wg sync.WaitGroup
@@ -55,7 +55,7 @@ func pushAllConcurrently(t *testing.T, ctx context.Context, objectStore *objectS
 	return head
 }
 
-// assertSeqContiguous 校验并发分配结果: 对象齐全, seq 从 1 起连续且不重复。
+// assertSeqContiguous validates the concurrent allocation result: all objects present, seq contiguous from 1 with no duplicates.
 func assertSeqContiguous(t *testing.T, ctx context.Context, objectStore *objectStore, userID string, total int) {
 	t.Helper()
 	entries, _, maxSeq, err := objectStore.idList(ctx, userID)
@@ -79,7 +79,7 @@ func assertSeqContiguous(t *testing.T, ctx context.Context, objectStore *objectS
 	}
 }
 
-// SQLite 并发推送: 多连接文件库下 head/seq 分配必须串行化, 无重复 seq, 无对象丢失。
+// SQLite concurrent push: with a multi-connection file database, head/seq allocation must be serialized, with no duplicate seq and no lost objects.
 func TestObjectStoreConcurrentPushSQLite(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "sync-concurrent.db"))

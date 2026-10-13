@@ -12,12 +12,12 @@ import (
 	"unicode/utf16"
 )
 
-// windowsTaskName 同时是计划任务名与 v1.x 旧系统服务 (sc.exe) 名, 迁移时按同名清理。
+// windowsTaskName is both the scheduled task name and the v1.x legacy system service (sc.exe) name; migration cleans up by the same name.
 const windowsTaskName = "NexTermAgent"
 
-// windowsManager 把 agent 自启注册为当前用户的计划任务: LogonTrigger 登录即起,
-// LogonType S4U (不存密码的"无论是否登录都运行") 让进程跑在非交互 window station,
-// console 子系统二进制也不会出现 console 窗口; 注册/删除不需要管理员权限。
+// windowsManager registers agent autostart as a scheduled task for the current user: LogonTrigger starts it at logon,
+// LogonType S4U ("run whether user is logged on or not" without storing a password) lets the process run in a non-interactive window station,
+// and console-subsystem binaries show no console window; registration/removal needs no admin rights.
 type windowsManager struct {
 	runner        CommandRunner
 	commandPrefix []string
@@ -27,7 +27,7 @@ func newWindowsManager(runner CommandRunner, commandPrefix ...string) ServiceMan
 	return &windowsManager{runner: runner, commandPrefix: commandPrefix}
 }
 
-// windowsTaskUser 返回计划任务的运行账户 (DOMAIN\user); 测试可替换。
+// windowsTaskUser returns the run account of the scheduled task (DOMAIN\user); replaceable in tests.
 var windowsTaskUser = func() (string, error) {
 	current, err := user.Current()
 	if err != nil {
@@ -64,13 +64,13 @@ func (m *windowsManager) Install(ctx context.Context, executable, dataDir string
 }
 
 func (m *windowsManager) Uninstall(ctx context.Context) error {
-	// /End 尽力而为: 任务不存在或未在运行都继续走删除, 真实失败由 /Delete 暴露。
+	// /End is best-effort: a missing or non-running task both continue to deletion; real failures surface from /Delete.
 	_, _ = m.runner.Run(ctx, "schtasks.exe", "/End", "/TN", windowsTaskName)
 	output, err := m.runner.Run(ctx, "schtasks.exe", "/Delete", "/TN", windowsTaskName, "/F")
 	if err != nil && !windowsTaskMissing(trimOutput(output)) {
-		// 非中英语言区域下"任务不存在"的文案不可枚举, /Delete 失败后复查:
-		// 任务已不存在 (退出码失败) 即视为删除成功; schtasks 本身不可用
-		// (非退出码错误) 不适用此兜底。
+		// The "task does not exist" wording is not enumerable across non-EN/ZH locales, so after a failed /Delete re-check:
+		// task already gone (exit-code failure) counts as deleted; schtasks itself being unavailable
+		// (a non-exit-code error) is not covered by this fallback.
 		if _, queryErr := m.runner.Run(ctx, "schtasks.exe", "/Query", "/TN", windowsTaskName, "/FO", "CSV", "/NH"); queryErr != nil && isExitError(queryErr) {
 			return m.removeLegacyService(ctx)
 		}
@@ -83,8 +83,8 @@ func (m *windowsManager) Status(ctx context.Context) ServiceState {
 	status := ServiceState{}
 	_, err := m.runner.Run(ctx, "schtasks.exe", "/Query", "/TN", windowsTaskName, "/FO", "CSV", "/NH")
 	if err != nil {
-		// 任务不存在时 /Query 以非零码退出, 视为未安装; 只有 schtasks.exe
-		// 本身不可执行 (非退出码错误) 才是需要暴露的环境故障。
+		// When the task does not exist, /Query exits with a non-zero code, which counts as not installed; only schtasks.exe
+		// itself being unexecutable (a non-exit-code error) is an environment fault worth surfacing.
 		if !isExitError(err) {
 			status.LastError = err.Error()
 		}
@@ -97,7 +97,7 @@ func (m *windowsManager) Status(ctx context.Context) ServiceState {
 		status.LastError = failureText(trimmed, err)
 		return status
 	}
-	// Get-ScheduledTask 的 State 是枚举, 名字不随系统区域设置本地化。
+	// Get-ScheduledTask's State is an enum whose names are not localized with the system locale.
 	switch trimmed {
 	case "Running":
 		status.Enabled = true
@@ -111,11 +111,11 @@ func (m *windowsManager) Status(ctx context.Context) ServiceState {
 	return status
 }
 
-// windowsTaskStateCommand 以退出码区分任务不存在 (Get-ScheduledTask 报错) 与读到状态。
+// windowsTaskStateCommand distinguishes a missing task (Get-ScheduledTask errors) from a successfully read state via the exit code.
 const windowsTaskStateCommand = "(Get-ScheduledTask -TaskName '" + windowsTaskName + "').State.ToString()"
 
-// removeLegacyService 清除 v1.x 用 sc.exe 注册的同名系统服务 (LocalSystem, 需管理员);
-// 服务不存在 (1060) 与未运行 (1062) 属正常, 其余失败说明旧部署仍在, 必须报错而不是放过。
+// removeLegacyService removes the same-named system service registered with sc.exe by v1.x (LocalSystem, requires admin);
+// service missing (1060) and not running (1062) are normal; any other failure means the old deployment is still present and must error rather than be let through.
 func (m *windowsManager) removeLegacyService(ctx context.Context) error {
 	if output, err := m.runner.Run(ctx, "sc.exe", "stop", windowsTaskName); err != nil && !scMissing(trimOutput(output)) && !scNotRunning(trimOutput(output)) {
 		return fmt.Errorf("检测到旧版系统服务 %s, 停止失败 (需要管理员权限, 请以管理员身份重跑一次完成迁移): %w", windowsTaskName, err)
@@ -126,7 +126,7 @@ func (m *windowsManager) removeLegacyService(ctx context.Context) error {
 	return nil
 }
 
-// sc 错误码数字跨语言环境稳定 (自由文本消息会被本地化): 1060=服务不存在, 1062=服务未运行。
+// sc error code numbers are stable across locales (the free-text messages get localized): 1060=service does not exist, 1062=service not running.
 func scMissing(output string) bool {
 	return strings.Contains(output, "FAILED 1060")
 }
@@ -144,8 +144,8 @@ func windowsTaskMissing(output string) bool {
 	return strings.Contains(output, "cannot find the file specified") || strings.Contains(output, "找不到指定的文件")
 }
 
-// schtasksHint 把 schtasks 失败翻译成可操作文案: 工具缺失 (非退出码错误) 与
-// 拒绝访问 (输出跨语言环境匹配 EN/ZH 两种固定文案) 分开指向, 其余原样带回输出。
+// schtasksHint translates schtasks failures into actionable wording: tool missing (non-exit-code error) and
+// access denied (matching the two fixed EN/ZH wordings in the output across locales) are pointed out separately; anything else passes the output through as-is.
 func schtasksHint(output string, err error) error {
 	if !isExitError(err) {
 		return fmt.Errorf("%w (schtasks.exe 不可用, 无法管理计划任务)", err)
@@ -193,8 +193,8 @@ func windowsXMLEscape(s string) string {
 	return windowsXMLReplacer.Replace(s)
 }
 
-// writeWindowsTaskXML 把任务定义写到临时文件; schtasks /Create /XML 只接受
-// 带 BOM 的 UTF-16LE 文件。
+// writeWindowsTaskXML writes the task definition to a temp file; schtasks /Create /XML only accepts
+// UTF-16LE files with a BOM.
 func writeWindowsTaskXML(xmlDoc string) (string, error) {
 	file, err := os.CreateTemp("", "nexterm-agent-task-*.xml")
 	if err != nil {

@@ -1,6 +1,6 @@
-// fleet/sharing 数据访问按传输切换: WEB 走浏览器 HTTP 客户端 (会话 cookie+CSRF
-// 由浏览器持有), 桌面走 remote* 代理 (经「账号同步」link 的服务端会话, cookie+CSRF
-// 由 Go 侧持有)。两侧方法签名与返回类型同形, 视图主体不分叉。
+// fleet/sharing data access switches by transport: WEB goes through the browser HTTP client (session cookie+CSRF
+// held by the browser), desktop goes through the remote* proxies (server session via the "account sync" link, cookie+CSRF
+// held by the Go side). Method signatures and return types are identical on both sides; the view body does not fork.
 
 import { WEB } from "../../ipc/env";
 import { fleetApi } from "../../ipc/fleetApi";

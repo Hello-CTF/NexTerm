@@ -11,9 +11,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// TestAttachSpectatorSnapshotThenLive 钉住只读订阅的核心契约: 首帧是当前屏幕
-// 快照 (JSON 文本帧), 之后只有实时输出 (二进制帧), 不含滚动历史, 且快照与
-// 实时输出之间无缺口 (feed 锁内完成快照+订阅)。
+// TestAttachSpectatorSnapshotThenLive pins the read-only subscription's core contract: the first frame is the current
+// screen snapshot (JSON text frame), afterwards only live output (binary frames), no scrollback, and no gap between
+// the snapshot and live output (snapshot + subscription happen inside the feed lock).
 func TestAttachSpectatorSnapshotThenLive(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{
@@ -77,7 +77,7 @@ func TestAttachSpectatorSnapshotThenLive(t *testing.T) {
 		t.Fatalf("snapshot lines = %q", joined)
 	}
 
-	// 订阅后的实时输出以二进制帧到达, 内容与顺序与终端输出一致。
+	// Live output after subscribing arrives as binary frames, matching the terminal output in content and order.
 	if err := channel.emit([]byte("beta-line\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +87,8 @@ func TestAttachSpectatorSnapshotThenLive(t *testing.T) {
 	}
 }
 
-// TestAttachSpectatorNoControlNoInput 钉住只读边界: 观看者不取得控制权 (无
-// 控制者时也不占), 以其身份写输入一律 ErrNotController。
+// TestAttachSpectatorNoControlNoInput pins the read-only boundary: the watcher does not take control (not even when
+// no one holds it), and writing input as the watcher always yields ErrNotController.
 func TestAttachSpectatorNoControlNoInput(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{
@@ -102,7 +102,7 @@ func TestAttachSpectatorNoControlNoInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, connected, "owner-client", "owner-1")
-	// 摘掉 owner 通道, 让标签页没有控制者。
+	// Detach the owner channel so the tab has no controller.
 	if err := manager.DetachChannel("owner-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +132,8 @@ func TestAttachSpectatorNoControlNoInput(t *testing.T) {
 	}
 }
 
-// TestAttachSpectatorValidates 钉住参数与状态校验: 缺通道 ID、标签页不存在、
-// 通道被他页占用都拒绝。
+// TestAttachSpectatorValidates pins parameter and state validation: missing channel ID, nonexistent tab,
+// and a channel already used by another tab are all rejected.
 func TestAttachSpectatorValidates(t *testing.T) {
 	connector := newFakeConnector()
 	manager := NewManager(Config{

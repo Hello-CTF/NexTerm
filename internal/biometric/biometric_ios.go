@@ -36,7 +36,7 @@ const (
 	keychainProtected
 )
 
-// Current 汇总设备生物识别能力与 Keychain 材料状态。
+// Current summarizes device biometric capability and Keychain material state.
 func Current() (Status, error) {
 	status := Status{Available: true, CanEvaluate: bool(C.nx_biometric_can_evaluate())}
 	state, err := keychainItemState()
@@ -50,10 +50,10 @@ func Current() (Status, error) {
 	return status, nil
 }
 
-// Unlock 触发系统面容/指纹验证后返回 Keychain 中的解锁材料。
-// 受 ACL 保护的 item 由 SecItemCopyMatching 自行弹出验证(单一路径);
-// 迁移未完成的存量 item 保持先 LAContext 显式验证再读值的旧编排。
-// 用户取消或验证失败返回 error(消息可直接展示), 材料不会外泄。
+// Unlock returns the Keychain unlock material after triggering the system face/fingerprint verification.
+// ACL-protected items get their verification prompt from SecItemCopyMatching itself (single path);
+// legacy items not yet migrated keep the old flow of explicit LAContext verification before reading the value.
+// User cancellation or verification failure returns an error (message is display-ready); the material never leaks.
 func Unlock() (string, error) {
 	state, err := keychainItemState()
 	if err != nil {
@@ -89,8 +89,8 @@ func Unlock() (string, error) {
 	return value, nil
 }
 
-// Enable 把解锁材料(凭据库主密码)重建为绑定当前面容集的 ACL item
-// (WhenUnlockedThisDeviceOnly + BiometryCurrentSet), 新增/删除面容后旧材料失效。
+// Enable rebuilds the unlock material (credential vault master password) as an ACL item bound to the current face set
+// (WhenUnlockedThisDeviceOnly + BiometryCurrentSet); the old material becomes invalid after faces are added or removed.
 func Enable(password string) error {
 	if password == "" {
 		return errors.New("解锁材料为空")
@@ -109,7 +109,7 @@ func Enable(password string) error {
 	return nil
 }
 
-// Disable 删除 Keychain 中的解锁材料; 不存在视为成功。
+// Disable deletes the unlock material from the Keychain; a missing item counts as success.
 func Disable() error {
 	account, free := cString(materialAccount)
 	defer free()
@@ -136,9 +136,9 @@ func evaluate() error {
 	return nil
 }
 
-// migrateLegacyItem 把存量无 ACL item 静默重建为 ACL item: 设备解锁态下直读
-// 不弹窗; ACL 先备妥再删旧建新, 创建失败原 item 不动, 重建失败可重新启用恢复,
-// 由 Unlock 的显式验证路径继续兜底。
+// migrateLegacyItem silently rebuilds a legacy item without ACL into an ACL item: direct reads while the device is unlocked
+// show no prompt; the ACL is prepared before deleting the old and creating the new, a failed creation leaves the original item
+// untouched, and a failed rebuild can be recovered by re-enabling, with Unlock's explicit verification path as the fallback.
 func migrateLegacyItem() bool {
 	value, found, err := keychainRead("")
 	if err != nil || !found {

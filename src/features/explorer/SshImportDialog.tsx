@@ -65,7 +65,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   });
 
   const termius = source === "termius";
-  // ssh-home 始终扫描默认 ~/.ssh，不携带其他来源页填写的隐藏路径
+  // ssh-home always scans the default ~/.ssh, without the hidden paths filled in on other source pages
   const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
 
   const runPreview = async () => {
@@ -97,7 +97,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       (action) => action !== "skip",
     );
 
-  // 一键导入只提交当前仍为选中状态的可新增项；手动 skip 与冲突行的覆盖选择都不包含，覆盖需走「导入选中项」
+  // One-click import submits only currently-still-selected addable items; manual skips and conflict-row override choices are excluded - overrides go through "import selected"
   const quickImportHosts =
     preview === null
       ? []

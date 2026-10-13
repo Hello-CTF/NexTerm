@@ -10,9 +10,9 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
-// 本文件的视图结构与服务端路由合同一一对应(JSON 标签保持线上 snake_case):
-// fleet 对齐 internal/fleet/server/http.go 与 sharing_http.go,
-// 账号对齐 internal/server/account_http.go、preview_http.go 与 remote_http.go。
+// View structs in this file correspond one-to-one with the server route contracts (JSON tags keep the wire snake_case):
+// fleet aligns with internal/fleet/server/http.go and sharing_http.go,
+// account aligns with internal/server/account_http.go, preview_http.go, and remote_http.go.
 
 type RemoteFleetOwner struct {
 	ID       string `json:"id"`
@@ -105,7 +105,7 @@ type RemoteHostShareInput struct {
 	TTLMS             int64  `json:"ttlMs"`
 }
 
-// RemoteShareLink.Token 仅创建响应携带, 列表/吊销响应不含 token。
+// RemoteShareLink.Token is only carried by the create response; list/revoke responses omit the token.
 type RemoteShareLink struct {
 	ID             string `json:"id"`
 	OwnerID        string `json:"owner_id"`
@@ -144,15 +144,15 @@ type RemotePreviewLinks struct {
 	Links []RemotePreviewLink `json:"links"`
 }
 
-// RemotePreviewLinkCreate 是 POST /share/previews 的创建响应: 唯一携带一次性
-// token 的入口, token 只用于当场拼公开 URL, 不持久化。
+// RemotePreviewLinkCreate is the POST /share/previews create response: the only entry
+// carrying the one-time token, which is used on the spot to build the public URL and is never persisted.
 type RemotePreviewLinkCreate struct {
 	RemotePreviewLink
 	Token string `json:"token"`
 }
 
-// RemoteSession 是 POST /share/remote-sessions 的建壳响应: session_id 既是
-// 推流 (feed)/删除路径里的 {id}, 也直接用于 POST /share/previews 建只读预览。
+// RemoteSession is the POST /share/remote-sessions shell-creation response: session_id serves as
+// the {id} in the feed/delete paths and is also used directly for POST /share/previews to create a read-only preview.
 type RemoteSession struct {
 	SessionID string `json:"session_id"`
 	Cols      uint32 `json:"cols"`
@@ -198,7 +198,7 @@ type RemoteAccountUserResult struct {
 	User RemoteAccountUser `json:"user"`
 }
 
-// fleet: 设备与注册码。
+// fleet: devices and enrollment codes.
 
 func (c *remoteClient) ListDevices(ctx context.Context) (*RemoteFleetDevices, error) {
 	var view RemoteFleetDevices
@@ -256,7 +256,7 @@ func (c *remoteClient) PutBaseURLs(ctx context.Context, entries []RemoteBaseURLE
 	return &view, nil
 }
 
-// sharing: 主机分享、会话公开链接与只读预览。
+// sharing: host shares, session public links, and read-only previews.
 
 func (c *remoteClient) ListHostShares(ctx context.Context) (*RemoteHostShares, error) {
 	var view RemoteHostShares
@@ -322,8 +322,8 @@ func (c *remoteClient) RevokePreviewLink(ctx context.Context, id string) error {
 	return c.api(ctx, http.MethodPost, "/share/previews/"+url.PathEscape(id)+"/revoke", nil, nil)
 }
 
-// 远程会话壳: 桌面端只读预览的数据面 — 壳是无本地进程的服务端终端标签页,
-// 输出由 RemoteSessionFeedDial 的推流 WS 喂入。
+// Remote session shells: the data plane of the desktop read-only preview - a shell is a server-side terminal tab with no local process,
+// fed output from the RemoteSessionFeedDial streaming WS.
 
 func (c *remoteClient) RemoteSessionCreate(ctx context.Context, title, assetID string, cols, rows uint32) (*RemoteSession, error) {
 	payload := map[string]any{"title": title, "asset_id": assetID, "cols": cols, "rows": rows}
@@ -347,7 +347,7 @@ func (c *remoteClient) CreatePreviewLink(ctx context.Context, sessionID string, 
 	return &view, nil
 }
 
-// account: 自己的设备、管理员用户管理与改密。
+// account: own devices, admin user management, and password change.
 
 func (c *remoteClient) Me(ctx context.Context) (*RemoteAccountMe, error) {
 	var view RemoteAccountMe
@@ -386,7 +386,7 @@ func (c *remoteClient) AdminCreateUser(ctx context.Context, username, password, 
 	return &view, nil
 }
 
-// AdminSetUserState 映射服务端仅有的两个状态动作: disabled → /disable, reset_required → /reset。
+// AdminSetUserState maps the server's only two state actions: disabled -> /disable, reset_required -> /reset.
 func (c *remoteClient) AdminSetUserState(ctx context.Context, userID, state string) error {
 	var action string
 	switch state {
@@ -400,7 +400,7 @@ func (c *remoteClient) AdminSetUserState(ctx context.Context, userID, state stri
 	return c.api(ctx, http.MethodPost, "/admin/users/"+url.PathEscape(userID)+"/"+action, nil, nil)
 }
 
-// changeMyPassword 提交改密与新 DEK 信封; 信封由调用方用新旧口令重包裹生成。
+// changeMyPassword submits the password change with the new DEK envelope; the caller generates the envelope by re-wrapping with the old and new passwords.
 func (c *remoteClient) changeMyPassword(ctx context.Context, oldPassword, newPassword string, envelopes *vault.UserDEKEnvelopes) error {
 	payload := map[string]any{
 		"old_password":      oldPassword,
@@ -414,7 +414,7 @@ func (c *remoteClient) changeMyPassword(ctx context.Context, oldPassword, newPas
 	return c.api(ctx, http.MethodPost, "/auth/password", payload, nil)
 }
 
-// Healthz 读 /healthz 的服务端版本; 该路由公开, 无需会话。
+// Healthz reads the server version from /healthz; the route is public and needs no session.
 func (c *remoteClient) Healthz(ctx context.Context) (string, error) {
 	var view struct {
 		Version string `json:"version"`

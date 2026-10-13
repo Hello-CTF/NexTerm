@@ -126,10 +126,10 @@ func loggerDefault() *slog.Logger {
 	return slog.Default()
 }
 
-// withRequestTimeouts 给普通 HTTP 请求施加读/写 idle 超时: 请求体每次读取、
-// 响应每次写入都重新续期, 慢速但持续传输的连接不受影响; 空闲 keep-alive 由
-// http.Server 的 IdleTimeout 把关, 请求头由 ReadHeaderTimeout 把关。
-// 连接一旦被 hijack(WebSocket 等长连接)即清除全部 deadline, 交还给上层自理。
+// withRequestTimeouts applies read/write idle timeouts to normal HTTP requests: every body read and every response
+// write renews the deadline, so slow but steadily transferring connections are unaffected; idle keep-alive is governed
+// by http.Server's IdleTimeout, and request headers by ReadHeaderTimeout.
+// Once a connection is hijacked (WebSocket and other long-lived connections), all deadlines are cleared and the upper layer takes over.
 func withRequestTimeouts(readIdle, writeIdle time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		controller := http.NewResponseController(w)

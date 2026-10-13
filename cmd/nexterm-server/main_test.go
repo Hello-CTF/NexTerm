@@ -143,15 +143,17 @@ func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	if !strings.Contains(string(ids.body), `"entries"`) {
 		t.Fatalf("ids response = %s", ids.body)
 	}
-	// 推送必须携带 CSRF 头; 缺失时拒绝。
+	// Push requests must carry the CSRF header; rejected when missing.
 	requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
 		"protocol": 2, "known_head": pushed.Head, "objects": []map[string]any{},
 	}, &accountSession{cookie: session.cookie}, http.StatusForbidden)
 }
 
-// TestSyncOnlyProcessServesPeerBundleRPC 守住 sync-only 对端命令面合同:
-// /sync/rpc 只挂 sync_digest/sync_export/sync_import 三命令(健康如实报 3),
-// 与账号 RPC 同一套会话与 CSRF 把关, 匿名与会话内无 CSRF 一律拒绝, 第四个命令 not_found。
+// TestSyncOnlyProcessServesPeerBundleRPC guards the sync-only peer command
+// surface contract: /sync/rpc mounts only sync_digest/sync_export/sync_import
+// (health reports 3 accordingly), shares the account RPC session and CSRF
+// checks - anonymous requests and CSRF-less session requests are rejected,
+// and a fourth command gets not_found.
 func TestSyncOnlyProcessServesPeerBundleRPC(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
@@ -272,10 +274,12 @@ func TestServerProcessAuthDefaultsOn(t *testing.T) {
 	}
 }
 
-// TestServerProcessLoopbackUninitializedLoginFree 守住 M196 合同(M202):
-// 全新数据目录 + --auth=loopback 的实例未初始化即免登录 —— /auth/status 上报
-// loopback 且 initialized=false, /rpc 匿名可用; 显式初始化路径保留, 初始化后
-// 账号路由仍要求会话(/auth/me 匿名 401), 模式仍上报 loopback。
+// TestServerProcessLoopbackUninitializedLoginFree guards the M196 contract
+// (M202): a fresh data dir with --auth=loopback is login-free before
+// initialization - /auth/status reports loopback with initialized=false and
+// /rpc works anonymously; the explicit init path remains, and after init the
+// account routes still require a session (anonymous /auth/me is 401) while
+// the mode still reports loopback.
 func TestServerProcessLoopbackUninitializedLoginFree(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
@@ -320,7 +324,8 @@ func TestServerProcessLoopbackUninitializedLoginFree(t *testing.T) {
 func TestServerProcessRequireVault(t *testing.T) {
 	binary := buildServerBinary(t)
 
-	// 未配置 key 时 --require-vault 复用数据目录自动生成的主密钥, 不再拒绝启动。
+	// Without a configured key, --require-vault reuses the auto-generated
+	// master key from the data dir instead of refusing to start.
 	generatedDir := t.TempDir()
 	process, address := startServerProcess(t, binary, generatedDir, false, "--require-vault", "--auth=loopback")
 	status := vaultStatusFromHealth(t, waitForHealth(t, process, address))
@@ -375,9 +380,11 @@ func TestServerProcessRequireVault(t *testing.T) {
 	}
 }
 
-// TestServerProcessAutoGeneratesMasterKey 守住无显式 key 时的开箱即用合同:
-// 首次启动在数据目录生成 0600 的 64 字符 hex master.key 并把凭据库初始化解锁;
-// 重启复用同一把 key(不重新生成), 旧密文仍可解密。
+// TestServerProcessAutoGeneratesMasterKey guards the out-of-box contract
+// without an explicit key: first start generates a 0600 64-char hex
+// master.key in the data dir and initializes/unlocks the credential store;
+// restart reuses the same key (no regeneration) and old ciphertext stays
+// decryptable.
 func TestServerProcessAutoGeneratesMasterKey(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
@@ -558,8 +565,9 @@ func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
 		}
 	})
 
-	// 暴露警告必须如实反映 auth 模式: auth=off 不得谎称已启用访问控制,
-	// on/loopback(非回环监听等同 on) 保留账号会话口径。
+	// The exposure warning must reflect the auth mode honestly: auth=off must
+	// not claim access control is enabled; on/loopback (non-loopback listen
+	// counts as on) keep the account-session wording.
 	for _, tc := range []struct {
 		name     string
 		syncOnly bool
@@ -672,7 +680,8 @@ type accountSession struct {
 	userID string
 }
 
-// initSuperadminThroughProcess 经控制台初始化码完成超管初始化并登录, 返回会话 cookie 与 CSRF 令牌。
+// initSuperadminThroughProcess completes superadmin init and login via the
+// console init code, returning the session cookie and CSRF token.
 func initSuperadminThroughProcess(t *testing.T, process *testServerProcess, address, username, password string) *accountSession {
 	t.Helper()
 	marker := "一次性初始化码: "

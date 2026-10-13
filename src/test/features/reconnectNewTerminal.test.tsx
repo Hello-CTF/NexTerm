@@ -208,7 +208,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     click(newTerminalButton());
     await waitUntil(() => expect(mocks.sessionReconnect).toHaveBeenCalledTimes(1));
 
-    // connected 事件先于 helper 的轮询到达 store, 此时连点走 pending 检查而不是 alive 快速路径
+    // The connected event reaches the store before the helper's polling; repeated clicks now take the pending check instead of the alive fast path
     act(() => useUi.setState({ sessions: [session("connected")] }));
     click(newTerminalButton());
     click(newTerminalButton());

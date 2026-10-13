@@ -7,12 +7,12 @@ import (
 	"github.com/coder/websocket"
 )
 
-// serveDeviceBridgeRelay 处理 GET /fleet/devices/{id}/bridge: owner
-// 经会话认证后, 服务端经控制通道请 agent 出站拨一条桥接, 再把这条用户侧
-// websocket 与桥接字节流双向接通。supervisor 协议帧原样穿过 (二进制帧, 字节透明),
-// 会话语义 (create/attach/resume) 由对端 supervisor helper 裁决。
-// GET 是安全方法, 与其他 session 路由一样不要求 CSRF; 跨源 WS 由
-// websocket.Accept 的默认 Origin 校验与同站 cookie 共同拦截。
+// serveDeviceBridgeRelay handles GET /fleet/devices/{id}/bridge: after owner
+// session authentication, the server asks the agent over the control channel to dial a bridge outbound, then connects this user-side
+// websocket and the bridge byte stream bidirectionally. Supervisor protocol frames pass through as-is (binary frames, byte-transparent);
+// session semantics (create/attach/resume) are arbitrated by the supervisor helper on the other end.
+// GET is a safe method and, like the other session routes, requires no CSRF; cross-origin WS is blocked by
+// websocket.Accept's default Origin check together with same-site cookies.
 func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request) {
 	identity := identityFrom(r)
 	deviceID := r.PathValue("id")
