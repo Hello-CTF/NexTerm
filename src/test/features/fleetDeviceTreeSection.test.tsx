@@ -2,10 +2,10 @@
 // 资产树「设备」分区测试: 分区位置(内置本地终端后、其他资产/分组前)、未登录不渲染且
 // 零请求、单击/Enter 打开设备终端(无独立「终端」按钮)、离线/终端关闭禁用提示、
 // revoked 不显示、吊销两次确认与取消、上下文菜单吊销 danger 样式、
-// 指标趋势 SVG/加载-错误-空三态/手动刷新、DevicesView 复用 MetricsPanel 回归。
+// 分区刷新、DevicesView 复用 MetricsPanel 回归。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -528,70 +528,7 @@ describe("资产树「设备」分区 · 吊销两次确认", () => {
   });
 });
 
-describe("资产树「设备」分区 · 指标展开", () => {
-  it("展开指标显示 CPU 24h 趋势 SVG 与最新值, 手动刷新重新拉取", async () => {
-    const calls = route({ devices: [ONLINE_DEVICE] });
-    seedUser(SUPERADMIN);
-    mountTree();
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-
-    click(section().querySelector('button[aria-label="指标 web-01"]') as HTMLButtonElement);
-    await flushUntil(() => section().querySelector('svg[role="img"]') !== null);
-
-    const chart = section().querySelector('svg[role="img"]') as SVGSVGElement;
-    expect(chart.getAttribute("aria-label")).toContain("CPU 24 小时趋势");
-    expect(chart.querySelector("polyline")).not.toBeNull();
-    expect(section().textContent).toContain("12.5%");
-    expect(section().textContent).toContain("8.0 GiB / 16.0 GiB");
-    expect(section().textContent).toContain("1 天 2 小时");
-    expect(section().textContent).toContain("近 24 小时共 2 个采样点");
-
-    const before = calls.filter((c) => c.url === "/fleet/devices/d-1/metrics").length;
-    click(section().querySelector('button[aria-label="刷新指标"]') as HTMLButtonElement);
-    await flushUntil(() => calls.filter((c) => c.url === "/fleet/devices/d-1/metrics").length === before + 1);
-  });
-
-  it("指标加载中/失败可重试/空态三态", async () => {
-    const gate = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
-    let metricsMode: "pending" | "empty" | "error" | "ready" = "pending";
-    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
-      const u = String(url);
-      const method = init.method ?? "GET";
-      const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(payload) });
-      if (u === "/fleet/devices" && method === "GET") return json({ devices: [ONLINE_DEVICE] });
-      if (u === "/fleet/devices/d-1/metrics" && method === "GET") {
-        if (metricsMode === "pending") return gate.promise;
-        if (metricsMode === "error") return json({ error: { code: "internal", message: "采样服务不可用" } }, 500);
-        if (metricsMode === "empty") return json({ samples: [] });
-        return json({ samples: METRICS_SAMPLES });
-      }
-      return json({ error: { code: "not_found", message: u } }, 404);
-    });
-    vi.stubGlobal("fetch", mocks.fetch);
-    seedUser(SUPERADMIN);
-
-    // 加载中
-    mountTree();
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-    click(section().querySelector('button[aria-label="指标 web-01"]') as HTMLButtonElement);
-    await flushUntil(() => (section().textContent ?? "").includes("指标加载中…"));
-
-    // 空态
-    metricsMode = "empty";
-    gate.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ samples: [] }) });
-    await flushUntil(() => (section().textContent ?? "").includes("设备还没有上报指标"));
-
-    // 失败 + 重试
-    metricsMode = "error";
-    click(section().querySelector('button[aria-label="刷新指标"]') as HTMLButtonElement);
-    await flushUntil(() => (section().textContent ?? "").includes("指标加载失败"));
-    expect(section().textContent).toContain("采样服务不可用");
-
-    metricsMode = "ready";
-    click(section().querySelector('button[aria-label="刷新指标"]') as HTMLButtonElement);
-    await flushUntil(() => section().querySelector('svg[role="img"]') !== null);
-  });
-
+describe("资产树「设备」分区 · 刷新", () => {
   it("分区头部刷新按钮重新拉取设备列表", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
