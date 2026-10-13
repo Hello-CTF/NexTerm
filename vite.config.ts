@@ -15,7 +15,7 @@ const config = defineConfig({
     strictPort: true,
     // 根目录会积累 .tower/target 等产物目录(主检出可达百万级文件): vite dev 默认
     // watch 整棵 root, 会把产物全部 walk 一遍, heap 冲过 2GB 后 OOM (M238)。忽略
-    // 规则锚定 root 本身, 与验收 config 共用 acceptance-watch-ignores.mjs 这一套。
+    // 规则锚定 root 本身, 复用 src/test/lib/acceptance-watch-ignores.mjs 这一套。
     watch: { ignored: acceptanceWatchIgnored(root) },
   },
   // dep 扫描默认按 **/*.html 收集入口, 同样会走进产物目录; 钉到唯一 HTML 入口。

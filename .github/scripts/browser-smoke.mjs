@@ -3,8 +3,6 @@
 // 以 --auth=loopback 启动真实 nexterm-server 服务 SPA, 用 CDP 直连系统 Chrome 验收
 // jsdom 无法覆盖的最小行为集: 真实浏览器启动进工作台、纯键盘 Tab 焦点导航、
 // /ws/events 真实帧(经 /rpc layout_put 触发 layout://changed)、真实服务端 reload 恢复。
-// 覆盖范围之外的条目 (窄宽溢出、触摸命中、WS 断线重连、RPC 抖动、auth=on CSRF、
-// 物理设备与真实部署) 仍是缺口, 见 .github/acceptance/real-target-gaps.json, 不算通过。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";

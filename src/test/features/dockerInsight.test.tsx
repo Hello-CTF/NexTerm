@@ -1218,10 +1218,4 @@ describe("parseStatsOutput", () => {
       pids: "12",
     });
   });
-
-  it("parses demo-mode pipe rows and skips unparseable lines", () => {
-    const rows = parseStatsOutput("aaaa11112222|web|0.50%|64MiB\r\njunk-line\n");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "aaaa11112222", name: "web", cpuPerc: "0.50%", memUsage: "64MiB" });
-  });
 });

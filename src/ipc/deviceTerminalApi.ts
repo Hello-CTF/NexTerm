@@ -570,9 +570,9 @@ export class DeviceBridge implements DeviceBridgeHandle {
   }
 }
 
-// openDeviceTerminal 在两条桥接上完成 create+attach (与 Go 客户端/acceptance
-// 同一模型)。create 携带客户端生成的稳定 id+attempt (internal/supervisor/
-// client.go 同一合同): creator 连接从建立起保留到 open 结束, create 成功后
+// openDeviceTerminal 在两条桥接上完成 create+attach (与 Go 客户端同一模型)。
+// create 携带客户端生成的稳定 id+attempt (internal/supervisor/client.go 同一合同):
+// creator 连接从建立起保留到 open 结束, create 成功后
 // 任何失败 (含 attach connect 被 401/403 拒绝) 都用这条切换前已鉴权的连接
 // killSession 回收; Created 因取消/断连未交付 (info=nil) 时不能推断未创建
 // (服务端用 context.Background() 完成 create, 回包 best-effort), 按 attempt

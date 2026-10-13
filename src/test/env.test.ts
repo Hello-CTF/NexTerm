@@ -34,7 +34,7 @@ describe("desktop/web 检测", () => {
     vi.resetModules();
     vi.stubGlobal(
       "window",
-      windowWith({ __NEXTERM_TRANSPORT__: "desktop", wails: {} }, "?demo=1"),
+      windowWith({ __NEXTERM_TRANSPORT__: "desktop", wails: {} }),
     );
     env = await import("../ipc/env");
     expect(env.TRANSPORT).toBe("desktop");

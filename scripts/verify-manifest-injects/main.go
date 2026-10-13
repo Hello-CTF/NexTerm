@@ -561,5 +561,5 @@ func main() {
 		fatalf("%v", err)
 	}
 
-	fmt.Println("\n全部断言通过；外部真机验收仍以 evidence gap 单独记录。")
+	fmt.Println("\n全部断言通过。")
 }

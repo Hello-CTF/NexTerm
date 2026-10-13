@@ -35,8 +35,6 @@ const report = {
   format: { format, architecture: "arm64", static: false },
   assertions: [{ id: "package", status: "passed", detail: `${format} package is present and readable` }],
   status: "passed",
-  feature_parity_claim: false,
-  real_target_acceptance_claim: false,
 };
 fs.writeFileSync(`${file}.artifact.json`, `${JSON.stringify(report, null, 2)}\n`);
 console.warn(`${id}: ${bytes} bytes; report=${file}.artifact.json`);

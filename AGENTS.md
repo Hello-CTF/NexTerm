@@ -79,13 +79,13 @@
 - 静态契约：`go run ./scripts/verify-manifest-injects`；workflow 复用接线 `go run ./scripts/check-reuse-wiring`（CI 设 `SOURCE_DATE_EPOCH=1`）；upsert 冲突列-目标表一致性 `go run ./scripts/check-conflict-columns`。
 - 已安装 task 时 `task check` 一次跑完上述常规项（`verify-manifest-injects` 在其中，复用接线检查不在其中，改动相关文件时以 `task verify:wiring` 单独执行）；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
 - CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
-- 真实 Chromium 验收：`task smoke:browser`（`.github/scripts/browser-smoke.mjs`）不依赖演示模式 - 构建真实 dist 后以 `--auth=loopback` 真实服务端服务 SPA，用 Node 内置 WebSocket 裸连 CDP 驱动系统 Chrome（`CHROME_PATH` 可覆盖），覆盖真实启动进工作台、纯键盘 Tab 焦点导航、`/ws/events` 真实帧（`/rpc layout_put` 触发 `layout://changed`）与真实服务端 reload 恢复；不在 CI 门禁内，按需本地跑。其余真实浏览器行为（窄宽溢出、触摸命中、WebSocket 断线重连、RPC 抖动、auth=on CSRF 等）仍无自动化验收，属未覆盖缺口，如实记录在 `.github/acceptance/real-target-gaps.json` 与 release notes，不得当作已通过。
+- 真实 Chromium 验收：`task smoke:browser`（`.github/scripts/browser-smoke.mjs`）不依赖演示模式 - 构建真实 dist 后以 `--auth=loopback` 真实服务端服务 SPA，用 Node 内置 WebSocket 裸连 CDP 驱动系统 Chrome（`CHROME_PATH` 可覆盖），覆盖真实启动进工作台、纯键盘 Tab 焦点导航、`/ws/events` 真实帧（`/rpc layout_put` 触发 `layout://changed`）与真实服务端 reload 恢复；不在 CI 门禁内，按需本地跑。其余真实浏览器行为（窄宽溢出、触摸命中、WebSocket 断线重连、RPC 抖动、auth=on CSRF 等）仍无自动化验收，不得当作已通过。
 
 ## 分层测试节奏
 
 - 实现期只跑聚焦测试：与改动直接相关的 Go 包 / 前端测试，外加 `pnpm typecheck`、`pnpm lint`；不为每个小改动重复全仓套件。
 - 高风险改动（并发、协议、持久化、安全、数据库）一旦可运行，立即补跑相关集成测试与 `go test -race ./...`；涉及 build tag 的按需加 `-tags`。
-- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验 15 个最终产物并生成 `SHA256SUMS`。release 资产共 16 个：6 个桌面包（2 个 NSIS、2 个 DMG、2 个 deb）+ 2 个服务端 tar.gz + 2 个移动包（apk、ipa）+ 5 个 agent 包（linux/darwin tar.gz 各两个架构、1 个 windows amd64 zip）+ `SHA256SUMS`，不生成也不上传 `release-evidence.json` 与 `real-target-gaps.json`；真实环境验证缺口只在 release notes 与 Pages 文档中如实说明。
+- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时跑 `node .github/scripts/release-evidence.mjs <产物目录>` 校验 15 个最终产物并生成 `SHA256SUMS`。release 资产共 16 个：6 个桌面包（2 个 NSIS、2 个 DMG、2 个 deb）+ 2 个服务端 tar.gz + 2 个移动包（apk、ipa）+ 5 个 agent 包（linux/darwin tar.gz 各两个架构、1 个 windows amd64 zip）+ `SHA256SUMS`。
 - 分层不削弱门禁：CI 保留全部质量检查，上文"质量命令"全绿要求不变；评审须实际运行并核对行为，不得凭汇报放行。
 
 ## pprof 调试

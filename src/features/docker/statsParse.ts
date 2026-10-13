@@ -10,15 +10,6 @@ export interface DockerStatsRow {
   pids: string;
 }
 
-const EMPTY_ROW: Omit<DockerStatsRow, "id" | "name"> = {
-  cpuPerc: "",
-  memUsage: "",
-  memPerc: "",
-  netIO: "",
-  blockIO: "",
-  pids: "",
-};
-
 export function parseStatsOutput(raw: string): DockerStatsRow[] {
   const rows: DockerStatsRow[] = [];
   for (const line of raw.split(/\r?\n/)) {
@@ -49,16 +40,6 @@ function parseStatsLine(line: string): DockerStatsRow | null {
     } catch {
       return null;
     }
-  }
-  const parts = line.split("|");
-  if (parts.length >= 4) {
-    return {
-      ...EMPTY_ROW,
-      id: parts[0].trim(),
-      name: parts[1].trim().replace(/^\//, ""),
-      cpuPerc: parts[2].trim(),
-      memUsage: parts[3].trim(),
-    };
   }
   return null;
 }

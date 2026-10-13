@@ -426,7 +426,7 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/release-template.md > candidate/release-body.md
-          printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和）。\n真实环境验证缺口（真实浏览器、真机安装与部署等）见仓库文档。\n' >> candidate/release-body.md
+          printf '\n### 验证说明\n\n本 Release 附带 `SHA256SUMS`（文件校验和）。\n' >> candidate/release-body.md
       - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -643,8 +643,6 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     format: inspected.inspected,
     assertions: inspected.assertions,
     status: assertionsFailed ? "failed" : "passed",
-    feature_parity_claim: false,
-    real_target_acceptance_claim: false,
   };
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
