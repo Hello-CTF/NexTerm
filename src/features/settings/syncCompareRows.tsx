@@ -33,6 +33,7 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
   known_host: "已知主机",
   ai_profile: "AI 模型档案",
   ai_permission: "AI 权限",
+  ai_grant: "AI 授权",
   preference: "偏好设置",
 };
 

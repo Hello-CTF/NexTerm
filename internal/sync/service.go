@@ -61,6 +61,12 @@ func WithPermissionsReload(reload func(context.Context) error) Option {
 	}
 }
 
+func WithGrantsReload(reload func(context.Context) error) Option {
+	return func(s *Service) {
+		s.grantsReload = reload
+	}
+}
+
 type Service struct {
 	store             *store.Store
 	vault             *vault.Vault
@@ -72,6 +78,7 @@ type Service struct {
 	logger            *slog.Logger
 	profilesReload    func(context.Context) error
 	permissionsReload func(context.Context) error
+	grantsReload      func(context.Context) error
 	syncPeriod        time.Duration
 
 	settingsMu  stdsync.Mutex
@@ -97,6 +104,10 @@ func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
 
 func (s *Service) SetPermissionsReload(reload func(context.Context) error) {
 	s.permissionsReload = reload
+}
+
+func (s *Service) SetGrantsReload(reload func(context.Context) error) {
+	s.grantsReload = reload
 }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
@@ -610,6 +621,11 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 		if s.permissionsReload != nil {
 			if err := s.permissionsReload(ctx); err != nil {
 				s.engine.logger.Warn("reload synced AI permission failed", "error", err)
+			}
+		}
+		if s.grantsReload != nil {
+			if err := s.grantsReload(ctx); err != nil {
+				s.engine.logger.Warn("reload synced AI grants failed", "error", err)
 			}
 		}
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})

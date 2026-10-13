@@ -16,21 +16,21 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 	engine.session = &remoteSession{key: "k", userID: "u-engine"}
 	engine.sessionMu.Unlock()
 
-	// The anonymous ctx reads the owning user's default-on state via the engine session.
+	// The anonymous ctx reads the owning user's default state via the engine session.
 	view, err := instance.service.KindOptInGet(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.KnownHost || !view.AIProfile || !view.AIPermission || !view.Preferences {
+	if !view.KnownHost || !view.AIProfile || !view.AIPermission || !view.AIGrant || !view.Preferences {
 		t.Fatalf("engine session user should see defaults on: %+v", view)
 	}
 
-	// Anonymous set writes the engine session user.
-	view, err = instance.service.KindOptInSet(context.Background(), KindOptInPatch{KnownHost: boolPtr(false)})
+	// Anonymous set writes the engine session user (including an explicit aiGrant opt-out).
+	view, err = instance.service.KindOptInSet(context.Background(), KindOptInPatch{KnownHost: boolPtr(false), AIGrant: boolPtr(false)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.KnownHost {
+	if view.KnownHost || view.AIGrant {
 		t.Fatalf("set via engine session failed: %+v", view)
 	}
 
@@ -39,7 +39,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !other.KnownHost {
+	if !other.KnownHost || !other.AIGrant {
 		t.Fatalf("u-other must keep defaults on: %+v", other)
 	}
 
@@ -70,7 +70,7 @@ func TestKindOptInEngineSessionFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if anon.KnownHost || anon.AIProfile || anon.AIPermission || anon.Preferences {
+	if anon.KnownHost || anon.AIProfile || anon.AIPermission || anon.AIGrant || anon.Preferences {
 		t.Fatalf("anonymous get must be all false: %+v", anon)
 	}
 	if _, err := instance.service.KindOptInSet(context.Background(), KindOptInPatch{KnownHost: boolPtr(true)}); err == nil {

@@ -84,8 +84,8 @@ beforeEach(() => {
     url: "https://sync.example.com", username: "alice", insecure: false,
     hasPassword: true, verifiedAt: 1700000000000, lastError: "",
   });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, preferences: true });
-  mocks.kindOptInSet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, preferences: true });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
+  mocks.kindOptInSet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
   mocks.wake.mockResolvedValue(undefined);
   mocks.me.mockRejectedValue({ code: "not_found", message: "不可用" });
   mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "需要超级管理员权限" });

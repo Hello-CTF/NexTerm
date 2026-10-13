@@ -16,6 +16,9 @@ import {
   type SyncObjectKind,
 } from "../auth/crypto";
 import {
+  aiGrantDevicePayload,
+  aiGrantModePayload,
+  aiGrantRulePayload,
   aiPermissionPayload,
   aiProfilePayload,
   collectAssetPayload,
@@ -857,7 +860,7 @@ async function localEntity(
 // a profile apiKey withheld (locked/unavailable/error) likewise only records a warning; keyless profiles (apiKeySet=false) are unaffected by vault lock.
 async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
   const warnings: string[] = [];
-  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, preferences] = await Promise.all([
+  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles, aiPermission, aiGrants, preferences] = await Promise.all([
     assetApi.groupList(),
     assetApi.snippetList(),
     loadOptedInTranscripts(),
@@ -867,6 +870,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     optIn.knownHost ? collectKnownHostsAll() : Promise.resolve([]),
     optIn.aiProfile ? collectAIProfilesAll() : Promise.resolve([]),
     optIn.aiPermission ? syncApi.collectAIPermission() : Promise.resolve({ id: "", mode: "", dangerRules: [], updatedAt: 0, found: false }),
+    optIn.aiGrant ? syncApi.collectAIGrants() : Promise.resolve({ grants: [], rules: [], modes: [] }),
     optIn.preferences ? syncApi.collectPreferences() : Promise.resolve([]),
   ]);
   const byId = new Map<string, LocalEntity>();
@@ -899,6 +903,16 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
   if (aiPermission.found) {
     byId.set(aiPermission.id, await localEntity(aiPermission.id, "ai_permission", "全局 AI 权限", aiPermission.updatedAt, null, aiPermissionPayload(aiPermission)));
   }
+  for (const g of aiGrants.grants) {
+    byId.set(g.id, await localEntity(g.id, "ai_grant", g.deviceId, g.updatedAt, null, aiGrantDevicePayload(g)));
+  }
+  for (const r of aiGrants.rules) {
+    const name = r.path ? `${r.deviceId} ${r.action} ${r.path}` : `${r.deviceId} ${r.action}`;
+    byId.set(r.id, await localEntity(r.id, "ai_grant", name, r.updatedAt, null, aiGrantRulePayload(r)));
+  }
+  for (const m of aiGrants.modes) {
+    byId.set(m.id, await localEntity(m.id, "ai_grant", `${m.deviceId} ${m.mode}`, m.updatedAt, null, aiGrantModePayload(m)));
+  }
   for (const p of preferences) {
     byId.set(p.id, await localEntity(p.id, "preference", p.key, p.updatedAt, null, preferencePayload(p)));
   }
@@ -907,6 +921,7 @@ async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection>
     if (t.targetKind === "known_host" && !optIn.knownHost) continue;
     if (t.targetKind === "ai_profile" && !optIn.aiProfile) continue;
     if (t.targetKind === "ai_permission" && !optIn.aiPermission) continue;
+    if (t.targetKind === "ai_grant" && !optIn.aiGrant) continue;
     if (t.targetKind === "preference" && !optIn.preferences) continue;
     const live = byId.get(t.id);
     if (live && revisionOf(live.updatedAt, live.deletedAt) > t.deletedAt) continue;
@@ -929,12 +944,14 @@ function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncK
   if (kind === "known_host") return optIn.knownHost;
   if (kind === "ai_profile") return optIn.aiProfile;
   if (kind === "ai_permission") return !!optIn.aiPermission;
+  if (kind === "ai_grant") return !!optIn.aiGrant;
   if (kind === "preference") return !!optIn.preferences;
   if (kind === "tombstone") {
     const target = (JSON.parse(plaintext) as { targetKind?: string }).targetKind;
     if (target === "known_host") return optIn.knownHost;
     if (target === "ai_profile") return optIn.aiProfile;
     if (target === "ai_permission") return !!optIn.aiPermission;
+    if (target === "ai_grant") return !!optIn.aiGrant;
     if (target === "preference") return !!optIn.preferences;
   }
   return true;
@@ -972,6 +989,17 @@ async function decodeRemoteObject(entry: { id: string; seq: number; blob_hash: s
   if (kind === "known_host") {
     const k = JSON.parse(text) as { host?: string; port?: number; addedAt?: number };
     return { ...base, name: k.host ? `${k.host}:${k.port}` : entry.id, updatedAt: k.addedAt ?? 0 };
+  }
+  if (kind === "ai_grant") {
+    const g = JSON.parse(text) as { deviceId?: string; action?: string; path?: string; mode?: string; updatedAt?: number };
+    const name = g.deviceId
+      ? g.action
+        ? `${g.deviceId} ${g.action}${g.path ? ` ${g.path}` : ""}`
+        : g.mode
+          ? `${g.deviceId} ${g.mode}`
+          : g.deviceId
+      : entry.id;
+    return { ...base, name, updatedAt: g.updatedAt ?? 0 };
   }
   const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
   return { ...base, name: p.name ?? entry.id, updatedAt: p.updatedAt ?? 0, deletedAt: p.deletedAt ?? null };
@@ -1041,7 +1069,7 @@ function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEnti
 }
 
 // sealAll encrypts winner objects into wire form in kind dependency order (aligned with Go objectKindRank:
-// AI permissions and preferences rank before plain tombstones, transcripts still go last).
+// AI permissions, AI grants, and preferences rank before plain tombstones, transcripts still go last).
 async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
   const rank = (k: SyncObjectKind) => {
     switch (k) {
@@ -1052,10 +1080,11 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "known_host": return 4;
       case "ai_profile": return 5;
       case "ai_permission": return 6;
-      case "preference": return 7;
-      case "tombstone": return 8;
-      case "transcript": return 9;
-      default: return 10;
+      case "ai_grant": return 7;
+      case "preference": return 8;
+      case "tombstone": return 9;
+      case "transcript": return 10;
+      default: return 11;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
@@ -1162,7 +1191,7 @@ function computeApplySet(local: LocalEntity[], remote: RemoteObject[]): RemoteOb
 async function optInMatches(optIn: SyncKindOptIn, shouldContinue: () => boolean): Promise<boolean> {
   if (!shouldContinue()) return false;
   const current = await syncApi.kindOptInGet();
-  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && !!current.aiPermission === !!optIn.aiPermission && !!current.preferences === !!optIn.preferences && shouldContinue();
+  return current.knownHost === optIn.knownHost && current.aiProfile === optIn.aiProfile && !!current.aiPermission === !!optIn.aiPermission && !!current.aiGrant === !!optIn.aiGrant && !!current.preferences === !!optIn.preferences && shouldContinue();
 }
 
 export async function runWebSync(

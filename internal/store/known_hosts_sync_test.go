@@ -231,3 +231,32 @@ func TestAIProfilesDeleteTxDefaultsToTombstone(t *testing.T) {
 		t.Fatalf("default opt-in tombstone = %q %d %v", kind, deletedAt, found)
 	}
 }
+
+func TestAIGrantSyncOptInDefaultsOn(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	if enabled, err := db.AIGrantSyncOptIn(ctx, "u-a"); err != nil || !enabled {
+		t.Fatalf("AI 授权 opt-in 必须默认开启: %v %v", enabled, err)
+	}
+	if err := db.SetAIGrantSyncOptIn(ctx, "u-a", false); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, _ := db.AIGrantSyncOptIn(ctx, "u-a"); enabled {
+		t.Fatal("u-a opt-in should be off after explicit opt-out")
+	}
+	if enabled, _ := db.AIGrantSyncOptIn(ctx, "u-b"); !enabled {
+		t.Fatal("u-b 必须保持默认开启")
+	}
+	if err := db.SetAIGrantSyncOptIn(ctx, "u-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, _ := db.AIGrantSyncOptIn(ctx, "u-a"); !enabled {
+		t.Fatal("u-a opt-in should be on again")
+	}
+	if _, err := db.AIGrantSyncOptIn(ctx, ""); err == nil {
+		t.Fatal("空 userID 必须拒绝, 防止退化为全局键")
+	}
+	if err := db.SetAIGrantSyncOptIn(ctx, "", true); err == nil {
+		t.Fatal("空 userID 必须拒绝写入")
+	}
+}

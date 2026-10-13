@@ -120,6 +120,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	services.Guard = guardManager
 	if services.Sync != nil {
 		services.Sync.SetPermissionsReload(guardManager.Reload)
+		services.Sync.SetGrantsReload(grantsManager.Reload)
 	}
 	services.Agent = runner
 	services.Takeover = takeoverManager

@@ -147,7 +147,7 @@ function openDetails(): void {
 async function runAutoSync() {
   const { runWebSync, WEB_SYNC_RESULT_EVENT, WEB_SYNC_ERROR_EVENT } = await import("../features/settings/SyncCard");
   try {
-    const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
+    const result = await runWebSync(DEK, { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
     if (result) window.dispatchEvent(new CustomEvent(WEB_SYNC_RESULT_EVENT, { detail: result }));
   } catch (error) {
     window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: error }));
@@ -170,7 +170,7 @@ beforeEach(() => {
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
   mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
   mocks.collectAIProfiles.mockResolvedValue({ profiles: [], hasMore: false });
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });

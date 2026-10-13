@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 // Shared sync-content toggles section (features/settings/syncOptIns): the web and desktop "Account Sync" consoles
-// both render SyncOptInSection; that module is the single source of the four toggles' title/description/summary copy.
+// both render SyncOptInSection; that module is the single source of the toggles' title/description/summary copy.
 // This file pins that copy (the web version's existing wording) and asserts at source level that both SyncCard consoles
 // use the shared component and no longer hardcode any toggle copy, keeping the two ends from diverging again.
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,9 +17,9 @@ import {
   syncOptInSummary,
 } from "../../features/settings/syncOptIns";
 
-const ALL_ON = { knownHost: true, aiProfile: true, aiPermission: true, preferences: true };
-const MIXED = { knownHost: true, aiProfile: false, aiPermission: true, preferences: false };
-const ALL_OFF = { knownHost: false, aiProfile: false, aiPermission: false, preferences: false };
+const ALL_ON = { knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true };
+const MIXED = { knownHost: true, aiProfile: false, aiPermission: true, aiGrant: false, preferences: false };
+const ALL_OFF = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false };
 
 let mounted: MountedView | undefined;
 
@@ -34,26 +34,27 @@ function mountSection(value = MIXED, onChange = vi.fn()) {
 }
 
 describe("SyncOptInSection 共享开关区", () => {
-  it("渲染唯一文案清单: 四路开关的标题与说明逐字为网页版措辞", async () => {
+  it("渲染唯一文案清单: 五路开关的标题与说明逐字为网页版措辞", async () => {
     mountSection();
     await flush();
     const labels = [...mounted!.container.querySelectorAll("label")];
-    expect(labels.length).toBe(4);
+    expect(labels.length).toBe(5);
     const rendered = labels.map((l) => l.textContent ?? "");
     expect(rendered[0]).toBe("同步已知主机（主机信任）默认开启。关闭后不再同步主机信任，也不会删除云端已有副本。");
     expect(rendered[1]).toBe("同步 AI 模型档案默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。");
     expect(rendered[2]).toBe("同步 AI 权限与拦截规则默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。");
-    expect(rendered[3]).toBe("同步外观与快捷键默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。");
+    expect(rendered[3]).toBe("同步 AI 授权与权限模式默认开启。设备授权、路径授权规则与设备权限模式端到端加密同步；会话内临时授权不同步。");
+    expect(rendered[4]).toBe("同步外观与快捷键默认开启。关闭后不再同步界面外观和快捷键覆盖；Cron 任务不同步。");
     // Rendered output matches the exported constants verbatim: both consoles get this exact same copy
     for (const [i, item] of SYNC_OPT_IN_ITEMS.entries()) {
       expect(rendered[i]).toBe(item.label + item.hint);
     }
   });
 
-  it("摘要行逐字渲染四路开/关状态", async () => {
+  it("摘要行逐字渲染五路开/关状态", async () => {
     mountSection(MIXED);
     await flush();
-    const summary = "已知主机 已开启 · AI 模型档案 已关闭 · AI 权限 已开启 · 外观快捷键 已关闭";
+    const summary = "已知主机 已开启 · AI 模型档案 已关闭 · AI 权限 已开启 · AI 授权 已关闭 · 外观快捷键 已关闭";
     expect(mounted!.container.textContent).toContain(summary);
     expect(syncOptInSummary(MIXED)).toBe(summary);
   });
@@ -62,7 +63,7 @@ describe("SyncOptInSection 共享开关区", () => {
     const onChange = mountSection(MIXED);
     await flush();
     const boxes = [...mounted!.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(boxes.map((b) => b.checked)).toEqual([true, false, true, false]);
+    expect(boxes.map((b) => b.checked)).toEqual([true, false, true, false, false]);
     click(boxes[0]);
     expect(onChange).toHaveBeenCalledWith({ knownHost: false });
     click(boxes[1]);
@@ -70,13 +71,15 @@ describe("SyncOptInSection 共享开关区", () => {
     click(boxes[2]);
     expect(onChange).toHaveBeenCalledWith({ aiPermission: false });
     click(boxes[3]);
+    expect(onChange).toHaveBeenCalledWith({ aiGrant: true });
+    click(boxes[4]);
     expect(onChange).toHaveBeenCalledWith({ preferences: true });
   });
 
   it("有任一路开启时面板自动展开; 全部关闭时默认折叠, 点「同步内容开关」展开", async () => {
     mountSection(ALL_ON);
     await flush();
-    expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(4);
+    expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(5);
     mounted!.unmount();
 
     mountSection(ALL_OFF);
@@ -86,7 +89,7 @@ describe("SyncOptInSection 共享开关区", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     click(toggle);
     await flush();
-    expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(4);
+    expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(5);
   });
 });
 

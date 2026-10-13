@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type memorySettings struct {
@@ -129,5 +131,64 @@ func TestDeviceModeDropsInvalidPersistedValues(t *testing.T) {
 	}
 	if _, ok := manager.DeviceMode("asset-b"); ok {
 		t.Fatal("invalid persisted mode kept")
+	}
+}
+
+func TestManagerReloadRefreshesDeviceModes(t *testing.T) {
+	settings := &memorySettings{values: make(map[string]string)}
+	ctx := context.Background()
+	manager, err := NewManager(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := NewManager(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := external.SetDeviceMode(ctx, "asset-a", ReadOnly); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.DeviceMode("asset-a"); ok {
+		t.Fatal("stale manager sees the external override before reload")
+	}
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if mode, ok := manager.DeviceMode("asset-a"); !ok || mode != ReadOnly {
+		t.Fatalf("post-reload DeviceMode = %v %v", mode, ok)
+	}
+	if err := external.SetDeviceMode(ctx, "asset-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.DeviceMode("asset-a"); ok {
+		t.Fatal("cleared override kept after reload")
+	}
+}
+
+func TestSetDeviceModeClearRecordsSyncTombstone(t *testing.T) {
+	settings := &grantSyncSettings{memorySettings: &memorySettings{values: make(map[string]string)}, optIn: true}
+	ctx := ipc.WithUserID(context.Background(), "u-1")
+	manager, err := NewManager(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetDeviceMode(ctx, "asset-a", Silent); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetDeviceMode(ctx, "asset-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 || settings.tombstones[0] != AIGrantSyncModePrefix+"asset-a" {
+		t.Fatalf("tombstones = %v", settings.tombstones)
+	}
+	// Clearing a device with no override is a no-op: no extra tombstone.
+	if err := manager.SetDeviceMode(ctx, "asset-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.tombstones) != 1 {
+		t.Fatalf("idempotent clear must not tombstone: %v", settings.tombstones)
 	}
 }

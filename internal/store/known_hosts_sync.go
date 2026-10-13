@@ -18,6 +18,7 @@ const (
 const (
 	SyncTombstoneKindKnownHost = "known_host"
 	SyncTombstoneKindAIProfile = "ai_profile"
+	SyncTombstoneKindAIGrant   = "ai_grant"
 )
 
 func knownHostOptInKey(userID string) string { return syncKnownHostOptInPrefix + userID }
@@ -116,6 +117,20 @@ func (s *Store) SetPreferencesSyncOptIn(ctx context.Context, userID string, enab
 		return badParam(fmt.Errorf("外观与快捷键同步 opt-in 需要用户身份"))
 	}
 	return s.SettingSet(ctx, "sync.optin.preferences."+userID, syncOptInValue(enabled))
+}
+
+func (s *Store) AIGrantSyncOptIn(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, badParam(fmt.Errorf("AI 授权同步 opt-in 需要用户身份"))
+	}
+	return s.syncOptInGet(ctx, "sync.optin.ai_grant."+userID)
+}
+
+func (s *Store) SetAIGrantSyncOptIn(ctx context.Context, userID string, enabled bool) error {
+	if userID == "" {
+		return badParam(fmt.Errorf("AI 授权同步 opt-in 需要用户身份"))
+	}
+	return s.SettingSet(ctx, "sync.optin.ai_grant."+userID, syncOptInValue(enabled))
 }
 
 func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {

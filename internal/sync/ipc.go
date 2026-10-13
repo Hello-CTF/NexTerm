@@ -41,11 +41,13 @@ type LinkResetPasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
-// KindOptIn is the per-account-user isolated sync opt-in view: known_host (host trust), AI model profiles, AI permissions, and appearance shortcuts are enabled by default.
+// KindOptIn is the per-account-user isolated sync opt-in view: known_host (host trust), AI model profiles, AI permissions,
+// AI grants (device authorization and permission modes), and appearance shortcuts are enabled by default.
 type KindOptIn struct {
 	KnownHost    bool `json:"knownHost"`
 	AIProfile    bool `json:"aiProfile"`
 	AIPermission bool `json:"aiPermission"`
+	AIGrant      bool `json:"aiGrant"`
 	Preferences  bool `json:"preferences"`
 }
 
@@ -53,6 +55,7 @@ type KindOptInPatch struct {
 	KnownHost    *bool `json:"knownHost,omitempty"`
 	AIProfile    *bool `json:"aiProfile,omitempty"`
 	AIPermission *bool `json:"aiPermission,omitempty"`
+	AIGrant      *bool `json:"aiGrant,omitempty"`
 	Preferences  *bool `json:"preferences,omitempty"`
 }
 
@@ -88,11 +91,15 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 	if err != nil {
 		return KindOptIn{}, err
 	}
+	aiGrant, err := s.store.AIGrantSyncOptIn(ctx, userID)
+	if err != nil {
+		return KindOptIn{}, err
+	}
 	preferences, err := s.store.PreferencesSyncOptIn(ctx, userID)
 	if err != nil {
 		return KindOptIn{}, err
 	}
-	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, Preferences: preferences}, nil
+	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile, AIPermission: aiPermission, AIGrant: aiGrant, Preferences: preferences}, nil
 }
 
 // KindOptInSet only writes the owning user's own opt-in; with no identity (anonymous and desktop engine not logged in) it is always forbidden, and client-reported userIDs are not accepted (cross-user writes cannot happen).
@@ -113,6 +120,11 @@ func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindO
 	}
 	if patch.AIPermission != nil {
 		if err := s.store.SetAIPermissionSyncOptIn(ctx, userID, *patch.AIPermission); err != nil {
+			return KindOptIn{}, err
+		}
+	}
+	if patch.AIGrant != nil {
+		if err := s.store.SetAIGrantSyncOptIn(ctx, userID, *patch.AIGrant); err != nil {
 			return KindOptIn{}, err
 		}
 	}
@@ -227,6 +239,11 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, CommandCollectAIPermission, func(ctx context.Context, _ *ipc.Call, _ struct{}) (CollectAIPermission, error) {
 				return s.CollectAIPermission(ctx)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, CommandCollectAIGrants, func(ctx context.Context, _ *ipc.Call, _ struct{}) (CollectAIGrants, error) {
+				return s.CollectAIGrants(ctx)
 			})
 		},
 		func() error {

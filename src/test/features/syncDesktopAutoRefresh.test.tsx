@@ -79,7 +79,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   mocks.linkGet.mockResolvedValue({ ...LINK });
   mocks.status.mockImplementation(() => Promise.resolve(statusPayload()));
-  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, preferences: false });
+  mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false });
 });
 
 afterEach(() => {

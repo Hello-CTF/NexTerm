@@ -26,11 +26,12 @@ const (
 	KindKnownHost    = "known_host"
 	KindAIProfile    = "ai_profile"
 	KindAIPermission = "ai_permission"
+	KindAIGrant      = "ai_grant"
 	KindPreference   = "preference"
 )
 
 // objectKinds is the fixed enumeration order for decryption attempts; AAD binds kind, so a wrong kind can never decrypt.
-var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindPreference}
+var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference}
 
 const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
@@ -193,6 +194,34 @@ type aiPermissionObject struct {
 	Mode        string   `json:"mode"`
 	DangerRules []string `json:"dangerRules"`
 	UpdatedAt   int64    `json:"updatedAt"`
+}
+
+// AI grant objects share the ai_grant kind, split into three families by object ID prefix:
+// device/<deviceID> (device-level grants), rule/<ruleID> (path-level grant rules), mode/<deviceID> (per-device permission modes).
+// Fields align with the guard persisted forms (guard.DeviceGrant / guard.GrantRule / the ai.device_permission map values);
+// updatedAt is the LWW revision, revocations converge via tombstones sharing the object ID.
+type aiGrantDeviceObject struct {
+	ID        string   `json:"id"`
+	DeviceID  string   `json:"deviceId"`
+	Kinds     []string `json:"kinds"`
+	UpdatedAt int64    `json:"updatedAt"`
+}
+
+type aiGrantRuleObject struct {
+	ID        string `json:"id"`
+	DeviceID  string `json:"deviceId"`
+	Action    string `json:"action"`
+	Path      string `json:"path,omitempty"`
+	ExpiresAt int64  `json:"expiresAt,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+type aiGrantModeObject struct {
+	ID        string `json:"id"`
+	DeviceID  string `json:"deviceId"`
+	Mode      string `json:"mode"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type preferenceObject struct {

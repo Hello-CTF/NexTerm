@@ -34,6 +34,12 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     hint: "默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。",
   },
   {
+    key: "aiGrant",
+    summary: "AI 授权",
+    label: "同步 AI 授权与权限模式",
+    hint: "默认开启。设备授权、路径授权规则与设备权限模式端到端加密同步；会话内临时授权不同步。",
+  },
+  {
     key: "preferences",
     summary: "外观快捷键",
     label: "同步外观与快捷键",

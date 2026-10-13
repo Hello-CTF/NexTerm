@@ -42,33 +42,42 @@ type Manager struct {
 
 func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	manager := &Manager{settings: settings, config: Config{Mode: ReadWrite, DangerRules: []string{}}, modes: make(map[string]Mode)}
-	raw, found, err := settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
-	if err != nil {
+	if err := manager.load(ctx); err != nil {
 		return nil, err
 	}
+	return manager, nil
+}
+
+func (m *Manager) load(ctx context.Context) error {
+	config := Config{Mode: ReadWrite, DangerRules: []string{}}
+	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
+	if err != nil {
+		return err
+	}
 	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &manager.config); err != nil {
-			return nil, err
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			return err
 		}
-		manager.config = manager.config.Normalized()
+		config = config.Normalized()
 	}
-	raw, found, err = settings.SettingGet(ctx, DevicePermissionSettingKeyForUser(ctx))
+	modes := make(map[string]Mode)
+	raw, found, err = m.settings.SettingGet(ctx, DevicePermissionSettingKeyForUser(ctx))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if found && raw != "" {
-		modes := make(map[string]Mode)
 		if err := json.Unmarshal([]byte(raw), &modes); err != nil {
-			return nil, err
+			return err
 		}
 		for deviceID, mode := range modes {
 			if !mode.valid() {
 				delete(modes, deviceID)
 			}
 		}
-		manager.modes = modes
 	}
-	return manager, nil
+	m.config = config
+	m.modes = modes
+	return nil
 }
 
 func (m *Manager) Snapshot(context.Context) (Config, error) {
@@ -80,18 +89,7 @@ func (m *Manager) Snapshot(context.Context) (Config, error) {
 func (m *Manager) Reload(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	raw, found, err := m.settings.SettingGet(ctx, PermissionSettingKeyForUser(ctx))
-	if err != nil {
-		return err
-	}
-	config := Config{Mode: ReadWrite, DangerRules: []string{}}
-	if found && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &config); err != nil {
-			return err
-		}
-	}
-	m.config = config.Normalized()
-	return nil
+	return m.load(ctx)
 }
 
 func (m *Manager) Get() Config {
@@ -174,6 +172,11 @@ func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode)
 			delete(m.modes, deviceID)
 		}
 		return err
+	}
+	if mode == "" {
+		if err := recordAIGrantTombstone(ctx, m.settings, AIGrantSyncModePrefix+deviceID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

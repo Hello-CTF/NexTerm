@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
@@ -115,4 +116,62 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
+}
+
+func TestPostgresApplyAIGrant(t *testing.T) {
+	instance := newPostgresTestInstance(t, true)
+	ctx := context.Background()
+
+	deviceObject := ApplyObject{ID: "device/dev-1", Kind: KindAIGrant, Payload: applyPayload(t, aiGrantDeviceObject{
+		ID: "device/dev-1", DeviceID: "dev-1", Kinds: []string{"terminal_write"}, UpdatedAt: 100,
+	})}
+	ruleObject := ApplyObject{ID: "rule/r-1", Kind: KindAIGrant, Payload: applyPayload(t, aiGrantRuleObject{
+		ID: "rule/r-1", DeviceID: "dev-1", Action: "write_file", Path: "/var/log/**", CreatedAt: 100, UpdatedAt: 100,
+	})}
+	modeObject := ApplyObject{ID: "mode/dev-1", Kind: KindAIGrant, Payload: applyPayload(t, aiGrantModeObject{
+		ID: "mode/dev-1", DeviceID: "dev-1", Mode: "read_only", UpdatedAt: 100,
+	})}
+	for _, object := range []ApplyObject{deviceObject, ruleObject, modeObject} {
+		requireApplyResult(t, mustApplyObjects(t, instance, object).Objects[0], ApplyResultApplied)
+		requireApplyResult(t, mustApplyObjects(t, instance, object).Objects[0], ApplyResultIdentical)
+	}
+
+	grants, err := guard.NewGrants(ctx, instance.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "确认"), nil, "dev-1", "send_keys", "run-1"); decision.Action != guard.ActionAllow {
+		t.Fatalf("grant must allow after apply: %+v", decision)
+	}
+	manager, err := guard.NewManager(ctx, instance.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, ok := manager.DeviceMode("dev-1"); !ok || mode != guard.ReadOnly {
+		t.Fatalf("mode = %v %v", mode, ok)
+	}
+
+	tombstone := func(id string) ApplyObject {
+		return ApplyObject{ID: id, Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{TargetKind: KindAIGrant, DeletedAt: 200})}
+	}
+	for _, id := range []string{"device/dev-1", "rule/r-1", "mode/dev-1"} {
+		requireApplyResult(t, mustApplyObjects(t, instance, tombstone(id)).Objects[0], ApplyResultApplied)
+	}
+	grants, err = guard.NewGrants(ctx, instance.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := grants.Evaluate(ctx, guard.Config{Mode: guard.ReadWrite}, guard.Confirm(guard.KindProcess, "确认"), nil, "dev-1", "send_keys", "run-1"); decision.Action == guard.ActionAllow {
+		t.Fatal("tombstoned grant must not allow")
+	}
+	if len(grants.Rules()) != 0 {
+		t.Fatalf("tombstoned rule kept: %+v", grants.Rules())
+	}
+	manager, err = guard.NewManager(ctx, instance.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.DeviceMode("dev-1"); ok {
+		t.Fatal("tombstoned mode kept")
+	}
 }
