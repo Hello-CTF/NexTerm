@@ -2591,6 +2591,7 @@
 
 .nx-rail {
   width: calc(48px + var(--nx-inset-left, env(safe-area-inset-left)));
+  padding-top: calc(9px + var(--nx-inset-top, env(safe-area-inset-top)));
   padding-left: var(--nx-inset-left, env(safe-area-inset-left));
 }
 
