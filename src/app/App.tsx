@@ -15,6 +15,7 @@ import {
   openTerminalTab,
   nextTabId,
   connectAsset,
+  connectDevice,
   dbKindOf,
   openCredentialsSidebar,
   requestCloseTab,
@@ -102,6 +103,7 @@ import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { UpdateBanner } from "./UpdateBanner";
 import { DekUnlockBanner } from "./DekUnlockBanner";
+import { DeviceSessionBoundary } from "../features/fleet/DeviceSessionBoundary";
 import { getUpdateState } from "./useUpdate";
 import { promptUpdateIfNeeded } from "./updatePrompt";
 import { PromptModal } from "../ui/PromptModal";
@@ -162,7 +164,6 @@ const TAB_ICON = {
   settings: IconSettings,
   audit: IconHistory,
   devices: IconMonitor,
-  deviceTerminal: IconTerminal,
   background: IconActivity,
   history: IconClock,
 } as const;
@@ -468,24 +469,6 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
-// LazyDeviceTerminalBoundary 与 LazyAuthGate 同理懒加载; 它常驻 App 根部,
-// 在 logout/401/账号切换时关闭全部设备终端标签 (FLEET156 账号隔离)。
-function LazyDeviceTerminalBoundary() {
-  const [view, setView] = useState<React.ComponentType | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void import("../features/fleet/DeviceTerminalBoundary").then((m) => {
-      if (alive) setView(() => m.DeviceTerminalBoundary);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  if (!view) return null;
-  const View = view;
-  return <View />;
-}
-
 // LazyDevicesView 同理:设备管理经 auth store 引 env,懒加载避免拖进桌面端测试的模块图。
 function LazyDevicesView() {
   const [view, setView] = useState<React.ComponentType | null>(null);
@@ -501,23 +484,6 @@ function LazyDevicesView() {
   if (!view) return null;
   const View = view;
   return <View />;
-}
-
-// LazyDeviceTerminalView 与 LazyDevicesView 同一理由懒加载 (xterm + fleet API 只服务 WEB)。
-function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visible: boolean }) {
-  const [view, setView] = useState<React.ComponentType<{ deviceId: string; visible?: boolean }> | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void import("../features/fleet/DeviceTerminalView").then((m) => {
-      if (alive) setView(() => m.DeviceTerminalView);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  if (!view) return null;
-  const View = view;
-  return <View deviceId={deviceId} visible={visible} />;
 }
 
 // 账号级查询键, 与 AssetTree/CredentialsSidebar/CredentialsPanel 的
@@ -681,7 +647,7 @@ function AppShell() {
   const rememberedOverlayDock = useRef<"left" | "right" | null>(null);
   const prevActiveKind = useRef<string | null>(null);
   const activeTabKind = active?.kind ?? null;
-  const isTerminalPaneKind = activeTabKind === "terminal" || activeTabKind === "deviceTerminal";
+  const isTerminalPaneKind = activeTabKind === "terminal";
   useEffect(() => {
     if (!isMobile() || !overlaySidebars) return;
     const prev = prevActiveKind.current;
@@ -875,6 +841,17 @@ function AppShell() {
       return;
     }
     if (ws?.assetId && ws.kind !== "db") {
+      // 设备工作区的 assetId 是伪资产 (device/<deviceId>), 资产表查不到, 走设备连接。
+      if (ws.assetKind === "device") {
+        const outcome = await connectDevice({
+          id: ws.assetId.slice("device/".length),
+          name: ws.title,
+        });
+        if (!outcome.ok && !outcome.canceled) {
+          pushToast("error", outcome.error ?? "重新连接失败");
+        }
+        return;
+      }
       try {
         const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string));
         if (!fresh) {
@@ -1321,6 +1298,7 @@ function AppShell() {
       <TakeoverBanner />
       <UpdateBanner onOpenSettings={openSettings} />
       <DekUnlockBanner />
+      <DeviceSessionBoundary />
 
       <div className="flex min-h-0 flex-1">
         <nav
@@ -1671,7 +1649,6 @@ function AppShell() {
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <LazyAuthGate />
-      <LazyDeviceTerminalBoundary />
       <PromptModal />
       <DialogHost />
     </div>
@@ -2140,12 +2117,6 @@ function PaneForTab({
       return <AuditView />;
     case "devices":
       return <LazyDevicesView />;
-    case "deviceTerminal":
-      return tab.deviceId ? (
-        <LazyDeviceTerminalView deviceId={tab.deviceId} visible={active} />
-      ) : (
-        <EmptyState />
-      );
     case "background":
       return <BackgroundSessions visible={active} />;
     case "history":

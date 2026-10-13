@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -497,4 +498,33 @@ func TestConcurrentClientsCanWriteIndependentTabs(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestDeviceSessionOwnerEnforcedAcrossUsers(t *testing.T) {
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	asset := Asset{ID: "device/d-1", Kind: KindDevice}
+	alice := ipc.WithUserID(context.Background(), "user-a")
+	bob := ipc.WithUserID(context.Background(), "user-b")
+
+	session, err := manager.Connect(alice, asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Connect(bob, asset); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-user connect = %v, want ErrForbidden", err)
+	}
+	if _, err := manager.Connect(alice, asset); err != nil {
+		t.Fatalf("owner re-connect = %v", err)
+	}
+	if _, err := manager.OpenTab(bob, OpenTabOptions{SessionID: session.ID, ClientID: "bob", ChannelID: "ch-b", Cols: 80, Rows: 24}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-user open tab = %v, want ErrForbidden", err)
+	}
+	tab := openTestTab(t, manager, session, "alice", "ch-a")
+	if _, err := manager.AttachTab(bob, tab.ID, AttachOptions{ClientID: "bob", ChannelID: "ch-b2"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-user attach = %v, want ErrForbidden", err)
+	}
+	if err := manager.Reconnect(bob, session.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-user reconnect = %v, want ErrForbidden", err)
+	}
 }

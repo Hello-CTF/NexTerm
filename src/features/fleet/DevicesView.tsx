@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { openDeviceTerminalTab, useUi } from "../../app/store";
+import { connectDevice, useUi } from "../../app/store";
 import { WEB } from "../../ipc/env";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
@@ -201,7 +201,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
             disabled={!online}
             title={online ? "在这台设备上打开远程终端" : "设备离线，无法打开终端"}
-            onClick={() => openDeviceTerminalTab(device)}
+            onClick={() => void connectDevice(device)}
           >
             <IconTerminal size={11} />
             终端

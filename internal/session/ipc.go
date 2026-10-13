@@ -33,6 +33,8 @@ func IPCError(err error) *ipc.Error {
 		return hostKeyIPCError(hostKeyErr)
 	}
 	switch {
+	case errors.Is(err, ErrForbidden):
+		return ipc.WrapError(ipc.CodeForbidden, "无权访问该会话", err)
 	case errors.Is(err, ErrNotController):
 		return ipc.WrapError(ipc.CodeNotController, userMessage(err), err)
 	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound), errors.Is(err, durable.ErrNotFound):

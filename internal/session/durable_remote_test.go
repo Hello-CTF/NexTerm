@@ -115,6 +115,59 @@ func TestOpenTabSSHDurableUnsupported(t *testing.T) {
 	}
 }
 
+func TestOpenTabDeviceUsesRemoteDurableProvider(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: resolver,
+	})
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "device-1", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Durable {
+		t.Fatalf("tab = %+v; want durable", first)
+	}
+	if provider.createCalls != 1 {
+		t.Fatalf("provider create calls = %d; want 1", provider.createCalls)
+	}
+	if _, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "device-2", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.callCount() != 1 {
+		t.Fatalf("resolver calls = %d; want 1 (cached per session)", resolver.callCount())
+	}
+	if err := manager.Disconnect(connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	reconnected, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: reconnected.ID, ClientID: "client-a", ChannelID: "device-3", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.callCount() != 2 {
+		t.Fatalf("resolver calls = %d; want 2 after reconnect", resolver.callCount())
+	}
+}
+
 func TestOpenTabSSHDurableResolverError(t *testing.T) {
 	resolverErr := errors.New("daemon unavailable")
 	manager := NewManager(Config{
@@ -167,6 +220,34 @@ func TestRecoverRemoteDurable(t *testing.T) {
 	}
 	if _, err := manager.RecoverRemoteDurable(ctx, "ffffffffffffffffffffffffffffffff", OpenTabOptions{ClientID: "client-a", ChannelID: "recover-2", Cols: 80, Rows: 24}); !errors.Is(err, ErrTabNotFound) {
 		t.Fatalf("RecoverRemoteDurable error = %v; want ErrTabNotFound", err)
+	}
+}
+
+func TestRecoverRemoteDurableIncludesDeviceSessions(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(context.Background(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &countingResolver{provider: provider}
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: resolver,
+	})
+	ctx := context.Background()
+	if _, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.RecoverRemoteDurable(ctx, tabID, OpenTabOptions{ClientID: "client-a", ChannelID: "recover-device-1", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != tabID {
+		t.Fatalf("recovered tab = %+v", info)
+	}
+	if provider.attachCalls != 1 {
+		t.Fatalf("provider attach calls = %d; want 1", provider.attachCalls)
 	}
 }
 

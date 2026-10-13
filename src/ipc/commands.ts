@@ -167,6 +167,8 @@ export const sessionApi = {
   }) => call<SessionInfo>("session_connect_quick", { args }),
   quickConnectDefaultUser: () => call<string>("session_quick_connect_user"),
   connectLocal: () => call<SessionInfo>("session_connect_local"),
+  connectDevice: (deviceId: string, name: string) =>
+    call<SessionInfo>("session_connect_device", { args: { deviceId, name } }),
   disconnect: (sessionId: string) =>
     call<void>("session_disconnect", { sessionId }),
   reconnect: (sessionId: string) => call<boolean>("session_reconnect", { sessionId }),

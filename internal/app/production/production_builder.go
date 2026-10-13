@@ -130,12 +130,14 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Database: database, Logger: config.Config.Logger,
 	})
 	var durableResolver session.DurableResolver
+	var sshResolver *sshdaemon.Resolver
 	executablePath, executableErr := os.Executable()
 	if executableErr == nil {
-		durableResolver = &sshdaemon.Resolver{Executable: executablePath}
+		sshResolver = &sshdaemon.Resolver{Executable: executablePath}
 	} else {
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", executableErr)
 	}
+	durableResolver = productionDurableResolver{ssh: sshResolver}
 	sessionManager = session.NewManager(session.Config{
 		Connector:         connector,
 		Terminals:         config.Terminals,
@@ -164,6 +166,27 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
 	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
+	if config.Desktop && sshConnector != nil {
+		sshConnector.device.Store(&DeviceConnectorConfig{
+			Dial: syncService.Remote().DialDeviceBridge,
+			Digest: func(ctx context.Context, deviceID string) (string, error) {
+				devices, err := syncService.Remote().ListDevices(ctx)
+				if err != nil {
+					return "", err
+				}
+				for _, listed := range devices.Devices {
+					if listed.ID != deviceID {
+						continue
+					}
+					if listed.Agent == nil || listed.Agent.StateDigest == "" {
+						return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+					}
+					return listed.Agent.StateDigest, nil
+				}
+				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已吊销")
+			},
+		})
+	}
 	retention, err := NewRetentionRunner(RetentionConfig{
 		Store: database, Policy: StoreRetentionPolicy(database), Interval: config.RetentionInterval,
 		AttemptTimeout: config.RetentionAttemptTimeout, Logger: config.Config.Logger,

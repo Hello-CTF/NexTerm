@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { openDeviceTerminalTab, useUi } from "../../app/store";
+import { connectDevice, useUi } from "../../app/store";
 import { useCoarsePointer } from "../../app/platform";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -154,7 +154,7 @@ export function DeviceTreeSection() {
       icon: <IconTerminal size={13} />,
       disabled: !connectable,
       hint: disabledReason ?? undefined,
-      onSelect: () => openDeviceTerminalTab(device),
+      onSelect: () => void connectDevice(device),
     });
     items.push(
       { kind: "item", label: "详情", icon: <IconInfo size={13} />, hint: "打开设备管理视图", onSelect: openDevicesTab },
@@ -265,7 +265,7 @@ function DeviceTreeRow({
 
   const open = () => {
     if (!connectable || busy) return;
-    openDeviceTerminalTab(device);
+    void connectDevice(device);
   };
 
   const tip = [

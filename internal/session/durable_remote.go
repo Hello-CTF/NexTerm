@@ -8,9 +8,9 @@ import (
 )
 
 // durableProviderFor resolves the durable provider backing a durable tab on
-// the given session. Local sessions use the manager's provider; SSH sessions
-// resolve through the configured resolver and cache the result per session
-// generation, so a reconnect re-resolves against the new transport.
+// the given session. Local sessions use the manager's provider; SSH and device
+// sessions resolve through the configured resolver and cache the result per
+// session generation, so a reconnect re-resolves against the new transport.
 func (m *Manager) durableProviderFor(ctx context.Context, session *Session, transport *transportHandle, kind string, generation uint64) (base.DurableProvider, error) {
 	if kind == KindLocal {
 		if m.durable == nil {
@@ -18,7 +18,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 		}
 		return m.durable, nil
 	}
-	if kind != KindSSH || m.resolver == nil || transport == nil {
+	if (kind != KindSSH && kind != KindDevice) || m.resolver == nil || transport == nil {
 		return nil, ErrUnsupported
 	}
 	session.durableMu.Lock()
@@ -36,15 +36,16 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	return provider, nil
 }
 
-// RecoverRemoteDurable searches the durable providers of connected SSH
-// sessions for a tab ID and reopens the first match with the given attach
-// options. It returns ErrTabNotFound only when the search completes with no
-// owning daemon; resolver and enumeration failures are joined and returned
-// after exhausting the connected sessions so callers can classify them.
+// RecoverRemoteDurable searches the durable providers of connected SSH and
+// device sessions for a tab ID and reopens the first match with the given
+// attach options. It returns ErrTabNotFound only when the search completes
+// with no owning daemon; resolver and enumeration failures are joined and
+// returned after exhausting the connected sessions so callers can classify
+// them.
 func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, options OpenTabOptions) (TabInfo, error) {
 	var searchErrs []error
 	for _, info := range m.ListSessions() {
-		if info.Kind != KindSSH || info.Status != StatusConnected {
+		if (info.Kind != KindSSH && info.Kind != KindDevice) || info.Status != StatusConnected {
 			continue
 		}
 		session, err := m.Session(info.ID)

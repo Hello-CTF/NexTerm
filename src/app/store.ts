@@ -39,7 +39,6 @@ export type PaneKind =
   | "settings"
   | "audit"
   | "devices"
-  | "deviceTerminal"
   | "background"
   | "history";
 
@@ -68,7 +67,6 @@ export interface AppTab {
   dbKind?: DbKind;
   credId?: string;
   path?: string;
-  deviceId?: string;
   pendingCommand?: string;
   closable: boolean;
   dead?: boolean;
@@ -1015,9 +1013,6 @@ function makePane(): Pane {
 function sameTab(t: AppTab, tab: AppTab): boolean {
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
-  if (t.kind === "deviceTerminal" && tab.kind === "deviceTerminal") {
-    return t.deviceId === tab.deviceId;
-  }
   return (
     tab.kind !== "terminal" &&
     t.kind === tab.kind &&
@@ -1070,18 +1065,6 @@ export async function openTerminalTab(
     },
     paneId,
   );
-}
-
-// openDeviceTerminalTab 从设备管理打开一台设备的远程终端标签 (FLEET156);
-// 同一设备重复打开会聚焦已有标签 (sameTab 按 deviceId 去重)。
-export function openDeviceTerminalTab(device: { id: string; name: string }): void {
-  useUi.getState().addTab({
-    id: nextTabId(`devterm-${device.id}`),
-    kind: "deviceTerminal",
-    title: `终端 · ${device.name}`,
-    deviceId: device.id,
-    closable: true,
-  });
 }
 
 async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boolean> {
@@ -1749,7 +1732,9 @@ async function openConnectedAssetSession(
     assetId: asset.id,
     assetKind: asset.kind,
   });
-  if (!sidebarsOverlayWorkspace()) {
+  // 设备会话没有文件面 (supervisor v2 无 fs 帧), 不自动切到文件栏; 手动打开
+  // 时由 FileTree 给出显式降级。
+  if (asset.kind !== "device" && !sidebarsOverlayWorkspace()) {
     setLeftMode("files");
     setLeftOpen(true);
   }
@@ -1930,6 +1915,84 @@ async function runConnectAsset(
     }
     await openConnectedAssetSession(info, asset);
     useConnectHistory.getState().record(asset.id);
+    return { ok: true };
+  } catch (e) {
+    const err = e as { message?: string };
+    const message = err.message || describeError(e);
+    if (!options?.silent) pushToast("error", message);
+    return { ok: false, error: message };
+  }
+}
+
+// deviceAssetId 是设备会话在会话体系里的伪资产 id (与后端 session_connect_device
+// 的 asset.ID 一致); 设备不是资产表记录, 凭据/主机密钥流程一律不适用。
+export function deviceAssetId(deviceId: string): string {
+  return `device/${deviceId}`;
+}
+
+// connectDevice 打开 fleet 设备的完整工作区: 会话经 session_connect_device 建立
+// (服务端做 owner/吊销/终端开关授权), 终端标签进会话体系, 复用重连与 durable
+// 恢复语义。工作区去重/断线重连与 connectAsset 同形态。
+export async function connectDevice(
+  device: { id: string; name: string },
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
+  const key = deviceAssetId(device.id);
+  const inflight = inflightConnects.get(key);
+  if (inflight) return inflight;
+  const promise = runConnectDevice(device, options).finally(() => {
+    inflightConnects.delete(key);
+    setAssetConnecting(key, false);
+  });
+  inflightConnects.set(key, promise);
+  setAssetConnecting(key, true);
+  return promise;
+}
+
+async function runConnectDevice(
+  device: { id: string; name: string },
+  options?: ConnectAssetOptions,
+): Promise<ConnectOutcome> {
+  const { pushToast } = useUi.getState();
+  const assetId = deviceAssetId(device.id);
+
+  const existing = useUi.getState().workspaces.find((w) => w.assetId === assetId);
+  if (existing) {
+    const session = useUi.getState().sessions.find((s) => s.id === existing.sessionId);
+    const live = session !== undefined && LIVE_SESSION_STATUSES.has(session.status);
+    if (live) {
+      const hasTerminal = existing.panes.some((p) => p.tabs.some((t) => t.kind === "terminal"));
+      if (session && !hasTerminal) {
+        void openTerminalTab(session);
+      } else {
+        useUi.getState().setActiveWorkspace(existing.id);
+      }
+      return { ok: true };
+    }
+    if (session) {
+      try {
+        const fresh = await reconnectSessionAndWait(session);
+        if (!fresh) {
+          pushToast("info", "已取消连接");
+          return { ok: false, canceled: true };
+        }
+        const { sessions, setSessions } = useUi.getState();
+        setSessions([...sessions.filter((s) => s.id !== fresh.id), fresh]);
+        useUi.getState().setActiveWorkspace(existing.id);
+        return { ok: true };
+      } catch {
+        // 会话已在服务端删除或重连失败: 落到下方清残留工作区走全新连接
+      }
+    }
+    await useUi.getState().closeWorkspace(existing.id);
+    if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {
+      return { ok: false, canceled: true };
+    }
+  }
+
+  try {
+    const info = await sessionApi.connectDevice(device.id, device.name);
+    await openConnectedAssetSession(info, { id: assetId, name: device.name, kind: "device" });
     return { ok: true };
   } catch (e) {
     const err = e as { message?: string };

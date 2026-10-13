@@ -109,6 +109,82 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 	}
 }
 
+func TestReconnectReattachesDeviceDurableTab(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	resolver := &countingResolver{provider: provider}
+	connector := newFakeConnector()
+	manager := NewManager(Config{
+		Connector:        connector,
+		Terminals:        newFakeTerminalFactory(),
+		DurableResolver:  resolver,
+		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
+	})
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "device/dev-1", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(ctx, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "rc-device-1", Cols: 80, Rows: 24,
+		Durable: &DurableTabOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabID := info.ID
+	provider.mu.Lock()
+	record := provider.records[tabID]
+	oldAttachment := record.attachments[0]
+	provider.mu.Unlock()
+	if err := oldAttachment.emit([]byte("daemon-live-output")); err != nil {
+		t.Fatal(err)
+	}
+	waitForTabMarker(t, manager, tabID, "daemon-live-output")
+	provider.mu.Lock()
+	record.output = []byte("daemon-live-output daemon-replay-marker")
+	provider.mu.Unlock()
+
+	if err := manager.Reconnect(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	attachCalls := provider.attachCalls
+	provider.mu.Unlock()
+	if attachCalls != 1 {
+		t.Fatalf("provider attach calls = %d; want 1 reattach on the new transport", attachCalls)
+	}
+	if resolver.callCount() != 2 {
+		t.Fatalf("resolver calls = %d; want 2 (re-resolved for the new transport)", resolver.callCount())
+	}
+	if count := connector.transport(1).channelCount(); count != 0 {
+		t.Fatalf("reconnect opened %d direct PTY channels on the new transport; want 0", count)
+	}
+	if oldAttachment.closeCount.Load() == 0 {
+		t.Fatal("old durable attachment was not closed")
+	}
+	tab, err := manager.Tab(tabID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.Info(); !got.Durable || got.Exited {
+		t.Fatalf("tab after reconnect = %+v; want durable and live", got)
+	}
+	waitForTabMarker(t, manager, tabID, "daemon-replay-marker")
+
+	provider.mu.Lock()
+	attachment := record.attachments[len(record.attachments)-1]
+	provider.mu.Unlock()
+	if attachment == oldAttachment {
+		t.Fatal("tab kept the old attachment after reconnect")
+	}
+	if err := manager.Write(ctx, tabID, "client-a", []byte("input-after-reconnect\n")); err != nil {
+		t.Fatal(err)
+	}
+	if written := string(attachment.written()); !strings.Contains(written, "input-after-reconnect") {
+		t.Fatalf("new attachment received input %q", written)
+	}
+}
+
 func TestReconnectMarksMissingSSHDurableTabExited(t *testing.T) {
 	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
 	resolver := &countingResolver{provider: provider}

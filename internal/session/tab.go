@@ -173,6 +173,11 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		m.mu.Unlock()
 		return TabInfo{}, ErrSessionClosed
 	}
+	if !sessionOwnerAllowed(session, userIDFromContext(ctx)) {
+		session.mu.Unlock()
+		m.mu.Unlock()
+		return TabInfo{}, ErrForbidden
+	}
 	if session.status != StatusConnected || session.transport == nil {
 		session.mu.Unlock()
 		m.mu.Unlock()
@@ -359,6 +364,12 @@ func (m *Manager) AttachTab(ctx context.Context, tabID string, options AttachOpt
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return TabInfo{}, err
+	}
+	tab.session.mu.Lock()
+	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx))
+	tab.session.mu.Unlock()
+	if !allowed {
+		return TabInfo{}, ErrForbidden
 	}
 	return m.attach(ctx, tab, options, true)
 }

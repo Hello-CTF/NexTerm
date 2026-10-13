@@ -74,8 +74,8 @@ interface StoreModule {
   };
 }
 
-function panelTab(id: string, kind: AppTab["kind"], title: string, deviceId?: string): AppTab {
-  return { id, kind, title, deviceId, closable: true };
+function panelTab(id: string, kind: AppTab["kind"], title: string): AppTab {
+  return { id, kind, title, closable: true };
 }
 
 function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length - 1]?.id ?? null): Workspace {
@@ -91,11 +91,7 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
 }
 
 function deviceTabs(): AppTab[] {
-  return [
-    panelTab("devices", "devices", "设备管理"),
-    panelTab("devterm-1", "deviceTerminal", "终端 · build-box", "device-1"),
-    panelTab("settings", "settings", "设置"),
-  ];
+  return [panelTab("devices", "devices", "设备管理"), panelTab("settings", "settings", "设置")];
 }
 
 function persistedLayout(workspaces: Workspace[]): PersistedLayout {
@@ -145,9 +141,9 @@ afterEach(() => {
 });
 
 describe("device tabs in the layout pane contract", () => {
-  it("serialize → JSON → sanitize round-trip keeps device tabs with deviceId and the active tab", async () => {
+  it("serialize → JSON → sanitize round-trip keeps the devices tab and the active tab", async () => {
     const { layout, store } = await openTab();
-    store.setState({ workspaces: [workspace(deviceTabs(), "devterm-1")], activeWorkspaceId: "ws" });
+    store.setState({ workspaces: [workspace(deviceTabs(), "devices")], activeWorkspaceId: "ws" });
 
     const dto = layout.serializeLayout(store.getState());
     expect(dto).not.toBeNull();
@@ -157,12 +153,9 @@ describe("device tabs in the layout pane contract", () => {
     expect(parsed?.workspaces).toHaveLength(1);
     expect(parsed?.workspaces[0].kind).toBe("session");
     const pane = parsed?.workspaces[0].panes[0];
-    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
-    expect(pane?.activeTabId).toBe("devterm-1");
-    const devices = pane?.tabs.find((t) => t.id === "devices");
-    expect(devices?.title).toBe("设备管理");
-    const devterm = pane?.tabs.find((t) => t.id === "devterm-1");
-    expect(devterm?.deviceId).toBe("device-1");
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
+    expect(pane?.activeTabId).toBe("devices");
+    expect(pane?.tabs.find((t) => t.id === "devices")?.title).toBe("设备管理");
   });
 
   it("sanitizeLayout keeps a pane whose only tab is the device list", async () => {
@@ -176,88 +169,75 @@ describe("device tabs in the layout pane contract", () => {
     expect(parsed?.activeWorkspaceId).toBe("ws");
   });
 
-  it("sanitizeLayout drops deviceTerminal tabs whose deviceId is missing or invalid", async () => {
+  it("sanitizeLayout drops legacy deviceTerminal tabs from older layouts", async () => {
     const { layout } = await openTab();
-    const parsed = layout.sanitizeLayout(
-      persistedLayout([
-        workspace(
-          [
-            panelTab("devices", "devices", "设备管理"),
-            panelTab("devterm-missing", "deviceTerminal", "终端 · 丢失"),
-            panelTab("devterm-empty", "deviceTerminal", "终端 · 空", ""),
-            panelTab("devterm-bad", "deviceTerminal", "终端 · 坏", 42 as unknown as string),
-            panelTab("devterm-ok", "deviceTerminal", "终端 · 好", "device-9"),
-          ],
-          "devterm-bad",
-        ),
-      ]),
-    );
+    const raw = persistedLayout([
+      workspace(
+        [
+          panelTab("devices", "devices", "设备管理"),
+          { id: "devterm-1", kind: "deviceTerminal", title: "终端 · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
+          panelTab("settings", "settings", "设置"),
+        ],
+        "devterm-1",
+      ),
+    ]);
+    const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(raw)));
     const pane = parsed?.workspaces[0].panes[0];
-    expect(pane?.tabs.map((t) => t.id)).toEqual(["devices", "devterm-ok"]);
-    expect(pane?.tabs[1].deviceId).toBe("device-9");
-    expect(pane?.activeTabId).toBe("devterm-ok");
+    expect(pane?.tabs.map((t) => t.id)).toEqual(["devices", "settings"]);
+    expect(pane?.activeTabId).toBe("settings");
   });
 
-  it("sanitizeLayout never restores a deviceTerminal tab without deviceId, even as the pane's only tab", async () => {
+  it("sanitizeLayout never restores a legacy deviceTerminal tab, even as the pane's only tab", async () => {
     const { layout } = await openTab();
-    const parsed = layout.sanitizeLayout(
-      persistedLayout([
-        workspace([panelTab("devices", "devices", "设备管理")], "devices"),
-        workspace([panelTab("devterm-missing", "deviceTerminal", "终端 · 丢失")], "devterm-missing"),
+    const raw = persistedLayout([
+      workspace([panelTab("devices", "devices", "设备管理")], "devices"),
+      workspace([
+        { id: "devterm-missing", kind: "deviceTerminal", title: "终端 · 丢失", closable: true } as unknown as AppTab,
       ]),
-    );
+    ]);
+    const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(raw)));
     expect(parsed?.workspaces).toHaveLength(2);
     expect(parsed?.workspaces[0].panes[0].tabs.map((t) => t.id)).toEqual(["devices"]);
     const emptied = parsed?.workspaces.find((w) => w.panes.every((p) => p.tabs.length === 0));
     expect(emptied?.panes[0].tabs).toEqual([]);
     expect(emptied?.panes[0].activeTabId).toBeNull();
-    expect(parsed?.activeWorkspaceId).toBe("ws");
   });
 
-  it("boot application preserves the device tabs and their active position", async () => {
-    server.data = JSON.stringify(persistedLayout([workspace(deviceTabs(), "devterm-1")]));
+  it("boot application drops legacy deviceTerminal tabs and keeps the rest", async () => {
+    const raw = persistedLayout([
+      workspace(
+        [
+          panelTab("devices", "devices", "设备管理"),
+          { id: "devterm-1", kind: "deviceTerminal", title: "终端 · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
+          panelTab("settings", "settings", "设置"),
+        ],
+        "devterm-1",
+      ),
+    ]);
+    server.data = JSON.stringify(raw);
     const { store } = await openTab();
 
     const pane = store.getState().workspaces[0]?.panes[0];
-    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
-    expect(pane?.activeTabId).toBe("devterm-1");
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
+    expect(pane?.activeTabId).toBe("settings");
     expect(findTab(store.getState(), "devices")?.title).toBe("设备管理");
-    expect(findTab(store.getState(), "devterm-1")?.deviceId).toBe("device-1");
+    expect(findTab(store.getState(), "devterm-1")).toBeUndefined();
   });
 
-  it("remote LAYOUT_CHANGED application preserves the device tabs", async () => {
+  it("remote LAYOUT_CHANGED application keeps device tabs", async () => {
     server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "设置")])]));
     const { layout, store } = await openTab();
-    expect(findTab(store.getState(), "devterm-1")).toBeUndefined();
+    expect(findTab(store.getState(), "devices")).toBeUndefined();
 
     server.revision = 1;
-    server.data = JSON.stringify(persistedLayout([workspace(deviceTabs(), "devterm-1")]));
+    server.data = JSON.stringify(persistedLayout([workspace(deviceTabs(), "devices")]));
     layout.onRemoteChange({ revision: 1 });
 
     await vi.waitFor(() => {
-      expect(findTab(store.getState(), "devterm-1")?.deviceId).toBe("device-1");
+      expect(findTab(store.getState(), "devices")?.title).toBe("设备管理");
     });
     const pane = store.getState().workspaces[0]?.panes[0];
-    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
-    expect(pane?.activeTabId).toBe("devterm-1");
-  });
-
-  it("conflict layout application preserves the device tabs and refreshes to the server copy", async () => {
-    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "设置")])]));
-    const { layout, store } = await openTab();
-
-    server.revision = 7;
-    server.data = JSON.stringify(persistedLayout([workspace(deviceTabs(), "devterm-1")]));
-    server.putAlwaysConflicts = true;
-    store.setState({ leftWidth: 300 });
-    await layout.flushLayout();
-
-    const state = store.getState();
-    const pane = state.workspaces[0]?.panes[0];
-    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "deviceTerminal", "settings"]);
-    expect(pane?.activeTabId).toBe("devterm-1");
-    expect(findTab(state, "devterm-1")?.deviceId).toBe("device-1");
-    expect(state.leftWidth).toBe(248);
-    expect(state.toasts.some((t) => t.text.includes("布局已在其他设备上更新"))).toBe(true);
+    expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
+    expect(pane?.activeTabId).toBe("devices");
   });
 });

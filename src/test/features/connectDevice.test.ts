@@ -1,0 +1,184 @@
+/** @vitest-environment jsdom */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deferred, flush } from "./reactTestUtils";
+
+const mocks = vi.hoisted(() => ({
+  sessionConnectDevice: vi.fn(),
+  sessionReconnect: vi.fn(),
+  sessionList: vi.fn(),
+  toast: vi.fn(),
+}));
+
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    sessionApi: {
+      connectDevice: mocks.sessionConnectDevice,
+      reconnect: mocks.sessionReconnect,
+      list: mocks.sessionList,
+    },
+    dbApi: {},
+    vaultApi: {},
+  };
+});
+
+import { connectDevice, deviceAssetId, useUi, type ConnectOutcome } from "../../app/store";
+import type { SessionInfo } from "../../ipc/commands";
+
+const DEVICE = { id: "d-1", name: "build-box" };
+
+const DEVICE_SESSION: SessionInfo = {
+  id: "s-dev-1",
+  assetId: "device/d-1",
+  name: "build-box",
+  kind: "device",
+  status: "connected",
+  tabs: [],
+  createdAt: 0,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  useUi.setState({
+    sessions: [],
+    workspaces: [],
+    activeWorkspaceId: null,
+    connectingAssetIds: [],
+    leftMode: "assets",
+    pushToast: mocks.toast,
+  });
+  mocks.sessionConnectDevice.mockResolvedValue(DEVICE_SESSION);
+});
+
+afterEach(() => {
+  useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [], leftMode: "assets" });
+});
+
+describe("connectDevice 打开设备工作区", () => {
+  it("全新连接建立会话、开独立工作区并打开终端标签", async () => {
+    const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledWith("d-1", "build-box");
+
+    const { workspaces, sessions, activeWorkspaceId } = useUi.getState();
+    const ws = workspaces.find((w) => w.assetId === "device/d-1");
+    expect(ws).toBeDefined();
+    expect(ws?.kind).toBe("session");
+    expect(ws?.assetKind).toBe("device");
+    expect(ws?.sessionId).toBe("s-dev-1");
+    expect(activeWorkspaceId).toBe(ws?.id);
+    expect(sessions.some((s) => s.id === "s-dev-1" && s.kind === "device")).toBe(true);
+    const tabs = ws?.panes.flatMap((p) => p.tabs) ?? [];
+    expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
+  });
+
+  it("设备工作区不自动切到文件栏 (设备会话没有文件面)", async () => {
+    useUi.setState({ leftMode: "assets" });
+    await connectDevice(DEVICE);
+    expect(useUi.getState().leftMode).toBe("assets");
+  });
+
+  it("同一设备在途时重复调用只发起一次连接", async () => {
+    const gate = deferred<SessionInfo>();
+    mocks.sessionConnectDevice.mockReturnValueOnce(gate.promise);
+
+    const first = connectDevice(DEVICE);
+    const second = connectDevice(DEVICE);
+    await flush();
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().connectingAssetIds).toContain("device/d-1");
+
+    gate.resolve(DEVICE_SESSION);
+    const [a, b] = (await Promise.all([first, second])) as ConnectOutcome[];
+    expect(a).toEqual({ ok: true });
+    expect(b).toEqual({ ok: true });
+    expect(useUi.getState().connectingAssetIds).not.toContain("device/d-1");
+  });
+
+  it("连接失败返回错误并 toast, 守卫清除后可重试", async () => {
+    mocks.sessionConnectDevice.mockRejectedValueOnce({ code: "forbidden", message: "设备已关闭终端访问" });
+    const failed = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(failed).toEqual({ ok: false, error: "设备已关闭终端访问" });
+    expect(mocks.toast).toHaveBeenCalledWith("error", "设备已关闭终端访问");
+    expect(useUi.getState().workspaces.every((w) => w.assetId !== "device/d-1")).toBe(true);
+
+    const retried = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(retried).toEqual({ ok: true });
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it("deviceAssetId 与后端伪资产 id 一致", () => {
+    expect(deviceAssetId("d-1")).toBe("device/d-1");
+  });
+});
+
+describe("connectDevice 工作区去重", () => {
+  function seedDeviceWorkspace(sessionStatus: SessionInfo["status"], withTerminalTab = false) {
+    const tabs = withTerminalTab
+      ? [{ id: "t1", kind: "terminal" as const, title: "终端 1", sessionId: "s-dev-1", closable: true }]
+      : [];
+    useUi.setState({
+      sessions: [{ ...DEVICE_SESSION, status: sessionStatus }],
+      workspaces: [
+        {
+          id: "ws-dev",
+          kind: "session" as const,
+          sessionId: "s-dev-1",
+          title: "build-box",
+          assetId: "device/d-1",
+          assetKind: "device",
+          panes: [{ id: "p1", tabs, activeTabId: tabs[0]?.id ?? null }],
+          activePaneId: "p1",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: null,
+    });
+  }
+
+  it("已有活会话工作区时再次打开直接跳转, 不发起新连接", async () => {
+    seedDeviceWorkspace("connected", true);
+    const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
+  });
+
+  it("工作区还在但终端标签已关闭时, 再次打开补开终端标签", async () => {
+    seedDeviceWorkspace("connected");
+    const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    const ws = useUi.getState().workspaces.find((w) => w.id === "ws-dev");
+    expect(ws?.panes.flatMap((p) => p.tabs).some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
+  });
+
+  it("会话已断开时直接重连, 不发起新连接", async () => {
+    seedDeviceWorkspace("disconnected");
+    mocks.sessionReconnect.mockResolvedValue(true);
+    mocks.sessionList.mockResolvedValue([{ ...DEVICE_SESSION, status: "connected" }]);
+
+    const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionReconnect).toHaveBeenCalledWith("s-dev-1");
+    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
+  });
+
+  it("重连失败 (会话已删除) 时清掉残留工作区走全新连接", async () => {
+    seedDeviceWorkspace("disconnected");
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "会话不存在" });
+
+    const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
+    const { workspaces } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]?.id).not.toBe("ws-dev");
+    expect(workspaces[0]?.assetId).toBe("device/d-1");
+  });
+});
