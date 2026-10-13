@@ -37,6 +37,10 @@ const (
 	FrameDialed
 	FrameDialData
 	FrameDialEOF
+	FrameListen
+	FrameListenAck
+	FrameInbound
+	FrameAccept
 )
 
 func WriteFrame(writer io.Writer, kind FrameType, payload []byte) error {

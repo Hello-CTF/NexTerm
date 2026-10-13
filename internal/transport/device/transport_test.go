@@ -20,6 +20,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
+	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -82,6 +83,9 @@ func newPurposeRig(t *testing.T) *purposeRig {
 	}
 	fileServer := purpose.NewFileServer(nil)
 	dialServer := purpose.NewDialServer(nil)
+	listenHub := purpose.NewListenHub()
+	listenServer := purpose.NewListenServer(nil, listenHub)
+	acceptServer := purpose.NewAcceptServer(nil, listenHub)
 	rig.dial = func(ctx context.Context, purpose string) (net.Conn, error) {
 		switch purpose {
 		case deviceproto.PurposeTerminal:
@@ -93,6 +97,14 @@ func newPurposeRig(t *testing.T) *purposeRig {
 		case deviceproto.PurposeForward:
 			clientConn, serverConn := net.Pipe()
 			go func() { _ = dialServer.ServeConn(rig.serveCtx, serverConn) }()
+			return clientConn, nil
+		case deviceproto.PurposeListen:
+			clientConn, serverConn := net.Pipe()
+			go func() { _ = listenServer.ServeConn(rig.serveCtx, serverConn) }()
+			return clientConn, nil
+		case deviceproto.PurposeAccept:
+			clientConn, serverConn := net.Pipe()
+			go func() { _ = acceptServer.ServeConn(rig.serveCtx, serverConn) }()
 			return clientConn, nil
 		default:
 			return nil, fmt.Errorf("unexpected bridge purpose %q", purpose)
@@ -154,6 +166,9 @@ func TestTransportCapabilitySurface(t *testing.T) {
 	}
 	if _, ok := transport.(base.Dialer); !ok {
 		t.Fatal("device transport must expose a dialer through forward-purpose bridges")
+	}
+	if _, ok := transport.(forward.RemoteListener); !ok {
+		t.Fatal("device transport must expose remote listen through listen/accept purpose bridges")
 	}
 }
 
@@ -545,6 +560,128 @@ func TestTransportDialContextFailures(t *testing.T) {
 	failing := New("dev-1", "digest", failingDial, 1)
 	if _, err := failing.DialContext(ctx, "tcp", "127.0.0.1:80"); err == nil {
 		t.Fatal("dial must surface the bridge dial failure")
+	}
+}
+
+func TestTransportListenRemoteEchoHalfCloseAndRelease(t *testing.T) {
+	rig := newPurposeRig(t)
+	transport := New("dev-1", rig.digest, rig.dial, 1)
+	listener, err := transport.ListenRemote(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil || port == 0 {
+		t.Fatalf("allocated port = %q, %v; want a real device-side port", portText, err)
+	}
+
+	accepted := make(chan net.Conn, 1)
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		accepted <- conn
+	}()
+	origin, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = origin.Close() }()
+	var forwarded net.Conn
+	select {
+	case forwarded = <-accepted:
+	case err := <-acceptErr:
+		t.Fatal(err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("device inbound connection was not accepted")
+	}
+	if forwarded.LocalAddr().String() != address {
+		t.Fatalf("forwarded local addr = %q, want the bound %q", forwarded.LocalAddr(), address)
+	}
+	if forwarded.RemoteAddr().String() != origin.LocalAddr().String() {
+		t.Fatalf("forwarded remote addr = %q, want origin %q", forwarded.RemoteAddr(), origin.LocalAddr())
+	}
+
+	if err := origin.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := origin.Write([]byte("remote-echo")); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, len("remote-echo"))
+	if _, err := io.ReadFull(forwarded, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forwarded.Write(buffer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(origin, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer) != "remote-echo" {
+		t.Fatalf("relayed payload = %q", buffer)
+	}
+	closer, ok := forwarded.(interface{ CloseWrite() error })
+	if !ok {
+		t.Fatal("accepted conn must support CloseWrite like the SSH channel conn")
+	}
+	if err := closer.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := origin.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("origin read after half-close = %v; want io.EOF", err)
+	}
+	if err := forwarded.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listener.Accept(); err == nil {
+		t.Fatal("Accept succeeded after Close")
+	}
+	// The listen-bridge close releases the device-side port asynchronously.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
+		if err != nil {
+			break
+		}
+		_ = conn.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("device-side port still open after listener Close")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestTransportListenRemoteValidationAndDialFailure(t *testing.T) {
+	rig := newPurposeRig(t)
+	transport := New("dev-1", rig.digest, rig.dial, 1)
+	ctx := context.Background()
+	if _, err := transport.ListenRemote(ctx, "udp", "127.0.0.1:53"); err == nil || !strings.Contains(err.Error(), "unsupported device remote listen network") {
+		t.Fatalf("udp listen = %v; want the unsupported network error", err)
+	}
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = taken.Close() }()
+	if _, err := transport.ListenRemote(ctx, "tcp", taken.Addr().String()); err == nil {
+		t.Fatal("duplicate bind must surface the agent's listen failure")
+	}
+	failing := New("dev-1", "digest", failingDial, 1)
+	if _, err := failing.ListenRemote(ctx, "tcp", "127.0.0.1:0"); err == nil {
+		t.Fatal("listen must surface the bridge dial failure")
 	}
 }
 

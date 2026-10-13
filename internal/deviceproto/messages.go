@@ -88,3 +88,27 @@ type DialMsg struct {
 	Network string `json:"network"`
 	Address string `json:"address"`
 }
+
+type ListenMsg struct {
+	Network string `json:"network"`
+	Address string `json:"address"`
+}
+
+// ListenAckMsg reports the actual bound address, which matters when the
+// request asked for port 0.
+type ListenAckMsg struct {
+	Address string `json:"address"`
+}
+
+// InboundMsg announces one accepted connection on the listen bridge; Address
+// is the remote peer address.
+type InboundMsg struct {
+	ConnID  string `json:"connId"`
+	Address string `json:"address"`
+}
+
+// AcceptMsg heads an accept bridge, naming the parked inbound connection the
+// client claims.
+type AcceptMsg struct {
+	ConnID string `json:"connId"`
+}

@@ -35,6 +35,78 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListenFrameValues(t *testing.T) {
+	// The listen family continues the numbering after FrameDialEOF(27); the
+	// values are a fixed wire contract with the client.
+	if FrameListen != 28 || FrameListenAck != 29 || FrameInbound != 30 || FrameAccept != 31 {
+		t.Fatalf("listen frames = %d/%d/%d/%d; want 28/29/30/31", FrameListen, FrameListenAck, FrameInbound, FrameAccept)
+	}
+}
+
+func TestListenMessageRoundTrips(t *testing.T) {
+	var buffer bytes.Buffer
+	if err := WriteMessage(&buffer, FrameListen, ListenMsg{Network: "tcp", Address: "0.0.0.0:2222"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMessage(&buffer, FrameListenAck, ListenAckMsg{Address: "10.0.0.1:2222"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMessage(&buffer, FrameInbound, InboundMsg{ConnID: "conn-1", Address: "10.0.0.2:51234"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMessage(&buffer, FrameAccept, AcceptMsg{ConnID: "conn-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	kind, payload, err := ReadFrame(&buffer)
+	if err != nil || kind != FrameListen {
+		t.Fatalf("kind = %d, err = %v; want FrameListen", kind, err)
+	}
+	var listen ListenMsg
+	if err := UnmarshalPayload(payload, &listen); err != nil {
+		t.Fatal(err)
+	}
+	if listen != (ListenMsg{Network: "tcp", Address: "0.0.0.0:2222"}) {
+		t.Fatalf("listen = %+v; want the written ListenMsg", listen)
+	}
+
+	kind, payload, err = ReadFrame(&buffer)
+	if err != nil || kind != FrameListenAck {
+		t.Fatalf("kind = %d, err = %v; want FrameListenAck", kind, err)
+	}
+	var ack ListenAckMsg
+	if err := UnmarshalPayload(payload, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.Address != "10.0.0.1:2222" {
+		t.Fatalf("ack = %+v; want the bound address", ack)
+	}
+
+	kind, payload, err = ReadFrame(&buffer)
+	if err != nil || kind != FrameInbound {
+		t.Fatalf("kind = %d, err = %v; want FrameInbound", kind, err)
+	}
+	var inbound InboundMsg
+	if err := UnmarshalPayload(payload, &inbound); err != nil {
+		t.Fatal(err)
+	}
+	if inbound != (InboundMsg{ConnID: "conn-1", Address: "10.0.0.2:51234"}) {
+		t.Fatalf("inbound = %+v; want the written InboundMsg", inbound)
+	}
+
+	kind, payload, err = ReadFrame(&buffer)
+	if err != nil || kind != FrameAccept {
+		t.Fatalf("kind = %d, err = %v; want FrameAccept", kind, err)
+	}
+	var accept AcceptMsg
+	if err := UnmarshalPayload(payload, &accept); err != nil {
+		t.Fatal(err)
+	}
+	if accept.ConnID != "conn-1" {
+		t.Fatalf("accept = %+v; want the claimed ConnID", accept)
+	}
+}
+
 func TestWriteFrameRejectsOversize(t *testing.T) {
 	var buffer bytes.Buffer
 	err := WriteFrame(&buffer, FrameData, make([]byte, MaxFramePayload+1))

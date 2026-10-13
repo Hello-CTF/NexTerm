@@ -167,7 +167,7 @@ func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec
 		return Spec{}, err
 	}
 	if _, ok := dialer.(RemoteListener); !ok {
-		return Spec{}, ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH 远程监听的会话")
+		return Spec{}, ipc.NewError(ipc.CodeUnsupported, "当前会话类型不支持远程监听")
 	}
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 	target := net.JoinHostPort(host, strconv.Itoa(int(args.TargetPort)))

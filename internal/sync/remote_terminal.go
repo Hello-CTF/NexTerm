@@ -20,7 +20,7 @@ import (
 // connection lives independently and does not hold opMu long-term.
 
 // DialDeviceBridge completes the WS upgrade against the server device bridge endpoint with the logged-in session and returns a byte-stream connection;
-// purpose selects the bridge kind ("terminal"/"file"/"forward", empty means terminal). 401 goes through remoteCall's dropSession re-login loop,
+// purpose selects the bridge kind ("terminal"/"file"/"forward"/"listen"/"accept", empty means terminal). 401 goes through remoteCall's dropSession re-login loop,
 // same semantics as the typed remote methods.
 func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
 	if deviceID == "" {

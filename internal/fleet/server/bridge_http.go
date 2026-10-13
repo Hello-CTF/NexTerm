@@ -24,7 +24,9 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		purpose = agent.PurposeTerminal
 	case "file":
 		action = "file_open"
-	case "forward":
+	// listen (one control bridge per remote listener) and accept (one bridge per inbound connection)
+	// serve remote port forwards, so they audit under the same forward_open family as forward.
+	case "forward", "listen", "accept":
 		action = "forward_open"
 	default:
 		writeFleetJSON(w, http.StatusBadRequest, ipc.Failure(ipc.NewError(ipc.CodeBadParam, "未知的桥接用途")))

@@ -655,7 +655,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               ) : sessionId ? (
                 kind === "remote" ? (
                   <>
-                    出口走当前会话（{sessionName(sessionId)}）的 SSH 连接；远端监听地址为{" "}
+                    出口走当前会话（{sessionName(sessionId)}）的连接；远端监听地址为{" "}
                     <span className="nx-code">
                       {bindHost}:{listenPort}
                     </span>{" "}
@@ -669,7 +669,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   </>
                 ) : (
                 <>
-                  出口走当前会话（{sessionName(sessionId)}）的 SSH 连接；监听地址为{" "}
+                  出口走当前会话（{sessionName(sessionId)}）的连接；监听地址为{" "}
                   <span className="nx-code">
                     {listenHost}:{listenPort}
                   </span>

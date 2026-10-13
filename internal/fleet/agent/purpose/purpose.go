@@ -1,8 +1,10 @@
 // Package purpose implements the agent-side servers for non-terminal bridge
-// purposes: file serves the device filesystem and forward dials TCP/unix
-// targets, each speaking the deviceproto wire protocol over one fleet bridge
-// connection. Bridges are authorized at the fleet server edge, so the servers
-// act with the agent user's privileges, mirroring the terminal shell.
+// purposes: file serves the device filesystem, forward dials TCP/unix
+// targets, and listen binds TCP/unix listeners whose inbound connections are
+// claimed over accept bridges, each speaking the deviceproto wire protocol
+// over one fleet bridge connection. Bridges are authorized at the fleet
+// server edge, so the servers act with the agent user's privileges, mirroring
+// the terminal shell.
 package purpose
 
 import (
