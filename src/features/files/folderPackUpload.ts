@@ -1,9 +1,10 @@
-import { fsApi } from "../../ipc/commands";
+import { fsApi, localFileApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { EVENTS, listenEvent, type FsProgressEvent } from "../../ipc/events";
 import { dropStaged, stageFile } from "../../ipc/webFiles";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { bytesFromBase64 } from "./fileCodec";
 import { formatSize } from "./fileTypes";
 import { joinPath } from "./pathUtils";
 import type { FolderFileEntry } from "./folderUpload";
@@ -84,6 +85,17 @@ function writeHeader(
   h[155] = 0x20;
 }
 
+async function entryBytes(f: FolderFileEntry): Promise<Uint8Array<ArrayBuffer>> {
+  if (f.file) return new Uint8Array(await f.file.arrayBuffer());
+  // Native-picker entries carry no File; read bytes from the local path through the desktop IPC.
+  const res = await localFileApi.read(f.localPath, f.size);
+  const bytes = bytesFromBase64(res.contentBase64);
+  if (bytes.length !== f.size) {
+    throw new Error(`文件「${f.relativePath}」的大小在读取期间发生了变化，请重新上传`);
+  }
+  return bytes as Uint8Array<ArrayBuffer>;
+}
+
 export async function buildFolderTar(
   files: FolderFileEntry[],
   rootPrefix = "",
@@ -111,11 +123,11 @@ export async function buildFolderTar(
     }
   }
   const dirList = [...dirs].sort();
-  const dirMtime = files.reduce((max, f) => Math.max(max, Math.floor(f.file.lastModified / 1000)), 0);
+  const dirMtime = files.reduce((max, f) => Math.max(max, Math.floor(f.mtimeMs / 1000)), 0);
 
   let total = 2 * BLOCK;
   total += dirList.length * BLOCK;
-  for (const f of files) total += BLOCK + Math.ceil(f.file.size / BLOCK) * BLOCK;
+  for (const f of files) total += BLOCK + Math.ceil(f.size / BLOCK) * BLOCK;
   const out = new Uint8Array(total);
 
   let offset = 0;
@@ -124,8 +136,8 @@ export async function buildFolderTar(
     offset += BLOCK;
   }
   for (const [i, f] of files.entries()) {
-    const data = new Uint8Array(await f.file.arrayBuffer());
-    writeHeader(out, offset, encoder.encode(names[i]), data.length, Math.floor(f.file.lastModified / 1000), TYPE_FILE);
+    const data = await entryBytes(f);
+    writeHeader(out, offset, encoder.encode(names[i]), data.length, Math.floor(f.mtimeMs / 1000), TYPE_FILE);
     offset += BLOCK;
     out.set(data, offset);
     offset += Math.ceil(data.length / BLOCK) * BLOCK;
@@ -189,7 +201,7 @@ export async function packUploadAndExtract(args: PackUploadArgs): Promise<string
   if (!packExtractSupported(kind)) {
     throw new Error(`当前会话类型（${kind || "未知"}）不支持打包上传`);
   }
-  const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0);
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
   // The 64MB cap applies only to the desktop fs_write path (device WriteFile is buffered and capped);
   // WEB streams through staged upload (OpenWrite) and is uncapped.
   if (kind === "device" && !WEB && totalBytes > MAX_PACK_BYTES_DEVICE) {

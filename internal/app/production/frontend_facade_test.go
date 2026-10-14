@@ -11,8 +11,9 @@ import (
 )
 
 // Command pinned values in the frontend IPC facade (files under src/ipc that initiate calls directly) must all fall within
-// the production dispatcher's registered surface; the reverse difference may only contain ai_takeover_resume, the single
-// pure-backend entry (the frontend only consumes ai_takeover_enter/run/exit).
+// the desktop production dispatcher's registered surface and, except the desktop-only local-folder pair, the server
+// dispatcher's as well; the reverse difference may only contain ai_takeover_resume, the single pure-backend entry (the
+// frontend only consumes ai_takeover_enter/run/exit).
 var frontendFacadeFiles = []string{
 	filepath.Join("..", "..", "..", "src", "ipc", "commands.ts"),
 	filepath.Join("..", "..", "..", "src", "ipc", "cron.ts"),
@@ -85,22 +86,40 @@ func frontendFacadeCommands(t *testing.T) map[string]bool {
 	return commands
 }
 
+// desktopOnlyFacadeCommands are called by the frontend but registered only in the desktop
+// assembly (local_folder_list/local_file_read walk the machine the process runs on, so the
+// server assembly must never expose them); every other facade command must exist in both.
+var desktopOnlyFacadeCommands = []string{"local_file_read", "local_folder_list"}
+
 func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
-	production, err := NewProduction(t.Context(), ProductionConfig{DataDir: t.TempDir(), Desktop: false})
+	server, err := NewProduction(t.Context(), ProductionConfig{DataDir: t.TempDir(), Desktop: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	desktop, err := NewProduction(t.Context(), ProductionConfig{DataDir: t.TempDir(), Desktop: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = desktop.Shutdown(context.Background()) })
 
-	registered := map[string]bool{}
-	for _, command := range production.Dispatcher.Commands() {
-		registered[command] = true
+	registeredServer := map[string]bool{}
+	for _, command := range server.Dispatcher.Commands() {
+		registeredServer[command] = true
+	}
+	registeredDesktop := map[string]bool{}
+	for _, command := range desktop.Dispatcher.Commands() {
+		registeredDesktop[command] = true
 	}
 	facade := frontendFacadeCommands(t)
 
 	var missing []string
 	for command := range facade {
-		if !registered[command] {
+		if !registeredDesktop[command] {
+			missing = append(missing, command)
+			continue
+		}
+		if !registeredServer[command] && !slices.Contains(desktopOnlyFacadeCommands, command) {
 			missing = append(missing, command)
 		}
 	}
@@ -110,7 +129,7 @@ func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
 	}
 
 	var backendOnly []string
-	for command := range registered {
+	for command := range registeredServer {
 		if !facade[command] {
 			backendOnly = append(backendOnly, command)
 		}
@@ -118,5 +137,16 @@ func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
 	sort.Strings(backendOnly)
 	if !slices.Equal(backendOnly, []string{"ai_takeover_resume"}) {
 		t.Fatalf("production commands without a frontend wrapper = %v, want [ai_takeover_resume]", backendOnly)
+	}
+
+	var desktopBackendOnly []string
+	for command := range registeredDesktop {
+		if !facade[command] {
+			desktopBackendOnly = append(desktopBackendOnly, command)
+		}
+	}
+	sort.Strings(desktopBackendOnly)
+	if !slices.Equal(desktopBackendOnly, []string{"ai_takeover_resume"}) {
+		t.Fatalf("desktop production commands without a frontend wrapper = %v, want [ai_takeover_resume]", desktopBackendOnly)
 	}
 }

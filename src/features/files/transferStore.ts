@@ -4,12 +4,16 @@ import { EVENTS, listenEvent, type FsProgressEvent } from "../../ipc/events";
 import { discardStaged, finishSave } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
+import { bytesToBase64 } from "./fileCodec";
 import { baseName } from "./pathUtils";
 import type { TransferDirection, TransferTask } from "./transferQueue";
 
 export interface UploadItem {
   localPath: string;
   remotePath: string;
+  // file uploads content instead of a local path (desktop drops, where the webview exposes no
+  // OS path); localPath stays empty in that case.
+  file?: File;
 }
 
 export interface DownloadItem {
@@ -72,6 +76,7 @@ function newTask(
     direction,
     remotePath: item.remotePath,
     localPath: item.localPath,
+    file: "file" in item ? item.file : undefined,
     status,
     transferred: 0,
     total: 0,
@@ -169,7 +174,12 @@ async function execute(id: string): Promise<void> {
   let resultText: string;
   try {
     if (task.direction === "upload") {
-      await fsApi.upload(task.sessionId, task.localPath, task.remotePath, false);
+      if (task.file) {
+        const data = new Uint8Array(await task.file.arrayBuffer());
+        await fsApi.write(task.sessionId, task.remotePath, bytesToBase64(data), false);
+      } else {
+        await fsApi.upload(task.sessionId, task.localPath, task.remotePath, false);
+      }
       resultText = `已上传到 ${task.remotePath}`;
     } else {
       await fsApi.download(task.sessionId, task.remotePath, task.localPath);

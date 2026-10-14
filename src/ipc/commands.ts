@@ -497,6 +497,30 @@ export const fsApi = {
     call<string>("fs_extract", { sessionId, path }),
 };
 
+export interface LocalFolderFileDto {
+  relativePath: string;
+  localPath: string;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface LocalFolderListDto {
+  name: string;
+  files: LocalFolderFileDto[];
+  emptyDirs: string[];
+}
+
+// Desktop-only commands (not registered in the server assembly): enumerate and read a local
+// folder picked via the native folder dialog, giving folder upload real OS paths.
+export const localFileApi = {
+  listFolder: (path: string) => call<LocalFolderListDto>("local_folder_list", { path }),
+  read: (path: string, maxBytes?: number) =>
+    call<{ path: string; size: number; contentBase64: string }>("local_file_read", {
+      path,
+      maxBytes,
+    }),
+};
+
 export const mountApi = {
   capability: () => call<string | null>("mount_capability"),
   list: (forceRefresh?: boolean) =>

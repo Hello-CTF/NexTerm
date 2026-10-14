@@ -53,10 +53,17 @@ async function askConflictPolicy(
   return { kind, applyAll };
 }
 
+export interface UploadSource {
+  name: string;
+  localPath: string;
+  // file uploads content instead of a local path (desktop drops expose no OS path); see UploadItem.
+  file?: File;
+}
+
 export async function enqueueUploadWithConflicts(args: {
   sessionId: string;
   dir: string;
-  localPaths: string[];
+  items: UploadSource[];
   knownSiblings?: FileEntryDto[];
   refreshDir?: string;
 }): Promise<boolean> {
@@ -66,20 +73,20 @@ export async function enqueueUploadWithConflicts(args: {
   let batchPolicy: ConflictPolicy | null = null;
   const uploads: UploadItem[] = [];
   const skipped: UploadItem[] = [];
-  for (const [i, localPath] of args.localPaths.entries()) {
-    const name = baseName(localPath);
+  for (const [i, item] of args.items.entries()) {
+    const name = item.name;
     if (!taken.has(name)) {
       taken.add(name);
-      uploads.push({ localPath, remotePath: joinPath(args.dir, name) });
+      uploads.push({ localPath: item.localPath, remotePath: joinPath(args.dir, name), file: item.file });
       continue;
     }
     let answer: PolicyAnswer | null;
     if (batchPolicy) {
       answer = { kind: batchPolicy, applyAll: true };
     } else {
-      const moreComing = args.localPaths
+      const moreComing = args.items
         .slice(i + 1)
-        .map(baseName)
+        .map((x) => x.name)
         .some((n) => taken.has(n));
       answer = await askConflictPolicy(name, findConflict(name, siblings)!, moreComing);
     }
@@ -89,12 +96,12 @@ export async function enqueueUploadWithConflicts(args: {
     }
     if (answer.applyAll) batchPolicy = answer.kind;
     if (answer.kind === "skip") {
-      skipped.push({ localPath, remotePath: joinPath(args.dir, name) });
+      skipped.push({ localPath: item.localPath, remotePath: joinPath(args.dir, name) });
       continue;
     }
     const finalName = answer.kind === "keepBoth" ? uniqueRemoteName(name, taken) : name;
     taken.add(finalName);
-    uploads.push({ localPath, remotePath: joinPath(args.dir, finalName) });
+    uploads.push({ localPath: item.localPath, remotePath: joinPath(args.dir, finalName), file: item.file });
   }
   for (const s of skipped) await dropStaged(s.localPath).catch(() => undefined);
   enqueueUploadBatch(args.sessionId, uploads, skipped, args.refreshDir ?? args.dir);
@@ -115,14 +122,8 @@ export async function localPathsFromFiles(files: File[]): Promise<string[] | nul
       return null;
     }
   }
-  const paths = files
-    .map((f) => (f as File & { path?: string }).path)
-    .filter((p): p is string => typeof p === "string" && p.length > 0);
-  if (paths.length === 0) {
-    pushToast("info", "当前平台无法读取拖拽文件的路径，请改用上传按钮选择文件");
-    return null;
-  }
-  return paths;
+  // Desktop webviews expose no OS path for dropped files; callers fall back to content upload.
+  return null;
 }
 
 export async function localPathsFromDataTransfer(dt: DataTransfer): Promise<string[] | null> {
@@ -136,14 +137,32 @@ export async function dropLocalFiles(args: {
   knownSiblings?: FileEntryDto[];
 }): Promise<void> {
   const localPaths = await localPathsFromFiles(args.files);
-  if (!localPaths) return;
+  if (!localPaths) {
+    // Desktop drops carry no OS paths, so the upload goes by file content through the same
+    // conflict-policy flow instead of the path-based fs_upload pipeline.
+    if (!WEB && args.files.length > 0) {
+      const pushToast = useUi.getState().pushToast;
+      try {
+        await enqueueUploadWithConflicts({
+          sessionId: args.sessionId,
+          dir: args.dir,
+          items: args.files.map((file) => ({ name: file.name, localPath: "", file })),
+          knownSiblings: args.knownSiblings,
+          refreshDir: args.dir,
+        });
+      } catch (e) {
+        pushToast("error", `上传失败：${describeError(e)}`);
+      }
+    }
+    return;
+  }
   const pushToast = useUi.getState().pushToast;
   let enqueued = false;
   try {
     enqueued = await enqueueUploadWithConflicts({
       sessionId: args.sessionId,
       dir: args.dir,
-      localPaths,
+      items: localPaths.map((localPath) => ({ name: baseName(localPath), localPath })),
       knownSiblings: args.knownSiblings,
       refreshDir: args.dir,
     });
@@ -250,6 +269,8 @@ export async function enqueueFolderUpload(args: {
   let uploads: UploadItem[] = args.files.map((f) => ({
     localPath: f.localPath,
     remotePath: joinPath(prefix, f.relativePath),
+    // Entries without a local path (desktop drops) upload their File content instead.
+    ...(f.localPath === "" && f.file ? { file: f.file } : {}),
   }));
   const skipped: UploadItem[] = [];
   if (top && top.kind === "dir" && uploads.length > 0) {
