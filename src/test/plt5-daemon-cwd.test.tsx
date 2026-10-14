@@ -1,15 +1,39 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, mount, type MountedView } from "./features/reactTestUtils";
+import { click, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+
+const h = vi.hoisted(() => ({
+  web: true,
+  setText: vi.fn(),
+}));
+
+vi.mock("../ipc/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ipc/env")>()),
+  get WEB() {
+    return h.web;
+  },
+}));
+
+vi.mock("@wailsio/runtime", () => ({
+  Clipboard: { SetText: h.setText },
+}));
+
 import { Cwd, shortenCwd } from "../features/terminal/Cwd";
+import { useUi } from "../app/store";
 
 const mounted: MountedView[] = [];
+
+beforeEach(() => {
+  h.web = true;
+  h.setText.mockReset().mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.unmount();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("shortenCwd", () => {
@@ -43,5 +67,40 @@ describe("Cwd", () => {
     expect(button?.getAttribute("title")).toContain("/srv/www/app");
     click(button!);
     expect(writeText).toHaveBeenCalledWith("/srv/www/app");
+  });
+
+  it("pushes an error toast when the copy fails", async () => {
+    const toast = vi.fn();
+    const original = useUi.getState().pushToast;
+    useUi.setState({ pushToast: toast });
+    try {
+      const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+      const view = mount(createElement(Cwd, { cwd: "/srv/www/app" }));
+      mounted.push(view);
+      click(view.container.querySelector("button")!);
+      await flushUntil(() => toast.mock.calls.length > 0);
+      expect(toast).toHaveBeenCalledWith("error", expect.stringContaining("复制工作目录失败"));
+    } finally {
+      useUi.setState({ pushToast: original });
+    }
+  });
+
+  it("falls back to the wails clipboard on desktop when the API is missing", async () => {
+    h.web = false;
+    const toast = vi.fn();
+    const original = useUi.getState().pushToast;
+    useUi.setState({ pushToast: toast });
+    try {
+      vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+      const view = mount(createElement(Cwd, { cwd: "/srv/www/app" }));
+      mounted.push(view);
+      click(view.container.querySelector("button")!);
+      await flushUntil(() => toast.mock.calls.length > 0);
+      expect(h.setText).toHaveBeenCalledWith("/srv/www/app");
+      expect(toast).toHaveBeenCalledWith("success", "已复制工作目录");
+    } finally {
+      useUi.setState({ pushToast: original });
+    }
   });
 });

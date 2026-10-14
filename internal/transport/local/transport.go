@@ -25,6 +25,7 @@ type Config struct {
 
 type Transport struct {
 	shell      string
+	loginShell bool
 	cwd        string
 	env        map[string]string
 	generation uint64
@@ -39,8 +40,9 @@ type Transport struct {
 
 func NewWithConfig(config Config) *Transport {
 	shell := strings.TrimSpace(config.Shell)
+	loginShell := true
 	if shell == "" {
-		shell = defaultShell()
+		shell, loginShell = defaultShell()
 	}
 	cwd := strings.TrimSpace(config.CWD)
 	if cwd == "" {
@@ -52,6 +54,7 @@ func NewWithConfig(config Config) *Transport {
 	}
 	return &Transport{
 		shell:      shell,
+		loginShell: loginShell,
 		cwd:        cwd,
 		env:        env,
 		generation: nextGeneration.Add(1),

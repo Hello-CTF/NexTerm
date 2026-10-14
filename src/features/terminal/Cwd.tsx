@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useUi } from "../../app/store";
+import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 
 const CWD_DISPLAY_LIMIT = 28;
@@ -14,8 +15,7 @@ export function shortenCwd(cwd: string): string {
 export function Cwd({ cwd }: { cwd: string | null }) {
   const pushToast = useUi((s) => s.pushToast);
   const copy = useCallback(() => {
-    void navigator.clipboard
-      ?.writeText(cwd ?? "")
+    void copyText(cwd ?? "")
       .then(() => pushToast("success", "已复制工作目录"))
       .catch((e) => pushToast("error", `复制工作目录失败：${describeError(e)}`));
   }, [cwd, pushToast]);

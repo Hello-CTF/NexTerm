@@ -88,7 +88,24 @@ async function pendingFoldersFromDrop(
     entry: typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null,
     file: typeof item.getAsFile === "function" ? item.getAsFile() : null,
   }));
-  if (!extracted.some((x) => x.entry?.isDirectory)) return null;
+  if (!extracted.some((x) => x.entry?.isDirectory)) {
+    // Without webkitGetAsEntry (WebKitGTK) a dropped folder surfaces only as a 0-byte typeless
+    // File named after it, indistinguishable from a real empty file; skip those and name them.
+    if (items.some((item) => typeof item.webkitGetAsEntry !== "function")) {
+      const files = extracted.map((x) => x.file).filter((file): file is File => file !== null);
+      const skipped = files.filter((file) => file.size === 0 && file.type === "");
+      if (skipped.length > 0) {
+        const shown = skipped.slice(0, 3).map((file) => file.name);
+        if (skipped.length > 3) shown.push(`等 ${skipped.length} 个`);
+        useUi.getState().pushToast(
+          "info",
+          `已跳过 ${skipped.length} 个无法识别的条目（${shown.join("、")}）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮`,
+        );
+        return { folders: [], looseFiles: files.filter((file) => file.size > 0 || file.type !== "") };
+      }
+    }
+    return null;
+  }
   const folders: PendingFolder[] = [];
   const looseFiles: File[] = [];
   for (const { entry, file } of extracted) {

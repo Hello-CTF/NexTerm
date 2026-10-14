@@ -169,6 +169,42 @@ func TestTransportCloseAndGeneration(t *testing.T) {
 	}
 }
 
+func TestShellArgumentsUsesLoginFlagOnlyForLoginShells(t *testing.T) {
+	if got := strings.Join(shellArguments(true, "echo hi"), " "); got != "-lc echo hi" {
+		t.Fatalf("login shell args = %q", got)
+	}
+	if got := strings.Join(shellArguments(false, "echo hi"), " "); got != "-c echo hi" {
+		t.Fatalf("fallback shell args = %q", got)
+	}
+}
+
+func TestDefaultShellFallbackIsNotALoginShell(t *testing.T) {
+	if value, ok := os.LookupEnv("SHELL"); ok {
+		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
+	}
+	if err := os.Unsetenv("SHELL"); err != nil {
+		t.Fatal(err)
+	}
+	shell, login := defaultShell()
+	if shell != "/bin/sh" || login {
+		t.Fatalf("defaultShell without SHELL = (%q, %v)", shell, login)
+	}
+	transport := NewWithConfig(Config{CWD: t.TempDir()})
+	if transport.loginShell {
+		t.Fatal("fallback transport must not use login-shell flags")
+	}
+	result, err := transport.Exec(context.Background(), "printf fallback-ok", base.ExecOptions{Timeout: 5 * time.Second})
+	if err != nil || result.Stdout != "fallback-ok" {
+		t.Fatalf("Exec via fallback shell = %#v, %v", result, err)
+	}
+	if err := os.Setenv("SHELL", "/bin/sh"); err != nil {
+		t.Fatal(err)
+	}
+	if shell, login := defaultShell(); shell != "/bin/sh" || !login {
+		t.Fatalf("defaultShell with explicit SHELL = (%q, %v)", shell, login)
+	}
+}
+
 func unixTransport(t *testing.T) *Transport {
 	t.Helper()
 	return NewWithConfig(Config{Shell: "/bin/sh", CWD: t.TempDir(), Env: map[string]string{"LANG": "C.UTF-8"}})

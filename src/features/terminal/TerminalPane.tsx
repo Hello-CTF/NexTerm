@@ -36,7 +36,7 @@ import {
 } from "./terminalThrottle";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { copyText } from "../../ui/clipboard";
+import { copyText, readText } from "../../ui/clipboard";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
@@ -722,7 +722,7 @@ export function TerminalPane({
   const pasteIntoTerminal = async () => {
     if (!kernelTabId) return;
     try {
-      const text = await navigator.clipboard.readText();
+      const text = await readText();
       if (text && (await confirmMultilinePaste(text))) handleRef.current?.paste(text);
     } catch (e) {
       pushToast("error", `读取剪贴板失败：${describeError(e)}`);

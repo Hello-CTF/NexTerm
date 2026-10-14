@@ -421,3 +421,63 @@ describe("设备会话拖拽大小守卫", () => {
     expect(h.toasts.some((t) => t.level === "error")).toBe(false);
   });
 });
+
+describe("无 webkitGetAsEntry 的平台拖拽", () => {
+  function pseudoFolderFile(name: string): File {
+    return new File([], name, { lastModified: MTIME_MS });
+  }
+
+  it("目录伪文件被过滤并明确提示，零 IPC 零任务", async () => {
+    const pseudo = pseudoFolderFile("pics");
+    const dt = dropOf([{ getAsFile: () => pseudo }], [pseudo]);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    expect(h.toasts).toEqual([
+      {
+        level: "info",
+        text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+      },
+    ]);
+    expect(h.calls).toEqual([]);
+    expect(useTransferStore.getState().tasks).toEqual([]);
+  });
+
+  it("混拖时真实文件照常上传，目录伪文件不上传", async () => {
+    const pseudo = pseudoFolderFile("pics");
+    const real = fakeFile("real.txt", "R");
+    const dt = dropOf(
+      [{ getAsFile: () => pseudo }, { getAsFile: () => real }],
+      [pseudo, real],
+    );
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    await waitForSettled();
+    expect(h.toasts).toContainEqual({
+      level: "info",
+      text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+    });
+    expect(h.toasts.some((t) => t.level === "error")).toBe(false);
+    expect(h.calls).toContain(`write:/data/real.txt:${b64("R")}`);
+    expect(h.calls.some((c) => c.includes("pics"))).toBe(false);
+  });
+
+  it("跳过多个条目时提示截断为前 3 个名称加总数", async () => {
+    const pseudos = ["a", "b", "c", "d", "e"].map(pseudoFolderFile);
+    const dt = dropOf(pseudos.map((file) => ({ getAsFile: () => file })), pseudos);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    expect(h.toasts).toEqual([
+      {
+        level: "info",
+        text: "已跳过 5 个无法识别的条目（a、b、c、等 5 个）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+      },
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("只有真实文件时不提示，按松散文件上传", async () => {
+    const files = [fakeFile("x.txt", "X")];
+    const dt = dropOf(files.map((file) => ({ getAsFile: () => file })), files);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    await waitForSettled();
+    expect(h.toasts.some((t) => t.text.includes("当前平台不支持"))).toBe(false);
+    expect(h.calls).toContain(`write:/data/x.txt:${b64("X")}`);
+  });
+});
