@@ -1,11 +1,14 @@
-// Asset tree "devices" section: mounts server-enrolled devices into the asset tree as a read-only section.
+// Asset tree device rows: mounts server-enrolled devices into the asset tree as plain rows, with no section chrome of any kind -
+// no header row, no count, no refresh button, and no placeholder hints. While the device list is loading, when it failed to load,
+// when no devices are enrolled, and when every device is offline, the component renders null and leaves no visual trace in the
+// tree; management (enrollment, manual refresh, error/offline details) lives in the 设备管理 view.
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter opens a remote terminal, no separate "terminal" button).
 // Renders nothing and issues no requests when logged out; revoked devices are not shown (not even grayed out), and neither are
 // offline or agent-less devices: only online devices appear, so no online badge is rendered. Revocation requires two
 // warning confirmations (the second explicitly states "credentials become invalid immediately, removed from assets and unrecoverable"),
-// and the device is removed from the section immediately on success.
+// and the device is removed from the rows immediately on success.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
 // revoked elsewhere converge on refresh), WEB additionally subscribes to device://status for realtime online flips
 // (events win within the event threshold, otherwise heartbeat determination), and refetches immediately on event WS reconnect resync;
@@ -18,14 +21,7 @@ import { useCoarsePointer } from "../../app/platform";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
-import {
-  IconInfo,
-  IconMonitor,
-  IconRefresh,
-  IconTerminal,
-  IconTrash,
-  IconXCircle,
-} from "../../ui/icons";
+import { IconInfo, IconMonitor, IconTerminal, IconTrash } from "../../ui/icons";
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { WEB } from "../../ipc/env";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
@@ -174,51 +170,19 @@ export function DeviceTreeSection() {
 
   const enrolled = (devicesQuery.data?.devices ?? []).filter((d) => d.revoked_at === 0);
   const devices = enrolled.filter((d) => onlineOf(d));
+  if (devices.length === 0) return null;
 
   return (
-    <div role="group" aria-label="设备" className="mb-0.5">
-      <div className="nx-row cursor-default text-neutral-400">
-        <IconMonitor size={13} className="shrink-0 text-neutral-500" />
-        <span className="nx-row-name min-w-0 flex-1 truncate text-xs font-medium">设备</span>
-        <span className="nx-count">{devices.length}</span>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="刷新设备列表"
-          aria-label="刷新设备列表"
-          disabled={devicesQuery.isFetching}
-          onClick={() => void devicesQuery.refetch()}
-        >
-          <IconRefresh size={12} className={devicesQuery.isFetching ? "animate-spin" : ""} />
-        </button>
-      </div>
-
-      {devicesQuery.isPending ? (
-        <div className="nx-hint px-2 py-1.5 text-[11px]">设备列表加载中…</div>
-      ) : devicesQuery.isError ? (
-        <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
-          <IconXCircle size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate" title={describeError(devicesQuery.error)}>
-            设备列表加载失败
-          </span>
-          <button className="nx-link shrink-0" onClick={() => void devicesQuery.refetch()}>
-            重试
-          </button>
-        </div>
-      ) : enrolled.length === 0 ? (
-        <div className="nx-hint px-2 py-1.5 text-[11px]">还没有接入设备，在「设备管理」里接入。</div>
-      ) : devices.length === 0 ? (
-        <div className="nx-hint px-2 py-1.5 text-[11px]">设备都不在线，在「设备管理」里查看。</div>
-      ) : (
-        devices.map((device) => (
-          <DeviceTreeRow
-            key={device.id}
-            device={device}
-            busy={busyId === device.id}
-            onMenu={(x, y) => setMenu({ x, y, device })}
-            onRevoke={() => void revoke(device)}
-          />
-        ))
-      )}
+    <>
+      {devices.map((device) => (
+        <DeviceTreeRow
+          key={device.id}
+          device={device}
+          busy={busyId === device.id}
+          onMenu={(x, y) => setMenu({ x, y, device })}
+          onRevoke={() => void revoke(device)}
+        />
+      ))}
 
       <ContextMenu
         state={
@@ -237,7 +201,7 @@ export function DeviceTreeSection() {
         }
         onClose={() => setMenu(null)}
       />
-    </div>
+    </>
   );
 }
 
