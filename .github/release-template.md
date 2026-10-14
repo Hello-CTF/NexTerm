@@ -1,10 +1,4 @@
-### v1.0.13 变化
-
-- **桌面文件夹上传修复（Windows / macOS / Linux 桌面全平台）**：v1.0.12 的文件夹上传在桌面端实际不可用（依赖 Electron 特有属性，wails webview 不提供）——改用系统原生目录选择框选择文件夹，按真实本地路径上传：逐文件模式（断点续传、覆盖策略不变）与打包解包模式均恢复可用；桌面拖拽上传文件/文件夹同步修复（无路径时按内容写入，复用同一套冲突处理）；设备会话单文件超过 64MB 前置提示改用上传按钮。
-- **文件区右键菜单 + 打包下载**：空白处右键——上传到当前目录 / 上传文件夹到当前目录 / 新建目录 / 新建空白文件 / 刷新；目录条目右键——打包下载（远端打成 tar.gz 拉回，ssh / 设备 / 本机会话均支持）；支持 Menu 键 / Shift+F10 键盘唤起。
-- **平台兼容修复（macOS / Linux 桌面）**：终端粘贴按钮与多处复制在 macOS/Linux 桌面静默失败（wails:// 协议不是安全上下文，没有 navigator.clipboard），统一走 wails 剪贴板兜底；Debian/Ubuntu 最小环境（$SHELL 未设置且 /bin/sh 是 dash）本机终端与命令执行启动失败（dash 不认 -l 选项）；macOS 的 Cmd 快捷键与窗口控制此前因平台判定不匹配 darwin 而整体失效。
-- **文件冲突与路径**：WinRM（NTFS 大小写不敏感）与本机 Windows/macOS 会话上，大小写不同的同名文件（A.txt vs a.txt）现在正确触发覆盖确认——此前会无提示覆盖；重命名为大小写变体同样纳入确认；\\server\share 这类 UNC 路径的面包屑与上一级导航修复。
-- **稳定性修复**：supervisor 连接会话字段数据竞争；时序敏感测试加固（fleet 故障转移、share 撤销、AI 并发用例）。
+<!-- The 变化 section is generated at release time by .github/scripts/release-notes.mjs from conventional commits between the previous and current release tags; this template keeps only the hand-written sections below. -->
 
 ### 已知缺口（如实说明）
 
