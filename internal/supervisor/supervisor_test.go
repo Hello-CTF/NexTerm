@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -423,6 +424,68 @@ func TestSessionEnvRespectsExplicitValues(t *testing.T) {
 	}
 	if occurrences != 1 {
 		t.Fatalf("TERM entries = %d, want exactly one", occurrences)
+	}
+}
+
+func TestDefaultShellCommandFallbackIsNotALoginShell(t *testing.T) {
+	if value, ok := os.LookupEnv("SHELL"); ok {
+		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
+	}
+	if err := os.Unsetenv("SHELL"); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh"}) {
+		t.Fatalf("defaultShellCommand without SHELL = %v, want [/bin/sh]", got)
+	}
+	if err := os.Setenv("SHELL", "/bin/sh"); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultShellCommand(nil); !slices.Equal(got, []string{"/bin/sh", "-l"}) {
+		t.Fatalf("defaultShellCommand with explicit SHELL=/bin/sh = %v, want [/bin/sh -l]", got)
+	}
+}
+
+func TestDefaultShellCommandEnvironmentShellKeepsLoginFlag(t *testing.T) {
+	if got := defaultShellCommand([]string{"SHELL=/bin/zsh"}); !slices.Equal(got, []string{"/bin/zsh", "-l"}) {
+		t.Fatalf("defaultShellCommand with environment SHELL = %v, want [/bin/zsh -l]", got)
+	}
+}
+
+func TestCreateDefaultCommandSpawnsFallbackShell(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real shell")
+	}
+	if value, ok := os.LookupEnv("SHELL"); ok {
+		t.Cleanup(func() { _ = os.Setenv("SHELL", value) })
+	}
+	if err := os.Unsetenv("SHELL"); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := testSupervisor(t)
+	session, err := supervisor.Create(context.Background(), CreateOptions{
+		Env:  []string{"PATH=" + os.Getenv("PATH"), "TERM=xterm-256color"},
+		Cols: 80,
+		Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := session.entry.Command; !slices.Equal(got, []string{"/bin/sh"}) {
+		t.Fatalf("registry command = %v; want [/bin/sh] without -l", got)
+	}
+	attachment, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attachment.Detach()
+	if _, err := session.Write([]byte("printf 'fallback-ok\\n'\n")); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, attachment, "fallback-ok")
+	killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := session.killAndWait(killCtx, supervisor.commandTimeout); err != nil {
+		t.Fatal(err)
 	}
 }
 
