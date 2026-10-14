@@ -364,6 +364,13 @@ func TestRuntimeFailoverAtReconnectBoundary(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- agentRuntime.Run(ctx) }()
+	// Always stop the runtime before TempDir cleanup, including on t.Fatal (same shape as runBridgeProbe).
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v, want clean stop", err)
+		}
+	})
 
 	waitFor(t, 15*time.Second, "initial sync on first endpoint", func() bool {
 		return len(first.syncs()) >= 1
@@ -380,17 +387,11 @@ func TestRuntimeFailoverAtReconnectBoundary(t *testing.T) {
 		}
 		return false
 	})
-	config, err := StoreAt(dataDir).Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.CurrentURL != second.server.URL {
-		t.Fatalf("persisted current URL = %q, want %q", config.CurrentURL, second.server.URL)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("Run = %v, want clean stop", err)
-	}
+	// The failover report reaches the server before notifyCurrentURL persists the new current URL, so poll the store.
+	waitFor(t, 10*time.Second, "persisted current URL on second endpoint", func() bool {
+		config, err := StoreAt(dataDir).Load()
+		return err == nil && config.CurrentURL == second.server.URL
+	})
 }
 
 func TestRuntimeStopsOnSyncRevocation(t *testing.T) {
