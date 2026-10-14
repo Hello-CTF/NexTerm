@@ -1,3 +1,4 @@
+import { isMac, isWindows } from "../../app/platform";
 import type { FileEntryDto } from "../../ipc/types";
 
 export type TransferDirection = "upload" | "download";
@@ -33,11 +34,43 @@ export const TRANSFER_STATUS_LABEL: Record<TransferStatus, string> = {
   cancelled: "已取消",
 };
 
-export function findConflict(name: string, siblings: FileEntryDto[]): FileEntryDto | undefined {
-  return siblings.find((e) => e.name === name);
+// Upload targets whose filesystem folds filename case: winrm is always NTFS semantics; a local
+// session follows the desktop OS, so a case-sensitive APFS volume may get an extra prompt.
+export function conflictCaseInsensitive(sessionKind: string): boolean {
+  if (sessionKind === "winrm") return true;
+  if (sessionKind === "local") return isWindows() || isMac();
+  return false;
 }
 
-export function uniqueRemoteName(name: string, taken: ReadonlySet<string>): string {
+function foldName(name: string, caseInsensitive: boolean): string {
+  return caseInsensitive ? name.toLowerCase() : name;
+}
+
+export function findConflict(
+  name: string,
+  siblings: FileEntryDto[],
+  caseInsensitive = false,
+): FileEntryDto | undefined {
+  return siblings.find(
+    (e) => foldName(e.name, caseInsensitive) === foldName(name, caseInsensitive),
+  );
+}
+
+export interface TakenNames {
+  has(name: string): boolean;
+  add(name: string): void;
+}
+
+export function takenNames(names: Iterable<string>, caseInsensitive: boolean): TakenNames {
+  const pool = new Set<string>();
+  for (const name of names) pool.add(foldName(name, caseInsensitive));
+  return {
+    has: (name) => pool.has(foldName(name, caseInsensitive)),
+    add: (name) => pool.add(foldName(name, caseInsensitive)),
+  };
+}
+
+export function uniqueRemoteName(name: string, taken: TakenNames): string {
   const dot = name.lastIndexOf(".");
   const base = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";

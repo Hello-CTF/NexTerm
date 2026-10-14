@@ -5,9 +5,15 @@ export function norm(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+// A UNC share root ("//server/share") is a navigation boundary like "/" or "C:/".
+function uncRoot(path: string): string | null {
+  const m = /^\/\/[^/]+\/[^/]+/.exec(path);
+  return m ? m[0] : null;
+}
+
 export function isRoot(path: string): boolean {
   const p = norm(path);
-  return p === "/" || /^[A-Za-z]:\/$/.test(p);
+  return p === "/" || /^[A-Za-z]:\/$/.test(p) || uncRoot(p) === p;
 }
 
 export function joinPath(dir: string, name: string): string {
@@ -35,6 +41,16 @@ export function crumbsOf(path: string): { label: string; path: string }[] {
     const out = [{ label: "~", path: HOME }];
     let acc = HOME;
     for (const s of p.slice(1).split("/").filter(Boolean)) {
+      acc = joinPath(acc, s);
+      out.push({ label: s, path: acc });
+    }
+    return out;
+  }
+  const unc = uncRoot(p);
+  if (unc) {
+    const out = [{ label: unc, path: unc }];
+    let acc = unc;
+    for (const s of p.slice(unc.length).split("/").filter(Boolean)) {
       acc = joinPath(acc, s);
       out.push({ label: s, path: acc });
     }

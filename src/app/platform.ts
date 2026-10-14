@@ -28,6 +28,17 @@ export function isMac(): boolean {
   return macPlatform;
 }
 
+let windowsPlatform =
+  typeof navigator !== "undefined" && /Win/i.test(navigator.platform ?? "");
+
+export function isWindows(): boolean {
+  return windowsPlatform;
+}
+
+export function setWindowsPlatform(fromBackend: boolean): void {
+  windowsPlatform = fromBackend;
+}
+
 const mobileUA =
   typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
 

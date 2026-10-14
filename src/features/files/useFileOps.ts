@@ -10,13 +10,13 @@ import { joinPath, norm, parentOf } from "./pathUtils";
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
-  findSibling,
   formatMode,
   losesOwnerAccess,
   octalDefaultFromEntry,
   parseOctalMode,
   validateEntryName,
 } from "./fileOps";
+import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 
 export type FileOpKind = "rename" | "chmod" | "checksum";
 
@@ -125,7 +125,8 @@ export function useFileOps(sessionId: string) {
       }
       if (name === entry.name) return;
       const to = joinPath(parentOf(entry.path) ?? "", name);
-      const conflict = findSibling(siblings, name);
+      const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+      const conflict = findConflict(name, siblings, conflictCaseInsensitive(kind));
       if (conflict) {
         const go = await ask(
           `「${name}」已存在。继续将替换原有内容，且无法恢复。\n\n替换「${name}」？`,

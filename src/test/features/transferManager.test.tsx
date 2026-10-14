@@ -509,6 +509,30 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.askChoice).toHaveBeenCalledTimes(2);
   });
 
+  it("同批大小写变体重名（winrm）：自动保留两者，不弹冲突也不报错", async () => {
+    useUi.setState({ sessions: [sessionOfKind("winrm")] });
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "X.TXT")]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/X (1).TXT", false);
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+
+  it("同批完全重名（ssh）：自动保留两者，不弹冲突也不报错", async () => {
+    useUi.setState({ sessions: [sessionOfKind("ssh")] });
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "x.txt")]);
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false);
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/x (1).txt", false);
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+
   it("策略可应用到本次队列：skip-all 只问一次，其余冲突同样跳过", async () => {
     mockHomeEntries([
       ["a.txt", "file"],

@@ -8,7 +8,14 @@ import type { FileEntryDto } from "../../ipc/types";
 import { formatSize } from "./fileTypes";
 import { MAX_PACK_BYTES_DEVICE } from "./folderPackUpload";
 import { baseName, joinPath, parentOf } from "./pathUtils";
-import { findConflict, uniqueRemoteName, type ConflictPolicy } from "./transferQueue";
+import {
+  conflictCaseInsensitive,
+  findConflict,
+  takenNames,
+  uniqueRemoteName,
+  type ConflictPolicy,
+  type TakenNames,
+} from "./transferQueue";
 import { enqueueUploadBatch, type UploadItem } from "./transferStore";
 import type { FolderFileEntry } from "./folderUpload";
 
@@ -17,14 +24,17 @@ interface PolicyAnswer {
   applyAll: boolean;
 }
 
+function sessionKindOf(sessionId: string): string {
+  return useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+}
+
 // Content uploads go through a single fs_write, which device sessions cap at MAX_PACK_BYTES_DEVICE;
 // path-based uploads (upload button / native folder picker) stream and stay uncapped.
 export function oversizedContentDrop(
   sessionId: string,
   files: { name: string; size: number }[],
 ): { name: string; size: number } | null {
-  const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
-  if (kind !== "device") return null;
+  if (sessionKindOf(sessionId) !== "device") return null;
   return files.find((f) => f.size > MAX_PACK_BYTES_DEVICE) ?? null;
 }
 
@@ -80,7 +90,11 @@ export async function enqueueUploadWithConflicts(args: {
   refreshDir?: string;
 }): Promise<boolean> {
   const siblings = args.knownSiblings ?? (await fsApi.list(args.sessionId, args.dir));
-  const taken = new Set(siblings.map((e) => e.name));
+  const ci = conflictCaseInsensitive(sessionKindOf(args.sessionId));
+  const taken = takenNames(
+    siblings.map((e) => e.name),
+    ci,
+  );
   const pushToast = useUi.getState().pushToast;
   let batchPolicy: ConflictPolicy | null = null;
   const uploads: UploadItem[] = [];
@@ -96,11 +110,23 @@ export async function enqueueUploadWithConflicts(args: {
     if (batchPolicy) {
       answer = { kind: batchPolicy, applyAll: true };
     } else {
+      const conflict = findConflict(name, siblings, ci);
+      if (!conflict) {
+        // Taken only by an earlier item in this batch: keep both without prompting.
+        const finalName = uniqueRemoteName(name, taken);
+        taken.add(finalName);
+        uploads.push({
+          localPath: item.localPath,
+          remotePath: joinPath(args.dir, finalName),
+          file: item.file,
+        });
+        continue;
+      }
       const moreComing = args.items
         .slice(i + 1)
         .map((x) => x.name)
         .some((n) => taken.has(n));
-      answer = await askConflictPolicy(name, findConflict(name, siblings)!, moreComing);
+      answer = await askConflictPolicy(name, conflict, moreComing);
     }
     if (!answer) {
       pushToast("info", "已取消上传，所有文件保持原样");
@@ -228,17 +254,24 @@ async function askFolderMergePolicy(folderName: string): Promise<ConflictPolicy 
 async function listRemoteSubdirs(
   sessionId: string,
   uploads: UploadItem[],
-): Promise<Map<string, Set<string>>> {
+  caseInsensitive: boolean,
+): Promise<Map<string, TakenNames>> {
   const dirs = [
     ...new Set(
       uploads.map((u) => parentOf(u.remotePath)).filter((d): d is string => d !== null),
     ),
   ];
-  const taken = new Map<string, Set<string>>();
+  const taken = new Map<string, TakenNames>();
   for (const dir of dirs) {
     try {
       const list = await fsApi.list(sessionId, dir);
-      taken.set(dir, new Set(list.map((e) => e.name)));
+      taken.set(
+        dir,
+        takenNames(
+          list.map((e) => e.name),
+          caseInsensitive,
+        ),
+      );
     } catch (e) {
       if ((e as { code?: string } | null)?.code === "not_found") continue;
       throw e;
@@ -256,9 +289,10 @@ export async function enqueueFolderUpload(args: {
   knownSiblings?: FileEntryDto[];
 }): Promise<boolean> {
   const siblings = args.knownSiblings ?? (await fsApi.list(args.sessionId, args.dir));
+  const ci = conflictCaseInsensitive(sessionKindOf(args.sessionId));
   const pushToast = useUi.getState().pushToast;
   let folderName = args.folderName;
-  const top = findConflict(folderName, siblings);
+  const top = findConflict(folderName, siblings, ci);
   if (top && top.kind !== "dir") {
     const key = await askChoice(
       `目标目录已存在同名文件「${folderName}」，无法在其位置创建文件夹。`,
@@ -283,7 +317,13 @@ export async function enqueueFolderUpload(args: {
       );
       return false;
     }
-    folderName = uniqueRemoteName(folderName, new Set(siblings.map((e) => e.name)));
+    folderName = uniqueRemoteName(
+      folderName,
+      takenNames(
+        siblings.map((e) => e.name),
+        ci,
+      ),
+    );
   }
   const prefix = joinPath(args.dir, folderName);
   let uploads: UploadItem[] = args.files.map((f) => ({
@@ -300,7 +340,7 @@ export async function enqueueFolderUpload(args: {
       return false;
     }
     if (policy !== "overwrite") {
-      const taken = await listRemoteSubdirs(args.sessionId, uploads);
+      const taken = await listRemoteSubdirs(args.sessionId, uploads, ci);
       uploads = uploads.filter((u) => {
         const dir = parentOf(u.remotePath) ?? args.dir;
         const names = taken.get(dir);
