@@ -20,6 +20,7 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
+import { GlobalScopeBadge } from "../../ui/GlobalScopeBadge";
 import { DESKTOP } from "../../ipc/env";
 import {
   IconArchive,
@@ -353,6 +354,7 @@ export function SettingsView() {
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
+        <GlobalScopeBadge />
         <div className="nx-spacer" />
       </div>
 

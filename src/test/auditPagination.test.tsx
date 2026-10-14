@@ -83,6 +83,17 @@ afterEach(() => {
 });
 
 describe("AuditView 分页", () => {
+  it("工具栏带「全局」范围标记", async () => {
+    mocks.auditCount.mockResolvedValue({ total: 0 });
+    mocks.auditQuery.mockResolvedValue([]);
+    mounted = mount(createElement(AuditView));
+    await flush();
+    const badge = mounted.container.querySelector(
+      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
+    );
+    expect(badge?.textContent).toBe("全局");
+  });
+
   it("首屏加载一页，加载更多按 offset 追加直到取完", async () => {
     mocks.auditCount.mockResolvedValue({ total: 250 });
     mocks.auditQuery.mockImplementation(({ offset }: { offset: number }) =>

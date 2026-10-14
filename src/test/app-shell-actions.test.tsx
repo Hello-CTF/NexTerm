@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   connectAsset: vi.fn(),
   connectLocal: vi.fn(),
   dbConnect: vi.fn(),
+  aiSidebarProps: [] as { sessionId?: string }[],
+  backgroundProps: [] as { workspaceId?: string }[],
+  historyProps: [] as { workspaceId?: string }[],
 }));
 
 vi.mock("../app/store", async (importOriginal) => {
@@ -61,8 +64,18 @@ vi.mock("../app/useUpdate", () => ({
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
-vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
-vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({ TranscriptHistoryPanel: () => null }));
+vi.mock("../features/terminal/BackgroundSessions", () => ({
+  BackgroundSessions: (props: { workspaceId?: string }) => {
+    mocks.backgroundProps.push(props);
+    return null;
+  },
+}));
+vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
+  TranscriptHistoryPanel: (props: { workspaceId?: string }) => {
+    mocks.historyProps.push(props);
+    return null;
+  },
+}));
 vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
 vi.mock("../features/files/MountPanel", () => ({ MountPanel: () => null }));
@@ -71,7 +84,12 @@ vi.mock("../features/files/LogViewer", () => ({ LogViewer: () => null }));
 vi.mock("../features/forward/ForwardPanel", () => ({ ForwardPanel: () => null }));
 vi.mock("../features/docker/DockerPanel", () => ({ DockerPanel: () => null }));
 vi.mock("../features/db/DbPanel", () => ({ DbPanel: () => null }));
-vi.mock("../features/ai/AiSidebar", () => ({ AiSidebar: () => null }));
+vi.mock("../features/ai/AiSidebar", () => ({
+  AiSidebar: (props: { sessionId?: string }) => {
+    mocks.aiSidebarProps.push(props);
+    return null;
+  },
+}));
 vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }));
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
@@ -157,6 +175,9 @@ beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   Element.prototype.scrollIntoView = vi.fn();
+  mocks.aiSidebarProps.length = 0;
+  mocks.backgroundProps.length = 0;
+  mocks.historyProps.length = 0;
   mocks.assetList.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
@@ -249,7 +270,104 @@ describe("App workspace actions", () => {
   });
 });
 
+describe("App 工作区范围", () => {
+  it("工作区切换菜单不再提供「新建工作区」入口", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [workspaceOf("s1")],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    const switcher = mounted.container.querySelector('button[aria-label^="切换工作区"]');
+    if (!switcher) throw new Error("工作区切换按钮未找到");
+    click(switcher);
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("关闭「workspace」");
+    expect(text).not.toContain("新建工作区");
+  });
+
+  it("后台会话与终端历史标签拿到所属工作区 id，而不是当前活动工作区", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [
+        { ...workspaceOf("s1"), id: "ws-active" },
+        {
+          ...workspaceOf("s2"),
+          id: "ws-host",
+          panes: [
+            {
+              id: "pane",
+              tabs: [
+                { id: "background", kind: "background", title: "后台会话", closable: true },
+                { id: "history", kind: "history", title: "终端历史", closable: true },
+              ],
+              activeTabId: "background",
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws-active",
+    });
+    mounted = mountApp();
+    await flush();
+    expect(mocks.backgroundProps[mocks.backgroundProps.length - 1]?.workspaceId).toBe("ws-host");
+    expect(mocks.historyProps[mocks.historyProps.length - 1]?.workspaceId).toBe("ws-host");
+  });
+
+  it("数据库工作区里 AI 侧栏不绑定任何会话", async () => {
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [
+        {
+          id: "ws",
+          kind: "db",
+          title: "db-01 · MySQL",
+          connId: "c1",
+          panes: [{ id: "pane", tabs: [], activeTabId: null }],
+          activePaneId: "pane",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBeUndefined();
+  });
+
+  it("会话工作区里 AI 侧栏绑定工作区会话；没有工作区时回退到第一个会话", async () => {
+    mocks.sessionList.mockResolvedValue([sessionOf("s1"), sessionOf("s2")]);
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [workspaceOf("s2")],
+      activeWorkspaceId: "ws",
+    });
+    mounted = mountApp();
+    await flush();
+    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBe("s2");
+
+    mounted.unmount();
+    mounted = undefined;
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({ sessions: [sessionOf("s1")], workspaces: [], activeWorkspaceId: null });
+    mounted = mountApp();
+    await flush();
+    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBe("s1");
+  });
+});
+
 describe("App empty states", () => {
+  it("没有工作区时顶部引导指向资产", async () => {
+    mounted = mountApp();
+    await flush();
+    expect(mounted.container.querySelector("header")?.textContent).toContain(
+      "还没有工作区，双击左侧资产连接一台主机",
+    );
+  });
+
   it("keeps the palette action when onPalette is provided and mentions PostgreSQL", async () => {
     mounted = mountApp();
     await flush();

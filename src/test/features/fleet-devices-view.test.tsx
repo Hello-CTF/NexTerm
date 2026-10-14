@@ -199,6 +199,17 @@ afterEach(() => {
 });
 
 describe("设备管理视图 · 角色差异", () => {
+  it("工具栏带「全局」范围标记", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    const badge = document.querySelector(
+      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
+    );
+    expect(badge?.textContent).toBe("全局");
+  });
+
   it("超管看到 owner 徽章与接入地址编辑器", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);

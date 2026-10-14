@@ -9,6 +9,7 @@ import {
   flushUntil,
   mount,
   setInputValue,
+  setSelectValue,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -139,6 +140,55 @@ describe("TranscriptHistoryPanel", () => {
     await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
+  });
+
+  it("布局恢复的标签从所属工作区 seed，而不是挂载时的活动工作区", async () => {
+    const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
+    mocks.assetList.mockResolvedValue([other, ASSET]);
+    mocks.uiState.workspaces = [
+      { id: "ws-1", assetId: other.id },
+      { id: "ws-2", assetId: ASSET.id },
+    ];
+    mocks.uiState.activeWorkspaceId = "ws-1";
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-2" }));
+    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
+    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
+    expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
+  });
+
+  it("重新获得焦点时跟随所属工作区的主机，手动选择主机后不再跟随", async () => {
+    const hostA = { ...ASSET, id: "01J0HOSTAAAAAAAAAAAA0001", name: "host-a", builtin: false };
+    const hostB = { ...ASSET, id: "01J0HOSTBBBBBBBBBBBB0001", name: "host-b", builtin: false };
+    mocks.assetList.mockResolvedValue([hostA, hostB, ASSET]);
+    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostA.id }];
+    mocks.uiState.activeWorkspaceId = "ws-1";
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", visible: false }));
+    const hostSelect = () =>
+      mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
+    await flushUntil(() => hostSelect().options.length === 3);
+    expect(mocks.transcriptList).toHaveBeenLastCalledWith(hostA.id);
+
+    const rerender = (visible: boolean) =>
+      act(() => {
+        mounted!.root.render(
+          createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", visible }),
+        );
+      });
+
+    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostB.id }];
+    rerender(true);
+    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === hostB.id));
+    expect(hostSelect().value).toBe(hostB.id);
+
+    setSelectValue(hostSelect(), hostA.id);
+    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === hostA.id));
+    const hostBCalls = mocks.transcriptList.mock.calls.filter((call) => call[0] === hostB.id).length;
+    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostB.id }];
+    rerender(false);
+    rerender(true);
+    await flush();
+    expect(mocks.transcriptList.mock.calls.filter((call) => call[0] === hostB.id)).toHaveLength(hostBCalls);
+    expect(hostSelect().value).toBe(hostA.id);
   });
 
   it("shows empty state when the host has no transcripts", async () => {

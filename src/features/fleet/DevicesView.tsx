@@ -15,6 +15,7 @@ import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { GlobalScopeBadge } from "../../ui/GlobalScopeBadge";
 import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
@@ -66,6 +67,7 @@ function FleetUnsupported() {
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
+        <GlobalScopeBadge />
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
         <div className="flex w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -485,6 +487,7 @@ export function DevicesView() {
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">设备管理</span>
+          <GlobalScopeBadge />
           <span className="nx-hint">账号状态读取中…</span>
         </div>
       </div>
@@ -502,6 +505,7 @@ export function DevicesView() {
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">设备管理</span>
+          <GlobalScopeBadge />
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6">
           <div className="flex w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -605,6 +609,7 @@ export function DevicesView() {
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
+        <GlobalScopeBadge />
         <span className="nx-hint">
           {error && devices === null ? "设备列表加载失败" : devices === null ? "加载中…" : `共 ${devices.length} 台`}
         </span>
