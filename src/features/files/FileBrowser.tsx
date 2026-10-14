@@ -16,7 +16,7 @@ import {
   pickSavePath,
   promptText,
 } from "../../ui/dialogs";
-import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
+import { fsApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
 import type { FileEntryDto } from "../../ipc/types";
 import {
@@ -26,9 +26,10 @@ import {
   openFileTabInSplit,
   openLogTab,
   openTerminalTab,
+  reconnectDeadHost,
   useUi,
+  type Workspace,
 } from "../../app/store";
-import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useCoarsePointer } from "../../app/platform";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
@@ -187,13 +188,13 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
 
   const reconnectHost = async () => {
     const st = useUi.getState();
-    let target: { tabId: string; assetId?: string } | undefined;
+    let target: { tabId: string; ws: Workspace } | undefined;
     for (const w of st.workspaces) {
       const tab = w.panes
         .flatMap((p) => p.tabs)
         .find((t) => t.kind === "files" && !t.path && t.sessionId === sessionId);
       if (tab) {
-        target = { tabId: tab.id, assetId: w.assetId };
+        target = { tabId: tab.id, ws: w };
         break;
       }
     }
@@ -203,9 +204,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     }
     setReconnecting(true);
     try {
-      const s = await connectWithHostKeyConfirm(() =>
-        target.assetId ? sessionApi.connect(target.assetId) : sessionApi.connectLocal(),
-      );
+      const s = await reconnectDeadHost(target.ws);
       if (!s) {
         pushToast("info", "已取消重连");
         return;

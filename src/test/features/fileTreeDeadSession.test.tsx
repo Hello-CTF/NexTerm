@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   termWrite: vi.fn(),
   connect: vi.fn(),
   connectLocal: vi.fn(),
+  connectDevice: vi.fn(),
   knownHostAccept: vi.fn(),
   listenEvent: vi.fn(),
 }));
@@ -62,6 +63,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     sessionApi: {
       connect: mocks.connect,
       connectLocal: mocks.connectLocal,
+      connectDevice: mocks.connectDevice,
     },
     terminalApi: { write: mocks.termWrite },
     assetApi: { ...(actual.assetApi ?? {}), knownHostAccept: mocks.knownHostAccept },
@@ -119,6 +121,16 @@ const NEW_LOCAL_SESSION = {
   createdAt: 1,
 };
 
+const NEW_DEVICE_SESSION = {
+  id: "s-dev",
+  assetId: "device/d-1",
+  name: "build-box",
+  kind: "device",
+  status: "connected" as const,
+  tabs: [],
+  createdAt: 1,
+};
+
 function entry(name: string, kind: string): FileEntryDto {
   return {
     name,
@@ -137,11 +149,13 @@ const ENTRIES = [entry("a.txt", "file"), entry("sub", "dir")];
 
 let mounted: MountedView | undefined;
 
-function seedWorkspace(options: { assetId?: string } = {}): void {
+function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: string } = {}): void {
+  const title = options.title ?? "web-01";
+  const kind = options.assetKind ?? (options.assetId ? "ssh" : "local");
   const tab: AppTab = {
     id: "t1",
     kind: "terminal",
-    title: "web-01",
+    title,
     sessionId: SID,
     closable: true,
   };
@@ -150,10 +164,10 @@ function seedWorkspace(options: { assetId?: string } = {}): void {
       {
         id: "ws1",
         kind: "session",
-        title: "web-01",
+        title,
         sessionId: SID,
         assetId: options.assetId,
-        assetKind: options.assetId ? "ssh" : undefined,
+        assetKind: options.assetId ? kind : undefined,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
         splitRatio: 0.5,
@@ -165,8 +179,8 @@ function seedWorkspace(options: { assetId?: string } = {}): void {
       {
         id: SID,
         assetId: options.assetId ?? null,
-        name: "web-01",
-        kind: options.assetId ? "ssh" : "local",
+        name: title,
+        kind,
         status: "connected",
         tabs: [],
         createdAt: 0,
@@ -363,6 +377,38 @@ describe("FileTree 会话已删除", () => {
     expect(mocks.connectLocal).toHaveBeenCalledTimes(1);
     expect(mocks.connect).not.toHaveBeenCalled();
     expect(workspaceSessionId()).toBe("s-local");
+  });
+
+  it("设备工作区死会话自动走设备连接重连，同步工作区会话", async () => {
+    seedWorkspace({ assetId: "device/d-1", assetKind: "device", title: "build-box" });
+    mocks.connectDevice.mockResolvedValue(NEW_DEVICE_SESSION);
+    mocks.list.mockImplementation((sid: string) =>
+      sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
+    );
+    mounted = mountTree();
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mocks.connectDevice).toHaveBeenCalledWith("d-1", "build-box");
+    expect(mocks.connectDevice).toHaveBeenCalledTimes(1);
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.connectLocal).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(workspaceSessionId()).toBe("s-dev");
+    expect(useUi.getState().sessions.filter((s) => s.id === "s-dev")).toHaveLength(1);
+    expect(toastTexts()).toContain("已重新连接");
+  });
+
+  it("ssh 资产真实不存在时报出资产不存在的真实原因，不盲目重试", async () => {
+    seedWorkspace({ assetId: "asset-gone" });
+    mocks.connect.mockRejectedValue({ code: "not_found", message: "资产不存在" });
+    mounted = mountTree();
+
+    await waitFor(() => expect(toastTexts()).toContain("重新连接失败"));
+    expect(toastTexts()).toContain("资源不存在：资产不存在");
+    expect(mocks.connect).toHaveBeenCalledWith("asset-gone");
+    await flush();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(workspaceSessionId()).toBe(SID);
   });
 });
 
