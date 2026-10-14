@@ -370,6 +370,33 @@ describe("FileTree keyboard navigation", () => {
     );
   });
 
+  it("opens the row menu with the ContextMenu key and Shift+F10, Escape dismisses", async () => {
+    await mountTree();
+    const dir = itemByText(mounted!.container, "logs");
+    act(() => dir.focus());
+
+    keyDown(dir, "ContextMenu");
+    await waitFor(() =>
+      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
+    );
+    expect(dir.getAttribute("aria-selected")).toBe("true");
+    expect(
+      [...mounted!.container.querySelectorAll('[role="menuitem"]')].some((b) =>
+        b.textContent?.includes("打包下载当前目录"),
+      ),
+    ).toBe(true);
+
+    keyDown(document.activeElement as HTMLElement, "Escape");
+    await waitFor(() => expect(mounted!.container.querySelector('[role="menu"]')).toBeNull());
+
+    act(() => dir.focus());
+    keyDown(dir, "F10", { shiftKey: true });
+    await waitFor(() =>
+      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
+    );
+    expect(dir.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("labels every icon-only control in header and path bar", async () => {
     await mountTree();
     const controls = [

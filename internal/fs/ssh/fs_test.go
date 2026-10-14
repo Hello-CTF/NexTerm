@@ -221,6 +221,22 @@ func TestPackDownloadAndExtract(t *testing.T) {
 	}
 }
 
+func TestPackDownloadExpandsHomeBeforePacking(t *testing.T) {
+	executor := &fakeExecutor{}
+	filesystem, _ := newTestFS(t, executor)
+	executor.filesystem = filesystem
+	local := filepath.Join(t.TempDir(), "pack.tar.gz")
+	if _, err := filesystem.PackDownload(context.Background(), "~/some dir", local, TransferOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.commands) != 1 || strings.Contains(executor.commands[0], "~") {
+		t.Fatalf("pack command kept an unexpanded home path = %v", executor.commands)
+	}
+	if exists, err := filesystem.Exists(context.Background(), executor.temporary); err != nil || exists {
+		t.Fatalf("temporary archive remains = %v, %v", exists, err)
+	}
+}
+
 func TestPackDownloadCleansPartialArchiveFailures(t *testing.T) {
 	for _, test := range []struct {
 		name     string

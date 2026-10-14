@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -113,9 +114,27 @@ func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
 	if events.count(ipc.TopicFSProgress) < 2 {
 		t.Fatalf("progress events = %d", events.count(ipc.TopicFSProgress))
 	}
-	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_pack_download", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","remotePath":` + jsonString(root) + `,"localPath":` + jsonString(filepath.Join(root, "pack.tgz")) + `}`)}, production.Environment(""))
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("local pack capability = %+v", response)
+	packed := filepath.Join(root, "pack.tgz")
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_pack_download", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","remotePath":` + jsonString(root) + `,"localPath":` + jsonString(packed) + `}`)}, production.Environment(""))
+	var packedBytes int
+	requireStoreTestResponse(t, response, &packedBytes)
+	info, err := os.Stat(packed)
+	if err != nil || info.Size() != int64(packedBytes) {
+		t.Fatalf("packed archive size = %d, stat = %v", packedBytes, err)
+	}
+	magic := make([]byte, 2)
+	archive, err := os.Open(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(archive, magic); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if magic[0] != 0x1f || magic[1] != 0x8b {
+		t.Fatalf("packed archive magic = %x, want gzip", magic)
 	}
 	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_delete", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"isDir":false}`)}, production.Environment(""))
 	requireProductionNull(t, response)

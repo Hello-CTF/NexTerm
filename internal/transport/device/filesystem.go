@@ -2,6 +2,8 @@ package device
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,10 +13,12 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-const extractExecTimeout = 10 * time.Minute
+const archiveExecTimeout = 10 * time.Minute
 
 // fileSystem serves the base filesystem surface through fresh file-purpose
 // bridge dials per operation, mirroring how the supervisor client dials per
@@ -180,7 +184,7 @@ func (f *fileSystem) Extract(ctx context.Context, archivePath string) (string, e
 	}
 	dir := path.Dir(archivePath)
 	command := "tar -xf " + shellQuoteHome(archivePath) + " -C " + shellQuoteHome(dir)
-	result, err := f.exec(ctx, command, base.ExecOptions{Timeout: extractExecTimeout})
+	result, err := f.exec(ctx, command, base.ExecOptions{Timeout: archiveExecTimeout})
 	if err != nil {
 		return "", fmt.Errorf("extract device archive: %w", err)
 	}
@@ -212,6 +216,78 @@ func shellQuoteHome(path string) string {
 		return `"$HOME"` + shellQuote("/"+rest)
 	}
 	return shellQuote(path)
+}
+
+// PackDownload tars a directory through the device shell into a random temp
+// archive, downloads it through the regular transfer path, and removes the
+// temp archive on both success and failure.
+func (f *fileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
+	parent, name, err := splitArchivePath(remotePath)
+	if err != nil {
+		return 0, err
+	}
+	var random [12]byte
+	_, _ = rand.Read(random[:])
+	temporary := "/tmp/nexterm-pack-" + hex.EncodeToString(random[:]) + ".tar.gz"
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = f.Delete(cleanupCtx, temporary, false)
+	}()
+	command := "umask 077 && tar -czf " + shellQuote(temporary) + " -C " + shellQuoteHome(parent) + " -- " + shellQuote(shellOperand(name))
+	result, err := f.exec(ctx, command, base.ExecOptions{Timeout: archiveExecTimeout})
+	if err != nil {
+		return 0, fmt.Errorf("create device archive: %w", err)
+	}
+	if result.ExitCode == nil {
+		return 0, fmt.Errorf("create device archive: %w", base.ErrExitStatusMissing)
+	}
+	if *result.ExitCode != 0 {
+		message := strings.TrimSpace(result.Stderr + result.Stdout)
+		return 0, fmt.Errorf("create device archive: remote command exited %d: %s", *result.ExitCode, message)
+	}
+	if result.Truncated {
+		return 0, fmt.Errorf("create device archive: command output exceeded safety limit")
+	}
+	return fslocal.Download(ctx, f, temporary, localPath, fslocal.TransferOptions{
+		Progress: func(progress fslocal.Progress) {
+			if options.Progress != nil {
+				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
+			}
+		},
+	})
+}
+
+// splitArchivePath decomposes a pack source into a -C parent and an operand
+// name; a ~ prefix is kept literal for later shell expansion by shellQuoteHome.
+func splitArchivePath(remotePath string) (string, string, error) {
+	if remotePath == "" || strings.ContainsRune(remotePath, 0) {
+		return "", "", fmt.Errorf("remote path is empty or contains NUL")
+	}
+	cleaned := path.Clean(remotePath)
+	if cleaned == "/" || cleaned == "~" {
+		return cleaned, ".", nil
+	}
+	parent, name := path.Split(cleaned)
+	if parent == "" {
+		parent = "."
+	} else {
+		parent = strings.TrimSuffix(parent, "/")
+		if parent == "" {
+			parent = "/"
+		}
+	}
+	if name == "" {
+		return "", "", fmt.Errorf("remote path has no file name")
+	}
+	return parent, name, nil
+}
+
+func shellOperand(value string) string {
+	if strings.HasPrefix(value, "-") {
+		return "./" + value
+	}
+	return value
 }
 
 var _ base.FileSystem = (*fileSystem)(nil)

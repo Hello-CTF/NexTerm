@@ -23,6 +23,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/fs/local"
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -519,6 +520,113 @@ func TestTransportFileSystemExtract(t *testing.T) {
 	}
 	if _, err := extractor.Extract(ctx, ""); err == nil {
 		t.Fatal("empty archive path must fail")
+	}
+}
+
+func TestTransportFileSystemPackDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("device pack download requires a POSIX shell and tar on the agent")
+	}
+	rig := newPurposeRig(t)
+	transport := New("dev-1", rig.digest, rig.dial, 1)
+	ctx := context.Background()
+	filesystem, err := transport.FileSystem(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packer, ok := filesystem.(interface {
+		PackDownload(context.Context, string, string, sshfs.TransferOptions) (int64, error)
+	})
+	if !ok {
+		t.Fatal("device filesystem must expose PackDownload for folder archive downloads")
+	}
+
+	source := filepath.Join(rig.root, "bundle")
+	if err := os.MkdirAll(filepath.Join(source, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "inner", "note.txt"), []byte("pack me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	countTemp := func() int {
+		matches, err := filepath.Glob("/tmp/nexterm-pack-*.tar.gz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(matches)
+	}
+	before := countTemp()
+	destination := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	var progress []sshfs.Progress
+	transferred, err := packer.PackDownload(ctx, source, destination, sshfs.TransferOptions{
+		Progress: func(p sshfs.Progress) { progress = append(progress, p) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transferred != info.Size() {
+		t.Fatalf("transferred = %d, want the archive size %d", transferred, info.Size())
+	}
+	if len(progress) == 0 || !progress[len(progress)-1].Done {
+		t.Fatalf("progress = %+v, want a final done event", progress)
+	}
+	unpacked := t.TempDir()
+	if output, err := exec.Command("tar", "-xzf", destination, "-C", unpacked).CombinedOutput(); err != nil {
+		t.Fatalf("unpack result: %v: %s", err, output)
+	}
+	if data, err := os.ReadFile(filepath.Join(unpacked, "bundle", "inner", "note.txt")); err != nil || string(data) != "pack me" {
+		t.Fatalf("packed content = %q, %v", data, err)
+	}
+	if after := countTemp(); after != before {
+		t.Fatalf("temp archives before = %d, after = %d; want no leftovers", before, after)
+	}
+
+	if _, err := packer.PackDownload(ctx, filepath.Join(rig.root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil || !strings.Contains(err.Error(), "create device archive") {
+		t.Fatalf("packing a missing directory = %v, want the tar failure", err)
+	}
+	if after := countTemp(); after != before {
+		t.Fatalf("failed pack left %d temp archives behind, want %d", after, before)
+	}
+	if _, err := packer.PackDownload(ctx, "", filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+		t.Fatal("empty source path must fail")
+	}
+}
+
+func TestFileSystemPackDownloadCommandExpandsHome(t *testing.T) {
+	var commands []string
+	filesystem := &fileSystem{
+		dial: func(context.Context) (net.Conn, error) { return nil, errors.New("no bridge") },
+		exec: func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
+			commands = append(commands, command)
+			code := 0
+			return base.ExecResult{ExitCode: &code}, nil
+		},
+	}
+	for _, testCase := range []struct {
+		path   string
+		suffix string
+	}{
+		{"~/packs", ` -C "$HOME" -- 'packs'`},
+		{"~", ` -C "$HOME" -- '.'`},
+		{"/data/dir", ` -C '/data' -- 'dir'`},
+		{"/~", ` -C '/' -- '~'`},
+		{"-weird", ` -C '.' -- './-weird'`},
+	} {
+		if _, err := filesystem.PackDownload(context.Background(), testCase.path, filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+			t.Fatalf("PackDownload(%q) unexpectedly succeeded without a file bridge", testCase.path)
+		}
+		command := commands[len(commands)-1]
+		cut := strings.Index(command, " -C ")
+		if !strings.HasPrefix(command, "umask 077 && tar -czf '/tmp/nexterm-pack-") || cut < 0 {
+			t.Fatalf("PackDownload(%q) command = %q, want a random /tmp tar target", testCase.path, command)
+		}
+		if command[cut:] != testCase.suffix {
+			t.Errorf("PackDownload(%q) command tail = %q, want %q", testCase.path, command[cut:], testCase.suffix)
+		}
 	}
 }
 

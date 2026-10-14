@@ -1,7 +1,9 @@
 package local
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -235,6 +238,106 @@ func TestReadBinaryWithoutUTF8Conversion(t *testing.T) {
 	got, err := filesystem.ReadFile(context.Background(), path, int64(len(want)))
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("binary read = %v, %v", got, err)
+	}
+}
+
+func TestPackDownloadRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	filesystem := New()
+	root := filepath.Join(t.TempDir(), "pack source")
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "note.txt"), []byte("pack me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "top.txt"), []byte("top"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink("top.txt", filepath.Join(root, "link")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	countTemp := func() int {
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), "nexterm-pack-*.tar.gz"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(matches)
+	}
+	before := countTemp()
+	destination := filepath.Join(t.TempDir(), "out.tar.gz")
+	var progress []sshfs.Progress
+	transferred, err := filesystem.PackDownload(ctx, root, destination, sshfs.TransferOptions{
+		Progress: func(p sshfs.Progress) { progress = append(progress, p) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transferred != info.Size() {
+		t.Fatalf("transferred = %d, want the archive size %d", transferred, info.Size())
+	}
+	if len(progress) == 0 || !progress[len(progress)-1].Done {
+		t.Fatalf("progress = %+v, want a final done event", progress)
+	}
+
+	file, err := os.Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tar.NewReader(compressed)
+	contents := map[string]string{}
+	linkTarget := ""
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch header.Typeflag {
+		case tar.TypeReg:
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contents[header.Name] = string(data)
+		case tar.TypeSymlink:
+			linkTarget = header.Linkname
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(root)
+	if contents[base+"/top.txt"] != "top" || contents[base+"/nested/note.txt"] != "pack me" {
+		t.Fatalf("archive contents = %v", contents)
+	}
+	if runtime.GOOS != "windows" && linkTarget != "top.txt" {
+		t.Fatalf("symlink entry = %q, want top.txt", linkTarget)
+	}
+	if after := countTemp(); after != before {
+		t.Fatalf("temp archives before = %d, after = %d; want no leftovers", before, after)
+	}
+
+	if _, err := filesystem.PackDownload(ctx, filepath.Join(root, "top.txt"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+		t.Fatal("packing a regular file must fail")
+	}
+	if _, err := filesystem.PackDownload(ctx, filepath.Join(root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+		t.Fatal("packing a missing directory must fail")
+	}
+	if after := countTemp(); after != before {
+		t.Fatalf("failed pack left %d temp archives behind, want %d", after, before)
 	}
 }
 
