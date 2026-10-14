@@ -94,8 +94,10 @@ Must be all green before committing; CI runs the same set:
 
 ## Multi-agent Collaboration
 
-- Agent scopes never overlap - one file is never assigned to two agents. Dependencies are ordered explicitly; only independent work parallelizes.
+- Parallel background agents are the default execution mode for any non-trivial work - never opt-in. The main thread only splits work into non-overlapping scopes, dispatches agents, makes merge decisions, and does final confirmation; it does not implement or investigate inline when an agent can do it.
+- Agent scopes never overlap - one file is never assigned to two agents. Independent tasks always run concurrently; dependent tasks are explicitly sequenced.
 - Implementation and review are separate agents; authors never review their own work. Rebase onto the latest `master` before implementing, and once more before the single final integration.
+- Mechanical waits (CI watches, release watches, builds) run as background tasks, never blocking the main thread.
 - Parallel work does not bypass the quality gates or the no-hand-edit rule for generated code.
 
 ## pprof Debugging
