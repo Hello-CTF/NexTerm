@@ -1,21 +1,5 @@
 <!-- The 变化 section is generated at release time by .github/scripts/release-notes.mjs from conventional commits between the previous and current release tags; this template keeps only the hand-written sections below. -->
 
-### 已知缺口（如实说明）
-
-- 设备会话暂不支持磁盘挂载（挂载依赖本机 sshfs / net use 直连）。
-- AI 授权同步语义声明：设备授权与路径规则在服务端多用户模式下是全局键（所有用户共享，与授权评估既有语义一致）；桌面直连会话（未登录账号）上的撤销不会记录墓碑，该撤销不会传播到其他设备（浏览器/服务端会话中的撤销正常传播）。
-- WinRM 不支持打包上传/远端解包与打包下载；ssh 打包上传的临时包名为 `<文件夹名>.tar`（非原子，同一目录并发打包同名文件夹会互相覆盖）。
-- 桌面拖拽上传经 wails 原生通道（真实路径流式上传）；仅在原生拖入不可用的环境回退内容路径（此时目录结构可能无法识别，会降级为逐文件并给出明示提示，0 字节无类型文件会被跳过并在提示中点名）。
-- Windows 桌面拖拽上传行为按 wails3 模块源码逐条核对（双通道时序与去重），尚无 Windows 真机验证；macOS 已实测通过。
-- 打包解包/打包下载要求远端是 POSIX 环境且有 tar（Windows 远端的 ssh 会话不支持，会明确报错）。
-- FaceID 材料未加 SecAccessControl 生物识别约束（v1 靠"先验证后读取"编排保护，换新面容后旧材料仍有效），加固另开 PR。
-- Android 冷启动需重新输入主密码（DEK 仅存 sessionStorage，Android 暂无生物识别兜底，计划 Android Keystore 方案）。
-- Android 上 durable（守护）会话的 supervisor socket 落在 TempDir，预计不可用；自更新、本地终端 shell 集成、Termius 导入在 Android 同样受 TempDir 限制。
-- 屏幕旋转后系统栏 insets 不刷新（wails Screen 缓存仅启动时刷新），横屏刘海侧可能出现避让偏差。
-- iPad 桌面模式（UA 为 Macintosh）拿不到移动布局与 insets 注入，粗指针媒体查询兜底。
-- wails3 生成工程自身（task ios:xcode 从零构建）不接资源编译（上游模板限制）；仓库打包流程（含 CI）已自动编译启动屏与资源。
-- 真实浏览器与真机的自动化验收仍未覆盖（真实拖拽、移动端手势、真机安装），上述移动端改动经真机人工验证（iPhone 17 Pro / Pixel 4a 5G），桌面文件夹上传经 macOS 真机验证。
-
 ### 亮点功能
 
 - **多用户账号**：服务端首次启动在控制台打印一次性初始化码，在浏览器完成超管初始化；注册默认关闭，超管可以在「设置 → 账号同步」的「用户管理」卡里开放注册或直接创建用户；支持登录设备管理，忘记密码可用恢复密钥找回。

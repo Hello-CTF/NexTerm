@@ -213,7 +213,7 @@ describe("FileEditor 快捷键标签", () => {
 });
 
 describe("FileTree ~ 归因", () => {
-  it("WinRM 会话直接从 / 开始，home 按钮如实说明不支持 ~", async () => {
+  it("WinRM 会话直接从 / 开始，home 按钮明示不支持 ~", async () => {
     useUi.setState({ sessions: [session(SID, "winrm")] });
     mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
