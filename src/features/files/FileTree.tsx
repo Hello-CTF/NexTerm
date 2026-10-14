@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
-import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
+import { fsApi, terminalApi } from "../../ipc/commands";
 import {
   ask,
   discardStaged,
@@ -21,9 +21,9 @@ import {
   openFileTabInSplit,
   openLogTab,
   openTerminalTab,
+  reconnectDeadHost,
   useUi,
 } from "../../app/store";
-import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useCoarsePointer } from "../../app/platform";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
@@ -199,9 +199,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
     setReconnecting(true);
     try {
-      const s = await connectWithHostKeyConfirm(() =>
-        ws.assetId ? sessionApi.connect(ws.assetId) : sessionApi.connectLocal(),
-      );
+      const s = await reconnectDeadHost(ws);
       if (!s) {
         pushToast("info", "已取消重连");
         return;

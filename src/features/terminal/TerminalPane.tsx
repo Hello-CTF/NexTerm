@@ -17,13 +17,12 @@ import {
 import { BroadcastPickerModal, BroadcastStrip } from "./BroadcastPanel";
 import { PreviewShareMenu } from "../sharing/PreviewShareMenu";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, terminalApi, fsApi, assetApi, syncApi } from "../../ipc/commands";
+import { terminalApi, fsApi, assetApi, syncApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
+import { takePendingCommand, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, reconnectDeadHost, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
-import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { bytesToBase64, markdownFileLink, pasteFileExtension } from "./imagePaste";
@@ -667,14 +666,14 @@ export function TerminalPane({
     const ws = st.workspaces.find((w) =>
       w.panes.some((p) => p.tabs.some((t) => t.id === storeTabId)),
     );
-    const assetId = ws?.assetId;
-    if (!assetId) {
+    if (!ws?.assetId) {
       pushToast("error", "找不到这台主机的资产信息，请到左侧资产树里手动连接");
       return;
     }
+    const assetId = ws.assetId;
     setReconnecting(true);
     try {
-      const s = await connectWithHostKeyConfirm(() => sessionApi.connect(assetId));
+      const s = await reconnectDeadHost(ws);
       if (!s) {
         pushToast("info", "已取消重连");
         return;

@@ -2000,6 +2000,21 @@ async function runConnectDevice(
   }
 }
 
+// reconnectDeadHost establishes a fresh session for a workspace whose session was deleted on the server (the
+// dead-session reconnect of the file panels and the terminal dead-tab overlay). A device workspace's assetId is the
+// pseudo device/<deviceId> with no asset table record, so it reconnects through the same fleet device connect as the
+// original open; other kinds keep the asset connect with host-key confirmation, local workspaces reconnect locally.
+export async function reconnectDeadHost(
+  ws: Pick<Workspace, "assetId" | "assetKind" | "title">,
+): Promise<SessionInfo | null> {
+  if (ws.assetKind === "device" && ws.assetId) {
+    return sessionApi.connectDevice(ws.assetId.slice("device/".length), ws.title);
+  }
+  return connectWithHostKeyConfirm(() =>
+    ws.assetId ? sessionApi.connect(ws.assetId) : sessionApi.connectLocal(),
+  );
+}
+
 const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
 
 async function promptQuickConnectPassword(display: string): Promise<string | null> {

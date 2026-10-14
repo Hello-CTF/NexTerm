@@ -6,6 +6,7 @@ import { clickButton, flush, mount, waitFor, type MountedView } from "./reactTes
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
+  connectDevice: vi.fn(),
   reconnect: vi.fn(),
   disconnect: vi.fn(),
   knownHostAccept: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("../../ipc/commands", () => ({
   vaultApi: {},
   sessionApi: {
     connect: mocks.connect,
+    connectDevice: mocks.connectDevice,
     reconnect: mocks.reconnect,
     disconnect: mocks.disconnect,
     list: mocks.listSessions,
@@ -97,11 +99,14 @@ import { useUi, type AppTab } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
-function seedTab(patch: Partial<AppTab> = {}) {
+function seedTab(
+  patch: Partial<AppTab> = {},
+  host: { assetId: string; assetKind: string; title?: string } = { assetId: "asset-1", assetKind: "ssh" },
+) {
   const tab: AppTab = {
     id: "t1",
     kind: "terminal",
-    title: "web-01",
+    title: host.title ?? "web-01",
     sessionId: "s1",
     tabId: "kernel-1",
     closable: true,
@@ -112,10 +117,10 @@ function seedTab(patch: Partial<AppTab> = {}) {
       {
         id: "ws1",
         kind: "session",
-        title: "web-01",
+        title: host.title ?? "web-01",
         sessionId: "s1",
-        assetId: "asset-1",
-        assetKind: "ssh",
+        assetId: host.assetId,
+        assetKind: host.assetKind,
         panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
         activePaneId: "p1",
         splitRatio: 0.5,
@@ -126,9 +131,9 @@ function seedTab(patch: Partial<AppTab> = {}) {
     sessions: [
       {
         id: "s1",
-        assetId: "asset-1",
-        name: "web-01",
-        kind: "ssh",
+        assetId: host.assetId,
+        name: host.title ?? "web-01",
+        kind: host.assetKind,
         status: "disconnected",
         tabs: [],
         createdAt: 0,
@@ -228,6 +233,15 @@ describe("terminal dead-tab overlay", () => {
       tabs: [],
       createdAt: 1,
     });
+    mocks.connectDevice.mockResolvedValue({
+      id: "s-dev",
+      assetId: "device/d-1",
+      name: "build-box",
+      kind: "device",
+      status: "connected",
+      tabs: [],
+      createdAt: 1,
+    });
     mocks.knownHostAccept.mockResolvedValue(undefined);
     mocks.ask.mockResolvedValue(false);
   });
@@ -277,6 +291,26 @@ describe("terminal dead-tab overlay", () => {
     expect(storeTab()?.sessionId).toBe("s2");
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
     expect(storeTab()?.tabId).toBe("kernel-1");
+    expect(toastTexts()).toContain("已重新连接");
+  });
+
+  it("reconnects a dead device terminal through the fleet device path", async () => {
+    seedTab({}, { assetId: "device/d-1", assetKind: "device", title: "build-box" });
+    mounted = mountPane();
+    await flush();
+    failAttach("not_found");
+    await waitFor(() => expect(overlay()).not.toBeNull());
+
+    clickButton(mounted.container, "重新连接这台主机");
+
+    await flush();
+    await waitFor(() => expect(overlay()).toBeNull());
+    expect(mocks.connectDevice).toHaveBeenCalledWith("d-1", "build-box");
+    expect(mocks.connectDevice).toHaveBeenCalledTimes(1);
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(storeTab()?.sessionId).toBe("s-dev");
+    expect(storeTab()?.dead).toBe(false);
     expect(toastTexts()).toContain("已重新连接");
   });
 
