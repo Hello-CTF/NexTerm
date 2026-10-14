@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   download: vi.fn(),
   packDownload: vi.fn(),
   extract: vi.fn(),
+  pickFolderUpload: vi.fn(),
+  dropFolderUpload: vi.fn(),
   termWrite: vi.fn(),
   toast: vi.fn(),
   listenEvent: vi.fn(),
@@ -83,6 +85,14 @@ vi.mock("../../ipc/events", async (importOriginal) => {
     ...actual,
     listenEvent: mocks.listenEvent,
     EVENTS: { fsProgress: "fs://progress" },
+  };
+});
+vi.mock("../../features/files/folderUpload", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../features/files/folderUpload")>();
+  return {
+    ...actual,
+    pickFolderUpload: mocks.pickFolderUpload,
+    dropFolderUpload: mocks.dropFolderUpload,
   };
 });
 vi.mock("@tanstack/react-virtual", () => ({
@@ -1418,5 +1428,161 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     await waitFor(() => expect(editors.views).toHaveLength(1));
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(mocks.ask).not.toHaveBeenCalled();
+  });
+});
+
+describe("右键菜单：空白区清单与接线", () => {
+  function openBrowserBlankMenu(): void {
+    const scroller = mounted!.container.querySelector('[role="tree"]')?.parentElement;
+    if (!scroller) throw new Error("scroller not found");
+    act(() => {
+      scroller.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function openTreeBlankMenu(): void {
+    const tree = mounted!.container.querySelector('[role="tree"]');
+    if (!tree) throw new Error("tree not found");
+    act(() => {
+      tree.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function menuLabels(): string[] {
+    return [...mounted!.container.querySelectorAll('[role="menuitem"]')].map(
+      (b) => b.textContent ?? "",
+    );
+  }
+
+  function seedSessionKind(kind: string): void {
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind, status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    mocks.pickFolderUpload.mockResolvedValue(undefined);
+    mocks.dropFolderUpload.mockResolvedValue(undefined);
+  });
+
+  it("FileBrowser 空白区菜单包含全部当前目录操作，新建空白文件写入当前目录并刷新", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    openBrowserBlankMenu();
+    const labels = menuLabels();
+    for (const label of [
+      "打包下载当前目录",
+      "上传到当前目录",
+      "上传文件夹到当前目录",
+      "新建目录",
+      "新建空白文件",
+      "刷新",
+    ]) {
+      expect(labels.some((t) => t.includes(label)), label).toBe(true);
+    }
+    mocks.promptText.mockResolvedValue("blank.txt");
+    clickMenuItem(mounted!.container, "新建空白文件");
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/blank.txt", "", false));
+    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));
+  });
+
+  it("FileBrowser 空白区上传与刷新和工具栏走同一流程", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    mocks.pickLocalFile.mockResolvedValue(null);
+    openBrowserBlankMenu();
+    clickMenuItem(mounted!.container, "上传到当前目录");
+    await flush();
+    expect(mocks.pickLocalFile).toHaveBeenCalledTimes(1);
+
+    openBrowserBlankMenu();
+    clickMenuItem(mounted!.container, "上传文件夹到当前目录");
+    await flush();
+    expect(mocks.pickFolderUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: SID, dir: "~" }),
+    );
+
+    const before = mocks.list.mock.calls.length;
+    openBrowserBlankMenu();
+    clickMenuItem(mounted!.container, "刷新");
+    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("目录行菜单的打包下载走 pickSavePath→packDownload→finishSave 链路", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    mocks.pickSavePath.mockResolvedValue("/local/sub.tar.gz");
+    mocks.packDownload.mockResolvedValue(1234);
+    mocks.finishSave.mockResolvedValue("/local/sub.tar.gz");
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "打包下载当前目录");
+    await waitFor(() =>
+      expect(mocks.packDownload).toHaveBeenCalledWith(SID, "~/sub", "/local/sub.tar.gz"),
+    );
+    expect(mocks.pickSavePath).toHaveBeenCalledWith("sub.tar.gz");
+    await waitFor(() =>
+      expect(mocks.finishSave).toHaveBeenCalledWith("/local/sub.tar.gz", "sub.tar.gz"),
+    );
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已打包下载"));
+  });
+
+  it("winrm 会话隐藏打包下载入口，ssh 会话保留", async () => {
+    seedSessionKind("winrm");
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    openRowMenu(mounted!.container, "~/sub");
+    expect(menuLabels().some((t) => t.includes("打包下载"))).toBe(false);
+    openBrowserBlankMenu();
+    const labels = menuLabels();
+    expect(labels.some((t) => t.includes("打包下载"))).toBe(false);
+    expect(labels.some((t) => t.includes("新建空白文件"))).toBe(true);
+    mounted.unmount();
+
+    seedSessionKind("ssh");
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    openRowMenu(mounted!.container, "~/sub");
+    expect(menuLabels().some((t) => t.includes("打包下载当前目录"))).toBe(true);
+  });
+
+  it("FileTree winrm 会话的目录行菜单同样隐藏打包下载", async () => {
+    seedSessionKind("winrm");
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      Promise.resolve(p === "/" ? [entry("sub", "dir", { path: "/sub" })] : []),
+    );
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "/sub")).toBeTruthy());
+    openRowMenu(mounted!.container, "/sub");
+    expect(menuLabels().some((t) => t.includes("打包下载"))).toBe(false);
+  });
+
+  it("FileTree 空白区菜单清单齐全，新建空白文件写入树根目录", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    openTreeBlankMenu();
+    const labels = menuLabels();
+    for (const label of [
+      "上传到当前目录",
+      "上传文件夹到当前目录",
+      "新建目录",
+      "新建空白文件",
+      "刷新",
+    ]) {
+      expect(labels.some((t) => t.includes(label)), label).toBe(true);
+    }
+    mocks.promptText.mockResolvedValue("blank.txt");
+    clickMenuItem(mounted!.container, "新建空白文件");
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/blank.txt", "", false));
+
+    openTreeBlankMenu();
+    clickMenuItem(mounted!.container, "上传文件夹到当前目录");
+    await flush();
+    expect(mocks.pickFolderUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: SID, dir: "~" }),
+    );
   });
 });

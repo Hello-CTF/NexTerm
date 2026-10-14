@@ -71,10 +71,14 @@ func (f *FS) PackDownload(ctx context.Context, remotePath, localPath string, opt
 	if f.executor == nil {
 		return 0, base.ErrUnsupported
 	}
+	resolved, err := f.real(ctx, remotePath)
+	if err != nil {
+		return 0, err
+	}
 	var random [12]byte
 	_, _ = rand.Read(random[:])
 	temporary := "/tmp/nexterm-pack-" + hex.EncodeToString(random[:]) + ".tar.gz"
-	command, err := PackCommand(remotePath, temporary)
+	command, err := PackCommand(resolved, temporary)
 	if err != nil {
 		return 0, err
 	}

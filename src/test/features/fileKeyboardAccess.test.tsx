@@ -109,8 +109,8 @@ function mountBrowser(): MountedView {
   return mount(createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })));
 }
 
-function keyDown(target: EventTarget, key: string): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
   act(() => {
     target.dispatchEvent(event);
   });
@@ -282,6 +282,31 @@ describe("FileBrowser 键盘可达性", () => {
       expect.stringContaining("递归删除，不可恢复"),
       expect.objectContaining({ kind: "warning" }),
     );
+  });
+
+  it("ContextMenu 键与 Shift+F10 在焦点行打开行菜单，Escape 关闭", async () => {
+    const sub = itemByName(mounted!.container, "sub");
+    act(() => sub.focus());
+    keyDown(sub, "ContextMenu");
+    await waitFor(() =>
+      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
+    );
+    expect(sub.getAttribute("aria-selected")).toBe("true");
+    expect(
+      [...mounted!.container.querySelectorAll('[role="menuitem"]')].some((b) =>
+        b.textContent?.includes("打包下载当前目录"),
+      ),
+    ).toBe(true);
+
+    keyDown(document.activeElement as HTMLElement, "Escape");
+    await waitFor(() => expect(mounted!.container.querySelector('[role="menu"]')).toBeNull());
+
+    act(() => sub.focus());
+    keyDown(sub, "F10", { shiftKey: true });
+    await waitFor(() =>
+      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
+    );
+    expect(sub.getAttribute("aria-selected")).toBe("true");
   });
 
   it("行内 ⋯ 按钮的 Enter 不触发行打开", () => {

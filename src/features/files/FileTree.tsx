@@ -36,7 +36,7 @@ import {
   parentOf,
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
-import { validateEntryName } from "./fileOps";
+import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
@@ -94,6 +94,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const { pushToast, leftOpen, leftWidth } = useUi();
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const homeSupported = sessionKind !== "winrm";
+  const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [root, setRoot] = useState(() =>
     useUi.getState().sessions.find((s) => s.id === sessionId)?.kind === "winrm" ? "/" : HOME,
   );
@@ -297,7 +298,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     return root;
   };
 
-  const newFile = async () => {
+  const newFileIn = async (dir: string) => {
     const name = await promptText("新建文件名", "");
     if (name === null) return;
     const problem = validateEntryName(name);
@@ -305,7 +306,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       pushToast("error", `无法创建：${problem}`);
       return;
     }
-    const path = joinPath(targetDir(), name);
+    const path = joinPath(dir, name);
     try {
       await fsApi.write(sessionId, path, "", false);
       refresh();
@@ -315,7 +316,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const newDir = async () => {
+  const newDirIn = async (dir: string) => {
     const name = await promptText("新建目录名", "");
     if (name === null) return;
     const problem = validateEntryName(name);
@@ -323,22 +324,20 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       pushToast("error", `无法创建：${problem}`);
       return;
     }
-    const dir = targetDir();
     const path = joinPath(dir, name);
     try {
       await fsApi.mkdir(sessionId, path);
       refresh();
-      if (!expanded.includes(dir)) toggle(dir);
+      if (dir !== root && !expanded.includes(dir)) toggle(dir);
       pushToast("success", `已创建 ${path}`);
     } catch (e) {
       pushToast("error", `创建失败：${describeError(e)}`);
     }
   };
 
-  const upload = async () => {
+  const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
     if (!file) return;
-    const dir = targetDir();
     const remote = joinPath(dir, baseName(file));
     let handed = false;
     try {
@@ -357,8 +356,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const uploadFolder = async () => {
-    const dir = targetDir();
+  const uploadFolderTo = async (dir: string) => {
     await pickFolderUpload({
       sessionId,
       dir,
@@ -506,13 +504,15 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       { kind: "group", label: isDir ? "目录" : "文件" },
     ];
     if (isDir) {
-      items.push({
-        kind: "item",
-        label: "打包下载当前目录",
-        icon: <IconArchive size={13} />,
-        hint: "tar.gz",
-        onSelect: () => void packDownload(entry.path),
-      });
+      if (!packHidden) {
+        items.push({
+          kind: "item",
+          label: "打包下载当前目录",
+          icon: <IconArchive size={13} />,
+          hint: "tar.gz",
+          onSelect: () => void packDownload(entry.path),
+        });
+      }
     } else {
       items.push({
         kind: "item",
@@ -597,6 +597,57 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     openRowMenuAt(entry, listKey, e.clientX, e.clientY);
   };
 
+  const openBlankMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const gone = sessionGone
+      ? { hint: "会话已删除" as const, disabled: true }
+      : { hint: undefined, disabled: false };
+    const items: MenuItem[] = [
+      { kind: "group", label: "当前目录" },
+      {
+        kind: "item",
+        label: "上传到当前目录",
+        icon: <IconUpload size={13} />,
+        hint: gone.hint,
+        disabled: gone.disabled,
+        onSelect: () => void uploadTo(root),
+      },
+      {
+        kind: "item",
+        label: "上传文件夹到当前目录",
+        icon: <IconFolderPlus size={13} />,
+        hint: gone.hint,
+        disabled: gone.disabled,
+        onSelect: () => void uploadFolderTo(root),
+      },
+      {
+        kind: "item",
+        label: "新建目录",
+        icon: <IconFolderPlus size={13} />,
+        hint: gone.hint,
+        disabled: gone.disabled,
+        onSelect: () => void newDirIn(root),
+      },
+      {
+        kind: "item",
+        label: "新建空白文件",
+        icon: <IconFilePlus size={13} />,
+        hint: gone.hint,
+        disabled: gone.disabled,
+        onSelect: () => void newFileIn(root),
+      },
+      {
+        kind: "item",
+        label: "刷新",
+        icon: <IconRefresh size={13} />,
+        hint: gone.hint,
+        disabled: gone.disabled,
+        onSelect: refresh,
+      },
+    ];
+    setMenu({ x: e.clientX, y: e.clientY, title: root, items });
+  };
+
   if (!leftOpen) return null;
 
   const crumbs = crumbsOf(root);
@@ -617,7 +668,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           title={sessionGone ? goneHint : "新建文件"}
           aria-label="新建文件"
           disabled={sessionGone}
-          onClick={() => void newFile()}
+          onClick={() => void newFileIn(targetDir())}
         >
           <IconFilePlus size={14} />
         </button>
@@ -626,7 +677,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           title={sessionGone ? goneHint : "新建目录"}
           aria-label="新建目录"
           disabled={sessionGone}
-          onClick={() => void newDir()}
+          onClick={() => void newDirIn(targetDir())}
         >
           <IconFolderPlus size={14} />
         </button>
@@ -671,7 +722,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           title={sessionGone ? goneHint : "上传到当前目录"}
           aria-label="上传到当前目录"
           disabled={sessionGone}
-          onClick={() => void upload()}
+          onClick={() => void uploadTo(targetDir())}
         >
           <IconUpload size={14} />
         </button>
@@ -680,7 +731,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           title={sessionGone ? goneHint : "上传文件夹到当前目录"}
           aria-label="上传文件夹到当前目录"
           disabled={sessionGone}
-          onClick={() => void uploadFolder()}
+          onClick={() => void uploadFolderTo(targetDir())}
         >
           <IconFolderPlus size={14} />
         </button>
@@ -784,6 +835,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         role="tree"
         aria-label="文件"
         className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
+        onContextMenu={openBlankMenu}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
@@ -859,6 +911,12 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                   e.preventDefault();
                   setSelected(entry.path);
                   if (isDir) toggle(entry.path);
+                  return;
+                }
+                if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+                  e.preventDefault();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  openRowMenuAt(entry, dir, r.left, r.bottom);
                   return;
                 }
                 if (e.key === "ArrowRight" && isDir && !open) {

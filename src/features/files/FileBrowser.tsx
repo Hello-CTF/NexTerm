@@ -40,7 +40,7 @@ import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUt
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
-import { validateEntryName } from "./fileOps";
+import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import {
@@ -58,6 +58,7 @@ import {
   IconDownload,
   IconEdit,
   IconEye,
+  IconFilePlus,
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
@@ -90,6 +91,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
+  const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [path, setPath] = useState(HOME);
   const [draft, setDraft] = useState(HOME);
   const [selected, setSelected] = useState<string | null>(null);
@@ -311,6 +314,24 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const newFileIn = async (dir: string) => {
+    const name = await promptText("新建文件名");
+    if (name === null) return;
+    const problem = validateEntryName(name);
+    if (problem) {
+      pushToast("error", `无法创建：${problem}`);
+      return;
+    }
+    const p = joinPath(dir, name);
+    try {
+      await fsApi.write(sessionId, p, "", false);
+      refreshDir(dir);
+      pushToast("success", `已创建 ${p}`);
+    } catch (e) {
+      pushToast("error", `创建失败：${describeError(e)}`);
+    }
+  };
+
   const copyPath = async (p: string) => {
     try {
       await copyText(p);
@@ -392,14 +413,16 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       { kind: "group", label: isDir ? "目录" : "文件" },
     ];
     if (isDir) {
-      items.push(
-        {
+      if (!packHidden) {
+        items.push({
           kind: "item",
           label: "打包下载当前目录",
           icon: <IconArchive size={13} />,
           hint: "tar.gz",
           onSelect: () => void packDownload(entry.path),
-        },
+        });
+      }
+      items.push(
         {
           kind: "item",
           label: "上传到该目录",
@@ -511,16 +534,18 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   };
 
   const openBlankMenuAt = (x: number, y: number) => {
-    const items: MenuItem[] = [
-      { kind: "group", label: "当前目录" },
-      {
+    const items: MenuItem[] = [{ kind: "group", label: "当前目录" }];
+    if (!packHidden) {
+      items.push({
         kind: "item",
         label: "打包下载当前目录",
         icon: <IconArchive size={13} />,
         hint: sessionGone ? "会话已删除" : "tar.gz",
         disabled: sessionGone,
         onSelect: () => void packDownload(path),
-      },
+      });
+    }
+    items.push(
       {
         kind: "item",
         label: "上传到当前目录",
@@ -547,6 +572,14 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       },
       {
         kind: "item",
+        label: "新建空白文件",
+        icon: <IconFilePlus size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
+        onSelect: () => void newFileIn(path),
+      },
+      {
+        kind: "item",
         label: "刷新",
         icon: <IconRefresh size={13} />,
         hint: sessionGone ? "会话已删除" : undefined,
@@ -569,7 +602,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         hint: "新标签",
         onSelect: () => openTerminalAt(path),
       },
-    ];
+    );
     setMenu({ x, y, title: path, items });
   };
 
@@ -713,7 +746,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-icon-btn"
-          title="更多操作（打包下载 / 上传 / 上传文件夹 / 新建目录 / 刷新）"
+          title="更多操作（打包下载 / 上传 / 上传文件夹 / 新建目录 / 新建空白文件 / 刷新）"
           aria-label="更多操作"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -824,6 +857,13 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                       ev.preventDefault();
                       ev.stopPropagation();
                       setSelected(e.path);
+                      return;
+                    }
+                    if ((ev.key === "F10" && ev.shiftKey) || ev.key === "ContextMenu") {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      const r = ev.currentTarget.getBoundingClientRect();
+                      openRowMenuAt(e, r.left, r.bottom);
                       return;
                     }
                     if (ev.key === "Delete" || ev.key === "Backspace") {

@@ -53,3 +53,7 @@ export const CHECKSUM_ALGOS: { key: string; label: string; hint: string }[] = [
 ];
 
 export const DEFAULT_CHECKSUM_ALGO = "sha256";
+
+export function packDownloadSupported(sessionKind: string): boolean {
+  return sessionKind === "ssh" || sessionKind === "device" || sessionKind === "local";
+}
