@@ -25,7 +25,6 @@ import {
   type TerminalCloseAction,
 } from "./preferences";
 import { moveItem } from "./tabReorder";
-import type { LayoutPreset } from "./layoutPresets";
 
 export type PaneKind =
   | "terminal"
@@ -186,8 +185,6 @@ interface UiState {
   setThemeMode: (m: ThemeMode) => void;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  layoutPresets: LayoutPreset[];
-  setLayoutPresets: (presets: LayoutPreset[]) => void;
   sessions: SessionInfo[];
   aiBusy: boolean;
   takeover: TakeoverState | null;
@@ -434,8 +431,6 @@ export const useUi = create<UiState>((set, get) => ({
   rightWidth: initialLayout.rightWidth,
   workspaces: [],
   activeWorkspaceId: null,
-  layoutPresets: [],
-  setLayoutPresets: (presets) => set({ layoutPresets: presets }),
   sessions: [],
   aiBusy: false,
   takeover: restoredTakeover,
@@ -1332,27 +1327,6 @@ function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome):
   pushToast("info", `已关闭「${title}」：${parts.join("，")}`);
 }
 
-// reclaimWorkspaceTabs reclaims tab occupancy after the summary confirmation (terminals detached/killed, databases disconnected) without closing the workspace;
-// used by the layout preset "apply to current workspace" to reuse the same confirm-and-reclaim semantics before rebuilding splits.
-export async function reclaimWorkspaceTabs(
-  tabs: AppTab[],
-  title: string,
-  assetKind?: string,
-): Promise<boolean> {
-  const summary = collectWorkspaceClose(tabs, assetKind);
-  if (!(await confirmWorkspaceClose(summary, title))) return false;
-  const outcome = await executeWorkspaceClose(summary);
-  if (outcome.dbFailed > 0) {
-    useUi.getState().pushToast(
-      "error",
-      `「${title}」保持打开：${outcome.dbFailed}/${summary.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
-    );
-    return false;
-  }
-  pushWorkspaceCloseToast(title, outcome);
-  return true;
-}
-
 export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
@@ -1759,43 +1733,6 @@ export interface ConnectAssetInput {
 
 export interface ConnectAssetOptions {
   silent?: boolean;
-}
-
-// connectAssetSession only establishes the session and registers it in the session list, opening no tabs;
-// used by entries like layout preset restore that connect first and arrange tabs afterwards.
-export async function connectAssetSession(
-  asset: ConnectAssetInput,
-): Promise<SessionInfo | null> {
-  const { pushToast } = useUi.getState();
-  try {
-    if (!(await ensureVaultReadyFor(asset))) return null;
-    const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id));
-    if (!info) {
-      pushToast("info", "已取消连接");
-      return null;
-    }
-    const { sessions, setSessions } = useUi.getState();
-    setSessions([...sessions.filter((s) => s.id !== info.id), info]);
-    return info;
-  } catch (e) {
-    const err = e as { message?: string };
-    pushToast("error", err.message || describeError(e));
-    return null;
-  } finally {
-    useUi.getState().setConnectProgress(asset.id, null);
-  }
-}
-
-// connectDbAsset establishes a database connection and returns the connId without opening a tab; used when layout preset restore rebuilds database tabs.
-export async function connectDbAsset(asset: ConnectAssetInput): Promise<string | null> {
-  try {
-    if (!(await ensureVaultReadyFor(asset))) return null;
-    const { connId } = await dbApi.connect(asset.id);
-    return connId;
-  } catch (e) {
-    useUi.getState().pushToast("error", describeError(e));
-    return null;
-  }
 }
 
 export type ConnectOutcome =

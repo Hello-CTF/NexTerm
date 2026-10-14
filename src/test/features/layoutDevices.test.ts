@@ -104,7 +104,6 @@ function persistedLayout(workspaces: Workspace[]): PersistedLayout {
     rightWidth: 352,
     workspaces,
     activeWorkspaceId: workspaces[0]?.id ?? null,
-    presets: [],
     aiBoards: {},
   };
 }
