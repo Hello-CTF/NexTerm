@@ -423,6 +423,36 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/b.txt");
   });
 
+  function seedKind(kind: string): void {
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind, status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+  }
+
+  it("winrm：改成仅大小写不同的已有名字也必须确认", async () => {
+    seedKind("winrm");
+    mocks.ask.mockResolvedValueOnce(false);
+    await triggerRename("B.TXT");
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已存在"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.rename).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await triggerRename("B.TXT");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/B.TXT");
+  });
+
+  it("ssh：仅大小写不同不算冲突，直接改名不确认", async () => {
+    seedKind("ssh");
+    await triggerRename("B.TXT");
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/B.TXT");
+  });
+
   it("符号链接：先讲清「改的是链接本身」再改", async () => {
     mocks.promptText.mockResolvedValue("link2");
     openRowMenu(mounted!.container, "~/link");

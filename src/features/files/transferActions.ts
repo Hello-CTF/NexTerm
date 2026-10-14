@@ -110,11 +110,23 @@ export async function enqueueUploadWithConflicts(args: {
     if (batchPolicy) {
       answer = { kind: batchPolicy, applyAll: true };
     } else {
+      const conflict = findConflict(name, siblings, ci);
+      if (!conflict) {
+        // Taken only by an earlier item in this batch: keep both without prompting.
+        const finalName = uniqueRemoteName(name, taken);
+        taken.add(finalName);
+        uploads.push({
+          localPath: item.localPath,
+          remotePath: joinPath(args.dir, finalName),
+          file: item.file,
+        });
+        continue;
+      }
       const moreComing = args.items
         .slice(i + 1)
         .map((x) => x.name)
         .some((n) => taken.has(n));
-      answer = await askConflictPolicy(name, findConflict(name, siblings, ci)!, moreComing);
+      answer = await askConflictPolicy(name, conflict, moreComing);
     }
     if (!answer) {
       pushToast("info", "已取消上传，所有文件保持原样");

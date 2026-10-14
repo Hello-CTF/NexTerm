@@ -1,5 +1,3 @@
-import type { FileEntryDto } from "../../ipc/types";
-
 export function validateEntryName(name: string): string | null {
   if (!name.trim()) return "名称不能为空";
   if (name !== name.trim()) return "名称首尾不能是空白字符";
@@ -38,13 +36,6 @@ export function octalDefaultFromEntry(mode: string): string {
 
 export function losesOwnerAccess(current: number, next: number): boolean {
   return ((current & 0o600) & ~next) !== 0;
-}
-
-export function findSibling(
-  siblings: FileEntryDto[],
-  name: string,
-): FileEntryDto | undefined {
-  return siblings.find((e) => e.name === name);
 }
 
 export const CHECKSUM_ALGOS: { key: string; label: string; hint: string }[] = [
