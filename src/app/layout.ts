@@ -2,7 +2,6 @@ import { layoutApi, terminalApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
 import { isDirtyFileEditor } from "../features/files/editorGuards";
-import { sanitizeLayoutPresets, type LayoutPreset } from "./layoutPresets";
 import {
   GLOBAL_AI_BOARD_KEY,
   LEFT_WIDTH_RANGE,
@@ -38,7 +37,6 @@ export interface PersistedLayout {
   rightWidth: number;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  presets: LayoutPreset[];
   aiBoards: Record<string, AiBoard>;
 }
 
@@ -202,7 +200,6 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
     ),
     workspaces,
     activeWorkspaceId,
-    presets: sanitizeLayoutPresets(raw.presets),
     aiBoards: sanitizeAiBoards(raw.aiBoards, workspaces),
   };
 }
@@ -215,7 +212,6 @@ interface LayoutSource {
   rightWidth: number;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  layoutPresets: LayoutPreset[];
   aiBoards?: Record<string, AiBoard>;
 }
 
@@ -229,7 +225,6 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
     rightWidth: s.rightWidth,
     workspaces: s.workspaces,
     activeWorkspaceId: s.activeWorkspaceId,
-    presets: s.layoutPresets,
     aiBoards: s.aiBoards ?? {},
   });
 }
@@ -401,7 +396,6 @@ function applyToStore(l: PersistedLayout) {
       rightWidth: l.rightWidth,
       workspaces: merged,
       activeWorkspaceId: l.activeWorkspaceId,
-      layoutPresets: l.presets,
       aiBoards: l.aiBoards,
     });
   } finally {

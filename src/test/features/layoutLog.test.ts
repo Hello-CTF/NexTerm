@@ -50,7 +50,6 @@ describe("log tab layout serialization", () => {
       rightWidth: 352,
       workspaces: [workspace],
       activeWorkspaceId: "ws",
-      layoutPresets: [],
     });
 
     const parsed = sanitizeLayout(JSON.parse(JSON.stringify(serialized)));

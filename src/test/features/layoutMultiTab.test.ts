@@ -88,7 +88,6 @@ function layout(leftWidth: number, title: string): PersistedLayout {
     rightWidth: 352,
     workspaces: [workspace("ws", title)],
     activeWorkspaceId: "ws",
-    presets: [],
     aiBoards: {},
   };
 }

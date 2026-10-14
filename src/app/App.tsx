@@ -51,10 +51,6 @@ import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { startUnreadTracking } from "./unread";
 import { useEdgeGestures } from "./edgeGestures";
 import {
-  applyLayoutPreset,
-  saveLayoutPresetFromWorkspace,
-} from "./layoutPresets";
-import {
   formatBinding,
   matchAppKeybinding,
   useKeybindings,
@@ -140,7 +136,6 @@ import {
   IconMonitor,
   IconNetwork,
   IconPlus,
-  IconSave,
   IconServer,
   IconSettings,
   IconSparkles,
@@ -532,7 +527,6 @@ function AppShell() {
     dismissToast,
     pushToast,
     connectFocusRevision,
-    layoutPresets,
   } = useUi();
 
   const ws = useActiveWorkspace();
@@ -921,42 +915,10 @@ function AppShell() {
           disabled: running === 0,
           onSelect: () => void requestKillWorkspaceTerminals(ws.id),
         });
-        items.push({ kind: "separator" });
-        items.push({
-          kind: "item",
-          label: "保存为布局预设…",
-          icon: <IconSave size={12} />,
-          hint: "分屏与打开的标签",
-          onSelect: () => void saveLayoutPresetFromWorkspace(ws.id),
-        });
-        items.push({
-          kind: "item",
-          label: "应用布局预设",
-          icon: <IconLayers size={12} />,
-          submenu:
-            layoutPresets.length > 0
-              ? layoutPresets.map((p) => ({
-                  kind: "item" as const,
-                  label: p.name,
-                  submenu: [
-                    {
-                      kind: "item" as const,
-                      label: "应用到当前工作区",
-                      onSelect: () => void applyLayoutPreset(p.id, "current"),
-                    },
-                    {
-                      kind: "item" as const,
-                      label: "应用到新工作区",
-                      onSelect: () => void applyLayoutPreset(p.id, "new"),
-                    },
-                  ],
-                }))
-              : [{ kind: "item" as const, label: "还没有预设", disabled: true }],
-        });
       }
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, layoutPresets],
+    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace],
   );
 
   useEffect(() => {
