@@ -51,6 +51,7 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	if err := ctx.Err(); err != nil {
 		return nativeResult{}, err
 	}
+	input = ProjectModelMessages(input)
 	primaryModel := c.config.Model
 	if configured := model.GetCommonOptions(nil, options...).Model; configured != nil {
 		primaryModel = strings.TrimSpace(*configured)

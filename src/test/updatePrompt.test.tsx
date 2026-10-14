@@ -54,7 +54,7 @@ function makeStatus(patch: Partial<UpdateStatusDto> = {}): UpdateStatusDto {
 
 function lastChoiceCall(): [string, ChoiceOptions] {
   const call = mocks.askChoice.mock.calls.at(-1);
-  if (!call) throw new Error("askChoice 未被调用");
+  if (!call) throw new Error("askChoice was not called");
   return call as [string, ChoiceOptions];
 }
 
@@ -74,14 +74,14 @@ beforeEach(() => {
   });
 });
 
-describe("isReleaseVersion 占位与可解析门控", () => {
-  it("常规与预发布版本可解析", () => {
+describe("isReleaseVersion placeholder and parseability gating", () => {
+  it("accepts regular and prerelease versions", () => {
     expect(isReleaseVersion("0.2.2")).toBe(true);
     expect(isReleaseVersion("v1.0.0")).toBe(true);
     expect(isReleaseVersion("0.2.2-rc.7")).toBe(true);
   });
 
-  it("dev/0.0.0 占位与不可解析版本被挡", () => {
+  it("rejects dev/0.0.0 placeholders and unparseable versions", () => {
     expect(isReleaseVersion("dev")).toBe(false);
     expect(isReleaseVersion("0.0.0")).toBe(false);
     expect(isReleaseVersion("")).toBe(false);
@@ -89,8 +89,8 @@ describe("isReleaseVersion 占位与可解析门控", () => {
   });
 });
 
-describe("更新提醒弹窗", () => {
-  it("有新版时弹出三选项: 更新(primary)/跳过当前版本/稍后再说", async () => {
+describe("update prompt dialog", () => {
+  it("offers update (primary), skip current version, and later when a new version is available", async () => {
     mocks.askChoice.mockResolvedValue(null);
     useUpdateStore.setState({ status: makeStatus() });
     await promptUpdateIfNeeded();
@@ -108,7 +108,7 @@ describe("更新提醒弹窗", () => {
     expect(options.choices[2]?.label).toBe("稍后再说");
   });
 
-  it("选择更新: 走现有安装流程", async () => {
+  it("choosing update uses the existing installation flow", async () => {
     mocks.askChoice.mockResolvedValue("update");
     mocks.install.mockResolvedValue({
       installed: true,
@@ -122,7 +122,7 @@ describe("更新提醒弹窗", () => {
     expect(window.localStorage.getItem("nexterm.update.v1")).toBeNull();
   });
 
-  it("选择跳过: 写持久偏好且同版本不再弹", async () => {
+  it("choosing skip persists the preference and suppresses the same version", async () => {
     mocks.askChoice.mockResolvedValue("skip");
     useUpdateStore.setState({ status: makeStatus() });
     await promptUpdateIfNeeded();
@@ -135,7 +135,7 @@ describe("更新提醒弹窗", () => {
     expect(mocks.askChoice).not.toHaveBeenCalled();
   });
 
-  it("选择稍后再说: 不写偏好,同版本本次启动不再弹", async () => {
+  it("choosing later does not persist a preference and suppresses the same version for this launch", async () => {
     mocks.askChoice.mockResolvedValue("later");
     useUpdateStore.setState({ status: makeStatus() });
     await promptUpdateIfNeeded();
@@ -148,7 +148,7 @@ describe("更新提醒弹窗", () => {
     expect(mocks.askChoice).not.toHaveBeenCalled();
   });
 
-  it("Esc/取消(null) 与稍后再说同等: 仅本次关闭", async () => {
+  it("Esc/cancel (null) behaves like later and only dismisses this prompt", async () => {
     mocks.askChoice.mockResolvedValue(null);
     useUpdateStore.setState({ status: makeStatus() });
     await promptUpdateIfNeeded();
@@ -158,7 +158,7 @@ describe("更新提醒弹窗", () => {
     expect(useUpdateStore.getState().remindedVersion).toBe("0.3.0");
   });
 
-  it("稍后再说后出现更新版本仍会再弹", async () => {
+  it("prompts again for a newer version after choosing later", async () => {
     mocks.askChoice.mockResolvedValue("later");
     useUpdateStore.setState({ status: makeStatus() });
     await promptUpdateIfNeeded();
@@ -167,7 +167,7 @@ describe("更新提醒弹窗", () => {
     expect(mocks.askChoice).toHaveBeenCalledTimes(2);
   });
 
-  it("占位或不可解析的当前版本不弹", async () => {
+  it("does not prompt for placeholder or unparseable current versions", async () => {
     for (const currentVersion of ["dev", "0.0.0", "", "not-a-version"]) {
       useUpdateStore.setState({ status: makeStatus({ currentVersion }), remindedVersion: null });
       await promptUpdateIfNeeded();
@@ -176,14 +176,14 @@ describe("更新提醒弹窗", () => {
     expect(useUpdateStore.getState().remindedVersion).toBeNull();
   });
 
-  it("无更新或未检查不弹", async () => {
+  it("does not prompt when there is no update or no completed check", async () => {
     await promptUpdateIfNeeded();
     useUpdateStore.setState({ status: makeStatus({ available: false, version: "" }) });
     await promptUpdateIfNeeded();
     expect(mocks.askChoice).not.toHaveBeenCalled();
   });
 
-  it("已跳过版本不弹,冷启动从 localStorage 读取跳过偏好", async () => {
+  it("does not prompt for skipped versions and restores skip preferences from localStorage on cold start", async () => {
     useUpdateStore.setState({ status: makeStatus(), skippedVersion: "0.3.0" });
     await promptUpdateIfNeeded();
     expect(mocks.askChoice).not.toHaveBeenCalled();

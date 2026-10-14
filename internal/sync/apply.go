@@ -141,10 +141,10 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 		return reject("不支持的同步对象种类 %q", object.Kind)
 	}
 	if len(object.Payload) == 0 {
-		return reject("对象载荷为空")
+		return reject("对象数据为空")
 	}
 	if len(object.Payload) > maxApplyObjectBytes {
-		return reject("对象载荷超过大小上限 %d 字节", int64(maxApplyObjectBytes))
+		return reject("对象数据超过大小上限 %d 字节", int64(maxApplyObjectBytes))
 	}
 	canonical, err := canonicalApplyPayload(object)
 	if err != nil {
@@ -201,15 +201,15 @@ func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 		return nil, ipc.NewError(ipc.CodeBadParam, "不支持的同步对象种类")
 	}
 	if !json.Valid(object.Payload) {
-		return nil, ipc.NewError(ipc.CodeBadParam, "对象载荷不是合法 JSON")
+		return nil, ipc.NewError(ipc.CodeBadParam, "对象数据不是合法 JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(object.Payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(decoded); err != nil {
-		return nil, ipc.WrapError(ipc.CodeBadParam, "对象载荷与对象种类不匹配", err)
+		return nil, ipc.WrapError(ipc.CodeBadParam, "对象数据与对象种类不匹配", err)
 	}
 	if object.Kind != KindTombstone && applyPayloadID(decoded) != object.ID {
-		return nil, ipc.NewError(ipc.CodeBadParam, "对象载荷 ID 与对象 ID 不一致")
+		return nil, ipc.NewError(ipc.CodeBadParam, "对象数据 ID 与对象 ID 不一致")
 	}
 	return marshalObject(decoded)
 }

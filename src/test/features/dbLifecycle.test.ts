@@ -57,8 +57,8 @@ beforeEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [], toasts: [] });
 });
 
-describe("数据库标签关闭", () => {
-  it("MySQL 标签关闭先 db_disconnect 再移除 UI", async () => {
+describe("Database tab closing", () => {
+  it("closing a MySQL tab calls db_disconnect before removing the UI", async () => {
     const tab = dbTab("db-mysql", "conn-mysql", "mysql");
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -72,7 +72,7 @@ describe("数据库标签关闭", () => {
     expect(tabExists(tab.id)).toBe(false);
   });
 
-  it("Redis 标签关闭同样真实断开", async () => {
+  it("closing a Redis tab also disconnects for real", async () => {
     const tab = dbTab("db-redis", "conn-redis", "redis");
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -85,7 +85,7 @@ describe("数据库标签关闭", () => {
     expect(tabExists(tab.id)).toBe(false);
   });
 
-  it("PostgreSQL 标签关闭同样真实断开", async () => {
+  it("closing a PostgreSQL tab also disconnects for real", async () => {
     const tab = dbTab("db-pg", "conn-pg", "postgres");
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -98,7 +98,7 @@ describe("数据库标签关闭", () => {
     expect(tabExists(tab.id)).toBe(false);
   });
 
-  it("断开失败时 toast 真实错误并保留标签，重试成功后关闭", async () => {
+  it("shows the real error in a toast and keeps the tab when disconnecting fails, then closes it after a successful retry", async () => {
     const tab = dbTab("db-mysql", "conn-mysql", "mysql");
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -106,13 +106,13 @@ describe("数据库标签关闭", () => {
     });
     mocks.disconnect.mockRejectedValueOnce({
       code: "internal",
-      message: "内部错误: 关闭数据库连接: driver: bad conn",
+      message: "Internal error: failed to close database connection: driver: bad conn",
     });
 
     await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(false);
 
     expect(tabExists(tab.id)).toBe(true);
-    expect(toastText()).toContain("数据库断开失败：内部错误: 关闭数据库连接: driver: bad conn");
+    expect(toastText()).toContain("数据库断开失败：内部错误：Internal error: failed to close database connection: driver: bad conn");
 
     await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(true);
 
@@ -120,7 +120,7 @@ describe("数据库标签关闭", () => {
     expect(tabExists(tab.id)).toBe(false);
   });
 
-  it("终端标签关闭不触碰 db_disconnect", async () => {
+  it("closing a terminal tab does not call db_disconnect", async () => {
     const tab = terminal();
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -135,8 +135,8 @@ describe("数据库标签关闭", () => {
   });
 });
 
-describe("工作区关闭", () => {
-  it("MySQL 与 Redis 标签随工作区关闭全部断开", async () => {
+describe("Workspace closing", () => {
+  it("closing a workspace disconnects all MySQL and Redis tabs", async () => {
     const mysql = dbTab("db-mysql", "conn-mysql", "mysql");
     const redis = dbTab("db-redis", "conn-redis", "redis");
     useUi.setState({
@@ -152,19 +152,19 @@ describe("工作区关闭", () => {
     expect(workspaceExists("ws")).toBe(false);
   });
 
-  it("部分断开失败时 toast 计数并保留工作区，重试后关闭", async () => {
+  it("shows the failure count in a toast and keeps the workspace when some disconnects fail, then closes it after a retry", async () => {
     const mysql = dbTab("db-mysql", "conn-mysql", "mysql");
     const redis = dbTab("db-redis", "conn-redis", "redis");
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [mysql, redis], activeTabId: mysql.id }])],
       activeWorkspaceId: "ws",
     });
-    mocks.disconnect.mockRejectedValueOnce(new Error("连接重置"));
+    mocks.disconnect.mockRejectedValueOnce(new Error("Connection reset"));
 
     await useUi.getState().closeWorkspace("ws");
 
     expect(workspaceExists("ws")).toBe(true);
-    expect(toastText()).toContain("1/2 个数据库断开失败：连接重置");
+    expect(toastText()).toContain("1/2 个数据库断开失败：Connection reset");
 
     await useUi.getState().closeWorkspace("ws");
 
@@ -172,7 +172,7 @@ describe("工作区关闭", () => {
     expect(workspaceExists("ws")).toBe(false);
   });
 
-  it("纯终端工作区关闭不触碰 db_disconnect", async () => {
+  it("closing a terminal-only workspace does not call db_disconnect", async () => {
     const tab = terminal();
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -188,8 +188,8 @@ describe("工作区关闭", () => {
   });
 });
 
-describe("取消分屏", () => {
-  it("被移除面板里的数据库标签随取消分屏断开", async () => {
+describe("Unsplitting", () => {
+  it("disconnects database tabs in the removed pane when unsplitting", async () => {
     const db = dbTab("db-mysql", "conn-mysql", "mysql");
     const term = terminal();
     useUi.setState({
@@ -209,7 +209,7 @@ describe("取消分屏", () => {
     expect(tabExists(db.id)).toBe(false);
   });
 
-  it("断开失败时保留面板并 toast", async () => {
+  it("keeps the pane and shows a toast when disconnecting fails", async () => {
     const db = dbTab("db-mysql", "conn-mysql", "mysql");
     const term = terminal();
     useUi.setState({
@@ -222,12 +222,12 @@ describe("取消分屏", () => {
       activeWorkspaceId: "ws",
       sessions: [{ id: "s", assetId: "a", name: "session", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
     });
-    mocks.disconnect.mockRejectedValueOnce(new Error("连接重置"));
+    mocks.disconnect.mockRejectedValueOnce(new Error("Connection reset"));
 
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
     expect(tabExists(db.id)).toBe(true);
-    expect(toastText()).toContain("1/1 个数据库断开失败：连接重置");
+    expect(toastText()).toContain("1/1 个数据库断开失败：Connection reset");
     expect(mocks.disconnect).toHaveBeenCalledTimes(1);
   });
 });

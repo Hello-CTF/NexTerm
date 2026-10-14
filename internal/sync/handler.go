@@ -122,7 +122,7 @@ func (h *ObjectHandler) servePush(w http.ResponseWriter, r *http.Request, userID
 	if errors.Is(err, errHeadMismatch) {
 		h.logger.Warn("sync push head conflict", "user", userID, "known_head", shortSyncHead(request.KnownHead))
 		writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden,
-			"同步头不一致：远端已被其他设备更新或发生回滚，请先拉取合并后再推送"))
+			"云端同步状态已变化：其他设备已更新或回滚了数据，请先拉取并合并，再推送本机变更"))
 		return
 	}
 	if err != nil {

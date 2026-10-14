@@ -115,7 +115,7 @@ describe.each<FormKind>(["credential", "asset"])("%s inline key picker ownership
     mocks.pickBrowserFile.mockResolvedValue({ name: "browser-id", size: 100, text: () => text.promise });
     mounted = await mountInlineForm(kind);
     clickButton(mounted.container, "浏览…");
-    clickButton(mounted.container, "引用本地文件");
+    clickButton(mounted.container, kind === "asset" ? "引用文件路径" : "引用本地文件");
     text.resolve("BROWSER KEY");
     await flush();
     expect(mounted.container.textContent).not.toContain("browser-id");
@@ -146,7 +146,7 @@ describe.each<FormKind>(["credential", "asset"])("%s inline key picker ownership
     mounted = await mountInlineForm(kind);
     clickButton(mounted.container, "浏览…");
     await waitFor(() => {
-      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/64KB/));
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/64 KB/));
     });
     expect(text).not.toHaveBeenCalled();
   });

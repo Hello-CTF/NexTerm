@@ -14,7 +14,9 @@ import (
 
 type fakeRedis struct {
 	keyType string
+	typeErr error
 	ttl     time.Duration
+	ttlErr  error
 
 	stringValue string
 	stringErr   error
@@ -46,12 +48,14 @@ func (f *fakeRedis) Scan(_ context.Context, _ uint64, match string, count int64)
 func (f *fakeRedis) Type(context.Context, string) *redisDriver.StatusCmd {
 	cmd := redisDriver.NewStatusCmd(context.Background())
 	cmd.SetVal(f.keyType)
+	cmd.SetErr(f.typeErr)
 	return cmd
 }
 
 func (f *fakeRedis) TTL(context.Context, string) *redisDriver.DurationCmd {
 	cmd := redisDriver.NewDurationCmd(context.Background(), time.Second)
 	cmd.SetVal(f.ttl)
+	cmd.SetErr(f.ttlErr)
 	return cmd
 }
 

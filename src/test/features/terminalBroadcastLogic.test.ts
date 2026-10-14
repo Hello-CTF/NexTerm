@@ -186,7 +186,7 @@ describe("describeBroadcastSkips", () => {
       { title: "e", reason: "r" },
     ]);
     expect(text).toContain("「a」r");
-    expect(text).toContain("等 5 个");
+    expect(text).toContain("另有 2 个");
     expect(text).not.toContain("「d」");
   });
 });

@@ -50,8 +50,8 @@ function commandCalls(fileName: string, fileSource: string) {
   return calls;
 }
 
-describe("IPC facade 静态契约", () => {
-  it("保留 194 个方法和 192 个唯一命令", () => {
+describe("IPC facade static contract", () => {
+  it("keeps 194 methods and 192 unique commands", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
     expect(names).toHaveLength(194);
     expect(new Set(names)).toHaveProperty("size", 192);
@@ -61,7 +61,7 @@ describe("IPC facade 静态契约", () => {
     ]);
   });
 
-  it("保留全部 39 个嵌套 args 命令", () => {
+  it("keeps all 39 nested-args commands", () => {
     const nested = commandCalls("commands.ts", commandsSource)
       .filter((call) => call.nested)
       .map((call) => call.command);
@@ -107,7 +107,7 @@ describe("IPC facade 静态契约", () => {
     ]);
   });
 
-  it("cron 的 5 个命令全部使用扁平 args（拒绝 cron_register 双包装回归）", () => {
+  it("uses flat args for all 5 cron commands (prevents cron_register double-wrapping regression)", () => {
     const calls = commandCalls("cron.ts", cronSource);
     expect(calls.map((call) => call.command)).toEqual([
       "cron_register",
@@ -119,7 +119,7 @@ describe("IPC facade 静态契约", () => {
     expect(calls.filter((call) => call.nested)).toEqual([]);
   });
 
-  it("grantApi 保留 6 个命令且全部扁平 args", () => {
+  it("keeps 6 grantApi commands, all with flat args", () => {
     const calls = commandCalls("grantApi.ts", grantSource);
     expect(calls.map((call) => call.command)).toEqual([
       "ai_grant_list",
@@ -132,7 +132,7 @@ describe("IPC facade 静态契约", () => {
     expect(calls.filter((call) => call.nested)).toEqual([]);
   });
 
-  it("memoryApi 保留 7 个命令且全部扁平 args", () => {
+  it("keeps 7 memoryApi commands, all with flat args", () => {
     const calls = commandCalls("memory.ts", memorySource);
     expect(calls.map((call) => call.command)).toEqual([
       "memory_create",
@@ -146,7 +146,7 @@ describe("IPC facade 静态契约", () => {
     expect(calls.filter((call) => call.nested)).toEqual([]);
   });
 
-  it("事件钉值: EVENTS 十四个通道与 layout://changed 保持不变", () => {
+  it("pins events: fourteen EVENTS channels and layout://changed remain unchanged", () => {
     const block = /export const EVENTS = \{([^}]*)\}/.exec(eventsSource)?.[1] ?? "";
     const entries = [...block.matchAll(/^  (\w+): "([^"]+)",$/gm)].map((match) => [
       match[1],
@@ -171,7 +171,7 @@ describe("IPC facade 静态契约", () => {
     expect(layoutSource).toContain('const LAYOUT_CHANGED = "layout://changed";');
   });
 
-  it("拖动区域内的每个按钮都有 no-drag，双击只匹配目标自身", () => {
+  it("gives every button in the drag region no-drag and matches double-clicks only on the target itself", () => {
     expect(appSource).not.toContain("@tauri-apps");
     expect(appSource).not.toContain("data-tauri-drag-region");
     expect(appSource).not.toContain('closest("[data-wails-drag-region]")');
@@ -276,7 +276,7 @@ function dispatchCronRegister(
   return { ok: true, sessionId };
 }
 
-describe("cron IPC 线上契约", () => {
+describe("cron IPC wire contract", () => {
   beforeEach(() => {
     vi.resetModules();
     installWebEnv();
@@ -285,7 +285,7 @@ describe("cron IPC 线上契约", () => {
     vi.unstubAllGlobals();
   });
 
-  it("cron_register 线上 args 扁平，旧双包装在 dispatcher 解码下必败", async () => {
+  it("keeps cron_register production args flat; legacy double-wrapping always fails dispatcher decoding", async () => {
     const calls = captureRpc();
     const { cronApi } = await import("../ipc/cron");
     const registration = {
@@ -311,7 +311,7 @@ describe("cron IPC 线上契约", () => {
     });
   });
 
-  it("cron_list/get/set_enabled/unregister 线上 args 保持扁平", async () => {
+  it("keeps cron_list/get/set_enabled/unregister production args flat", async () => {
     const calls = captureRpc();
     const { cronApi } = await import("../ipc/cron");
 
@@ -329,7 +329,7 @@ describe("cron IPC 线上契约", () => {
   });
 });
 
-describe("ai_edit_resend 线上契约", () => {
+describe("ai_edit_resend wire contract", () => {
   beforeEach(() => {
     vi.resetModules();
     installWebEnv();
@@ -338,7 +338,7 @@ describe("ai_edit_resend 线上契约", () => {
     vi.unstubAllGlobals();
   });
 
-  it("ai_edit_resend 线上 args 扁平且字段精确", async () => {
+  it("keeps ai_edit_resend production args flat with exact fields", async () => {
     const calls = captureRpc();
     const { aiApi } = await import("../ipc/commands");
 
@@ -352,7 +352,7 @@ describe("ai_edit_resend 线上契约", () => {
   });
 });
 
-describe("ai_circuit_status 线上契约", () => {
+describe("ai_circuit_status wire contract", () => {
   beforeEach(() => {
     vi.resetModules();
     installWebEnv();
@@ -361,7 +361,7 @@ describe("ai_circuit_status 线上契约", () => {
     vi.unstubAllGlobals();
   });
 
-  it("ai_circuit_status 线上 args 扁平且字段精确", async () => {
+  it("keeps ai_circuit_status production args flat with exact fields", async () => {
     const calls = captureRpc();
     const { modelApi } = await import("../ipc/commands");
 

@@ -78,8 +78,8 @@ application:
             const targetPath =
               "/files/home" + ctx.request.path.slice(bridgePrefix.length);
 
-            // 带上 Cookie 才能以**当前用户**身份访问网盘；Origin/Referer 留着会被
-            // 目标端拒绝（跨域来源），所以显式删掉。
+            // Send the Cookie to access the network drive as the **current user**; Origin/Referer are
+            // rejected by the target (cross-origin), so delete them explicitly.
             ctx.headers.del("Origin");
             ctx.headers.del("Referer");
             ctx.proxy.to(fileOrigin, {

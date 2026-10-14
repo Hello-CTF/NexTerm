@@ -58,8 +58,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("validateBaseURL 对齐服务端规则", () => {
-  it("https 地址通过并去尾斜杠", () => {
+describe("validateBaseURL follows server rules", () => {
+  it("accepts HTTPS URLs and removes trailing slashes", () => {
     expect(validateBaseURL("https://a.example.com/", false)).toEqual({
       url: "https://a.example.com",
       error: null,
@@ -70,7 +70,7 @@ describe("validateBaseURL 对齐服务端规则", () => {
     });
   });
 
-  it("公网明文 http 必须勾选 insecure, 内网/本机放行", () => {
+  it("requires insecure for public cleartext HTTP and allows private or local addresses", () => {
     expect(validateBaseURL("http://nexterm.example.com", false).error).toContain("HTTPS");
     expect(validateBaseURL("http://nexterm.example.com", true).error).toBeNull();
     expect(validateBaseURL("http://192.168.1.8:8080", false).error).toBeNull();
@@ -78,7 +78,7 @@ describe("validateBaseURL 对齐服务端规则", () => {
     expect(validateBaseURL("http://127.0.0.1", false).error).toBeNull();
   });
 
-  it("拒绝非法 scheme/用户信息/查询参数/片段/空值/超长", () => {
+  it("rejects invalid schemes, userinfo, query parameters, fragments, empty values, and overlong URLs", () => {
     expect(validateBaseURL("ftp://a.example.com", false).error).toContain("http://");
     expect(validateBaseURL("https://user:pw@a.example.com", false).error).toContain("用户信息");
     expect(validateBaseURL("https://a.example.com?x=1", false).error).toContain("查询参数");
@@ -89,10 +89,10 @@ describe("validateBaseURL 对齐服务端规则", () => {
   });
 });
 
-describe("BaseUrlsSection 超管编辑", () => {
+describe("BaseUrlsSection superadmin editing", () => {
   const entries = [{ url: "https://a.example.com" }, { url: "https://b.example.com" }];
 
-  it("上下移改顺序, 保存时 PUT 新顺序, 以服务端返回为准", async () => {
+  it("reorders entries with move buttons, saves the new order with PUT, and uses the server response", async () => {
     const calls = routePut({ base_urls: [{ url: "https://b.example.com" }, { url: "https://a.example.com" }] });
     let saved: { url: string; insecure?: boolean }[] | null = null;
     mounted = mount(
@@ -123,7 +123,7 @@ describe("BaseUrlsSection 超管编辑", () => {
     expect(document.body.textContent).not.toContain("有未保存的修改");
   });
 
-  it("添加: 非法地址给行内错误, 重复地址拦截, 合法地址入列", async () => {
+  it("shows inline errors for invalid additions, blocks duplicates, and appends valid addresses", async () => {
     routePut();
     mounted = mount(createElement(BaseUrlsSection, { entries, isAdmin: true, onSaved: () => undefined }));
     await expandSection();
@@ -148,7 +148,7 @@ describe("BaseUrlsSection 超管编辑", () => {
     expect(document.body.textContent).toContain("#3");
   });
 
-  it("达到上限后添加按钮禁用", async () => {
+  it("disables the add button after reaching the limit", async () => {
     routePut();
     const full = Array.from({ length: MAX_BASE_URLS }, (_, i) => ({ url: `https://h${i}.example.com` }));
     mounted = mount(createElement(BaseUrlsSection, { entries: full, isAdmin: true, onSaved: () => undefined }));
@@ -159,7 +159,7 @@ describe("BaseUrlsSection 超管编辑", () => {
     expect((addButton as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("删除后保存把移除结果发给服务端", async () => {
+  it("sends the remaining entries to the server after deleting and saving", async () => {
     const calls = routePut({ base_urls: [{ url: "https://b.example.com" }] });
     mounted = mount(createElement(BaseUrlsSection, { entries, isAdmin: true, onSaved: () => undefined }));
     await expandSection();
@@ -176,8 +176,8 @@ describe("BaseUrlsSection 超管编辑", () => {
   });
 });
 
-describe("BaseUrlsSection 普通用户只读", () => {
-  it("没有输入框与操作按钮, 提示仅超管可修改", async () => {
+describe("BaseUrlsSection read-only regular users", () => {
+  it("omits inputs and action buttons and explains that only superadmins can edit", async () => {
     mounted = mount(
       createElement(BaseUrlsSection, { entries: [{ url: "https://a.example.com" }], isAdmin: false, onSaved: () => undefined }),
     );
@@ -192,8 +192,8 @@ describe("BaseUrlsSection 普通用户只读", () => {
   });
 });
 
-describe("BaseUrlsSection 默认折叠", () => {
-  it("默认只渲染一行摘要, 展开后才出现列表与编辑器", async () => {
+describe("BaseUrlsSection collapsed by default", () => {
+  it("renders only the summary row by default and shows the list and editor after expansion", async () => {
     mounted = mount(
       createElement(BaseUrlsSection, {
         entries: [{ url: "https://a.example.com" }, { url: "https://b.example.com" }],
@@ -220,8 +220,8 @@ describe("BaseUrlsSection 默认折叠", () => {
   });
 });
 
-describe("BaseUrlsSection 空列表引导", () => {
-  it("超管看到可操作的空态指引, 普通用户看到联系管理员指引", async () => {
+describe("BaseUrlsSection empty-list guidance", () => {
+  it("shows actionable guidance to superadmins and an admin-contact hint to regular users", async () => {
     mounted = mount(createElement(BaseUrlsSection, { entries: [], isAdmin: true, onSaved: () => undefined }));
     await flushUntil(() => document.body.textContent?.includes("未配置") ?? false);
     expect(document.body.textContent).toContain("新设备无法接入");
@@ -238,8 +238,8 @@ describe("BaseUrlsSection 空列表引导", () => {
   });
 });
 
-describe("BaseUrlsSection 保存竞态 (R1-5)", () => {
-  it("PUT 在途时全部编辑控件锁定, 响应到达后以服务端列表为准", async () => {
+describe("BaseUrlsSection save race (R1-5)", () => {
+  it("locks every edit control while PUT is in flight and uses the server list after the response arrives", async () => {
     const put = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     mocks.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
       if ((init.method ?? "GET") === "PUT") return put.promise;

@@ -283,27 +283,27 @@ describe("PublicPreviewApp", () => {
   it("shows a one-shot warning for read_only errors without leaving live", async () => {
     const view = await mountViewer();
     const socket = await goLive("read_write");
-    socket.emitText({ type: "error", code: "read_only", message: "当前没有控制权" });
+    socket.emitText({ type: "error", code: "read_only", message: "control is currently unavailable" });
     await flush();
-    expect(view.container.textContent).toContain("当前没有控制权");
+    expect(view.container.textContent).toContain("control is currently unavailable");
     expect(badgeText(view)).toBe("可控制");
     const terminal = lastTerminal();
     socket.emitBinary(new TextEncoder().encode("still-live"));
     await flush();
     expect(decodeWrite(terminal.writes[terminal.writes.length - 1])).toBe("still-live");
-    socket.emitText({ type: "error", code: "read_only", message: "再来一次" });
+    socket.emitText({ type: "error", code: "read_only", message: "try again" });
     await flush();
-    expect(view.container.textContent).not.toContain("再来一次");
+    expect(view.container.textContent).not.toContain("try again");
     socket.emitText({ type: "control", state: "guest" });
     await flush();
-    socket.emitText({ type: "error", code: "read_only", message: "再次没有控制权" });
+    socket.emitText({ type: "error", code: "read_only", message: "control is unavailable again" });
     await flush();
-    expect(view.container.textContent).toContain("再次没有控制权");
+    expect(view.container.textContent).toContain("control is unavailable again");
   });
 
   it("maps an expired error frame to plain copy without retry", async () => {
     const view = await mountViewer();
-    lastSocket().emitText({ type: "error", code: "expired", message: "分享链接已过期" });
+    lastSocket().emitText({ type: "error", code: "expired", message: "share link expired" });
     await flush();
     expect(view.container.textContent).toContain("预览链接已过期");
     expect(view.container.querySelector("button")).toBeNull();
@@ -311,7 +311,7 @@ describe("PublicPreviewApp", () => {
 
   it("maps a revoked error frame to plain copy", async () => {
     const view = await mountViewer();
-    lastSocket().emitText({ type: "error", code: "revoked", message: "分享链接已吊销" });
+    lastSocket().emitText({ type: "error", code: "revoked", message: "share link revoked" });
     await flush();
     expect(view.container.textContent).toContain("预览链接已吊销");
   });
@@ -319,7 +319,7 @@ describe("PublicPreviewApp", () => {
   it("maps an ended error frame to ended copy", async () => {
     const view = await mountViewer();
     await goLive();
-    lastSocket().emitText({ type: "error", code: "ended", message: "分享已结束" });
+    lastSocket().emitText({ type: "error", code: "ended", message: "share ended" });
     await flush();
     expect(view.container.textContent).toContain("预览已结束");
   });

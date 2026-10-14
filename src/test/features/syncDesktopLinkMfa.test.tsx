@@ -92,8 +92,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("桌面端登录 · 直连成功", () => {
-  it("linkSet 返回 connected: 不进分步, 直接完成登录并展示同步控制台", async () => {
+describe("Desktop login - direct success", () => {
+  it("returns connected from linkSet, skips the stepped flow, completes login, and shows the sync console", async () => {
     seedForm();
     mocks.linkSet.mockImplementation(() => {
       loggedIn = true;
@@ -110,8 +110,8 @@ describe("桌面端登录 · 直连成功", () => {
   });
 });
 
-describe("桌面端登录 · mfa_required 分支", () => {
-  it("进入两步验证: 提交动态码经 remoteLinkApi.mfa 完成后进入已登录态", async () => {
+describe("Desktop login - mfa_required branch", () => {
+  it("enters two-step verification, completes through remoteLinkApi.mfa, and reaches the logged-in state", async () => {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "mfa_required", mfaTicket: "ticket-1", mfaExpiresAt: 1700000300000 });
     mocks.mfa.mockImplementation(() => {
@@ -133,10 +133,10 @@ describe("桌面端登录 · mfa_required 分支", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
   });
 
-  it("动态码错误内联展示, 可重试; 「返回」回到登录表单", async () => {
+  it("shows an invalid-code error inline with retry and returns to the login form with Back", async () => {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "mfa_required", mfaTicket: "ticket-1" });
-    mocks.mfa.mockRejectedValueOnce(new Error("动态码错误")).mockImplementation(() => {
+    mocks.mfa.mockRejectedValueOnce(new Error("incorrect verification code")).mockImplementation(() => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected" });
     });
@@ -145,13 +145,13 @@ describe("桌面端登录 · mfa_required 分支", () => {
 
     setInputValue(document.querySelector("#sync-mfa-code") as HTMLInputElement, "000000");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("验证并登录")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("动态码错误") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("incorrect verification code") ?? false);
     expect(document.body.textContent).not.toContain("立即同步");
 
     // After "Back" returns to the main form, logging in again works
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "返回") as HTMLButtonElement);
     await flushUntil(() => document.querySelector("#sync-url") !== null);
-    expect(document.body.textContent).not.toContain("动态码错误");
+    expect(document.body.textContent).not.toContain("incorrect verification code");
 
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "mfa_required", mfaTicket: "ticket-2" });
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "登录") as HTMLButtonElement);
@@ -162,7 +162,7 @@ describe("桌面端登录 · mfa_required 分支", () => {
   });
 });
 
-describe("桌面端登录 · reset_required 分支", () => {
+describe("Desktop login - reset_required branch", () => {
   async function enterReset() {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "reset_required" });
@@ -170,7 +170,7 @@ describe("桌面端登录 · reset_required 分支", () => {
     await flushUntil(() => document.body.textContent?.includes("必须先设置新密码") ?? false);
   }
 
-  it("前端校验: 新密码至少 8 位且两次输入一致, 不发请求", async () => {
+  it("requires at least eight characters and matching new passwords without making a request", async () => {
     await enterReset();
 
     setInputValue(document.querySelector("#sync-new-pass") as HTMLInputElement, "short");
@@ -186,7 +186,7 @@ describe("桌面端登录 · reset_required 分支", () => {
     expect(mocks.resetPassword).not.toHaveBeenCalled();
   });
 
-  it("改密成功先一次性展示恢复密钥: 复制确认后才能进入, 密钥默认掩码", async () => {
+  it("shows a one-time recovery key after a successful password change, requires copy confirmation, and masks it by default", async () => {
     await enterReset();
     mocks.resetPassword.mockImplementation(() => {
       loggedIn = true;
@@ -224,7 +224,7 @@ describe("桌面端登录 · reset_required 分支", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
   });
 
-  it("clipboard 不可用: 自动显示密钥并提示手动复制, 同样放行进入", async () => {
+  it("reveals the key and shows a manual-copy hint when the clipboard is unavailable, while still allowing entry", async () => {
     await enterReset();
     mocks.resetPassword.mockImplementation(() => {
       loggedIn = true;
@@ -250,9 +250,9 @@ describe("桌面端登录 · reset_required 分支", () => {
     await flushUntil(() => document.body.textContent?.includes("立即同步") ?? false);
   });
 
-  it("改密失败内联展示, 停留改密步可重试", async () => {
+  it("shows password change failures inline and stays on the step for retry", async () => {
     await enterReset();
-    mocks.resetPassword.mockRejectedValueOnce(new Error("登录状态已过期，请重新连接")).mockImplementation(() => {
+    mocks.resetPassword.mockRejectedValueOnce(new Error("login session expired; reconnect")).mockImplementation(() => {
       loggedIn = true;
       return Promise.resolve({ ...LINK, connect: "connected", recoveryKey: RECOVERY_KEY });
     });
@@ -260,7 +260,7 @@ describe("桌面端登录 · reset_required 分支", () => {
     setInputValue(document.querySelector("#sync-new-pass") as HTMLInputElement, "new-password-1");
     setInputValue(document.querySelector("#sync-new-pass2") as HTMLInputElement, "new-password-1");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("登录状态已过期，请重新连接") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("login session expired; reconnect") ?? false);
     expect(document.body.textContent).toContain("必须先设置新密码");
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);

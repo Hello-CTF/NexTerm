@@ -99,8 +99,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面端凭据保护关闭路径", () => {
-  it("取消勾选开关校验当前密码后走 DPAPI 迁移，而不是空口令", async () => {
+describe("Desktop credential protection disable paths", () => {
+  it("verifies the current password and uses DPAPI migration instead of an empty password when protection is toggled off", async () => {
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);
     vi.mocked(promptText).mockResolvedValue("current-password");
@@ -118,7 +118,7 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护");
   });
 
-  it("取消勾选时放弃输入则不调用任何关闭路径", async () => {
+  it("does not invoke any disable path when password entry is canceled", async () => {
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);
     vi.mocked(promptText).mockResolvedValue(null);
@@ -132,7 +132,7 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(mocks.changePassword).not.toHaveBeenCalled();
   });
 
-  it("无系统级免密保护时（如 Linux 桌面）取消勾选改走空口令，并给出数据目录警告", async () => {
+  it("uses an empty password and warns about data-directory access when system passwordless protection is unavailable, such as on Linux desktop", async () => {
     mocks.vaultStatus.mockResolvedValue(MASTER_VAULT_NO_SYSTEM);
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);
@@ -150,7 +150,7 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护");
   });
 
-  it("修改密码留空时走 DPAPI 迁移而不是空口令", async () => {
+  it("uses DPAPI migration instead of an empty password when the new password is left blank", async () => {
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText)
       .mockResolvedValueOnce("current-password")
@@ -170,10 +170,10 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭密码保护 · 凭据改由系统级密钥保护");
   });
 
-  it("旧密码错误时不再询问新密码", async () => {
+  it("does not ask for a new password after old-password validation fails", async () => {
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText).mockResolvedValue("wrong-password");
-    mocks.unlock.mockRejectedValueOnce({ code: "bad_master_password", message: "保护密码错误" });
+    mocks.unlock.mockRejectedValueOnce({ code: "bad_master_password", message: "incorrect protection password" });
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("已开启"));
 
@@ -187,12 +187,12 @@ describe("桌面端凭据保护关闭路径", () => {
     expect(promptText).toHaveBeenCalledTimes(1);
     expect(mocks.changePassword).not.toHaveBeenCalled();
     expect(mocks.initDpapi).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "保护密码错误");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "保护密码错误：incorrect protection password");
   });
 
-  it("桌面端密钥存储文案区分本机与同步上传条件", async () => {
+  it("distinguishes local key storage from sync upload requirements in desktop copy", async () => {
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前运行环境的 SQLite 中"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("密钥加密后保存在当前实例的数据库中"));
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
@@ -200,8 +200,8 @@ describe("桌面端凭据保护关闭路径", () => {
   });
 });
 
-describe("桌面端空密码凭据库", () => {
-  it("显示「加密已启用 · 未设密码」，主操作设置密码、次级关闭加密", async () => {
+describe("Desktop passwordless vault", () => {
+  it("shows encryption enabled without a password, with set-password primary and disable-encryption secondary actions", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
@@ -216,7 +216,7 @@ describe("桌面端空密码凭据库", () => {
     expect(vaultCard()?.textContent).not.toContain("闲置自动锁定");
   });
 
-  it("点「设置密码」不询问旧密码，直接以空旧密码设置新密码", async () => {
+  it("sets a new password with an empty old password without asking for the old password", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText).mockResolvedValue("brand-new-password");
@@ -237,7 +237,7 @@ describe("桌面端空密码凭据库", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已开启密码保护 · 凭据不受影响");
   });
 
-  it("点「关闭加密」确认后以空密码迁移到系统级密钥保护", async () => {
+  it("migrates to system key protection with an empty password after disable-encryption confirmation", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);
@@ -258,7 +258,7 @@ describe("桌面端空密码凭据库", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭加密 · 凭据改由系统级密钥保护");
   });
 
-  it("「关闭加密」取消确认则不调用任何接口", async () => {
+  it("does not call any API when disable-encryption confirmation is canceled", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     const { ask } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(false);

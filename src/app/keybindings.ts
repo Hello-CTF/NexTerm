@@ -25,7 +25,7 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "commandPalette", label: "命令面板", defaultBinding: "Mod+Shift+p" },
   { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
   { id: "newTerminal", label: "新建终端标签", defaultBinding: "Mod+t" },
-  { id: "toggleSidebar", label: "收起 / 展开资产树", defaultBinding: "Mod+b" },
+  { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
   { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
   { id: "toggleSplit", label: "上下分屏 / 取消分屏", defaultBinding: "Mod+\\" },

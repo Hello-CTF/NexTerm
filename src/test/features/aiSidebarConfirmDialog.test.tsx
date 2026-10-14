@@ -151,8 +151,8 @@ afterEach(() => {
   resetAllKeybindings();
 });
 
-describe("AiSidebar 权限请求对话框", () => {
-  it("命令确认展示完整命令与 URL，并提供永久允许入口", async () => {
+describe("AiSidebar permission request dialogs", () => {
+  it("shows complete commands and URLs in command confirmations and offers permanent allow", async () => {
     await sendAndEmit([
       { type: "toolCall", id: "call-1", name: "exec_commands", display: "exec_commands", args: {} },
       {
@@ -182,7 +182,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(permanent?.getAttribute("title")).toContain("可随时在授权管理中撤销");
   });
 
-  it("文件写确认展示路径范围，永久允许按钮标注范围", async () => {
+  it("shows the path scope in file-write confirmations and labels the permanent-allow button with that scope", async () => {
     await sendAndEmit([
       { type: "toolCall", id: "call-2", name: "write_file", display: "write_file", args: {} },
       {
@@ -203,7 +203,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(permanent?.getAttribute("title")).toContain("永久允许写入 /var/log/** 下的文件");
   });
 
-  it("危险操作不展示永久允许", async () => {
+  it("does not offer permanent allow for dangerous operations", async () => {
     await sendAndEmit([
       { type: "toolCall", id: "call-3", name: "send_keys", display: "send_keys sudo reboot", args: {} },
       {
@@ -221,7 +221,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(permanentButton()).toBeNull();
   });
 
-  it("点击永久允许发送 allow_persistent 决策", async () => {
+  it("sends an allow_persistent decision when permanent allow is clicked", async () => {
     await sendAndEmit([
       { type: "toolCall", id: "call-4", name: "write_file", display: "write_file", args: {} },
       {
@@ -247,7 +247,7 @@ describe("AiSidebar 权限请求对话框", () => {
     });
   });
 
-  it("Esc 默认拒绝", async () => {
+  it("denies by default when Escape is pressed", async () => {
     await sendAndEmit([
       { type: "toolCall", id: "call-5", name: "write_file", display: "write_file", args: {} },
       {
@@ -281,7 +281,7 @@ describe("AiSidebar 权限请求对话框", () => {
     await flushUntil(() => mounted?.container.textContent?.includes("已拒绝") === true);
   });
 
-  it("计划只批准一次，批准消息不复述方案，历史恢复不再提供批准", async () => {
+  it("approves a plan only once without restating it and does not offer approval again after history restoration", async () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     const planToggle = [...mounted!.container.querySelectorAll("button")].find(
       (button) => button.getAttribute("title") === "先生成方案，批准后执行",
@@ -300,24 +300,24 @@ describe("AiSidebar 权限请求对话框", () => {
     expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准并执行方案")).toBe(false);
 
     act(() => {
-      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "执行完成" });
+      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "Execution complete" });
     });
     await flush();
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue([
       { id: "p1", role: "plan", content: { type: "planSubmitted", plan: "步骤 A" } },
       { id: "u1", role: "user", content: { role: "user", content: "按上面的方案执行。" } },
-      { id: "a1", role: "assistant", content: { role: "assistant", content: "执行完成" } },
+      { id: "a1", role: "assistant", content: { role: "assistant", content: "Execution complete" } },
     ]);
     click(mounted!.container.querySelector('button[title="历史会话"]')!);
     await flush();
-    clickButton(mounted!.container, "演示");
+    clickButton(mounted!.container, "Demo");
     await flush();
     expect(mounted!.container.textContent).toContain("已批准");
     expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "批准并执行方案")).toBe(false);
   });
 
-  it("重试复用原请求的图片、引用和计划模式", async () => {
+  it("reuses the original request images, references, and plan mode on retry", async () => {
     useUi.setState({
       sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
       aiRulePrefill: null,
@@ -353,7 +353,7 @@ describe("AiSidebar 权限请求对话框", () => {
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flushUntil(() => mocks.chat.mock.calls.length === 1);
     act(() => {
-      mocks.channels[0].onEvent({ type: "error", message: "网络超时", retryable: true });
+      mocks.channels[0].onEvent({ type: "error", message: "Network timeout", retryable: true });
     });
     await flush();
 
@@ -365,7 +365,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(retry.planMode).toBe(true);
   });
 
-  it("已批准执行的计划不允许通过重试再次执行，新计划仍可单独批准", async () => {
+  it("does not execute an approved plan again on retry while still allowing a new plan to be approved independently", async () => {
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     const planToggle = [...mounted!.container.querySelectorAll("button")].find(
       (button) => button.getAttribute("title") === "先生成方案，批准后执行",
@@ -376,7 +376,7 @@ describe("AiSidebar 权限请求对话框", () => {
     clickButton(mounted!.container, "批准并执行方案");
     await flushUntil(() => mocks.chat.mock.calls.length === 2);
     act(() => {
-      mocks.channels.at(-1)!.onEvent({ type: "error", message: "执行中断", retryable: true });
+      mocks.channels.at(-1)!.onEvent({ type: "error", message: "Execution interrupted", retryable: true });
     });
     await flush();
 
@@ -391,12 +391,12 @@ describe("AiSidebar 权限请求对话框", () => {
     );
     click(planToggleAgain!);
     const input = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
-    setInputValue(input, "继续");
+    setInputValue(input, "Continue");
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flushUntil(() => mocks.channels.length === 3);
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "planSubmitted" });
-      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "步骤 B" });
+      mocks.channels.at(-1)!.onEvent({ type: "done", answer: "Step B" });
     });
     await flush();
     clickButton(mounted!.container, "批准并执行方案");
@@ -405,14 +405,14 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(second.message).toBe("按上面的方案执行。");
   });
 
-  it("@ 引用的终端与文件随消息上送后端可解析的对象", async () => {
+  it("sends backend-resolvable terminal and file objects for @ references with the message", async () => {
     useUi.setState({
       sessions: [{ id: "s1", assetId: null, name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 }],
       workspaces: [
         {
           id: "w1",
           kind: "session",
-          title: "生产",
+          title: "Production",
           sessionId: "s1",
           panes: [
             {
@@ -446,7 +446,7 @@ describe("AiSidebar 权限请求对话框", () => {
         button.textContent?.includes("nginx.conf"),
       )!,
     );
-    setInputValue(textarea(), "看下这两个");
+    setInputValue(textarea(), "Inspect these two");
     click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flushUntil(() => mocks.chat.mock.calls.length === 1);
 
@@ -459,7 +459,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(call.message).toContain("构建机");
   });
 
-  it("本轮允许此类同步决策与结果文案", async () => {
+  it("syncs allow-for-this-run decisions and result copy", async () => {
     await sendAndEmit([
       {
         type: "confirmRequired",
@@ -478,7 +478,7 @@ describe("AiSidebar 权限请求对话框", () => {
     expect(mounted!.container.textContent).not.toContain("本会话允许此类");
   });
 
-  it("命令拦截规则使用结构化 commands，文件规则使用 preview.path", async () => {
+  it("uses structured commands for command interception rules and preview.path for file rules", async () => {
     useUi.setState({ aiRulePrefill: null });
     await sendAndEmit([
       {
@@ -491,7 +491,7 @@ describe("AiSidebar 权限请求对话框", () => {
         confirmationNonce: "n-rule-command",
       },
     ]);
-    clickButton(mounted!.container, "加为拦截规则");
+    clickButton(mounted!.container, "去设置拦截规则");
     expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
 
     mounted?.unmount();
@@ -509,11 +509,11 @@ describe("AiSidebar 权限请求对话框", () => {
         confirmationNonce: "n-rule-file",
       },
     ]);
-    clickButton(mounted!.container, "加为拦截规则");
+    clickButton(mounted!.container, "去设置拦截规则");
     expect(useUi.getState().aiRulePrefill).toBe("/etc/nginx/nginx.conf");
   });
 
-  it("不支持的对象不显示拦截规则按钮，权限读取失败显示错误与重试", async () => {
+  it("hides interception-rule buttons for unsupported objects and shows an error with retry when permission loading fails", async () => {
     await sendAndEmit([
       {
         type: "confirmRequired",
@@ -523,7 +523,7 @@ describe("AiSidebar 权限请求对话框", () => {
         confirmationNonce: "n-unsupported",
       },
     ]);
-    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "加为拦截规则")).toBe(false);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "去设置拦截规则")).toBe(false);
 
     mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);

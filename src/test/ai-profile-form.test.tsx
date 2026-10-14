@@ -102,7 +102,7 @@ describe("ModelManager AI-1 profile fields", () => {
     vi.useRealTimers();
   });
 
-  it("旧档案（demo 形状，无 maxTokens/熔断字段）显示为不限且保存保持不限", async () => {
+  it("legacy profiles (demo shape without maxTokens/circuit-breaker fields) display unlimited output and preserve it on save", async () => {
     await mountManager(demoProfile());
 
     expect(inputFor("最大输出").value).toBe("");
@@ -122,7 +122,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(payload.circuitCooldownSeconds ?? null).toBeNull();
   });
 
-  it("设置最大输出后标记未保存并写回数值", async () => {
+  it("setting maximum output marks the form dirty and saves the numeric value", async () => {
     await mountManager(demoProfile());
 
     setInputValue(inputFor("最大输出"), "4096");
@@ -133,7 +133,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(savedPayload()).toMatchObject({ id: "m-deepseek", maxTokens: 4096 });
   });
 
-  it("清空最大输出 = 明确恢复不限", async () => {
+  it("clearing maximum output explicitly restores unlimited output", async () => {
     await mountManager({ ...demoProfile(), maxTokens: 4096 });
     expect(inputFor("最大输出").value).toBe("4096");
 
@@ -144,7 +144,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(savedPayload()).toMatchObject({ id: "m-deepseek", maxTokens: null });
   });
 
-  it("非法最大输出输入按不限收敛，不会把垃圾写进档案", async () => {
+  it("invalid maximum-output input falls back to unlimited instead of writing garbage into the profile", async () => {
     await mountManager(demoProfile());
 
     const input = inputFor("最大输出");
@@ -158,14 +158,14 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(savedPayload().maxTokens ?? null).toBeNull();
   });
 
-  it("按档案展示熔断配置输入（自定义 3 次 / 60 秒）", async () => {
+  it("displays circuit-breaker settings from the profile (custom 3 failures / 60 seconds)", async () => {
     await mountManager({ ...demoProfile(), circuitFailureThreshold: 3, circuitCooldownSeconds: 60 });
 
     expect(inputFor("自动暂停阈值").value).toBe("3");
     expect(inputFor("自动暂停时长").value).toBe("60");
   });
 
-  it("未配置熔断时输入留空并展示后端默认值占位符", async () => {
+  it("leaves circuit-breaker inputs empty when unconfigured and shows backend defaults as placeholders", async () => {
     await mountManager(demoProfile());
 
     expect(inputFor("自动暂停阈值").value).toBe("");
@@ -174,7 +174,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(inputFor("自动暂停时长").placeholder).toBe("默认 300");
   });
 
-  it("编辑熔断阈值标记未保存并写回", async () => {
+  it("editing the circuit-breaker threshold marks the form dirty and saves the value", async () => {
     await mountManager(demoProfile());
 
     setInputValue(inputFor("自动暂停阈值"), "7");
@@ -185,7 +185,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(savedPayload()).toMatchObject({ id: "m-deepseek", circuitFailureThreshold: 7 });
   });
 
-  it("新增档案以不限输出与空熔断配置开始，保存后才查熔断状态", async () => {
+  it("new profiles start with unlimited output and empty circuit-breaker settings; circuit status is queried only after save", async () => {
     await mountManager(demoProfile());
     const callsBefore = mocks.circuitStatus.mock.calls.length;
 
@@ -213,7 +213,7 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(payload.circuitCooldownSeconds).toBeNull();
   });
 
-  it("保存后重新读取熔断状态", async () => {
+  it("reloads circuit-breaker status after save", async () => {
     await mountManager(demoProfile());
     expect(mocks.circuitStatus).toHaveBeenCalledTimes(1);
 
@@ -244,7 +244,7 @@ describe("ModelManager circuit runtime status", () => {
     vi.useRealTimers();
   });
 
-  it("运行态为零值 DTO 时展示正常运行", async () => {
+  it("shows normal operation for a zero-valued runtime DTO", async () => {
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 0, openUntil: null });
     await mountManager(demoProfile());
 
@@ -253,7 +253,7 @@ describe("ModelManager circuit runtime status", () => {
     expect(view!.container.textContent).not.toContain("可重试");
   });
 
-  it("熔断中展示连续失败数与冷却剩余时间", async () => {
+  it("shows consecutive failures and remaining cooldown while the circuit is open", async () => {
     mocks.circuitStatus.mockResolvedValue({
       consecutiveFailures: 5,
       openUntil: Date.now() + 240_000,
@@ -263,7 +263,7 @@ describe("ModelManager circuit runtime status", () => {
     expect(view!.container.textContent).toContain("已暂停：连续失败 5 次，240 秒后自动恢复");
   });
 
-  it("冷却倒计时随时间递减", async () => {
+  it("decrements the cooldown countdown over time", async () => {
     vi.useFakeTimers();
     mocks.circuitStatus.mockResolvedValue({
       consecutiveFailures: 5,
@@ -279,14 +279,14 @@ describe("ModelManager circuit runtime status", () => {
     expect(view!.container.textContent).toContain("暂停已结束：连续失败 5 次，下次请求时恢复");
   });
 
-  it("有连续失败但未熔断时展示闭合状态", async () => {
+  it("shows the closed state when there are consecutive failures but the circuit is not open", async () => {
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 2, openUntil: null });
     await mountManager(demoProfile());
 
     expect(view!.container.textContent).toContain("运行中：最近连续失败 2 次");
   });
 
-  it("读取失败时如实降级，点刷新可恢复", async () => {
+  it("degrades accurately when status loading fails and recovers via refresh", async () => {
     mocks.circuitStatus.mockRejectedValue(new Error("boom"));
     await mountManager(demoProfile());
 
@@ -302,11 +302,11 @@ describe("ModelManager circuit runtime status", () => {
     expect(view!.container.textContent).not.toContain("暂停状态读取失败");
   });
 
-  it("切换档案时按新档案重新加载运行态（demo open/closed 语义）", async () => {
+  it("reloads runtime status for the newly selected profile (demo open/closed semantics)", async () => {
     const glm: ModelProfile = {
       ...demoProfile(),
       id: "m-glm",
-      name: "GLM 备用",
+      name: "GLM backup",
       model: "glm-4-plus",
     };
     mocks.overview.mockResolvedValue({
@@ -336,7 +336,7 @@ describe("ModelManager circuit runtime status", () => {
   });
 });
 
-describe("ModelManager 快速填充预设与可选参数", () => {
+describe("ModelManager quick-fill presets and optional parameters", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
@@ -373,7 +373,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     vi.useRealTimers();
   });
 
-  it("只渲染 4 个预设且 moonshot 排最前，不再拉取后端预设", async () => {
+  it("renders only 4 presets with Moonshot first and no longer fetches backend presets", async () => {
     await mountManager(demoProfile());
 
     const chips = [...view!.container.querySelectorAll("button")]
@@ -383,7 +383,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(mocks.presets).not.toHaveBeenCalled();
   });
 
-  it("新档案点预设复用后端地址、模型与上下文窗口，温度留空不传", async () => {
+  it("applying a preset to a new profile reuses the backend URL, model, and context window while leaving temperature unset", async () => {
     await mountManager(demoProfile());
 
     click(view!.container.querySelector('button[title="新增档案"]')!);
@@ -413,7 +413,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(payload.contextWindow).toBe(200_000);
   });
 
-  it("编辑已有档案时预设不覆盖已填参数", async () => {
+  it("presets do not overwrite fields already filled in for existing profiles", async () => {
     await mountManager({ ...demoProfile(), temperature: 0.7, contextWindow: 64000 });
 
     clickButton(view!.container, "Moonshot");
@@ -426,7 +426,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(inputFor("上下文窗口").value).toBe("64000");
   });
 
-  it("清空温度与上下文窗口后保存时省略这两个参数", async () => {
+  it("omits temperature and context window on save after clearing them", async () => {
     await mountManager({ ...demoProfile(), temperature: 0.7 });
 
     setInputValue(inputFor("温度"), "");
@@ -440,7 +440,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
     expect(payload.model).toBe("deepseek-chat");
   });
 
-  it("档案 revision 刷新不覆盖未保存草稿，干净后按新数据更新", async () => {
+  it("profile revision refreshes do not overwrite unsaved drafts and apply new data once clean", async () => {
     const profile = demoProfile();
     await mountManager(profile);
     const baseUrl = view!.container.querySelector<HTMLInputElement>(
@@ -459,7 +459,7 @@ describe("ModelManager 快速填充预设与可选参数", () => {
 
   });
 
-  it("干净草稿会随档案 revision 更新", async () => {
+  it("clean drafts update with profile revisions", async () => {
     const profile = demoProfile();
     await mountManager(profile);
     const baseUrl = view!.container.querySelector<HTMLInputElement>(

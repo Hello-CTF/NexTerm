@@ -206,8 +206,8 @@ describe("menu and command palette accessibility", () => {
       y: 20,
       title: "服务器",
       items: [
-        { kind: "group", label: "动作" },
-        { kind: "item", label: "不可用", disabled: true },
+        { kind: "group", label: "Actions" },
+        { kind: "item", label: "Unavailable", disabled: true },
         { kind: "item", label: "一级" },
         {
           kind: "item",
@@ -218,7 +218,7 @@ describe("menu and command palette accessibility", () => {
           ],
         },
         { kind: "separator" },
-        { kind: "item", label: "删除", danger: true },
+        { kind: "item", label: "Delete", danger: true },
       ],
     };
     mounted = mount(createElement(ContextMenu, { state, onClose: vi.fn() }));
@@ -336,11 +336,11 @@ describe("menu and command palette accessibility", () => {
 
   it("hands Shift+Tab to the visible previous control, not a hidden button or BODY", async () => {
     const expand = document.createElement("button");
-    expand.textContent = "展开";
+    expand.textContent = "Expand";
     const hiddenPanel = document.createElement("div");
     hiddenPanel.style.display = "none";
     const hiddenDelete = document.createElement("button");
-    hiddenDelete.textContent = "删除";
+    hiddenDelete.textContent = "Delete";
     hiddenPanel.appendChild(hiddenDelete);
     const trigger = document.createElement("button");
     document.body.append(expand, hiddenPanel, trigger);

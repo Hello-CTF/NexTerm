@@ -32,7 +32,7 @@ function questionEvent(id: string, nonce: string, requestId?: string) {
   return {
     type: "questionRequired",
     id,
-    question: { question: "继续吗？", options: ["继续"] },
+    question: { question: "Continue?", options: ["Continue"] },
     confirmationNonce: nonce,
     ...(requestId ? { requestId, attempt: 1 } : {}),
   };
@@ -114,12 +114,12 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     const first = applyHitlReplay(state, 1, plan, [resumed], null, 0);
     expect(first.changed).toBe(true);
     expect(first.lastSeq).toBe(2);
-    expect(resolutionsOf(first.state)).toEqual(["已在服务端回答"]);
+    expect(resolutionsOf(first.state)).toEqual(["已在服务端处理"]);
 
     const replay = applyHitlReplay(first.state, 1, plan, [resumed], null, first.lastSeq);
     expect(replay.changed).toBe(false);
     expect(replay.lastSeq).toBe(2);
-    expect(resolutionsOf(replay.state)).toEqual(["已在服务端回答"]);
+    expect(resolutionsOf(replay.state)).toEqual(["已在服务端处理"]);
   });
 
   it("processes out-of-order events by seq and ignores invalid identities", () => {
@@ -133,7 +133,7 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     ];
     const result = applyHitlReplay(state, 1, plan, outOfOrder, null, 0);
     expect(result.lastSeq).toBe(3);
-    expect(resolutionsOf(result.state)).toEqual(["已在服务端回答"]);
+    expect(resolutionsOf(result.state)).toEqual(["已在服务端处理"]);
   });
 
   it("closes every open card on terminal, including cards created after the plan", () => {
@@ -225,7 +225,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
           callId: "q-1",
           tool: "ask_user",
           kind: "question",
-          question: { id: "req-q", text: "继续吗？", options: ["继续", "停止"] },
+          question: { id: "req-q", text: "Continue?", options: ["Continue", "Stop"] },
         }),
       ]),
       0,
@@ -233,8 +233,8 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
     const card = pendingInteraction(result.state, 1, "question");
     expect(card).toMatchObject({
       callId: "q-1",
-      question: "继续吗？",
-      options: ["继续", "停止"],
+      question: "Continue?",
+      options: ["Continue", "Stop"],
       requestId: "req-q",
     });
   });
@@ -323,11 +323,11 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
       snapshotOf("running", [], { seq: 2 }),
       0,
     );
-    expect(resolutionsOf(result.state)).toEqual(["已在服务端回答"]);
+    expect(resolutionsOf(result.state)).toEqual(["已在服务端处理"]);
   });
 
   it("does not revive cards for an unknown or settled generation", () => {
-    const settled = applyAiEvent(withConfirmCard(), 1, { type: "done", answer: "完" }).state;
+    const settled = applyAiEvent(withConfirmCard(), 1, { type: "done", answer: "Done" }).state;
     const plan = planHitlReplay(settled, 1, 0);
     const result = applyHitlReplay(
       settled,
@@ -371,7 +371,7 @@ describe("appendHitlInterrupt identity", () => {
 
   it("falls back to a fresh local id when the kernel id is taken by a settled card", () => {
     let state = withConfirmCard();
-    state = applyAiEvent(state, 1, { type: "done", answer: "完" }).state;
+    state = applyAiEvent(state, 1, { type: "done", answer: "Done" }).state;
     state = beginRun(state, 2);
     state = appendHitlInterrupt(state, 2, interruptOf({ id: "req-2", nonce: "nonce-2" }));
     const cards = state.items.filter((i) => i.role === "confirm");
@@ -381,7 +381,7 @@ describe("appendHitlInterrupt identity", () => {
   });
 
   it("refuses to append into a settled generation", () => {
-    const settled = applyAiEvent(withConfirmCard(), 1, { type: "done", answer: "完" }).state;
+    const settled = applyAiEvent(withConfirmCard(), 1, { type: "done", answer: "Done" }).state;
     expect(appendHitlInterrupt(settled, 1, interruptOf())).toBe(settled);
   });
 });
@@ -414,7 +414,7 @@ describe("conversationStream HITL replay", () => {
     s.beginRun(1);
     s.applyHitlReplay(1, s.planHitlReplay(1), [], snapshotOf("interrupted", [], { seq: 5 }));
     expect(s.hitlSeq(1)).toBe(5);
-    s.pushEvent(1, { type: "done", answer: "完" });
+    s.pushEvent(1, { type: "done", answer: "Done" });
     expect(s.hitlSeq(1)).toBe(0);
 
     s.beginRun(2);
@@ -431,14 +431,14 @@ describe("conversationStream HITL replay", () => {
       return () => {};
     });
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "半截输出" });
+    s.pushEvent(1, { type: "delta", text: "partial output" });
     s.applyHitlReplay(1, s.planHitlReplay(1), [], snapshotOf("interrupted", [interruptOf()]));
     const roles = s.getState().items.map((i) => i.role);
     expect(roles).toEqual(["assistant", "confirm"]);
   });
 });
 
-describe("confirmRequired 事件字段", () => {
+describe("confirmRequired event fields", () => {
   it("captures risk, commands and rulePattern on the pending card", () => {
     let state = createConversation();
     state = beginRun(state, 1);

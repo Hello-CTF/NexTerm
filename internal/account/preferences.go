@@ -176,7 +176,7 @@ func isPreferenceFKey(raw string) bool {
 func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 	spec, ok := preferenceSpecs[key]
 	if !ok {
-		return "", ipc.BadParam(fmt.Errorf("参数错误: 未声明的偏好键 %q", key))
+		return "", ipc.BadParam(fmt.Errorf("未声明的偏好键 %q", key))
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		if spec.kind == preferenceKindBinding {
@@ -238,7 +238,7 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 }
 
 func invalidPreferenceValue(key string) error {
-	return ipc.BadParam(fmt.Errorf("参数错误: 偏好 %q 的值不合法", key))
+	return ipc.BadParam(fmt.Errorf("偏好 %q 的值不合法", key))
 }
 
 // preferenceUpdate translates set/clear into one atomic write of namespaced keys.
@@ -254,7 +254,7 @@ func preferenceUpdate(prefix string, set map[string]json.RawMessage, clear []str
 	deleteKeys := make([]string, 0, len(clear))
 	for _, key := range clear {
 		if _, ok := preferenceSpecs[key]; !ok {
-			return nil, nil, ipc.BadParam(fmt.Errorf("参数错误: 未声明的偏好键 %q", key))
+			return nil, nil, ipc.BadParam(fmt.Errorf("未声明的偏好键 %q", key))
 		}
 		deleteKeys = append(deleteKeys, prefix+key)
 	}

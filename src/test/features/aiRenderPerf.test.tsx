@@ -89,7 +89,7 @@ function renderCount(text: string): number {
   return markdownRenders.byText.get(text) ?? 0;
 }
 
-describe("AI 会话流式渲染性能", () => {
+describe("AI conversation streaming render performance", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -150,8 +150,8 @@ describe("AI 会话流式渲染性能", () => {
     await flush();
   }
 
-  it("流式刷新只重渲染末尾气泡，不每帧重渲染整个列表", async () => {
-    await send("第一问");
+  it("re-renders only the trailing bubble during streaming refreshes, not the entire list on every frame", async () => {
+    await send("First question");
     emit({ type: "delta", text: "第一答" });
     act(runFrames);
     emit({ type: "done", answer: "第一答" });
@@ -159,9 +159,9 @@ describe("AI 会话流式渲染性能", () => {
     const settledRenders = renderCount("第一答");
     expect(settledRenders).toBeGreaterThan(0);
 
-    await send("第二问");
+    await send("Second question");
     for (let i = 1; i <= 6; i++) {
-      emit({ type: "delta", text: `流${i}` });
+      emit({ type: "delta", text: `stream-${i}` });
       act(runFrames);
     }
     expect(renderCount("第一答")).toBe(settledRenders);

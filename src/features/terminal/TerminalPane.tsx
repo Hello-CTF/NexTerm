@@ -728,14 +728,14 @@ export function TerminalPane({
     }
   };
 
-  const handleSelectionCopy = (text: string, error: unknown | null) => {
+  const handleSelectionCopy = (_text: string, error: unknown | null) => {
     if (error) {
       const name = (error as { name?: string } | null)?.name;
       const reason = name === "NotAllowedError" ? "剪贴板权限被拒绝" : describeError(error);
       pushToast("error", `复制选中内容失败：${reason}`);
       return;
     }
-    pushToast("success", `已复制 ${text.length} 个字符`);
+    pushToast("success", "已复制选中内容");
   };
 
   const disconnectSession = async () => {
@@ -1014,7 +1014,7 @@ export function TerminalPane({
       },
       {
         kind: "item",
-        label: "搜索选中内容",
+        label: "搜索选中内容的首行",
         icon: <IconSearch size={13} />,
         accel: searchBindingLabel,
         disabled: !hasSel,
@@ -1207,7 +1207,7 @@ export function TerminalPane({
           <button
             type="button"
             className="nx-badge nx-badge-red shrink-0 cursor-pointer"
-            title={`命令广播已开启：输入将发送到 ${broadcastCount} 个终端，点击关闭广播`}
+            title={`命令广播已开启：目标共 ${broadcastCount} 个，不可写目标会跳过；点击关闭广播`}
             aria-label="关闭命令广播"
             onClick={closeBroadcast}
           >

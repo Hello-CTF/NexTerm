@@ -44,8 +44,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("authApi 线上契约", () => {
-  it("status/me 走 GET,login 走 POST 并返回会话负载", async () => {
+describe("authApi production contract", () => {
+  it("uses GET for status/me and POST for login, returning the session payload", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -58,7 +58,7 @@ describe("authApi 线上契约", () => {
     expect(calls[1]).toMatchObject({ url: "/auth/login", method: "POST", body: { username: "alice", password: "secret" } });
   });
 
-  it("totpLogin 走 /auth/totp/login 并记住 CSRF 令牌", async () => {
+  it("uses /auth/totp/login for totpLogin and remembers the CSRF token", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -67,7 +67,7 @@ describe("authApi 线上契约", () => {
     expect(calls[0]).toMatchObject({ url: "/auth/totp/login", method: "POST", body: { ticket: "ticket-1", code: "123456" } });
   });
 
-  it("init 携带初始化码、账号与 DEK 信封五元组", async () => {
+  it("sends the initialization code, account, and five DEK envelope fields in init", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -94,7 +94,7 @@ describe("authApi 线上契约", () => {
     });
   });
 
-  it("状态变更请求携带 CSRF 头,查询不携带", async () => {
+  it("sends the CSRF header on mutations but not queries", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -117,7 +117,7 @@ describe("authApi 线上契约", () => {
     expect(calls[2]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
   });
 
-  it("deviceRevoke 走 DELETE 并编码路径", async () => {
+  it("uses DELETE and encodes the path in deviceRevoke", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -127,7 +127,7 @@ describe("authApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("login 携带 device_id 时绑定设备,缺省不带该字段", async () => {
+  it("binds a device when login receives device_id and omits the field otherwise", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -137,7 +137,7 @@ describe("authApi 线上契约", () => {
     expect(calls[1]?.body).toEqual({ username: "alice", password: "secret" });
   });
 
-  it("错误规整为 code+message,401 时派发会话过期事件", async () => {
+  it("normalizes errors to code+message and emits the session-expired event on 401", async () => {
     mocks.fetch.mockResolvedValue({
       ok: false,
       status: 401,
@@ -153,7 +153,7 @@ describe("authApi 线上契约", () => {
     window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
   });
 
-  it("网络失败规整为 disconnected", async () => {
+  it("normalizes network failures to disconnected", async () => {
     mocks.fetch.mockRejectedValue(new Error("offline"));
     vi.stubGlobal("fetch", mocks.fetch);
     await expect(authApi.status()).rejects.toMatchObject({ code: "disconnected" });
@@ -161,8 +161,8 @@ describe("authApi 线上契约", () => {
   });
 });
 
-describe("adminApi 线上契约", () => {
-  it("用户管理与注册开关的路径和方法", async () => {
+describe("adminApi production contract", () => {
+  it("uses the expected paths and methods for user management and the registration toggle", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -188,8 +188,8 @@ describe("adminApi 线上契约", () => {
   });
 });
 
-describe("syncV2Api 线上契约", () => {
-  it("ids/pull/push 的路径与协议字段", async () => {
+describe("syncV2Api production contract", () => {
+  it("uses the expected ids/pull/push paths and protocol fields", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");

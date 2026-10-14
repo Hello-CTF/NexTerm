@@ -134,8 +134,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("ShareCard 窄屏行结构 (M233)", () => {
-  it("分享行可折行, 时间戳与方向文本可收缩换行, 吊销按钮与徽章保持 shrink-0", async () => {
+describe("ShareCard narrow-screen row layout (M233)", () => {
+  it("wraps share rows, shrinks and wraps timestamps and direction text, and keeps revoke buttons and badges shrink-0", async () => {
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 

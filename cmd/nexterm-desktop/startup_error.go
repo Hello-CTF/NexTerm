@@ -42,7 +42,7 @@ li { margin: 4px 0; }
 <pre>`)
 	b.WriteString(html.EscapeString(paths.DataDir))
 	b.WriteString(`</pre>
-<h2>接下来可以</h2>
+<h2>后续操作</h2>
 <ol>
 <li>关闭此窗口，重新启动 NexTerm 重试。</li>
 <li>如果仍然失败，请查看日志文件 <code>`)

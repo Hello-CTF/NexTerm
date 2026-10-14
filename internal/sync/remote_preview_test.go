@@ -227,7 +227,7 @@ func TestRemoteSessionFeedDialReLoginAfterRevoke(t *testing.T) {
 	}
 	defer func() { _ = conn.CloseNow() }()
 	if got := fixture.logins.Load(); got != 2 {
-		t.Fatalf("logins = %d, want 2 (401 后重登)", got)
+		t.Fatalf("logins = %d, want 2 (re-login after 401)", got)
 	}
 }
 

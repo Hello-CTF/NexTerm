@@ -26,8 +26,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("authedFetch 401 处理", () => {
-  it("无 401 时原样返回", async () => {
+describe("authedFetch 401 handling", () => {
+  it("returns the response unchanged when status is not 401", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
     vi.stubGlobal("fetch", fetchMock);
     const auth = await import("../ipc/serverAuth");
@@ -37,8 +37,8 @@ describe("authedFetch 401 处理", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("401 时派发重新登录事件并返回 401", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "会话无效或缺失" } }));
+  it("dispatches the re-login event and returns 401", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "Session is invalid or missing" } }));
     vi.stubGlobal("fetch", fetchMock);
     const auth = await import("../ipc/serverAuth");
 
@@ -57,7 +57,7 @@ describe("authedFetch 401 处理", () => {
     expect(events).toContain("nexterm:session-expired");
   });
 
-  it("401 后不自动重试", async () => {
+  it("does not retry automatically after 401", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { ok: false }))
@@ -71,11 +71,11 @@ describe("authedFetch 401 处理", () => {
   });
 });
 
-describe("callWeb 经 401 直接失败", () => {
-  it("首个调用 401 时直接失败,不重放", async () => {
+describe("callWeb fails immediately on 401", () => {
+  it("fails immediately without replaying when the first call returns 401", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "会话无效或缺失" } }))
+      .mockResolvedValueOnce(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "Session is invalid or missing" } }))
       .mockResolvedValueOnce(jsonResponse(200, { ok: true, data: "linux" }));
     vi.stubGlobal("fetch", fetchMock);
     const { systemApi } = await import("../ipc/commands");
@@ -87,7 +87,7 @@ describe("callWeb 经 401 直接失败", () => {
   });
 });
 
-describe("WebSocket 固定子协议", () => {
+describe("fixed WebSocket subprotocol", () => {
   class RecordingWebSocket {
     static instances: RecordingWebSocket[] = [];
     readonly url: string;
@@ -112,7 +112,7 @@ describe("WebSocket 固定子协议", () => {
     vi.stubGlobal("WebSocket", RecordingWebSocket);
   });
 
-  it("channel 与 events 连接固定只提供 nexterm 子协议", async () => {
+  it("offers only the nexterm subprotocol for channel and events connections", async () => {
     const { newBinaryChannel, subscribeEvent } = await import("../ipc/webTransport");
 
     newBinaryChannel();

@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestDockerHandlers(t *testing.T) {
@@ -93,6 +95,49 @@ func TestDatabaseAndMetaHandlers(t *testing.T) {
 	}
 }
 
+func TestDatabaseQueryModelTextOnlyTranslatesGeneratedFooter(t *testing.T) {
+	rows := make([][]any, 51)
+	for index := range rows {
+		rows[index] = []any{"仅显示前 7 行（查询返回 7 行）"}
+	}
+	registry := NewRegistry(Dependencies{Database: &fakeDatabase{result: db.QueryResult{Columns: []string{"alias"}, Rows: rows}}})
+	result := registry.Execute(context.Background(), "job", Scope{ConnID: "conn"}, Call{ID: "query", Name: "db_query", Args: json.RawMessage(`{"sql":"SELECT alias FROM t"}`)}, nil)
+	if !result.OK || !result.Truncated {
+		t.Fatalf("query = %+v", result)
+	}
+	if strings.Count(result.Text, "仅显示前 7 行（查询返回 7 行）") != 50 || !strings.Contains(result.Text, "仅显示前 50 行（查询返回 51 行）") {
+		t.Fatalf("Chinese query rows or footer changed: %q", result.Text)
+	}
+	if strings.Count(result.ModelText, "仅显示前 7 行（查询返回 7 行）") != 50 || !strings.Contains(result.ModelText, "showing only the first 50 rows (query returned 51 rows)") {
+		t.Fatalf("SQL aliases were rewritten or real footer was not projected: %q", result.ModelText)
+	}
+}
+
+func TestDatabaseQueryDriverErrorModelTextStaysOpaque(t *testing.T) {
+	driverDetail := "没有资产"
+	registry := NewRegistry(Dependencies{Database: &fakeDatabase{result: db.QueryResult{Error: &driverDetail}}})
+	result := registry.Execute(context.Background(), "job", Scope{ConnID: "conn"}, Call{ID: "query", Name: "db_query", Args: json.RawMessage(`{"sql":"SELECT broken"}`)}, nil)
+	if result.OK || result.ExitCode != 1 || result.Text != driverDetail || result.ModelText != driverDetail {
+		t.Fatalf("query = %+v, want opaque driver detail in both text channels", result)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := schema.ToolMessage(string(encoded), "query")
+	message.ToolName = "db_query"
+	projected := provider.ProjectModelMessages([]*schema.Message{message})
+	var envelope struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(projected[0].Content), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Text != driverDetail {
+		t.Fatalf("model text = %q, want original driver detail %q", envelope.Text, driverDetail)
+	}
+}
+
 func TestTerminalAndDirectoryHandlers(t *testing.T) {
 	terminal := &fakeTerminal{screen: Screen{Text: "visible", CursorRow: 2, CursorCol: 3, IdleMS: 9}}
 	registry := NewRegistry(Dependencies{Terminal: terminal})
@@ -136,5 +181,80 @@ func TestSearchContentAndExecOutput(t *testing.T) {
 	result = executeTool(registry, "j", "exec_commands", `{"commands":["false"]}`)
 	if !result.OK || result.ExitCode != 3 || !strings.Contains(result.Text, "[stderr]") || !strings.Contains(result.Text, "[exit_code=3]") {
 		t.Fatalf("exec=%+v", result)
+	}
+}
+
+func TestExecModelTextPreservesMarkerLikeUserData(t *testing.T) {
+	transport := &fakeTransport{result: base.ExecResult{Stdout: "command [执行失败: user data]\nstdout [输出已截断]"}}
+	registry := NewRegistry(Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }})
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "session"}, execCall("call", "echo '[执行失败: command data]'"), nil)
+	if !result.OK || result.ModelText != result.Text {
+		t.Fatalf("marker-like user data changed: %+v", result)
+	}
+	if _, err := completionFromOutput(result); err != nil {
+		t.Fatalf("marker-like user data changed the outcome: %v", err)
+	}
+}
+
+func TestExecModelTextUsesKnownFailureAndTruncation(t *testing.T) {
+	t.Run("known failure", func(t *testing.T) {
+		transport := &fakeTransport{result: base.ExecResult{Stdout: "stdout"}, execErr: fmt.Errorf("backend broken")}
+		registry := NewRegistry(Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }})
+		result := registry.Execute(context.Background(), "job", Scope{SessionID: "session"}, execCall("call", "echo hi"), nil)
+		if !result.OK || !result.ExecFailed {
+			t.Fatalf("structured exec state = %+v", result)
+		}
+		if !strings.Contains(result.Text, "[执行失败: backend broken]") || !strings.Contains(result.ModelText, "[execution failed: backend broken]") {
+			t.Fatalf("known failure was not projected from execErr: %+v", result)
+		}
+		if _, err := completionFromOutput(result); err == nil {
+			t.Fatal("known transport failure was not surfaced to outcome recording")
+		}
+	})
+	t.Run("known truncation", func(t *testing.T) {
+		transport := &fakeTransport{result: base.ExecResult{Stdout: "stdout [输出已截断]\n" + strings.Repeat("x", MaxOutputBytes)}}
+		registry := NewRegistry(Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }})
+		result := registry.Execute(context.Background(), "job", Scope{SessionID: "session"}, execCall("call", "echo hi"), nil)
+		if !result.OK || !result.Truncated || !strings.HasSuffix(result.Text, "\n[输出已截断]") || !strings.HasSuffix(result.ModelText, "\n[output truncated]") {
+			t.Fatalf("known truncation was not projected from cap state: %+v", result)
+		}
+		if !strings.Contains(result.ModelText, "stdout [输出已截断]") {
+			t.Fatalf("marker-like stdout was rewritten: %q", result.ModelText)
+		}
+	})
+}
+
+func TestModelTextOnlyMarksGeneratedEmptyResults(t *testing.T) {
+	emptySearch, _ := fileRegistry(newFakeFS())
+	literalSearchFiles := newFakeFS()
+	literalSearchFiles.dirs["/src"] = []base.FileEntry{{Name: "literal", Path: "无匹配", Kind: base.FileFile}}
+	literalSearch, _ := fileRegistry(literalSearchFiles)
+	tests := []struct {
+		name          string
+		registry      *Registry
+		scope         Scope
+		tool          string
+		args          string
+		wantText      string
+		wantModelText string
+	}{
+		{name: "empty tables", registry: NewRegistry(Dependencies{Database: &fakeDatabase{tables: []string{}}}), scope: Scope{ConnID: "c"}, tool: "db_list_tables", args: `{}`, wantText: "无表", wantModelText: "no tables"},
+		{name: "literal table name", registry: NewRegistry(Dependencies{Database: &fakeDatabase{tables: []string{"无表"}}}), scope: Scope{ConnID: "c"}, tool: "db_list_tables", args: `{}`, wantText: "无表"},
+		{name: "empty search", registry: emptySearch, scope: Scope{SessionID: "s"}, tool: "search_files", args: `{"path":"/src","pattern":"*","by":"name"}`, wantText: "无匹配", wantModelText: "no matches"},
+		{name: "literal search result", registry: literalSearch, scope: Scope{SessionID: "s"}, tool: "search_files", args: `{"path":"/src","pattern":"*","by":"name"}`, wantText: "无匹配"},
+		{name: "empty docker logs", registry: NewRegistry(Dependencies{DockerLogs: func(context.Context, string, string, int, string) (string, error) { return "", nil }}), scope: Scope{SessionID: "s"}, tool: "docker_logs", args: `{"container_id":"web"}`, wantText: "日志为空", wantModelText: "no logs"},
+		{name: "literal docker logs", registry: NewRegistry(Dependencies{DockerLogs: func(context.Context, string, string, int, string) (string, error) { return "日志为空", nil }}), scope: Scope{SessionID: "s"}, tool: "docker_logs", args: `{"container_id":"web"}`, wantText: "日志为空"},
+		{name: "empty docker exec", registry: NewRegistry(Dependencies{DockerExec: func(context.Context, string, string, string) (ExecResult, error) { return ExecResult{}, nil }}), scope: Scope{SessionID: "s"}, tool: "docker_exec", args: `{"container_id":"web","cmd":"true"}`, wantText: "(无输出)", wantModelText: "(no output)"},
+		{name: "literal docker exec", registry: NewRegistry(Dependencies{DockerExec: func(context.Context, string, string, string) (ExecResult, error) {
+			return ExecResult{Output: "(无输出)"}, nil
+		}}), scope: Scope{SessionID: "s"}, tool: "docker_exec", args: `{"container_id":"web","cmd":"true"}`, wantText: "(无输出)"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := test.registry.Execute(context.Background(), "j", test.scope, Call{ID: "call", Name: test.tool, Args: json.RawMessage(test.args)}, nil)
+			if !result.OK || result.Text != test.wantText || result.ModelText != test.wantModelText {
+				t.Fatalf("result = %+v, want text %q and modelText %q", result, test.wantText, test.wantModelText)
+			}
+		})
 	}
 }

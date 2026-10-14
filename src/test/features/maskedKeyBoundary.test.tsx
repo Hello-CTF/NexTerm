@@ -42,7 +42,7 @@ const MASKED_KEY = "••••••••••••";
 function savedProfile(): ModelProfile {
   return {
     id: "p1",
-    name: "公司 DeepSeek",
+    name: "Acme DeepSeek",
     baseUrl: "https://ai.example/v1",
     apiKey: MASKED_KEY,
     model: "deepseek-chat",

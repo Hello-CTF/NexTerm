@@ -173,8 +173,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("设备管理 · 桌面端已登录", () => {
-  it("列表经 remote 代理渲染, 在线状态按心跳判定, 不订阅 device://status 事件", async () => {
+describe("Device management - desktop logged in", () => {
+  it("renders the device list through remote proxies, determines online state from heartbeats, and does not subscribe to device://status events", async () => {
     seedLoggedIn();
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
@@ -189,7 +189,7 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("30 秒轮询刷新列表 (桌面无事件推送, 轮询是唯一在线信号来源)", async () => {
+  it("polls every 30 seconds to refresh the list (desktop has no event push, so polling is the only online signal)", async () => {
     vi.useFakeTimers();
     seedLoggedIn();
     seedFleet();
@@ -203,7 +203,7 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.devices.mock.calls.length).toBeGreaterThan(before);
   });
 
-  it("指标展开走 remote metrics 并可刷新", async () => {
+  it("loads and refreshes metrics through remote metrics when expanded", async () => {
     seedLoggedIn();
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
@@ -219,7 +219,7 @@ describe("设备管理 · 桌面端已登录", () => {
     await flushUntil(() => mocks.metrics.mock.calls.length === 2);
   });
 
-  it("签发接入码走 remote enroll, 一键安装命令版本来自 remote healthz", async () => {
+  it("issues an enrollment code via remote enroll and uses the remote healthz version in one-click install commands", async () => {
     seedLoggedIn();
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
@@ -232,13 +232,14 @@ describe("设备管理 · 桌面端已登录", () => {
 
     expect(mocks.issueEnrollCode).toHaveBeenCalledWith(15 * 60_000);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("仅显示一次");
+    expect(text).toContain("完成后不再显示");
+    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
     expect(text).toContain("install-device.sh");
     expect(text).toContain("--version '1.2.3'");
     expect(text).toContain("install-device.ps1");
   });
 
-  it("吊销需确认, 确认后走 remote revoke 并刷新列表", async () => {
+  it("requires confirmation to revoke a device, then uses remote revoke and refreshes the list", async () => {
     seedLoggedIn();
     seedFleet();
     mocks.ask.mockResolvedValue(true);
@@ -254,7 +255,7 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.devices.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("切换期望自启动走 remote autostart", async () => {
+  it("toggles desired autostart via remote autostart", async () => {
     seedLoggedIn();
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
@@ -267,7 +268,7 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.setAutostart).toHaveBeenCalledWith("d-1", false);
   });
 
-  it("接入地址保存走 remote putBaseUrls", async () => {
+  it("saves base URLs via remote putBaseUrls", async () => {
     seedLoggedIn();
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));
@@ -282,7 +283,7 @@ describe("设备管理 · 桌面端已登录", () => {
     expect(mocks.putBaseUrls).toHaveBeenCalledWith([{ url: "https://nexterm.example.com" }, { url: "https://b.example.com" }]);
   });
 
-  it("普通用户 (adminUsers 探测失败) 无接入地址编辑, 不显示 owner 徽章", async () => {
+  it("hides base URL editing and owner badges for regular users when the adminUsers probe fails", async () => {
     seedLoggedIn(false);
     seedFleet();
     mounted = mountWithClient(createElement(DevicesView));

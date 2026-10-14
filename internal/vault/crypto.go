@@ -120,7 +120,7 @@ func openDEK(kek *secretKey, envelope []byte) (*secretKey, error) {
 	}
 	plaintext, err := open(kek, envelope[:nonceLength], envelope[nonceLength:], dekAAD)
 	if err != nil {
-		return nil, ipc.WrapError(ipc.CodeBadMasterPass, "主密码错误", err)
+		return nil, ipc.WrapError(ipc.CodeBadMasterPass, "保护密码错误", err)
 	}
 	dek := &secretKey{}
 	copy(dek.bytes[:], plaintext)

@@ -133,7 +133,7 @@ function setTerminalWorkspace(tabId: string | null) {
                   {
                     id: "t1",
                     kind: "terminal" as const,
-                    title: "终端 1",
+                    title: "Terminal 1",
                     tabId,
                     closable: true,
                   },
@@ -195,14 +195,14 @@ describe("asset group controls", () => {
   it("keeps a rename failure inline with a working retry", async () => {
     mocks.groupUpdate
       .mockRejectedValueOnce({ code: "internal", message: "boom" })
-      .mockResolvedValueOnce({ ...GROUP, name: "生产环境" });
+      .mockResolvedValueOnce({ ...GROUP, name: "Production environment" });
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
 
     click(buttonByTitle(mounted!.container, "重命名分组"));
     const input = mounted!.container.querySelector<HTMLInputElement>(".nx-modal input.nx-input");
     if (!input) throw new Error("Rename input not found");
-    setInputValue(input, "生产环境");
+    setInputValue(input, "Production environment");
     clickButton(mounted!.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledTimes(1));
     await flush();
@@ -357,7 +357,7 @@ describe("asset group controls", () => {
     const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>("[role='menuitem']")].find(
       (b) => b.textContent?.includes("新建分组"),
     );
-    if (!item) throw new Error("Menu item not found: 新建分组");
+    if (!item) throw new Error("Menu item not found: New group");
     click(item);
     await flush();
 
@@ -495,7 +495,7 @@ describe("asset editor shared credential hint", () => {
     return select;
   }
 
-  it("密码路径：选已有凭据时提示共用后果", async () => {
+  it("warns about shared effects when selecting an existing password credential", async () => {
     mocks.listCredentials.mockResolvedValue([PASSWORD_CRED]);
     await mountEditor();
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
@@ -505,7 +505,7 @@ describe("asset editor shared credential hint", () => {
     expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
   });
 
-  it("密码路径：未使用的凭据，提示不预设已有多个资产共用", async () => {
+  it("does not imply that an unused password credential is already shared by multiple assets", async () => {
     mocks.listCredentials.mockResolvedValue([{ ...PASSWORD_CRED, usedBy: [] }]);
     await mountEditor();
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
@@ -516,7 +516,7 @@ describe("asset editor shared credential hint", () => {
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
-  it("私钥路径：选已有私钥凭据时同一句提示", async () => {
+  it("shows the same sharing hint when selecting an existing private-key credential", async () => {
     mocks.listCredentials.mockResolvedValue([KEY_CRED]);
     await mountEditor();
 
@@ -620,7 +620,7 @@ describe("snippets panel", () => {
     const name = modal?.querySelectorAll("input.nx-input")[0];
     const body = modal?.querySelector("textarea");
     if (!name || !body) throw new Error("Snippet editor fields not found");
-    setInputValue(name as HTMLInputElement, "空白正文");
+    setInputValue(name as HTMLInputElement, "Whitespace body");
     setInputValue(body as HTMLTextAreaElement, " \t\r\n ");
     const save = [...mounted.container.querySelectorAll(".nx-modal")[1]!.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "保存",

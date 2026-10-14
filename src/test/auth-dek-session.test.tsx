@@ -60,8 +60,8 @@ beforeEach(() => {
   mocks.dekGet.mockResolvedValue({ dek_envelope: "ZW52", kdf_salt: "c2FsdA", kdf_params: "{}" });
 });
 
-describe("DEK 会话持久化", () => {
-  it("刷新时 sessionStorage 有该用户 DEK 则恢复解锁", async () => {
+describe("DEK session persistence", () => {
+  it("restores the unlocked DEK on refresh when sessionStorage contains it for the user", async () => {
     sessionStorage.setItem(DEK_SESSION_KEY, bytesToBase64(savedDek));
     await useAuth.getState().refresh();
     const state = useAuth.getState();
@@ -69,13 +69,13 @@ describe("DEK 会话持久化", () => {
     expect(state.dek).toEqual(savedDek);
   });
 
-  it("sessionStorage 是其他用户的 DEK 则不恢复", async () => {
+  it("does not restore a DEK from sessionStorage belonging to another user", async () => {
     sessionStorage.setItem("nexterm.sessionDek.v1.u2", bytesToBase64(savedDek));
     await useAuth.getState().refresh();
     expect(useAuth.getState().dek).toBeNull();
   });
 
-  it("unlockDEK 写入 sessionStorage,logout 清除", async () => {
+  it("writes sessionStorage in unlockDEK and clears it in logout", async () => {
     useAuth.setState({ user: sessionUser, dek: null, gate: "ready" });
     await useAuth.getState().unlockDEK("pw");
     const stored = sessionStorage.getItem(DEK_SESSION_KEY);

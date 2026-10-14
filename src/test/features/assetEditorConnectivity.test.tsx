@@ -134,8 +134,8 @@ function updatedPayload(): Record<string, unknown> {
   return mocks.update.mock.calls[0]![0] as Record<string, unknown>;
 }
 
-describe("AssetEditor SSH 连接能力", () => {
-  it("键盘交互认证保存 authKind 与密码凭据", async () => {
+describe("AssetEditor SSH connectivity", () => {
+  it("saves authKind and password credentials for keyboard-interactive authentication", async () => {
     mountEditor();
     await flush();
     setSelectValue(findSelect("密码"), "keyboard-interactive");
@@ -154,20 +154,20 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(payload.options).toEqual({});
   });
 
-  it("跳板机下拉列出 SSH 资产并保存 jumpAssetId", async () => {
+  it("lists SSH assets in the jump host dropdown and saves jumpAssetId", async () => {
     mocks.listAssets.mockResolvedValue([
-      { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
-      { id: "l1", kind: "local", name: "本机", host: null, port: null },
-      { id: "d1", kind: "docker", name: "容器宿主机", host: "10.0.0.2", port: 22 },
+      { id: "j1", kind: "ssh", name: "jump-host", host: "10.0.0.1", port: 22 },
+      { id: "l1", kind: "local", name: "local-machine", host: null, port: null },
+      { id: "d1", kind: "docker", name: "docker-host", host: "10.0.0.2", port: 22 },
     ]);
     mountEditor();
     expandAdvanced();
     await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
     const jumpSelect = findSelect("不使用跳板机");
     const labels = [...jumpSelect.options].map((option) => option.textContent);
-    expect(labels.some((label) => label?.includes("跳板"))).toBe(true);
-    expect(labels.some((label) => label?.includes("容器宿主机"))).toBe(true);
-    expect(labels.some((label) => label?.includes("本机"))).toBe(false);
+    expect(labels.some((label) => label?.includes("jump-host"))).toBe(true);
+    expect(labels.some((label) => label?.includes("docker-host"))).toBe(true);
+    expect(labels.some((label) => label?.includes("local-machine"))).toBe(false);
     setSelectValue(jumpSelect, "j1");
     fillName("via-jump");
     fillHost("10.0.0.8");
@@ -176,7 +176,7 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(createdPayload().options).toEqual({ jumpAssetId: "j1" });
   });
 
-  it("编辑时排除自身作为跳板机，并可清除跳板机引用", async () => {
+  it("excludes the current asset from jump host choices when editing and allows clearing the reference", async () => {
     const initial = {
       id: "self-1",
       kind: "ssh",
@@ -199,7 +199,7 @@ describe("AssetEditor SSH 连接能力", () => {
     } as unknown as Asset;
     mocks.listAssets.mockResolvedValue([
       { id: "self-1", kind: "ssh", name: "web-01", host: "10.0.0.9", port: 22 },
-      { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
+      { id: "j1", kind: "ssh", name: "jump-host", host: "10.0.0.1", port: 22 },
     ]);
     mountEditor(initial);
     expandAdvanced();
@@ -214,10 +214,13 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(updatedPayload().options).toEqual({});
   });
 
-  it("Agent 转发默认关闭，勾选后保存 forwardAgent 与 socket", async () => {
+  it("Agent forwarding is disabled by default and saves forwardAgent and socket when enabled", async () => {
     mountEditor();
     await flush();
     expandAdvanced();
+    expect(mounted!.container.textContent).toContain(
+      "默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。",
+    );
     const checkbox = mounted!.container.querySelector('input[aria-label="Agent 转发"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     click(checkbox);
@@ -234,7 +237,7 @@ describe("AssetEditor SSH 连接能力", () => {
     });
   });
 
-  it("私钥认证可保存证书路径", async () => {
+  it("saves the certificate path for private key authentication", async () => {
     mountEditor();
     await flush();
     setSelectValue(findSelect("密码"), "key");
@@ -251,7 +254,7 @@ describe("AssetEditor SSH 连接能力", () => {
     expect(payload.options).toEqual({ certPath: "/home/u/.ssh/id_ed25519-cert.pub" });
   });
 
-  it("保存时保留界面未管理的既有 options", async () => {
+  it("preserves existing options not managed by the editor when saving", async () => {
     const initial = {
       id: "a9",
       kind: "ssh",
@@ -286,7 +289,7 @@ describe("AssetEditor SSH 连接能力", () => {
   });
 });
 
-describe("AssetEditor SSH 高级选项折叠", () => {
+describe("AssetEditor SSH advanced options collapsing", () => {
   const baseAsset = {
     id: "a9",
     kind: "ssh",
@@ -308,7 +311,7 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     builtin: false,
   } as unknown as Asset;
 
-  it("新建资产默认折叠，高级项不进 DOM", async () => {
+  it("collapses advanced options for a new asset and omits them from the DOM", async () => {
     mountEditor();
     await flush();
     const toggle = advancedToggle();
@@ -320,10 +323,10 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     expect(hasJumpSelect).toBe(false);
   });
 
-  it("编辑含跳板机配置的资产时默认折叠,手动展开后可见", async () => {
+  it("collapses jump host options when editing until they are expanded manually", async () => {
     const initial = { ...baseAsset, options: { jumpAssetId: "j1" } };
     mocks.listAssets.mockResolvedValue([
-      { id: "j1", kind: "ssh", name: "跳板", host: "10.0.0.1", port: 22 },
+      { id: "j1", kind: "ssh", name: "jump-host", host: "10.0.0.1", port: 22 },
     ]);
     mountEditor(initial);
     await flush();
@@ -336,7 +339,7 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     expect(findSelect("不使用跳板机").value).toBe("j1");
   });
 
-  it("编辑含 Agent 转发的资产时默认折叠,手动展开后可见", async () => {
+  it("collapses Agent forwarding options when editing until they are expanded manually", async () => {
     const initial = { ...baseAsset, options: { forwardAgent: true } };
     mountEditor(initial);
     await flush();
@@ -351,13 +354,13 @@ describe("AssetEditor SSH 高级选项折叠", () => {
     expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
   });
 
-  it("编辑无高级配置的资产时保持折叠", async () => {
+  it("keeps advanced options collapsed when editing an asset without them", async () => {
     mountEditor(baseAsset);
     await flush();
     expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("切换折叠不丢表单 state", async () => {
+  it("preserves form state when toggling advanced options", async () => {
     mountEditor();
     await flush();
     expandAdvanced();

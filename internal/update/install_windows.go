@@ -4,7 +4,6 @@ package update
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +22,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 			return err
 		}
 		if _, err := os.Stat(target); err != nil {
-			return fmt.Errorf("安装完成后未找到新可执行文件 %s", target)
+			return userErrorf(UserErrorIO, "安装完成后未找到新可执行文件 %s", target)
 		}
 		m.restartTarget = target
 		return nil
@@ -31,7 +30,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	executable := m.ExePath
 	backup := executable + ".old"
 	if err := os.Rename(executable, backup); err != nil {
-		return fmt.Errorf("备份当前可执行文件失败: %w", err)
+		return userErrorf(UserErrorIO, "备份当前可执行文件失败: %w", err)
 	}
 	if err := runInstaller(ctx, archive); err != nil {
 		_ = os.Rename(backup, executable)
@@ -39,7 +38,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	if _, err := os.Stat(executable); err != nil {
 		_ = os.Rename(backup, executable)
-		return fmt.Errorf("安装完成后未找到新可执行文件 %s", executable)
+		return userErrorf(UserErrorIO, "安装完成后未找到新可执行文件 %s", executable)
 	}
 	m.restartTarget = executable
 	return nil
@@ -48,7 +47,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 func runInstaller(ctx context.Context, archive string) error {
 	command := exec.CommandContext(ctx, archive, "/S")
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("NSIS 静默安装失败: %w (%s)", err, output)
+		return userErrorf(UserErrorIO, "NSIS 静默安装失败: %w (%s)", err, output)
 	}
 	return nil
 }

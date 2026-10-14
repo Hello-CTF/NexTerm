@@ -35,8 +35,8 @@ beforeEach(() => {
   document.body.replaceChildren();
 });
 
-describe("标题栏交互命中区域", () => {
-  it("按钮及其后代不会成为拖动句柄，空白区域仍可拖动", () => {
+describe("title bar interaction hit regions", () => {
+  it("does not turn buttons or their descendants into drag handles but keeps blank areas draggable", () => {
     const region = dragRegion();
     const tab = noDragButton("nx-ws");
     const label = document.createElement("span");
@@ -51,7 +51,7 @@ describe("标题栏交互命中区域", () => {
     expect(wouldStartWailsDrag(spacer)).toBe(true);
   });
 
-  it("标签和动作按钮照常接收 click，双击不会最大化", () => {
+  it("lets tabs and action buttons receive clicks normally without maximizing on double-click", () => {
     const root = document.createElement("div");
     const region = dragRegion();
     const tab = noDragButton("nx-ws");
@@ -82,7 +82,7 @@ describe("标题栏交互命中区域", () => {
     expect(maximize).not.toHaveBeenCalled();
   });
 
-  it("只有事件目标自身是拖动区域时才切换最大化", () => {
+  it("toggles maximization only when the event target itself is a drag region", () => {
     const root = document.createElement("div");
     const spacer = dragRegion();
     const descendant = document.createElement("span");

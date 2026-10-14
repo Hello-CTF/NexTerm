@@ -71,7 +71,7 @@ func main() {
 	fset := token.NewFileSet()
 	tables, err := modelTables(fset, "internal/store/model")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "check-conflict-columns: 读取模型表名失败:", err)
+		fmt.Fprintln(os.Stderr, "check-conflict-columns: failed to read model table names:", err)
 		os.Exit(1)
 	}
 	failures := 0
@@ -105,18 +105,18 @@ func main() {
 				target := createTargetType(text, start)
 				if target == "" {
 					unresolved++
-					fmt.Printf("unresolved: %s:%d (表名 %q) 无法静态确定 Create 目标, 请人工核对\n", path, line, table)
+					fmt.Printf("unresolved: %s:%d (table %q) cannot statically determine the Create target; please review manually\n", path, line, table)
 					continue
 				}
 				want := tables[target]
 				if want == "" {
 					unresolved++
-					fmt.Printf("unresolved: %s:%d Create 目标 %s 不在模型表(表名 %q), 请人工核对\n", path, line, target, table)
+					fmt.Printf("unresolved: %s:%d Create target %s is not a model table (table %q); please review manually\n", path, line, target, table)
 					continue
 				}
 				if want != table {
 					failures++
-					fmt.Printf("mismatch: %s:%d 限定表 %q 与 Create 目标 %s(表 %q) 不一致\n", path, line, table, target, want)
+					fmt.Printf("mismatch: %s:%d qualified table %q does not match Create target %s (table %q)\n", path, line, table, target, want)
 				}
 			}
 		}
@@ -127,10 +127,10 @@ func main() {
 		os.Exit(1)
 	}
 	if failures > 0 {
-		fmt.Printf("check-conflict-columns: %d 处表名错位\n", failures)
+		fmt.Printf("check-conflict-columns: %d table-name mismatches\n", failures)
 		os.Exit(1)
 	}
-	fmt.Printf("check-conflict-columns: 全部一致(%d 处无法静态确定需人工留意)\n", unresolved)
+	fmt.Printf("check-conflict-columns: all consistent (%d unresolved entries require manual review)\n", unresolved)
 }
 
 // nthStringArg returns the n-th string literal argument of a call, or "" when

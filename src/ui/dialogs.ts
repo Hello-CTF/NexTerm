@@ -158,7 +158,7 @@ export async function finishSave(target: string, name: string): Promise<string |
   const outcome = await deliverStaged(target, name);
   if (outcome === "cancelled") return null;
   if (outcome === "not-staged") {
-    console.warn("[dialogs] 期望是暂存落点，但没有登记记录", target);
+    console.warn("[dialogs] Expected a staged save target, but no registration was found", target);
   }
   return name;
 }

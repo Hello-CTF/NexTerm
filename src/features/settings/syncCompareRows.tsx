@@ -54,7 +54,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
     case "remote-deleted":
       return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已被删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "云端对象与本机数据密钥不匹配或已损坏；本机同名对象可在下次同步覆盖修复。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "云端对象与本机数据密钥不匹配或已损坏；本机同 ID 对象可在下次同步覆盖修复。" };
   }
 }
 

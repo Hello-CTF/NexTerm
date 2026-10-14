@@ -122,7 +122,7 @@ func TestEngineLWWConflictConverges(t *testing.T) {
 			t.Fatal(err)
 		}
 		if asset.Name != "B 的编辑" {
-			t.Fatalf("device%s asset name=%q, want B 的编辑", name, asset.Name)
+			t.Fatalf("device%s asset name=%q, want B's edit", name, asset.Name)
 		}
 	}
 }

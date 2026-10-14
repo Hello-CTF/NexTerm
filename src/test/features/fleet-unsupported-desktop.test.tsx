@@ -30,8 +30,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("设备管理 · 桌面端未登录", () => {
-  it("渲染登录引导视图且零请求, 按钮打开「设置 → 账号同步」", async () => {
+describe("Device management - desktop logged out", () => {
+  it("renders the login guide with zero requests and opens Settings > Account Sync", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     Element.prototype.scrollIntoView = vi.fn();

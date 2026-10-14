@@ -73,7 +73,7 @@ const structuredMessages = [
     id: "call-1",
     tool: "read_file",
     ok: true,
-    text: "文件全文",
+    text: "Full file contents",
     summary: "输出摘要",
     truncated: false,
     exitCode: 0,
@@ -191,7 +191,7 @@ describe("AiSidebar history reload", () => {
     });
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue(structuredMessages);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.usageSummary.mockResolvedValue([]);
@@ -203,7 +203,7 @@ describe("AiSidebar history reload", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },
@@ -264,7 +264,7 @@ describe("aiCreatedTerminalOf", () => {
   });
 });
 
-describe("AiSidebar terminal_create 自动打开", () => {
+describe("AiSidebar automatic terminal_create opening", () => {
   let view: MountedView | null = null;
 
   beforeEach(async () => {
@@ -280,7 +280,7 @@ describe("AiSidebar terminal_create 自动打开", () => {
     mocks.hitlSnapshot.mockRejectedValue(new Error("none"));
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue([]);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.usageSummary.mockResolvedValue([]);
@@ -292,7 +292,7 @@ describe("AiSidebar terminal_create 自动打开", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },
@@ -311,7 +311,7 @@ describe("AiSidebar terminal_create 自动打开", () => {
   });
 
   const sendMessage = async () => {
-    setInputValue(view!.container.querySelector("textarea")!, "开个终端");
+    setInputValue(view!.container.querySelector("textarea")!, "Open a terminal");
     click(view!.container.querySelector<HTMLButtonElement>('button[title="发送 (Enter)"]')!);
     await flushUntil(() => mocks.channels.length > 0 && mocks.chat.mock.calls.length > 0);
     return mocks.channels[0];
@@ -319,15 +319,15 @@ describe("AiSidebar terminal_create 自动打开", () => {
 
   const workspaceTabs = () => useUi.getState().workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs);
 
-  it("terminal_create 前台结果自动在工作区打开标签", async () => {
+  it("a foreground terminal_create result automatically opens a tab in the workspace", async () => {
     const channel = await sendMessage();
     channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create" });
     channel.onEvent({
       type: "toolResult",
       id: "call-1",
       ok: true,
-      summary: "已创建终端标签页",
-      text: "已创建并在前台展示终端标签页（tab_id=tab-9），AI 正在其中工作，用户可随时接管输入",
+      summary: "Terminal tab created",
+      text: "Created and displayed a terminal tab in the foreground (tab_id=tab-9); AI is working in it, and the user can take over input at any time",
       exitCode: 0,
       terminal: { tabId: "tab-9", sessionId: "s1", title: "构建机" },
     });
@@ -340,29 +340,29 @@ describe("AiSidebar terminal_create 自动打开", () => {
     expect(tab.closable).toBe(true);
   });
 
-  it("toolResult 缺少 terminal 负载（后台创建）不打开标签", async () => {
+  it("a toolResult without a terminal payload (background creation) does not open a tab", async () => {
     const channel = await sendMessage();
     channel.onEvent({ type: "toolCall", id: "call-1", name: "terminal_create", display: "terminal_create" });
     channel.onEvent({
       type: "toolResult",
       id: "call-1",
       ok: true,
-      summary: "已创建终端标签页",
-      text: "已在后台创建分离终端（tab_id=tab-9），AI 可在其中工作，用户可在「后台会话」中接管",
+      summary: "Terminal tab created",
+      text: "Created a detached terminal in the background (tab_id=tab-9); AI can work in it, and the user can take over from Background Sessions",
       exitCode: 0,
     });
     await flush();
     expect(workspaceTabs().every((t) => t.tabId === undefined)).toBe(true);
   });
 
-  it("重排缓冲释放的 terminal_create 结果也会自动打开，且不重复", async () => {
+  it("terminal_create results released from the reorder buffer also open automatically exactly once", async () => {
     const channel = await sendMessage();
     const toolResult = {
       type: "toolResult",
       id: "call-1",
       ok: true,
-      summary: "已创建终端标签页",
-      text: "已创建并在前台展示终端标签页（tab_id=tab-9），AI 正在其中工作，用户可随时接管输入",
+      summary: "Terminal tab created",
+      text: "Created and displayed a terminal tab in the foreground (tab_id=tab-9); AI is working in it, and the user can take over input at any time",
       exitCode: 0,
       terminal: { tabId: "tab-9", sessionId: "s1" },
       seq: 3,
@@ -378,7 +378,7 @@ describe("AiSidebar terminal_create 自动打开", () => {
     expect(workspaceTabs().filter((t) => t.tabId === "tab-9")).toHaveLength(1);
   });
 
-  it("历史运行回放不重新打开标签", async () => {
+  it("replaying historical runs does not reopen tabs", async () => {
     view!.unmount();
     mocks.runs.mockResolvedValue([
       {
@@ -407,8 +407,8 @@ describe("AiSidebar terminal_create 自动打开", () => {
         type: "toolResult",
         id: "call-9",
         ok: true,
-        summary: "已创建终端标签页",
-        text: "已创建并在前台展示终端标签页（tab_id=tab-old），AI 正在其中工作，用户可随时接管输入",
+        summary: "Terminal tab created",
+        text: "Created and displayed a terminal tab in the foreground (tab_id=tab-old); AI is working in it, and the user can take over input at any time",
         exitCode: 0,
         terminal: { tabId: "tab-old", sessionId: "s1" },
         seq: 2,

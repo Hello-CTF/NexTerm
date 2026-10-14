@@ -90,16 +90,16 @@ async function openHistory() {
   await flush();
 }
 
-describe("AiSidebar 历史会话状态", () => {
-  it("加载失败时显示错误与重试，而不是「还没有历史会话」", async () => {
-    mocks.conversationList.mockRejectedValueOnce(new Error("会话库不可用"));
+describe("AiSidebar history conversation states", () => {
+  it("shows an error and retry instead of the empty-history message when loading fails", async () => {
+    mocks.conversationList.mockRejectedValueOnce(new Error("Conversation store unavailable"));
     await openHistory();
-    await flushUntil(() => text().includes("历史会话加载失败 · 会话库不可用"));
+    await flushUntil(() => text().includes("历史会话加载失败 · Conversation store unavailable"));
     expect(text()).not.toContain("还没有历史会话");
   });
 
-  it("重试后恢复，真空才显示「还没有历史会话」", async () => {
-    mocks.conversationList.mockRejectedValueOnce(new Error("会话库不可用"));
+  it("shows the empty-history message only after a successful retry with no conversations", async () => {
+    mocks.conversationList.mockRejectedValueOnce(new Error("Conversation store unavailable"));
     await openHistory();
     await flushUntil(() => text().includes("历史会话加载失败"));
     const retry = [...mounted!.container.querySelectorAll("button")].find(
@@ -111,11 +111,11 @@ describe("AiSidebar 历史会话状态", () => {
     expect(mocks.conversationList).toHaveBeenCalledTimes(2);
   });
 
-  it("加载成功后渲染会话条目", async () => {
+  it("renders conversation entries after loading succeeds", async () => {
     mocks.conversationList.mockResolvedValueOnce([
-      { id: "c1", title: "排查 nginx", updatedAt: 1700000000000 },
+      { id: "c1", title: "Investigate nginx", updatedAt: 1700000000000 },
     ]);
     await openHistory();
-    await flushUntil(() => text().includes("排查 nginx"));
+    await flushUntil(() => text().includes("Investigate nginx"));
   });
 });

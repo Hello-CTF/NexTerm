@@ -351,7 +351,7 @@ export function AssetTree() {
         kind: "item",
         label: "克隆",
         icon: <IconCopy size={13} />,
-        hint: "与原件共用同一份凭据",
+        hint: "共用原资产的凭据引用与私钥路径",
         onSelect: () => void onClone(asset),
       },
       ...(copySsh ? [copySsh] : []),
@@ -1999,7 +1999,7 @@ export function AssetEditor({
                       className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
                       onClick={() => changeKeyOrigin("ref")}
                     >
-                      引用本地文件
+                      引用文件路径
                     </button>
                     <button
                       type="button"
@@ -2106,7 +2106,9 @@ export function AssetEditor({
                             />
                           )}
                           <div className="nx-hint mt-1.5">
-                            ↳ 保存时读取内容并加密入库，之后不再依赖原文件。
+                            {keyContentMode === "file"
+                              ? "↳ 保存时读取私钥并加密入库，之后不再依赖原文件。"
+                              : "↳ 保存时将粘贴的私钥加密入库。"}
                           </div>
                         </>
                       ) : (
@@ -2267,7 +2269,7 @@ export function AssetEditor({
                           <div className="min-w-0 flex-1">
                             <div className="text-[12.5px] text-neutral-200">Agent 转发</div>
                             <p className="nx-hint mt-0.5">
-                              默认关闭；开启后远端会话可使用本机 ssh-agent 里的密钥。
+                              默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。
                             </p>
                           </div>
                           <input

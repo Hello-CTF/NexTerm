@@ -171,7 +171,7 @@ describe("BackgroundSessions lists detached terminals", () => {
     }
   });
 
-  it("旧加载响应不会覆盖新一轮刷新", async () => {
+  it("ignores stale load responses after a newer refresh", async () => {
     vi.useFakeTimers();
     const first = deferred<LiveTabInfo[]>();
     const second = deferred<LiveTabInfo[]>();
@@ -203,7 +203,7 @@ describe("BackgroundSessions lists detached terminals", () => {
   });
 });
 
-describe("BackgroundSessions 按所属工作区过滤", () => {
+describe("BackgroundSessions filters by owning workspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
@@ -245,7 +245,7 @@ describe("BackgroundSessions 按所属工作区过滤", () => {
     return select;
   }
 
-  it("默认只列出所属工作区会话的后台终端，选择「全部」后放宽", async () => {
+  it("lists only the owning workspace's detached terminals by default and allows showing all", async () => {
     mocks.listLive.mockResolvedValue(detachedRows());
     seedScope({ kind: "session", sessionId: "s1" }, [s1, s2]);
     const view = mount(createElement(BackgroundSessions));
@@ -265,7 +265,7 @@ describe("BackgroundSessions 按所属工作区过滤", () => {
     }
   });
 
-  it("工具工作区或所属会话已消失时回退为显示全部", async () => {
+  it("shows all terminals for tools workspaces or when the owning session is missing", async () => {
     mocks.listLive.mockResolvedValue(detachedRows());
     seedScope({ kind: "tools" }, [s1, s2]);
     const view = mount(createElement(BackgroundSessions));
@@ -290,7 +290,7 @@ describe("BackgroundSessions 按所属工作区过滤", () => {
     }
   });
 
-  it("按 workspaceId 指定的工作区过滤，与当前活动工作区无关", async () => {
+  it("filters by the workspace identified by workspaceId, not the active workspace", async () => {
     mocks.listLive.mockResolvedValue(detachedRows());
     useUi.setState({
       workspaces: [

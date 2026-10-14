@@ -47,7 +47,7 @@ func objectAAD(id, kind string) []byte {
 
 func sealObject(dek, plaintext []byte, id, kind string) ([]byte, error) {
 	if len(dek) != 32 {
-		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: DEK 长度不合法")
+		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: 数据密钥长度不合法")
 	}
 	block, err := aes.NewCipher(dek)
 	if err != nil {
@@ -66,7 +66,7 @@ func sealObject(dek, plaintext []byte, id, kind string) ([]byte, error) {
 
 func openObject(dek, blob []byte, id, kind string) ([]byte, error) {
 	if len(dek) != 32 {
-		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: DEK 长度不合法")
+		return nil, ipc.NewError(ipc.CodeCrypto, "加密错误: 数据密钥长度不合法")
 	}
 	if len(blob) <= objectNonceSize {
 		return nil, ipc.NewError(ipc.CodeDecrypt, "凭据解密失败: 同步对象长度不合法")

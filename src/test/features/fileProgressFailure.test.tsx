@@ -108,8 +108,8 @@ afterEach(() => {
   progressHandler = undefined;
 });
 
-describe("fs://progress error 字段", () => {
-  it("reducer：error 事件移除任务，未知任务保持原 map", () => {
+describe("fs://progress error field", () => {
+  it("reducer: error events remove their task and unknown tasks leave the map unchanged", () => {
     const current: FileProgressMap = {
       t1: { taskId: "t1", transferred: 5, total: 100, done: false },
     };
@@ -138,7 +138,7 @@ describe("fs://progress error 字段", () => {
     expect(progressed.t1.transferred).toBe(60);
   });
 
-  it("组件：失败事件移除进度条并弹出错误提示", async () => {
+  it("component: failure events remove the progress bar and show an error toast", async () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalled());
     act(() => {
       progressHandler?.({ taskId: "t1", transferred: 5, total: 100, done: false });
@@ -159,7 +159,7 @@ describe("fs://progress error 字段", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", "文件传输失败：connection reset");
   });
 
-  it("组件：成功完成只移除进度条，不弹错误", async () => {
+  it("component: successful completion only removes the progress bar without an error toast", async () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalled());
     act(() => {
       progressHandler?.({ taskId: "t2", transferred: 5, total: 100, done: false });

@@ -95,7 +95,7 @@ func postgresDescribe(ctx context.Context, connection *postgresConnection, schem
 		return TableDescribe{}, err
 	}
 	if table == "" {
-		return TableDescribe{}, badParam(errors.New("table 不能为空"))
+		return TableDescribe{}, badParam(errors.New("表名不能为空"))
 	}
 
 	primaryKeys, err := queryStrings(ctx, connection.db, `SELECT a.attname

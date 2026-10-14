@@ -373,7 +373,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         else await dockerApi.imageRemove(sessionId, imageRef(t as ImageSummary), false);
         ok++;
       } catch (e) {
-        errs.push(`${name}: ${describeError(e)}`);
+        errs.push(`${name}：${describeError(e)}`);
       } finally {
         markPending(isContainer ? (t as ContainerSummary).id : imageKey(t as ImageSummary), false);
       }

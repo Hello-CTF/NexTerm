@@ -145,7 +145,7 @@ describe("AiSidebar search jump", () => {
     });
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue([]);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.usageSummary.mockResolvedValue([]);
@@ -167,7 +167,7 @@ describe("AiSidebar search jump", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },
@@ -185,7 +185,7 @@ describe("AiSidebar search jump", () => {
     vi.unstubAllGlobals();
   });
 
-  it("按真实几何居中命中项：短气泡与高气泡都不用 index*88 估算", async () => {
+  it("centers matches using real geometry: short and tall bubbles never use an index*88 estimate", async () => {
     const text = () => view!.container.textContent ?? "";
     mocks.messages.mockResolvedValue([
       message("m1", "user", "alpha"),
@@ -219,7 +219,7 @@ describe("AiSidebar search jump", () => {
     expect(wrapperOf(view!, 1)?.className).toContain("ring-amber");
   });
 
-  it("虚拟化窗口外命中：先估算挂载窗口再按真实位置校正", async () => {
+  it("match outside the virtualization window: mount the estimated window first, then correct using the real position", async () => {
     const text = () => view!.container.textContent ?? "";
     const rows = Array.from({ length: 80 }, (_, i) =>
       message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
@@ -263,7 +263,7 @@ describe("AiSidebar search jump", () => {
     expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
   });
 
-  it("reviewer 场景：100 条中命中 50，前置 6 个 300px 气泡，校正后的第二次 scroll 不再卸载目标", async () => {
+  it("reviewer scenario: match row 50 of 100 after six 300px bubbles; the corrected second scroll no longer unmounts the target", async () => {
     const text = () => view!.container.textContent ?? "";
     topOf = (i) => (i <= 44 ? i * 88 : 3872 + (i - 44) * 300);
     heightOf = (i) => (i >= 44 && i <= 49 ? 300 : 30);
@@ -308,7 +308,7 @@ describe("AiSidebar search jump", () => {
     expect(log.scrollTop).toBe(centered);
   });
 
-  it("底部边界：短最后项按真实最大偏移 clamp 并判定 settled，手滚离开无 snapback、无 frozen 残留", async () => {
+  it("bottom boundary: a short last item clamps to the real maximum offset and settles; manual scrolling away does not snap back or leave frozen state", async () => {
     const text = () => view!.container.textContent ?? "";
     topOf = (i) => i * 88;
     heightOf = (i) => (i === 99 ? 30 : 88);
@@ -353,7 +353,7 @@ describe("AiSidebar search jump", () => {
     expect(wrapperOf(view!, 99)).toBeNull();
   });
 
-  it("输入查询后首个匹配立即 reveal，无需先点下一个", async () => {
+  it("reveals the first match immediately after entering a query, without clicking next first", async () => {
     const rows = Array.from({ length: 80 }, (_, i) =>
       message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
     );

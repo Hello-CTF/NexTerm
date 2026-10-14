@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/cloudwego/eino/schema"
 )
 
 type fakeTransport struct {
@@ -135,13 +137,14 @@ func (f *fakeDatabase) RedisScan(context.Context, string, uint64, string, uint64
 }
 
 type dispatcher struct {
-	storage   *store.Store
-	ledger    *outcome.Ledger
-	registry  *tools.Registry
-	transport *fakeTransport
-	database  *fakeDatabase
-	terminal  *fakeTerminal
-	files     *fakeFS
+	storage    *store.Store
+	ledger     *outcome.Ledger
+	registry   *tools.Registry
+	transport  *fakeTransport
+	database   *fakeDatabase
+	dockerExec func(context.Context, string, string, string) (tools.ExecResult, error)
+	terminal   *fakeTerminal
+	files      *fakeFS
 }
 
 func newDispatcher(t *testing.T, auditor func(*store.Store) outcome.Auditor) *dispatcher {
@@ -162,18 +165,19 @@ func newDispatcher(t *testing.T, auditor func(*store.Store) outcome.Auditor) *di
 		database: &fakeDatabase{queryFunc: func(context.Context, string) (db.QueryResult, error) {
 			return db.QueryResult{Columns: []string{"n"}, Rows: [][]any{{1}}}, nil
 		}},
+		dockerExec: func(context.Context, string, string, string) (tools.ExecResult, error) {
+			return tools.ExecResult{Output: "done", ExitCode: 0}, nil
+		},
 		terminal: &fakeTerminal{},
 		files:    files,
 	}
 	deps := tools.Dependencies{
-		Transport: func(context.Context, string) (base.Transport, error) { return d.transport, nil },
-		Terminal:  d.terminal,
-		Database:  d.database,
-		DockerExec: func(context.Context, string, string, string) (tools.ExecResult, error) {
-			return tools.ExecResult{Output: "done", ExitCode: 0}, nil
-		},
-		DockerAct: func(context.Context, string, string, string) error { return nil },
-		Outcome:   ledger,
+		Transport:  func(context.Context, string) (base.Transport, error) { return d.transport, nil },
+		Terminal:   d.terminal,
+		Database:   d.database,
+		DockerExec: d.dockerExec,
+		DockerAct:  func(context.Context, string, string, string) error { return nil },
+		Outcome:    ledger,
 	}
 	deps = tools.WithStore(deps, storage, d.database)
 	d.registry = tools.NewRegistry(deps)
@@ -390,6 +394,152 @@ func TestDispatcherAuditFailurePreservesOutcome(t *testing.T) {
 	d.registry.Execute(context.Background(), "job-1", tools.Scope{SessionID: "s"}, call, nil)
 	if auditor.attempts != 1 || d.transport.calls() != 1 {
 		t.Fatalf("replay repeated work: audits=%d calls=%d", auditor.attempts, d.transport.calls())
+	}
+}
+
+func TestDispatcherAuditFailureWithModelTextWire(t *testing.T) {
+	auditErr := errors.New("audit storage unavailable")
+	d := newDispatcher(t, func(*store.Store) outcome.Auditor { return &failingAuditor{err: auditErr} })
+	call := tools.Call{ID: "call-model-text", Name: "db_query", Args: json.RawMessage(`{"sql":"SELECT 1"}`)}
+	call.AuthorizationID = authorizationFor(t, call.Name, call.Args, guard.ReadWrite)
+
+	output := d.registry.Execute(context.Background(), "job-1", tools.Scope{ConnID: "conn-用户"}, call, nil)
+	if !output.OK || output.ModelText == "" {
+		t.Fatalf("output = %+v", output)
+	}
+	if want := "\n[结果审计写入失败: " + auditErr.Error() + "]"; !strings.HasSuffix(output.Text, want) {
+		t.Fatalf("UI text = %q, want suffix %q", output.Text, want)
+	}
+	if want := "\n[audit write failed: " + auditErr.Error() + "]"; !strings.HasSuffix(output.ModelText, want) {
+		t.Fatalf("model text = %q, want suffix %q", output.ModelText, want)
+	}
+	record := d.record(t, "job-1", call.ID)
+	if record.Outcome != outcome.OutcomeAccepted || record.Audit.State != outcome.AuditFailed {
+		t.Fatalf("record = %+v", record)
+	}
+
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := schema.ToolMessage(string(encoded), call.ID)
+	message.ToolName = call.Name
+	projected := provider.ProjectModelMessages([]*schema.Message{message})
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(projected[0].Content), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := envelope["modelText"]; exists {
+		t.Fatalf("modelText leaked into model wire: %s", projected[0].Content)
+	}
+	var text string
+	if err := json.Unmarshal(envelope["text"], &text); err != nil {
+		t.Fatal(err)
+	}
+	if want := "\n[audit write failed: " + auditErr.Error() + "]"; !strings.HasSuffix(text, want) {
+		t.Fatalf("wire text = %q, want suffix %q", text, want)
+	}
+	if strings.Contains(text, "结果审计写入失败") {
+		t.Fatalf("Chinese UI audit marker leaked into model wire: %q", text)
+	}
+}
+
+func TestDispatcherAuditFailureProjectsOnlyRealSuffix(t *testing.T) {
+	const markerLikeData = "[结果审计写入失败: 用户数据]"
+	auditErr := errors.New("数据编码失败: json: unsupported value")
+	uiSuffix := "\n[结果审计写入失败: " + auditErr.Error() + "]"
+	modelSuffix := "\n[audit write failed: failed to encode data: json: unsupported value]"
+	tests := []struct {
+		name      string
+		call      tools.Call
+		scope     tools.Scope
+		configure func(*dispatcher)
+	}{
+		{
+			name:  "exec_commands",
+			call:  execCall("call-exec-audit", "printf '命令输出中文'"),
+			scope: tools.Scope{SessionID: "session-用户"},
+			configure: func(d *dispatcher) {
+				d.transport.execFunc = func(context.Context, string) (base.ExecResult, error) {
+					code := 0
+					return base.ExecResult{Stdout: "命令输出中文\n" + markerLikeData, ExitCode: &code}, nil
+				}
+			},
+		},
+		{
+			name:  "docker_exec",
+			call:  tools.Call{ID: "call-docker-audit", Name: "docker_exec", Args: json.RawMessage(`{"container_id":"web","cmd":"printf data"}`)},
+			scope: tools.Scope{SessionID: "session-用户"},
+			configure: func(d *dispatcher) {
+				d.dockerExec = func(context.Context, string, string, string) (tools.ExecResult, error) {
+					return tools.ExecResult{Output: "Docker 输出中文\n" + markerLikeData, ExitCode: 0}, nil
+				}
+			},
+		},
+		{
+			name:  "db_query",
+			call:  tools.Call{ID: "call-db-audit", Name: "db_query", Args: json.RawMessage(`{"sql":"SELECT data"}`)},
+			scope: tools.Scope{ConnID: "conn-用户"},
+			configure: func(d *dispatcher) {
+				d.database.queryFunc = func(context.Context, string) (db.QueryResult, error) {
+					return db.QueryResult{Columns: []string{"别名"}, Rows: [][]any{{"SQL 数据中文"}, {markerLikeData}}}, nil
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failed := newDispatcher(t, func(*store.Store) outcome.Auditor { return &failingAuditor{err: auditErr} })
+			baseline := newDispatcher(t, realAuditor)
+			test.configure(failed)
+			test.configure(baseline)
+			call := test.call
+			call.AuthorizationID = authorizationFor(t, call.Name, call.Args, guard.ReadWrite)
+			failedOutput := failed.registry.Execute(context.Background(), "job-1", test.scope, call, nil)
+			baselineOutput := baseline.registry.Execute(context.Background(), "job-1", test.scope, call, nil)
+			if failedOutput.Text != baselineOutput.Text+uiSuffix {
+				t.Fatalf("UI text changed beyond audit suffix:\nfailed=%q\nbaseline=%q", failedOutput.Text, baselineOutput.Text)
+			}
+			baselineModelText := baselineOutput.ModelText
+			if baselineModelText == "" {
+				baselineModelText = provider.ProjectModelOutput(call.Name, baselineOutput.OK, baselineOutput.Text, baselineOutput.Truncated, baselineOutput.Panic)
+			}
+			if failedOutput.ModelText != baselineModelText+modelSuffix {
+				t.Fatalf("model text changed beyond projected audit suffix:\nfailed=%q\nbaseline=%q", failedOutput.ModelText, baselineModelText)
+			}
+			if failedOutput.OK != baselineOutput.OK || failedOutput.ExitCode != baselineOutput.ExitCode || failedOutput.Truncated != baselineOutput.Truncated {
+				t.Fatalf("result state changed: failed=%+v baseline=%+v", failedOutput, baselineOutput)
+			}
+			failedRecord := failed.record(t, "job-1", call.ID)
+			baselineRecord := baseline.record(t, "job-1", call.ID)
+			if failedRecord.Outcome != baselineRecord.Outcome || failedRecord.Outcome != outcome.OutcomeAccepted || failedRecord.Audit.State != outcome.AuditFailed {
+				t.Fatalf("outcome changed: failed=%+v baseline=%+v", failedRecord, baselineRecord)
+			}
+			encoded, err := json.Marshal(failedOutput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := schema.ToolMessage(string(encoded), call.ID)
+			message.ToolName = call.Name
+			projected := provider.ProjectModelMessages([]*schema.Message{message})
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(projected[0].Content), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := envelope["modelText"]; exists {
+				t.Fatalf("modelText leaked into model wire: %s", projected[0].Content)
+			}
+			var wireText string
+			if err := json.Unmarshal(envelope["text"], &wireText); err != nil {
+				t.Fatal(err)
+			}
+			if wireText != failedOutput.ModelText {
+				t.Fatalf("wire text = %q, want %q", wireText, failedOutput.ModelText)
+			}
+			if strings.Contains(wireText, "数据编码失败") {
+				t.Fatalf("Chinese audit detail leaked into model wire: %q", wireText)
+			}
+		})
 	}
 }
 

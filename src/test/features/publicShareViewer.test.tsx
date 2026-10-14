@@ -211,7 +211,7 @@ describe("PublicShareApp", () => {
 
   it("maps an expired error frame to plain copy without retry", async () => {
     const view = await mountViewer();
-    lastSocket().emitText({ type: "error", code: "expired", message: "分享授权已过期" });
+    lastSocket().emitText({ type: "error", code: "expired", message: "share authorization expired" });
     await flush();
     expect(view.container.textContent).toContain("分享链接已过期");
     expect(view.container.textContent).toContain("请让分享者重新生成链接");
@@ -220,7 +220,7 @@ describe("PublicShareApp", () => {
 
   it("maps a not_found error frame to plain copy", async () => {
     const view = await mountViewer();
-    lastSocket().emitText({ type: "error", code: "not_found", message: "分享会话不存在" });
+    lastSocket().emitText({ type: "error", code: "not_found", message: "shared session not found" });
     await flush();
     expect(view.container.textContent).toContain("分享链接无效或已吊销");
   });
@@ -228,7 +228,7 @@ describe("PublicShareApp", () => {
   it("maps a disconnected error frame and reconnects on retry", async () => {
     const view = await mountViewer();
     await goLive("read");
-    lastSocket().emitText({ type: "error", code: "disconnected", message: "设备代理离线" });
+    lastSocket().emitText({ type: "error", code: "disconnected", message: "device agent offline" });
     await flush();
     expect(view.container.textContent).toContain("设备当前离线");
     clickButton(view.container, "重新连接");

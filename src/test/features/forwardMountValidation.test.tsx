@@ -106,8 +106,8 @@ function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
 }
 
-describe("ForwardPanel 提交时内联校验", () => {
-  it("监听端口非法时提交才报错：内联关联字段、焦点落在监听端口、不再弹 toast", async () => {
+describe("ForwardPanel inline validation on submit", () => {
+  it("invalid listen port errors only on submit: inline field linked, focus lands on the listen port, no toast", async () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
@@ -124,7 +124,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
-  it("监听端口失焦立即报错，无需等待", async () => {
+  it("listen port errors immediately on blur, no waiting", async () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
@@ -134,7 +134,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(fieldError(listenPort)?.textContent).toBe("本地端口要填 1–65535 之间的整数");
   });
 
-  it("目标端口空闲约 500ms 后自动校验，无需失焦", async () => {
+  it("target port validates automatically after ~500ms idle, no blur needed", async () => {
     mountForward();
     await flush();
     const targetPort = inputBy('input[aria-label="目标端口"]');
@@ -147,7 +147,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(fieldError(targetPort)?.textContent).toBe("目标端口要填 1–65535 之间的整数");
   });
 
-  it("修正后失焦立即清除错误", async () => {
+  it("blur after fixing clears the error immediately", async () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
@@ -160,7 +160,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(fieldError(listenPort)).toBeNull();
   });
 
-  it("失焦报错后 env 才 resolve：既有 alert 文案随当前标签更新", async () => {
+  it("env resolves after the blur error: the existing alert text updates with the current label", async () => {
     const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
@@ -174,7 +174,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
   });
 
-  it("输入后 500ms 内 env 切换：idle 回调使用切换后的标签", async () => {
+  it("env switches within 500ms of input: the idle callback uses the switched label", async () => {
     const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
@@ -189,7 +189,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
   });
 
-  it("多字段非法时焦点按字段顺序落在第一个非法字段", async () => {
+  it("with multiple invalid fields focus lands on the first invalid field in order", async () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
@@ -221,7 +221,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("SOCKS 模式只校验监听端口，目标字段不渲染", async () => {
+  it("SOCKS mode validates only the listen port; target fields are not rendered", async () => {
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
@@ -236,7 +236,7 @@ describe("ForwardPanel 提交时内联校验", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
-  it("320/390 窄屏下错误文本折行不溢出", async () => {
+  it("error text wraps without overflow at 320/390 narrow widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mountForward();
@@ -261,8 +261,8 @@ describe("ForwardPanel 提交时内联校验", () => {
   });
 });
 
-describe("MountPanel 提交时内联校验", () => {
-  it("远端路径为空时提交：内联报错并聚焦远端路径，不再弹 toast", async () => {
+describe("MountPanel inline validation on submit", () => {
+  it("empty remote path on submit: inline error and focus on the remote path, no toast", async () => {
     mountMountPanel();
     await flush();
     const remotePath = inputBy('input[aria-label="远端路径"]');
@@ -277,7 +277,7 @@ describe("MountPanel 提交时内联校验", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
-  it("挂载点与远端路径都为空：两个字段都报错，焦点落在挂载点", async () => {
+  it("empty mount point and remote path: both fields error, focus lands on the mount point", async () => {
     mountMountPanel();
     await flush();
     const localPoint = inputBy('input[aria-label="本地挂载点"]');
@@ -293,7 +293,7 @@ describe("MountPanel 提交时内联校验", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
-  it("远端路径失焦立即报错，修正后失焦立即清除", async () => {
+  it("remote path errors immediately on blur; blur after fixing clears immediately", async () => {
     mountMountPanel();
     await flush();
     const remotePath = inputBy('input[aria-label="远端路径"]');
@@ -306,7 +306,7 @@ describe("MountPanel 提交时内联校验", () => {
     expect(fieldError(remotePath)).toBeNull();
   });
 
-  it("挂载点空闲约 500ms 后自动校验，无需失焦", async () => {
+  it("mount point validates automatically after ~500ms idle, no blur needed", async () => {
     mountMountPanel();
     await flush();
     const localPoint = inputBy('input[aria-label="本地挂载点"]');
@@ -319,7 +319,7 @@ describe("MountPanel 提交时内联校验", () => {
     expect(fieldError(localPoint)?.textContent).toBe("挂载点不能为空");
   });
 
-  it("合法输入提交成功且无内联错误", async () => {
+  it("valid input submits successfully with no inline errors", async () => {
     mocks.mountCreate.mockResolvedValue({ id: "m1" });
     mountMountPanel();
     await flush();
@@ -337,7 +337,7 @@ describe("MountPanel 提交时内联校验", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已挂载 Z:");
   });
 
-  it("320/390 窄屏下错误文本折行不溢出", async () => {
+  it("error text wraps without overflow at 320/390 narrow widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mountMountPanel();
@@ -362,16 +362,16 @@ describe("MountPanel 提交时内联校验", () => {
   });
 });
 
-describe("MountPanel 凭据折叠可访问性", () => {
+describe("MountPanel credential collapse accessibility", () => {
   function credsToggle(): HTMLButtonElement {
     const toggle = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("使用其他凭据"),
     );
-    if (!toggle) throw new Error("凭据折叠按钮未找到");
+    if (!toggle) throw new Error("credential collapse button not found");
     return toggle;
   }
 
-  it("折叠按钮 aria-controls 指向凭据面板；已填凭据时折叠摘要显示已配置", async () => {
+  it("collapse button aria-controls points at the credential panel; the summary shows configured when credentials are filled", async () => {
     mountMountPanel();
     await flush();
     const toggle = credsToggle();
@@ -393,7 +393,7 @@ describe("MountPanel 凭据折叠可访问性", () => {
     expect(toggle.textContent).toContain("已配置");
   });
 
-  it("凭据保持为空时折叠摘要不显示已配置", async () => {
+  it("summary does not show configured while credentials stay empty", async () => {
     mountMountPanel();
     await flush();
     const toggle = credsToggle();
@@ -410,7 +410,7 @@ function actionButton(text: string): HTMLButtonElement {
   const button = [...mounted!.container.querySelectorAll("button")].find(
     (candidate) => candidate.textContent?.trim() === text,
   );
-  if (!button) throw new Error(`按钮未找到: ${text}`);
+  if (!button) throw new Error(`button not found: ${text}`);
   return button;
 }
 
@@ -418,7 +418,7 @@ function credentialsToggle(): HTMLButtonElement {
   const button = [...mounted!.container.querySelectorAll("button")].find((candidate) =>
     candidate.textContent?.includes("使用其他凭据"),
   );
-  if (!button) throw new Error("凭据折叠按钮未找到");
+  if (!button) throw new Error("credential collapse button not found");
   return button;
 }
 
@@ -439,9 +439,9 @@ function selectWorkspaceTab(activeTabId: string): void {
             id: "p1",
             activeTabId,
             tabs: [
-              { id: "mount", kind: "mount", title: "挂载", sessionId: "s1", closable: true },
-              { id: "forward", kind: "forward", title: "转发", sessionId: "s", closable: true },
-              { id: "terminal", kind: "terminal", title: "终端", sessionId: "s1", closable: true },
+              { id: "mount", kind: "mount", title: "Mount", sessionId: "s1", closable: true },
+              { id: "forward", kind: "forward", title: "Forward", sessionId: "s", closable: true },
+              { id: "terminal", kind: "terminal", title: "Terminal", sessionId: "s1", closable: true },
             ],
           },
         ],
@@ -450,8 +450,8 @@ function selectWorkspaceTab(activeTabId: string): void {
   });
 }
 
-describe("MountPanel 平台默认值与连接约束", () => {
-  it("Windows 默认 Z:，Linux 留空并使用 /mnt/point 示例", async () => {
+describe("MountPanel platform defaults and connection constraints", () => {
+  it("Windows defaults to Z:; Linux stays empty with a /mnt/point example", async () => {
     mountMountPanel();
     await flush();
     expect(inputBy('input[aria-label="本地挂载点"]').value).toBe("Z:");
@@ -471,7 +471,7 @@ describe("MountPanel 平台默认值与连接约束", () => {
     expect(headers).not.toContain("挂载时间");
   });
 
-  it("无 sessionId 或本地会话时禁用挂载并提示先连接 SSH 资产", async () => {
+  it("mount is disabled without sessionId or with a local session, prompting to connect an SSH asset first", async () => {
     mountMountPanel(null);
     await flush();
     expect(actionButton("挂载").disabled).toBe(true);
@@ -484,7 +484,7 @@ describe("MountPanel 平台默认值与连接约束", () => {
         {
           id: "s1",
           assetId: null,
-          name: "当前设备",
+          name: "This Device",
           kind: "local",
           status: "connected",
           tabs: [],
@@ -498,7 +498,7 @@ describe("MountPanel 平台默认值与连接约束", () => {
     expect(mounted!.container.textContent).toContain("请先连接 SSH 资产");
   });
 
-  it("挂载成功清空本次凭据并收起，下一次请求不再携带", async () => {
+  it("a successful mount clears this round of credentials and collapses; the next request carries none", async () => {
     mocks.mountCreate.mockResolvedValue({ id: "m1" });
     mountMountPanel();
     await flush();
@@ -537,7 +537,7 @@ describe("MountPanel 平台默认值与连接约束", () => {
     expect(inputBy('input[aria-label="挂载密码（可选）"]').value).toBe("");
   });
 
-  it("隐藏时停止轮询，重新可见立即补取", async () => {
+  it("polling stops when hidden and refetches immediately when visible again", async () => {
     selectWorkspaceTab("mount");
     mountMountPanel();
     await flush();
@@ -554,11 +554,11 @@ describe("MountPanel 平台默认值与连接约束", () => {
   });
 });
 
-describe("MountPanel 默认目标为当前资产", () => {
+describe("MountPanel defaults the target to the current asset", () => {
   function useSshSession(): void {
     useUi.setState({
       sessions: [
-        { id: "s1", assetId: "a1", name: "生产机", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
+        { id: "s1", assetId: "a1", name: "prod-host", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
       ],
     });
   }
@@ -567,19 +567,19 @@ describe("MountPanel 默认目标为当前资产", () => {
     mocks.assetGet.mockResolvedValue({
       id: "a1",
       kind: "ssh",
-      name: "生产机",
+      name: "prod-host",
       host,
       username,
     });
   }
 
-  it("Linux 预填 user@host: 并标明目标资产，Windows 预填 \\\\host\\", async () => {
+  it("Linux prefills user@host: and names the target asset; Windows prefills \\\\host\\", async () => {
     useSshSession();
     mockAsset("10.0.0.8", "root");
     mocks.platform.mockResolvedValue("linux");
     mountMountPanel();
     await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "root@10.0.0.8:");
-    expect(mounted!.container.textContent).toContain("默认目标为当前资产「生产机」");
+    expect(mounted!.container.textContent).toContain("默认目标为当前资产「prod-host」");
 
     mounted!.unmount();
     mounted = undefined;
@@ -588,7 +588,7 @@ describe("MountPanel 默认目标为当前资产", () => {
     await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "\\\\10.0.0.8\\");
   });
 
-  it("IPv6 主机预填加括号，无用户名时不带 user@", async () => {
+  it("IPv6 hosts are prefilled with brackets; no user@ without a username", async () => {
     useSshSession();
     mockAsset("2001:db8::1", null);
     mocks.platform.mockResolvedValue("linux");
@@ -596,7 +596,7 @@ describe("MountPanel 默认目标为当前资产", () => {
     await flushUntil(() => inputBy('input[aria-label="远端路径"]').value === "[2001:db8::1]:");
   });
 
-  it("用户编辑后资产解析完成不覆盖输入", async () => {
+  it("asset resolution completing after user edits does not overwrite the input", async () => {
     useSshSession();
     mockAsset("10.0.0.8", "root");
     mocks.platform.mockResolvedValue("linux");
@@ -608,7 +608,7 @@ describe("MountPanel 默认目标为当前资产", () => {
     expect(remotePath.value).toBe("other:/x");
   });
 
-  it("挂载成功后重新预填当前资产", async () => {
+  it("the current asset is prefilled again after a successful mount", async () => {
     useSshSession();
     mockAsset("10.0.0.8", "root");
     mocks.platform.mockResolvedValue("linux");
@@ -631,8 +631,8 @@ describe("MountPanel 默认目标为当前资产", () => {
   });
 });
 
-describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
-  it("环境查询 pending 时禁用创建且不默认监听 127.0.0.1", async () => {
+describe("ForwardPanel env status, polling, and browser wording", () => {
+  it("create is disabled while the env query is pending and 127.0.0.1 is not the default listen address", async () => {
     const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
@@ -648,14 +648,14 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
     expect(mocks.forwardCreate).not.toHaveBeenCalled();
   });
 
-  it("环境查询失败时显示错误与重试，恢复前禁止创建", async () => {
+  it("env query failure shows the error and a retry; create stays forbidden until recovery", async () => {
     mocks.forwardEnv
-      .mockRejectedValueOnce(new Error("环境探测失败"))
+      .mockRejectedValueOnce(new Error("env probe failed"))
       .mockResolvedValueOnce({ available: true, platform: "other", listenHost: "0.0.0.0" });
     mountForward();
     await flush();
     expect(actionButton("创建").disabled).toBe(true);
-    expect(mounted!.container.textContent).toContain("转发环境检查失败 · 环境探测失败");
+    expect(mounted!.container.textContent).toContain("转发环境检查失败 · env probe failed");
 
     clickButton(mounted!.container, "重试");
     await flush();
@@ -664,7 +664,7 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
     expect(mounted!.container.textContent).toContain("0.0.0.0:13306");
   });
 
-  it("后续刷新失败保留旧列表并显示非阻塞提示", async () => {
+  it("later refresh failures keep the old list and show a non-blocking notice", async () => {
     mocks.forwardList
       .mockResolvedValueOnce([
         {
@@ -678,7 +678,7 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
           createdAt: 1,
         },
       ])
-      .mockRejectedValueOnce(new Error("暂时离线"));
+      .mockRejectedValueOnce(new Error("temporarily offline"));
     const client = mountForward();
     await flush();
     expect(mounted!.container.textContent).toContain("10.0.0.8");
@@ -688,12 +688,12 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
     expect(mocks.forwardList).toHaveBeenCalledTimes(2);
     expect(client.getQueryState(["forwards"])?.status).toBe("error");
     expect(mounted!.container.textContent).toContain("10.0.0.8");
-    expect(mounted!.container.textContent).toContain("转发列表刷新失败 · 暂时离线");
+    expect(mounted!.container.textContent).toContain("转发列表刷新失败 · temporarily offline");
     expect(mounted!.container.textContent).toContain("已保留上次成功结果");
     expect(actionButton("创建").disabled).toBe(false);
   });
 
-  it("隐藏时停止轮询，重新可见立即补取", async () => {
+  it("polling stops when hidden and refetches immediately when visible again", async () => {
     selectWorkspaceTab("forward");
     mountForward();
     await flush();
@@ -709,7 +709,7 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
     expect(mocks.forwardList).toHaveBeenCalledTimes(3);
   });
 
-  it("Web 远程转发目标明确为 NexTerm 所在机器，静态转发提示一致", async () => {
+  it("web remote forwarding names the NexTerm host as the target; static forwarding wording stays consistent", async () => {
     mocks.forwardCreate.mockResolvedValue({ id: "f1", kind: "local" });
     mountForward();
     await flush();
@@ -729,7 +729,7 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
   });
 });
 
-describe("ForwardPanel 按当前会话过滤列表，MountPanel 列出全部系统挂载", () => {
+describe("ForwardPanel filters the list by current session; MountPanel lists all system mounts", () => {
   function forwardRow(id: string, sessionId: string, targetHost: string) {
     return {
       id,
@@ -750,7 +750,7 @@ describe("ForwardPanel 按当前会话过滤列表，MountPanel 列出全部系�
     );
   }
 
-  it("转发列表默认只看当前会话，切换后显示全部", async () => {
+  it("forward list shows only the current session by default and all sessions after switching", async () => {
     mocks.forwardList.mockResolvedValue([
       forwardRow("f1", "s", "10.0.0.8"),
       forwardRow("f2", "other", "10.0.0.9"),
@@ -770,7 +770,7 @@ describe("ForwardPanel 按当前会话过滤列表，MountPanel 列出全部系�
     ).toBe(true);
   });
 
-  it("无会话的转发标签显示全部，且不渲染范围切换按钮", async () => {
+  it("a sessionless forward tab shows all and renders no scope toggle button", async () => {
     mocks.forwardList.mockResolvedValue([
       forwardRow("f1", "s", "10.0.0.8"),
       forwardRow("f2", "other", "10.0.0.9"),
@@ -788,7 +788,7 @@ describe("ForwardPanel 按当前会话过滤列表，MountPanel 列出全部系�
     }
   });
 
-  it("挂载列表来自系统挂载表（sessionId 为 null），列出全部条目不按会话过滤，也不渲染范围切换按钮", async () => {
+  it("mount list comes from the system mount table (sessionId null), lists all entries without session filtering, and renders no scope toggle button", async () => {
     mocks.mountList.mockResolvedValue([
       { id: "m1", localPoint: "Z:", remote: "root@h1:/data", sessionId: null, createdAt: 1 },
       { id: "m2", localPoint: "Y:", remote: "root@h2:/data", sessionId: null, createdAt: 1 },

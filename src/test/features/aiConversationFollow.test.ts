@@ -43,7 +43,7 @@ function mountFollow(view: MountedView): Harness {
           onClick: follow.jumpToLatest,
           style: { display: follow.newOutput ? "block" : "none" },
         },
-        "↓ 新输出",
+        "↓ New output",
       ),
     );
   }

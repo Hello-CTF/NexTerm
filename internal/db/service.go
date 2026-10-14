@@ -121,7 +121,7 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		if inline.Database != "" {
 			database, err = strconv.Atoi(inline.Database)
 			if err != nil || database < 0 {
-				return ConnectResult{}, badParam(fmt.Errorf("Redis database 必须是非负整数"))
+				return ConnectResult{}, badParam(fmt.Errorf("Redis 数据库编号必须是非负整数"))
 			}
 		}
 		connection, err = s.openRedis(ctx, RedisConfig{
@@ -172,7 +172,7 @@ func (s *Service) Disconnect(id string) error {
 func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineConnection, error) {
 	if args.AssetID == "" {
 		if args.Inline == nil {
-			return InlineConnection{}, badParam(errors.New("需要 assetId 或 inline 参数"))
+			return InlineConnection{}, badParam(errors.New("需要提供数据库资产或连接配置"))
 		}
 		return *args.Inline, nil
 	}
@@ -190,7 +190,7 @@ func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineC
 	}
 	if strings.TrimSpace(asset.OptionsJSON) != "" {
 		if err := json.Unmarshal([]byte(asset.OptionsJSON), &options); err != nil {
-			return InlineConnection{}, badParam(fmt.Errorf("资产 optionsJson 无效: %w", err))
+			return InlineConnection{}, badParam(fmt.Errorf("数据库资产配置无效: %w", err))
 		}
 	}
 	inline := InlineConnection{
@@ -236,7 +236,7 @@ func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) 
 	case *postgresConnection:
 		return postgresSchemas(ctx, typed)
 	default:
-		return nil, badParam(errors.New("该连接是 Redis"))
+		return nil, badParam(errors.New("Redis 连接不支持此操作"))
 	}
 }
 
@@ -251,7 +251,7 @@ func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, 
 	case *postgresConnection:
 		return postgresTables(ctx, typed, schema)
 	default:
-		return nil, badParam(errors.New("该连接是 Redis"))
+		return nil, badParam(errors.New("Redis 连接不支持此操作"))
 	}
 }
 
@@ -266,7 +266,7 @@ func (s *Service) Describe(ctx context.Context, connID, schema, table string) (T
 	case *postgresConnection:
 		return postgresDescribe(ctx, typed, schema, table)
 	default:
-		return TableDescribe{}, badParam(errors.New("该连接是 Redis"))
+		return TableDescribe{}, badParam(errors.New("Redis 连接不支持此操作"))
 	}
 }
 
@@ -281,7 +281,7 @@ func (s *Service) Query(ctx context.Context, connID, statement string, limit uin
 	case *postgresConnection:
 		return queryPostgres(ctx, typed.db, statement, limit, timeout)
 	default:
-		return QueryResult{}, badParam(errors.New("该连接是 Redis"))
+		return QueryResult{}, badParam(errors.New("Redis 连接不支持此操作"))
 	}
 }
 
@@ -334,7 +334,7 @@ func badParam(err error) *ipc.Error {
 }
 
 func notFound(id string) *ipc.Error {
-	return ipc.NewError(ipc.CodeNotFound, "未找到数据库连接 "+id)
+	return ipc.NewError(ipc.CodeNotFound, "数据库连接 "+id+" 不存在或已关闭")
 }
 
 func internalError(action string, err error) *ipc.Error {

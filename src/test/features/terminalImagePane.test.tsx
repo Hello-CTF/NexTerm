@@ -156,7 +156,7 @@ function statusText(): string {
   return close?.parentElement?.textContent ?? "";
 }
 
-describe("TerminalPane 图片粘贴编排", () => {
+describe("TerminalPane image paste orchestration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
@@ -172,7 +172,7 @@ describe("TerminalPane 图片粘贴编排", () => {
     mounted = undefined;
   });
 
-  it("经文件通道写到本会话主机的 /tmp 并插入普通 Markdown 链接, 展示成功状态", async () => {
+  it("writes through the file channel to /tmp on the current session host, inserts a plain Markdown link, and shows success", async () => {
     seedTab();
     mounted = mount(
       createElement(TerminalPane, {
@@ -202,7 +202,7 @@ describe("TerminalPane 图片粘贴编排", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("多张图片逐张落盘, 链接按顺序空格拼接", async () => {
+  it("writes multiple images individually and joins their links with spaces in order", async () => {
     seedTab();
     mounted = mount(
       createElement(TerminalPane, {
@@ -234,7 +234,7 @@ describe("TerminalPane 图片粘贴编排", () => {
     expect(statusText()).toContain("已上传 2 张图片");
   });
 
-  it("上传失败时展示失败原因, 不插入任何内容", async () => {
+  it("shows the failure reason on upload failure and inserts nothing", async () => {
     seedTab();
     mocks.fsWrite.mockRejectedValue({ code: "internal", message: "磁盘只读" });
     mounted = mount(

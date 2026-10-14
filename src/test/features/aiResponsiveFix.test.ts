@@ -108,7 +108,7 @@ describe("M119 AI responsive fixes", () => {
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.overview.mockResolvedValue({
-      profiles: [{ id: "p1", name: "公司 DeepSeek", model: "deepseek-chat" }],
+      profiles: [{ id: "p1", name: "Company DeepSeek", model: "deepseek-chat" }],
       activeId: "p1",
     });
     mocks.presets.mockResolvedValue(["deepseek"]);
@@ -116,7 +116,7 @@ describe("M119 AI responsive fixes", () => {
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     useUi.setState({
       rightOpen: true,
@@ -176,7 +176,7 @@ describe("M119 AI responsive fixes", () => {
   });
 
   it("renders the confirmation card inside the log scroll flow with a readable body", async () => {
-    setInputValue(composer(), "跑个命令");
+    setInputValue(composer(), "Run a command");
     click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flush();
     emit({

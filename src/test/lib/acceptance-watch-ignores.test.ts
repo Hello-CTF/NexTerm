@@ -8,7 +8,7 @@ function matchesAnchored(pattern: string, target: string): boolean {
 }
 
 describe("acceptanceWatchIgnored", () => {
-  it("锚定 resolved root:root 自带 .tower 祖先时 src 不被命中,root 自己的产物目录被命中", () => {
+  it("anchored resolved root: src is not matched when root has a .tower ancestor, while the root's own artifact directories are matched", () => {
     const root = "/fake/.tower/worktrees/wt-fake";
     const patterns = acceptanceWatchIgnored(root);
     expect(patterns).toEqual([

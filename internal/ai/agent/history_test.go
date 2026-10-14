@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/model"
@@ -235,6 +236,137 @@ func TestPersistToolRowsTruncatesAndStripsRuntimeFields(t *testing.T) {
 	if rowsCount(t, storage, conversation.ID, historyTypePlanSubmitted) != 1 {
 		t.Fatal("planSubmitted row missing")
 	}
+}
+
+func TestToolResultModelTextCompatibility(t *testing.T) {
+	t.Run("new rows round trip without changing UI events", func(t *testing.T) {
+		storage, err := store.OpenInMemory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = storage.Close() })
+		conversation, err := storage.ConvCreate(context.Background(), "t", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream := &SliceStream{}
+		runner := &Runner{store: storage}
+		current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID}, ctx: context.Background(), stream: stream}
+		input := tools.Output{OK: true, Text: "无表", ModelText: "no tables"}
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		message := &schema.Message{Role: schema.Tool, ToolCallID: "call-1", ToolName: "db_list_tables", Content: string(encoded)}
+		result, text, err := runner.emitToolResult(current, message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.ModelText != input.ModelText || text != input.Text {
+			t.Fatalf("emit result = %+v, text = %q", result, text)
+		}
+		if err := runner.persistToolResultRows(context.Background(), current, message, result, text); err != nil {
+			t.Fatal(err)
+		}
+
+		events, _ := stream.Snapshot()
+		if len(events) != 1 || events[0].Type != "toolResult" || events[0].Text != input.Text {
+			t.Fatalf("UI events = %+v", events)
+		}
+		eventJSON, err := json.Marshal(events[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(eventJSON), "modelText") || strings.Contains(string(eventJSON), input.ModelText) {
+			t.Fatalf("model text leaked into UI event: %s", eventJSON)
+		}
+
+		rows, err := storage.MsgList(context.Background(), conversation.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("persisted rows = %d, want 1", len(rows))
+		}
+		var persisted historyRow
+		if err := json.Unmarshal([]byte(rows[0].ContentJSON), &persisted); err != nil {
+			t.Fatal(err)
+		}
+		if persisted.Text != input.Text || persisted.ModelText != input.ModelText {
+			t.Fatalf("persisted row = %+v", persisted)
+		}
+		rebuilt := rebuildHistory(rows, "other")
+		if len(rebuilt) != 1 {
+			t.Fatalf("rebuilt messages = %d, want 1", len(rebuilt))
+		}
+		var envelope tools.Output
+		if err := json.Unmarshal([]byte(rebuilt[0].Content), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Text != input.Text || envelope.ModelText != input.ModelText {
+			t.Fatalf("rebuilt envelope = %+v", envelope)
+		}
+	})
+
+	t.Run("new rows rebuild into projected model input", func(t *testing.T) {
+		storage, err := store.OpenInMemory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = storage.Close() })
+		conversation, err := storage.ConvCreate(context.Background(), "t", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := &Runner{store: storage}
+		current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID}}
+		if err := runner.persistToolCallRows(context.Background(), conversation.ID, current.id, []schema.ToolCall{namedToolCall("call-1", "db_list_tables", `{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		result := tools.Output{OK: true, Text: "无表", ModelText: "no tables"}
+		message := &schema.Message{Role: schema.Tool, ToolCallID: "call-1", ToolName: "db_list_tables"}
+		if err := runner.persistToolResultRows(context.Background(), current, message, result, result.Text); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := storage.MsgList(context.Background(), conversation.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rebuilt := historyMessages(rows, "other")
+		if len(rebuilt) != 2 {
+			t.Fatalf("rebuilt messages = %d, want assistant call and tool result", len(rebuilt))
+		}
+		projected := provider.ProjectModelMessages(rebuilt)
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(projected[1].Content), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope["text"] != "no tables" {
+			t.Fatalf("round-trip model text = %v", envelope["text"])
+		}
+		if _, exists := envelope["modelText"]; exists {
+			t.Fatalf("modelText leaked after history round trip: %+v", envelope)
+		}
+		var original map[string]any
+		if err := json.Unmarshal([]byte(rebuilt[1].Content), &original); err != nil {
+			t.Fatal(err)
+		}
+		if original["text"] != "无表" || original["modelText"] != "no tables" {
+			t.Fatalf("history projection mutated the rebuilt original: %+v", original)
+		}
+	})
+
+	t.Run("legacy rows keep their original shape", func(t *testing.T) {
+		rows := []store.MessageRow{historyTestRow("c", `{"type":"toolResult","jobId":"j1","id":"call-1","tool":"db_list_tables","ok":true,"text":"无表","summary":"无表","truncated":false,"exitCode":0}`)}
+		messages := rebuildHistory(rows, "other")
+		if len(messages) != 1 {
+			t.Fatalf("rebuilt messages = %d, want 1", len(messages))
+		}
+		const want = `{"ok":true,"text":"无表","exitCode":0,"truncated":false}`
+		if messages[0].Content != want {
+			t.Fatalf("legacy envelope = %s, want %s", messages[0].Content, want)
+		}
+	})
 }
 
 func rowsCount(t *testing.T, storage *store.Store, conversationID, role string) int {

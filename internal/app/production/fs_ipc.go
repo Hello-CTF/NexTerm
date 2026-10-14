@@ -38,7 +38,7 @@ func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path
 		return path, nil
 	}
 	if filepath.IsAbs(path) {
-		return "", ipc.NewError(ipc.CodeBadParam, "参数错误: web 模式下的本地路径必须是暂存引用")
+		return "", ipc.NewError(ipc.CodeBadParam, "参数错误: Web 模式下的本地路径必须是暂存引用")
 	}
 	userID, _ := ipc.UserIDFromContext(ctx)
 	resolved, err := staged.ResolveStagedPath(path, userID)

@@ -60,6 +60,30 @@ func TestScanHomeSymlinkInsideDirAcceptedOnce(t *testing.T) {
 	}
 }
 
+func TestScanHomeSymlinkedRootPreservesOriginalPaths(t *testing.T) {
+	actualDir := t.TempDir()
+	keyPath, fingerprint := writeTestKey(t, actualDir, "z_target", false)
+	aliasPath := filepath.Join(actualDir, "a_alias")
+	if err := os.Symlink(keyPath, aliasPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	root := filepath.Join(t.TempDir(), "ssh-home")
+	if err := os.Symlink(actualDir, root); err != nil {
+		t.Fatalf("root symlink: %v", err)
+	}
+
+	keys, _, err := ScanHome(root, Limits{})
+	if err != nil {
+		t.Fatalf("ScanHome: %v", err)
+	}
+	if len(keys) != 1 || keys[0].Path != filepath.Join(root, "a_alias") || keys[0].Fingerprint != fingerprint {
+		t.Fatalf("keys = %+v", keys)
+	}
+	if !slices.Contains(keys[0].AltPaths, filepath.Join(root, "z_target")) {
+		t.Fatalf("target must retain the scanned root form in AltPaths: %+v", keys[0])
+	}
+}
+
 func TestScanHomeTargetFirstRecordsLaterAlias(t *testing.T) {
 	dir := t.TempDir()
 	keyPath, fingerprint := writeTestKey(t, dir, "a_target", false)

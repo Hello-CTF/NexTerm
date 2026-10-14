@@ -24,7 +24,7 @@ const outcome = (text: string): ChatItem => ({
 describe("conversation search", () => {
   it("matches user, tool, diff and outcome content case-insensitively", () => {
     const items = [
-      user("NGINX 502 排查"),
+      user("NGINX 502 investigation"),
       tool("exec_commands", "systemctl status nginx"),
       diff("/etc/NGINX/nginx.conf"),
       outcome("本轮出错：超时"),
@@ -43,7 +43,7 @@ describe("conversation search", () => {
       callId: "c1",
       name: "dispatch_subagent",
       display: "dispatch_subagent",
-      summary: "子代理完成",
+      summary: "Subagent completed",
       subagent: {
         subagentId: "s1",
         depth: 1,

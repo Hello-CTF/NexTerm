@@ -284,7 +284,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         const remote = kind === "remote";
         const ok = await ask(
           remote
-            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，能连上该地址的任何人都能访问这个${remoteService}。请确认你理解并愿意承担这个风险。`
+            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，能连上该地址的任何人都能访问该目标服务。请确认你理解并愿意承担这个风险。`
             : `监听 ${confirmedHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n能连上这个端口的任何人都能借当前 SSH 会话访问远端网络。请确认你理解并愿意承担这个风险。`,
           { title: remote ? "确认远程转发风险" : "确认开放代理风险", kind: "warning" },
         );
@@ -532,7 +532,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                     ? "把远端某个固定端口映射到服务端（连 MySQL / Redis 用这个）"
                     : `把远端某个固定端口映射到${localMachine}（连 MySQL / Redis 用这个）`
                   : kind === "remote"
-                    ? `在远端机器上监听一个端口，把连入的流量转回${remoteService}（让远端访问${WEB ? remoteService : "你本机的服务"}）`
+                    ? `在远端机器上监听一个端口，把连入的流量转回${remoteTarget}（让远端访问${WEB ? remoteService : "你本机的服务"}）`
                     : exposed
                       ? "在服务端开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）"
                       : `在${localMachine}开一个 SOCKS5 代理，目标由客户端当场指定（浏览器 / curl / proxychains 用这个）`}

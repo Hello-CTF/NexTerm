@@ -198,7 +198,7 @@ func (e *Engine) aiGrantSettingPut(ctx context.Context, key string, value any, u
 func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload aiPermissionObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 权限对象载荷损坏: %v", err)
+		report.warnf("AI 权限对象数据损坏：%v", err)
 		return false, false
 	}
 	if payload.ID != "global" {
@@ -207,7 +207,7 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 	}
 	config := guard.Config{Mode: guard.Mode(payload.Mode), DangerRules: payload.DangerRules}.Normalized()
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查 AI 权限删除墓碑: %v", err)
+		report.warnf("无法检查 AI 权限删除标记：%v", err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -249,7 +249,7 @@ func (e *Engine) applyAIPermissionObject(ctx context.Context, plaintext []byte, 
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
-		report.warnf("AI 权限墓碑清理失败: %v", err)
+		report.warnf("AI 权限删除标记清理失败：%v", err)
 		return false, false
 	}
 	return true, false
@@ -272,7 +272,7 @@ func (e *Engine) applyAIGrantObject(ctx context.Context, objectID string, plaint
 func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload aiGrantDeviceObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 授权对象载荷损坏: %v", err)
+		report.warnf("AI 授权对象数据损坏：%v", err)
 		return false, false
 	}
 	// DeviceID is normalized exactly like guard.Grant trims it locally; the object ID must match the normalized form,
@@ -288,7 +288,7 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查 AI 授权 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查 AI 授权 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -327,7 +327,7 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
-		report.warnf("AI 授权墓碑清理失败: %v", err)
+		report.warnf("AI 授权删除标记清理失败：%v", err)
 		return false, false
 	}
 	return true, false
@@ -336,7 +336,7 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload aiGrantRuleObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 授权规则对象载荷损坏: %v", err)
+		report.warnf("AI 授权规则对象数据损坏：%v", err)
 		return false, false
 	}
 	ruleID := strings.TrimPrefix(payload.ID, aiGrantRulePrefix)
@@ -361,7 +361,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查 AI 授权规则 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查 AI 授权规则 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -413,7 +413,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
-		report.warnf("AI 授权规则墓碑清理失败: %v", err)
+		report.warnf("AI 授权规则删除标记清理失败：%v", err)
 		return false, false
 	}
 	return true, false
@@ -422,7 +422,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload aiGrantModeObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 设备权限模式对象载荷损坏: %v", err)
+		report.warnf("AI 设备权限模式对象数据损坏：%v", err)
 		return false, false
 	}
 	// DeviceID is normalized exactly like guard.SetDeviceMode trims it locally; the object ID must match the normalized form,
@@ -437,7 +437,7 @@ func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查 AI 设备权限模式 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查 AI 设备权限模式 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -477,7 +477,7 @@ func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
-		report.warnf("AI 设备权限模式墓碑清理失败: %v", err)
+		report.warnf("AI 设备权限模式删除标记清理失败：%v", err)
 		return false, false
 	}
 	return true, false
@@ -492,7 +492,7 @@ func (e *Engine) applyAIGrantTombstone(ctx context.Context, objectID string, del
 	case strings.HasPrefix(objectID, aiGrantModePrefix):
 		return e.applyAIGrantModeTombstone(ctx, objectID, deletedAt, report)
 	default:
-		report.warnf("AI 授权墓碑 ID %s 不受支持", objectID)
+		report.warnf("AI 授权删除标记 ID %s 不受支持", objectID)
 		return false, false
 	}
 }
@@ -516,13 +516,13 @@ func (e *Engine) applyAIGrantDeviceTombstone(ctx context.Context, objectID strin
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIGrant, deletedAt); err != nil {
-		report.warnf("AI 授权删除墓碑记录失败: %v", err)
+		report.warnf("AI 授权删除标记记录失败：%v", err)
 		return false, false
 	}
 	if exists {
 		delete(grants, deviceID)
 		if err := e.aiGrantSettingPut(ctx, guard.DeviceGrantsSettingKey, grants, max(revision, deletedAt)); err != nil {
-			report.warnf("AI 设备授权按墓碑删除失败: %v", err)
+			report.warnf("应用 AI 设备授权的删除标记失败：%v", err)
 			return false, false
 		}
 	}
@@ -554,13 +554,13 @@ func (e *Engine) applyAIGrantRuleTombstone(ctx context.Context, objectID string,
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIGrant, deletedAt); err != nil {
-		report.warnf("AI 授权规则删除墓碑记录失败: %v", err)
+		report.warnf("AI 授权规则删除标记记录失败：%v", err)
 		return false, false
 	}
 	if index >= 0 {
 		rules = append(rules[:index], rules[index+1:]...)
 		if err := e.aiGrantSettingPut(ctx, guard.GrantRulesSettingKey, rules, max(revision, deletedAt)); err != nil {
-			report.warnf("AI 授权规则按墓碑删除失败: %v", err)
+			report.warnf("应用 AI 授权规则的删除标记失败：%v", err)
 			return false, false
 		}
 	}
@@ -587,13 +587,13 @@ func (e *Engine) applyAIGrantModeTombstone(ctx context.Context, objectID string,
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIGrant, deletedAt); err != nil {
-		report.warnf("AI 设备权限模式删除墓碑记录失败: %v", err)
+		report.warnf("AI 设备权限模式删除标记记录失败：%v", err)
 		return false, false
 	}
 	if _, exists := modes[deviceID]; exists {
 		delete(modes, deviceID)
 		if err := e.aiGrantSettingPut(ctx, key, modes, max(revision, deletedAt)); err != nil {
-			report.warnf("AI 设备权限模式按墓碑删除失败: %v", err)
+			report.warnf("应用 AI 设备权限模式的删除标记失败：%v", err)
 			return false, false
 		}
 	}
@@ -603,7 +603,7 @@ func (e *Engine) applyAIGrantModeTombstone(ctx context.Context, objectID string,
 func (e *Engine) applyPreferenceObject(ctx context.Context, plaintext []byte, report *SyncReport, userID string) (bool, bool) {
 	var payload preferenceObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("偏好对象载荷损坏: %v", err)
+		report.warnf("偏好对象数据损坏：%v", err)
 		return false, false
 	}
 	if userID == "" {
@@ -620,7 +620,7 @@ func (e *Engine) applyPreferenceObject(ctx context.Context, plaintext []byte, re
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查偏好 %s 的删除墓碑: %v", payload.Key, err)
+		report.warnf("无法检查偏好 %s 的删除标记：%v", payload.Key, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -658,7 +658,7 @@ func (e *Engine) applyPreferenceObject(ctx context.Context, plaintext []byte, re
 		return false, false
 	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
-		report.warnf("偏好 %s 的墓碑清理失败: %v", payload.ID, err)
+		report.warnf("偏好 %s 的删除标记清理失败：%v", payload.ID, err)
 		return false, false
 	}
 	return true, false
@@ -666,7 +666,7 @@ func (e *Engine) applyPreferenceObject(ctx context.Context, plaintext []byte, re
 
 func (e *Engine) applyAIPermissionTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
 	if objectID != "global" {
-		report.warnf("AI 权限墓碑 ID %s 不受支持", objectID)
+		report.warnf("AI 权限删除标记 ID %s 不受支持", objectID)
 		return false, false
 	}
 	updatedAt, found, err := e.settingRevision(ctx, guard.PermissionSettingKeyForUser(ctx))
@@ -678,7 +678,7 @@ func (e *Engine) applyAIPermissionTombstone(ctx context.Context, objectID string
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIPermission, deletedAt); err != nil {
-		report.warnf("AI 权限删除墓碑记录失败: %v", err)
+		report.warnf("AI 权限删除标记记录失败：%v", err)
 		return false, false
 	}
 	if found {
@@ -692,12 +692,12 @@ func (e *Engine) applyAIPermissionTombstone(ctx context.Context, objectID string
 
 func (e *Engine) applyPreferenceTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport, userID string) (bool, bool) {
 	if userID == "" {
-		report.warnf("偏好删除墓碑需要账号身份")
+		report.warnf("偏好删除标记需要账号身份")
 		return false, false
 	}
 	preferenceKey := strings.TrimPrefix(objectID, preferenceObjectPrefix)
 	if objectID != preferenceObjectPrefix+preferenceKey || !account.PreferenceKeyDeclared(preferenceKey) {
-		report.warnf("偏好墓碑 ID %s 不受支持", objectID)
+		report.warnf("偏好删除标记 ID %s 不受支持", objectID)
 		return false, false
 	}
 	key := account.PreferenceUserKeyPrefix(userID) + preferenceKey
@@ -710,7 +710,7 @@ func (e *Engine) applyPreferenceTombstone(ctx context.Context, objectID string, 
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindPreference, deletedAt); err != nil {
-		report.warnf("偏好 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("偏好 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	if found {

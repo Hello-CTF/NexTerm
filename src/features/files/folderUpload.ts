@@ -237,7 +237,7 @@ async function chooseUploadMode(
         {
           key: "perFile",
           label: "逐文件上传",
-          hint: "默认方式；失败的任务可单独重试续传",
+          hint: "默认方式；失败的任务可单独重试",
           primary: true,
         },
         ...(packExtractSupported(kind)

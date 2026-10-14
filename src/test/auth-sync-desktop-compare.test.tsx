@@ -87,8 +87,8 @@ beforeEach(() => {
   mocks.kindOptInGet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
   mocks.kindOptInSet.mockResolvedValue({ knownHost: true, aiProfile: true, aiPermission: true, aiGrant: true, preferences: true });
   mocks.wake.mockResolvedValue(undefined);
-  mocks.me.mockRejectedValue({ code: "not_found", message: "不可用" });
-  mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "需要超级管理员权限" });
+  mocks.me.mockRejectedValue({ code: "not_found", message: "Unavailable" });
+  mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "Super administrator access required" });
   mocks.devices.mockResolvedValue({ devices: [] });
   mocks.compare.mockResolvedValue({ rows: FIRST_ROWS, remote: 2, warnings: [] });
 });
@@ -98,8 +98,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面端同步控制台·逐条对比", () => {
-  it("挂载后自动加载对比: 汇总/云端对象数/行徽章真实呈现", async () => {
+describe("desktop sync console row-by-row comparison", () => {
+  it("loads the comparison on mount and renders the summary, cloud object count, and row badges", async () => {
     mounted = mountSyncCard();
     await flushUntil(() => mocks.compare.mock.calls.length > 0 && text().includes("共 2 条"));
     expect(mocks.compare).toHaveBeenCalledTimes(1);
@@ -113,7 +113,7 @@ describe("桌面端同步控制台·逐条对比", () => {
     expect(text()).toContain("仅本机");
   });
 
-  it("「刷新对比」重新拉取并渲染最新行", async () => {
+  it("refreshes the comparison and renders the latest rows", async () => {
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("共 2 条"));
     mocks.compare.mockResolvedValue({
@@ -129,7 +129,7 @@ describe("桌面端同步控制台·逐条对比", () => {
     expect(text()).not.toContain("web-01");
   });
 
-  it("对比失败如实展示并可重试恢复", async () => {
+  it("shows comparison failures as-is and recovers after retry", async () => {
     mocks.compare.mockRejectedValueOnce({ code: "disconnected", message: "无法连接远端同步服务" });
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("对比读取失败"));
@@ -142,17 +142,17 @@ describe("桌面端同步控制台·逐条对比", () => {
     expect(mocks.compare.mock.calls.length).toBe(2);
   });
 
-  it("收集告警逐条展示", async () => {
+  it("renders collection warnings individually", async () => {
     mocks.compare.mockResolvedValue({
       rows: FIRST_ROWS,
       remote: 2,
-      warnings: ["凭据 abc 解密失败, 本次不同步: 凭据库已锁定"],
+      warnings: ["Credential abc decryption failed; skipped for this sync: credential vault is locked"],
     });
     mounted = mountSyncCard();
-    await flushUntil(() => text().includes("凭据 abc 解密失败"));
+    await flushUntil(() => text().includes("Credential abc decryption failed"));
   });
 
-  it("云端对象解不开时呈现「无法解密」行", async () => {
+  it("renders an undecryptable row when a cloud object cannot be opened", async () => {
     mocks.compare.mockResolvedValue({
       rows: [{ id: "u1", kind: "", name: "u1", state: "remote-undecryptable" }],
       remote: 1,

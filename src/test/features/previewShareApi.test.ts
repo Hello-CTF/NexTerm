@@ -48,8 +48,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("previewApi 线上契约", () => {
-  it("创建预览链接走 POST /share/previews, 蛇形字段 + CSRF, 默认 write:false", async () => {
+describe("previewApi live contract", () => {
+  it("creates preview links via POST /share/previews with snake_case fields and CSRF, defaulting write to false", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -64,7 +64,7 @@ describe("previewApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("创建可写预览链接在 body 里携带 write:true", async () => {
+  it("includes write:true in the body when creating a writable preview link", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -74,7 +74,7 @@ describe("previewApi 线上契约", () => {
     expect(calls[0]?.body).toMatchObject({ session_id: "tab-1", ttl_ms: 3_600_000, write: true });
   });
 
-  it("预览列表走 GET /share/previews 且不带 CSRF 头", async () => {
+  it("lists preview links via GET /share/previews without a CSRF header", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -84,7 +84,7 @@ describe("previewApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
   });
 
-  it("吊销预览链接走 POST /share/previews/{id}/revoke, 路径编码且带 CSRF, 无请求体", async () => {
+  it("revokes preview links via POST /share/previews/{id}/revoke with an encoded path and CSRF, without a request body", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -96,11 +96,11 @@ describe("previewApi 线上契约", () => {
     expect(calls[0]?.body).toBeUndefined();
   });
 
-  it("previewPublicUrl 拼当前源的公开地址", () => {
+  it("previewPublicUrl builds a public URL from the current origin", () => {
     expect(previewPublicUrl("tok-1")).toBe(`${window.location.origin}/share/preview/tok-1`);
   });
 
-  it("previewWsUrl 对 token 做 URI 编码", () => {
+  it("previewWsUrl URI-encodes the token", () => {
     const url = previewWsUrl("abc/123 ?=");
     expect(url).toContain("/share/preview/abc%2F123%20%3F%3D");
   });

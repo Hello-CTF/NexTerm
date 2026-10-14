@@ -132,10 +132,10 @@ describe("MemoryCard", () => {
   });
 
   it("surfaces a list failure with a working retry", async () => {
-    mocks.index.mockRejectedValueOnce(new Error("磁盘炸了")).mockResolvedValueOnce(INDEX_ONE);
+    mocks.index.mockRejectedValueOnce(new Error("disk failure")).mockResolvedValueOnce(INDEX_ONE);
     mounted = mount(createElement(MemoryCard));
     await flush();
-    expect(mounted.container.textContent).toContain("磁盘炸了");
+    expect(mounted.container.textContent).toContain("disk failure");
 
     clickButton(mounted.container, "重试");
     await flush();
@@ -298,7 +298,7 @@ describe("MemoryCard", () => {
 
   it("keeps the entry and reports when the delete itself fails", async () => {
     mocks.ask.mockResolvedValue(true);
-    mocks.delete.mockRejectedValue(new Error("只读数据库"));
+    mocks.delete.mockRejectedValue(new Error("read-only database"));
     mounted = mount(createElement(MemoryCard));
     await flush();
 
@@ -310,7 +310,7 @@ describe("MemoryCard", () => {
   });
 
   it("expands an entry to load its body on demand, with a retry on failure", async () => {
-    mocks.get.mockRejectedValueOnce(new Error("网络抖动")).mockResolvedValueOnce(ENTRY_FULL);
+    mocks.get.mockRejectedValueOnce(new Error("network glitch")).mockResolvedValueOnce(ENTRY_FULL);
     mounted = mount(createElement(MemoryCard));
     await flush();
 
@@ -353,7 +353,7 @@ describe("MemoryCard", () => {
   });
 
   it("closes the form and reports when the edit body fails to load", async () => {
-    mocks.get.mockRejectedValue(new Error("网络抖动"));
+    mocks.get.mockRejectedValue(new Error("network glitch"));
     mounted = mount(createElement(MemoryCard));
     await flush();
 
@@ -368,7 +368,7 @@ describe("MemoryCard", () => {
   });
 
   it("shows the refresh failure instead of the empty state when a reload fails after an empty list", async () => {
-    mocks.index.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("磁盘炸了"));
+    mocks.index.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("disk failure"));
     mounted = mount(createElement(MemoryCard));
     await flush();
     expect(mounted.container.textContent).toContain("还没有记忆");
@@ -376,7 +376,7 @@ describe("MemoryCard", () => {
     clickButton(mounted.container, "刷新");
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("磁盘炸了");
+    expect(text).toContain("disk failure");
     expect(text).not.toContain("还没有记忆");
 
     clickButton(mounted.container, "重试");
@@ -386,7 +386,7 @@ describe("MemoryCard", () => {
   });
 
   it("shows the refresh failure instead of stale entries when a reload fails", async () => {
-    mocks.index.mockResolvedValueOnce(INDEX_ONE).mockRejectedValueOnce(new Error("磁盘炸了"));
+    mocks.index.mockResolvedValueOnce(INDEX_ONE).mockRejectedValueOnce(new Error("disk failure"));
     mounted = mount(createElement(MemoryCard));
     await flush();
     expect(mounted.container.textContent).toContain("m-1");
@@ -394,7 +394,7 @@ describe("MemoryCard", () => {
     clickButton(mounted.container, "刷新");
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("磁盘炸了");
+    expect(text).toContain("disk failure");
     expect(text).not.toContain("m-1");
   });
 
@@ -412,7 +412,7 @@ describe("MemoryCard", () => {
     expect(mounted.container.textContent).toContain("m-1");
   });
 
-  it("卡片说明只陈述 scope 隔离，注入细节由开关区说明", async () => {
+  it("limits the card description to scope isolation and leaves injection details to the toggle section", async () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
     const text = mounted.container.textContent ?? "";

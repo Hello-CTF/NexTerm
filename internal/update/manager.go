@@ -2,7 +2,6 @@ package update
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -117,10 +116,10 @@ func (m *Manager) Check(ctx context.Context) Status {
 
 func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if !m.CanInstall {
-		return Result{UnavailableReason: "server 模式不支持桌面应用内安装"}, nil
+		return Result{UnavailableReason: "服务端模式不支持桌面应用内安装"}, nil
 	}
 	if !m.installing.CompareAndSwap(false, true) {
-		return Result{}, fmt.Errorf("正在安装更新，请稍候")
+		return Result{}, userErrorf(UserErrorBadParam, "正在安装更新，请稍候")
 	}
 	defer m.installing.Store(false)
 	status := m.Check(ctx)
@@ -132,7 +131,7 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{UnavailableReason: reason}, nil
 	}
 	if version != "" && version != status.Version {
-		return Result{}, fmt.Errorf("待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
+		return Result{}, userErrorf(UserErrorBadParam, "待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
 	}
 	asset, sums, err := m.resolveAsset(ctx, status.Version)
 	if err != nil {
@@ -172,7 +171,7 @@ func (m *Manager) resolveAsset(ctx context.Context, version string) (Asset, map[
 	defer cancel()
 	releases, err := m.fetchReleases(ctx)
 	if err != nil {
-		return Asset{}, nil, fmt.Errorf("检查更新失败: %w", err)
+		return Asset{}, nil, userErrorf(UserErrorIO, "检查更新失败: %w", err)
 	}
 	acceptPre := acceptsPrerelease(m.CurrentVersion)
 	for _, release := range releases {
@@ -188,11 +187,11 @@ func (m *Manager) resolveAsset(ctx context.Context, version string) (Asset, map[
 		}
 		sums, err := m.fetchChecksums(ctx, release)
 		if err != nil {
-			return Asset{}, nil, fmt.Errorf("获取校验和失败: %w", err)
+			return Asset{}, nil, userErrorf(UserErrorIO, "获取校验和失败: %w", err)
 		}
 		return asset, sums, nil
 	}
-	return Asset{}, nil, fmt.Errorf("release %s 不存在或不可用", version)
+	return Asset{}, nil, userErrorf(UserErrorNotFound, "版本 %s 不存在或不可用", version)
 }
 
 func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string) error {
@@ -205,11 +204,11 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 	request.Header.Set("User-Agent", "NexTerm-updater")
 	response, err := m.httpClient().Do(request)
 	if err != nil {
-		return fmt.Errorf("下载 %s 失败: %w", asset.Name, err)
+		return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载 %s 返回 %s", asset.Name, response.Status)
+		return userErrorf(UserErrorIO, "下载 %s 返回 %s", asset.Name, response.Status)
 	}
 	total := asset.Size
 	if response.ContentLength > 0 {
@@ -227,7 +226,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
 			if _, err := file.Write(buffer[:count]); err != nil {
-				return fmt.Errorf("写入 %s 失败: %w", asset.Name, err)
+				return userErrorf(UserErrorIO, "写入 %s 失败: %w", asset.Name, err)
 			}
 			transferred += int64(count)
 			m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total})
@@ -236,7 +235,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 			break
 		}
 		if readErr != nil {
-			return fmt.Errorf("下载 %s 失败: %w", asset.Name, readErr)
+			return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, readErr)
 		}
 	}
 	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total, Done: true})
@@ -245,7 +244,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 
 func (m *Manager) Restart(ctx context.Context) Result {
 	if m.RestartFunc == nil {
-		return Result{UnavailableReason: "server 模式不支持应用内重启"}
+		return Result{UnavailableReason: "服务端模式不支持应用内重启"}
 	}
 	target := m.restartTarget
 	if target == "" {

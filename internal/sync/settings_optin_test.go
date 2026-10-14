@@ -53,7 +53,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !viewB.KnownHost || !viewB.AIProfile {
-		t.Fatalf("u-b 应保持默认开启: %+v", viewB)
+		t.Fatalf("u-b must keep the default enabled state: %+v", viewB)
 	}
 	// The underlying keys are isolated per user; no global key exists.
 	var globalRows int
@@ -62,7 +62,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if globalRows != 0 {
-		t.Fatal("不得写全局 opt-in 键")
+		t.Fatal("must not write global opt-in keys")
 	}
 	// Disabling known_host does not affect the AI profile default-on state.
 	if _, err := instance.service.KindOptInSet(ctxA, KindOptInPatch{KnownHost: boolPtr(false)}); err != nil {
@@ -73,7 +73,7 @@ func TestKindOptInSetAndGetPerUserIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if viewA.KnownHost || !viewA.AIProfile {
-		t.Fatalf("关闭 known_host 后状态错误: %+v", viewA)
+		t.Fatalf("state after disabling known_host is incorrect: %+v", viewA)
 	}
 }
 

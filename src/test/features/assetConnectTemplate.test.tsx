@@ -60,7 +60,7 @@ const KEY = "nexterm.connectTemplates.v1";
 
 const TEMPLATE: ConnectTemplate = {
   id: "t-1",
-  name: "生产模板",
+  name: "production template",
   kind: "ssh",
   port: 2222,
   username: "deploy",
@@ -149,9 +149,9 @@ function fillHost(host: string) {
   setInputValue(input, host);
 }
 
-describe("AssetEditor 存为模板", () => {
-  it("保存除名称/主机外的连接参数并持久化", async () => {
-    mocks.promptText.mockResolvedValue("生产模板");
+describe("AssetEditor save as template", () => {
+  it("persists connection parameters except name and host", async () => {
+    mocks.promptText.mockResolvedValue("production template");
     mountEditor();
     await flush();
     setInputValue(inputOf("名称"), "web-01");
@@ -165,7 +165,7 @@ describe("AssetEditor 存为模板", () => {
     expect(mocks.promptText).toHaveBeenCalledWith("模板名称", "web-01");
     const saved = useConnectTemplates.getState().templates[0]!;
     expect(saved).toMatchObject({
-      name: "生产模板",
+      name: "production template",
       kind: "ssh",
       port: 2222,
       username: "deploy",
@@ -174,11 +174,11 @@ describe("AssetEditor 存为模板", () => {
     expect(saved).not.toHaveProperty("host");
     const persisted = JSON.parse(localStorage.getItem(KEY) ?? "[]") as Record<string, unknown>[];
     expect(persisted).toHaveLength(1);
-    expect(persisted[0]).toMatchObject({ name: "生产模板", port: 2222, username: "deploy" });
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已存为模板「生产模板」");
+    expect(persisted[0]).toMatchObject({ name: "production template", port: 2222, username: "deploy" });
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已存为模板「production template」");
   });
 
-  it("取消输入模板名则不保存", async () => {
+  it("does not save when template name input is cancelled", async () => {
     mocks.promptText.mockResolvedValue(null);
     mountEditor();
     await flush();
@@ -188,7 +188,7 @@ describe("AssetEditor 存为模板", () => {
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
-  it("编辑已有资产不显示模板入口", async () => {
+  it("hides template controls when editing an existing asset", async () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     mountEditor({
       id: "a1",
@@ -220,14 +220,14 @@ describe("AssetEditor 存为模板", () => {
   });
 });
 
-describe("AssetEditor 从模板创建", () => {
-  it("无模板时不显示模板行", async () => {
+describe("AssetEditor creation from templates", () => {
+  it("hides the template row when no templates exist", async () => {
     mountEditor();
     await flush();
     expect(templateSelect()).toBeNull();
   });
 
-  it("选择模板预填连接参数, 名称/主机保持空白", async () => {
+  it("prefills connection parameters from the selected template and leaves name and host blank", async () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     mountEditor();
     await flush();
@@ -248,7 +248,7 @@ describe("AssetEditor 从模板创建", () => {
     expect(startup?.value).toBe("htop");
   });
 
-  it("套用模板后保存走模板参数", async () => {
+  it("saves with template parameters after applying a template", async () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     const { onSaved } = mountEditor();
     await flush();
@@ -274,7 +274,7 @@ describe("AssetEditor 从模板创建", () => {
     );
   });
 
-  it("删除模板后入口消失并清出存储", async () => {
+  it("deleting a template hides the controls and clears storage", async () => {
     localStorage.setItem(KEY, JSON.stringify([TEMPLATE]));
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     mountEditor();

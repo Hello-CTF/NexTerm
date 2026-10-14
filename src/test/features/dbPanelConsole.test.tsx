@@ -93,7 +93,7 @@ function mountMysql(): void {
 
 function cmdInput(): HTMLInputElement {
   const input = mounted?.container.querySelector<HTMLInputElement>('input[aria-label="Redis 命令"]');
-  if (!input) throw new Error("命令输入框未找到");
+  if (!input) throw new Error("command input not found");
   return input;
 }
 
@@ -101,7 +101,7 @@ async function expandConsole(): Promise<void> {
   const bar = [...(mounted?.container.querySelectorAll("button") ?? [])].find((b) =>
     b.textContent?.includes("控制台"),
   );
-  if (!bar) throw new Error("控制台折叠条未找到");
+  if (!bar) throw new Error("console collapse bar not found");
   click(bar);
   await flushUntil(
     () => mounted?.container.querySelector('input[aria-label="Redis 命令"]') !== null,
@@ -125,7 +125,7 @@ async function selectKey(key: string): Promise<void> {
   const row = [...mounted!.container.querySelectorAll(".nx-row")].find((r) =>
     r.textContent?.includes(key),
   );
-  if (!row) throw new Error(`键行未找到: ${key}`);
+  if (!row) throw new Error(`key row not found: ${key}`);
   click(row);
   await flushUntil(() =>
     [...mounted!.container.querySelectorAll("button")].some(
@@ -134,8 +134,8 @@ async function selectKey(key: string): Promise<void> {
   );
 }
 
-describe("DbPanel Redis 控制台可访问性", () => {
-  it("命令输入有可访问名，输出通过 status 区域播报", async () => {
+describe("DbPanel Redis console accessibility", () => {
+  it("the command input has an accessible name and output is announced via a status region", async () => {
     mountRedis();
     await expandConsole();
     setInputValue(cmdInput(), "INFO memory");
@@ -145,7 +145,7 @@ describe("DbPanel Redis 控制台可访问性", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("提示文案说明危险命令确认规则与引号限制", async () => {
+  it("the hint explains the dangerous-command confirmation rule and the quoting limitation", async () => {
     mountRedis();
     await expandConsole();
     const text = mounted!.container.textContent ?? "";
@@ -156,8 +156,8 @@ describe("DbPanel Redis 控制台可访问性", () => {
   });
 });
 
-describe("DbPanel Redis 控制台折叠", () => {
-  it("默认折叠成一行条，展开可执行，收起后回到一行条并保留输出预览", async () => {
+describe("DbPanel Redis console collapse", () => {
+  it("collapsed to a one-line bar by default; expandable, and collapsing returns to the bar keeping an output preview", async () => {
     mountRedis();
     await flushUntil(() => mounted!.container.textContent?.includes("控制台") === true);
     expect(mounted!.container.querySelector('input[aria-label="Redis 命令"]')).toBeNull();
@@ -181,13 +181,13 @@ describe("DbPanel Redis 控制台折叠", () => {
     expect(collapsedBar?.textContent).toContain("OK");
   });
 
-  it("折叠条与收起按钮通过 aria-controls 关联控制台区域", async () => {
+  it("the collapse bar and collapse button are linked to the console region via aria-controls", async () => {
     mountRedis();
     await flushUntil(() => mounted!.container.textContent?.includes("控制台") === true);
     const bar = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
-    if (!bar) throw new Error("控制台折叠条未找到");
+    if (!bar) throw new Error("console collapse bar not found");
     const panelId = bar.getAttribute("aria-controls");
     expect(panelId).toBeTruthy();
     expect(bar.getAttribute("aria-expanded")).toBe("false");
@@ -211,8 +211,8 @@ describe("DbPanel Redis 控制台折叠", () => {
   });
 });
 
-describe("DbPanel Redis 控制台危险命令门禁", () => {
-  it("FLUSHALL 先弹警告确认；取消则不执行", async () => {
+describe("DbPanel Redis console dangerous-command gate", () => {
+  it("FLUSHALL asks for warning confirmation first; cancel does not execute", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     mountRedis();
     await expandConsole();
@@ -227,7 +227,7 @@ describe("DbPanel Redis 控制台危险命令门禁", () => {
     expect(statusOut()).toBeNull();
   });
 
-  it("确认后 FLUSHALL 真正执行并播报结果", async () => {
+  it("confirmed FLUSHALL actually executes and announces the result", async () => {
     mountRedis();
     await expandConsole();
     setInputValue(cmdInput(), "FLUSHALL");
@@ -248,7 +248,7 @@ describe("DbPanel Redis 控制台危险命令门禁", () => {
     "EVALSHA",
     "FCALL",
     "flushall",
-  ])("%s 同样被门禁拦截，取消即不执行", async (command) => {
+  ])("%s is also gated; cancel does not execute", async (command) => {
     mocks.ask.mockResolvedValueOnce(false);
     mountRedis();
     await expandConsole();
@@ -263,8 +263,8 @@ describe("DbPanel Redis 控制台危险命令门禁", () => {
   });
 });
 
-describe("DbPanel Redis 修改过期时间", () => {
-  it("非整数输入直接报错，不调用后端", async () => {
+describe("DbPanel Redis edit TTL", () => {
+  it("non-integer input errors immediately without calling the backend", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("abc");
     clickButton(mounted!.container, "修改过期时间");
@@ -273,7 +273,7 @@ describe("DbPanel Redis 修改过期时间", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
   });
 
-  it("小数输入同样拒绝", async () => {
+  it("decimal input is also rejected", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("1.5");
     clickButton(mounted!.container, "修改过期时间");
@@ -281,7 +281,7 @@ describe("DbPanel Redis 修改过期时间", () => {
     expect(mocks.redisSetTtl).not.toHaveBeenCalled();
   });
 
-  it.each(["-2", "-42"])("%s 等 -1 以外的负数会被拒绝，不调用后端", async (input) => {
+  it.each(["-2", "-42"])("negatives other than -1 such as %s are rejected without calling the backend", async (input) => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce(input);
     clickButton(mounted!.container, "修改过期时间");
@@ -290,7 +290,7 @@ describe("DbPanel Redis 修改过期时间", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
   });
 
-  it("-1 照常提交（永不过期）", async () => {
+  it("-1 is submitted as usual (never expire)", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("-1");
     clickButton(mounted!.container, "修改过期时间");
@@ -300,7 +300,7 @@ describe("DbPanel Redis 修改过期时间", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "过期时间已更新");
   });
 
-  it("输入 0 时提示会立即删除该键，确认后照常提交", async () => {
+  it("entering 0 warns that the key is deleted immediately, then submits after confirmation", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("0");
     clickButton(mounted!.container, "修改过期时间");
@@ -314,20 +314,20 @@ describe("DbPanel Redis 修改过期时间", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "过期时间已更新");
   });
 
-  it("后端失败时报错，不再提示成功、不再刷新", async () => {
+  it("backend failure reports the error, with no success toast and no refresh", async () => {
     await selectKey("k1");
     mocks.promptText.mockResolvedValueOnce("120");
-    mocks.redisSetTtl.mockRejectedValueOnce(new Error("NOAUTH 未授权"));
+    mocks.redisSetTtl.mockRejectedValueOnce(new Error("NOAUTH Authentication required."));
     clickButton(mounted!.container, "修改过期时间");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "NOAUTH 未授权");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "NOAUTH Authentication required.");
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
     expect(mocks.redisInspect).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("DbPanel MySQL 可访问性", () => {
-  it("SQL 编辑器有可访问名，查询结果在 status 区域播报", async () => {
+describe("DbPanel MySQL accessibility", () => {
+  it("the SQL editor has an accessible name and query results are announced via a status region", async () => {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     expect(mounted!.container.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
@@ -344,7 +344,7 @@ describe("DbPanel MySQL 可访问性", () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it("运行按钮与空态如实声明单语句限制", async () => {
+  it("the run button and empty state truthfully state the single-statement limitation", async () => {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
@@ -357,14 +357,14 @@ describe("DbPanel MySQL 可访问性", () => {
   });
 });
 
-describe("DbPanel MySQL 复制 CSV 反馈", () => {
+describe("DbPanel MySQL copy-CSV feedback", () => {
   async function runQuery(): Promise<void> {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("运行"),
     );
-    if (!run) throw new Error("运行按钮未找到");
+    if (!run) throw new Error("run button not found");
     click(run);
     await flushUntil(() =>
       [...mounted!.container.querySelectorAll("button")].some(
@@ -373,7 +373,7 @@ describe("DbPanel MySQL 复制 CSV 反馈", () => {
     );
   }
 
-  it("复制成功后给出成功提示", async () => {
+  it("a success toast is shown after copying", async () => {
     await runQuery();
     clickButton(mounted!.container, "复制 CSV");
     await flushUntil(() => mocks.writeText.mock.calls.length > 0);
@@ -382,11 +382,11 @@ describe("DbPanel MySQL 复制 CSV 反馈", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "CSV 已复制");
   });
 
-  it("复制失败时给出错误提示而不是静默", async () => {
+  it("a failure toast is shown instead of silence", async () => {
     await runQuery();
-    mocks.writeText.mockRejectedValueOnce(new Error("剪贴板不可用"));
+    mocks.writeText.mockRejectedValueOnce(new Error("clipboard unavailable"));
     clickButton(mounted!.container, "复制 CSV");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败：剪贴板不可用");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败：clipboard unavailable");
   });
 });

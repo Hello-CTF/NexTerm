@@ -163,8 +163,8 @@ describe("PreviewConnection contract", () => {
 
   it("passes a non-terminal read_only error frame through without closing", () => {
     const { socket, recorded } = connect("tok");
-    socket.emitText({ type: "error", code: "read_only", message: "预览当前为只读" });
-    expect(recorded.errors).toEqual([{ code: "read_only", message: "预览当前为只读" }]);
+    socket.emitText({ type: "error", code: "read_only", message: "preview is read-only" });
+    expect(recorded.errors).toEqual([{ code: "read_only", message: "preview is read-only" }]);
     expect(recorded.closes).toEqual([]);
     socket.emitText({ type: "control", state: "owner" });
     expect(recorded.controls).toEqual([{ state: "owner" }]);
@@ -172,8 +172,8 @@ describe("PreviewConnection contract", () => {
 
   it("parses terminal error frames with the original code/message contract", () => {
     const { socket, recorded } = connect("tok");
-    socket.emitText({ type: "error", code: "expired", message: "分享链接已过期" });
-    expect(recorded.errors).toEqual([{ code: "expired", message: "分享链接已过期" }]);
+    socket.emitText({ type: "error", code: "expired", message: "share link expired" });
+    expect(recorded.errors).toEqual([{ code: "expired", message: "share link expired" }]);
   });
 
   it("ignores unknown and malformed text frames without throwing", () => {

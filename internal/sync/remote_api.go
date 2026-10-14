@@ -395,7 +395,7 @@ func (c *remoteClient) AdminSetUserState(ctx context.Context, userID, state stri
 	case accountStateResetRequired:
 		action = "reset"
 	default:
-		return ipc.NewError(ipc.CodeBadParam, "不支持的目标账号状态(仅支持 disabled / reset_required)")
+		return ipc.NewError(ipc.CodeBadParam, "不支持的目标账号状态（仅支持 disabled / reset_required）")
 	}
 	return c.api(ctx, http.MethodPost, "/admin/users/"+url.PathEscape(userID)+"/"+action, nil, nil)
 }

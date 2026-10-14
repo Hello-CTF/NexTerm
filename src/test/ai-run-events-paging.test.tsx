@@ -163,9 +163,9 @@ describe("AiSidebar run event paging", () => {
     mocks.hitlSnapshot.mockResolvedValue(pendingSnapshot);
     mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue([
-      { id: "m1", conversationId: "conv-1", role: "user", content: { role: "user", content: "你好", imageCount: 0 }, tokensIn: null, tokensOut: null, createdAt: 1 },
+      { id: "m1", conversationId: "conv-1", role: "user", content: { role: "user", content: "Hello", imageCount: 0 }, tokensIn: null, tokensOut: null, createdAt: 1 },
     ]);
     mocks.runs.mockResolvedValue(runRows);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
@@ -178,7 +178,7 @@ describe("AiSidebar run event paging", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },

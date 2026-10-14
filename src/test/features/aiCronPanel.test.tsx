@@ -156,7 +156,7 @@ describe("CronPanel", () => {
     mounted = undefined;
   });
 
-  it("只读取并展示当前会话的定时任务", async () => {
+  it("reads and displays only the current conversation's scheduled jobs", async () => {
     mounted = mountPanel();
     expect(mounted.container.textContent).toContain("读取中…");
     await flush();
@@ -170,7 +170,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledWith(CONV_ID);
   });
 
-  it("切换会话后按新会话重新读取", async () => {
+  it("reloads jobs for the new conversation after switching conversations", async () => {
     const other = job({ id: "j-2", sessionId: "c-2", prompt: "backup db" });
     mocks.list.mockImplementation((sessionId: string) =>
       Promise.resolve(sessionId === CONV_ID ? [JOB_A] : [other]),
@@ -190,14 +190,14 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).not.toContain("磁盘巡检");
   });
 
-  it("空列表显示当前会话的空提示", async () => {
+  it("shows the current conversation's empty-state hint when the list is empty", async () => {
     mocks.list.mockResolvedValue([]);
     mounted = mountPanel();
     await flush();
     expect(mounted.container.textContent).toContain("这个会话还没有定时任务");
   });
 
-  it("读取失败展示错误并可重试", async () => {
+  it("shows loading errors and allows retry", async () => {
     mocks.list.mockRejectedValueOnce(new Error("存储故障")).mockResolvedValueOnce([JOB_A]);
     mounted = mountPanel();
     await flush();
@@ -211,7 +211,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 
-  it("刷新失败时保留错误而不是旧列表，重试后恢复", async () => {
+  it("keeps the refresh error instead of the stale list and recovers after retry", async () => {
     mocks.list.mockResolvedValueOnce([JOB_A]).mockRejectedValueOnce(new Error("存储故障"));
     mounted = mountPanel();
     await flush();
@@ -228,7 +228,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
-  it("丢弃晚到的旧列表结果", async () => {
+  it("discards late results from an older list request", async () => {
     const stale = deferred<TestJob[]>();
     mocks.list
       .mockReturnValueOnce(stale.promise)
@@ -245,7 +245,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
-  it("停用当前会话的任务并原位更新", async () => {
+  it("disables a job in the current conversation and updates it in place", async () => {
     mocks.setEnabled.mockResolvedValue({ ...JOB_A, enabled: false, revision: 2 });
     mounted = mountPanel();
     await flush();
@@ -258,7 +258,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledTimes(1);
   });
 
-  it("启停失败时如实提示并重新读取", async () => {
+  it("reports enable/disable failures and reloads the list", async () => {
     mocks.setEnabled.mockRejectedValue(new Error("存储故障"));
     mounted = mountPanel();
     await flush();
@@ -271,7 +271,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
-  it("删除前先确认，拒绝则不动作", async () => {
+  it("asks before deletion and does nothing when rejected", async () => {
     mocks.ask.mockResolvedValue(false);
     mounted = mountPanel();
     await flush();
@@ -286,7 +286,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
-  it("确认删除后重新读取，任务消失", async () => {
+  it("reloads after confirmed deletion and removes the job", async () => {
     mocks.ask.mockResolvedValue(true);
     let jobs: TestJob[] = [JOB_A];
     mocks.list.mockImplementation(() => Promise.resolve(jobs));
@@ -305,9 +305,9 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("这个会话还没有定时任务");
   });
 
-  it("删除失败时保留任务并提示", async () => {
+  it("keeps the job and reports deletion failures", async () => {
     mocks.ask.mockResolvedValue(true);
-    mocks.unregister.mockRejectedValue(new Error("只读数据库"));
+    mocks.unregister.mockRejectedValue(new Error("Read-only database"));
     mounted = mountPanel();
     await flush();
 
@@ -317,7 +317,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
-  it("创建表单不再提供所属会话选择，自动落在当前会话", async () => {
+  it("omits the conversation selector from the create form and uses the current conversation automatically", async () => {
     mounted = mountPanel();
     await flush();
 
@@ -325,7 +325,7 @@ describe("CronPanel", () => {
     expect(mounted.container.querySelector('select[aria-label="所属 AI 会话"]')).toBeNull();
     setInputValue(
       mounted.container.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')!,
-      "清理日志",
+      "Clean logs",
     );
     setInputValue(
       mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
@@ -347,7 +347,7 @@ describe("CronPanel", () => {
 
     expect(mocks.register).toHaveBeenCalledWith({
       sessionId: CONV_ID,
-      name: "清理日志",
+      name: "Clean logs",
       prompt: "truncate old logs",
       schedule: "0 4 * * *",
       timezone: "UTC",
@@ -357,7 +357,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 
-  it("创建表单默认折叠高级设置;编辑非默认时区/超时的任务也默认折叠,手动展开后可见", async () => {
+  it("collapses advanced settings by default for create and for edits with non-default timezone or timeout until expanded manually", async () => {
     mounted = mountPanel();
     await flush();
 
@@ -371,7 +371,7 @@ describe("CronPanel", () => {
     const custom = job({
       id: "j-3",
       sessionId: CONV_ID,
-      name: "自定义时区",
+      name: "Custom timezone",
       timezone: "Asia/Shanghai",
       timeout: 0,
     });
@@ -379,7 +379,7 @@ describe("CronPanel", () => {
     click(mounted.container.querySelector('button[title="刷新"]')!);
     await flush();
 
-    clickRowButton(mounted.container, "自定义时区", "编辑");
+    clickRowButton(mounted.container, "Custom timezone", "编辑");
     expect(mounted.container.querySelector('input[aria-label="时区"]')).toBeNull();
 
     clickButton(mounted.container, "高级设置");
@@ -387,11 +387,11 @@ describe("CronPanel", () => {
     expect(tz?.value).toBe("Asia/Shanghai");
   });
 
-  it("编辑空字符串时区（等同默认 UTC）的任务时不自动展开高级设置", async () => {
+  it("does not auto-expand advanced settings when editing a job whose empty timezone is equivalent to UTC", async () => {
     const emptyTz = job({
       id: "j-4",
       sessionId: CONV_ID,
-      name: "空时区任务",
+      name: "Empty timezone job",
       timezone: "",
       timeout: 0,
     });
@@ -399,12 +399,12 @@ describe("CronPanel", () => {
     mounted = mountPanel();
     await flush();
 
-    clickRowButton(mounted.container, "空时区任务", "编辑");
+    clickRowButton(mounted.container, "Empty timezone job", "编辑");
     expect(mounted.container.querySelector('input[aria-label="时区"]')).toBeNull();
     expect(mounted.container.querySelector('input[aria-label="单次执行超时（秒）"]')).toBeNull();
   });
 
-  it("创建被拒时展示后端原因并保留表单", async () => {
+  it("shows the backend rejection reason and preserves the form when creation fails", async () => {
     mocks.register.mockRejectedValue({
       code: "bad_param",
       message: "invalid cron schedule",
@@ -430,7 +430,7 @@ describe("CronPanel", () => {
     expect(mocks.list).toHaveBeenCalledTimes(1);
   });
 
-  it("任务卡片文案：全角冒号、待执行时间点", async () => {
+  it("uses a full-width colon and shows the pending execution time on task cards", async () => {
     const noNext = job({ id: "j-3", sessionId: CONV_ID, nextRunAt: "" });
     mocks.list.mockResolvedValue([noNext]);
     mounted = mountPanel();
@@ -440,7 +440,7 @@ describe("CronPanel", () => {
     expect(text).not.toContain("对账");
   });
 
-  it("模型档案选择器：默认项显式指向当前激活档案，列出全部档案且不暴露密钥", async () => {
+  it("points the model profile default at the active profile, lists every profile, and never exposes keys", async () => {
     mounted = mountPanel();
     await flush();
     clickButton(mounted.container, "新建定时任务");
@@ -457,7 +457,7 @@ describe("CronPanel", () => {
     expect(mocks.modelOverview).toHaveBeenCalled();
   });
 
-  it("创建时把所选模型档案随任务持久化", async () => {
+  it("persists the selected model profile with a newly created job", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-9", sessionId: CONV_ID }));
     mounted = mountPanel();
     await flush();
@@ -488,7 +488,7 @@ describe("CronPanel", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已创建");
   });
 
-  it("编辑任务：预填当前值并披露重建语义，保存时先建停用替身、删旧后按原状态启用", async () => {
+  it("prefills current values, discloses replacement semantics, creates a disabled replacement, deletes the old job, and restores the original enabled state", async () => {
     const withProfile = job({
       id: "j-1",
       sessionId: CONV_ID,
@@ -533,7 +533,7 @@ describe("CronPanel", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
   });
 
-  it("编辑已停用任务时保持停用状态", async () => {
+  it("keeps a disabled job disabled while editing it", async () => {
     const disabledJob = job({ id: "j-2", sessionId: CONV_ID, enabled: false });
     mocks.list.mockResolvedValue([disabledJob]);
     mocks.register.mockResolvedValue(job({ id: "j-11", sessionId: CONV_ID, enabled: false }));
@@ -556,7 +556,7 @@ describe("CronPanel", () => {
     expect(mocks.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("旧任务删除失败（如保存期间开始执行）：回滚清理新任务，不留双任务", async () => {
+  it("rolls back the new job when deleting the old job fails, such as when it starts running during save, without leaving duplicates", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: CONV_ID, enabled: false }));
     mocks.unregister
       .mockRejectedValueOnce(new Error("任务正在执行，不能删除"))
@@ -581,7 +581,7 @@ describe("CronPanel", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("success", "定时任务已更新");
   });
 
-  it("回滚也失败：持久人工处理告警，涉及任务禁止编辑，冲突解决后告警消除", async () => {
+  it("keeps a persistent manual-resolution warning when rollback also fails, disables editing for affected jobs, and clears it after resolution", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: CONV_ID, enabled: false }));
     mocks.unregister.mockRejectedValue(new Error("存储故障"));
     const both = [JOB_A, job({ id: "j-10", sessionId: CONV_ID, enabled: false })];
@@ -613,7 +613,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).not.toContain("请手动删除其中一条");
   });
 
-  it("读取失败不算冲突已解决，告警保留", async () => {
+  it("does not treat a read failure as conflict resolution and keeps the warning", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: CONV_ID, enabled: false }));
     mocks.unregister.mockRejectedValue(new Error("存储故障"));
     const both = [JOB_A, job({ id: "j-10", sessionId: CONV_ID, enabled: false })];
@@ -644,7 +644,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).not.toContain("请手动删除其中一条");
   });
 
-  it("行内启停 pending 时禁止保存；完成后按最新状态提交", async () => {
+  it("blocks saving while the row enable/disable action is pending and submits the latest state after it completes", async () => {
     const slowToggle = deferred<TestJob>();
     mocks.setEnabled.mockReturnValue(slowToggle.promise);
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: CONV_ID, enabled: false }));
@@ -679,7 +679,7 @@ describe("CronPanel", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
   });
 
-  it("替换后启用失败：新任务保持停用并如实提示", async () => {
+  it("keeps the replacement disabled and reports the error when enabling it fails", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: CONV_ID, enabled: false }));
     mocks.setEnabled.mockRejectedValue(new Error("存储故障"));
     mounted = mountPanel();
@@ -697,7 +697,7 @@ describe("CronPanel", () => {
     expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).toBeNull();
   });
 
-  it("保存进行中锁定该行的启停、删除与编辑", async () => {
+  it("locks enable/disable, delete, and edit actions for a row while saving", async () => {
     const slow = deferred<TestJob>();
     mocks.register.mockReturnValue(slow.promise);
     mounted = mountPanel();
@@ -722,7 +722,7 @@ describe("CronPanel", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
   });
 
-  it("编辑打开期间该行禁止删除与重复编辑，启停仍可用", async () => {
+  it("blocks deletion and repeated editing while an edit is open but still allows enable/disable", async () => {
     mounted = mountPanel();
     await flush();
 
@@ -739,7 +739,7 @@ describe("CronPanel", () => {
     expect(rowButton("停用")?.disabled).toBe(false);
   });
 
-  it("执行中的任务不能编辑", async () => {
+  it("does not allow editing a running job", async () => {
     const running = job({
       id: "j-1",
       sessionId: CONV_ID,
@@ -759,13 +759,13 @@ describe("CronPanel", () => {
     expect(edit?.getAttribute("title")).toBe("执行中不能编辑");
   });
 
-  it("未指定档案的任务显示跟随当前档案", async () => {
+  it("shows that a job without an assigned profile follows the current profile", async () => {
     mounted = mountPanel();
     await flush();
     expect(mounted.container.textContent).toContain("跟随当前档案「生产档案」");
   });
 
-  it("任务保存的档案已删除时如实标注，编辑时给出未知档案选项与警告", async () => {
+  it("marks a deleted saved profile and offers an unknown-profile option and warning while editing", async () => {
     const orphan = job({
       id: "j-1",
       sessionId: CONV_ID,
@@ -792,7 +792,7 @@ describe("CronPanel", () => {
     );
   });
 
-  it("档案读取失败时如实提示，任务列表与创建不受影响", async () => {
+  it("reports profile-loading failures without affecting the job list or creation", async () => {
     mocks.modelOverview.mockRejectedValue(new Error("档案服务不可用"));
     const withProfile = job({
       id: "j-1",
@@ -837,7 +837,7 @@ describe("CronPanel", () => {
     });
   });
 
-  it("编辑表单在档案读取失败时显示状态未知，而非误报已删除", async () => {
+  it("shows unknown profile status in the edit form when profile loading fails instead of claiming deletion", async () => {
     mocks.modelOverview.mockRejectedValue(new Error("档案服务不可用"));
     const withProfile = job({
       id: "j-1",
@@ -866,7 +866,7 @@ describe("CronPanel", () => {
     ).toBe(true);
   });
 
-  it("档案加载中时默认项如实显示读取中，加载完成后更新", async () => {
+  it("shows the loading state in the profile default option and updates it after loading completes", async () => {
     const slow = deferred<typeof OVERVIEW>();
     mocks.modelOverview.mockReturnValue(slow.promise);
     mounted = mountPanel();
@@ -883,7 +883,7 @@ describe("CronPanel", () => {
     expect([...select.options][0]?.textContent).toContain("跟随当前档案「生产档案」");
   });
 
-  it("提交前发现所选档案已删除时拒绝创建并如实提示", async () => {
+  it("rejects creation and reports it when the selected profile is found to be deleted before submission", async () => {
     mounted = mountPanel();
     await flush();
 
@@ -911,7 +911,7 @@ describe("CronPanel", () => {
     expect(mounted.container.textContent).toContain("所选模型档案已不存在");
   });
 
-  it("档案变更（revision 递增）后刷新档案数据", async () => {
+  it("refreshes profile data after the profile revision increments", async () => {
     mocks.modelOverview.mockResolvedValue({ profiles: [], activeId: null });
     mounted = mountPanel();
     await flush();
@@ -924,11 +924,11 @@ describe("CronPanel", () => {
     expect(mocks.modelOverview).toHaveBeenCalledTimes(2);
   });
 
-  it("窄屏结构：长任务名断行不溢出，模型档案选择器行可折行", async () => {
+  it("wraps long job names without overflowing narrow screens and allows the model profile row to wrap", async () => {
     const longName = job({
       id: "j-1",
       sessionId: CONV_ID,
-      name: "r120-磁盘巡检任务名称故意取得很长用来验证窄屏折行",
+      name: "r120-intentionally-long-disk-inspection-job-name-for-narrow-screen-wrapping",
     });
     mocks.list.mockResolvedValue([longName]);
     mounted = mountPanel();
@@ -952,11 +952,11 @@ describe("CronPanel", () => {
     expect(select.value).toBe("");
   });
 
-  it("下次执行取计划、重试与熔断时间的最晚者，停用状态优先且不显示待执行", async () => {
+  it("uses the latest of schedule, retry, and circuit-breaker times for next execution and prioritizes disabled state without showing pending execution", async () => {
     const scheduled = job({
       id: "j-scheduled",
       sessionId: CONV_ID,
-      name: "最晚时间",
+      name: "Latest time",
       nextRunAt: "2030-01-01T02:00:00Z",
       retryAt: "2031-02-03T04:00:00Z",
       circuitOpenUntil: "2032-04-05T06:00:00Z",
@@ -973,7 +973,7 @@ describe("CronPanel", () => {
     const disabled = job({
       id: "j-disabled",
       sessionId: CONV_ID,
-      name: "已停用任务",
+      name: "Disabled job",
       enabled: false,
       nextRunAt: "2030-01-01T02:00:00Z",
       retryAt: "2031-02-03T04:00:00Z",
@@ -992,8 +992,8 @@ describe("CronPanel", () => {
     expect(text).not.toContain("下次执行");
   });
 
-  it("未保存编辑在切换对象、取消和关闭面板前均要求确认", async () => {
-    const other = job({ id: "j-other", sessionId: CONV_ID, name: "备用任务", prompt: "backup" });
+  it("requires confirmation for unsaved edits before switching jobs, canceling, or closing the panel", async () => {
+    const other = job({ id: "j-other", sessionId: CONV_ID, name: "Backup job", prompt: "backup" });
     mocks.list.mockResolvedValue([JOB_A, other]);
     mocks.ask.mockResolvedValue(false);
     mounted = mountPanel();
@@ -1004,7 +1004,7 @@ describe("CronPanel", () => {
       mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
       "dirty draft",
     );
-    clickRowButton(mounted.container, "备用任务", "编辑");
+    clickRowButton(mounted.container, "Backup job", "编辑");
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')?.value).toBe("dirty draft");
@@ -1018,7 +1018,7 @@ describe("CronPanel", () => {
     expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).not.toBeNull();
 
     mocks.ask.mockResolvedValue(true);
-    clickRowButton(mounted.container, "备用任务", "编辑");
+    clickRowButton(mounted.container, "Backup job", "编辑");
     await flush();
     expect(mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')?.value).toBe("backup");
 

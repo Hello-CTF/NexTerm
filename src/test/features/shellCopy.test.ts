@@ -44,7 +44,7 @@ function ws(panes: Pane[]): Workspace {
 }
 
 describe("describeError", () => {
-  it("已知 code 映射为短中文标签并保留原始 message", () => {
+  it("maps known codes to short Chinese labels and preserves the original message", () => {
     expect(describeError({ code: "not_found", message: "session not found" })).toBe(
       "资源不存在：session not found",
     );
@@ -56,7 +56,7 @@ describe("describeError", () => {
     );
   });
 
-  it("message 已带同义中文前缀时不再叠加 code 前缀", () => {
+  it("does not prepend the code label when the message already has an equivalent Chinese prefix", () => {
     expect(describeError({ code: "internal", message: "内部错误: SSH handshake: x" })).toBe(
       "内部错误: SSH handshake: x",
     );
@@ -66,7 +66,7 @@ describe("describeError", () => {
     expect(describeError({ code: "io", message: "IO 错误: no space left" })).toBe("IO 错误: no space left");
   });
 
-  it("已知 code db_migrate 映射为中文标签，message 已带前缀时不叠加", () => {
+  it("maps db_migrate to a Chinese label without duplicating an existing prefix", () => {
     expect(describeError({ code: "db_migrate", message: "checksum mismatch" })).toBe(
       "数据库迁移错误：checksum mismatch",
     );
@@ -75,7 +75,7 @@ describe("describeError", () => {
     );
   });
 
-  it("未知 code 保留 code: message 诊断", () => {
+  it("preserves code: message diagnostics for unknown codes", () => {
     expect(describeError({ code: "some_future_code", message: "checksum mismatch" })).toBe(
       "some_future_code: checksum mismatch",
     );
@@ -84,7 +84,7 @@ describe("describeError", () => {
     );
   });
 
-  it("provider 与迁移 code 映射为中文标签", () => {
+  it("maps provider and migration codes to Chinese labels", () => {
     expect(describeError({ code: "winrm", message: "WinRM host is empty" })).toBe(
       "WinRM 错误：WinRM host is empty",
     );
@@ -99,7 +99,7 @@ describe("describeError", () => {
     );
   });
 
-  it("非 AppError 输入保持原有行为", () => {
+  it("preserves existing behavior for non-AppError inputs", () => {
     expect(describeError(null)).toBe("未知错误");
     expect(describeError(undefined)).toBe("未知错误");
     expect(describeError("plain")).toBe("plain");
@@ -110,7 +110,7 @@ describe("describeError", () => {
 });
 
 describe("sessionStatusText", () => {
-  it("会话状态映射为中文标签", () => {
+  it("maps session states to Chinese labels", () => {
     expect(sessionStatusText("connected")).toBe("已连接");
     expect(sessionStatusText("connecting")).toBe("连接中");
     expect(sessionStatusText("reconnecting")).toBe("重连中");
@@ -130,7 +130,7 @@ describe("connectProgressText", () => {
     port: 22,
   });
 
-  it("连接阶段映射为中文文案", () => {
+  it("maps connection stages to Chinese copy", () => {
     expect(connectStageText("auth")).toBe("准备认证");
     expect(connectStageText("dial")).toBe("TCP 拨号");
     expect(connectStageText("channel")).toBe("经跳板打开通道");
@@ -138,7 +138,7 @@ describe("connectProgressText", () => {
     expect(connectStageText("unexpected")).toBe("unexpected");
   });
 
-  it("目标主机与第几跳可区分", () => {
+  it("distinguishes the target host from the hop number", () => {
     expect(connectProgressText(at("dial", 0))).toBe("目标主机 · TCP 拨号");
     expect(connectProgressText(at("handshake", 1, 2))).toBe("跳板 1/2 · SSH 握手认证");
     expect(connectProgressText(at("channel", 2, 2))).toBe("跳板 2/2 · 经跳板打开通道");
@@ -150,7 +150,7 @@ describe("modHint", () => {
     setMacPlatform(false);
   });
 
-  it("Mac 显示 ⌘，其他平台显示 Ctrl", () => {
+  it("shows the command symbol on macOS and Ctrl elsewhere", () => {
     setMacPlatform(true);
     expect(modHint()).toBe("⌘");
     setMacPlatform(false);
@@ -158,13 +158,13 @@ describe("modHint", () => {
   });
 });
 
-describe("closeWorkspace 批量关闭", () => {
+describe("closeWorkspace batch close", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
   });
 
-  it("关闭失败 toast 汇总为一条并带中文标签诊断", async () => {
+  it("summarizes close failures in one toast with Chinese diagnostic labels", async () => {
     const tab = terminal();
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -184,7 +184,7 @@ describe("closeWorkspace 批量关闭", () => {
     expect(useUi.getState().workspaces).toHaveLength(0);
   });
 
-  it("取消汇总确认时零 IPC、零关闭", async () => {
+  it("performs no IPC or closes when the summary confirmation is canceled", async () => {
     const tab = terminal();
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
@@ -202,7 +202,7 @@ describe("closeWorkspace 批量关闭", () => {
     expect(useUi.getState().toasts).toHaveLength(0);
   });
 
-  it("dirty 与 blocked 合并为一次汇总确认", async () => {
+  it("combines dirty and blocked tabs into one summary confirmation", async () => {
     const tab = terminal();
     const dirtyTab: AppTab = {
       id: "file-1",

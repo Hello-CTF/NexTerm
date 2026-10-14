@@ -148,7 +148,7 @@ async function clickMenuItem(label: string): Promise<void> {
   act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-describe("TerminalPane 命令输入的真实发送反馈", () => {
+describe("TerminalPane truthful command-input send feedback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
@@ -163,7 +163,7 @@ describe("TerminalPane 命令输入的真实发送反馈", () => {
     useUi.setState({ toasts: [] });
   });
 
-  it("真正写出后才提示命令已发送", async () => {
+  it("shows the command-sent toast only after the write succeeds", async () => {
     seedTab();
     mounted = mount(
       createElement(TerminalPane, {
@@ -184,7 +184,7 @@ describe("TerminalPane 命令输入的真实发送反馈", () => {
     expect(new TextDecoder().decode(data)).toBe("echo hi\n");
   });
 
-  it("观察者发送时不提示已发送，只提示接管", async () => {
+  it("shows only the takeover notice for observer sends, not command-sent", async () => {
     seedTab();
     mocks.listLive.mockResolvedValue([
       {
@@ -220,7 +220,7 @@ describe("TerminalPane 命令输入的真实发送反馈", () => {
     expect(toastTexts()).not.toContain("success:命令已发送");
   });
 
-  it("写出失败时展示真实错误，不提示已发送", async () => {
+  it("shows the real error when the write fails and does not show command-sent", async () => {
     seedTab();
     mocks.write.mockRejectedValue(new Error("boom"));
     mounted = mount(

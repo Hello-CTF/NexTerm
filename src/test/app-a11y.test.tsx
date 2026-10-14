@@ -83,8 +83,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("地标与跳转链接", () => {
-  it("主内容暴露 main 地标并作为跳转目标", async () => {
+describe("landmarks and skip link", () => {
+  it("exposes the main content as a main landmark and skip target", async () => {
     mounted = mountApp();
     await flush();
 
@@ -95,7 +95,7 @@ describe("地标与跳转链接", () => {
     expect(main?.getAttribute("tabindex")).toBe("-1");
   });
 
-  it("每个 navigation 地标都有可访问名称", async () => {
+  it("gives every navigation landmark an accessible name", async () => {
     mounted = mountApp();
     await flush();
 
@@ -109,7 +109,7 @@ describe("地标与跳转链接", () => {
     expect(dock?.getAttribute("aria-label")).toBe("左栏");
   });
 
-  it("跳转链接是应用首个子元素并指向主内容", async () => {
+  it("makes the skip link the app's first child and points it at the main content", async () => {
     mounted = mountApp();
     await flush();
 
@@ -122,8 +122,8 @@ describe("地标与跳转链接", () => {
   });
 });
 
-describe("主导航悬浮说明", () => {
-  it("每个 rail 按钮的悬浮提示都是比短标签更长的用途说明", async () => {
+describe("main navigation tooltips", () => {
+  it("uses purpose descriptions longer than the short labels for every rail button", async () => {
     mounted = mountApp();
     await flush();
 
@@ -134,11 +134,11 @@ describe("主导航悬浮说明", () => {
       const title = button.getAttribute("data-tip");
       expect(label, title ?? undefined).toBeTruthy();
       expect(title, label ?? undefined).toBeTruthy();
-      expect(title!.length, `${label} 的悬浮说明应比标签长`).toBeGreaterThan(label!.length);
+      expect(title!.length, `${label} tooltip should be longer than its label`).toBeGreaterThan(label!.length);
     }
   });
 
-  it("新建终端的悬浮说明区分已连接、断线重连与本机终端", async () => {
+  it("distinguishes connected, reconnecting, and local-terminal cases in the new-terminal tooltip", async () => {
     mounted = mountApp();
     await flush();
 
@@ -150,8 +150,8 @@ describe("主导航悬浮说明", () => {
   });
 });
 
-describe("toast 播报", () => {
-  it("普通 toast 通过 role=status 礼貌播报", async () => {
+describe("toast announcements", () => {
+  it("politely announces regular toasts through role=status", async () => {
     useUi.setState({ toasts: [toast(1, "info", "已取消连接")] });
     mounted = mountApp();
     await flush();
@@ -161,7 +161,7 @@ describe("toast 播报", () => {
     expect(announcer()?.querySelector('[role="alert"]')?.textContent).toBe("");
   });
 
-  it("成功 toast 也通过 role=status 礼貌播报", async () => {
+  it("also politely announces success toasts through role=status", async () => {
     useUi.setState({ toasts: [toast(1, "success", "已结束进程")] });
     mounted = mountApp();
     await flush();
@@ -171,7 +171,7 @@ describe("toast 播报", () => {
     expect(announcer()?.querySelector('[role="alert"]')?.textContent).toBe("");
   });
 
-  it("错误 toast 通过 role=alert 立即播报", async () => {
+  it("immediately announces error toasts through role=alert", async () => {
     useUi.setState({ toasts: [toast(1, "error", "连接失败：超时")] });
     mounted = mountApp();
     await flush();
@@ -181,7 +181,7 @@ describe("toast 播报", () => {
     expect(announcer()?.querySelector('[role="status"]')?.textContent).toBe("");
   });
 
-  it("同类多条只保留最新文本，避免重复播报", async () => {
+  it("keeps only the latest text of each kind to avoid duplicate announcements", async () => {
     useUi.setState({
       toasts: [toast(1, "info", "布局已更新"), toast(2, "info", "布局同步失败")],
     });
@@ -194,7 +194,7 @@ describe("toast 播报", () => {
     expect(box?.textContent).not.toContain("布局已更新");
   });
 
-  it("多条错误只保留最新一条", async () => {
+  it("keeps only the latest of multiple errors", async () => {
     useUi.setState({
       toasts: [toast(1, "error", "连接失败"), toast(2, "error", "连接被拒绝")],
     });
@@ -206,7 +206,7 @@ describe("toast 播报", () => {
     expect(box?.querySelector('[role="alert"]')?.textContent).toBe("连接被拒绝");
   });
 
-  it("普通与错误各自播报，互不干扰", async () => {
+  it("announces regular and error toasts independently", async () => {
     useUi.setState({
       toasts: [toast(1, "info", "已取消连接"), toast(2, "error", "连接失败")],
     });
@@ -218,7 +218,7 @@ describe("toast 播报", () => {
     expect(box?.querySelector('[role="alert"]')?.textContent).toBe("连接失败");
   });
 
-  it("可见 toast 列表自身不再挂实时角色，播报只经 announcer 一份", async () => {
+  it("keeps live roles off the visible toast list so only the announcer speaks", async () => {
     useUi.setState({
       toasts: [toast(1, "info", "已取消连接"), toast(2, "error", "连接失败")],
     });

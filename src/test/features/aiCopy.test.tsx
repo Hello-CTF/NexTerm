@@ -99,7 +99,7 @@ describe("M134 AI copy", () => {
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     useUi.setState({
       rightOpen: true,
@@ -126,7 +126,7 @@ describe("M134 AI copy", () => {
   }
 
   it("points the confirm-card guidance at the real interception-rule setting", async () => {
-    setInputValue(composer(), "跑个命令");
+    setInputValue(composer(), "Run a command");
     click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flush();
     emit({
@@ -151,7 +151,7 @@ describe("M134 AI copy", () => {
     click(view!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("设备长期授权仅放行普通终端写入或命令执行");
+    expect(text).toContain("设备长期授权和授权规则仅放行匹配的普通操作");
     expect(text).toContain("高危或无法判断的操作仍逐次确认");
   });
 
@@ -164,30 +164,30 @@ describe("M134 AI copy", () => {
     selector.unmount();
   });
 
-  it("labels the active profile 当前 and keeps the key-storage hint free of internal cross-references", async () => {
+  it("labels the active profile as current and keeps the key-storage hint free of internal cross-references", async () => {
     const manager = mount(createElement(ModelManager, {}));
     await flush();
     const label = manager.container.querySelector("span.nx-hint.mr-auto");
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 加密后保存在本机，仅在发起请求时发送到你配置的模型端点，不会上传到 NexTerm 服务器。");
+    expect(text).toContain("API Key 由当前 NexTerm 实例加密保存；模型请求仅发往你配置的端点。");
     expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();
   });
 
-  it("labels the read_screen tool item 读取屏幕", () => {
+  it("uses the localized read_screen tool label", () => {
     const s = createConversationStream(() => () => undefined);
     s.beginRun(1, "takeover");
-    s.pushEvent(1, { type: "screen", text: "nginx 安装日志" });
+    s.pushEvent(1, { type: "screen", text: "nginx installation log" });
     const item = s
       .getState()
       .items.find((i) => i.role === "tool" && i.name === "read_screen");
     expect(item).toMatchObject({ display: "读取屏幕" });
   });
 
-  it("模型档案读取失败显示错误与重试，不伪装成空配置", async () => {
+  it("shows an error and retry when model profiles fail to load instead of presenting an empty configuration", async () => {
     mocks.overview.mockRejectedValue(new Error("档案服务不可用"));
     const selector = mount(createElement(ModelSelector, { onManage: () => undefined }));
     await flush();

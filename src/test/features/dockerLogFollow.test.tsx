@@ -179,7 +179,7 @@ describe("docker log stream follow", () => {
 
     sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
     sc.dispatchScroll();
-    emitLog("第一行\n");
+    emitLog("first line\n");
     expect(sc.metrics.scrollTop).toBe(1000);
     expect(mounted.container.textContent).not.toContain("↓ 新输出");
   });
@@ -191,13 +191,13 @@ describe("docker log stream follow", () => {
 
     sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
     sc.dispatchScroll();
-    emitLog("第一行\n");
+    emitLog("first line\n");
     expect(sc.metrics.scrollTop).toBe(1000);
 
     sc.setMetrics({ scrollTop: 100 });
     sc.dispatchScroll();
     sc.setMetrics({ scrollHeight: 1600 });
-    emitLog("第二行\n");
+    emitLog("second line\n");
     expect(sc.metrics.scrollTop).toBe(100);
     expect(mounted.container.textContent).toContain("↓ 新输出");
 
@@ -206,7 +206,7 @@ describe("docker log stream follow", () => {
     expect(mounted.container.textContent).not.toContain("↓ 新输出");
 
     sc.setMetrics({ scrollHeight: 2000 });
-    emitLog("第三行\n");
+    emitLog("third line\n");
     expect(sc.metrics.scrollTop).toBe(2000);
   });
 
@@ -217,9 +217,9 @@ describe("docker log stream follow", () => {
 
     sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
     sc.dispatchScroll();
-    emitLog("第一行\n");
+    emitLog("first line\n");
     sc.setMetrics({ scrollHeight: 1200 });
-    emitLog("第二行\n");
+    emitLog("second line\n");
     expect(sc.metrics.scrollTop).toBe(1200);
     expect(mounted.container.textContent).not.toContain("↓ 新输出");
   });

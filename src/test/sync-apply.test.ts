@@ -30,7 +30,7 @@ function captureRpc() {
   return calls;
 }
 
-describe("sync_apply_objects 线上契约", () => {
+describe("sync_apply_objects wire contract", () => {
   beforeEach(() => {
     vi.resetModules();
     installWebEnv();
@@ -39,14 +39,14 @@ describe("sync_apply_objects 线上契约", () => {
     vi.unstubAllGlobals();
   });
 
-  it("applyObjects 使用嵌套 args 信封且对象字段精确", async () => {
+  it("applyObjects wraps args and preserves exact object fields", async () => {
     const calls = captureRpc();
     const { syncApi } = await import("../ipc/commands");
     const objects: SyncApplyObject[] = [
       {
         id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         kind: "group",
-        payload: { id: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "同步分组", sort: 0, createdAt: 1, updatedAt: 100 },
+        payload: { id: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "Synced group", sort: 0, createdAt: 1, updatedAt: 100 },
       },
       {
         id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",

@@ -115,8 +115,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("SettingsView 凭据保护首次初始化引导", () => {
-  it("未初始化时说明启用前无法保存凭据", async () => {
+describe("SettingsView first-run credential protection guidance", () => {
+  it("explains that credentials cannot be saved before protection is initialized", async () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("未初始化");
 
@@ -125,7 +125,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(text).not.toContain("无需密码");
   });
 
-  it("勾选开关后设置密码即完成初始化并刷新状态", async () => {
+  it("initializes protection and refreshes state after the toggle is enabled and a password is set", async () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("尚未初始化");
 
@@ -149,7 +149,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(passwordInput()).toBeNull();
   });
 
-  it("主密码模式显示已开启与每次启动需输入密码", async () => {
+  it("shows enabled state and startup password requirement in master-password mode", async () => {
     mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("已开启");
@@ -159,7 +159,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(protectionToggle()!.checked).toBe(true);
   });
 
-  it("系统免密模式显示未开启与系统级密钥保护说明", async () => {
+  it("shows disabled state and system key protection guidance in system passwordless mode", async () => {
     mocks.vaultStatus.mockResolvedValue(DPAPI_VAULT);
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("未开启");
@@ -169,7 +169,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(text).not.toContain("尚未初始化");
   });
 
-  it("留空密码也能完成初始化", async () => {
+  it("allows initialization with a blank password", async () => {
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("尚未初始化");
 
@@ -190,7 +190,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
   });
 
-  it("无密码凭据库显示「加密已启用 · 未设密码」与设置密码入口，且不展示自动锁定", async () => {
+  it("shows encryption enabled without a password and the set-password entry in a passwordless vault, without auto-lock", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     mounted = withClient(createElement(SettingsView));
     await waitForVaultText("加密已启用 · 未设密码");
@@ -207,7 +207,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(buttons).not.toContain("修改密码");
   });
 
-  it("无密码凭据库点「设置密码」走改密码流程，旧密码自动用空", async () => {
+  it("uses the change-password flow with an empty old password when setting a password in a passwordless vault", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText).mockResolvedValue("brand-new-password");
@@ -230,7 +230,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
   });
 
-  it("无密码凭据库拨动开关同样进入设置密码流程，而不是重复初始化", async () => {
+  it("enters the set-password flow instead of reinitializing when the passwordless vault toggle is changed", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText).mockResolvedValue("brand-new-password");
@@ -245,7 +245,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(mocks.changePassword).toHaveBeenCalledWith("", "brand-new-password");
   });
 
-  it("设置密码时留空新密码视为取消，不调用改密码", async () => {
+  it("treats a blank new password as cancellation and does not change the password", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_VAULT);
     const { promptText } = await import("../../ui/dialogs");
     vi.mocked(promptText).mockResolvedValue("");
@@ -263,7 +263,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("取消勾选开关时改空密码关闭保护", async () => {
+  it("uses an empty password to disable protection when the toggle is switched off", async () => {
     mocks.vaultStatus.mockResolvedValue(MASTER_VAULT);
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);

@@ -88,7 +88,7 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		var timeout time.Duration
 		if input.TimeoutMS != nil && *input.TimeoutMS != 0 {
 			if *input.TimeoutMS > uint64(math.MaxInt64/int64(time.Millisecond)) {
-				return QueryResult{}, badParam(errors.New("timeoutMs 超出范围"))
+				return QueryResult{}, badParam(errors.New("查询超时时间（毫秒）超出范围"))
 			}
 			timeout = time.Duration(*input.TimeoutMS) * time.Millisecond
 		}

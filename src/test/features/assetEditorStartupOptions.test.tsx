@@ -153,8 +153,8 @@ const baseAsset = {
   builtin: false,
 } as unknown as Asset;
 
-describe("AssetEditor SSH 启动配置", () => {
-  it("保存启动命令、终端编码与环境变量", async () => {
+describe("AssetEditor SSH startup options", () => {
+  it("saves the startup command, terminal encoding, and environment variables", async () => {
     mountEditor();
     await flush();
     expandAdvanced();
@@ -172,7 +172,7 @@ describe("AssetEditor SSH 启动配置", () => {
     });
   });
 
-  it("默认值不写入 options", async () => {
+  it("does not write default values to options", async () => {
     mountEditor();
     await flush();
     expandAdvanced();
@@ -183,7 +183,7 @@ describe("AssetEditor SSH 启动配置", () => {
     expect(createdPayload().options).toEqual({});
   });
 
-  it("非法环境变量行阻止保存并提示", async () => {
+  it("rejects invalid environment variable lines and shows an error", async () => {
     mountEditor();
     await flush();
     expandAdvanced();
@@ -196,7 +196,7 @@ describe("AssetEditor SSH 启动配置", () => {
     expect(mounted!.container.textContent).toContain("不是有效的 KEY=VALUE");
   });
 
-  it("编辑含启动命令/编码/环境变量的资产时默认折叠,手动展开后可见", async () => {
+  it("collapses advanced options for an asset with startup settings until expanded manually", async () => {
     const initial = {
       ...baseAsset,
       options: { startupCommand: "echo hi", encoding: "gbk", env: { A: "1" } },
@@ -215,7 +215,7 @@ describe("AssetEditor SSH 启动配置", () => {
     expect(envTextarea().value).toBe("A=1");
   });
 
-  it("编辑含启动命令的资产默认折叠,清空后保存会删除对应 key", async () => {
+  it("starts collapsed for an asset with a startup command and removes its key after clearing and saving", async () => {
     const initial = {
       ...baseAsset,
       options: { startupCommand: "echo hi", encoding: "utf-8", env: { A: "1" } },
@@ -237,7 +237,7 @@ describe("AssetEditor SSH 启动配置", () => {
     expect(updatedPayload().options).toEqual({});
   });
 
-  it("WinRM 与本地资产不渲染 SSH 高级选项", async () => {
+  it("does not render SSH advanced options for WinRM and local assets", async () => {
     mountEditor({ ...baseAsset, kind: "winrm" } as unknown as Asset);
     await flush();
     expect(

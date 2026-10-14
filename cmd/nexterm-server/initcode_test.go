@@ -30,7 +30,7 @@ func TestPrintAccountInitCodeLifecycle(t *testing.T) {
 	const marker = "一次性初始化码: "
 	index := strings.Index(output, marker)
 	if index < 0 {
-		t.Fatalf("控制台未输出初始化码: %q", output)
+		t.Fatalf("initialization code was not printed to console: %q", output)
 	}
 	code := output[index+len(marker):]
 	if lineEnd := strings.Index(code, "\n"); lineEnd >= 0 {
@@ -38,7 +38,7 @@ func TestPrintAccountInitCodeLifecycle(t *testing.T) {
 	}
 	code = strings.TrimSpace(code)
 	if code == "" || strings.ContainsAny(code, " \n\t") {
-		t.Fatalf("初始化码格式异常: %q", code)
+		t.Fatalf("invalid initialization code format: %q", code)
 	}
 
 	console.Reset()
@@ -46,11 +46,11 @@ func TestPrintAccountInitCodeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if console.Len() != 0 {
-		t.Fatalf("初始化码已生成后不得重复输出: %q", console.String())
+		t.Fatalf("initialization code must not be printed again after generation: %q", console.String())
 	}
 
 	if _, err := accounts.InitSuperadmin(ctx, code, "root", "password-123"); err != nil {
-		t.Fatalf("控制台输出的初始化码无法完成初始化: %v", err)
+		t.Fatalf("initialization code printed to console cannot complete initialization: %v", err)
 	}
 
 	console.Reset()
@@ -58,6 +58,6 @@ func TestPrintAccountInitCodeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if console.Len() != 0 {
-		t.Fatalf("已初始化后不得再输出初始化码: %q", console.String())
+		t.Fatalf("initialization code must not be printed after initialization: %q", console.String())
 	}
 }

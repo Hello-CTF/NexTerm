@@ -223,7 +223,7 @@ describe("AiSidebar conversation stream UX", () => {
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     mocks.askChoice.mockResolvedValue("allow");
     mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
@@ -281,7 +281,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("resolves confirmations with full identity and leaves a permanent record", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -301,14 +301,14 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).not.toContain("需要你确认");
     expect(textOf(view!)).toContain("执行命令 · 已允许一次");
 
-    emit({ type: "done", answer: "跑完了" });
+    emit({ type: "done", answer: "Command completed" });
     await flush();
     expect(textOf(view!)).toContain("执行命令 · 已允许一次");
     expect(textOf(view!)).not.toContain("需要你确认");
   });
 
   it("answers questions by option and by free text, cleaning up the card", async () => {
-    await send("问吧");
+    await send("Ask a question");
     emit({
       type: "questionRequired",
       id: "q-1",
@@ -330,7 +330,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({
       type: "questionRequired",
       id: "q-2",
-      question: { question: "部署到哪？", options: [] },
+      question: { question: "Deploy to where?", options: [] },
       confirmationNonce: "nonce-q2",
     });
     const draft = view!.container.querySelector("form.nx-alert textarea");
@@ -348,7 +348,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("shows a persistent alert on error and rejects a late done", async () => {
-    await send("会失败的一轮");
+    await send("Failing run");
     emit({ type: "delta", text: "失败前的输出" });
     act(runFrames);
     emit({ type: "error", message: "网络断开", retryable: true });
@@ -366,14 +366,14 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("streams reasoning in an open details block that folds at run end", async () => {
-    await send("想一想");
+    await send("Think about it");
     emit({ type: "reasoning", text: "第一段推理" });
     emit({ type: "reasoning", text: "第二段" });
     act(runFrames);
     const reasoning = view!.container.querySelector("details");
     expect(reasoning?.open).toBe(true);
     expect(reasoning?.textContent).toContain("第一段推理第二段");
-    emit({ type: "done", answer: "想好了" });
+    emit({ type: "done", answer: "Finished thinking" });
     await flush();
     const settled = view!.container.querySelector("details");
     expect(settled?.open).toBe(false);
@@ -381,7 +381,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("stop records a canceled outcome and a late done cannot overwrite it", async () => {
-    await send("长任务");
+    await send("Long task");
     emit({ type: "delta", text: "已流出的部分" });
     act(runFrames);
     click(view!.container.querySelector('button[title^="停止当前任务"]')!);
@@ -394,7 +394,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).not.toContain("迟到的完整答案");
     expect(textOf(view!)).toContain("已停止本轮");
-    await send("下一句");
+    await send("Next message");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
 
@@ -476,7 +476,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("refuses to delete the current conversation while its run is active", async () => {
-    await send("运行中的问题");
+    await send("Running question");
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
@@ -489,7 +489,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("请先停止"));
     expect(textOf(view!)).toContain("当前会话");
 
-    emit({ type: "done", answer: "运行中的回答" });
+    emit({ type: "done", answer: "Running answer" });
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
@@ -550,7 +550,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
-    await send("第三轮");
+    await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
     );
@@ -590,7 +590,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
-    await send("第三轮");
+    await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
     );
@@ -602,7 +602,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(mocks.takeoverRun).toHaveBeenCalledOnce();
     expect(useUi.getState().takeover?.jobId).toBe("job-t");
-    emit({ type: "screen", text: "nginx 安装日志" });
+    emit({ type: "screen", text: "nginx installation log" });
     emit({ type: "delta", text: "正在安装" });
     act(runFrames);
     expect(textOf(view!)).toContain("正在安装");
@@ -613,7 +613,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(useUi.getState().takeover).toBeNull();
   });
 
-  it("takeover 三选：退出则不启动接管", async () => {
+  it("does not start takeover when the three-choice prompt is aborted", async () => {
     mocks.askChoice.mockResolvedValueOnce("abort");
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
@@ -626,14 +626,14 @@ describe("AiSidebar conversation stream UX", () => {
     expect(useUi.getState().takeover).toBeNull();
   });
 
-  it("takeover 三选：只读则以 allowWrite=false 启动", async () => {
+  it("starts takeover with allowWrite=false when read-only is selected", async () => {
     mocks.askChoice.mockResolvedValueOnce("readonly");
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
     await flush();
     expect(mocks.takeoverRun).toHaveBeenCalledWith(expect.objectContaining({ allowWrite: false }));
     expect(useUi.getState().takeover?.allowWrite).toBe(false);
-    emit({ type: "done", answer: "看完了" });
+    emit({ type: "done", answer: "Finished reviewing" });
     await flush();
     expect(useUi.getState().takeover).toBeNull();
   });
@@ -641,9 +641,9 @@ describe("AiSidebar conversation stream UX", () => {
   it("follows output only at the bottom and offers a jump-back affordance", async () => {
     const sc = stubScroller(view!.container.querySelector('[role="log"]') as HTMLDivElement);
 
-    await send("滚动测试");
+    await send("Scroll test");
     sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-    emit({ type: "delta", text: "第一段" });
+    emit({ type: "delta", text: "First part" });
     act(runFrames);
     expect(sc.scrollCalls.length).toBeGreaterThan(0);
 
@@ -651,7 +651,7 @@ describe("AiSidebar conversation stream UX", () => {
     sc.dispatchScroll();
     const callsBefore = sc.scrollCalls.length;
     sc.setMetrics({ scrollHeight: 1600 });
-    emit({ type: "delta", text: "第二段" });
+    emit({ type: "delta", text: "Second part" });
     act(runFrames);
     expect(sc.scrollCalls.length).toBe(callsBefore);
     expect(textOf(view!)).toContain("↓ 新输出");
@@ -661,13 +661,13 @@ describe("AiSidebar conversation stream UX", () => {
     expect(sc.scrollCalls.at(-1)).toBe(1600);
     expect(textOf(view!)).not.toContain("↓ 新输出");
     sc.setMetrics({ scrollHeight: 2000 });
-    emit({ type: "done", answer: "第一段第二段" });
+    emit({ type: "done", answer: "First partSecond part" });
     await flush();
     expect(sc.scrollCalls.at(-1)).toBe(2000);
   });
 
   it("keeps honoring manual scroll-up after a sidebar close/reopen cycle", async () => {
-    await send("滚动生命周期");
+    await send("Scroll lifecycle");
     const first = view!.container.querySelector('[role="log"]');
     act(() => useUi.setState({ rightOpen: false }));
     expect(view!.container.querySelector('[role="log"]')).toBeNull();
@@ -677,7 +677,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(sc.el).not.toBe(first);
 
     sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-    emit({ type: "delta", text: "重开后的输出" });
+    emit({ type: "delta", text: "Output after reopen" });
     act(runFrames);
     expect(sc.scrollCalls.length).toBeGreaterThan(0);
 
@@ -685,7 +685,7 @@ describe("AiSidebar conversation stream UX", () => {
     sc.dispatchScroll();
     const callsBefore = sc.scrollCalls.length;
     sc.setMetrics({ scrollHeight: 1600 });
-    emit({ type: "delta", text: "继续输出" });
+    emit({ type: "delta", text: "More output" });
     act(runFrames);
     expect(sc.scrollCalls.length).toBe(callsBefore);
     expect(sc.metrics.scrollTop).toBe(100);
@@ -693,7 +693,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("reconnect replay does not duplicate streamed text end to end", async () => {
-    await send("重连测试");
+    await send("Reconnect test");
     emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
     act(runFrames);
     emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
@@ -708,20 +708,20 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("keeps genuinely new identical reasoning after reconnect, end to end", async () => {
-    await send("重复内容");
+    await send("Duplicate content");
     emit({ type: "reasoning", text: "ha", ...perRun(1) });
     act(runFrames);
     emit({ type: "reasoning", text: "ha", ...perRun(2) });
     emit({ type: "reasoning", text: "!", ...perRun(3) });
     act(runFrames);
-    emit({ type: "done", answer: "答案" });
+    emit({ type: "done", answer: "Answer" });
     await flush();
     expect(textOf(view!)).toContain("haha!");
     expect(textOf(view!)).not.toContain("haha!haha!");
   });
 
   it("replays a pending HITL request on reconnect even when its live event was lost", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     mocks.hitlEvents.mockResolvedValueOnce([
       {
         runId: "job-1",
@@ -767,7 +767,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("replays a pending question from the snapshot and answers it", async () => {
-    await send("问吧");
+    await send("Ask a question");
     mocks.hitlEvents.mockResolvedValueOnce([]);
     mocks.hitlSnapshot.mockResolvedValueOnce(
       hitlSnapshotOf("interrupted", [
@@ -798,7 +798,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("settles a card that was answered elsewhere while disconnected", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -824,11 +824,11 @@ describe("AiSidebar conversation stream UX", () => {
     reconnect();
     await flushReplay();
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("执行命令 · 已在服务端回答");
+    expect(textOf(view!)).toContain("执行命令 · 已在服务端处理");
   });
 
   it("closes pending cards when the run terminated while disconnected", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -869,7 +869,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -891,7 +891,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("keeps the card when a confirmation fails but the server still has it pending", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -901,7 +901,7 @@ describe("AiSidebar conversation stream UX", () => {
       requestId: "req-1",
       attempt: 1,
     });
-    mocks.confirm.mockRejectedValueOnce(new Error("网络抖动"));
+    mocks.confirm.mockRejectedValueOnce(new Error("Network jitter"));
     mocks.hitlSnapshot.mockResolvedValueOnce(
       hitlSnapshotOf("interrupted", [hitlInterruptOf()], { attempt: 1, seq: 1 }),
     );
@@ -920,7 +920,7 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("ignores a duplicate click while the confirmation RPC is in flight", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     emit({
       type: "confirmRequired",
       id: "call-1",
@@ -950,10 +950,10 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("does not fire HITL replay for a settled run or the takeover channel", async () => {
-    await send("跑个命令");
+    await send("Run a command");
     const chatChannel = mocks.channels.at(-1);
     expect(mocks.reopens.has(chatChannel)).toBe(true);
-    emit({ type: "done", answer: "完成" });
+    emit({ type: "done", answer: "Done" });
     await flush();
     expect(mocks.reopens.has(chatChannel)).toBe(false);
     expect(mocks.hitlEvents).not.toHaveBeenCalled();
@@ -991,7 +991,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).toContain("AI 任务因应用重启而中断");
     expect(useUi.getState().aiBusy).toBe(false);
 
-    await send("新问题");
+    await send("New question");
     expect(mocks.chat).toHaveBeenCalled();
   });
 
@@ -1007,7 +1007,7 @@ describe("AiSidebar conversation stream UX", () => {
     mocks.runEvents.mockImplementation(async (jobId: string) =>
       jobId === "job-old"
         ? [{ type: "questionRequired", seq: 1, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-old", requestId: "req-old", attempt: 1 }]
-        : [{ type: "delta", seq: 1, text: "较新的中断" }],
+        : [{ type: "delta", seq: 1, text: "Newer interruption" }],
     );
     mocks.hitlSnapshot.mockImplementation(async (jobId: string) =>
       jobId === "job-old"
@@ -1063,7 +1063,7 @@ describe("AiSidebar conversation stream UX", () => {
 
     mocks.runEvents.mockResolvedValue([
       ...questionJournal,
-      { type: "done", seq: 2, answer: "做完了", turns: 1, tokensIn: 1, tokensOut: 1 },
+      { type: "done", seq: 2, answer: "Done", turns: 1, tokensIn: 1, tokensOut: 1 },
     ]);
     mocks.hitlSnapshot.mockResolvedValue(
       hitlSnapshotOf("completed", [], {
@@ -1129,7 +1129,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(useUi.getState().aiBusy).toBe(false);
     expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
     expect(textOf(view!)).toContain("过期");
-    await send("继续新问题");
+    await send("Follow-up question");
     expect(mocks.chat).toHaveBeenCalled();
   });
 
@@ -1178,12 +1178,12 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.runEvents).toHaveBeenCalledTimes(2);
     expect(useUi.getState().aiBusy).toBe(false);
     expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
-    await send("过期之后");
+    await send("After expiration");
     expect(mocks.chat).toHaveBeenCalled();
   });
 
   it("renders a collapsible subagent timeline inside the spawn tool card", async () => {
-    await send("派生子代理");
+    await send("Spawn subagent");
     emit({ type: "toolCall", id: "sp-1", name: "spawn_subagent", display: "spawn_subagent", seq: 1 });
     emit({ type: "subagentDelta", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, text: "正在排查磁盘", seq: 2 });
     emit({ type: "subagentToolCall", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, id: "c1", name: "exec_commands", seq: 3 });

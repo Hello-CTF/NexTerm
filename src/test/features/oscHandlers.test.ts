@@ -68,7 +68,7 @@ describe("createOsc52Handler", () => {
     expect(d.authorize).not.toHaveBeenCalled();
   });
 
-  it("asks once and keeps writing for the rest of the session after 本会话允许", async () => {
+  it("asks once and keeps writing for the rest of the session after allowing for this session", async () => {
     const d = deps("session");
     d.handler("c;aGVsbG8=");
     await flushAuth();
@@ -80,7 +80,7 @@ describe("createOsc52Handler", () => {
     expect(d.onError).not.toHaveBeenCalled();
   });
 
-  it("允许本次 writes only that payload and asks again on the next one", async () => {
+  it("allowing once writes only that payload and asks again on the next one", async () => {
     const d = deps("once");
     d.handler("c;aGVsbG8=");
     await flushAuth();
@@ -92,7 +92,7 @@ describe("createOsc52Handler", () => {
     expect(d.writeText).toHaveBeenCalledTimes(2);
   });
 
-  it("拒绝 drops the payload silently and never asks again for the session", async () => {
+  it("denying drops the payload silently and never asks again for the session", async () => {
     const d = deps("deny");
     d.handler("c;aGVsbG8=");
     await flushAuth();

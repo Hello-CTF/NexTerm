@@ -831,7 +831,7 @@ function AppShell() {
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
       } catch (e) {
-        pushToast("error", `重连失败：${describeError(e)}`);
+        pushToast("error", `重新连接失败：${describeError(e)}`);
       }
       return;
     }
@@ -2156,7 +2156,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
             ["newTerminal", "新建终端"],
             ["quickConnect", "快速连接"],
             ["commandPalette", "命令面板"],
-            ["toggleSidebar", "资产树"],
+            ["toggleSidebar", "左栏"],
             ["toggleAiSidebar", "AI 侧栏"],
           ] as const
         ).map(([id, label]) => (

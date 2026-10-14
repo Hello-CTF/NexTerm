@@ -415,11 +415,11 @@ func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stder
 	code, err := accounts.GenerateInitCode(ctx)
 	if err != nil {
 		if ipc.NormalizeError(err).Code == ipc.CodeForbidden {
-			logger.Warn("初始化码此前已生成; 若遗失, 请清除 setting 表 auth.init_code 后重启以重新生成")
+			logger.Warn("initialization code was already generated; if it is lost, clear auth.init_code in the setting table and restart to regenerate it")
 			return nil
 		}
 		return err
 	}
-	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)\n\n", code)
+	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超级管理员账号初始化(初始化码仅可使用一次)\n\n", code)
 	return nil
 }

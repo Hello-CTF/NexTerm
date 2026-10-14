@@ -59,6 +59,7 @@ describe("confirmMultilinePaste", () => {
     expect(ask).toHaveBeenCalledTimes(1);
     const [message, options] = vi.mocked(ask).mock.calls[0];
     expect(message).toContain("7 行");
+    expect(message).toContain("多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。");
     expect(message).toContain("l1");
     expect(message).toContain("l5");
     expect(message).not.toContain("l6");

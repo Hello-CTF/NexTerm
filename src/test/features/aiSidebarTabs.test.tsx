@@ -92,7 +92,7 @@ async function send(view: MountedView, text: string) {
   await flush();
 }
 
-describe("AiSidebar 多标签", () => {
+describe("AiSidebar multiple tabs", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -141,7 +141,7 @@ describe("AiSidebar 多标签", () => {
     view = null;
   });
 
-  it("新建、切换、关闭标签, 每个标签的会话上下文互不串台", async () => {
+  it("creates, switches, and closes tabs without mixing conversation contexts", async () => {
     await flush();
     expect(stripTabs(view!)).toHaveLength(1);
 
@@ -165,7 +165,7 @@ describe("AiSidebar 多标签", () => {
     expect(textOf(view!)).toContain("问题甲");
     expect(textOf(view!)).not.toContain("问题乙");
 
-    emit({ type: "done", answer: "回答甲" }, 0);
+    emit({ type: "done", answer: "Answer A" }, 0);
     await flush();
     click(stripTabs(view!)[1].querySelector("button")!);
     await flush();
@@ -174,14 +174,14 @@ describe("AiSidebar 多标签", () => {
     expect(textOf(view!)).not.toContain("问题甲");
   });
 
-  it("两个标签可以并行运行: 一个标签忙不阻塞另一个标签发消息", async () => {
+  it("allows two tabs to run in parallel without one busy tab blocking messages in the other", async () => {
     await flush();
-    await send(view!, "并行一");
+    await send(view!, "Parallel one");
     expect(useUi.getState().aiBusy).toBe(true);
 
     click(view!.container.querySelector('button[title="新建 AI 标签"]')!);
     await flush();
-    await send(view!, "并行二");
+    await send(view!, "Parallel two");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
     expect(useUi.getState().aiBusy).toBe(true);
 
@@ -199,9 +199,9 @@ describe("AiSidebar 多标签", () => {
     expect(textOf(view!)).not.toContain("回答二");
   });
 
-  it("运行中的标签关闭需确认：拒绝则保留，确认则停止运行并关闭", async () => {
+  it("asks for confirmation before closing a running tab: cancel keeps it, confirm stops and closes it", async () => {
     await flush();
-    await send(view!, "长跑任务");
+    await send(view!, "Long-running task");
     mocks.ask.mockResolvedValue(false);
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();

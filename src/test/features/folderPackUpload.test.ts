@@ -48,7 +48,7 @@ vi.mock("../../ipc/commands", () => ({
     read: async (path: string) => {
       h.calls.push(`read:${path}`);
       const content = h.localReads[path];
-      if (content === undefined) throw new Error(`无读取样本：${path}`);
+      if (content === undefined) throw new Error(`no read sample for ${path}`);
       return { path, size: atob(content).length, contentBase64: content };
     },
   },
@@ -134,8 +134,8 @@ beforeEach(() => {
   h.progressHandler = null;
 });
 
-describe("buildFolderTar（ustar 字节布局）", () => {
-  it("单文件头部字段、内容、结尾零块", async () => {
+describe("buildFolderTar (ustar byte layout)", () => {
+  it("single file header fields, content, and trailing zero blocks", async () => {
     const tar = await buildFolderTar([entry("hello.txt", "hello")]);
     expect(tar.length).toBe(512 + 512 + 1024);
     expect(ascii(tar, 0, 100)).toBe("hello.txt");
@@ -156,7 +156,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(tar.slice(1024).every((b) => b === 0)).toBe(true);
   });
 
-  it("内容按 512 整块补齐", async () => {
+  it("content padded to 512-byte blocks", async () => {
     const tar = await buildFolderTar([entry("a.bin", new Uint8Array(513).fill(7))]);
     expect(tar.length).toBe(512 + 1024 + 1024);
     expect(tar[512]).toBe(7);
@@ -167,7 +167,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(ascii(empty, 124, 12)).toBe("00000000000");
   });
 
-  it("超过 100 字节的路径拆到 prefix 字段", async () => {
+  it("paths longer than 100 bytes split into the prefix field", async () => {
     const a = "a".repeat(60);
     const b = "b".repeat(60);
     const tar = await buildFolderTar([entry(`${a}/${b}`, "x")]);
@@ -179,11 +179,11 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(ascii(tar, 512 + 148, 6)).toBe(checksumOf(tar, 512).toString(8).padStart(6, "0"));
   });
 
-  it("无法拆分的长路径直接报错", async () => {
+  it("unsplittable long paths throw", async () => {
     await expect(buildFolderTar([entry("x".repeat(120), "x")])).rejects.toThrow("路径过长");
   });
 
-  it("目录项来自去重后的路径前缀且排在文件前", async () => {
+  it("directory entries come from deduped path prefixes and sort before files", async () => {
     const tar = await buildFolderTar([
       entry("sub/one.txt", "1"),
       entry("sub/two.txt", "2"),
@@ -201,7 +201,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(ascii(tar, 3072, 100)).toBe("sub/deep/three.txt");
   });
 
-  it("rootPrefix 决定条目是否携带根目录前缀", async () => {
+  it("rootPrefix controls whether entries carry the root directory prefix", async () => {
     const files = () => [entry("sub/one.txt", "1"), entry("two.txt", "2")];
     const prefixed = await buildFolderTar(files(), "photos");
     expect(ascii(prefixed, 0, 100)).toBe("photos/");
@@ -214,7 +214,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(ascii(rootless, 1536, 100)).toBe("two.txt");
   });
 
-  it("目录头部权限为 0755，文件头部为 0644", async () => {
+  it("directory headers use mode 0755 and file headers 0644", async () => {
     const tar = await buildFolderTar([entry("sub/one.txt", "1")]);
     expect(tar[156]).toBe(0x35);
     expect(ascii(tar, 100, 8)).toBe("0000755");
@@ -222,7 +222,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
     expect(ascii(tar, 512 + 100, 8)).toBe("0000644");
   });
 
-  it("空目录写成目录项并与路径前缀去重", async () => {
+  it("empty dirs are written as directory entries and deduped with path prefixes", async () => {
     const tar = await buildFolderTar([entry("sub/one.txt", "1")], "", [
       "empty",
       "sub/deep",
@@ -240,7 +240,7 @@ describe("buildFolderTar（ustar 字节布局）", () => {
 });
 
 describe("packExtractSupported", () => {
-  it("仅 ssh 与 device 支持打包解压", () => {
+  it("only ssh and device support pack extraction", () => {
     expect(packExtractSupported("ssh")).toBe(true);
     expect(packExtractSupported("device")).toBe(true);
     expect(packExtractSupported("winrm")).toBe(false);
@@ -250,11 +250,11 @@ describe("packExtractSupported", () => {
   });
 });
 
-describe("packUploadAndExtract（device 流程，就地解压）", () => {
+describe("packUploadAndExtract (device flow, in-place extraction)", () => {
   const files = () => [entry("a.txt", "abc")];
   const tarSize = 512 + 512 + 512 + 1024;
 
-  it("按 打包 -> 暂存上传 -> 解压 -> 删除 顺序执行并回报进度", async () => {
+  it("runs pack -> stage upload -> extract -> delete in order and reports progress", async () => {
     const progress: [number, number][] = [];
     const result = await packUploadAndExtract({
       sessionId: "s1",
@@ -279,14 +279,14 @@ describe("packUploadAndExtract（device 流程，就地解压）", () => {
       [tarSize, tarSize],
       [tarSize, tarSize],
     ]);
-    // 就地解压语义：条目保留 photos/ 根前缀
+    // In-place extraction semantics: entries retain the photos/ root prefix
     expect(h.stagedBytes).not.toBeNull();
     expect(ascii(h.stagedBytes!, 0, 100)).toBe("photos/");
     expect(h.stagedBytes![156]).toBe(0x35);
     expect(ascii(h.stagedBytes!, 512, 100)).toBe("photos/a.txt");
   });
 
-  it("解压失败仍删除临时包并抛出远端错误文本", async () => {
+  it("extract failure still deletes the temp package and rethrows the remote error text", async () => {
     h.failExtract = true;
     await expect(
       packUploadAndExtract({
@@ -304,7 +304,7 @@ describe("packUploadAndExtract（device 流程，就地解压）", () => {
     expect(h.calls[deleteIdx].endsWith(":false")).toBe(true);
   });
 
-  it("空目录随包上传：tar 内含带根前缀的空目录项", async () => {
+  it("empty dirs upload with the package: the tar contains root-prefixed empty dir entries", async () => {
     await packUploadAndExtract({
       sessionId: "s1",
       dir: "/data",
@@ -322,11 +322,11 @@ describe("packUploadAndExtract（device 流程，就地解压）", () => {
   });
 });
 
-describe("packUploadAndExtract（ssh 流程，派生目录解压）", () => {
+describe("packUploadAndExtract (ssh flow, derived directory extraction)", () => {
   const files = () => [entry("a.txt", "abc")];
   const tarSize = 512 + 512 + 1024;
 
-  it("临时包以文件夹命名，条目不带根前缀", async () => {
+  it("temp package named after the folder, entries carry no root prefix", async () => {
     h.kind = "ssh";
     const result = await packUploadAndExtract({
       sessionId: "s1",
@@ -349,7 +349,7 @@ describe("packUploadAndExtract（ssh 流程，派生目录解压）", () => {
     expect(h.stagedBytes![156]).toBe(0x30);
   });
 
-  it("目标目录已存在同名文件或链接时拒绝，不做任何写操作", async () => {
+  it("rejects when a same-name file or symlink exists in the target dir and performs no writes", async () => {
     h.kind = "ssh";
     for (const kind of ["file", "symlink"]) {
       h.calls.length = 0;
@@ -367,7 +367,7 @@ describe("packUploadAndExtract（ssh 流程，派生目录解压）", () => {
     }
   });
 
-  it("同名目录不视为冲突", async () => {
+  it("a same-name directory is not treated as a conflict", async () => {
     h.kind = "ssh";
     h.listEntries = [{ name: "photos.tar", kind: "dir" }];
     await packUploadAndExtract({
@@ -381,10 +381,10 @@ describe("packUploadAndExtract（ssh 流程，派生目录解压）", () => {
   });
 });
 
-describe("packUploadAndExtract（入参校验）", () => {
+describe("packUploadAndExtract (input validation)", () => {
   const files = () => [entry("a.txt", "abc")];
 
-  it("空文件夹、非法名称、不支持的会话类型", async () => {
+  it("empty folder, invalid name, and unsupported session kind", async () => {
     await expect(
       packUploadAndExtract({
         sessionId: "s1",
@@ -416,7 +416,7 @@ describe("packUploadAndExtract（入参校验）", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("ssh 会话总量超过 256 MB 提前失败并建议逐文件上传", async () => {
+  it("ssh sessions over the 256 MB total limit fail early and suggest per-file upload", async () => {
     h.kind = "ssh";
     const big = new File([new Uint8Array(0)], "big.bin");
     Object.defineProperty(big, "size", { value: MAX_PACK_BYTES + 1 });
@@ -432,7 +432,7 @@ describe("packUploadAndExtract（入参校验）", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("device 会话超过 64 MB 单次写入上限，在任何 IPC 前拒绝并建议逐文件上传", async () => {
+  it("device sessions over the 64 MB single-write limit are rejected before any IPC and suggest per-file upload", async () => {
     h.kind = "device";
     h.web = false;
     const attempt = () => {
@@ -451,7 +451,7 @@ describe("packUploadAndExtract（入参校验）", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("device 会话经 WEB 暂存流式上传不受 64 MB 上限", async () => {
+  it("device sessions via WEB staged streaming are not subject to the 64 MB limit", async () => {
     h.kind = "device";
     const big = new File([new Uint8Array(0)], "big.bin");
     Object.defineProperty(big, "size", { value: 100 * 1024 * 1024 });
@@ -466,7 +466,7 @@ describe("packUploadAndExtract（入参校验）", () => {
     expect(h.calls.some((c) => c.startsWith("extract:"))).toBe(true);
   });
 
-  it("ssh 会话 100 MB 不受 device 上限影响，正常进入打包流程", async () => {
+  it("100 MB on ssh sessions is unaffected by the device limit and enters the pack flow", async () => {
     h.kind = "ssh";
     const big = new File([new Uint8Array(0)], "big.bin");
     Object.defineProperty(big, "size", { value: 100 * 1024 * 1024 });
@@ -482,8 +482,8 @@ describe("packUploadAndExtract（入参校验）", () => {
   });
 });
 
-describe("packUploadAndExtract（桌面端流程）", () => {
-  it("走 fs_write 直写远端，不经过暂存", async () => {
+describe("packUploadAndExtract (desktop flow)", () => {
+  it("writes directly to the remote via fs_write without staging", async () => {
     h.web = false;
     const progress: [number, number][] = [];
     const result = await packUploadAndExtract({
@@ -511,12 +511,12 @@ describe("packUploadAndExtract（桌面端流程）", () => {
   });
 });
 
-describe("buildFolderTar（无 File 的桌面原生选择器条目）", () => {
+describe("buildFolderTar (desktop native picker entries without File)", () => {
   function nativeEntry(rel: string, localPath: string, size: number): FolderFileEntry {
     return { relativePath: rel, localPath, size, mtimeMs: MTIME_MS };
   }
 
-  it("经 localFileApi.read 读取字节打包，头部 mtime 与大小正确", async () => {
+  it("packs bytes read via localFileApi.read with correct header mtime and size", async () => {
     h.localReads = { "C:\\pics\\hello.txt": btoa("hello") };
     const tar = await buildFolderTar([nativeEntry("hello.txt", "C:\\pics\\hello.txt", 5)]);
     expect(h.calls).toEqual(["read:C:\\pics\\hello.txt"]);
@@ -527,14 +527,14 @@ describe("buildFolderTar（无 File 的桌面原生选择器条目）", () => {
     expect(ascii(tar, 512, 5)).toBe("hello");
   });
 
-  it("读取到的大小与枚举大小不一致时报错，不产生残缺 tar", async () => {
+  it("errors when the read size differs from the enumerated size, producing no partial tar", async () => {
     h.localReads = { "/local/pics/a.txt": btoa("abcd") };
     await expect(buildFolderTar([nativeEntry("a.txt", "/local/pics/a.txt", 3)])).rejects.toThrow(
       "大小",
     );
   });
 
-  it("桌面端打包上传无 File 条目走 fs_write 直写远端", async () => {
+  it("desktop pack upload without File entries writes directly to the remote via fs_write", async () => {
     h.web = false;
     h.kind = "ssh";
     h.localReads = { "/local/pics/a.txt": btoa("abc") };

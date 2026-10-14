@@ -196,7 +196,7 @@ func (s *Server) requireSuperadmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := accountIdentityFrom(r.Context())
 		if identity == nil || identity.Role != account.RoleSuperadmin {
-			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超管权限"))
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超级管理员权限"))
 			return
 		}
 		next.ServeHTTP(w, r)

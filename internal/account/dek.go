@@ -18,7 +18,7 @@ func validateEnvelopes(envelopes *vault.UserDEKEnvelopes) error {
 	if envelopes == nil ||
 		len(envelopes.DEKEnvelope) == 0 || len(envelopes.KDFSalt) == 0 || envelopes.KDFParams == "" ||
 		len(envelopes.RecoveryEnvelope) == 0 || envelopes.RecoveryHash == "" {
-		return ipc.BadParam(fmt.Errorf("账号加密密钥字段不完整"))
+		return ipc.BadParam(fmt.Errorf("数据密钥封装字段不完整"))
 	}
 	return nil
 }
@@ -40,7 +40,7 @@ func (a *Accounts) SetUserDEKEnvelopes(ctx context.Context, userID string, envel
 	return nil
 }
 
-var ErrDEKEnvelopesExist = errors.New("账号加密密钥已存在")
+var ErrDEKEnvelopesExist = errors.New("数据密钥已存在")
 
 func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, envelopes *vault.UserDEKEnvelopes) error {
 	if err := validateEnvelopes(envelopes); err != nil {
@@ -67,7 +67,7 @@ func (a *Accounts) GetUserDEKEnvelopes(ctx context.Context, userID string) (*vau
 	userDEK := query.Use(a.db).UserDEK
 	row, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(userID)).First()
 	if err == gorm.ErrRecordNotFound {
-		return nil, ipc.NewError(ipc.CodeNotFound, "账号加密密钥不存在")
+		return nil, ipc.NewError(ipc.CodeNotFound, "数据密钥不存在")
 	}
 	if err != nil {
 		return nil, dbError(err)
@@ -95,7 +95,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 			return dbError(err)
 		}
 		if !verifyPassword(user.PasswordHash, oldPassword) {
-			return ipc.NewError(ipc.CodeForbidden, "原密码错误")
+			return ipc.NewError(ipc.CodeForbidden, "当前密码错误")
 		}
 		newHash, err := hashPassword(newPassword)
 		if err != nil {
@@ -113,7 +113,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 			return dbError(err)
 		}
 		if info.RowsAffected == 0 {
-			return ipc.NewError(ipc.CodeForbidden, "原密码错误")
+			return ipc.NewError(ipc.CodeForbidden, "当前密码错误")
 		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_id"}},
@@ -158,7 +158,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		userDEK := query.Use(tx).UserDEK
 		dek, err := userDEK.WithContext(ctx).Where(userDEK.UserID.Eq(user.ID)).First()
 		if err == gorm.ErrRecordNotFound {
-			return ipc.NewError(ipc.CodeForbidden, "账号未设置加密密钥，不能使用恢复密钥")
+			return ipc.NewError(ipc.CodeForbidden, "账号未设置数据密钥，不能使用恢复密钥")
 		}
 		if err != nil {
 			return dbError(err)

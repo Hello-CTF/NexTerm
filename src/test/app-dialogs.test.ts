@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { dialogLevelForKind } from "../app/App";
 
-describe("dialogLevelForKind（App 共享 ask 映射）", () => {
+describe("dialogLevelForKind (shared App ask mapping)", () => {
   it("explicit info maps to info", () => {
     expect(dialogLevelForKind("info")).toBe("info");
   });

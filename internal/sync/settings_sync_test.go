@@ -645,7 +645,7 @@ func TestEngineKnownHostLWWConflictConverges(t *testing.T) {
 	for name, device := range map[string]*testDevice{"A": deviceA, "B": deviceB} {
 		row, found := deviceKnownHost(t, device, hostID)
 		if !found || row.Fingerprint != "SHA256:b-edit" || row.AddedAt != 300 {
-			t.Fatalf("device%s known host=%+v found=%v, want B 的编辑", name, row, found)
+			t.Fatalf("device%s known host=%+v found=%v, want B's edit", name, row, found)
 		}
 	}
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
@@ -744,16 +744,16 @@ func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: profileID, Name: "默认同步档案", Model: "m", Stream: true}, 100)
 
 	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pushed != 2 {
-		t.Fatalf("opt-in 默认开启应推送两类对象: %+v", report)
+		t.Fatalf("default opt-in must push both object types: %+v", report)
 	}
 	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Applied != 2 {
-		t.Fatalf("opt-in 默认开启应应用远端对象: %+v", report)
+		t.Fatalf("default opt-in must apply remote objects: %+v", report)
 	}
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
-		t.Fatal("opt-in 默认开启应应用 known_host")
+		t.Fatal("default opt-in must apply known_host")
 	}
 	if state := deviceAIProfileState(t, deviceB); len(state.Profiles) != 1 {
-		t.Fatalf("opt-in 默认开启应应用 ai_profile: %+v", state.Profiles)
+		t.Fatalf("default opt-in must apply ai_profile: %+v", state.Profiles)
 	}
 
 	for _, device := range []*testDevice{deviceA, deviceB} {
@@ -767,10 +767,10 @@ func TestEngineKindOptInDefaultOnAndDisable(t *testing.T) {
 	putDeviceKnownHost(t, deviceA, ids.New(), "disabled.example.com", 22, "ssh-ed25519", "SHA256:disabled", 200)
 	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: ids.New(), Name: "关闭后不应推送", Model: "m", Stream: true}, 200)
 	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pushed != 0 {
-		t.Fatalf("opt-in 关闭后不得推送新对象: %+v", report)
+		t.Fatalf("new objects must not be pushed after opt-in is disabled: %+v", report)
 	}
 	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Applied != 0 {
-		t.Fatalf("opt-in 关闭后不得应用新对象: %+v", report)
+		t.Fatalf("new objects must not be applied after opt-in is disabled: %+v", report)
 	}
 }
 
@@ -791,7 +791,7 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
-		t.Fatal("opt-in 开启后 known_host 必须同步")
+		t.Fatal("known_host must sync after opt-in is enabled")
 	}
 
 	// A turns off: local additions are not pushed, and B's remote changes are not applied to A.
@@ -805,10 +805,10 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, localOnly); found {
-		t.Fatal("opt-in 关闭后本地新增不得推送")
+		t.Fatal("local additions must not be pushed after opt-in is disabled")
 	}
 	if _, found := deviceKnownHost(t, deviceA, fromB); found {
-		t.Fatal("opt-in 关闭后远端对象不得应用")
+		t.Fatal("remote objects must not be applied after opt-in is disabled")
 	}
 
 	// A deletes the local row (while off, opt-in off): no tombstone, no propagation, the remote copy is kept.
@@ -817,20 +817,20 @@ func TestEngineKindOptInOnOffOn(t *testing.T) {
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
-		t.Fatal("opt-in 关闭期间删除不得传播, 远端副本必须保留")
+		t.Fatal("deletions during opt-in off must not propagate; remote copy must be retained")
 	}
 
 	// Re-enabled: remote objects not reconciled while off (fromB) are pulled and merged; the locally deleted hostID (never tombstoned) does not revive (the remote copy stays on B and the server).
 	enableDeviceKindOptIn(t, deviceA, userID)
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceA, fromB); !found {
-		t.Fatal("重新开启后必须补拉关闭期间的远端对象")
+		t.Fatal("remote objects created while opt-in was off must be pulled after re-enabling")
 	}
 	if _, found := deviceKnownHost(t, deviceA, hostID); found {
-		t.Fatal("关闭期间的本地删除不复活(未立碑, 删除仅限本地)")
+		t.Fatal("local deletion during opt-in off must not revive (no deletion marker, deletion is local only)")
 	}
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
-		t.Fatal("远端副本必须保留在 B")
+		t.Fatal("remote copy must remain on B")
 	}
 }
 
@@ -862,13 +862,13 @@ func TestEngineKindOptInRemoteTombstoneGated(t *testing.T) {
 	// B syncs: the tombstone is not applied, the local row is kept.
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
-		t.Fatal("opt-in 关闭时远端墓碑不得删除本地行")
+		t.Fatal("remote deletion markers must not delete local rows while opt-in is off")
 	}
 
 	// B re-enables: the tombstone (still unreconciled) is applied in the next round and the local row is cleared.
 	enableDeviceKindOptIn(t, deviceB, userID)
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	if _, found := deviceKnownHost(t, deviceB, hostID); found {
-		t.Fatal("重新开启后必须按墓碑清除本地行")
+		t.Fatal("local rows must be cleared by deletion markers after re-enabling")
 	}
 }

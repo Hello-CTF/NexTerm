@@ -23,7 +23,7 @@ function terminal(id = "t1", extra: Partial<AppTab> = {}): AppTab {
   return {
     id,
     kind: "terminal",
-    title: "终端 1",
+    title: "Terminal 1",
     sessionId: "s",
     tabId: `kernel-${id}`,
     closable: true,
@@ -72,9 +72,9 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("never overrides a user-renamed tab", () => {
-    seed([terminal("t1", { title: "我的终端", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
     expect(applyRemoteTabTitle("t1", "remote title")).toBe(false);
-    expect(titleOf()).toBe("我的终端");
+    expect(titleOf()).toBe("my terminal");
   });
 
   it("keeps a user rename authoritative even after remote title updates", () => {
@@ -93,9 +93,9 @@ describe("remote tab titles (OSC 0/2)", () => {
 
   it("ignores empty and unchanged titles", () => {
     expect(applyRemoteTabTitle("t1", "   \x00 ")).toBe(false);
-    expect(titleOf()).toBe("终端 1");
-    expect(applyRemoteTabTitle("t1", "终端 1")).toBe(false);
-    expect(titleOf()).toBe("终端 1");
+    expect(titleOf()).toBe("Terminal 1");
+    expect(applyRemoteTabTitle("t1", "Terminal 1")).toBe(false);
+    expect(titleOf()).toBe("Terminal 1");
   });
 
   it("ignores unknown tabs", () => {
@@ -108,7 +108,7 @@ describe("remote tab titles (OSC 0/2)", () => {
   });
 
   it("renamedByUser survives a layout serialize/sanitize round trip", () => {
-    seed([terminal("t1", { title: "我的终端", renamedByUser: true })]);
+    seed([terminal("t1", { title: "my terminal", renamedByUser: true })]);
     const dto = serializeLayout(useUi.getState());
     expect(dto).not.toBeNull();
     const parsed = sanitizeLayout(JSON.parse(JSON.stringify(dto)));

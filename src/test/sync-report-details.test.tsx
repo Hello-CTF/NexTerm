@@ -148,8 +148,8 @@ function view(props: { title: string; dir?: "push" | "pull"; data: ImportReport 
   return mount(createElement(ImportReportView, props));
 }
 
-describe("ImportReportView 跳过明细", () => {
-  it("推送报告：修订号标签以对端为本（导入发生在对端）", () => {
+describe("ImportReportView skipped-item details", () => {
+  it("uses the remote side for revision labels in a push report (import happens remotely)", () => {
     mounted = view({ title: "推送结果", dir: "push", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("推送结果");
@@ -161,50 +161,50 @@ describe("ImportReportView 跳过明细", () => {
     expect(text).toContain("对端与本机修订号相同（400），按 Origin 字典序裁决");
   });
 
-  it("拉取报告：修订号标签以本机为本", () => {
-    mounted = view({ title: "拉取结果", dir: "pull", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
+  it("uses the local side for revision labels in a pull report", () => {
+    mounted = view({ title: "Pull results", dir: "pull", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("本机修订 500 较对端修订 300 新");
     expect(text).toContain("本机与对端修订号相同（400），按 Origin 字典序裁决");
   });
 
-  it("资产包导入报告：来源侧标注为「包内」", () => {
-    mounted = view({ title: "导入结果", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
+  it("labels the source side as the bundle in an asset bundle import report", () => {
+    mounted = view({ title: "Import results", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("本机修订 500 较包内修订 300 新");
     expect(text).toContain("跳过（本机较新） 2");
   });
 
-  it("存在跳过时给出时钟准确要求；无跳过时不出该提示", () => {
-    mounted = view({ title: "拉取结果", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 1 } });
+  it("requires accurate clocks when skips exist and omits that hint otherwise", () => {
+    mounted = view({ title: "Pull results", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 1 } });
     expect(mounted.container.textContent).toContain("请保持各设备时钟准确");
     mounted.unmount();
 
-    mounted = view({ title: "拉取结果", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 0 } });
+    mounted = view({ title: "Pull results", dir: "pull", data: { ...REPORT_BASE, skippedNewer: 0 } });
     const text = mounted.container.textContent ?? "";
     expect(text).not.toContain("请保持各设备时钟准确");
     expect(text).toContain("跳过（本机较新） 0");
   });
 
-  it("报告计数补充凭据删除与片段：仅在非零时出现", () => {
+  it("shows credential deletion and snippet counts only when non-zero", () => {
     mounted = view({
-      title: "导入结果",
+      title: "Import results",
       data: { ...REPORT_BASE, credsDeleted: 2, snippetsCreated: 3, snippetsUpdated: 1 },
     });
     let text = mounted.container.textContent ?? "";
-    expect(text).toContain("凭据 新建 0 / 更新 0 / 删除 2");
-    expect(text).toContain("片段 新建 3 / 更新 1");
+    expect(text).toContain("凭据：新建 0 / 更新 0 / 删除 2");
+    expect(text).toContain("片段：新建 3 / 更新 1");
     mounted.unmount();
 
-    mounted = view({ title: "导入结果", data: { ...REPORT_BASE } });
+    mounted = view({ title: "Import results", data: { ...REPORT_BASE } });
     text = mounted.container.textContent ?? "";
     expect(text).not.toContain("删除 0");
     expect(text).not.toContain("片段");
   });
 
-  it("凭据墓碑等名称为空的明细回退展示条目 ID", () => {
+  it("falls back to the entry ID for credential tombstones and other details with empty names", () => {
     mounted = view({
-      title: "导入结果",
+      title: "Import results",
       data: {
         ...REPORT_BASE,
         skippedNewerDetails: [
@@ -219,8 +219,8 @@ describe("ImportReportView 跳过明细", () => {
   });
 });
 
-describe("SyncCard 对照区时钟提示", () => {
-  it("对照台在展示同步状态处给出时钟准确要求", async () => {
+describe("SyncCard comparison clock hint", () => {
+  it("requires accurate clocks next to the sync status in the comparison console", async () => {
     const { useAuth } = await import("../features/auth/store");
     syncV2Mocks.ids.mockResolvedValue({
       protocol: 2,

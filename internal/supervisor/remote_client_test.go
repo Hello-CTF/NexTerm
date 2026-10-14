@@ -64,7 +64,12 @@ func TestRemoteClientDigestMismatch(t *testing.T) {
 }
 
 func TestRemoteClientProtocolMismatch(t *testing.T) {
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "mismatch.sock"))
+	runDir, err := os.MkdirTemp("/tmp", "nx-sup-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+	listener, err := net.Listen("unix", filepath.Join(runDir, "mismatch.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

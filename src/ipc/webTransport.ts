@@ -217,7 +217,7 @@ function connectEvents() {
         try {
           fn();
         } catch (e) {
-          console.error("[NexTerm] resync 处理器抛出异常", e);
+          console.error("[NexTerm] Resync handler threw an exception", e);
         }
       }
       return;
@@ -229,7 +229,7 @@ function connectEvents() {
       try {
         fn(parsed.payload);
       } catch (e) {
-        console.error("[NexTerm] 事件处理器抛出异常", parsed.event, e);
+        console.error("[NexTerm] Event handler threw an exception", parsed.event, e);
       }
     }
   };

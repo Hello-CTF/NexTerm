@@ -6,7 +6,7 @@
 // Data sources switch by TRANSPORT: WEB talks to previewApi directly (server-hosted tab with the same id); desktop goes through the
 // remote relay - create via preview_share_create (remote shell + link + output relay), the list filters remoteSharingApi.previewLinks by the
 // current tab's active relay shell id, and revoke likewise goes remote.
-// Previews created by the desktop relay do not support control in the first phase: the checkbox is disabled and permanently read-only.
+// Previews created by the desktop relay do not support control: the checkbox is disabled and permanently read-only.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -130,7 +130,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
         if (epoch !== epochRef.current || unmountedRef.current) return;
         setCreatedUrl(previewPublicUrl(link.token));
       } else {
-        // Previews created by the desktop relay do not support control in the first phase; the create signature stays (tabId, ttlMs).
+        // Previews created by the desktop relay do not support control; the create signature stays (tabId, ttlMs).
         const created = await remotePreviewApi.create(tabId, ttlMs);
         if (epoch !== epochRef.current || unmountedRef.current) return;
         setCreatedUrl(created.url);
@@ -222,7 +222,7 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
               />
               允许控制
             </label>
-            {!WEB && <span className="text-xs text-neutral-500">桌面中继创建的预览第一期暂不支持控制</span>}
+            {!WEB && <span className="text-xs text-neutral-500">桌面中继创建的预览暂不支持控制</span>}
           </div>
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           {createdUrl && (

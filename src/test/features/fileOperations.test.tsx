@@ -336,8 +336,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("fileOps 预检（纯函数）", () => {
-  it("拒绝跨路径名与点目录名", () => {
+describe("fileOps preflight checks (pure functions)", () => {
+  it("rejects path separators and dot directory names", () => {
     expect(validateEntryName("a/b")).toMatch(/路径分隔符/);
     expect(validateEntryName("a\\b")).toMatch(/路径分隔符/);
     expect(validateEntryName("..")).toBeTruthy();
@@ -347,7 +347,7 @@ describe("fileOps 预检（纯函数）", () => {
     expect(validateEntryName("ok.txt")).toBeNull();
   });
 
-  it("mode 只收八进制数字且不超 0o777", () => {
+  it("accepts only octal digits in mode and rejects values above 0o777", () => {
     expect(parseOctalMode("644")).toEqual({ ok: true, mode: 0o644 });
     expect(parseOctalMode("0644")).toEqual({ ok: true, mode: 0o644 });
     expect(parseOctalMode("888").ok).toBe(false);
@@ -356,20 +356,20 @@ describe("fileOps 预检（纯函数）", () => {
     expect(parseOctalMode("").ok).toBe(false);
   });
 
-  it("只有移除所有者读/写才算权限收窄", () => {
+  it("counts only removing owner read or write access as permission narrowing", () => {
     expect(losesOwnerAccess(0o644, 0o000)).toBe(true);
     expect(losesOwnerAccess(0o644, 0o444)).toBe(true);
     expect(losesOwnerAccess(0o644, 0o755)).toBe(false);
     expect(losesOwnerAccess(0o000, 0o644)).toBe(false);
   });
 
-  it("校验算法与后端白名单对齐（md5/sha256，缺省 sha256）", () => {
+  it("aligns checksum algorithms with the backend allowlist (md5/sha256, default sha256)", () => {
     expect(CHECKSUM_ALGOS.map((a) => a.key)).toEqual(["sha256", "md5"]);
     expect(DEFAULT_CHECKSUM_ALGO).toBe("sha256");
   });
 });
 
-describe("重命名（FileBrowser）", () => {
+describe("rename (FileBrowser)", () => {
   async function triggerRename(name: string | null): Promise<void> {
     mocks.promptText.mockResolvedValue(name);
     openRowMenu(mounted!.container, "~/a.txt");
@@ -382,7 +382,7 @@ describe("重命名（FileBrowser）", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("拒绝跨路径输入，不发 RPC", async () => {
+  it("rejects path-crossing input without issuing an RPC", async () => {
     await triggerRename("../evil.txt");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("路径分隔符"));
     expect(mocks.rename).not.toHaveBeenCalled();
@@ -390,7 +390,7 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).not.toHaveBeenCalled();
   });
 
-  it("拒绝空名与首尾空白名", async () => {
+  it("rejects empty names and names with leading or trailing whitespace", async () => {
     await triggerRename("   ");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("不能为空"));
     await triggerRename(" b.txt ");
@@ -398,14 +398,14 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).not.toHaveBeenCalled();
   });
 
-  it("同目录改名成功并刷新列表", async () => {
+  it("renames within the same directory and refreshes the list", async () => {
     await triggerRename("c.txt");
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
   });
 
-  it("覆盖已有名字前必须显式确认，取消即中止", async () => {
+  it("requires explicit confirmation before overwriting an existing name and aborts on cancel", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     await triggerRename("b.txt");
     expect(mocks.ask).toHaveBeenCalledWith(
@@ -431,7 +431,7 @@ describe("重命名（FileBrowser）", () => {
     });
   }
 
-  it("winrm：改成仅大小写不同的已有名字也必须确认", async () => {
+  it("winrm: requires confirmation when renaming to an existing name that differs only by case", async () => {
     seedKind("winrm");
     mocks.ask.mockResolvedValueOnce(false);
     await triggerRename("B.TXT");
@@ -446,14 +446,14 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/B.TXT");
   });
 
-  it("ssh：仅大小写不同不算冲突，直接改名不确认", async () => {
+  it("ssh: case-only differences do not conflict, so rename proceeds without confirmation", async () => {
     seedKind("ssh");
     await triggerRename("B.TXT");
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/B.TXT");
   });
 
-  it("符号链接：先讲清「改的是链接本身」再改", async () => {
+  it("symlinks: explains that only the link itself is renamed before proceeding", async () => {
     mocks.promptText.mockResolvedValue("link2");
     openRowMenu(mounted!.container, "~/link");
     clickMenuItem(mounted!.container, "重命名");
@@ -465,7 +465,7 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/link", "~/link2");
   });
 
-  it("脏编辑器持有该文件时告警，且操作不替用户清 dirty", async () => {
+  it("warns when a dirty editor has the file open and does not clear its dirty state", async () => {
     const tab = editorTab("~/a.txt");
     act(() => {
       useUi.setState({
@@ -494,7 +494,7 @@ describe("重命名（FileBrowser）", () => {
     setFileEditorDirty(SID, "~/a.txt", false);
   });
 
-  it("后端拒绝原样呈现，且可以原样重试", async () => {
+  it("presents backend rejection verbatim and allows retrying with the same input", async () => {
     mocks.rename.mockRejectedValueOnce({ code: "internal", message: "SFTP：目标已存在" });
     await triggerRename("c.txt");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("SFTP：目标已存在"));
@@ -502,7 +502,7 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.rename).toHaveBeenCalledTimes(2);
   });
 
-  it("进行中的操作挡住第二次触发（double-submit）", async () => {
+  it("blocks a second trigger while an operation is in progress (double-submit)", async () => {
     const pending = deferred<void>();
     mocks.rename.mockReturnValueOnce(pending.promise);
     await triggerRename("c.txt");
@@ -524,7 +524,7 @@ describe("重命名（FileBrowser）", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
   });
 
-  it("卸载后到达的完成回调不碰任何状态（stale completion）", async () => {
+  it("ignores completion callbacks that arrive after unmount (stale completion)", async () => {
     const pending = deferred<void>();
     mocks.rename.mockReturnValueOnce(pending.promise);
     await triggerRename("c.txt");
@@ -537,7 +537,7 @@ describe("重命名（FileBrowser）", () => {
   });
 });
 
-describe("权限 chmod（FileBrowser）", () => {
+describe("chmod permission changes (FileBrowser)", () => {
   async function triggerChmod(path: string, mode: string | null): Promise<void> {
     mocks.promptText.mockResolvedValue(mode);
     openRowMenu(mounted!.container, path);
@@ -550,7 +550,7 @@ describe("权限 chmod（FileBrowser）", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("非八进制与超界输入在发 RPC 前被挡下", async () => {
+  it("rejects non-octal and out-of-range input before issuing an RPC", async () => {
     await triggerChmod("~/a.txt", "888");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("八进制"));
     await triggerChmod("~/a.txt", "7777");
@@ -559,13 +559,13 @@ describe("权限 chmod（FileBrowser）", () => {
     expect(mocks.chmod).not.toHaveBeenCalled();
   });
 
-  it("接受前导零八进制并发送数值 mode", async () => {
+  it("accepts octal input with a leading zero and sends a numeric mode", async () => {
     await triggerChmod("~/a.txt", "0755");
     expect(mocks.chmod).toHaveBeenCalledWith(SID, "~/a.txt", 0o755);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新"));
   });
 
-  it("移除所有者读/写需要危险确认，取消即中止", async () => {
+  it("requires danger confirmation before removing owner read or write access and aborts on cancel", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     await triggerChmod("~/a.txt", "000");
     expect(mocks.ask).toHaveBeenCalledWith(
@@ -579,7 +579,7 @@ describe("权限 chmod（FileBrowser）", () => {
     expect(mocks.chmod).toHaveBeenCalledWith(SID, "~/a.txt", 0);
   });
 
-  it("符号链接：提醒 chmod 改的是目标", async () => {
+  it("symlinks: warns that chmod changes the target", async () => {
     await triggerChmod("~/link", "600");
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("符号链接"),
@@ -589,13 +589,13 @@ describe("权限 chmod（FileBrowser）", () => {
   });
 });
 
-describe("校验值 checksum（FileBrowser）", () => {
+describe("checksum (FileBrowser)", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("算法多选只有 md5/sha256，结果以供复制的输入框呈现", async () => {
+  it("offers only md5/sha256 in the algorithm picker and presents the result in a copyable input", async () => {
     mocks.askChoice.mockResolvedValue("md5");
     mocks.checksum.mockResolvedValue("md5-hash-value");
     openRowMenu(mounted!.container, "~/a.txt");
@@ -613,7 +613,7 @@ describe("校验值 checksum（FileBrowser）", () => {
     );
   });
 
-  it("算法选择取消则完全不碰后端", async () => {
+  it("does not touch the backend when algorithm selection is canceled", async () => {
     mocks.askChoice.mockResolvedValue(null);
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "校验值…");
@@ -622,26 +622,26 @@ describe("校验值 checksum（FileBrowser）", () => {
     expect(mocks.promptText).not.toHaveBeenCalled();
   });
 
-  it("目录不提供校验值入口", async () => {
+  it("does not offer checksum for directories", async () => {
     openRowMenu(mounted!.container, "~/sub");
     expect(() => menuItem(mounted!.container, "校验值…")).toThrow();
   });
 });
 
-describe("FileTree 入口与状态搬迁", () => {
+describe("FileTree entry points and state migration", () => {
   beforeEach(async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("目录行有重命名/权限，没有校验值", () => {
+  it("directory rows offer rename and permissions but not checksum", () => {
     openRowMenu(mounted!.container, "~/sub");
     expect(menuItem(mounted!.container, "重命名")).toBeTruthy();
     expect(menuItem(mounted!.container, "权限…")).toBeTruthy();
     expect(() => menuItem(mounted!.container, "校验值…")).toThrow();
   });
 
-  it("重命名目录后，展开与选中状态搬到新路径", async () => {
+  it("moves expansion and selection state to the new path after renaming a directory", async () => {
     click(rowByPath(mounted!.container, "~/sub"));
     await waitFor(() =>
       expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"),
@@ -655,15 +655,18 @@ describe("FileTree 入口与状态搬迁", () => {
   });
 });
 
-describe("新建文件与文件夹的名称预检", () => {
+describe("name preflight checks for new files and folders", () => {
   const invalidNames = ["..", "a/b", "a\\b", " name ", "a\0b"];
 
-  for (const [label, rpc] of [["新建文件", "write"], ["新建目录", "mkdir"]] as const) {
-    it(`FileTree ${label}在 joinPath 前拒绝危险名称`, async () => {
+  for (const [label, ariaLabel, rpc] of [
+    ["new file", "新建文件", "write"],
+    ["new directory", "新建目录", "mkdir"],
+  ] as const) {
+    it(`FileTree ${label} rejects dangerous names before joinPath`, async () => {
       mounted = mountTree();
       await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
       const button = mounted.container.querySelector<HTMLButtonElement>(
-        `button[aria-label="${label}"]`,
+        `button[aria-label="${ariaLabel}"]`,
       )!;
       for (const name of invalidNames) {
         mocks.promptText.mockResolvedValueOnce(name);
@@ -675,7 +678,7 @@ describe("新建文件与文件夹的名称预检", () => {
     });
   }
 
-  it("FileBrowser 新建目录拒绝危险名称", async () => {
+  it("FileBrowser rejects dangerous names for new directories", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     const button = [...mounted.container.querySelectorAll("button")].find(
@@ -690,7 +693,7 @@ describe("新建文件与文件夹的名称预检", () => {
     expect(mocks.toast).toHaveBeenCalledTimes(invalidNames.length);
   });
 
-  it("合法名称仍创建到当前目录", async () => {
+  it("creates valid names in the current directory", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.promptText.mockResolvedValue("ok.txt");
@@ -699,7 +702,7 @@ describe("新建文件与文件夹的名称预检", () => {
   });
 });
 
-describe("FileTree 导航后的选择与展开状态", () => {
+describe("selection and expansion state after FileTree navigation", () => {
   beforeEach(() => {
     mocks.list.mockImplementation((_s: string, path: string) => {
       if (path === "~") {
@@ -733,7 +736,7 @@ describe("FileTree 导航后的选择与展开状态", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub/a.txt")).toBeTruthy());
   }
 
-  it("上级导航清空失效选择并裁剪展开目录", async () => {
+  it("parent navigation clears stale selection and prunes expanded directories", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     click(rowByPath(mounted.container, "~/sub"));
@@ -752,7 +755,7 @@ describe("FileTree 导航后的选择与展开状态", () => {
     expect(rowByPath(mounted.container, "~/sub").getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("Home 导航后，新建操作不会使用旧目录的选择", async () => {
+  it("create actions do not use the previous directory's selection after Home navigation", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     await enterSubdirectory();
@@ -766,7 +769,7 @@ describe("FileTree 导航后的选择与展开状态", () => {
     await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/fresh.txt", "", false));
   });
 
-  it("面包屑导航后，新建操作不会使用旧目录的选择", async () => {
+  it("create actions do not use the previous directory's selection after breadcrumb navigation", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     await enterSubdirectory();
@@ -781,7 +784,7 @@ describe("FileTree 导航后的选择与展开状态", () => {
   });
 });
 
-describe("FileBrowser 选中项入口校验", () => {
+describe("FileBrowser selected-item action validation", () => {
   beforeEach(async () => {
     mocks.list.mockResolvedValue([
       entry("a.txt", "file"),
@@ -800,7 +803,7 @@ describe("FileBrowser 选中项入口校验", () => {
     return button as HTMLButtonElement;
   }
 
-  it("目录与非文本文件的按钮、title 和编辑入口一致", () => {
+  it("keeps buttons, titles, and edit entry points consistent for directories and non-text files", () => {
     click(rowByPath(mounted!.container, "~/sub"));
     expect(actionButton("下载").disabled).toBe(true);
     expect(actionButton("下载").title).toContain("目录");
@@ -821,7 +824,7 @@ describe("FileBrowser 选中项入口校验", () => {
     expect(actionButton("日志").disabled).toBe(false);
   });
 
-  it("列表刷新后失效选择不能触发下载或日志", async () => {
+  it("stale selection cannot trigger download or log actions after a list refresh", async () => {
     click(rowByPath(mounted!.container, "~/a.txt"));
     expect(actionButton("下载").disabled).toBe(false);
     mocks.list.mockResolvedValue([entry("sub", "dir")]);
@@ -837,8 +840,8 @@ describe("FileBrowser 选中项入口校验", () => {
   });
 });
 
-describe("终端入口的会话断开提示", () => {
-  it("FileTree：会话已断开时「在新终端打开」给出明确错误", async () => {
+describe("disconnected-session feedback for terminal entry points", () => {
+  it("FileTree: opening in a new terminal reports a clear error when the session is disconnected", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
@@ -848,7 +851,7 @@ describe("终端入口的会话断开提示", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", "当前会话已断开，无法打开终端");
   });
 
-  it("FileBrowser：会话已断开时「在新终端打开」给出明确错误", async () => {
+  it("FileBrowser: opening in a new terminal reports a clear error when the session is disconnected", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
@@ -859,8 +862,8 @@ describe("终端入口的会话断开提示", () => {
   });
 });
 
-describe("操作不破坏既有状态", () => {
-  it("传输进度条与无关 dirty 编辑器在操作后原样保留", async () => {
+describe("operations preserve existing state", () => {
+  it("preserves transfer progress and unrelated dirty editors after an operation", async () => {
     let progressHandler: ((e: unknown) => void) | undefined;
     mocks.listenEvent.mockImplementation((t: string, cb: (e: unknown) => void) => {
       if (t === "fs://progress") progressHandler = cb;
@@ -897,7 +900,7 @@ describe("操作不破坏既有状态", () => {
   });
 });
 
-describe("React StrictMode 下的操作（评审 P1 回归）", () => {
+describe("operations under React StrictMode (review P1 regression)", () => {
   function mountBrowserStrict(): MountedView {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return mount(
@@ -918,7 +921,7 @@ describe("React StrictMode 下的操作（评审 P1 回归）", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("rename 在 StrictMode 下真正发出 RPC 并有结果提示", async () => {
+  it("rename actually issues an RPC and shows a result toast under StrictMode", async () => {
     mocks.promptText.mockResolvedValue("c.txt");
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "重命名");
@@ -926,14 +929,14 @@ describe("React StrictMode 下的操作（评审 P1 回归）", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
   });
 
-  it("chmod 在 StrictMode 下真正发出 RPC", async () => {
+  it("chmod actually issues an RPC under StrictMode", async () => {
     mocks.promptText.mockResolvedValue("600");
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "权限…");
     await waitFor(() => expect(mocks.chmod).toHaveBeenCalledWith(SID, "~/a.txt", 0o600));
   });
 
-  it("checksum 在 StrictMode 下真正发出 RPC 并呈现结果", async () => {
+  it("checksum actually issues an RPC and presents the result under StrictMode", async () => {
     mocks.askChoice.mockResolvedValue("sha256");
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "校验值…");
@@ -946,7 +949,7 @@ describe("React StrictMode 下的操作（评审 P1 回归）", () => {
   });
 });
 
-describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回归）", () => {
+describe("warns for dirty editors of descendants when renaming a directory (review P2-3 regression)", () => {
   beforeEach(async () => {
     mocks.list.mockImplementation((_s: string, p: string) => {
       if (p === "~/sub") return Promise.resolve([entry("a.txt", "file", { path: "~/sub/a.txt" })]);
@@ -956,7 +959,7 @@ describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
   });
 
-  it("目录内未保存文件触发旧路径告警", async () => {
+  it("unsaved files inside the directory trigger the old-path warning", async () => {
     const tab = editorTab("~/sub/a.txt");
     act(() => {
       useUi.setState({
@@ -990,7 +993,7 @@ describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回
   });
 });
 
-describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
+describe("Windows backslash paths (review P2-2 / R2 regression)", () => {
   beforeEach(async () => {
     let subRenamed = false;
     mocks.list.mockImplementation((_s: string, p: string) => {
@@ -1039,7 +1042,7 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub\\inner"));
   });
 
-  it("嵌套反斜杠目录下同名冲突照常弹覆盖确认", async () => {
+  it("shows the usual overwrite confirmation for name conflicts in nested backslash directories", async () => {
     mocks.promptText.mockResolvedValue("b.txt");
     openRowMenu(mounted!.container, "~\\sub\\a.txt");
     clickMenuItem(mounted!.container, "重命名");
@@ -1051,7 +1054,7 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub\\a.txt", "~/sub/b.txt");
   });
 
-  it("目录改名后展开/选中按原分隔符风格搬迁，后端仍回反斜杠", async () => {
+  it("migrates expansion and selection using the original separator style after directory rename while the backend still returns backslashes", async () => {
     mocks.promptText.mockResolvedValue("sub2");
     openRowMenu(mounted!.container, "~\\sub");
     clickMenuItem(mounted!.container, "重命名");
@@ -1064,7 +1067,7 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     );
   });
 
-  it("未参与改名的目录展开态不受影响", async () => {
+  it("does not affect expansion state of directories not involved in the rename", async () => {
     click(rowByPath(mounted!.container, "~\\other"));
     await waitFor(() =>
       expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy(),
@@ -1079,7 +1082,7 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
   });
 });
 
-describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审 P1/P2 回归）", () => {
+describe("real backend path shapes (~ list keys + absolute entry.path, R1 review P1/P2 regression)", () => {
   const HOME_ABS = "/home/u";
   let renamedRoot = false;
   let renamedSub = false;
@@ -1125,7 +1128,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     });
   });
 
-  it("FileTree 根层：同名覆盖确认照常弹出，取消即中止（P1-1）", async () => {
+  it("FileTree root: shows the usual overwrite confirmation for duplicate names and aborts on cancel (P1-1)", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
 
@@ -1147,7 +1150,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     expect(mocks.rename).toHaveBeenCalledWith(SID, `${HOME_ABS}/a.txt`, `${HOME_ABS}/b.txt`);
   });
 
-  it("FileTree 根层：rename 后 `~` 键列表真实刷新（P2-1）", async () => {
+  it("FileTree root: actually refreshes the `~`-keyed list after rename (P2-1)", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
     const before = listCalls("~");
@@ -1168,7 +1171,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     ).toBe(false);
   });
 
-  it("FileTree 嵌套层：rename/chmod 后对应层列表刷新", async () => {
+  it("FileTree nested level: refreshes the corresponding list after rename/chmod", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/sub`)).toBeTruthy());
     click(rowByPath(mounted!.container, `${HOME_ABS}/sub`));
@@ -1194,7 +1197,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     await waitFor(() => expect(listCalls(`${HOME_ABS}/sub`)).toBeGreaterThan(beforeChmod));
   });
 
-  it("FileBrowser 根层：rename 后 `~` 键列表真实刷新", async () => {
+  it("FileBrowser root: actually refreshes the `~`-keyed list after rename", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
     const before = listCalls("~");
@@ -1209,7 +1212,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     );
   });
 
-  it("FileBrowser 子目录：rename/chmod 后 `~/sub` 键列表刷新", async () => {
+  it("FileBrowser subdirectory: refreshes the `~/sub`-keyed list after rename/chmod", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/sub`)).toBeTruthy());
     dblclickRow(mounted!.container, `${HOME_ABS}/sub`);
@@ -1235,7 +1238,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     await waitFor(() => expect(listCalls("~/sub")).toBeGreaterThan(beforeChmod));
   });
 
-  it("FileBrowser 根层：绝对 entry.path 下覆盖确认照常弹出", async () => {
+  it("FileBrowser root: shows the usual overwrite confirmation with absolute entry.path values", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
 
@@ -1252,7 +1255,7 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
   });
 });
 
-describe("删除与丢弃确认（R42 destructive dialogs）", () => {
+describe("delete and discard confirmations (R42 destructive dialogs)", () => {
   beforeEach(() => {
     editors.views = [];
     mocks.read.mockResolvedValue({
@@ -1290,7 +1293,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     );
   }
 
-  it("FileBrowser 删除文件：警示浮层（alertdialog），取消即中止", async () => {
+  it("FileBrowser file deletion: shows a warning dialog (alertdialog) and aborts on cancel", async () => {
     mounted = mountWithDialogHost(createElement(FileBrowser, { sessionId: SID }));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
@@ -1310,7 +1313,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
   });
 
-  it("FileTree 删除目录：警示浮层并讲清递归删除不可恢复", async () => {
+  it("FileTree directory deletion: warning dialog explains that recursive deletion is irreversible", async () => {
     mounted = mountWithDialogHost(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
@@ -1329,7 +1332,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
   });
 
-  it("FileEditor 切换编码：脏文档先警示确认，取消即不重新读盘", async () => {
+  it("FileEditor encoding switch: warns about dirty documents first and does not reread from disk on cancel", async () => {
     mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/a.txt" }));
     await waitFor(() => expect(editors.views).toHaveLength(1));
 
@@ -1355,7 +1358,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
   });
 
-  it("FileEditor 大文件提示：性能提醒显式 info（普通浮层），取消即关闭编辑器", async () => {
+  it("FileEditor large-file prompt: uses an explicit info dialog for the performance notice and closes the editor on cancel", async () => {
     mocks.read.mockResolvedValue({
       path: "~/big.log",
       size: 6 * 1024 * 1024,
@@ -1373,7 +1376,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 
-  it("FileEditor 大文件预检：只读分块查看复用日志标签且不整读", async () => {
+  it("FileEditor large-file preflight: read-only chunked view reuses a log tab without reading the whole file", async () => {
     mocks.readRange.mockResolvedValue({
       path: "~/big.log",
       offset: 0,
@@ -1420,7 +1423,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     });
   });
 
-  it("FileEditor 大文件预检：取消不整读", async () => {
+  it("FileEditor large-file preflight: cancel avoids reading the whole file", async () => {
     mocks.readRange.mockResolvedValue({
       path: "~/big.log",
       offset: 0,
@@ -1438,7 +1441,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     expect(mocks.read).not.toHaveBeenCalled();
   });
 
-  it("FileEditor 大文件预检：编辑整个文件只确认一次", async () => {
+  it("FileEditor large-file preflight: prompts only once when editing the whole file", async () => {
     mocks.readRange.mockResolvedValue({
       path: "~/big.log",
       offset: 0,
@@ -1461,7 +1464,7 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
   });
 });
 
-describe("右键菜单：空白区清单与接线", () => {
+describe("context menus: blank-area entries and wiring", () => {
   function openBrowserBlankMenu(): void {
     const scroller = mounted!.container.querySelector('[role="tree"]')?.parentElement;
     if (!scroller) throw new Error("scroller not found");
@@ -1497,7 +1500,7 @@ describe("右键菜单：空白区清单与接线", () => {
     mocks.dropFolderUpload.mockResolvedValue(undefined);
   });
 
-  it("FileBrowser 空白区菜单包含全部当前目录操作，新建空白文件写入当前目录并刷新", async () => {
+  it("FileBrowser blank-area menu includes all current-directory actions; new blank file writes to the current directory and refreshes", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     openBrowserBlankMenu();
@@ -1519,7 +1522,7 @@ describe("右键菜单：空白区清单与接线", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));
   });
 
-  it("FileBrowser 空白区上传与刷新和工具栏走同一流程", async () => {
+  it("FileBrowser blank-area upload and refresh use the same flows as the toolbar", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
@@ -1542,7 +1545,7 @@ describe("右键菜单：空白区清单与接线", () => {
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(before));
   });
 
-  it("目录行菜单的打包下载走 pickSavePath→packDownload→finishSave 链路", async () => {
+  it("directory row menu pack download follows the pickSavePath -> packDownload -> finishSave flow", async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     mocks.pickSavePath.mockResolvedValue("/local/sub.tar.gz");
@@ -1560,7 +1563,7 @@ describe("右键菜单：空白区清单与接线", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已打包下载"));
   });
 
-  it("winrm 会话隐藏打包下载入口，ssh 会话保留", async () => {
+  it("hides pack download for winrm sessions and keeps it for ssh sessions", async () => {
     seedSessionKind("winrm");
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
@@ -1579,7 +1582,7 @@ describe("右键菜单：空白区清单与接线", () => {
     expect(menuLabels().some((t) => t.includes("打包下载当前目录"))).toBe(true);
   });
 
-  it("FileTree winrm 会话的目录行菜单同样隐藏打包下载", async () => {
+  it("FileTree directory row menu also hides pack download for winrm sessions", async () => {
     seedSessionKind("winrm");
     mocks.list.mockImplementation((_s: string, p: string) =>
       Promise.resolve(p === "/" ? [entry("sub", "dir", { path: "/sub" })] : []),
@@ -1590,7 +1593,7 @@ describe("右键菜单：空白区清单与接线", () => {
     expect(menuLabels().some((t) => t.includes("打包下载"))).toBe(false);
   });
 
-  it("FileTree 空白区菜单清单齐全，新建空白文件写入树根目录", async () => {
+  it("FileTree blank-area menu has all entries; new blank file writes to the tree root", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     openTreeBlankMenu();

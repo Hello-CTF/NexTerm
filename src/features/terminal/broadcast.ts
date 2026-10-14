@@ -143,6 +143,6 @@ export async function broadcastInput(args: BroadcastWriteArgs): Promise<Broadcas
 
 export function describeBroadcastSkips(skipped: BroadcastSkip[]): string {
   const shown = skipped.slice(0, 3).map((s) => `「${s.title}」${s.reason}`);
-  if (skipped.length > 3) shown.push(`等 ${skipped.length} 个`);
+  if (skipped.length > 3) shown.push(`另有 ${skipped.length - 3} 个`);
   return shown.join("、");
 }

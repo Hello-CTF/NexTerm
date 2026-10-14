@@ -247,7 +247,7 @@ func TestPreviewRelayLifecycle(t *testing.T) {
 	index := feed.waitWrite(t, 0, hasBinaryContaining("relay-unit-marker"))
 	for earlier := 0; earlier < index; earlier++ {
 		if write := feed.writeAt(earlier); write.typ != websocket.MessageBinary {
-			t.Fatalf("write #%d = %+v, 快照等 JSON 帧不得转发", earlier, write)
+			t.Fatalf("write #%d = %+v, snapshot and other JSON frames must not be forwarded", earlier, write)
 		}
 	}
 

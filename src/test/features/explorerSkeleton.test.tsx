@@ -114,8 +114,8 @@ afterEach(() => {
   setViewportWidth(1024);
 });
 
-describe("资产树加载骨架屏", () => {
-  it("列表加载中显示骨架屏而不是空态提示", async () => {
+describe("asset tree loading skeleton", () => {
+  it("shows skeleton bars instead of the empty state while the list loads", async () => {
     const pending = deferred<typeof WEB[]>();
     mocks.assetList.mockReturnValue(pending.promise);
     mounted = mountWithClient(createElement(AssetTree));
@@ -131,7 +131,7 @@ describe("资产树加载骨架屏", () => {
     expect(mounted.container.querySelector('[role="status"]')).toBeNull();
   });
 
-  it("空列表加载完成后骨架屏消失并显示空态提示", async () => {
+  it("hides the skeleton and shows the empty state after an empty list loads", async () => {
     const pending = deferred<typeof WEB[]>();
     mocks.assetList.mockReturnValue(pending.promise);
     mounted = mountWithClient(createElement(AssetTree));
@@ -143,7 +143,7 @@ describe("资产树加载骨架屏", () => {
     expect(mounted.container.querySelector('[role="status"]')).toBeNull();
   });
 
-  it("骨架条带 reduced-motion 兼容类", async () => {
+  it("applies reduced-motion compatibility classes to skeleton bars", async () => {
     const pending = deferred<typeof WEB[]>();
     mocks.assetList.mockReturnValue(pending.promise);
     mounted = mountWithClient(createElement(AssetTree));
@@ -157,7 +157,7 @@ describe("资产树加载骨架屏", () => {
     pending.resolve([]);
   });
 
-  it("320/390 窄屏下比例中条可收缩，固定条预算不超出内容宽", async () => {
+  it("lets proportional bars shrink at 320/390px without fixed bars exceeding the content width", async () => {
     const NARROW_ROW_GAP_PX = 7;
     const NARROW_CONTENT_PX = 180 - 12 - 16;
     const classPxWidth = (className: string): number => {

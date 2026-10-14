@@ -45,34 +45,34 @@ const GO_ARGON2ID_VECTORS: {
   },
 ];
 
-describe("argon2id 与 Go x/crypto 互通", () => {
-  it("小参数向量一致", () => {
+describe("argon2id interoperability with Go x/crypto", () => {
+  it("matches the small-parameter vectors", () => {
     for (const v of GO_ARGON2ID_VECTORS) {
       const got = argon2idKey(bytes(v.password), bytes(v.salt), v.time, v.memory, v.threads, 32);
       expect(hex(got)).toBe(v.key);
     }
   });
 
-  it("生产参数(t=3, m=64MiB, p=4)向量一致", () => {
+  it("matches the production-parameter vector (t=3, m=64MiB, p=4)", () => {
     const got = argon2idKey(bytes("password"), bytes("somesalt12345678"), 3, 65536, 4, 32);
     expect(hex(got)).toBe("64d388aeb007b664336c2357dfdd47c496340c12d8ee87dd33f05ae923aa5718");
   }, 60_000);
 });
 
-describe("blake2b 基础向量", () => {
-  it("空输入 BLAKE2b-512", () => {
+describe("blake2b basic vectors", () => {
+  it("hashes empty input with BLAKE2b-512", () => {
     expect(hex(blake2b(new Uint8Array(0), 64))).toBe(
       "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce",
     );
   });
 
-  it("abc 的 BLAKE2b-512", () => {
+  it("hashes abc with BLAKE2b-512", () => {
     expect(hex(blake2b(bytes("abc"), 64))).toBe(
       "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923",
     );
   });
 
-  it(" BLAKE2b-32(参数化输出长度)", () => {
+  it("hashes abc with parameterized BLAKE2b-32 output length", () => {
     expect(hex(blake2b(bytes("abc"), 32))).toBe(
       "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319",
     );

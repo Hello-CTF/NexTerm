@@ -97,7 +97,7 @@ function emitDone(answer: string) {
   act(() => channel.onEvent({ type: "done", answer }));
 }
 
-describe("AiSidebar 定时任务入口", () => {
+describe("AiSidebar cron entry point", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -147,7 +147,7 @@ describe("AiSidebar 定时任务入口", () => {
     view = null;
   });
 
-  it("没有会话时入口禁用并提示先开始会话", async () => {
+  it("disables the entry point and prompts to start a conversation when none exists", async () => {
     await flush();
     const disabled = view!.container.querySelector<HTMLButtonElement>(
       'button[title="定时任务挂在会话上：先发送消息开始一个会话"]',
@@ -157,10 +157,10 @@ describe("AiSidebar 定时任务入口", () => {
     expect(mocks.cronList).not.toHaveBeenCalled();
   });
 
-  it("有会话后入口可点，面板按当前会话读取，关闭后收起", async () => {
+  it("enables the entry point after a conversation starts, loads the panel for the current conversation, and collapses it on close", async () => {
     await flush();
-    await send(view!, "问题甲");
-    emitDone("回答甲");
+    await send(view!, "Question A");
+    emitDone("Answer A");
     await flush();
     expect(cronButton(view!).disabled).toBe(false);
 
@@ -175,19 +175,19 @@ describe("AiSidebar 定时任务入口", () => {
     expect(cronButton(view!).className).not.toContain("is-active");
   });
 
-  it("删除当前会话后面板随之关闭", async () => {
+  it("closes the panel when the current conversation is deleted", async () => {
     await flush();
-    await send(view!, "问题甲");
-    emitDone("回答甲");
+    await send(view!, "Question A");
+    emitDone("Answer A");
     await flush();
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "会话甲", updatedAt: 0 }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Conversation A", updatedAt: 0 }]);
 
     click(cronButton(view!));
     await flushUntil(() => textOf(view!).includes("这个会话还没有定时任务"));
 
     click(view!.container.querySelector('button[title="历史会话"]')!);
-    await flushUntil(() => textOf(view!).includes("会话甲"));
-    click(view!.container.querySelector('button[aria-label="删除会话「会话甲」"]')!);
+    await flushUntil(() => textOf(view!).includes("Conversation A"));
+    click(view!.container.querySelector('button[aria-label="删除会话「Conversation A」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
     await flush();

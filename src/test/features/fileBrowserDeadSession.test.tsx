@@ -120,7 +120,7 @@ const NEW_SESSION = {
 const NEW_LOCAL_SESSION = {
   id: "s-local",
   assetId: null,
-  name: "本机",
+  name: "Local",
   kind: "local",
   status: "connected" as const,
   tabs: [],
@@ -156,7 +156,7 @@ const ENTRIES = [entry("a.txt", "file"), entry("sub", "dir")];
 let mounted: MountedView | undefined;
 
 function seedWorkspace(options: { assetId?: string; assetKind?: string; title?: string } = {}): void {
-  const tab: AppTab = { id: TAB_ID, kind: "files", title: "文件", sessionId: SID, closable: true };
+  const tab: AppTab = { id: TAB_ID, kind: "files", title: "Files", sessionId: SID, closable: true };
   const title = options.title ?? "web-01";
   const kind = options.assetKind ?? (options.assetId ? "ssh" : "local");
   useUi.setState({
@@ -272,8 +272,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("FileBrowser 会话已删除", () => {
-  it("自动重连失败后显示真实原因与「重新连接这台主机」，不提供无效的「重试」", async () => {
+describe("FileBrowser deleted sessions", () => {
+  it("shows the real reason and a reconnect action after automatic reconnection fails, without an ineffective retry action", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
@@ -288,7 +288,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("检测到死会话后自动重连一次：fresh connect 复用原标签加载新会话，不重复工作区/会话/标签", async () => {
+  it("reconnects once after detecting a dead session: fresh connect reuses the original tab for the new session without duplicating the workspace, session, or tab", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
@@ -310,7 +310,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(toolbarButton("新建")?.disabled).toBe(false);
   });
 
-  it("新会话仍被删除时只为新会话再自动重连一次，随后停止不循环", async () => {
+  it("reconnects only once more when the new session is also deleted, then stops without looping", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mounted = mountFromStore();
 
@@ -322,7 +322,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(buttonTexts()).toContain("重新连接这台主机");
   });
 
-  it("自动重连进行中展示「正在重新连接…」并禁用按钮，失败后回退为手动按钮", async () => {
+  it("shows a busy reconnecting state and disables the button during automatic reconnection, then restores the manual action after failure", async () => {
     seedWorkspace({ assetId: "asset-1" });
     const pending = deferred<unknown>();
     mocks.connect.mockReturnValue(pending.promise);
@@ -341,8 +341,8 @@ describe("FileBrowser 会话已删除", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("updateTab 重指向会话时只同步正在跟踪旧会话的工作区", () => {
-    const tab: AppTab = { id: "t1", kind: "files", title: "文件", sessionId: SID, closable: true };
+  it("synchronizes only workspaces tracking the old session when updateTab retargets a session", () => {
+    const tab: AppTab = { id: "t1", kind: "files", title: "Files", sessionId: SID, closable: true };
     useUi.setState({
       workspaces: [
         {
@@ -364,7 +364,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.sessionId).toBe("s2");
   });
 
-  it("死会话下禁用工具栏与菜单里会打到后端的项目并给出真实原因", async () => {
+  it("disables toolbar and menu actions that would reach the backend for a dead session and explains the real reason", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountFromStore();
@@ -404,7 +404,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(mocks.mkdir).not.toHaveBeenCalled();
   });
 
-  it("取消主机密钥变更确认：不信任、不重试，面板保持真实原因，手动点击才会再试", async () => {
+  it("cancelling the host-key change confirmation does not trust or retry, keeps the real reason in the panel, and retries only after a manual click", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
     mounted = mountFromStore();
@@ -423,7 +423,7 @@ describe("FileBrowser 会话已删除", () => {
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
   });
 
-  it("接受主机密钥变更：记账后自动重连成功并复用原标签", async () => {
+  it("accepting a host-key change records it, reconnects automatically, and reuses the original tab", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValueOnce(CHANGED_HOST_KEY);
     mocks.ask.mockResolvedValue(true);
@@ -441,7 +441,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
   });
 
-  it("自动重连失败：报告真实错误，面板与会话保持原样，手动重试成功恢复", async () => {
+  it("reports the real error and preserves the panel and session after automatic reconnection fails, then recovers with a manual retry", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
     mounted = mountFromStore();
@@ -469,7 +469,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(storeTabSessionId()).toBe("s2");
   });
 
-  it("本地会话（无资产）自动回退 connectLocal，同样复用原标签", async () => {
+  it("falls back to connectLocal for a local session without an asset and reuses the original tab", async () => {
     seedWorkspace();
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
@@ -482,7 +482,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(storeTabSessionId()).toBe("s-local");
   });
 
-  it("设备工作区死会话自动走设备连接重连，复用原标签加载新会话", async () => {
+  it("reconnects a dead session in a device workspace through the device connection and loads the new session in the original tab", async () => {
     seedWorkspace({ assetId: "device/d-1", assetKind: "device", title: "build-box" });
     mocks.connectDevice.mockResolvedValue(NEW_DEVICE_SESSION);
     mocks.list.mockImplementation((sid: string) =>
@@ -501,7 +501,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(toastTexts()).toContain("已重新连接");
   });
 
-  it("ssh 资产真实不存在时报出资产不存在的真实原因，不盲目重试", async () => {
+  it("reports the real missing-asset reason for an SSH asset that no longer exists without blindly retrying", async () => {
     seedWorkspace({ assetId: "asset-gone" });
     mocks.connect.mockRejectedValue({ code: "not_found", message: "资产不存在" });
     mounted = mountFromStore();
@@ -515,7 +515,7 @@ describe("FileBrowser 会话已删除", () => {
     expect(panel()?.textContent).toContain("会话已在服务端删除");
   });
 
-  it("找不到文件标签时给出准确原因，不盲目发起连接，也不循环重试", async () => {
+  it("reports the precise reason when the file tab is missing and does not connect blindly or retry in a loop", async () => {
     mounted = mountStandalone();
 
     await waitFor(() => expect(toastTexts()).toContain("找不到这个文件标签的主机信息"));
@@ -533,8 +533,8 @@ describe("FileBrowser 会话已删除", () => {
   });
 });
 
-describe("FileBrowser 瞬时文件错误", () => {
-  it("保留真实错误与「重试」，自动重试一次仍失败后展示，手动重试成功恢复，不引导重新连接", async () => {
+describe("FileBrowser transient file errors", () => {
+  it("preserves the real error and retry action after one automatic retry fails, recovers with a manual retry, and does not offer reconnection", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockRejectedValueOnce({ code: "sftp", message: "SFTP：连接被对端重置" });
     mocks.list.mockRejectedValueOnce({ code: "sftp", message: "SFTP：连接被对端重置" });
@@ -559,7 +559,7 @@ describe("FileBrowser 瞬时文件错误", () => {
   });
 });
 
-describe("FileBrowser 生产重试策略（retry: 1）", () => {
+describe("FileBrowser production retry policy (retry: 1)", () => {
   function mountProductionRetry(): MountedView {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: 1, retryDelay: 0, refetchOnWindowFocus: false } },
@@ -569,7 +569,7 @@ describe("FileBrowser 生产重试策略（retry: 1）", () => {
     );
   }
 
-  it("not_found 不再自动重试：只调用一次 fsApi.list 即显示死会话面板", async () => {
+  it("does not automatically retry not_found: calls fsApi.list once and shows the dead-session panel", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountProductionRetry();
@@ -581,7 +581,7 @@ describe("FileBrowser 生产重试策略（retry: 1）", () => {
     expect(mocks.list).toHaveBeenCalledTimes(1);
   });
 
-  it("瞬时错误保留一次自动重试：失败后共调用两次，之后重试可恢复", async () => {
+  it("keeps one automatic retry for transient errors: calls twice after failure and recovers with a later retry", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockRejectedValue({ code: "sftp", message: "SFTP：连接被对端重置" });
     mounted = mountProductionRetry();

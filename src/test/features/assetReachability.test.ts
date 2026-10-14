@@ -65,8 +65,8 @@ beforeEach(() => {
   );
 });
 
-describe("assetReachability 重叠批次", () => {
-  it("a/b 两批重叠各自成功，互不作废也不卡 checking", async () => {
+describe("assetReachability overlapping batches", () => {
+  it("overlapping a/b batches succeed independently without invalidating each other or getting stuck in checking", async () => {
     const p1 = probe(["a"]);
     const p2 = probe(["b"]);
     expect(mocks.probeBatch).toHaveBeenCalledTimes(2);
@@ -82,7 +82,7 @@ describe("assetReachability 重叠批次", () => {
     expect(useAssetReachability.getState().batchError).toBeNull();
   });
 
-  it("同资产后批覆盖前批，前批迟到的响应被丢弃", async () => {
+  it("a later batch for the same asset supersedes the earlier batch and discards its late response", async () => {
     const p1 = probe(["a"]);
     const p2 = probe(["a"]);
     expect(mocks.probeBatch).toHaveBeenCalledTimes(2);
@@ -96,7 +96,7 @@ describe("assetReachability 重叠批次", () => {
     expect(entryOf("a")?.error).toBe("down");
   });
 
-  it("批次失败清理自身资产的 checking 并允许重新探测", async () => {
+  it("a failed batch clears checking for its own assets and allows probing again", async () => {
     const p1 = probe(["a", "b"]);
     calls[0].reject({ code: "io", message: "batch down" });
     await p1;
@@ -112,7 +112,7 @@ describe("assetReachability 重叠批次", () => {
     expect(useAssetReachability.getState().batchError).toBeNull();
   });
 
-  it("重叠批次失败只清自己的资产，不动已被新批次接管的资产", async () => {
+  it("a failed overlapping batch clears only its own assets and leaves assets taken over by a newer batch unchanged", async () => {
     const p1 = probe(["a", "b"]);
     const p2 = probe(["b"]);
     calls[1].resolve({ results: [result("b", true)] });
@@ -124,7 +124,7 @@ describe("assetReachability 重叠批次", () => {
     expect(entryOf("a")).toBeUndefined();
   });
 
-  it("请求参数有界：timeoutMs 2500、maxConcurrent 8、去重并截断 32", async () => {
+  it("uses timeoutMs 2500 and maxConcurrent 8 and deduplicates and truncates IDs to 32", async () => {
     const ids = Array.from({ length: 40 }, (_, i) => `asset-${i}`);
     const p1 = probe([...ids, "asset-0", "asset-1"]);
     expect(calls[0].ids).toHaveLength(32);
@@ -139,8 +139,8 @@ describe("assetReachability 重叠批次", () => {
   });
 });
 
-describe("probeAssetReachability 共享在途请求", () => {
-  it("自动批次在途时手动探测等待同一请求，不重复发起", async () => {
+describe("probeAssetReachability in-flight request sharing", () => {
+  it("a manual probe waits for an in-flight automatic batch instead of issuing a duplicate request", async () => {
     const p1 = probe(["a", "b"]);
     const manual = probeAssetReachability("a");
     await Promise.resolve();
@@ -154,7 +154,7 @@ describe("probeAssetReachability 共享在途请求", () => {
     expect(entryOf("b")?.state).toBe("unreachable");
   });
 
-  it("手动探测赶上同资产连续两批时等到最终一批的结果", async () => {
+  it("a manual probe spanning consecutive batches for the same asset waits for the final batch result", async () => {
     const p1 = probe(["a"]);
     const p2 = probe(["a"]);
     const manual = probeAssetReachability("a");
@@ -167,7 +167,7 @@ describe("probeAssetReachability 共享在途请求", () => {
     expect(entryOf("a")?.state).toBe("unreachable");
   });
 
-  it("无在途时手动探测自行发起并返回结果", async () => {
+  it("a manual probe starts its own request and returns the result when no request is in flight", async () => {
     const manual = probeAssetReachability("a");
     await Promise.resolve();
     expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
@@ -176,7 +176,7 @@ describe("probeAssetReachability 共享在途请求", () => {
     await expect(manual).resolves.toMatchObject({ state: "reachable", durationMs: 31 });
   });
 
-  it("在途批次失败时手动探测返回 null 而不是卡住的 checking", async () => {
+  it("a manual probe returns null instead of a stuck checking state when the in-flight batch fails", async () => {
     const p1 = probe(["a", "b"]);
     const manual = probeAssetReachability("a");
     calls[0].reject({ code: "io", message: "batch down" });

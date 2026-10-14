@@ -31,7 +31,7 @@ function png(name: string): File {
 }
 
 describe("pureImageFiles", () => {
-  it("全部文件项都是图片时才返回文件列表", () => {
+  it("returns files only when every file item is an image", () => {
     const dt = dataTransferWith([
       { kind: "file", type: "image/png", file: png("a.png") },
       { kind: "file", type: "image/webp", file: new File(["w"], "b.webp", { type: "image/webp" }) },
@@ -39,7 +39,7 @@ describe("pureImageFiles", () => {
     expect(pureImageFiles(dt).map((f) => f.name)).toEqual(["a.png", "b.webp"]);
   });
 
-  it("混合载荷(图片+非图片)整体返回空, 不提取图片子集", () => {
+  it("returns an empty list for mixed image and non-image payloads instead of extracting an image subset", () => {
     const dt = dataTransferWith([
       { kind: "file", type: "image/png", file: png("a.png") },
       { kind: "file", type: "text/plain", file: new File(["x"], "notes.txt", { type: "text/plain" }) },
@@ -47,7 +47,7 @@ describe("pureImageFiles", () => {
     expect(pureImageFiles(dt)).toEqual([]);
   });
 
-  it("文本项不计入文件判定, 空数据与非图片载荷返回空数组", () => {
+  it("ignores text items and returns empty arrays for empty and non-image payloads", () => {
     const dt = dataTransferWith([
       { kind: "string", type: "text/plain", file: null },
       { kind: "file", type: "image/png", file: png("a.png") },
@@ -62,7 +62,7 @@ describe("pureImageFiles", () => {
     ).toEqual([]);
   });
 
-  it("items 缺失时回退到 files, 同样 all-or-nothing", () => {
+  it("falls back to files when items is missing, preserving all-or-nothing behavior", () => {
     const allImages = {
       items: [],
       files: [png("c.png")],
@@ -79,7 +79,7 @@ describe("pureImageFiles", () => {
 });
 
 describe("clipboardHasPlainText", () => {
-  it("混合剪贴板里有纯文本时判定为真, 交还终端默认粘贴", () => {
+  it("detects plain text in mixed clipboard data and lets the terminal handle the paste", () => {
     expect(clipboardHasPlainText(dataTransferWith([], "echo hi"))).toBe(true);
     expect(clipboardHasPlainText(dataTransferWith([], ""))).toBe(false);
     expect(clipboardHasPlainText(null)).toBe(false);
@@ -87,7 +87,7 @@ describe("clipboardHasPlainText", () => {
 });
 
 describe("markdownFileLink", () => {
-  it("生成普通 Markdown 链接(非图片嵌入)并转义文本", () => {
+  it("creates a regular Markdown link, not an image embed, and escapes the text", () => {
     expect(markdownFileLink("shot.png", "/tmp/nexterm-paste-1.png")).toBe(
       "[shot.png](/tmp/nexterm-paste-1.png)",
     );
@@ -95,19 +95,19 @@ describe("markdownFileLink", () => {
     expect(markdownFileLink("", "/tmp/a.png")).toBe("[file](/tmp/a.png)");
   });
 
-  it("目标含空白或圆括号时用尖括号包裹", () => {
+  it("wraps targets containing spaces or parentheses in angle brackets", () => {
     expect(markdownFileLink("a.png", "/tmp/my images/a.png")).toBe("[a.png](</tmp/my images/a.png>)");
     expect(markdownFileLink("a.png", "/tmp/a(1).png")).toBe("[a.png](</tmp/a(1).png>)");
   });
 });
 
 describe("pasteFileExtension", () => {
-  it("优先取文件名扩展名并小写化", () => {
+  it("prefers the filename extension and lowercases it", () => {
     expect(pasteFileExtension(png("shot.PNG"))).toBe("png");
     expect(pasteFileExtension(new File(["w"], "b.webp", { type: "image/webp" }))).toBe("webp");
   });
 
-  it("文件名没有扩展名时回退 MIME 子类型, 再缺省 png", () => {
+  it("falls back to the MIME subtype and then png when the filename has no extension", () => {
     expect(pasteFileExtension(new File(["x"], "pasted-image", { type: "image/gif" }))).toBe("gif");
     expect(pasteFileExtension(new File(["x"], "pasted-image", { type: "image/svg+xml" }))).toBe("png");
     expect(pasteFileExtension(new File(["x"], "pasted-image"))).toBe("png");
@@ -115,7 +115,7 @@ describe("pasteFileExtension", () => {
 });
 
 describe("bytesToBase64", () => {
-  it("小数据与跨chunk数据都能往返", () => {
+  it("round-trips small and chunked data", () => {
     const small = new Uint8Array([1, 2, 3, 250]);
     expect(bytesToBase64(small)).toBe(btoa(String.fromCharCode(...small)));
 

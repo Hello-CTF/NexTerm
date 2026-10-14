@@ -135,15 +135,15 @@ function commandTexts(): string[] {
   return [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
 }
 
-describe("oneLineInstallCommand 构造", () => {
-  it("curl 拉取接入地址的 install-device.sh 并带真实 --server/--code/--version", () => {
+describe("oneLineInstallCommand construction", () => {
+  it("downloads install-device.sh from the base URL with curl and passes the real --server/--code/--version values", () => {
     expect(oneLineInstallCommand("https://nexterm.example.com", false, "c-1", "0.2.2")).toBe(
       "curl -fsSL 'https://nexterm.example.com/install-device.sh' | sh -s -- " +
         "--server 'https://nexterm.example.com' --code 'c-1' --version '0.2.2'",
     );
   });
 
-  it("非 insecure 的接入地址两侧都严格校验证书, 不出现任何 --insecure", () => {
+  it("strictly validates certificates on both sides for non-insecure base URLs and never emits --insecure", () => {
     const command = oneLineInstallCommand("https://nexterm.example.com", false, "c-1", "0.2.2");
     expect(command).toBe(
       "curl -fsSL 'https://nexterm.example.com/install-device.sh' | sh -s -- " +
@@ -152,7 +152,7 @@ describe("oneLineInstallCommand 构造", () => {
     expect(command).not.toContain("--insecure");
   });
 
-  it("显式 insecure 的自签名 HTTPS 接入地址: curl 与脚本/enroll 两侧都放宽证书", () => {
+  it("relaxes certificate checks in both curl and script/enroll arguments for an explicitly insecure self-signed HTTPS base URL", () => {
     const command = oneLineInstallCommand("https://10.0.0.8:8443", true, "c-1", "0.2.2");
     expect(command).toBe(
       "curl -fsSL --insecure 'https://10.0.0.8:8443/install-device.sh' | sh -s -- " +
@@ -160,7 +160,7 @@ describe("oneLineInstallCommand 构造", () => {
     );
   });
 
-  it("动态参数中的 shell 元字符被单引号包裹, 单引号自身转义", () => {
+  it("single-quotes shell metacharacters in dynamic arguments and escapes embedded single quotes", () => {
     const command = oneLineInstallCommand("https://nexterm.example.com/mirror;v2/$(id)", false, "co'de", "0.2.2");
     expect(command).toContain("'https://nexterm.example.com/mirror;v2/$(id)/install-device.sh'");
     expect(command).toContain("--code 'co'\\''de'");
@@ -169,15 +169,15 @@ describe("oneLineInstallCommand 构造", () => {
   });
 });
 
-describe("oneLineInstallCommandWindows 构造", () => {
-  it("iex 拉取接入地址的 install-device.ps1 并透传与 sh 版相同的参数", () => {
+describe("oneLineInstallCommandWindows construction", () => {
+  it("downloads install-device.ps1 with iex and forwards the same parameters as the sh version", () => {
     expect(oneLineInstallCommandWindows("https://nexterm.example.com", false, "c-1", "0.2.2")).toBe(
       "iex \"& { $(iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1') } " +
         "--server 'https://nexterm.example.com' --code 'c-1' --version '0.2.2'\"",
     );
   });
 
-  it("显式 insecure 的接入地址: --insecure 透传给脚本参数", () => {
+  it("passes --insecure through to the script arguments for an explicitly insecure base URL", () => {
     const command = oneLineInstallCommandWindows("https://10.0.0.8:8443", true, "c-1", "0.2.2");
     expect(command).toBe(
       "iex \"& { $(iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1') } " +
@@ -185,7 +185,7 @@ describe("oneLineInstallCommandWindows 构造", () => {
     );
   });
 
-  it("动态参数按 PowerShell 字面字符串引用, 内嵌单引号双写转义", () => {
+  it("quotes dynamic arguments as PowerShell literal strings and doubles embedded single quotes", () => {
     const command = oneLineInstallCommandWindows("https://nexterm.example.com/mirror;v2/$(id)", false, "co'de", "0.2.2");
     expect(command).toContain("'https://nexterm.example.com/mirror;v2/$(id)/install-device.ps1'");
     expect(command).toContain("--code 'co''de'");
@@ -193,8 +193,8 @@ describe("oneLineInstallCommandWindows 构造", () => {
   });
 });
 
-describe("设备管理 · 一键安装指令", () => {
-  it("签发后按接入地址展示一行安装指令 (真实 /healthz 版本), 既有 enroll/install 命令保留", async () => {
+describe("Device management - one-click install commands", () => {
+  it("shows one-line install commands for each base URL after issuance using the real /healthz version and preserves existing enroll/install commands", async () => {
     const calls = route();
     await openIssuedPanel();
 
@@ -239,7 +239,7 @@ describe("设备管理 · 一键安装指令", () => {
     expect(document.body.textContent).toContain("无法确认安装结果");
   });
 
-  it("接入地址含 shell 元字符时一行安装指令同样单引号安全", async () => {
+  it("keeps one-line install commands single-quote safe when a base URL contains shell metacharacters", async () => {
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
       const u = String(url);
       const method = init.method ?? "GET";
@@ -265,7 +265,7 @@ describe("设备管理 · 一键安装指令", () => {
     expect(oneLiner).toContain("--server 'https://nexterm.example.com/mirror;v2/$(id)'");
   });
 
-  it("版本不可用 (/healthz 失败) 时一键安装指令整段隐藏, 不伪造版本", async () => {
+  it("hides the entire one-click install command section when /healthz fails instead of fabricating a version", async () => {
     healthBehavior.mode = "fail";
     route();
     await openIssuedPanel();
@@ -278,7 +278,7 @@ describe("设备管理 · 一键安装指令", () => {
     expect(commandTexts().some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
   });
 
-  it("版本为空串时同样隐藏一键安装指令", async () => {
+  it("also hides one-click install commands when the version is an empty string", async () => {
     healthBehavior.mode = "empty";
     route();
     await openIssuedPanel();

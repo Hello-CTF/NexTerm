@@ -276,7 +276,7 @@ function CredentialDetail({
   };
 
   const clearPassphrase = async () => {
-    const ok = await ask("清除这条私钥的口令？\n清除后，需要口令才能解开的私钥将无法连接。", {
+    const ok = await ask("清除凭据库中保存的私钥口令？\n清除后，若私钥本身已加密，连接时将无法自动解密。", {
       kind: "warning",
     });
     if (!ok) return;

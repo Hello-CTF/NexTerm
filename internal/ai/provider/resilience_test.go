@@ -36,6 +36,7 @@ type recordedRequest struct {
 	model     string
 	stream    bool
 	toolCount int
+	messages  []map[string]json.RawMessage
 }
 
 type fakeProvider struct {
@@ -46,13 +47,14 @@ type fakeProvider struct {
 
 func (f *fakeProvider) RoundTrip(request *http.Request) (*http.Response, error) {
 	var body struct {
-		Model  string            `json:"model"`
-		Stream bool              `json:"stream"`
-		Tools  []json.RawMessage `json:"tools"`
+		Model    string                       `json:"model"`
+		Stream   bool                         `json:"stream"`
+		Tools    []json.RawMessage            `json:"tools"`
+		Messages []map[string]json.RawMessage `json:"messages"`
 	}
 	_ = json.NewDecoder(request.Body).Decode(&body)
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedRequest{model: body.Model, stream: body.Stream, toolCount: len(body.Tools)})
+	f.requests = append(f.requests, recordedRequest{model: body.Model, stream: body.Stream, toolCount: len(body.Tools), messages: body.Messages})
 	index := len(f.requests) - 1
 	step := fakeStep{err: fmt.Errorf("unexpected fake-provider request %d", index)}
 	if index < len(f.steps) {

@@ -110,7 +110,7 @@ async function send(view: MountedView, text: string) {
   await flush();
 }
 
-describe("AiSidebar 图片粘贴与添加", () => {
+describe("AiSidebar image paste and attachment", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -148,7 +148,7 @@ describe("AiSidebar 图片粘贴与添加", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-1", title: "新会话" }],
+          tabs: [{ id: "tab-1", title: "New conversation" }],
           activeTabId: "tab-1",
         },
       },
@@ -163,29 +163,29 @@ describe("AiSidebar 图片粘贴与添加", () => {
     view = null;
   });
 
-  it("paste 从 items 取图片并随消息发送", async () => {
+  it("paste takes images from items and sends them with the message", async () => {
     await flush();
     const event = dispatchPaste(view!, pasteDataTransfer([imageItem(png("a.png"))], []));
     expect(event.defaultPrevented).toBe(true);
     await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
 
-    await send(view!, "看图");
+    await send(view!, "Look at the image");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "看图",
+        message: "Look at the image",
         images: [expect.stringContaining("data:image/png;base64")],
       }),
     );
   });
 
-  it("paste 在 items 为空时回退到 files", async () => {
+  it("paste falls back to files when items is empty", async () => {
     await flush();
     const event = dispatchPaste(view!, pasteDataTransfer([], [png("b.png")]));
     expect(event.defaultPrevented).toBe(true);
     await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
   });
 
-  it("items 与 files 同时给出同一图片时去重只加一张", async () => {
+  it("deduplicates when items and files contain the same image and adds only one attachment", async () => {
     await flush();
     const file = png("same.png");
     dispatchPaste(view!, pasteDataTransfer([imageItem(file)], [file]));
@@ -194,7 +194,7 @@ describe("AiSidebar 图片粘贴与添加", () => {
     expect(view!.container.querySelectorAll(".nx-attach")).toHaveLength(1);
   });
 
-  it("非图片 paste 不拦截、不加附件", async () => {
+  it("does not intercept non-image paste or add attachments", async () => {
     await flush();
     const event = dispatchPaste(
       view!,
@@ -205,7 +205,7 @@ describe("AiSidebar 图片粘贴与添加", () => {
     expect(view!.container.querySelectorAll(".nx-attach")).toHaveLength(0);
   });
 
-  it("添加图片按钮经文件选择加入附件并随消息发送", async () => {
+  it("adds an image through the file picker and sends it with the message", async () => {
     await flush();
     const button = view!.container.querySelector<HTMLButtonElement>('button[aria-label="添加图片"]');
     expect(button).not.toBeNull();
@@ -220,16 +220,16 @@ describe("AiSidebar 图片粘贴与添加", () => {
     });
     await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
 
-    await send(view!, "看这张图");
+    await send(view!, "Look at this image");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "看这张图",
+        message: "Look at this image",
         images: [expect.stringContaining("data:image/png;base64")],
       }),
     );
   });
 
-  it("placeholder 按平台区分：web 承诺可直接粘贴，桌面端不承诺", async () => {
+  it("uses platform-specific placeholders: web promises direct paste while desktop does not", async () => {
     await flush();
     const placeholder = () =>
       view!.container.querySelector("textarea")?.getAttribute("placeholder") ?? "";

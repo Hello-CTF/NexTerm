@@ -173,13 +173,13 @@ describe("stream recovery: sequence cursor and reorder", () => {
   it("drains a buffered terminal event once the gap is filled", () => {
     const { s, runFrame } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "半", seq: 1 });
+    s.pushEvent(1, { type: "delta", text: "Part", seq: 1 });
     runFrame();
     const buffered = s.pushEvent(1, { type: "done", answer: "完整答案", seq: 3 });
     expect(buffered.accepted).toBe(false);
     expect(buffered.terminal).toBeNull();
     expect(s.getState().attempts[0].outcome).toBeNull();
-    const filled = s.pushEvent(1, { type: "delta", text: "截", seq: 2 });
+    const filled = s.pushEvent(1, { type: "delta", text: "Chunk", seq: 2 });
     expect(filled.terminal).toBe("done");
     expect(s.getState().attempts[0].outcome).toBe("done");
     runFrame();
@@ -238,7 +238,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     const done = stream();
     done.s.beginRun(1);
     done.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
-    done.s.pushEvent(1, { type: "done", answer: "答案", seq: 2 });
+    done.s.pushEvent(1, { type: "done", answer: "Answer", seq: 2 });
     const doneState = done.s.getState();
     expect(doneState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "未返回结果" });
     expect(doneState.attempts[0].outcome).toBe("done");
@@ -247,17 +247,17 @@ describe("stream recovery: sequence cursor and reorder", () => {
   it("a rejected filler still drains a buffered terminal and settles exactly once", () => {
     const { s, runFrame } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "半", seq: 1 });
+    s.pushEvent(1, { type: "delta", text: "Part", seq: 1 });
     runFrame();
-    const buffered = s.pushEvent(1, { type: "done", answer: "答案", seq: 3 });
+    const buffered = s.pushEvent(1, { type: "done", answer: "Answer", seq: 3 });
     expect(buffered.terminal).toBeNull();
     expect(s.getState().attempts[0].outcome).toBeNull();
-    const filler = s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    const filler = s.pushEvent(1, { type: "steered", text: "More", seq: 2 });
     expect(filler.accepted).toBe(false);
     expect(filler.terminal).toBe("done");
     expect(s.getState().attempts[0].outcome).toBe("done");
     expect(s.hasGap(1)).toBe(false);
-    const replayed = s.pushEvent(1, { type: "done", answer: "答案", seq: 3 });
+    const replayed = s.pushEvent(1, { type: "done", answer: "Answer", seq: 3 });
     expect(replayed.accepted).toBe(false);
     expect(replayed.terminal).toBe("done");
     const outcomes = s.getState().items.filter((i) => i.role === "outcome");
@@ -270,7 +270,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     errored.s.beginRun(1);
     errored.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
     errored.s.pushEvent(1, { type: "error", message: "boom", retryable: true, seq: 3 });
-    const errorFiller = errored.s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    const errorFiller = errored.s.pushEvent(1, { type: "steered", text: "More", seq: 2 });
     expect(errorFiller.accepted).toBe(false);
     expect(errorFiller.terminal).toBe("error");
     const errorState = errored.s.getState();
@@ -282,7 +282,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     canceled.s.beginRun(1);
     canceled.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
     canceled.s.pushEvent(1, { type: "canceled", message: "已停止本轮", seq: 3 });
-    const cancelFiller = canceled.s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    const cancelFiller = canceled.s.pushEvent(1, { type: "steered", text: "More", seq: 2 });
     expect(cancelFiller.accepted).toBe(false);
     expect(cancelFiller.terminal).toBe("canceled");
     const cancelState = canceled.s.getState();
@@ -336,7 +336,7 @@ describe("AiSidebar stream recovery", () => {
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
     mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
@@ -368,7 +368,7 @@ describe("AiSidebar stream recovery", () => {
   }
 
   it("resumes a live run from the last delivered seq on reconnect and reports the resync", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "流式", seq: 1 });
     act(runFrames);
 
@@ -383,7 +383,7 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("catches up missed events when a live seq gap appears", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "一", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockResolvedValue([
@@ -399,7 +399,7 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("settles with a canceled outcome when the server reports user cancel", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "半截", seq: 1 });
     emit({ type: "canceled", message: "已停止本轮", seq: 2 });
     await flush();
@@ -425,12 +425,12 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("settles when a rejected filler drains the buffered terminal during replay", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "半截", seq: 1 });
     act(runFrames);
-    mocks.runEvents.mockResolvedValue([{ type: "steered", text: "补充", seq: 2 }]);
+    mocks.runEvents.mockResolvedValue([{ type: "steered", text: "More", seq: 2 }]);
 
-    emit({ type: "done", answer: "答案", seq: 3 });
+    emit({ type: "done", answer: "Answer", seq: 3 });
     await flushReplay();
 
     expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1, 200);
@@ -441,16 +441,16 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("settles when a rejected filler arrives live after a buffered terminal", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "半截", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockResolvedValue([]);
 
-    emit({ type: "done", answer: "答案", seq: 3 });
+    emit({ type: "done", answer: "Answer", seq: 3 });
     await flushReplay();
     expect(useUi.getState().aiBusy).toBe(true);
 
-    emit({ type: "steered", text: "补充", seq: 2 });
+    emit({ type: "steered", text: "More", seq: 2 });
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
     expect(textOf(view!)).toContain("本轮已完成");
@@ -458,7 +458,7 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("keeps an honest syncing state on replay failure and succeeds on retry", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "一", seq: 1 });
     act(runFrames);
     mocks.runEvents
@@ -486,7 +486,7 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("shows a retryable failure state after repeated replay failures and recovers via the manual action", async () => {
-    await send("你好");
+    await send("Hello");
     emit({ type: "delta", text: "一", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockRejectedValue(new Error("offline"));
@@ -515,16 +515,16 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("clears the syncing notice and pending retry when a live drain settles the run", async () => {
-    await send("你好");
-    emit({ type: "delta", text: "半", seq: 1 });
+    await send("Hello");
+    emit({ type: "delta", text: "Part", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockRejectedValue(new Error("offline"));
 
-    emit({ type: "done", answer: "答案", seq: 3 });
+    emit({ type: "done", answer: "Answer", seq: 3 });
     await flushReplay();
     expect(textOf(view!)).toContain("正在补齐");
 
-    emit({ type: "steered", text: "补充", seq: 2 });
+    emit({ type: "steered", text: "More", seq: 2 });
     await flush();
 
     expect(useUi.getState().aiBusy).toBe(false);
@@ -555,16 +555,16 @@ describe("AiSidebar stream recovery", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValue([{ type: "delta", text: "二", seq: 2 }]);
 
-    await send("第一");
+    await send("First");
     emit({ type: "delta", text: "一", seq: 1 }, 0);
     act(runFrames);
     emit({ type: "done", answer: "一", seq: 3 }, 0);
     await flushReplay();
-    emit({ type: "steered", text: "补充", seq: 2 }, 0);
+    emit({ type: "steered", text: "More", seq: 2 }, 0);
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
 
-    await send("第二");
+    await send("Second");
     emit({ type: "delta", text: "一", seq: 1 }, 1);
     act(runFrames);
     emit({ type: "delta", text: "三", seq: 3 }, 1);
@@ -597,16 +597,16 @@ describe("AiSidebar stream recovery", () => {
       )
       .mockResolvedValueOnce([{ type: "delta", text: "二", seq: 2 }]);
 
-    await send("第一");
+    await send("First");
     emit({ type: "delta", text: "一", seq: 1 }, 0);
     act(runFrames);
     emit({ type: "done", answer: "一", seq: 3 }, 0);
     await flushReplay();
-    emit({ type: "steered", text: "补充", seq: 2 }, 0);
+    emit({ type: "steered", text: "More", seq: 2 }, 0);
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
 
-    await send("第二");
+    await send("Second");
     emit({ type: "delta", text: "一", seq: 1 }, 1);
     act(runFrames);
     emit({ type: "delta", text: "三", seq: 3 }, 1);
@@ -623,8 +623,8 @@ describe("AiSidebar stream recovery", () => {
   });
 
   it("replays an interrupted run's canceled terminal without error styling", async () => {
-    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "Old conversation", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "Old question" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-old", conversationId: "c-9", status: "canceled", attempt: 1, seq: 2,
@@ -638,7 +638,7 @@ describe("AiSidebar stream recovery", () => {
     ]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
-    clickButton(view!.container, "旧会话");
+    clickButton(view!.container, "Old conversation");
     await flush();
     await flushReplay();
 

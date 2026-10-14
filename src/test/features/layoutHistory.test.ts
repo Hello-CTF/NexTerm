@@ -92,10 +92,10 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
 
 function toolTabs(): AppTab[] {
   return [
-    panelTab("settings", "settings", "设置"),
+    panelTab("settings", "settings", "Settings"),
     panelTab("history", "history", "终端历史"),
-    panelTab("background", "background", "后台会话"),
-    panelTab("audit", "audit", "审计日志"),
+    panelTab("background", "background", "Background sessions"),
+    panelTab("audit", "audit", "Audit log"),
   ];
 }
 
@@ -175,7 +175,7 @@ describe("history tab in the layout pane contract", () => {
   });
 
   it("remote LAYOUT_CHANGED application preserves the history tab", async () => {
-    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "设置")])]));
+    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "Settings")])]));
     const { layout, store } = await openTab();
     expect(findTab(store.getState(), "history")).toBeUndefined();
 
@@ -192,7 +192,7 @@ describe("history tab in the layout pane contract", () => {
   });
 
   it("conflict layout application preserves the history tab and refreshes to the server copy", async () => {
-    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "设置")])]));
+    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "Settings")])]));
     const { layout, store } = await openTab();
 
     server.revision = 7;

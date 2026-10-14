@@ -162,8 +162,8 @@ afterEach(() => {
   setViewportWidth(1024);
 });
 
-describe("FileBrowser 骨架屏", () => {
-  it("pending 显示骨架行，无空态闪烁，数据到达后立即替换", async () => {
+describe("FileBrowser skeleton", () => {
+  it("shows skeleton rows while pending and replaces them immediately without flashing an empty state", async () => {
     const d = deferred<FileEntryDto[]>();
     mocks.fsList.mockReturnValue(d.promise);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
@@ -180,7 +180,7 @@ describe("FileBrowser 骨架屏", () => {
     expect(mounted!.container.textContent).not.toContain("这个目录是空的");
   });
 
-  it("真空目录到达后显示空态而不是骨架", async () => {
+  it("shows the empty state instead of skeleton rows after a genuinely empty directory arrives", async () => {
     mocks.fsList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitFor(() =>
@@ -189,7 +189,7 @@ describe("FileBrowser 骨架屏", () => {
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
   });
 
-  it("320 与 390 下骨架行低频列带隐藏类、名称条自适应", async () => {
+  it("hides low-priority columns and makes name bars responsive at 320 and 390 widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       const d = deferred<FileEntryDto[]>();
@@ -217,8 +217,8 @@ describe("FileBrowser 骨架屏", () => {
   });
 });
 
-describe("FileTree 骨架屏", () => {
-  it("pending 显示骨架行且不出空态，数据到达后立即替换", async () => {
+describe("FileTree skeleton", () => {
+  it("shows skeleton rows without an empty state while pending and replaces them when data arrives", async () => {
     const d = deferred<FileEntryDto[]>();
     mocks.fsList.mockReturnValue(d.promise);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
@@ -233,7 +233,7 @@ describe("FileTree 骨架屏", () => {
     expect(mounted!.container.textContent).not.toContain("这个目录是空的");
   });
 
-  it("320 与 390 下骨架行名称条自适应", async () => {
+  it("makes skeleton name bars responsive at 320 and 390 widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       const d = deferred<FileEntryDto[]>();
@@ -257,8 +257,8 @@ describe("FileTree 骨架屏", () => {
   });
 });
 
-describe("DockerPanel 骨架屏", () => {
-  it("容器 pending 显示骨架行，无空态，数据到达后立即替换", async () => {
+describe("DockerPanel skeleton", () => {
+  it("shows skeleton rows while containers are pending and replaces them when data arrives without an empty state", async () => {
     const ps = deferred<ContainerSummary[]>();
     mocks.dockerPs.mockReturnValue(ps.promise);
     mocks.dockerImages.mockResolvedValue(IMAGES.map((i) => ({ ...i })));
@@ -277,7 +277,7 @@ describe("DockerPanel 骨架屏", () => {
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有容器");
   });
 
-  it("镜像 tab pending 显示骨架行，数据到达后立即替换", async () => {
+  it("shows skeleton rows while the images tab is pending and replaces them when data arrives", async () => {
     const images = deferred<ImageSummary[]>();
     mocks.dockerPs.mockResolvedValue(CONTAINERS.map((c) => ({ ...c })));
     mocks.dockerImages.mockReturnValue(images.promise);
@@ -302,7 +302,7 @@ describe("DockerPanel 骨架屏", () => {
     expect(mounted!.container.textContent).not.toContain("这台主机上还没有镜像");
   });
 
-  it("320 与 390 下骨架条只用百分比或自动宽度，不产生固定最小宽度", async () => {
+  it("uses only percentage or automatic widths at 320 and 390 without fixed minimum widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mocks.dockerPs.mockReturnValue(new Promise<ContainerSummary[]>(() => {}));
@@ -324,8 +324,8 @@ describe("DockerPanel 骨架屏", () => {
   });
 });
 
-describe("BackgroundSessions 骨架屏", () => {
-  it("pending 显示骨架行且无空态，数据到达后立即替换", async () => {
+describe("BackgroundSessions skeleton", () => {
+  it("shows skeleton rows without an empty state while pending and replaces them when data arrives", async () => {
     const d = deferred<LiveTabInfo[]>();
     mocks.listLive.mockReturnValue(d.promise);
     mounted = mount(createElement(BackgroundSessions, { visible: true }));
@@ -342,7 +342,7 @@ describe("BackgroundSessions 骨架屏", () => {
     expect(mounted!.container.textContent).not.toContain("没有在后台运行的终端");
   });
 
-  it("真空结果到达后显示空态而不是骨架", async () => {
+  it("shows the empty state instead of skeleton rows after a genuinely empty result arrives", async () => {
     mocks.listLive.mockResolvedValue([]);
     mounted = mount(createElement(BackgroundSessions, { visible: true }));
     await flushUntil(
@@ -351,7 +351,7 @@ describe("BackgroundSessions 骨架屏", () => {
     expect(mounted!.container.querySelector('tbody tr[aria-hidden="true"]')).toBeNull();
   });
 
-  it("320 与 390 下骨架条只用百分比或自动宽度", async () => {
+  it("uses only percentage or automatic widths at 320 and 390", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mocks.listLive.mockReturnValue(new Promise<LiveTabInfo[]>(() => {}));

@@ -415,7 +415,7 @@ func TestReplaceScriptUnixExecutes(t *testing.T) {
 		return scriptPath
 	}
 
-	t.Run("成功换入并清理", func(t *testing.T) {
+	t.Run("successful swap and cleanup", func(t *testing.T) {
 		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -439,7 +439,7 @@ func TestReplaceScriptUnixExecutes(t *testing.T) {
 		}
 	})
 
-	t.Run("换入失败回滚旧二进制", func(t *testing.T) {
+	t.Run("failed swap rolls back old binary", func(t *testing.T) {
 		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 			t.Fatal(err)
 		}

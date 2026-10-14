@@ -110,8 +110,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("资产复制链接", () => {
-  it("行菜单复制 nexterm://connect/<id> 到剪贴板", async () => {
+describe("asset link copying", () => {
+  it("copies nexterm://connect/<id> from the row menu to the clipboard", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() =>
       expect(

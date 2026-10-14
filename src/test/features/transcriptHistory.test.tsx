@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   transcriptRead: vi.fn(),
   transcriptSearch: vi.fn(),
   transcriptRemove: vi.fn(),
+  transcriptSyncOptIn: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
   uiState: {
@@ -38,6 +39,7 @@ vi.mock("../../ipc/commands", () => ({
     read: mocks.transcriptRead,
     search: mocks.transcriptSearch,
     remove: mocks.transcriptRemove,
+    syncOptIn: mocks.transcriptSyncOptIn,
   },
   sessionApi: {},
   terminalApi: {},
@@ -131,7 +133,7 @@ afterEach(() => {
 });
 
 describe("TranscriptHistoryPanel", () => {
-  it("打开时默认选中当前活动工作区的主机而非列表第一台", async () => {
+  it("selects the active workspace's host by default instead of the first host in the list", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);
     mocks.uiState.workspaces = [{ id: "ws-1", assetId: ASSET.id }];
@@ -142,7 +144,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
   });
 
-  it("布局恢复的标签从所属工作区 seed，而不是挂载时的活动工作区", async () => {
+  it("seeds restored tabs from their owning workspace instead of the workspace active at mount", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);
     mocks.uiState.workspaces = [
@@ -156,7 +158,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
   });
 
-  it("重新获得焦点时跟随所属工作区的主机，手动选择主机后不再跟随", async () => {
+  it("follows the owning workspace's host after regaining focus and stops following after a manual host selection", async () => {
     const hostA = { ...ASSET, id: "01J0HOSTAAAAAAAAAAAA0001", name: "host-a", builtin: false };
     const hostB = { ...ASSET, id: "01J0HOSTBBBBBBBBBBBB0001", name: "host-b", builtin: false };
     mocks.assetList.mockResolvedValue([hostA, hostB, ASSET]);
@@ -332,6 +334,65 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptRemove).not.toHaveBeenCalled();
   });
 
+  it("keeps sync enabled and skips the sync API when disabling is cancelled", async () => {
+    const synced = summary({ syncOptIn: true });
+    mocks.transcriptList.mockResolvedValue([synced]);
+    mocks.ask.mockResolvedValue(false);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
+    const listCalls = mocks.transcriptList.mock.calls.length;
+    const syncButton = mounted.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="关闭这条记录的同步"]',
+    );
+    expect(syncButton).not.toBeNull();
+    expect(syncButton?.title).toBe(
+      "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留",
+    );
+
+    click(syncButton!);
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await flush();
+
+    expect(mocks.ask).toHaveBeenCalledWith(
+      "关闭这条记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。",
+      { title: "关闭账号同步", kind: "warning" },
+    );
+    expect(mocks.transcriptSyncOptIn).not.toHaveBeenCalled();
+    expect(mocks.transcriptList.mock.calls.length).toBe(listCalls);
+    expect(synced).toMatchObject({ syncOptIn: true });
+    expect(syncButton?.textContent?.trim()).toBe("已开启同步");
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("disables sync and reloads only after confirmation", async () => {
+    const synced = summary({ syncOptIn: true });
+    const confirmation = deferred<boolean>();
+    mocks.transcriptList
+      .mockResolvedValueOnce([synced])
+      .mockResolvedValue([summary({ syncOptIn: false })]);
+    mocks.transcriptSyncOptIn.mockResolvedValue(undefined);
+    mocks.ask.mockReturnValue(confirmation.promise);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已开启同步"));
+    const syncButton = mounted.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="关闭这条记录的同步"]',
+    );
+    expect(syncButton).not.toBeNull();
+
+    click(syncButton!);
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    expect(mocks.transcriptSyncOptIn).not.toHaveBeenCalled();
+
+    confirmation.resolve(true);
+    await waitFor(() => expect(mocks.transcriptSyncOptIn).toHaveBeenCalledWith(synced.id, false));
+    await flushUntil(
+      () => mounted!.container.querySelector('button[aria-label="开启这条记录的同步"]') !== null,
+    );
+
+    expect(mocks.transcriptList.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已关闭这条记录的同步");
+  });
+
   it("lists soft-deleted hosts from transcript snapshots", async () => {
     mocks.assetList.mockResolvedValue([]);
     mocks.transcriptHosts.mockResolvedValue([
@@ -446,7 +507,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(target?.textContent).toContain("needle here");
   });
 
-  it("旧记录列表响应不会覆盖手动刷新结果", async () => {
+  it("does not let stale record-list responses overwrite manual refresh results", async () => {
     const first = deferred<ReturnType<typeof summary>[]>();
     const second = deferred<ReturnType<typeof summary>[]>();
     mocks.transcriptList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -467,7 +528,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mounted.container.textContent).not.toContain("1.0 KB");
   });
 
-  it("切换记录后，旧内容响应不会覆盖新记录", async () => {
+  it("does not let stale content responses overwrite the newly selected record", async () => {
     const first = summary({ id: "first" });
     const second = summary({ id: "second" });
     const firstRead = deferred<ReturnType<typeof readResult>>();
@@ -493,7 +554,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mounted.container.querySelector("pre")?.textContent).not.toContain("old output");
   });
 
-  it("旧搜索响应不会覆盖新搜索", async () => {
+  it("does not let stale search responses overwrite a newer search", async () => {
     const first = deferred<{ seq: number; ts: number; preview: string }[]>();
     const second = deferred<{ seq: number; ts: number; preview: string }[]>();
     mocks.transcriptList.mockResolvedValue([summary()]);
@@ -528,7 +589,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mounted.container.textContent).not.toContain("old match");
   });
 
-  it("刷新同时重读当前记录内容", async () => {
+  it("reloads the current record content when refreshing", async () => {
     mocks.transcriptList.mockResolvedValue([summary()]);
     mocks.transcriptRead
       .mockResolvedValueOnce(readResult([{ seq: 0, dataBase64: b64("old output") }]))
@@ -548,7 +609,7 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptRead).toHaveBeenLastCalledWith(summary().id, 0, 524288);
   });
 
-  it("contentOmitted 仅展示元数据，同步状态说明完整", async () => {
+  it("shows metadata only for contentOmitted with a complete sync status explanation", async () => {
     mocks.transcriptList.mockResolvedValue([
       summary({ contentOmitted: true, syncOptIn: true }),
     ]);

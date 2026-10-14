@@ -88,7 +88,7 @@ const historyMessages = [
     id: "call-1",
     tool: "read_file",
     ok: true,
-    text: "文件全文",
+    text: "Full file contents",
     summary: "输出摘要",
     truncated: false,
     exitCode: 0,
@@ -172,7 +172,7 @@ describe("AiSidebar edit and resend", () => {
     mocks.runs.mockResolvedValue([runRow("job-1", "completed"), runRow("job-2", "completed")]);
     mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "演示", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
     mocks.messages.mockResolvedValue(historyMessages);
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.usageSummary.mockResolvedValue([]);
@@ -184,7 +184,7 @@ describe("AiSidebar edit and resend", () => {
       workspaces: [],
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "演示", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },
@@ -200,7 +200,7 @@ describe("AiSidebar edit and resend", () => {
     vi.unstubAllGlobals();
   });
 
-  it("编辑重发成功：editResend 截断后以编辑文本重新发送", async () => {
+  it("edit and resend succeeds: editResend truncates history before resending the edited text", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
 
@@ -209,25 +209,25 @@ describe("AiSidebar edit and resend", () => {
     expect(composerOf(view!).value).toBe("第一问");
     expect(text()).toContain("编辑并重新发送将删除此消息后的消息和运行记录");
 
-    setInputValue(composerOf(view!), "第一问（改）");
+    setInputValue(composerOf(view!), "First question (edited)");
     clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
 
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m1");
     expect(mocks.chat).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", message: "第一问（改）" }),
+      expect.objectContaining({ conversationId: "conv-1", message: "First question (edited)" }),
     );
     expect(text()).not.toContain("编辑并重新发送将删除此消息后的消息和运行记录");
   });
 
-  it("旧消息截断后的 UI：锚点原文保留，其后的回答/工具/后续消息全部移除", async () => {
+  it("UI after truncating old messages: keeps the anchor text and removes its following answers, tools, and messages", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
     expect(text()).toContain("输出摘要");
 
     click(editButtonFor(view!, "第一问"));
     await flush();
-    setInputValue(composerOf(view!), "第一问（改）");
+    setInputValue(composerOf(view!), "First question (edited)");
     clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
     await flush();
@@ -239,7 +239,7 @@ describe("AiSidebar edit and resend", () => {
     expect(text()).not.toContain("第二答");
   });
 
-  it("活动 job/HITL：编辑重发由后端取消清理，前端不重复调用清理 IPC", async () => {
+  it("active job/HITL: the backend cancels and cleans up on edit-resend; the frontend does not repeat cleanup IPC calls", async () => {
     const text = () => view!.container.textContent ?? "";
     mocks.runs.mockResolvedValue([
       runRow("job-1", "completed"),
@@ -299,7 +299,7 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第一问"));
     await flush();
     expect(composerOf(view!).value).toBe("第一问");
-    setInputValue(composerOf(view!), "第一问（改）");
+    setInputValue(composerOf(view!), "First question (edited)");
     clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.chat.mock.calls.length > 0);
 
@@ -310,14 +310,14 @@ describe("AiSidebar edit and resend", () => {
     expect(text()).not.toContain("需要你确认");
     expect(text()).not.toContain("第二答");
     expect(mocks.chat).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", message: "第一问（改）" }),
+      expect.objectContaining({ conversationId: "conv-1", message: "First question (edited)" }),
     );
   });
 
-  it("失败路径：editResend 拒绝时不截断、不重发、保留编辑态", async () => {
+  it("failure path: when editResend rejects, history is not truncated, nothing is resent, and edit mode is preserved", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
-    mocks.editResend.mockRejectedValue(new Error("消息不存在"));
+    mocks.editResend.mockRejectedValue(new Error("Message not found"));
 
     click(editButtonFor(view!, "第一问"));
     await flush();
@@ -336,7 +336,7 @@ describe("AiSidebar edit and resend", () => {
     expect(composerOf(view!).value).toBe("第一问（改）");
   });
 
-  it("提交串行化：deferred double-submit 只发一次 editResend/chat，后续 continuation 不 dispose 首个新 run", async () => {
+  it("submission serialization: a deferred double-submit sends only one editResend/chat call, and a later continuation does not dispose the first new run", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
     const editGate = deferred<void>();
@@ -346,7 +346,7 @@ describe("AiSidebar edit and resend", () => {
 
     click(editButtonFor(view!, "第一问"));
     await flush();
-    setInputValue(composerOf(view!), "第一问（改）");
+    setInputValue(composerOf(view!), "First question (edited)");
     const submitButton = clickButton(view!.container, "编辑并重新发送");
     expect(submitButton.disabled).toBe(true);
     expect(text()).toContain("正在编辑并重新发送…");
@@ -371,7 +371,7 @@ describe("AiSidebar edit and resend", () => {
     expect(text()).not.toContain("正在编辑并重新发送…");
   });
 
-  it("新发送完成的消息无需 remount 即可编辑：chat 后通过 messages IPC 补齐 messageId", async () => {
+  it("newly sent messages are editable without a remount: messages IPC backfills messageId after chat", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
     mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
@@ -379,7 +379,7 @@ describe("AiSidebar edit and resend", () => {
       Promise.resolve([
         ...historyMessages,
         message("m-100", "user", { role: "user", content: "第三问", imageCount: 0, jobId: "job-1" }),
-        message("m-101", "assistant", { role: "assistant", content: "第三答" }),
+        message("m-101", "assistant", { role: "assistant", content: "Third answer" }),
       ]),
     );
 
@@ -391,13 +391,13 @@ describe("AiSidebar edit and resend", () => {
     click(editButtonFor(view!, "第三问"));
     await flush();
     expect(composerOf(view!).value).toBe("第三问");
-    setInputValue(composerOf(view!), "第三问（改）");
+    setInputValue(composerOf(view!), "Third question (edited)");
     clickButton(view!.container, "编辑并重新发送");
     await flushUntil(() => mocks.editResend.mock.calls.length > 0);
     expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m-100");
   });
 
-  it("取消编辑：不发起任何 IPC，保留输入框内容", async () => {
+  it("cancel editing: no IPC calls are made and the composer content is preserved", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
 

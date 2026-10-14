@@ -91,7 +91,7 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
 }
 
 function deviceTabs(): AppTab[] {
-  return [panelTab("devices", "devices", "设备管理"), panelTab("settings", "settings", "设置")];
+  return [panelTab("devices", "devices", "设备管理"), panelTab("settings", "settings", "Settings")];
 }
 
 function persistedLayout(workspaces: Workspace[]): PersistedLayout {
@@ -174,8 +174,8 @@ describe("device tabs in the layout pane contract", () => {
       workspace(
         [
           panelTab("devices", "devices", "设备管理"),
-          { id: "devterm-1", kind: "deviceTerminal", title: "终端 · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
-          panelTab("settings", "settings", "设置"),
+          { id: "devterm-1", kind: "deviceTerminal", title: "Terminal · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
+          panelTab("settings", "settings", "Settings"),
         ],
         "devterm-1",
       ),
@@ -191,7 +191,7 @@ describe("device tabs in the layout pane contract", () => {
     const raw = persistedLayout([
       workspace([panelTab("devices", "devices", "设备管理")], "devices"),
       workspace([
-        { id: "devterm-missing", kind: "deviceTerminal", title: "终端 · 丢失", closable: true } as unknown as AppTab,
+        { id: "devterm-missing", kind: "deviceTerminal", title: "Terminal · missing", closable: true } as unknown as AppTab,
       ]),
     ]);
     const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(raw)));
@@ -207,8 +207,8 @@ describe("device tabs in the layout pane contract", () => {
       workspace(
         [
           panelTab("devices", "devices", "设备管理"),
-          { id: "devterm-1", kind: "deviceTerminal", title: "终端 · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
-          panelTab("settings", "settings", "设置"),
+          { id: "devterm-1", kind: "deviceTerminal", title: "Terminal · build-box", deviceId: "device-1", closable: true } as unknown as AppTab,
+          panelTab("settings", "settings", "Settings"),
         ],
         "devterm-1",
       ),
@@ -224,7 +224,7 @@ describe("device tabs in the layout pane contract", () => {
   });
 
   it("remote LAYOUT_CHANGED application keeps device tabs", async () => {
-    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "设置")])]));
+    server.data = JSON.stringify(persistedLayout([workspace([panelTab("settings", "settings", "Settings")])]));
     const { layout, store } = await openTab();
     expect(findTab(store.getState(), "devices")).toBeUndefined();
 

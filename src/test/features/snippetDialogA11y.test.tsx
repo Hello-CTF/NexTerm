@@ -43,8 +43,8 @@ import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
 import { useUi } from "../../app/store";
 
 const SNIPPETS = [
-  { id: "sn1", name: "看容器状态", body: "docker ps", groupId: null, sort: 1 },
-  { id: "sn2", name: "磁盘水位", body: "df -h", groupId: null, sort: 2 },
+  { id: "sn1", name: "check container status", body: "docker ps", groupId: null, sort: 1 },
+  { id: "sn2", name: "disk usage", body: "df -h", groupId: null, sort: 2 },
 ];
 
 function SnippetsHost({ onClosed }: { onClosed?: () => void }) {
@@ -126,10 +126,10 @@ afterEach(() => {
 describe("snippets panel dialog accessibility", () => {
   it("labels the list dialog, moves focus inside, inerts the background and locks scroll", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
-    trigger.textContent = "打开片段";
+    trigger.textContent = "Open snippets";
     trigger.focus();
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const modal = mounted.container.querySelector<HTMLElement>('.nx-modal[role="dialog"]');
     if (!modal) throw new Error("List dialog not found");
@@ -143,10 +143,10 @@ describe("snippets panel dialog accessibility", () => {
 
   it("closes the list dialog on Escape, restores focus and unlocks the page", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
-    trigger.textContent = "打开片段";
+    trigger.textContent = "Open snippets";
     trigger.focus();
     mounted = mountPanel(createElement(SnippetsHost));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const modal = mounted.container.querySelector<HTMLElement>('.nx-modal[role="dialog"]');
     if (!modal) throw new Error("List dialog not found");
@@ -162,7 +162,7 @@ describe("snippets panel dialog accessibility", () => {
 
   it("traps Tab inside the list dialog", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const first = buttonByTitle(mounted.container, "新建片段");
     const last = buttonByText(mounted.container, "关闭");
@@ -176,7 +176,7 @@ describe("snippets panel dialog accessibility", () => {
   it("opens the editor with focus on the name input and Escape closes only the editor", async () => {
     const onClose = vi.fn();
     mounted = mountPanel(createElement(SnippetsPanel, { onClose }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const listModal = mounted.container.querySelector<HTMLElement>(".nx-modal");
     click(buttonByTitle(mounted.container, "新建片段"));
@@ -202,7 +202,7 @@ describe("snippets panel dialog accessibility", () => {
 
   it("ignores repeated and IME-composing Escape in the editor", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByTitle(mounted.container, "新建片段"));
     const nameInput = editorModal(mounted.container).querySelector<HTMLInputElement>("input.nx-input");
@@ -218,13 +218,13 @@ describe("snippets panel dialog accessibility", () => {
   it("asks before discarding a dirty editor on Escape, keeping it open on cancel", async () => {
     const onClose = vi.fn();
     mounted = mountPanel(createElement(SnippetsPanel, { onClose }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByTitle(mounted.container, "新建片段"));
     const editor = editorModal(mounted.container);
     const nameInput = editor.querySelector<HTMLInputElement>("input.nx-input");
     if (!nameInput) throw new Error("Name input not found");
-    setInputValue(nameInput, "草稿");
+    setInputValue(nameInput, "draft");
 
     mocks.ask.mockResolvedValueOnce(false);
     keyDown(nameInput, "Escape");
@@ -246,13 +246,13 @@ describe("snippets panel dialog accessibility", () => {
   it("asks before discarding a dirty editor on backdrop click without closing the panel", async () => {
     const onClose = vi.fn();
     mounted = mountPanel(createElement(SnippetsPanel, { onClose }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByTitle(mounted.container, "新建片段"));
     const editor = editorModal(mounted.container);
     const nameInput = editor.querySelector<HTMLInputElement>("input.nx-input");
     if (!nameInput) throw new Error("Name input not found");
-    setInputValue(nameInput, "草稿");
+    setInputValue(nameInput, "draft");
     const editorOverlay = mounted.container.querySelectorAll<HTMLElement>(".nx-overlay")[1];
     if (!editorOverlay) throw new Error("Editor overlay not found");
 
@@ -272,7 +272,7 @@ describe("snippets panel dialog accessibility", () => {
 
   it("asks before discarding a dirty editor on the cancel button", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByTitle(mounted.container, "编辑片段"));
     const editor = editorModal(mounted.container);
@@ -294,7 +294,7 @@ describe("snippets panel dialog accessibility", () => {
 
   it("contains key events locally so they never reach window-level handlers", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const windowSpy = vi.fn();
     window.addEventListener("keydown", windowSpy);
@@ -317,14 +317,14 @@ describe("snippets panel dialog accessibility", () => {
 
   it("traps Tab inside the dirty editor across its enabled controls", async () => {
     mounted = mountPanel(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     click(buttonByTitle(mounted.container, "新建片段"));
     const editor = editorModal(mounted.container);
     const nameInput = editor.querySelector<HTMLInputElement>("input.nx-input");
     const bodyInput = editor.querySelector<HTMLTextAreaElement>("textarea");
     if (!nameInput || !bodyInput) throw new Error("Editor fields not found");
-    setInputValue(nameInput, "草稿");
+    setInputValue(nameInput, "draft");
     setInputValue(bodyInput, "docker ps");
 
     const save = buttonByText(editor, "保存");

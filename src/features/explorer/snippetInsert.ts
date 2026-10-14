@@ -32,7 +32,7 @@ function terminalTarget(): TerminalTarget {
     return { blocked: "请先在当前工作区打开一个终端" };
   }
   if (tab.dead || tab.exited) {
-    return { blocked: "当前终端已结束" };
+    return { blocked: "当前终端已失效或已结束" };
   }
   return { tabId: tab.tabId };
 }
@@ -54,9 +54,8 @@ export function insertRisk(body: string): InsertRisk {
 async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction): Promise<boolean> {
   const label = ACTION_LABEL[action];
   if (risk === "execute") {
-    const n = s.body.match(/[\r\n]/g)?.length ?? 0;
     return ask(
-      `片段「${s.name}」包含 ${n} 处回车或换行，${label}时会逐行提交执行。仍要${label}吗？`,
+      `片段「${s.name}」包含回车或换行，${label}时会逐行提交执行。仍要${label}吗？`,
       { kind: "warning" },
     );
   }
@@ -108,7 +107,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
     return true;
   } catch (e) {
     if (isNotController(e)) {
-      pushToast("error", `${label}失败：当前终端由其他设备控制，请先在终端上获取控制权`);
+      pushToast("error", `${label}失败：当前终端由其他设备控制，请先在终端上接管控制`);
     } else {
       pushToast("error", `${label}失败：${describeError(e)}`);
     }

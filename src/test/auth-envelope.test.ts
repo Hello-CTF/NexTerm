@@ -31,8 +31,8 @@ const GO_FIXTURE = {
   recoveryHash: "bf19cc2446a331d83b984666f621e480196ba373402a91e4adad34ea7ac0df82",
 };
 
-describe("DEK 信封与 Go vault 互通", () => {
-  it("解包 Go 端密码信封(生产参数 argon2id)", async () => {
+describe("DEK envelope interoperability with the Go vault", () => {
+  it("unwraps a Go password envelope using production argon2id parameters", async () => {
     const dek = await unwrapDEKWithPassword(
       GO_FIXTURE.password,
       base64ToBytes(GO_FIXTURE.dekEnvelope),
@@ -42,7 +42,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     expect(bytesToHex(dek)).toBe(GO_FIXTURE.dekHex);
   }, 60_000);
 
-  it("本端信封往返: 密码包裹 → 解包", async () => {
+  it("round-trips a local password-wrapped envelope", async () => {
     const dek = generateDEK();
     const { envelope, salt, params } = await wrapDEKWithPassword("correct horse battery staple", dek);
     expect(params).toBe('{"t":3,"m":65536,"p":4}');
@@ -51,7 +51,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     await expect(unwrapDEKWithPassword("wrong password", envelope, salt, params)).rejects.toThrow();
   }, 60_000);
 
-  it("本端信封往返: 恢复密钥包裹 → 解包", async () => {
+  it("round-trips a local recovery-key-wrapped envelope", async () => {
     const dek = generateDEK();
     const canonical = generateRecoveryKey();
     const envelope = await wrapDEKWithRecovery(canonical, dek);
@@ -64,7 +64,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     await expect(unwrapDEKWithRecovery("AAAAAAAAAAAAAAAAAAAAAAAAAAA", envelope)).rejects.toThrow();
   });
 
-  it("恢复密钥散列与 Go RecoveryKeyHash 形状一致(sha256 hex)", async () => {
+  it("matches the Go RecoveryKeyHash shape (sha256 hex)", async () => {
     const canonical = generateRecoveryKey();
     const hash = await recoveryKeyHash(canonical);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
@@ -73,7 +73,7 @@ describe("DEK 信封与 Go vault 互通", () => {
     expect(await recoveryKeyHash(canonical.toLowerCase())).toBe(hash);
   });
 
-  it("恢复密钥格式: 32 字符 base32,4 字符分组", () => {
+  it("formats recovery keys as 32 base32 characters in groups of four", () => {
     const canonical = generateRecoveryKey();
     expect(canonical).toMatch(/^[A-Z2-7]{32}$/);
     const formatted = formatRecoveryKey(canonical);
@@ -82,8 +82,8 @@ describe("DEK 信封与 Go vault 互通", () => {
   });
 });
 
-describe("同步对象加解密与 AAD 绑定", () => {
-  it("seal/open 往返,且 AAD 绑定 id 与 kind", async () => {
+describe("sync object encryption and AAD binding", () => {
+  it("round-trips seal/open and binds AAD to the id and kind", async () => {
     const dek = generateDEK();
     const plaintext = utf8Bytes('{"id":"a1","name":"web-01"}');
     const blob = await sealSyncObject(dek, plaintext, "a1", "asset");
@@ -102,7 +102,7 @@ describe("同步对象加解密与 AAD 绑定", () => {
     await expect(openSyncObject(dek, tampered, "a1", "asset")).rejects.toThrow();
   });
 
-  it("tryOpenSyncObject 按 kind 枚举解密", async () => {
+  it("decrypts tryOpenSyncObject by trying each kind", async () => {
     const dek = generateDEK();
     const plaintext = utf8Bytes('{"targetKind":"asset","deletedAt":1}');
     const blob = await sealSyncObject(dek, plaintext, "t1", "tombstone");
@@ -112,14 +112,14 @@ describe("同步对象加解密与 AAD 绑定", () => {
     await expect(tryOpenSyncObject(generateDEK(), blob, "t1")).rejects.toThrow();
   });
 
-  it("objectPayloadHash 为 sha256 hex", async () => {
+  it("returns a sha256 hex objectPayloadHash", async () => {
     const hash = await objectPayloadHash(utf8Bytes("abc"));
     expect(hash).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   });
 });
 
-describe("base64 互操作", () => {
-  it("与 Go encoding/json 的 []byte 编码一致(标准字母表带填充)", () => {
+describe("base64 interoperability", () => {
+  it("matches Go encoding/json []byte encoding with the padded standard alphabet", () => {
     const data = new Uint8Array([0x09, 0x54, 0xaa, 0x80, 0xc4, 0xe4, 0x41, 0xfe]);
     expect(bytesToBase64(data)).toBe("CVSqgMTkQf4=");
     expect(base64ToBytes("CVSqgMTkQf4=")).toEqual(data);

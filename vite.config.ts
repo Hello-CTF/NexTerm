@@ -44,7 +44,7 @@ const config = defineConfig({
 const include = config.test?.include ?? [];
 if (!include.includes("src/test/**/*.test.ts") || !include.includes("src/test/**/*.test.tsx")) {
   throw new Error(
-    'test.include 必须同时包含 "src/test/**/*.test.ts" 与 "src/test/**/*.test.tsx"（M62/M63：收窄共享 include 会静默跳过整批 TSX 测试）',
+    'test.include must include both "src/test/**/*.test.ts" and "src/test/**/*.test.tsx" (M62/M63: narrowing the shared include silently skips the entire TSX test suite)',
   );
 }
 

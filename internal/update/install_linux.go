@@ -6,7 +6,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +27,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	compressed, err := gzip.NewReader(source)
 	if err != nil {
-		return fmt.Errorf("解压 %s 失败: %w", filepath.Base(archive), err)
+		return userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
 	}
 	defer compressed.Close()
 	staged := m.ExePath + ".new"
@@ -40,7 +39,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("读取 %s 失败: %w", filepath.Base(archive), err)
+			return userErrorf(UserErrorIO, "读取 %s 失败: %w", filepath.Base(archive), err)
 		}
 		if header.Typeflag != tar.TypeReg || !strings.HasSuffix(header.Name, "/nexterm-desktop") {
 			continue
@@ -53,7 +52,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		closeErr := output.Close()
 		if copyErr != nil {
 			_ = os.Remove(staged)
-			return fmt.Errorf("写入新可执行文件失败：%w", copyErr)
+			return userErrorf(UserErrorIO, "写入新可执行文件失败：%w", copyErr)
 		}
 		if closeErr != nil {
 			_ = os.Remove(staged)
@@ -63,7 +62,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		break
 	}
 	if !found {
-		return fmt.Errorf("%s 中没有 nexterm-desktop", filepath.Base(archive))
+		return userErrorf(UserErrorIO, "%s 中没有 nexterm-desktop", filepath.Base(archive))
 	}
 	if err := ctx.Err(); err != nil {
 		_ = os.Remove(staged)
@@ -71,7 +70,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	if err := os.Rename(staged, m.ExePath); err != nil {
 		_ = os.Remove(staged)
-		return fmt.Errorf("替换当前可执行文件失败: %w", err)
+		return userErrorf(UserErrorIO, "替换当前可执行文件失败: %w", err)
 	}
 	m.restartTarget = m.ExePath
 	return nil
@@ -85,22 +84,22 @@ func debDataTarGz(file *os.File) (io.Reader, error) {
 	}
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(file, header); err != nil || string(header) != "!<arch>\n" {
-		return nil, fmt.Errorf("不是合法的 deb 包")
+		return nil, userErrorf(UserErrorIO, "不是合法的 deb 包")
 	}
 	for {
 		member := make([]byte, 60)
 		if _, err := io.ReadFull(file, member); err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, fmt.Errorf("读取 deb 成员头失败: %w", err)
+			return nil, userErrorf(UserErrorIO, "读取 deb 成员头失败: %w", err)
 		}
 		if string(member[58:60]) != "`\n" {
-			return nil, fmt.Errorf("deb 成员头损坏")
+			return nil, userErrorf(UserErrorIO, "deb 成员头损坏")
 		}
 		name := strings.TrimRight(string(member[0:16]), " ")
 		size, err := strconv.Atoi(strings.TrimSpace(string(member[48:58])))
 		if err != nil || size < 0 {
-			return nil, fmt.Errorf("deb 成员大小非法: %q", string(member[48:58]))
+			return nil, userErrorf(UserErrorIO, "deb 成员大小非法: %q", string(member[48:58]))
 		}
 		if name == "data.tar.gz/" {
 			return io.LimitReader(file, int64(size)), nil
@@ -109,5 +108,5 @@ func debDataTarGz(file *os.File) (io.Reader, error) {
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("deb 包中没有 data.tar.gz")
+	return nil, userErrorf(UserErrorIO, "deb 包中没有 data.tar.gz")
 }

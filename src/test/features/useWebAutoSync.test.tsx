@@ -34,7 +34,7 @@ function Probe() {
   return null;
 }
 
-describe("useDesktopAutoSync 同步后刷新视图缓存", () => {
+describe("useDesktopAutoSync cache refresh after sync", () => {
   let view: MountedView | undefined;
 
   beforeEach(() => {
@@ -48,7 +48,7 @@ describe("useDesktopAutoSync 同步后刷新视图缓存", () => {
     });
   });
 
-  it("sync://status 唤醒后端同步并失效 assets/asset-search/groups/snippets/credentials/vault-status", async () => {
+  it("invalidates assets/asset-search/groups/snippets/credentials/vault-status after sync://status wakes backend sync", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     for (const key of ["assets", "asset-search", "groups", "snippets", "credentials", "vault-status"]) {
       qc.setQueryData([key], []);
@@ -57,7 +57,7 @@ describe("useDesktopAutoSync 同步后刷新视图缓存", () => {
     await flush();
 
     const handler = mocks.statusHandlers.at(-1);
-    if (!handler) throw new Error("sync://status 未订阅");
+    if (!handler) throw new Error("sync://status was not subscribed");
     handler();
     await flush();
 

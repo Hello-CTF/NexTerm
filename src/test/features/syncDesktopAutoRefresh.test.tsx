@@ -87,8 +87,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面端账号同步卡片 · 状态自刷新", () => {
-  it("初始待同步, 后台建立会话后经 sync://status 广播自动变已登录", async () => {
+describe("Desktop account sync card - automatic status refresh", () => {
+  it("changes from pending sync to logged in after a background session is established and sync://status is broadcast", async () => {
     mounted = mountCard();
     await flushUntil(() => document.body.textContent?.includes("待同步") ?? false);
     expect(mocks.syncStatusHandlers.length).toBeGreaterThan(0);
@@ -100,13 +100,13 @@ describe("桌面端账号同步卡片 · 状态自刷新", () => {
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
   });
 
-  it("后台探测失败经 sync://status 广播后 LastError 自动上屏", async () => {
+  it("surfaces LastError after a background probe failure and sync://status broadcast", async () => {
     mounted = mountCard();
     await flushUntil(() => document.body.textContent?.includes("待同步") ?? false);
 
-    lastError = "无法连接远端同步服务: connection refused";
+    lastError = "cannot reach remote sync service: connection refused";
     fireSyncStatus();
-    await flushUntil(() => document.body.textContent?.includes("上次失败：无法连接远端同步服务") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("上次失败：cannot reach remote sync service") ?? false);
     expect(document.body.textContent).not.toContain("已登录 alice");
   });
 });

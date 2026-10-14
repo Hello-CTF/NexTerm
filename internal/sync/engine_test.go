@@ -88,7 +88,7 @@ func (s *testSyncServer) maybeFailPush(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.failNextPushWith409 {
 			s.failNextPushWith409 = false
-			writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden, "同步头不一致"))
+			writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden, "云端同步状态已变化：其他设备已更新或回滚了数据，请先拉取并合并，再推送本机变更"))
 			return
 		}
 		next.ServeHTTP(w, r)

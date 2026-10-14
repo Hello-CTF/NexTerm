@@ -5,7 +5,7 @@ import {
 } from "../../app/quickConnectTarget";
 
 describe("parseQuickConnectTarget", () => {
-  it("解析 user@host:port", () => {
+  it("parses user@host:port", () => {
     expect(parseQuickConnectTarget("deploy@example.com:2222")).toEqual({
       host: "example.com",
       port: 2222,
@@ -13,7 +13,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("解析 host:port，用户名为空", () => {
+  it("parses host:port with no username", () => {
     expect(parseQuickConnectTarget("10.0.0.8:22")).toEqual({
       host: "10.0.0.8",
       port: 22,
@@ -21,7 +21,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("解析 ssh://user@host:port", () => {
+  it("parses ssh://user@host:port", () => {
     expect(parseQuickConnectTarget("ssh://root@example.com:22")).toEqual({
       host: "example.com",
       port: 22,
@@ -29,7 +29,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("scheme 大小写不敏感", () => {
+  it("matches schemes case-insensitively", () => {
     expect(parseQuickConnectTarget("SSH://Example.COM")).toEqual({
       host: "Example.COM",
       port: 22,
@@ -37,7 +37,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("user@host 缺省端口 22", () => {
+  it("defaults user@host to port 22", () => {
     expect(parseQuickConnectTarget("deploy@example.com")).toEqual({
       host: "example.com",
       port: 22,
@@ -45,7 +45,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("ssh://host 视为显式快速连接", () => {
+  it("treats ssh://host as an explicit quick connection", () => {
     expect(parseQuickConnectTarget("ssh://example.com")).toEqual({
       host: "example.com",
       port: 22,
@@ -53,25 +53,25 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("裸主机名与裸 IP 不解析，保持资产搜索", () => {
+  it("does not parse bare hostnames or IP addresses, preserving asset search", () => {
     expect(parseQuickConnectTarget("example.com")).toBeNull();
     expect(parseQuickConnectTarget("10.0.0.8")).toBeNull();
     expect(parseQuickConnectTarget("web-01")).toBeNull();
   });
 
-  it("端口非法时不解析", () => {
+  it("does not parse invalid ports", () => {
     expect(parseQuickConnectTarget("host:abc")).toBeNull();
     expect(parseQuickConnectTarget("host:0")).toBeNull();
     expect(parseQuickConnectTarget("host:99999")).toBeNull();
     expect(parseQuickConnectTarget("host:")).toBeNull();
   });
 
-  it("非 ssh scheme 不解析", () => {
+  it("does not parse non-SSH schemes", () => {
     expect(parseQuickConnectTarget("ftp://example.com")).toBeNull();
     expect(parseQuickConnectTarget("mysql://root@db:3306")).toBeNull();
   });
 
-  it("支持方括号 IPv6", () => {
+  it("supports bracketed IPv6 addresses", () => {
     expect(parseQuickConnectTarget("root@[::1]:2222")).toEqual({
       host: "::1",
       port: 2222,
@@ -89,7 +89,7 @@ describe("parseQuickConnectTarget", () => {
     });
   });
 
-  it("裸 IPv6 与残缺输入不解析", () => {
+  it("does not parse bare IPv6 addresses or incomplete input", () => {
     expect(parseQuickConnectTarget("::1")).toBeNull();
     expect(parseQuickConnectTarget("[::1")).toBeNull();
     expect(parseQuickConnectTarget("@host")).toBeNull();
@@ -103,7 +103,7 @@ describe("parseQuickConnectTarget", () => {
 });
 
 describe("formatQuickConnectTarget", () => {
-  it("22 端口省略，其余保留", () => {
+  it("omits port 22 and preserves other ports", () => {
     expect(formatQuickConnectTarget({ host: "example.com", port: 22, username: null })).toBe(
       "example.com",
     );
@@ -112,7 +112,7 @@ describe("formatQuickConnectTarget", () => {
     );
   });
 
-  it("IPv6 主机统一加方括号并可解析往返", () => {
+  it("brackets IPv6 hosts and round-trips through the parser", () => {
     const withUsername = { host: "::1", port: 22, username: "root" };
     const withoutUsername = { host: "2001:db8::10", port: 2222, username: null };
 

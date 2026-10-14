@@ -2,7 +2,7 @@ package ipc
 
 import (
 	"errors"
-	"fmt"
+	"log/slog"
 )
 
 type Code string
@@ -89,5 +89,6 @@ func NormalizeError(err error) *Error {
 	if errors.As(err, &appErr) {
 		return appErr
 	}
-	return WrapError(CodeInternal, fmt.Sprintf("内部错误: %v", err), err)
+	slog.Error("internal IPC error", "error", err)
+	return WrapError(CodeInternal, "内部错误，请稍后重试", err)
 }

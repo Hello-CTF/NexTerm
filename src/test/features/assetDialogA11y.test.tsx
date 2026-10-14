@@ -68,7 +68,7 @@ import { useUi } from "../../app/store";
 const GROUP = {
   id: "g1",
   parentId: null,
-  name: "生产",
+  name: "production",
   sort: 0,
   createdAt: 1,
   updatedAt: 1,
@@ -138,7 +138,7 @@ afterEach(() => {
 describe("GroupRenameDialog accessible overlay", () => {
   async function openRenameDialog(): Promise<HTMLElement> {
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
     click(buttonByTitle(mounted!.container, "重命名分组"));
     const modal = mounted!.container.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
     if (!modal) throw new Error("Rename dialog not found");
@@ -154,7 +154,7 @@ describe("GroupRenameDialog accessible overlay", () => {
     if (!input) throw new Error("Rename input not found");
     expect(document.activeElement).toBe(input);
     expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe("生产".length);
+    expect(input.selectionEnd).toBe("production".length);
 
     const cancel = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消");
     const save = [...modal.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存");
@@ -178,7 +178,7 @@ describe("GroupRenameDialog accessible overlay", () => {
     const modal = await openRenameDialog();
     const input = modal.querySelector<HTMLInputElement>("input.nx-input");
     if (!input) throw new Error("Rename input not found");
-    setInputValue(input, "生产环境");
+    setInputValue(input, "production environment");
 
     mocks.ask.mockResolvedValueOnce(false);
     keyDown(modal, "Escape");
@@ -320,8 +320,8 @@ describe("AssetEditor accessible overlay", () => {
   });
 });
 
-describe("资产表单字段可访问名称与分组 placeholder（M205 发现 12/13）", () => {
-  it("新建凭据密码框有可访问名称与占位提示", async () => {
+describe("asset form field accessible names and group placeholder (M205 finding 12/13)", () => {
+  it("gives the new credential password input an accessible name and placeholder", async () => {
     mounted = mountWithClient(
       createElement(AssetEditor, { kind: "asset", onClose: vi.fn(), onSaved: vi.fn() }),
     );
@@ -334,7 +334,7 @@ describe("资产表单字段可访问名称与分组 placeholder（M205 发现 1
     expect(passwordInput!.placeholder).toBe("密码");
   });
 
-  it("新建分组名称用分组场景 placeholder，不复用资产示例", async () => {
+  it("uses the group-specific placeholder for a new group name instead of the asset example", async () => {
     mounted = mountWithClient(
       createElement(AssetEditor, { kind: "group", onClose: vi.fn(), onSaved: vi.fn() }),
     );
@@ -346,7 +346,7 @@ describe("资产表单字段可访问名称与分组 placeholder（M205 发现 1
     expect(mounted.container.querySelector('input[placeholder="web-01"]')).toBeNull();
   });
 
-  it("SSH 导入按钮 aria-label 与对话框标题一致，覆盖主机与密钥", async () => {
+  it("matches the SSH import button aria-label to the dialog title and covers hosts and keys", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() =>
       expect(

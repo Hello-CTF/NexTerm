@@ -99,25 +99,32 @@ func TestBiometricEnableValidatesAndDelegates(t *testing.T) {
 
 func TestBiometricEnableRequiresUnlockedVault(t *testing.T) {
 	backend := &fakeBiometric{}
-	dispatcher := ipc.NewDispatcher()
-	if err := registerBiometricCommands(dispatcher, backend, fakeVaultState{unlocked: false}); err != nil {
-		t.Fatal(err)
-	}
-	response := dispatchStoreTest(dispatcher, "biometric_enable", `{"password":"master-pw"}`)
-	if response.OK || response.Error == nil {
-		t.Fatalf("locked enable = %+v", response)
+	for _, test := range []struct {
+		name  string
+		state vaultUnlockState
+	}{
+		{name: "locked", state: fakeVaultState{unlocked: false}},
+		{name: "nil state", state: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dispatcher := ipc.NewDispatcher()
+			if err := registerBiometricCommands(dispatcher, backend, test.state); err != nil {
+				t.Fatal(err)
+			}
+			response := dispatchStoreTest(dispatcher, "biometric_enable", `{"password":"master-pw"}`)
+			if response.OK || response.Error == nil {
+				t.Fatalf("locked enable = %+v", response)
+			}
+			if response.Error.Code != ipc.CodeVaultLocked || response.Error.Message != "凭据库已锁定，请先解锁再启用生物识别" {
+				t.Fatalf("locked enable error = %+v", response.Error)
+			}
+			if !errors.Is(response.Error, errBiometricVaultLocked) {
+				t.Fatalf("locked enable cause = %v", response.Error.Unwrap())
+			}
+		})
 	}
 	if backend.enabled != "" {
 		t.Fatalf("backend received material while locked: %q", backend.enabled)
-	}
-
-	dispatcher = ipc.NewDispatcher()
-	if err := registerBiometricCommands(dispatcher, backend, nil); err != nil {
-		t.Fatal(err)
-	}
-	response = dispatchStoreTest(dispatcher, "biometric_enable", `{"password":"master-pw"}`)
-	if response.OK || response.Error == nil {
-		t.Fatalf("nil-vault enable = %+v", response)
 	}
 }
 

@@ -64,21 +64,21 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("命令面板资产与片段加载失败互不覆盖", () => {
-  it("两个请求都失败时各自展示错误, 后到的失败不覆盖先到的", async () => {
-    mocks.list.mockRejectedValue(new Error("资产 boom"));
-    mocks.snippetList.mockRejectedValue(new Error("片段 boom"));
+describe("command palette asset and snippet load failures remain independent", () => {
+  it("both failed requests show separate errors and the later failure does not replace the earlier one", async () => {
+    mocks.list.mockRejectedValue(new Error("asset boom"));
+    mocks.snippetList.mockRejectedValue(new Error("snippet boom"));
     mounted = mountPalette();
     await flushUntil(() => errorRows().length === 2);
 
     const rows = errorRows();
-    expect(rows[0].textContent).toContain("资产列表加载失败：资产 boom");
-    expect(rows[1].textContent).toContain("片段列表加载失败：片段 boom");
+    expect(rows[0].textContent).toContain("资产列表加载失败：asset boom");
+    expect(rows[1].textContent).toContain("片段列表加载失败：snippet boom");
   });
 
-  it("资产重试只重新拉取资产, 成功后只清资产错误", async () => {
-    mocks.list.mockRejectedValueOnce(new Error("资产 boom"));
-    mocks.snippetList.mockRejectedValue(new Error("片段 boom"));
+  it("asset retry refetches only assets and clears only the asset error on success", async () => {
+    mocks.list.mockRejectedValueOnce(new Error("asset boom"));
+    mocks.snippetList.mockRejectedValue(new Error("snippet boom"));
     mounted = mountPalette();
     await flushUntil(() => errorRows().length === 2);
 
@@ -89,12 +89,12 @@ describe("命令面板资产与片段加载失败互不覆盖", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(mocks.snippetList).toHaveBeenCalledTimes(1);
     const rows = errorRows();
-    expect(rows[0].textContent).toContain("片段列表加载失败：片段 boom");
+    expect(rows[0].textContent).toContain("片段列表加载失败：snippet boom");
   });
 
-  it("片段重试成功后片段错误消失, 资产错误仍在", async () => {
-    mocks.list.mockRejectedValue(new Error("资产 boom"));
-    mocks.snippetList.mockRejectedValueOnce(new Error("片段 boom"));
+  it("a successful snippet retry clears the snippet error while retaining the asset error", async () => {
+    mocks.list.mockRejectedValue(new Error("asset boom"));
+    mocks.snippetList.mockRejectedValueOnce(new Error("snippet boom"));
     mounted = mountPalette();
     await flushUntil(() => errorRows().length === 2);
 
@@ -104,6 +104,6 @@ describe("命令面板资产与片段加载失败互不覆盖", () => {
 
     expect(mocks.snippetList).toHaveBeenCalledTimes(2);
     expect(mocks.list).toHaveBeenCalledTimes(1);
-    expect(errorRows()[0].textContent).toContain("资产列表加载失败：资产 boom");
+    expect(errorRows()[0].textContent).toContain("资产列表加载失败：asset boom");
   });
 });

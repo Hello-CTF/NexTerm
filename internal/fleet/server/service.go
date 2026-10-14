@@ -285,7 +285,7 @@ func (s *Service) refreshAgentAppVersion(ctx context.Context, deviceID, appVersi
 	if _, err := deviceAgent.WithContext(ctx).
 		Where(deviceAgent.DeviceID.Eq(deviceID), deviceAgent.AppVersion.Neq(appVersion)).
 		UpdateColumns(map[string]any{"app_version": appVersion}); err != nil {
-		slog.Warn("刷新设备 agent 版本失败", "device", deviceID, "error", err)
+		slog.Warn("failed to refresh device agent version", "device", deviceID, "error", err)
 	}
 }
 
@@ -392,7 +392,7 @@ func (s *Service) IssueEnrollCode(ctx context.Context, identity *account.Identit
 	ownerID := identity.UserID
 	if targetUserID != "" && targetUserID != identity.UserID {
 		if identity.Role != account.RoleSuperadmin {
-			return "", 0, ipc.NewError(ipc.CodeForbidden, "需要超管权限")
+			return "", 0, ipc.NewError(ipc.CodeForbidden, "需要超级管理员权限")
 		}
 		ownerID = targetUserID
 	}

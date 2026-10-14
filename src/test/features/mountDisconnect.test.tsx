@@ -85,7 +85,7 @@ function mountPanelWithDialogHost(): MountedView {
   );
 }
 
-describe("断开挂载确认（warning 级别）", () => {
+describe("Mount disconnect confirmation (warning level)", () => {
   it("renders a warning alertdialog, cancel aborts", async () => {
     mounted = mountPanelWithDialogHost();
     await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));

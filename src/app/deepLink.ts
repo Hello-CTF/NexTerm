@@ -30,11 +30,11 @@ export async function openDeepLink(url: string): Promise<void> {
   try {
     asset = await assetApi.get(assetId);
   } catch {
-    pushToast("error", "链接对应的资产不存在或已删除");
+    pushToast("error", "打开链接对应的资产失败，请确认资产仍存在后重试");
     return;
   }
   if (!asset || asset.deletedAt) {
-    pushToast("error", "链接对应的资产不存在或已删除");
+    pushToast("error", "打开链接对应的资产失败，请确认资产仍存在后重试");
     return;
   }
   await connectAsset({ id: asset.id, name: asset.name, kind: asset.kind, credId: asset.credId });

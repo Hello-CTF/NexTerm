@@ -243,7 +243,7 @@ function DesktopLinkCard() {
     <section className="nx-card">
       <div className="mb-1 flex items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
-        <span className="nx-card-title">账号同步</span>
+        <span className="nx-card-title">{status?.loggedIn ? "服务端连接" : "账号同步"}</span>
         {connected ? (
           <span className="nx-badge nx-badge-green">已登录 {status?.username}</span>
         ) : status?.configured ? (
@@ -254,7 +254,7 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        登录后自动同步。首轮先拉取并合并云端内容，再推送本机变更；数据在本机加密后传输，服务端只保存密文。不登录也能继续本地使用。
+        登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。
       </p>
 
       {loadError && (
@@ -455,7 +455,7 @@ function DesktopLinkCard() {
             <span className="text-[13px] font-semibold text-neutral-100">恢复密钥（仅显示一次）</span>
           </div>
           <p className="nx-hint">
-            这是找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
+            这是自行找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
           </p>
           <div className="nx-alert nx-alert-danger flex flex-col gap-2">
             <code className="nx-code break-all font-mono text-[13px]">
@@ -501,7 +501,7 @@ function DesktopLinkCard() {
         <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            会话记录（终端录像）默认不同步；如需同步，请在「终端历史」中为对应记录开启同步。同步采用端到端加密，服务端无法查看资产名、主机、用户名和内容。
+            终端录像默认不同步，可在「终端历史」中单独开启。
           </div>
         </div>
       )}
@@ -514,7 +514,7 @@ function DesktopLinkCard() {
 // ---------- Desktop: account sync ----------
 
 // DesktopSyncConsole is shown after desktop login (link established): sync content switches (kindOptInGet/Set),
-// sync status (account verified time/applied cloud seq/latest error), manual trigger (sync_wake wakes the background sync loop),
+// sync status (last successful sync/latest error), manual trigger (sync_wake wakes the background sync loop),
 // and per-row comparison details (sync_compare: the Go side decrypts cloud objects with the engine session DEK, same judgment as the web).
 function DesktopSyncConsole() {
   const { pushToast } = useUi();
@@ -562,6 +562,23 @@ function DesktopSyncConsole() {
     void loadCompare();
   }, [load, loadCompare]);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenEvent("sync://round-complete", () => {
+      if (disposed) return;
+      void load();
+      void loadCompare();
+    }).then((off) => {
+      if (disposed) off();
+      else unlisten = off;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [load, loadCompare]);
+
   const updateKindOptIn = async (patch: Partial<SyncKindOptIn>) => {
     setOptInBusy(true);
     setError(null);
@@ -580,11 +597,6 @@ function DesktopSyncConsole() {
     try {
       await syncApi.wake();
       pushToast("success", "已触发一轮后台同步");
-      // Sync runs asynchronously in the background loop; refetch status and comparison shortly to reflect the result.
-      window.setTimeout(() => {
-        void load();
-        void loadCompare();
-      }, 2000);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -620,9 +632,9 @@ function DesktopSyncConsole() {
       </div>
 
       <p className="nx-hint mb-3">
-        {SYNC_MERGE_GUIDE}「立即同步」立刻触发一轮，不等下一分钟。
-        {status && status.verifiedAt > 0 && `账号验证于 ${formatTime(status.verifiedAt)}。`}
-        {status && status.seq > 0 && `已应用云端第 ${status.seq} 号。`}
+        {SYNC_MERGE_GUIDE}
+        {status?.lastSuccessAt && Date.parse(status.lastSuccessAt) > 0 &&
+          `上次同步：${formatTime(Date.parse(status.lastSuccessAt))}。`}
       </p>
 
       {kindOptIn && <SyncOptInSection value={kindOptIn} busy={optInBusy} onChange={(patch) => void updateKindOptIn(patch)} />}
@@ -630,7 +642,7 @@ function DesktopSyncConsole() {
       {status?.lastError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">上次同步失败：{status.lastError}，下一分钟自动重试。</span>
+          <span className="min-w-0 flex-1 break-words">上次同步失败：{status.lastError}，将在下个自动同步周期重试。</span>
         </div>
       )}
 
@@ -670,7 +682,7 @@ function DesktopSyncConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>
@@ -1039,7 +1051,7 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
         next.set(entry.id, object);
       } catch (e) {
         if (e instanceof CryptoError && e.code !== "decrypt") throw e;
-        warnings.push(`云端对象 ${entry.id} 解密失败，已跳过；本机同名对象可推送覆盖`);
+        warnings.push(`云端对象 ${entry.id} 解密失败，已跳过；本机同 ID 对象可推送覆盖`);
       }
     }
   }
@@ -1166,6 +1178,7 @@ interface Snapshot {
 export interface WebSyncResult extends Snapshot {
   applied: number;
   pushed: number;
+  lastSuccessAt: number;
 }
 
 async function loadSnapshot(dek: Uint8Array, optIn: SyncKindOptIn, idsOverride?: SyncIds): Promise<Snapshot> {
@@ -1245,7 +1258,7 @@ export async function runWebSync(
         const latest = await syncV2Api.ids();
         await reload(latest);
         winners = computeWinners(snapshot.local, snapshot.remote);
-        if (winners.length === 0) return { ...snapshot, applied, pushed: 0 };
+        if (winners.length === 0) return { ...snapshot, applied, pushed: 0, lastSuccessAt: Date.now() };
         if (!(await optInMatches(optIn, shouldContinue))) return null;
         response = await syncV2Api.push(snapshot.head, await sealAll(dek, winners));
       }
@@ -1262,7 +1275,7 @@ export async function runWebSync(
       await reload();
     }
   }
-  return { ...snapshot, warnings: [...new Set([...snapshot.warnings, ...operationWarnings])], applied, pushed };
+  return { ...snapshot, warnings: [...new Set([...snapshot.warnings, ...operationWarnings])], applied, pushed, lastSuccessAt: Date.now() };
 }
 
 function WebSyncConsole() {
@@ -1347,6 +1360,7 @@ function CompareConsole() {
   const [optInBusy, setOptInBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
+  const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
   const optInEpochRef = useRef(0);
   const loadSeqRef = useRef(0);
   const kindOptInRef = useRef<SyncKindOptIn | null>(null);
@@ -1391,6 +1405,7 @@ function CompareConsole() {
       setLocal(result.local);
       setRemote(result.remote);
       setCollectWarnings(result.warnings);
+      setLastSuccessAt(result.lastSuccessAt);
       setError(null);
     };
     const onError = (event: Event) => {
@@ -1460,6 +1475,7 @@ function CompareConsole() {
 
       <p className="nx-hint mb-3">
         {SYNC_MERGE_GUIDE}
+        {lastSuccessAt !== null && `上次同步：${formatTime(lastSuccessAt)}。`}
         {refreshBusy ? "正在读取本机与云端数据…" : `当前待应用 ${applySet.length} 项，待推送 ${pushCount} 项。`}
       </p>
 
@@ -1468,7 +1484,7 @@ function CompareConsole() {
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">自动同步失败：{error}，下一分钟自动重试。</span>
+          <span className="min-w-0 flex-1 break-words">同步失败：{error}，将在下个自动同步周期重试。</span>
         </div>
       )}
 
@@ -1490,7 +1506,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录（终端录像）默认不同步，可在对应位置单独开启；已知主机和 AI 模型档案默认同步，可关闭；关闭开关不会删除云端已有副本。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          终端录像默认不同步，可在「终端历史」中单独开启。关闭上方内容类型开关不会删除云端已有副本；在「终端历史」关闭单条录像同步会删除其云端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
         </div>
       </div>
     </section>

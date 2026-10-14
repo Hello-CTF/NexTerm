@@ -115,5 +115,5 @@ func wsUpgradeError(response *http.Response, endpoint string) error {
 			return ipc.NewError(failure.Error.Code, failure.Error.Message)
 		}
 	}
-	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用(HTTP %d)", endpoint, response.StatusCode))
+	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用（HTTP %d）", endpoint, response.StatusCode))
 }

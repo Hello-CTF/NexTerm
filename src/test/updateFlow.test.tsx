@@ -91,8 +91,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("updateVerdict 三态与 available/canInstall 分离", () => {
-  it("已最新: available=false 且无不可用原因", () => {
+describe("updateVerdict three states and separation of available/canInstall", () => {
+  it("up to date: available=false and no unavailable reason", () => {
     expect(
       updateVerdict({
         status: makeStatus({ available: false, version: "", assetName: "", assetSize: 0 }),
@@ -102,19 +102,19 @@ describe("updateVerdict 三态与 available/canInstall 分离", () => {
     ).toBe("uptodate");
   });
 
-  it("有更新但不可安装: available=true 且 canInstall=false", () => {
+  it("update available but not installable: available=true and canInstall=false", () => {
     expect(
       updateVerdict({ status: makeStatus({ canInstall: false }), checking: false, checkError: null }),
     ).toBe("unavailable");
   });
 
-  it("检查失败: 传输层抛错", () => {
+  it("check failed: transport error thrown", () => {
     expect(
       updateVerdict({ status: null, checking: false, checkError: "网络不可达" }),
     ).toBe("check-failed");
   });
 
-  it("检查失败: 后端降级进 unavailableReason", () => {
+  it("check failed: backend degradation reported in unavailableReason", () => {
     expect(
       updateVerdict({
         status: makeStatus({
@@ -130,14 +130,14 @@ describe("updateVerdict 三态与 available/canInstall 分离", () => {
     ).toBe("check-failed");
   });
 
-  it("未检查与检查中", () => {
+  it("idle and checking states", () => {
     expect(updateVerdict({ status: null, checking: false, checkError: null })).toBe("idle");
     expect(updateVerdict({ status: null, checking: true, checkError: null })).toBe("checking");
   });
 });
 
-describe("UpdateCard 检查流程", () => {
-  it("展示当前版本与新版本,桌面端可安装时出现安装按钮", async () => {
+describe("UpdateCard check flow", () => {
+  it("shows current and new versions, with an install button when installation is available on desktop", async () => {
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
     const text = mounted.container.textContent ?? "";
@@ -152,7 +152,7 @@ describe("UpdateCard 检查流程", () => {
     ).toBe(true);
   });
 
-  it("有更新但不可安装: 说明原因且不显示安装按钮", async () => {
+  it("update available but not installable: explains the reason and hides the install button", async () => {
     useUpdateStore.setState({
       status: makeStatus({ canInstall: false, unavailableReason: "当前平台没有安装包" }),
     });
@@ -167,7 +167,7 @@ describe("UpdateCard 检查流程", () => {
     ).toBe(false);
   });
 
-  it("检查失败展示原因,立即检查可重试成功", async () => {
+  it("shows check failure reasons and succeeds when immediate check is retried", async () => {
     mocks.check.mockRejectedValueOnce(new Error("网络不可达"));
     mounted = mount(createElement(UpdateCard));
     clickButton(mounted.container, "立即检查");
@@ -180,7 +180,7 @@ describe("UpdateCard 检查流程", () => {
     expect(mocks.check).toHaveBeenCalledTimes(2);
   });
 
-  it("检查在途时按钮进入检查中并禁用", async () => {
+  it("disables the button and shows checking state while a check is in flight", async () => {
     const pending = deferred<UpdateStatusDto>();
     mocks.check.mockReturnValue(pending.promise);
     mounted = mount(createElement(UpdateCard));
@@ -193,8 +193,8 @@ describe("UpdateCard 检查流程", () => {
   });
 });
 
-describe("UpdateCard 安装流程", () => {
-  it("下载进度按 total 渲染百分比,total 缺失时走不确定进度", async () => {
+describe("UpdateCard installation flow", () => {
+  it("renders download percentage from total and uses indeterminate progress when total is missing", async () => {
     const pending = deferred<UpdateResultDto>();
     mocks.install.mockReturnValue(pending.promise);
     useUpdateStore.setState({ status: makeStatus() });
@@ -228,7 +228,7 @@ describe("UpdateCard 安装流程", () => {
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
   });
 
-  it("安装失败展示原因,重试会再次调用安装", async () => {
+  it("shows installation failure reasons and calls install again on retry", async () => {
     mocks.install.mockRejectedValueOnce(new Error("磁盘已满"));
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
@@ -247,31 +247,31 @@ describe("UpdateCard 安装流程", () => {
     expect(mocks.install).toHaveBeenCalledTimes(2);
   });
 
-  it("进度事件携带错误时安装失败", async () => {
+  it("fails installation when a progress event carries an error", async () => {
     const pending = deferred<UpdateResultDto>();
     mocks.install.mockReturnValue(pending.promise);
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
     clickButton(mounted.container, "下载并安装");
     act(() => {
-      emitProgress({ taskId: "t1", phase: "download", transferred: 0, total: 0, done: true, error: "校验和不匹配" });
+      emitProgress({ taskId: "t1", phase: "download", transferred: 0, total: 0, done: true, error: "Checksum mismatch" });
     });
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("校验和不匹配"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("Checksum mismatch"));
   });
 
-  it("安装完成后提示重启,重启失败展示原因", async () => {
-    mocks.restart.mockResolvedValue({ restarted: false, version: "", unavailableReason: "无法确定当前可执行文件路径" });
+  it("prompts for restart after installation and shows restart failure reasons", async () => {
+    mocks.restart.mockResolvedValue({ restarted: false, version: "", unavailableReason: "Unable to determine current executable path" });
     useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
     mounted = mount(createElement(UpdateCard));
     expect(mounted.container.textContent).toContain("重启应用后生效");
     clickButton(mounted.container, "立即重启");
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("无法确定当前可执行文件路径"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("Unable to determine current executable path"));
     expect(mocks.restart).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("UpdateBanner 桌面端横幅", () => {
-  it("有更新时展示版本与入口,跳过后同版本不再出现并写入持久偏好", async () => {
+describe("UpdateBanner desktop banner", () => {
+  it("shows version and entry point for available updates; skipping hides the same version and persists the preference", async () => {
     useUpdateStore.setState({ status: makeStatus() });
     const onOpenSettings = vi.fn();
     mounted = mount(createElement(UpdateBanner, { onOpenSettings }));
@@ -299,13 +299,13 @@ describe("UpdateBanner 桌面端横幅", () => {
     expect(mounted.container.querySelector('[aria-label="软件更新"]')?.textContent).toContain("v0.3.1");
   });
 
-  it("已跳过的版本不显示横幅", async () => {
+  it("hides the banner for skipped versions", async () => {
     useUpdateStore.setState({ status: makeStatus(), skippedVersion: "0.3.0" });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
   });
 
-  it("安装期间显示进度,total 缺失时走不确定进度", async () => {
+  it("shows progress during installation and uses indeterminate progress when total is missing", async () => {
     useUpdateStore.setState({
       status: makeStatus(),
       install: {
@@ -345,7 +345,7 @@ describe("UpdateBanner 桌面端横幅", () => {
     ).toBeNull();
   });
 
-  it("安装失败弹出 error toast", async () => {
+  it("shows an error toast when installation fails", async () => {
     const toast = vi.fn();
     useUi.setState({ pushToast: toast });
     useUpdateStore.setState({ status: makeStatus() });
@@ -366,7 +366,7 @@ describe("UpdateBanner 桌面端横幅", () => {
     expect(toast).toHaveBeenCalledWith("error", "更新安装失败：磁盘已满");
   });
 
-  it("无更新时不显示横幅，已安装待重启时显示重启视图", async () => {
+  it("hides the banner when there is no update and shows the restart view after installation", async () => {
     useUpdateStore.setState({ status: makeStatus({ available: false, version: "" }) });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();

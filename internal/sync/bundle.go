@@ -343,7 +343,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			decision.acceptance = bundleAssetRefused
 			id := strings.TrimSpace(payload.ID)
 			if id == "" {
-				id = "(空)"
+				id = "（空）"
 			}
 			decision.warning = fmt.Sprintf("资产 %s 的 ID 或名称不合法，已拒绝导入", id)
 		case found:
@@ -581,12 +581,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		id := strings.TrimSpace(tombstone.ID)
 		if id == "" {
 			report.Refused++
-			warnf("拒绝了 ID 为空的凭据删除墓碑")
+			warnf("拒绝了 ID 为空的凭据删除标记")
 			continue
 		}
 		if !ids.Valid(id) {
 			report.Refused++
-			warnf("凭据删除墓碑 %s 的 ID 格式不合法，已拒绝导入", id)
+			warnf("凭据删除标记 %s 的 ID 格式不合法，已拒绝导入", id)
 			continue
 		}
 		local, err := s.store.CredentialGetRow(ctx, id)
@@ -602,7 +602,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				Kind: "credential", ID: id, Name: local.Name,
 				LocalRevision: local.UpdatedAt, RemoteRevision: tombstone.DeletedAt,
 			})
-			warnf("凭据 %s 的本机版本较新，已忽略远端删除墓碑；如需覆盖请使用强制同步", id)
+			warnf("凭据 %s 的本机版本较新，已忽略远端删除标记；如需覆盖请使用强制同步", id)
 			continue
 		}
 		preparedTombstones = append(preparedTombstones, preparedCredTombstone{id: id, deletedAt: tombstone.DeletedAt})
@@ -643,7 +643,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			report.Refused++
 			name := id
 			if name == "" {
-				name = "(空)"
+				name = "（空）"
 			}
 			warnf("片段 %s 的 ID 或名称不合法，已拒绝导入", name)
 			continue
@@ -839,7 +839,7 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 			continue
 		}
 		if _, err := s.store.GroupGet(ctx, *plan.parentID); isNotFound(err) {
-			warnf("分组 %s 的父级 %s 不存在, 已按顶级分组导入", plan.id, *plan.parentID)
+			warnf("分组 %s 的父级 %s 不存在，已按顶级分组导入", plan.id, *plan.parentID)
 			plan.parentID = nil
 		} else if err != nil {
 			return nil, err
@@ -855,11 +855,11 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 		}
 		switch mergedGroupTopology(plan.id, plan.parentID, parents) {
 		case groupTopologyCycle:
-			warnf("分组 %s 的父级会在合并后形成循环, 已按顶级分组导入", plan.id)
+			warnf("分组 %s 的父级会在合并后形成循环，已按顶级分组导入", plan.id)
 			plan.parentID = nil
 			parents[plan.id] = nil
 		case groupTopologyTooDeep:
-			warnf("分组 %s 合并后的祖先链超过 64 层, 已按顶级分组导入", plan.id)
+			warnf("分组 %s 合并后的祖先链超过 64 层，已按顶级分组导入", plan.id)
 			plan.parentID = nil
 			parents[plan.id] = nil
 		}

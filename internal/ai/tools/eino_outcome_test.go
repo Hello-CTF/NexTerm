@@ -277,3 +277,41 @@ func TestOutcomeDispatcherRejectsConflictingAuthorization(t *testing.T) {
 		t.Fatalf("outcome audit rows = %d, want 1", len(rows))
 	}
 }
+
+func TestExecFailureMarkerProductionAndParsingCompatibility(t *testing.T) {
+	transport := &fakeTransport{execErr: errors.New("连接中断")}
+	registry := NewRegistry(Dependencies{
+		Transport: func(context.Context, string) (base.Transport, error) { return transport, nil },
+	})
+	result := registry.Execute(context.Background(), "job-1", Scope{SessionID: "session-1"}, execCall("call-1", "echo hi"), nil)
+	if !result.OK || !strings.Contains(result.Text, "[执行失败: 连接中断]") {
+		t.Fatalf("exec failure result = %+v", result)
+	}
+	if _, err := completionFromOutput(result); err == nil {
+		t.Fatal("execution failure marker was not recognized by completion parsing")
+	}
+}
+
+func TestGuardAuthorizationIDChineseReasonGolden(t *testing.T) {
+	const reason = "数据库写入需要确认"
+	decision := guard.Decision{Action: guard.ActionAsk, Ruling: guard.Confirm(guard.KindDBWrite, reason), Reason: reason}
+	encoded, err := json.Marshal(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantJSON = `{"action":"ask","ruling":{"risk":1,"kind":"db_write","kinds":["db_write"],"reason":"数据库写入需要确认"},"reason":"数据库写入需要确认"}`
+	if string(encoded) != wantJSON {
+		t.Fatalf("decision JSON = %s, want %s", encoded, wantJSON)
+	}
+	const wantID = "guard:ebef5a85f16f9c06d443f022ed120700d1b92b98f412db3a83115d3b8ad40b21"
+	if got := GuardAuthorizationID(decision); got != wantID {
+		t.Fatalf("authorization ID = %q, want %q", got, wantID)
+	}
+	var replayed guard.Decision
+	if err := json.Unmarshal([]byte(wantJSON), &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if got := GuardAuthorizationID(replayed); got != wantID {
+		t.Fatalf("replayed authorization ID = %q, want %q", got, wantID)
+	}
+}

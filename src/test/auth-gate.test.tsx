@@ -118,8 +118,8 @@ function mountGate(): MountedView {
   return mount(createElement(AuthGate));
 }
 
-describe("AuthGate 首次初始化", () => {
-  it("未初始化时显示设置表单,提交初始化码+账号+密码后进入恢复密钥展示", async () => {
+describe("AuthGate initial setup", () => {
+  it("shows the setup form when uninitialized and displays the recovery key after submitting the initialization code, account, and password", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "on" });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
@@ -151,7 +151,7 @@ describe("AuthGate 首次初始化", () => {
     expect(mounted.container.textContent).toContain("已保存，进入应用");
   });
 
-  it("两次密码不一致时不提交", async () => {
+  it("does not submit when the two passwords differ", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "on" });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
@@ -169,8 +169,8 @@ describe("AuthGate 首次初始化", () => {
   });
 });
 
-describe("AuthGate loopback 免登录", () => {
-  it("未初始化的 loopback 实例直接进入应用,不弹初始化门", async () => {
+describe("AuthGate loopback login bypass", () => {
+  it("enters the app directly for an uninitialized loopback instance without showing the setup gate", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -180,7 +180,7 @@ describe("AuthGate loopback 免登录", () => {
     expect(mocks.me).not.toHaveBeenCalled();
   });
 
-  it("已初始化 loopback 未登录:匿名 ready,不弹登录门", async () => {
+  it("becomes anonymously ready for an initialized signed-out loopback instance without showing the login gate", async () => {
     mocks.status.mockResolvedValue({ initialized: true, registration_open: false, auth: "loopback" });
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -188,7 +188,7 @@ describe("AuthGate loopback 免登录", () => {
     expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
   });
 
-  it("loopback 未初始化可从设置入口打开初始化表单,并可退回匿名使用", async () => {
+  it("opens setup from settings for an uninitialized loopback instance and returns to anonymous use", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -201,7 +201,7 @@ describe("AuthGate loopback 免登录", () => {
     expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
   });
 
-  it("auth=on 未初始化的初始化门没有匿名出口", async () => {
+  it("offers no anonymous exit from the setup gate for an uninitialized auth=on instance", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "on" });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
@@ -209,7 +209,7 @@ describe("AuthGate loopback 免登录", () => {
     expect(skip).toBeUndefined();
   });
 
-  it("loopback 初始化成功后 status.initialized 同步为 true", async () => {
+  it("sets status.initialized to true after successful loopback initialization", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -232,7 +232,7 @@ describe("AuthGate loopback 免登录", () => {
 });
 
 describe("AuthGate auth=off", () => {
-  it("refresh 拿到 auth=off 的 403 时归一为 off 状态:匿名 ready,不弹门,不留错误", async () => {
+  it("normalizes an auth=off 403 during refresh to anonymous ready with no gate or error", async () => {
     mocks.status.mockRejectedValue(new AuthApiError("forbidden", "--auth=off 下账号功能已关闭", 403));
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -242,7 +242,7 @@ describe("AuthGate auth=off", () => {
     expect(mocks.me).not.toHaveBeenCalled();
   });
 
-  it("其他 403 不归一为 auth=off:如实保留错误", async () => {
+  it("does not normalize other 403 errors to auth=off and preserves the error as-is", async () => {
     mocks.status.mockRejectedValue(new AuthApiError("forbidden", "用户名或密码错误", 403));
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -250,7 +250,7 @@ describe("AuthGate auth=off", () => {
     expect(useAuth.getState().error?.message).toBe("用户名或密码错误");
   });
 
-  it("auth=off 下误入初始化门也有出口,可返回应用", async () => {
+  it("offers an exit back to the app when setup is opened while auth=off", async () => {
     mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "off" });
     mounted = mountGate();
     await flushUntil(() => useAuth.getState().gate === "ready");
@@ -263,8 +263,8 @@ describe("AuthGate auth=off", () => {
   });
 });
 
-describe("AuthGate 恢复密钥全屏门", () => {
-  it("恢复密钥页在同一全屏门内,复制前不能进入", async () => {
+describe("AuthGate fullscreen recovery-key gate", () => {
+  it("keeps recovery in the same fullscreen gate and blocks entry until the key is copied", async () => {
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
       user: { id: "u-admin", username: "root", display_name: "", role: "superadmin", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 },
@@ -292,7 +292,7 @@ describe("AuthGate 恢复密钥全屏门", () => {
     expect(doneBtn2?.disabled).toBe(false);
   });
 
-  it("恢复密钥复制失败时显示手动复制路径,用户确认后仍可进入", async () => {
+  it("shows a manual-copy path when recovery-key copying fails and still allows entry after confirmation", async () => {
     const formatted = "X3QS-WQP4-PY4P-VVAY-PH7R-NDV2-CUAI-QUKU";
     mocks.writeText.mockRejectedValue(new Error("denied"));
     useAuth.setState({
@@ -317,8 +317,8 @@ describe("AuthGate 恢复密钥全屏门", () => {
   });
 });
 
-describe("AuthGate 登录", () => {
-  it("已初始化未登录时显示登录表单,登录成功进入应用", async () => {
+describe("AuthGate login", () => {
+  it("shows the login form for an initialized signed-out instance and enters the app after login", async () => {
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
 
@@ -335,7 +335,7 @@ describe("AuthGate 登录", () => {
     expect(useAuth.getState().gate).toBe("ready");
   });
 
-  it("登录等待只显示登录中", async () => {
+  it("shows only the in-progress login state while login is pending", async () => {
     let resolveLogin!: (value: { user: typeof ADMIN; csrf_token: string }) => void;
     mocks.login.mockImplementation(
       () => new Promise<{ user: typeof ADMIN; csrf_token: string }>((resolve) => { resolveLogin = resolve; }),
@@ -356,7 +356,7 @@ describe("AuthGate 登录", () => {
     await flushUntil(() => useAuth.getState().gate === "ready");
   });
 
-  it("管理员创建的用户首登无信封:本地生成并上传,展示恢复密钥", async () => {
+  it("generates and uploads an envelope locally for an admin-created user's first login, then shows the recovery key", async () => {
     // GET /auth/dek returns not_found (users created by an admin have no DEK envelope yet)
     mocks.dekGet.mockRejectedValue({ code: "not_found", message: "未找到: DEK 信封", status: 404 });
     mounted = mountGate();
@@ -381,7 +381,7 @@ describe("AuthGate 登录", () => {
     expect(useAuth.getState().gate).toBe("ready");
   });
 
-  it("登录失败时显示服务端错误", async () => {
+  it("shows the server error when login fails", async () => {
     mocks.login.mockRejectedValue({ code: "forbidden", message: "用户名或密码错误", status: 403 });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
@@ -395,7 +395,7 @@ describe("AuthGate 登录", () => {
     expect(useAuth.getState().user).toBeNull();
   });
 
-  it("注册关闭时不显示注册入口,开放时显示并可注册", async () => {
+  it("hides registration while closed and shows a working registration entry while open", async () => {
     mocks.status.mockResolvedValue({ initialized: true, registration_open: true, auth: "on" });
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
@@ -414,8 +414,8 @@ describe("AuthGate 登录", () => {
   });
 });
 
-describe("AuthGate reset_required 强制改密", () => {
-  it("reset_required 状态强制先设置新密码", async () => {
+describe("AuthGate reset_required forced password change", () => {
+  it("forces a new password before allowing a reset_required session", async () => {
     mocks.login.mockResolvedValue({
       user: { ...ADMIN, state: "reset_required", must_change_password: true },
       csrf_token: "csrf-1",
@@ -450,7 +450,7 @@ describe("AuthGate reset_required 强制改密", () => {
     );
   });
 
-  it("临时密码错误后,正确重试能成功(不因信封已存在 409 卡死)", async () => {
+  it("succeeds after retrying with the correct temporary password instead of getting stuck on an existing-envelope 409", async () => {
     mocks.login.mockResolvedValue({
       user: { ...ADMIN, state: "reset_required", must_change_password: true },
       csrf_token: "csrf-1",
@@ -487,8 +487,8 @@ describe("AuthGate reset_required 强制改密", () => {
   });
 });
 
-describe("AuthGate 恢复密钥重置", () => {
-  it("忘记密码走恢复密钥重置并重新登录", async () => {
+describe("AuthGate recovery-key reset", () => {
+  it("resets a forgotten password with the recovery key and logs in again", async () => {
     mounted = mountGate();
     await flushUntil(() => mounted!.container.textContent?.includes("登录"));
 

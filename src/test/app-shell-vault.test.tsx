@@ -51,7 +51,7 @@ vi.mock("../features/settings/SettingsView", async () => {
       return h(
         "div",
         null,
-        h("section", { className: "nx-card" }, h("span", { className: "nx-card-title" }, "终端")),
+        h("section", { className: "nx-card" }, h("span", { className: "nx-card-title" }, "Terminal")),
         h(
           "section",
           { className: "nx-card" },
@@ -117,8 +117,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("状态栏凭据库状态", () => {
-  it("未初始化时渲染可点击的开启保护入口", async () => {
+describe("status bar credential vault state", () => {
+  it("renders a clickable enable-protection entry when uninitialized", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
     await flush();
@@ -130,7 +130,7 @@ describe("状态栏凭据库状态", () => {
     expect(control?.getAttribute("title")).toContain("凭据保护");
   });
 
-  it("点击入口打开设置标签并定位到凭据保护卡片", async () => {
+  it("opens the settings tab and locates the credential protection card after clicking the entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
     await flush();
@@ -152,7 +152,7 @@ describe("状态栏凭据库状态", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("设置标签已在其它工作区打开时去重激活原标签并滚动该设置页", async () => {
+  it("deduplicates and activates an existing settings tab in another workspace and scrolls that settings page", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     useUi.setState({
       workspaces: [
@@ -163,7 +163,7 @@ describe("状态栏凭据库状态", () => {
           panes: [
             {
               id: "pane-a",
-              tabs: [{ id: "settings", kind: "settings", title: "设置", closable: true }],
+              tabs: [{ id: "settings", kind: "settings", title: "Settings", closable: true }],
               activeTabId: "settings",
             },
           ],
@@ -174,7 +174,7 @@ describe("状态栏凭据库状态", () => {
         {
           id: "ws-b",
           kind: "tools",
-          title: "工具",
+          title: "Tools",
           panes: [{ id: "pane-b", tabs: [], activeTabId: null }],
           activePaneId: "pane-b",
           splitRatio: 0.5,
@@ -208,7 +208,7 @@ describe("状态栏凭据库状态", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("已锁定时保持纯文本状态，不给出开启保护入口", async () => {
+  it("keeps the locked state as plain text without an enable-protection entry", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();
     await flush();
@@ -219,7 +219,7 @@ describe("状态栏凭据库状态", () => {
     expect(control?.textContent).not.toContain("去开启保护");
   });
 
-  it("已解锁时保持纯文本状态", async () => {
+  it("keeps the unlocked state as plain text", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
     await flush();
@@ -229,7 +229,7 @@ describe("状态栏凭据库状态", () => {
     expect(control?.textContent).toBe("凭据库已解锁");
   });
 
-  it("状态拉取失败时展示不可用，不给出开启保护入口", async () => {
+  it("shows unavailable without an enable-protection entry when the status request fails", async () => {
     mocks.vaultStatus.mockRejectedValue(new Error("boom"));
     mounted = mountApp();
     // react-query settles its failure state via internal scheduling; a single flush does not guarantee the timing
@@ -240,7 +240,7 @@ describe("状态栏凭据库状态", () => {
     expect(control?.textContent).toBe("凭据库不可用");
   });
 
-  it("别处完成初始化后，已打开的设置页经共享 vault-status query 自动刷新", async () => {
+  it("refreshes an open settings page through the shared vault-status query after initialization elsewhere", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     mounted = mountApp();
     await flush();

@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -66,7 +67,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			return ipc.Register(dispatcher, "ai_models", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]string, error) {
 				client, err := manager.ActiveClient()
 				if err != nil {
-					return nil, err
+					return nil, aiIPCError(err)
 				}
 				return client.ListModels(ctx)
 			})
@@ -76,13 +77,13 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				if input.ID != "" {
 					client, err := manager.ClientFor(input.ID)
 					if err != nil {
-						return provider.TestResult{}, err
+						return provider.TestResult{}, aiIPCError(err)
 					}
 					return client.Test(ctx), nil
 				}
 				client, err := manager.ActiveClient()
 				if err != nil {
-					return provider.TestResult{}, err
+					return provider.TestResult{}, aiIPCError(err)
 				}
 				return client.Test(ctx), nil
 			})
@@ -114,7 +115,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				profile.Proxy = config.Proxy
 				profile.Stream = config.Stream
 				_, err := manager.Save(ctx, profile)
-				return nil, err
+				return nil, aiIPCError(err)
 			})
 		},
 		func() error {
@@ -176,11 +177,11 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				if id == "" {
 					profile, ok := manager.ActiveProfile()
 					if !ok {
-						return aiCircuitStatusDTO{}, profiles.ErrNoActiveProfile
+						return aiCircuitStatusDTO{}, aiIPCError(profiles.ErrNoActiveProfile)
 					}
 					id = profile.ID
 				} else if _, ok := manager.Profile(id); !ok {
-					return aiCircuitStatusDTO{}, fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
+					return aiCircuitStatusDTO{}, aiIPCError(fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id))
 				}
 				status, ok := manager.CircuitStatus(id)
 				if !ok {
@@ -203,26 +204,26 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				profile = profile.Normalized()
 				overview, err := manager.Save(ctx, profile)
 				if err != nil {
-					return profiles.Profile{}, err
+					return profiles.Profile{}, aiIPCError(err)
 				}
 				for _, saved := range overview.Profiles {
 					if saved.ID == profile.ID {
 						return saved, nil
 					}
 				}
-				return profiles.Profile{}, profiles.ErrProfileNotFound
+				return profiles.Profile{}, aiIPCError(profiles.ErrProfileNotFound)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_delete", func(ctx context.Context, _ *ipc.Call, input aiConversationRequest) (any, error) {
 				_, err := manager.Delete(ctx, input.ID)
-				return nil, err
+				return nil, aiIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_activate", func(ctx context.Context, _ *ipc.Call, input aiConversationRequest) (any, error) {
 				_, err := manager.Activate(ctx, input.ID)
-				return nil, err
+				return nil, aiIPCError(err)
 			})
 		},
 		func() error {
@@ -231,16 +232,16 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
 					key, err := resolveMaskedProfileKey(ctx, database, input.Profile.ID)
 					if err != nil {
-						return provider.ModelList{}, err
+						return provider.ModelList{}, aiIPCError(err)
 					}
 					if err := profiles.RejectMaskedKey(key); err != nil {
-						return provider.ModelList{}, err
+						return provider.ModelList{}, aiIPCError(err)
 					}
 					config.APIKey = key
 				}
 				client, err := provider.NewClient(config, input.Profile.ClientOptions()...)
 				if err != nil {
-					return provider.ModelList{}, err
+					return provider.ModelList{}, aiIPCError(err)
 				}
 				return client.ListModelsDetailed(ctx)
 			})
@@ -262,6 +263,24 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		}
 	}
 	return nil
+}
+
+func aiIPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+	switch {
+	case errors.Is(err, profiles.ErrProfileNotFound):
+		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
+	case errors.Is(err, profiles.ErrNoActiveProfile), errors.Is(err, profiles.ErrProfileKeyUnavailable):
+		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+	default:
+		return err
+	}
 }
 
 func resolveMaskedProfileKey(ctx context.Context, database *store.Store, id string) (string, error) {

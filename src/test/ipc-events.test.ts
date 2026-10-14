@@ -36,8 +36,8 @@ async function ready(channel: unknown): Promise<void> {
   await (channel as unknown as { ready: Promise<void> }).ready;
 }
 
-describe("Wails events 与 channels", () => {
-  it("保留共享事件列表和 layout 事件", async () => {
+describe("Wails events and channels", () => {
+  it("preserves the shared event list and layout event", async () => {
     const { EVENTS } = await import("../ipc/events");
     expect(Object.values(EVENTS)).toEqual([
       "session://status",
@@ -58,7 +58,7 @@ describe("Wails events 与 channels", () => {
     expect(layoutSource).toContain('"layout://changed"');
   });
 
-  it("监听在命令前就绪，命令返回前的 early bytes 不丢且有序", async () => {
+  it("subscribes before commands and preserves early bytes in order", async () => {
     const off = vi.fn();
     let push: EventHandler | undefined;
     runtime.Events.On.mockImplementation((_topic, handler) => {
@@ -83,7 +83,7 @@ describe("Wails events 与 channels", () => {
     );
   });
 
-  it("保持 ArrayBuffer/Uint8Array/number[]/string 解码和顺序", async () => {
+  it("decodes ArrayBuffer/Uint8Array/number[]/string while preserving order", async () => {
     const { createBinaryChannel } = await import("../ipc/events");
     const frames: number[][] = [];
     const channel = createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
@@ -99,7 +99,7 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([[4, 5], [6], [7, 255], [65]]);
   });
 
-  it("流锚点帧分流给 onControl，其余消息仍按字节解码", async () => {
+  it("routes stream anchor frames to onControl and decodes other messages as bytes", async () => {
     const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
     const frames: number[][] = [];
     const anchors: unknown[] = [];
@@ -118,7 +118,7 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([[1, 2]]);
   });
 
-  it("未注册 onControl 时锚点帧被静默忽略", async () => {
+  it("silently ignores anchor frames when onControl is not registered", async () => {
     const { createBinaryChannel, STREAM_ANCHOR_TYPE } = await import("../ipc/events");
     const frames: number[] = [];
     const channel = createBinaryChannel((bytes) => frames.push(...bytes));
@@ -131,7 +131,7 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([3]);
   });
 
-  it("dispose 幂等退订，并忽略迟到的回调", async () => {
+  it("dispose unsubscribes idempotently and ignores late callbacks", async () => {
     const off = vi.fn();
     runtime.Events.On.mockReturnValue(off);
     const { createBinaryChannel, disposeChannel } = await import("../ipc/events");
@@ -148,7 +148,7 @@ describe("Wails events 与 channels", () => {
     expect(frames).toEqual([]);
   });
 
-  it("AI channel 仅投递对象帧", async () => {
+  it("delivers only object frames on the AI channel", async () => {
     const { createAiChannel } = await import("../ipc/events");
     const events: Record<string, unknown>[] = [];
     const channel = createAiChannel((event) => events.push(event));
@@ -157,13 +157,13 @@ describe("Wails events 与 channels", () => {
 
     push({ data: { type: "done" } });
     push({ data: '{"type":"confirmRequired","jobId":"job-1"}' });
-    push({ data: "正在思考" });
+    push({ data: "Thinking" });
     push({ data: 42 });
 
     expect(events).toEqual([{ type: "done" }]);
   });
 
-  it("命名事件解包 data，dispose 返回异步退订函数", async () => {
+  it("unwraps named-event data and returns an asynchronous unsubscribe function", async () => {
     const off = vi.fn();
     runtime.Events.On.mockReturnValue(off);
     const { listenEvent, EVENTS } = await import("../ipc/events");
@@ -179,7 +179,7 @@ describe("Wails events 与 channels", () => {
     expect(off).toHaveBeenCalledTimes(1);
   });
 
-  it("desktop 没有 WS reopen，但仍返回可用退订", async () => {
+  it("desktop has no WS reopen notifications but still returns a working unsubscribe", async () => {
     const { createBinaryChannel, onChannelReopen } = await import("../ipc/events");
     const channel = createBinaryChannel(() => {});
     const reopened = vi.fn();
@@ -190,8 +190,8 @@ describe("Wails events 与 channels", () => {
   });
 });
 
-describe("共享事件 DTO 与版本高水位", () => {
-  it("events.ts 的 SessionStatusEvent/TerminalExitEvent 与 types.ts 同源（含 version）", () => {
+describe("shared event DTOs and version high-water marks", () => {
+  it("shares SessionStatusEvent/TerminalExitEvent between events.ts and types.ts, including version", () => {
     const status: SessionStatusEventFromEvents = {
       sessionId: "s-1",
       status: "connected",
@@ -206,7 +206,7 @@ describe("共享事件 DTO 与版本高水位", () => {
     expect(sameExit.version).toBe(5);
   });
 
-  it("TerminalControlEvent 携带权威网格与事件版本（对齐 Go ControlEvent）", () => {
+  it("carries the authoritative grid and event version in TerminalControlEvent (matching Go ControlEvent)", () => {
     const control: TerminalControlEvent = {
       tabId: "t-1",
       controller: null,
@@ -222,7 +222,7 @@ describe("共享事件 DTO 与版本高水位", () => {
     expect(control.version).toBe(11);
   });
 
-  it("TerminalThrottledEvent 的 version/channelId 必填（对齐 Go ThrottleEvent）", () => {
+  it("requires version/channelId in TerminalThrottledEvent (matching Go ThrottleEvent)", () => {
     const throttled: TerminalThrottledEvent = {
       tabId: "t-1",
       channelId: "c-1",
@@ -236,7 +236,7 @@ describe("共享事件 DTO 与版本高水位", () => {
     expect(recovered.recovered).toBe(true);
   });
 
-  it("EventVersionGate 接受递增版本，丢弃重放、乱序与非法版本", async () => {
+  it("EventVersionGate accepts increasing versions and rejects replays, out-of-order versions, and invalid versions", async () => {
     const { EventVersionGate } = await import("../ipc/events");
     const gate = new EventVersionGate();
 

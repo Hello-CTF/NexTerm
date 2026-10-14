@@ -92,7 +92,7 @@ afterEach(() => {
 });
 
 describe("TranscriptReplayView", () => {
-  it("加载后应用初始帧,input 不回放", async () => {
+  it("applies the initial frame after load without replaying input", async () => {
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await flush();
     const terminal = terminalMocks.instances[0];
@@ -105,7 +105,7 @@ describe("TranscriptReplayView", () => {
     expect(clock?.textContent).toBe("00:00 / 00:01");
   });
 
-  it("播放推进到结尾自动暂停,倍速生效", async () => {
+  it("automatically pauses at the end during playback and applies the speed multiplier", async () => {
     vi.useFakeTimers();
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await act(async () => {
@@ -140,7 +140,7 @@ describe("TranscriptReplayView", () => {
     expect(clock?.textContent).toBe("00:01 / 00:01");
   });
 
-  it("后退 seek 重置终端并重放起始帧", async () => {
+  it("resets the terminal and replays the initial frame when seeking backward", async () => {
     vi.useFakeTimers();
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await act(async () => {
@@ -167,14 +167,14 @@ describe("TranscriptReplayView", () => {
     expect(clock?.textContent).toBe("00:00 / 00:01");
   });
 
-  it("加载失败展示错误", async () => {
+  it("shows an error when loading fails", async () => {
     mocks.transcriptRead.mockRejectedValue(new Error("boom"));
     mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
     await flush();
     expect(mounted.container.textContent).toContain("加载回放数据失败");
   });
 
-  it("播放按真实 elapsed 而不是固定 tick 推进", async () => {
+  it("advances playback using real elapsed time instead of fixed ticks", async () => {
     vi.useFakeTimers();
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -201,7 +201,7 @@ describe("TranscriptReplayView", () => {
     );
   });
 
-  it("contentOmitted 不读取空内容，只展示元数据状态", async () => {
+  it("skips the empty content read for contentOmitted and shows the metadata-only state", async () => {
     mounted = mount(<TranscriptReplayView transcriptId="t-1" contentOmitted />);
     await flush();
 

@@ -82,8 +82,8 @@ afterEach(() => {
   setViewportWidth(1024);
 });
 
-describe("AuditView 分页", () => {
-  it("工具栏带「全局」范围标记", async () => {
+describe("AuditView pagination", () => {
+  it("shows the global scope badge in the toolbar", async () => {
     mocks.auditCount.mockResolvedValue({ total: 0 });
     mocks.auditQuery.mockResolvedValue([]);
     mounted = mount(createElement(AuditView));
@@ -94,7 +94,7 @@ describe("AuditView 分页", () => {
     expect(badge?.textContent).toBe("全局");
   });
 
-  it("首屏加载一页，加载更多按 offset 追加直到取完", async () => {
+  it("loads the first page and appends by offset until all rows are loaded", async () => {
     mocks.auditCount.mockResolvedValue({ total: 250 });
     mocks.auditQuery.mockImplementation(({ offset }: { offset: number }) =>
       Promise.resolve(makeRows(offset === 200 ? 50 : 100, offset + 1)),
@@ -117,7 +117,7 @@ describe("AuditView 分页", () => {
     expect(rowKinds(mounted!.container)[249]).toBe("k250");
   });
 
-  it("重叠页按 id 去重，已加载行不重复渲染", async () => {
+  it("deduplicates overlapping pages by ID without rendering loaded rows twice", async () => {
     mocks.auditCount.mockResolvedValue({ total: 150 });
     mocks.auditQuery.mockImplementation(({ offset }: { offset: number }) =>
       Promise.resolve(offset === 0 ? makeRows(100, 1) : makeRows(100, 51)),
@@ -137,17 +137,17 @@ describe("AuditView 分页", () => {
     expect(mocks.auditQuery).toHaveBeenLastCalledWith({ source: undefined, limit: 100, offset: 100 });
   });
 
-  it("加载更多失败保留已有行，重试后继续追加", async () => {
+  it("keeps loaded rows after load-more fails and resumes appending after retry", async () => {
     mocks.auditCount.mockResolvedValue({ total: 250 });
     mocks.auditQuery
       .mockResolvedValueOnce(makeRows(100, 1))
-      .mockRejectedValueOnce(new Error("网络中断"))
+      .mockRejectedValueOnce(new Error("Network interrupted"))
       .mockResolvedValueOnce(makeRows(100, 101));
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 100);
 
     clickButton(mounted!.container, "加载更多");
-    await flushUntil(() => text(mounted!.container).includes("加载更多失败 · 网络中断"));
+    await flushUntil(() => text(mounted!.container).includes("加载更多失败 · Network interrupted"));
     expect(mounted!.container.querySelectorAll("tbody tr").length).toBe(100);
 
     clickButton(mounted!.container, "重试");
@@ -156,7 +156,7 @@ describe("AuditView 分页", () => {
     expect(mocks.auditQuery).toHaveBeenLastCalledWith({ source: undefined, limit: 100, offset: 100 });
   });
 
-  it("load-more pending 时刷新不锁死分页，旧响应落地后按新 offset 继续", async () => {
+  it("refresh during load-more does not deadlock pagination and continues with the new offset after the stale response settles", async () => {
     mocks.auditCount.mockResolvedValue({ total: 250 });
     const stale = deferred<AuditEntryDto[]>();
     mocks.auditQuery
@@ -188,7 +188,7 @@ describe("AuditView 分页", () => {
     expect(rowKinds(mounted!.container)[199]).toBe("k699");
   });
 
-  it("load-more pending 时切换筛选不锁死分页，旧响应不混入新筛选", async () => {
+  it("changing filters during load-more does not deadlock pagination or mix stale responses into the new filter", async () => {
     mocks.auditCount.mockResolvedValue({ total: 250 });
     const stale = deferred<AuditEntryDto[]>();
     mocks.auditQuery
@@ -221,8 +221,8 @@ describe("AuditView 分页", () => {
   });
 });
 
-describe("AuditView 计数与筛选", () => {
-  it("总数来自 audit_count 并跟随筛选切换，切换时重置分页", async () => {
+describe("AuditView counts and filters", () => {
+  it("gets totals from audit_count, follows filter changes, and resets pagination", async () => {
     mocks.auditCount.mockImplementation(({ source }: { source?: string }) =>
       Promise.resolve({ total: source === "ai" ? 7 : 250 }),
     );
@@ -254,8 +254,8 @@ describe("AuditView 计数与筛选", () => {
     expect(text(mounted!.container)).toContain("已显示 100 / 250 条");
   });
 
-  it("audit_count 失败但短页已证明取完时仍显示精确总数", async () => {
-    mocks.auditCount.mockRejectedValue(new Error("count 不可用"));
+  it("shows an exact total after audit_count fails when a short page proves all rows are loaded", async () => {
+    mocks.auditCount.mockRejectedValue(new Error("count unavailable"));
     mocks.auditQuery.mockResolvedValue(makeRows(3, 1));
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
@@ -264,8 +264,8 @@ describe("AuditView 计数与筛选", () => {
     expect(text(mounted!.container)).toContain("已显示 3 / 3 条");
   });
 
-  it("audit_count 失败且满页时显示已加载而非总数，取完后转为精确总数", async () => {
-    mocks.auditCount.mockRejectedValue(new Error("count 不可用"));
+  it("shows the loaded count after audit_count fails on a full page, then switches to an exact total when loading completes", async () => {
+    mocks.auditCount.mockRejectedValue(new Error("count unavailable"));
     mocks.auditQuery
       .mockResolvedValueOnce(makeRows(100, 1))
       .mockResolvedValueOnce(makeRows(50, 101));
@@ -284,8 +284,8 @@ describe("AuditView 计数与筛选", () => {
   });
 });
 
-describe("AuditView 加载状态", () => {
-  it("首屏加载中显示骨架行，数据到达后立即替换且无空态闪烁", async () => {
+describe("AuditView loading states", () => {
+  it("shows skeleton rows during initial loading and replaces them immediately without flashing an empty state", async () => {
     const first = deferred<AuditEntryDto[]>();
     mocks.auditCount.mockResolvedValue({ total: 3 });
     mocks.auditQuery.mockReturnValue(first.promise);
@@ -301,7 +301,7 @@ describe("AuditView 加载状态", () => {
     expect(text(mounted!.container)).not.toContain("暂无记录");
   });
 
-  it("刷新按钮重新从第一页加载并刷新总数", async () => {
+  it("reloads from the first page and refreshes the total from the refresh button", async () => {
     mocks.auditCount.mockResolvedValue({ total: 3 });
     mocks.auditQuery.mockResolvedValue(makeRows(3, 1));
     mounted = mount(createElement(AuditView));
@@ -317,8 +317,8 @@ describe("AuditView 加载状态", () => {
   });
 });
 
-describe("AuditView 响应式", () => {
-  it("320/390/桌面下骨架真实 pending、分页条可换行、长错误文本可收缩断行", async () => {
+describe("AuditView responsive layout", () => {
+  it("shows real pending skeletons at 320/390/desktop, wraps pagination, and shrinks/wraps long error text", async () => {
     for (const width of [320, 390, 1280]) {
       setViewportWidth(width);
       mocks.auditQuery.mockReset();
@@ -365,7 +365,7 @@ describe("AuditView 响应式", () => {
   });
 });
 
-describe("AuditView 设备时间线", () => {
+describe("AuditView device timeline", () => {
   const DEVICE = { id: "d-1", name: "web-01", kind: "agent", created_at: 1, last_seen_at: 1, revoked_at: 0 };
 
   function seedAdmin() {
@@ -394,7 +394,7 @@ describe("AuditView 设备时间线", () => {
     useAuth.setState({ user: null });
   });
 
-  it("选中设备后按 assetId 过滤出设备时间线, 渲染中文事件标签, 来源筛选让位", async () => {
+  it("filters by assetId after selecting a device, renders Chinese event labels, and disables source filters", async () => {
     mocks.fleetDevices.mockResolvedValue({ devices: [DEVICE] });
     mocks.auditCount.mockResolvedValue({ total: 2 });
     mocks.auditQuery.mockResolvedValue([
@@ -406,7 +406,7 @@ describe("AuditView 设备时间线", () => {
 
     await flushUntil(() => mounted!.container.querySelector('select[aria-label="按设备过滤"]') !== null);
     const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
-    if (!select) throw new Error("设备过滤下拉未出现");
+    if (!select) throw new Error("Device filter select did not appear");
     // With no device selected, the source filter is kept.
     expect(mocks.auditQuery).toHaveBeenCalledWith({ source: undefined, limit: 100, offset: 0 });
 
@@ -426,7 +426,7 @@ describe("AuditView 设备时间线", () => {
     expect(userSegment?.disabled).toBe(true);
   });
 
-  it("未登录(WEB)不请求设备清单, 不显示设备过滤入口", async () => {
+  it("does not request devices or show the device filter for logged-out WEB users", async () => {
     mocks.auditCount.mockResolvedValue({ total: 0 });
     mocks.auditQuery.mockResolvedValue([]);
     useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });

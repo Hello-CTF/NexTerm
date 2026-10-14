@@ -230,8 +230,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("分享卡片 · 创建入口与角色", () => {
-  it("超管与普通用户都有新建入口, 设备下拉只列接入设备, 全程不访问 /admin/users", async () => {
+describe("ShareCard creation entry and roles", () => {
+  it("gives superadmins and regular users a creation entry, lists only enrolled devices, and never calls /admin/users", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -260,7 +260,7 @@ describe("分享卡片 · 创建入口与角色", () => {
     expect(plainCalls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
-  it("未登录时只给说明卡(零按钮, 登录入口唯一在「账号」卡), 不发任何分享/设备请求", async () => {
+  it("shows only the guidance card when logged out, with no buttons or share/device requests and the sole login entry in the account card", async () => {
     const calls = route(shareHandler());
     seedUser(null);
     mounted = mountWithClient(createElement(ShareCard));
@@ -271,8 +271,8 @@ describe("分享卡片 · 创建入口与角色", () => {
   });
 });
 
-describe("分享卡片 · auth=off/on/loopback", () => {
-  it("auth=off: 如实显示账号功能已关闭与分享不可用, 零按钮, 不给死登录承诺, 不发任何分享/设备请求", async () => {
+describe("ShareCard auth=off/on/loopback", () => {
+  it("auth=off reports disabled accounts and unavailable sharing with no buttons, dead login promise, or share/device requests", async () => {
     const calls = route(shareHandler());
     seedUser(null, "off");
     mounted = mountWithClient(createElement(ShareCard));
@@ -285,7 +285,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
 
-  it("auth=off 且残留旧会话视图: 零请求渲染关闭态; 切回 auth=on 后加载与入口恢复", async () => {
+  it("auth=off renders the disabled state without requests even with a stale session, then restores loading and entries after switching to auth=on", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN, "off");
     mounted = mountWithClient(createElement(ShareCard));
@@ -308,7 +308,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     expect(document.body.textContent).toContain("新建主机分享");
   });
 
-  it("auth=on 未登录: 保持登录提示口径不变", async () => {
+  it("keeps the login guidance unchanged for logged-out auth=on", async () => {
     const calls = route(shareHandler());
     seedUser(null, "on");
     mounted = mountWithClient(createElement(ShareCard));
@@ -319,7 +319,7 @@ describe("分享卡片 · auth=off/on/loopback", () => {
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
 
-  it("loopback 未登录: 保持登录提示口径不变", async () => {
+  it("keeps the login guidance unchanged for logged-out loopback mode", async () => {
     const calls = route(shareHandler());
     seedUser(null, "loopback");
     mounted = mountWithClient(createElement(ShareCard));
@@ -331,8 +331,8 @@ describe("分享卡片 · auth=off/on/loopback", () => {
   });
 });
 
-describe("分享卡片 · 列表与状态", () => {
-  it("主机分享渲染设备名/方向/权限/状态/有效期, 公开链接渲染会话短 id 与最近访问", async () => {
+describe("ShareCard lists and states", () => {
+  it("renders device names, direction, permission, state, and expiry for host shares, plus short session ids and recent access for public links", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -360,7 +360,7 @@ describe("分享卡片 · 列表与状态", () => {
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
   });
 
-  it("空列表给空态, 加载失败给错误与重试, 断网显示离线原因", async () => {
+  it("shows empty states, load errors with retry, and the offline reason when disconnected", async () => {
     route(shareHandler({ shares: { shares: [] }, links: { links: [] } }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -368,10 +368,10 @@ describe("分享卡片 · 列表与状态", () => {
     expect(document.body.textContent).toContain("还没有公开链接");
     mounted.unmount();
 
-    route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
+    route(() => ({ status: 500, payload: { error: { code: "internal", message: "database error" } } }));
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("分享数据加载失败") ?? false);
-    expect(document.body.textContent).toContain("数据库错误");
+    expect(document.body.textContent).toContain("database error");
     mounted.unmount();
 
     mocks.fetch.mockRejectedValue(new Error("connect ECONNREFUSED"));
@@ -382,8 +382,8 @@ describe("分享卡片 · 列表与状态", () => {
   });
 });
 
-describe("分享卡片 · 创建主机分享", () => {
-  it("默认只读 + 24 小时: 用户名 trim 后随蛇形请求体提交并刷新列表", async () => {
+describe("ShareCard host-share creation", () => {
+  it("defaults to read-only for 24 hours, trims the username, submits snake_case fields, and refreshes the list", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -409,7 +409,7 @@ describe("分享卡片 · 创建主机分享", () => {
     expect(document.querySelector('select[aria-label="分享主机"]')).toBeNull();
   });
 
-  it("普通用户以 recipient_username 创建成功 (与超管同一合同)", async () => {
+  it("creates a share as a regular user with recipient_username under the same contract as a superadmin", async () => {
     const calls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
     seedUser(ALICE);
     mounted = mountWithClient(createElement(ShareCard));
@@ -426,7 +426,7 @@ describe("分享卡片 · 创建主机分享", () => {
     expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
-  it("显式读写 + 7 天: write 与 ttl_ms 随选择提交", async () => {
+  it("submits write=true and a seven-day ttl_ms when read-write access is explicitly selected", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -448,9 +448,9 @@ describe("分享卡片 · 创建主机分享", () => {
     expect(create?.body).toEqual({ device_id: "d-1", recipient_username: "alice", write: true, ttl_ms: 604_800_000 });
   });
 
-  it("无效用户名给内联 not_found 错误, 禁用接收者给 forbidden 错误", async () => {
+  it("shows inline not_found for an invalid username and forbidden for a disabled recipient", async () => {
     const calls = route(
-      shareHandler({ create: { status: 404, payload: { error: { code: "not_found", message: "未找到: 用户" } } } }),
+      shareHandler({ create: { status: 404, payload: { error: { code: "not_found", message: "not found: user" } } } }),
     );
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -460,11 +460,11 @@ describe("分享卡片 · 创建主机分享", () => {
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
     setInputValue(recipientInput(), "no-such-user");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("未找到: 用户") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("not found: user") ?? false);
     mounted.unmount();
 
     route(
-      shareHandler({ create: { status: 403, payload: { error: { code: "forbidden", message: "接收者账号不可用" } } } }),
+      shareHandler({ create: { status: 403, payload: { error: { code: "forbidden", message: "recipient account is unavailable" } } } }),
     );
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
@@ -472,13 +472,13 @@ describe("分享卡片 · 创建主机分享", () => {
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
     setInputValue(recipientInput(), "bob");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("接收者账号不可用") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("recipient account is unavailable") ?? false);
     expect(calls.filter((c) => c.url === "/share/host-shares" && c.method === "POST").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("设备代理离线给内联错误", async () => {
+  it("shows an inline error when the device agent is offline", async () => {
     const calls = route(
-      shareHandler({ create: { status: 503, payload: { error: { code: "disconnected", message: "设备代理离线" } } } }),
+      shareHandler({ create: { status: 503, payload: { error: { code: "disconnected", message: "device agent offline" } } } }),
     );
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -488,13 +488,13 @@ describe("分享卡片 · 创建主机分享", () => {
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
     setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("设备代理离线") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("device agent offline") ?? false);
     expect(calls.some((c) => c.url === "/share/host-shares" && c.method === "POST")).toBe(true);
   });
 });
 
-describe("分享卡片 · 吊销", () => {
-  it("吊销主机分享需确认, 确认后 POST 并刷新; 已吊销行不再给吊销按钮", async () => {
+describe("ShareCard revocation", () => {
+  it("requires confirmation before revoking a host share, then POSTs and refreshes; revoked rows no longer offer revoke", async () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -517,7 +517,7 @@ describe("分享卡片 · 吊销", () => {
     expect([...(revokedRow?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "吊销")).toBe(false);
   });
 
-  it("吊销确认被取消时不发请求", async () => {
+  it("does not send a revoke request when confirmation is canceled", async () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
@@ -533,7 +533,7 @@ describe("分享卡片 · 吊销", () => {
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
 
-  it("吊销公开链接走 POST /share/links/{id}/revoke", async () => {
+  it("revokes a public link with POST /share/links/{id}/revoke", async () => {
     const calls = route(shareHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -549,7 +549,7 @@ describe("分享卡片 · 吊销", () => {
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("公开链接");
   });
 
-  it("普通用户可吊销自己创建的公开链接,无需持有对应设备", async () => {
+  it("lets a regular user revoke their own public link without holding the corresponding device", async () => {
     const ownedLink = { ...LINK_ACTIVE, id: "l-alice", owner_id: "u-alice", device_id: "d-1" };
     const calls = route(shareHandler({
       devices: { devices: [DAEMON_DEVICE_2] },
@@ -572,8 +572,8 @@ describe("分享卡片 · 吊销", () => {
   });
 });
 
-describe("分享卡片 · 确认框在途的账号隔离", () => {
-  it("吊销确认框打开期间切换账号: 旧主机分享不发吊销请求", async () => {
+describe("ShareCard account isolation while confirmation is open", () => {
+  it("does not revoke the old host share after switching accounts while its confirmation is open", async () => {
     const calls = route(shareHandler());
     const dialog = deferred<boolean>();
     mocks.ask.mockReturnValue(dialog.promise);
@@ -596,7 +596,7 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
 
-  it("吊销确认框打开期间切换账号: 旧公开链接不发吊销请求", async () => {
+  it("does not revoke the old public link after switching accounts while its confirmation is open", async () => {
     const calls = route(shareHandler());
     const dialog = deferred<boolean>();
     mocks.ask.mockReturnValue(dialog.promise);
@@ -621,8 +621,8 @@ describe("分享卡片 · 确认框在途的账号隔离", () => {
   });
 });
 
-describe("分享卡片 · 公开链接只有列表与吊销", () => {
-  it("没有创建入口/会话 id 输入框/token 展示", async () => {
+describe("ShareCard public links support listing and revocation only", () => {
+  it("has no creation entry, session ID input, or token display", async () => {
     route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(ShareCard));
@@ -643,8 +643,8 @@ describe("分享卡片 · 公开链接只有列表与吊销", () => {
   });
 });
 
-describe("分享卡片 · 账号切换隔离", () => {
-  it("user.id 变化后旧分享立即清除, 旧账号晚到响应不覆盖新账号", async () => {
+describe("ShareCard account-switch isolation", () => {
+  it("clears old shares immediately after user.id changes and never lets late responses from the old account overwrite the new account", async () => {
     const lateAdminShares = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     let switched = false;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
@@ -688,7 +688,7 @@ describe("分享卡片 · 账号切换隔离", () => {
     expect(document.body.textContent).toContain("分享给 carol");
   });
 
-  it("创建在途时切换账号: 旧创建响应不写入, 新账号创建不被卡死", async () => {
+  it("discards an old create response after an account switch without blocking creation for the new account", async () => {
     const lateCreate = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     let createCalls = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {

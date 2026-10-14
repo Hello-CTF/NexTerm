@@ -443,7 +443,7 @@ jobs:
           fi
           if appendix="$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${notes_args[@]}" --jq .body)"; then
             if [ -n "$appendix" ]; then
-              printf '\n<details><summary>完整变更列表(自动生成)</summary>\n\n%s\n\n</details>\n' "$appendix" >> candidate/release-body.md
+              printf '\n<details><summary>完整变更列表（自动生成）</summary>\n\n%s\n\n</details>\n' "$appendix" >> candidate/release-body.md
             fi
           else
             echo "assemble: generate-notes API failed; omitting the auto-generated change list appendix" >&2

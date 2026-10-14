@@ -18,7 +18,7 @@ describe("SelectionActionBar", () => {
     mounted = undefined;
   });
 
-  it("渲染复制/粘贴/全选三个动作并各自回调", () => {
+  it("renders copy, paste, and select-all actions with their own callbacks", () => {
     const onCopy = vi.fn();
     const onPaste = vi.fn();
     const onSelectAll = vi.fn();
@@ -35,7 +35,7 @@ describe("SelectionActionBar", () => {
     expect(onSelectAll).toHaveBeenCalledTimes(1);
   });
 
-  it("横向夹取在视口内, 靠近顶部时翻转到手指下方", () => {
+  it("clamps horizontally within the viewport and flips below the finger near the top", () => {
     mounted = mount(
       createElement(SelectionActionBar, { x: 4, y: 20, onCopy: noop, onPaste: noop, onSelectAll: noop }),
     );
@@ -47,7 +47,7 @@ describe("SelectionActionBar", () => {
     expect(Number.parseFloat(bar.style.top)).toBeGreaterThan(20);
   });
 
-  it("默认 matchMedia stub（非粗指针）下门控为 false", () => {
+  it("disables the gate with the default non-coarse matchMedia stub", () => {
     expect(isCoarsePointerDevice()).toBe(false);
   });
 });

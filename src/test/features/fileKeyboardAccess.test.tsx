@@ -174,13 +174,13 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("FileBrowser 键盘可达性", () => {
+describe("FileBrowser keyboard accessibility", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(itemByName(mounted!.container, "a.txt")).toBeTruthy());
   });
 
-  it("行暴露 tree/treeitem 角色、层级、选中态与 tabIndex，交互按钮保持语义暴露", () => {
+  it("exposes tree/treeitem roles, levels, selection state, and tabIndex on rows while keeping action buttons semantic", () => {
     expect(mounted!.container.querySelector('[role="tree"][aria-label="文件"]')).not.toBeNull();
     expect(mounted!.container.querySelector('[role="option"]')).toBeNull();
     const rows = treeitems(mounted!.container);
@@ -194,7 +194,7 @@ describe("FileBrowser 键盘可达性", () => {
     }
   });
 
-  it("空格选中焦点行，行间互斥", () => {
+  it("selects the focused row with Space and keeps selection exclusive across rows", () => {
     const a = itemByName(mounted!.container, "a.txt");
     const sub = itemByName(mounted!.container, "sub");
     act(() => a.focus());
@@ -207,7 +207,7 @@ describe("FileBrowser 键盘可达性", () => {
     expect(a.getAttribute("aria-selected")).toBe("false");
   });
 
-  it("回车把文件打开为编辑器标签", async () => {
+  it("opens a file in an editor tab with Enter", async () => {
     act(() => {
       useUi.setState({
         workspaces: [
@@ -234,14 +234,14 @@ describe("FileBrowser 键盘可达性", () => {
     });
   });
 
-  it("回车进入目录并加载其列表", async () => {
+  it("enters a directory and loads its listing with Enter", async () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
     keyDown(sub, "Enter");
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"));
   });
 
-  it("ArrowDown/ArrowUp 在行间移动焦点", () => {
+  it("moves focus between rows with ArrowDown/ArrowUp", () => {
     const a = itemByName(mounted!.container, "a.txt");
     const sub = itemByName(mounted!.container, "sub");
     act(() => a.focus());
@@ -253,7 +253,7 @@ describe("FileBrowser 键盘可达性", () => {
     expect(document.activeElement).toBe(a);
   });
 
-  it("Delete 走既有警示确认：取消不删，确认才删", async () => {
+  it("uses the existing warning confirmation for Delete: cancel keeps the file and confirm deletes it", async () => {
     const a = itemByName(mounted!.container, "a.txt");
     act(() => a.focus());
 
@@ -271,7 +271,7 @@ describe("FileBrowser 键盘可达性", () => {
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
   });
 
-  it("目录 Backspace 确认讲清递归删除，确认后按目录语义删除", async () => {
+  it("explains recursive deletion for Backspace on a directory and deletes it with directory semantics after confirmation", async () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
 
@@ -284,7 +284,7 @@ describe("FileBrowser 键盘可达性", () => {
     );
   });
 
-  it("ContextMenu 键与 Shift+F10 在焦点行打开行菜单，Escape 关闭", async () => {
+  it("opens the row menu with ContextMenu or Shift+F10 and closes it with Escape", async () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
     keyDown(sub, "ContextMenu");
@@ -309,7 +309,7 @@ describe("FileBrowser 键盘可达性", () => {
     expect(sub.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("行内 ⋯ 按钮的 Enter 不触发行打开", () => {
+  it("does not open the row when Enter is pressed on its inline ⋯ button", () => {
     const a = itemByName(mounted!.container, "a.txt");
     const more = a.querySelector<HTMLButtonElement>('button[aria-label="更多操作 a.txt"]');
     if (!more) throw new Error("more button not found");
@@ -321,7 +321,7 @@ describe("FileBrowser 键盘可达性", () => {
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).toHaveLength(0);
   });
 
-  it("行消费的按键不再冒泡到 window 级裸键快捷键，未消费的键照常冒泡", async () => {
+  it("does not let row-consumed keys bubble to window-level bare-key shortcuts, while unconsumed keys still bubble", async () => {
     const globalHits: string[] = [];
     const onWindowKey = (e: KeyboardEvent) => {
       globalHits.push(e.key);
@@ -352,13 +352,13 @@ describe("FileBrowser 键盘可达性", () => {
   });
 });
 
-describe("useFileOps 对话框文案（纯文本）", () => {
+describe("useFileOps dialog copy (plain text)", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("chmod 符号链接确认无 markdown 星号且保留目标含义", async () => {
+  it("omits Markdown asterisks from the chmod symlink confirmation and preserves the target meaning", async () => {
     mocks.promptText.mockResolvedValue("600");
     act(() => {
       rowByPath(mounted!.container, "~/link").dispatchEvent(
@@ -377,7 +377,7 @@ describe("useFileOps 对话框文案（纯文本）", () => {
     expect(notice![1]).toEqual(expect.objectContaining({ kind: "warning" }));
   });
 
-  it("chmod 危险确认无装饰符号且保留所有者警告", async () => {
+  it("omits decorative symbols from the dangerous chmod confirmation and preserves the owner warning", async () => {
     mocks.promptText.mockResolvedValue("000");
     act(() => {
       rowByPath(mounted!.container, "~/a.txt").dispatchEvent(

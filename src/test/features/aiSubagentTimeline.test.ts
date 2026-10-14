@@ -59,8 +59,8 @@ describe("subagent timeline folding", () => {
     const { s, frames } = stream();
     s.beginRun(1);
     spawnCard(s, 1, "sp-1", 1);
-    s.pushEvent(1, subagentEvent({ type: "subagentDelta", text: "正在", seq: 2 }));
-    s.pushEvent(1, subagentEvent({ type: "subagentDelta", text: "排查", seq: 3 }));
+    s.pushEvent(1, subagentEvent({ type: "subagentDelta", text: "Investi", seq: 2 }));
+    s.pushEvent(1, subagentEvent({ type: "subagentDelta", text: "gating", seq: 3 }));
     s.pushEvent(1, subagentEvent({ type: "subagentToolCall", id: "c1", name: "list_assets", seq: 4 }));
     s.pushEvent(
       1,
@@ -76,7 +76,7 @@ describe("subagent timeline folding", () => {
       subagentId: "sub-1",
       depth: 1,
       status: "completed",
-      text: "正在排查",
+      text: "Investigating",
       summary: "child done",
     });
     expect(timeline?.tools).toEqual([
@@ -91,18 +91,18 @@ describe("subagent timeline folding", () => {
     s.pushEvent(1, subagentEvent({ type: "subagentToolCall", id: "c1", name: "list_assets", seq: 2 }));
     s.pushEvent(
       1,
-      subagentEvent({ type: "subagentToolResult", id: "c1", ok: false, summary: "工具 list_assets 执行崩溃: 后端不可用", panic: true, seq: 3 }),
+      subagentEvent({ type: "subagentToolResult", id: "c1", ok: false, summary: "Tool list_assets crashed: backend unavailable", panic: true, seq: 3 }),
     );
     s.pushEvent(1, subagentEvent({ type: "subagentToolCall", id: "c2", name: "read_file", seq: 4 }));
     s.pushEvent(
       1,
-      subagentEvent({ type: "subagentToolResult", id: "c2", ok: false, summary: "文件不存在", panic: false, seq: 5 }),
+      subagentEvent({ type: "subagentToolResult", id: "c2", ok: false, summary: "File not found", panic: false, seq: 5 }),
     );
     frames.runFrame();
     const tools = timelineOf(s, 1, "sp-1")?.tools;
     expect(tools).toEqual([
-      { callId: "c1", name: "list_assets", status: "error", summary: "工具 list_assets 执行崩溃: 后端不可用", panic: true },
-      { callId: "c2", name: "read_file", status: "error", summary: "文件不存在", panic: false },
+      { callId: "c1", name: "list_assets", status: "error", summary: "Tool list_assets crashed: backend unavailable", panic: true },
+      { callId: "c2", name: "read_file", status: "error", summary: "File not found", panic: false },
     ]);
   });
 

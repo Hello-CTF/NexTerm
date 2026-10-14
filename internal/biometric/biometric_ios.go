@@ -131,7 +131,7 @@ func evaluate() error {
 		if msg := cStr(errMsg); msg != "" {
 			return errors.New(msg)
 		}
-		return errors.New("面容验证未通过")
+		return errors.New("生物识别验证未通过")
 	}
 	return nil
 }

@@ -44,6 +44,51 @@ func Module(runner *Runner) app.Module {
 	return app.Module{Name: "ai-agent", RegisterCommands: runner.RegisterCommands, Component: runnerComponent{runner: runner}}
 }
 
+func agentIPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+	switch {
+	case errors.Is(err, ErrJobNotFound):
+		return ipc.WrapError(ipc.CodeNotFound, ErrJobNotFound.Error(), err)
+	case errors.Is(err, ErrConfirmationStale):
+		return ipc.WrapError(ipc.CodeBadParam, ErrConfirmationStale.Error(), err)
+	case errors.Is(err, ErrInvalidConfirmation):
+		return ipc.WrapError(ipc.CodeBadParam, ErrInvalidConfirmation.Error(), err)
+	case errors.Is(err, ErrSteerQueueFull):
+		return ipc.WrapError(ipc.CodeBadParam, ErrSteerQueueFull.Error(), err)
+	}
+	switch err.Error() {
+	case "AI 补充指令不能为空",
+		"权限模式仅支持 read_only/read_write/silent/unattended",
+		"设备权限模式缺少设备 ID",
+		"设备授权至少需要一个种类",
+		"设备授权种类仅支持 terminal_write/session_exec",
+		"设备授权缺少设备 ID",
+		"授权规则缺少设备 ID",
+		"授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys",
+		"文件写入规则必须限定路径范围",
+		"该动作的规则不支持路径范围",
+		"授权规则过期时间必须晚于当前时间",
+		"授权规则缺少规则 ID",
+		"只能编辑用户消息",
+		"无法确定设备身份，不能清除设备模式",
+		"无法确定设备身份, 权限未保存; 请重新连接后再试",
+		"缺少 config":
+		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+	case "消息不存在":
+		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
+	case "AI 会话存储未配置", "AI 会话存储不支持消息截断", "权限设置未配置", "设备授权未配置":
+		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
+	default:
+		return err
+	}
+}
+
 func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
@@ -56,7 +101,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return ipc.Register(dispatcher, "ai_cancel", func(_ context.Context, _ *ipc.Call, args struct {
 				JobID string `json:"jobId"`
 			}) (any, error) {
-				return nil, r.Cancel(args.JobID)
+				return nil, agentIPCError(r.Cancel(args.JobID))
 			})
 		},
 		func() error {
@@ -64,7 +109,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				JobID   string `json:"jobId"`
 				Message string `json:"message"`
 			}) (any, error) {
-				return nil, r.Steer(args.JobID, args.Message)
+				return nil, agentIPCError(r.Steer(args.JobID, args.Message))
 			})
 		},
 		func() error {
@@ -72,7 +117,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				ConversationID string `json:"conversationId"`
 				MessageID      string `json:"messageId"`
 			}) (any, error) {
-				return nil, r.EditResend(ctx, args.ConversationID, args.MessageID)
+				return nil, agentIPCError(r.EditResend(ctx, args.ConversationID, args.MessageID))
 			})
 		},
 		func() error {
@@ -84,12 +129,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_confirm", func(ctx context.Context, call *ipc.Call, args Confirmation) (any, error) {
-				return nil, r.ConfirmStream(ctx, args, channelStreamFactory(call))
+				return nil, agentIPCError(r.ConfirmStream(ctx, args, channelStreamFactory(call)))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_answer", func(ctx context.Context, call *ipc.Call, args Answer) (any, error) {
-				return nil, r.AnswerStream(ctx, args, channelStreamFactory(call))
+				return nil, agentIPCError(r.AnswerStream(ctx, args, channelStreamFactory(call)))
 			})
 		},
 		func() error {
@@ -129,7 +174,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				Scope tools.Scope `json:"scope"`
 			}) (guard.Config, error) {
 				if r.config.Permissions == nil {
-					return guard.Config{}, errors.New("权限设置未配置")
+					return guard.Config{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
 				}
 				config := r.config.Permissions.Get()
 				return r.config.Permissions.WithDeviceMode(config, tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)), nil
@@ -142,32 +187,32 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				FollowGlobal bool          `json:"followGlobal,omitempty"`
 			}) (guard.Config, error) {
 				if r.config.Permissions == nil {
-					return guard.Config{}, errors.New("权限设置未配置")
+					return guard.Config{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
 				}
 				deviceID := tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)
 				if args.FollowGlobal {
 					if deviceID == "" {
-						return guard.Config{}, errors.New("无法确定设备身份，不能清除设备模式")
+						return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份，不能清除设备模式")
 					}
 					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, ""); err != nil {
-						return guard.Config{}, err
+						return guard.Config{}, agentIPCError(err)
 					}
 					return r.config.Permissions.Get(), nil
 				}
 				if args.Config == nil {
-					return guard.Config{}, errors.New("缺少 config")
+					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "缺少 config")
 				}
 				if deviceID != "" {
 					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, args.Config.Mode); err != nil {
-						return guard.Config{}, err
+						return guard.Config{}, agentIPCError(err)
 					}
 					return r.config.Permissions.WithDeviceMode(r.config.Permissions.Get(), deviceID), nil
 				}
 				if args.Scope.SessionID != "" || args.Scope.TabID != "" {
-					return guard.Config{}, errors.New("无法确定设备身份, 权限未保存; 请重新连接后再试")
+					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份, 权限未保存; 请重新连接后再试")
 				}
 				if err := r.config.Permissions.Set(ctx, *args.Config); err != nil {
-					return guard.Config{}, err
+					return guard.Config{}, agentIPCError(err)
 				}
 				return r.config.Permissions.Get(), nil
 			})
@@ -175,7 +220,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, "ai_grant_list", func(context.Context, *ipc.Call, struct{}) ([]guard.DeviceGrant, error) {
 				if r.config.Grants == nil {
-					return nil, errors.New("设备授权未配置")
+					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
 				return r.config.Grants.List(), nil
 			})
@@ -186,16 +231,17 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				Kinds    []string `json:"kinds"`
 			}) (guard.DeviceGrant, error) {
 				if err := r.guardGrantMutation(ctx); err != nil {
-					return guard.DeviceGrant{}, err
+					return guard.DeviceGrant{}, agentIPCError(err)
 				}
 				if r.config.Grants == nil {
-					return guard.DeviceGrant{}, errors.New("设备授权未配置")
+					return guard.DeviceGrant{}, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
 				kinds, err := guard.ParseGrantKinds(args.Kinds)
 				if err != nil {
-					return guard.DeviceGrant{}, err
+					return guard.DeviceGrant{}, agentIPCError(err)
 				}
-				return r.config.Grants.Grant(ctx, args.DeviceID, kinds)
+				grant, err := r.config.Grants.Grant(ctx, args.DeviceID, kinds)
+				return grant, agentIPCError(err)
 			})
 		},
 		func() error {
@@ -203,18 +249,18 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				DeviceID string `json:"deviceId"`
 			}) (any, error) {
 				if err := r.guardGrantMutation(ctx); err != nil {
-					return nil, err
+					return nil, agentIPCError(err)
 				}
 				if r.config.Grants == nil {
-					return nil, errors.New("设备授权未配置")
+					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
-				return nil, r.config.Grants.Revoke(ctx, args.DeviceID)
+				return nil, agentIPCError(r.config.Grants.Revoke(ctx, args.DeviceID))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_grant_rule_list", func(context.Context, *ipc.Call, struct{}) ([]guard.GrantRule, error) {
 				if r.config.Grants == nil {
-					return nil, errors.New("设备授权未配置")
+					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
 				return r.config.Grants.Rules(), nil
 			})
@@ -227,16 +273,17 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				ExpiresAt int64  `json:"expiresAt"`
 			}) (guard.GrantRule, error) {
 				if err := r.guardGrantMutation(ctx); err != nil {
-					return guard.GrantRule{}, err
+					return guard.GrantRule{}, agentIPCError(err)
 				}
 				if r.config.Grants == nil {
-					return guard.GrantRule{}, errors.New("设备授权未配置")
+					return guard.GrantRule{}, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
 				var expiresAt time.Time
 				if args.ExpiresAt != 0 {
 					expiresAt = time.UnixMilli(args.ExpiresAt)
 				}
-				return r.config.Grants.AddRule(ctx, args.DeviceID, args.Action, args.Path, expiresAt)
+				rule, err := r.config.Grants.AddRule(ctx, args.DeviceID, args.Action, args.Path, expiresAt)
+				return rule, agentIPCError(err)
 			})
 		},
 		func() error {
@@ -244,12 +291,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				ID string `json:"id"`
 			}) (any, error) {
 				if err := r.guardGrantMutation(ctx); err != nil {
-					return nil, err
+					return nil, agentIPCError(err)
 				}
 				if r.config.Grants == nil {
-					return nil, errors.New("设备授权未配置")
+					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")
 				}
-				return nil, r.config.Grants.RevokeRule(ctx, args.ID)
+				return nil, agentIPCError(r.config.Grants.RevokeRule(ctx, args.ID))
 			})
 		},
 	}

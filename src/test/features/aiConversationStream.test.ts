@@ -91,10 +91,10 @@ describe("conversation aggregation: chunking and ordering", () => {
   it("flushes pending text before tool, interaction and terminal boundaries", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "先" });
+    s.pushEvent(1, { type: "delta", text: "Before" });
     s.pushEvent(1, { type: "toolCall", id: "call-1", name: "exec", display: "ls" });
     expect(roles(s.getState().items)).toEqual(["assistant", "tool"]);
-    s.pushEvent(1, { type: "delta", text: "中" });
+    s.pushEvent(1, { type: "delta", text: "Middle" });
     s.pushEvent(1, {
       type: "confirmRequired",
       id: "call-2",
@@ -103,8 +103,8 @@ describe("conversation aggregation: chunking and ordering", () => {
       confirmationNonce: "n2",
     });
     expect(roles(s.getState().items)).toEqual(["assistant", "tool", "assistant", "confirm"]);
-    s.pushEvent(1, { type: "delta", text: "后" });
-    s.pushEvent(1, { type: "done", answer: "后" });
+    s.pushEvent(1, { type: "delta", text: "After" });
+    s.pushEvent(1, { type: "done", answer: "After" });
     expect(frames.scheduled()).toBe(0);
     expect(roles(s.getState().items)).toEqual([
       "assistant",
@@ -114,7 +114,7 @@ describe("conversation aggregation: chunking and ordering", () => {
       "assistant",
       "outcome",
     ]);
-    expect(s.getState().items.at(-2)).toMatchObject({ role: "assistant", text: "后" });
+    expect(s.getState().items.at(-2)).toMatchObject({ role: "assistant", text: "After" });
   });
 
   it("attaches results to the right tool call by id even with interleaved calls", () => {
@@ -135,8 +135,8 @@ describe("conversation aggregation: chunking and ordering", () => {
     s.beginRun(1);
     s.pushEvent(1, { type: "toolCall", id: "p", name: "list_assets", display: "list_assets" });
     s.pushEvent(1, { type: "toolCall", id: "q", name: "read_file", display: "read_file /a" });
-    s.pushEvent(1, { type: "toolResult", id: "p", ok: false, summary: "工具 list_assets 执行崩溃: 后端不可用", text: "工具 list_assets 执行崩溃: 后端不可用", exitCode: 1, panic: true });
-    s.pushEvent(1, { type: "toolResult", id: "q", ok: false, summary: "文件不存在", text: "文件不存在", exitCode: 1, panic: false });
+    s.pushEvent(1, { type: "toolResult", id: "p", ok: false, summary: "Tool list_assets crashed: backend unavailable", text: "Tool list_assets crashed: backend unavailable", exitCode: 1, panic: true });
+    s.pushEvent(1, { type: "toolResult", id: "q", ok: false, summary: "File not found", text: "File not found", exitCode: 1, panic: false });
     const items = s.getState().items;
     const crashed = items.find((i): i is ToolItem => i.role === "tool" && i.callId === "p");
     const failed = items.find((i): i is ToolItem => i.role === "tool" && i.callId === "q");
@@ -160,7 +160,7 @@ describe("conversation aggregation: chunking and ordering", () => {
     s.pushEvent(1, { type: "usage", promptTokens: 10, completionTokens: 5, cachedTokens: 2, contextWindow: 100 });
     s.pushEvent(1, { type: "usage", promptTokens: 20, completionTokens: 6, cachedTokens: 0, contextWindow: 100 });
     expect(s.getState().usage).toMatchObject({ promptTokens: 20, completionTokens: 6 });
-    s.pushEvent(1, { type: "todos", items: [{ content: "做", status: "in_progress" }] });
+    s.pushEvent(1, { type: "todos", items: [{ content: "Task", status: "in_progress" }] });
     expect(s.getState().todos).toHaveLength(1);
   });
 });
@@ -198,29 +198,29 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
   it("done replaces only the final segment and keeps earlier narration and tool cards", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "先分析一下" });
+    s.pushEvent(1, { type: "delta", text: "Analyze first" });
     frames.runFrame();
     s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
     s.pushEvent(1, { type: "toolResult", id: "t", ok: true, summary: "s", text: "full", exitCode: 0 });
-    s.pushEvent(1, { type: "delta", text: "最终" });
+    s.pushEvent(1, { type: "delta", text: "Final" });
     frames.runFrame();
-    s.pushEvent(1, { type: "done", answer: "最终答案" });
+    s.pushEvent(1, { type: "done", answer: "Final answer" });
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "tool", "assistant", "outcome"]);
-    expect(texts(items, "assistant")).toEqual(["先分析一下", "最终答案"]);
+    expect(texts(items, "assistant")).toEqual(["Analyze first", "Final answer"]);
   });
 
   it("keeps the first terminal outcome under duplicate done and late error", () => {
     const { s } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "答案" });
-    expect(s.pushEvent(1, { type: "done", answer: "答案" }).accepted).toBe(true);
+    s.pushEvent(1, { type: "delta", text: "Answer" });
+    expect(s.pushEvent(1, { type: "done", answer: "Answer" }).accepted).toBe(true);
     const settled = s.getState();
-    expect(s.pushEvent(1, { type: "done", answer: "答案" }).accepted).toBe(false);
-    const lateError = s.pushEvent(1, { type: "error", message: "迟到" });
+    expect(s.pushEvent(1, { type: "done", answer: "Answer" }).accepted).toBe(false);
+    const lateError = s.pushEvent(1, { type: "error", message: "Late" });
     expect(lateError.accepted).toBe(false);
     expect(lateError.terminal).toBe("error");
-    expect(s.pushEvent(1, { type: "delta", text: "尾巴" }).accepted).toBe(false);
+    expect(s.pushEvent(1, { type: "delta", text: "Tail" }).accepted).toBe(false);
     s.flush();
     expect(s.getState()).toBe(settled);
     expect(roles(settled.items)).toEqual(["assistant", "outcome"]);
@@ -230,11 +230,11 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
   it("isolates stale generations: unknown or previous runs cannot mutate the conversation", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "一" });
+    s.pushEvent(1, { type: "delta", text: "One" });
     frames.runFrame();
-    s.pushEvent(1, { type: "done", answer: "一" });
+    s.pushEvent(1, { type: "done", answer: "One" });
     s.beginRun(2);
-    s.appendUser(2, "第二问");
+    s.appendUser(2, "Second question");
     const before = s.getState();
     for (const ev of [
       { type: "delta", text: "stale" },
@@ -248,18 +248,18 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
     }
     s.flush();
     expect(s.getState()).toBe(before);
-    expect(s.pushEvent(2, { type: "delta", text: "二" }).accepted).toBe(true);
+    expect(s.pushEvent(2, { type: "delta", text: "Two" }).accepted).toBe(true);
   });
 
   it("never merges text across attempts or across a terminal boundary", () => {
     let state = createConversation();
     state = beginRun(state, 1);
-    state = appendUserMessage(state, 1, "问");
-    state = applyAiEvent(state, 1, { type: "delta", text: "答一" }).state;
-    state = applyAiEvent(state, 1, { type: "done", answer: "答一" }).state;
+    state = appendUserMessage(state, 1, "Question");
+    state = applyAiEvent(state, 1, { type: "delta", text: "Answer one" }).state;
+    state = applyAiEvent(state, 1, { type: "done", answer: "Answer one" }).state;
     state = beginRun(state, 2);
-    state = applyAiEvent(state, 2, { type: "delta", text: "答二" }).state;
-    expect(texts(state.items, "assistant")).toEqual(["答一", "答二"]);
+    state = applyAiEvent(state, 2, { type: "delta", text: "Answer two" }).state;
+    expect(texts(state.items, "assistant")).toEqual(["Answer one", "Answer two"]);
   });
 });
 
@@ -323,10 +323,10 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.pushEvent(1, { type: "reasoning", text: " and more", ...perRun(2) });
     frames.runFrame();
     expect(texts(s.getState().items, "reasoning")).toEqual(["same reasoning chunk and more"]);
-    s.pushEvent(1, { type: "done", answer: "答案", ...perRun(3) });
+    s.pushEvent(1, { type: "done", answer: "Answer", ...perRun(3) });
     const items = s.getState().items;
     expect(texts(items, "reasoning")).toEqual(["same reasoning chunk and more"]);
-    expect(texts(items, "assistant")).toEqual(["答案"]);
+    expect(texts(items, "assistant")).toEqual(["Answer"]);
   });
 
   it("suppresses replay even before the original fragments were flushed", () => {
@@ -345,14 +345,14 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     withSeq.s.pushEvent(1, { type: "reasoning", text: "ha", ...perRun(1) });
     withSeq.s.pushEvent(1, { type: "reasoning", text: "ha", ...perRun(2) });
     withSeq.s.pushEvent(1, { type: "reasoning", text: "!", ...perRun(3) });
-    withSeq.s.pushEvent(1, { type: "done", answer: "答案", ...perRun(4) });
+    withSeq.s.pushEvent(1, { type: "done", answer: "Answer", ...perRun(4) });
     expect(texts(withSeq.s.getState().items, "reasoning")).toEqual(["haha!"]);
     const noSeq = stream();
     noSeq.s.beginRun(1);
     noSeq.s.pushEvent(1, { type: "reasoning", text: "ha" });
     noSeq.s.pushEvent(1, { type: "reasoning", text: "ha" });
     noSeq.s.pushEvent(1, { type: "reasoning", text: "!" });
-    noSeq.s.pushEvent(1, { type: "done", answer: "答案" });
+    noSeq.s.pushEvent(1, { type: "done", answer: "Answer" });
     expect(texts(noSeq.s.getState().items, "reasoning")).toEqual(["haha!"]);
   });
 
@@ -388,35 +388,35 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
   it("scopes identity per run and treats missing/invalid identity fields as new content", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "一", ...perRun(1) });
-    s.pushEvent(1, { type: "done", answer: "一", ...perRun(2) });
+    s.pushEvent(1, { type: "delta", text: "One", ...perRun(1) });
+    s.pushEvent(1, { type: "done", answer: "One", ...perRun(2) });
     s.beginRun(2);
-    s.pushEvent(2, { type: "delta", text: "二", ...perRun(1) });
+    s.pushEvent(2, { type: "delta", text: "Two", ...perRun(1) });
     frames.runFrame();
-    expect(texts(s.getState().items, "assistant")).toEqual(["一", "二"]);
+    expect(texts(s.getState().items, "assistant")).toEqual(["One", "Two"]);
     s.beginRun(3);
     const invalid = [{ seq: 0 }, { seq: -2 }, { seq: 1.5 }, { seq: "7" }, {}];
     for (const identity of invalid) {
       s.pushEvent(3, { type: "delta", text: "x", ...identity });
     }
     frames.runFrame();
-    expect(texts(s.getState().items, "assistant")).toEqual(["一", "二", "xxxxx"]);
+    expect(texts(s.getState().items, "assistant")).toEqual(["One", "Two", "xxxxx"]);
   });
 
   it("a replayed done still settles exactly once after a replayed text prefix", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "答", ...perRun(1) });
+    s.pushEvent(1, { type: "delta", text: "Answer", ...perRun(1) });
     frames.runFrame();
-    s.pushEvent(1, { type: "delta", text: "答", ...perRun(1) });
-    expect(s.pushEvent(1, { type: "done", answer: "答", ...perRun(2) }).accepted).toBe(true);
-    const replayedDone = s.pushEvent(1, { type: "done", answer: "答", ...perRun(2) });
+    s.pushEvent(1, { type: "delta", text: "Answer", ...perRun(1) });
+    expect(s.pushEvent(1, { type: "done", answer: "Answer", ...perRun(2) }).accepted).toBe(true);
+    const replayedDone = s.pushEvent(1, { type: "done", answer: "Answer", ...perRun(2) });
     expect(replayedDone.accepted).toBe(false);
     expect(replayedDone.terminal).toBe("done");
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
-    expect(texts(items, "assistant")).toEqual(["答"]);
-    expect(s.pushEvent(1, { type: "delta", text: "答", ...perRun(3) }).accepted).toBe(false);
+    expect(texts(items, "assistant")).toEqual(["Answer"]);
+    expect(s.pushEvent(1, { type: "delta", text: "Answer", ...perRun(3) }).accepted).toBe(false);
   });
 });
 
@@ -434,27 +434,27 @@ describe("conversation terminal reconciliation", () => {
   }
 
   it("exact match keeps one bubble; non-streamed fallback appends the answer once", () => {
-    expect(roles(doneWith("完整答案", "完整答案").items)).toEqual(["assistant", "outcome"]);
-    const fallback = doneWith(null, "完整答案");
+    expect(roles(doneWith("Complete answer", "Complete answer").items)).toEqual(["assistant", "outcome"]);
+    const fallback = doneWith(null, "Complete answer");
     expect(roles(fallback.items)).toEqual(["assistant", "outcome"]);
-    expect(texts(fallback.items, "assistant")).toEqual(["完整答案"]);
+    expect(texts(fallback.items, "assistant")).toEqual(["Complete answer"]);
   });
 
   it("the authoritative answer replaces the final segment: prefix, short prefix, divergence", () => {
-    const long = doneWith("0123456789", "0123456789 后续");
-    expect(texts(long.items, "assistant")).toEqual(["0123456789 后续"]);
+    const long = doneWith("0123456789", "0123456789 follow-up");
+    expect(texts(long.items, "assistant")).toEqual(["0123456789 follow-up"]);
     expect(roles(long.items)).toEqual(["assistant", "outcome"]);
-    const short = doneWith("好", "好，完整回答");
-    expect(texts(short.items, "assistant")).toEqual(["好，完整回答"]);
+    const short = doneWith("Good", "Good, complete answer");
+    expect(texts(short.items, "assistant")).toEqual(["Good, complete answer"]);
     expect(roles(short.items)).toEqual(["assistant", "outcome"]);
-    const diverged = doneWith("与答案完全不同的流式", "权威答案");
-    expect(texts(diverged.items, "assistant")).toEqual(["权威答案"]);
+    const diverged = doneWith("Streaming that differs completely from the answer", "Authoritative answer");
+    expect(texts(diverged.items, "assistant")).toEqual(["Authoritative answer"]);
     expect(roles(diverged.items)).toEqual(["assistant", "outcome"]);
   });
 
   it("empty raw answer does not add a placeholder after streamed text, but does with no output", () => {
-    const streamed = doneWith("已经流出的正文", "");
-    expect(texts(streamed.items, "assistant")).toEqual(["已经流出的正文"]);
+    const streamed = doneWith("Previously streamed text", "");
+    expect(texts(streamed.items, "assistant")).toEqual(["Previously streamed text"]);
     expect(roles(streamed.items)).toEqual(["assistant", "outcome"]);
     const empty = doneWith(null, "");
     expect(texts(empty.items, "assistant")).toEqual(["（无回答）"]);
@@ -463,7 +463,7 @@ describe("conversation terminal reconciliation", () => {
   it("replaces the final segment even when reasoning trails it, without touching earlier items", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "早先的旁白" });
+    s.pushEvent(1, { type: "delta", text: "Earlier narration" });
     frames.runFrame();
     s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
     s.pushEvent(1, { type: "toolResult", id: "t", ok: true, summary: "s", text: "full", exitCode: 0 });
@@ -473,20 +473,20 @@ describe("conversation terminal reconciliation", () => {
     s.pushEvent(1, { type: "done", answer: "authoritative final" });
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "tool", "assistant", "reasoning", "outcome"]);
-    expect(texts(items, "assistant")).toEqual(["早先的旁白", "authoritative final"]);
+    expect(texts(items, "assistant")).toEqual(["Earlier narration", "authoritative final"]);
     expect(texts(items, "reasoning")).toEqual(["trailing reasoning"]);
   });
 
   it("appends after a tool boundary even with trailing reasoning, and handles empty raw there", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "工具前的旁白" });
+    s.pushEvent(1, { type: "delta", text: "Narration before the tool" });
     frames.runFrame();
     s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
-    s.pushEvent(1, { type: "reasoning", text: "收尾推理" });
+    s.pushEvent(1, { type: "reasoning", text: "Closing reasoning" });
     frames.runFrame();
-    s.pushEvent(1, { type: "done", answer: "工具后的答案" });
-    expect(texts(s.getState().items, "assistant")).toEqual(["工具前的旁白", "工具后的答案"]);
+    s.pushEvent(1, { type: "done", answer: "Answer after the tool" });
+    expect(texts(s.getState().items, "assistant")).toEqual(["Narration before the tool", "Answer after the tool"]);
     expect(roles(s.getState().items)).toEqual(["assistant", "tool", "reasoning", "assistant", "outcome"]);
 
     const empty = stream();
@@ -500,37 +500,37 @@ describe("conversation terminal reconciliation", () => {
   });
 
   it("planSubmitted upgrades the closing bubble to a plan exactly once", () => {
-    const state = doneWith("方案正文", "方案正文", true);
+    const state = doneWith("Plan body", "Plan body", true);
     expect(roles(state.items)).toEqual(["plan", "outcome"]);
-    expect(texts(state.items, "plan")).toEqual(["方案正文"]);
+    expect(texts(state.items, "plan")).toEqual(["Plan body"]);
   });
 
   it("error produces a persistent outcome row and wins over later events", () => {
     const { s } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "半截" });
-    const result = s.pushEvent(1, { type: "error", message: "网络断开", retryable: true });
+    s.pushEvent(1, { type: "delta", text: "Partial" });
+    const result = s.pushEvent(1, { type: "error", message: "Network disconnected", retryable: true });
     expect(result.terminal).toBe("error");
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
-    expect(items.at(-1)).toMatchObject({ outcome: "error", text: "网络断开" });
-    expect(s.pushEvent(1, { type: "done", answer: "半截" }).accepted).toBe(false);
+    expect(items.at(-1)).toMatchObject({ outcome: "error", text: "Network disconnected" });
+    expect(s.pushEvent(1, { type: "done", answer: "Partial" }).accepted).toBe(false);
     expect(s.getState().attempts[0].outcome).toBe("error");
   });
 
   it("cancel flushes pending text, records canceled once and survives a late done", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "已流出的部分" });
+    s.pushEvent(1, { type: "delta", text: "Partially streamed output" });
     s.cancelRun(1, true);
     expect(frames.scheduled()).toBe(0);
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
-    expect(items[0]).toMatchObject({ text: "已流出的部分" });
+    expect(items[0]).toMatchObject({ text: "Partially streamed output" });
     expect(items[1]).toMatchObject({ outcome: "canceled" });
     s.cancelRun(1, true);
     expect(roles(s.getState().items)).toEqual(["assistant", "outcome"]);
-    expect(s.pushEvent(1, { type: "done", answer: "已流出的部分" }).accepted).toBe(false);
+    expect(s.pushEvent(1, { type: "done", answer: "Partially streamed output" }).accepted).toBe(false);
     expect(s.getState().attempts[0].outcome).toBe("canceled");
   });
 
@@ -538,15 +538,15 @@ describe("conversation terminal reconciliation", () => {
     const { s } = stream();
     s.beginRun(7, "takeover");
     s.pushEvent(7, { type: "screen", text: "screen-1" });
-    s.pushEvent(7, { type: "delta", text: "观察" });
+    s.pushEvent(7, { type: "delta", text: "Observe" });
     s.pushEvent(7, { type: "screen", text: "screen-2" });
     s.cancelRun(7, false);
     expect(s.getState().attempts[0].outcome).toBeNull();
-    const done = s.pushEvent(7, { type: "done", answer: "装好了" });
+    const done = s.pushEvent(7, { type: "done", answer: "Installation complete" });
     expect(done.accepted).toBe(true);
     const items = s.getState().items;
     expect(items.filter((i) => i.role === "tool" && i.name === "read_screen")).toHaveLength(1);
-    expect(texts(items, "assistant")).toEqual(["观察", "接管结束：装好了"]);
+    expect(texts(items, "assistant")).toEqual(["Observe", "接管结束：Installation complete"]);
     expect(items.at(-1)).toMatchObject({ role: "outcome", outcome: "done" });
   });
 });
@@ -565,23 +565,23 @@ describe("HITL interaction lifecycle", () => {
     s.pushEvent(1, {
       type: "questionRequired",
       id: "b",
-      question: { question: "继续吗", options: ["是"] },
+      question: { question: "Continue?", options: ["Yes"] },
       confirmationNonce: "nb",
     });
-    s.resolveInteraction(1, confirm!.id, "na", "已允许一次");
+    s.resolveInteraction(1, confirm!.id, "na", "Allowed once");
     expect(pendingInteraction(s.getState(), 1, "confirm")).toBeNull();
     const question = pendingInteraction(s.getState(), 1, "question");
     expect(question).toMatchObject({ callId: "b" });
     expect(question?.resolution).toBeUndefined();
     const before = s.getState();
     s.resolveInteraction(1, confirm!.id, "na", "已拒绝");
-    s.resolveInteraction(1, question!.id, "wrong", "已回答：x");
-    s.resolveInteraction(2, question!.id, "nb", "已回答：x");
+    s.resolveInteraction(1, question!.id, "wrong", "Answered: x");
+    s.resolveInteraction(2, question!.id, "nb", "Answered: x");
     expect(s.getState()).toBe(before);
-    s.resolveInteraction(1, question!.id, "nb", "已回答：是");
+    s.resolveInteraction(1, question!.id, "nb", "已回答：Yes");
     expect(pendingInteraction(s.getState(), 1, "question")).toBeNull();
     expect(s.getState().items.find((i) => i.id === question!.id)).toMatchObject({
-      resolution: "已回答：是",
+      resolution: "已回答：Yes",
     });
   });
 
@@ -590,7 +590,7 @@ describe("HITL interaction lifecycle", () => {
     s.beginRun(1);
     const ev = confirmEvent("a", "na");
     s.pushEvent(1, ev);
-    s.pushEvent(1, { type: "done", answer: "好" });
+    s.pushEvent(1, { type: "done", answer: "Good" });
     expect(pendingInteraction(s.getState(), 1, "confirm")).toBeNull();
     expect(s.getState().items.find((i) => i.role === "confirm")?.resolution).toContain("已结束");
     expect(s.pushEvent(1, ev).accepted).toBe(false);
@@ -638,13 +638,13 @@ describe("coalescing bounds and dispose", () => {
   it("flushes on dispose, cancels the frame and rejects everything afterwards", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "收尾" });
+    s.pushEvent(1, { type: "delta", text: "Wrap-up" });
     s.dispose();
     expect(frames.scheduled()).toBe(0);
-    expect(texts(s.getState().items, "assistant")).toEqual(["收尾"]);
+    expect(texts(s.getState().items, "assistant")).toEqual(["Wrap-up"]);
     expect(s.pushEvent(1, { type: "delta", text: "late" }).accepted).toBe(false);
-    expect(s.pushEvent(1, { type: "done", answer: "收尾" }).accepted).toBe(false);
-    expect(texts(s.getState().items, "assistant")).toEqual(["收尾"]);
+    expect(s.pushEvent(1, { type: "done", answer: "Wrap-up" }).accepted).toBe(false);
+    expect(texts(s.getState().items, "assistant")).toEqual(["Wrap-up"]);
     s.dispose();
   });
 
@@ -694,23 +694,23 @@ describe("history and reset", () => {
   it("maps persisted messages and cuts off every earlier generation", () => {
     const { s } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "旧" });
+    s.pushEvent(1, { type: "delta", text: "Old" });
     s.flush();
     const history = historyToItems(s.getState(), [
-      { role: "user", content: { content: "带图", imageCount: 2 } },
-      { role: "assistant", content: { content: "历史回答" } },
-      { role: "tool", content: { content: "不入历史" } },
+      { role: "user", content: { content: "With image", imageCount: 2 } },
+      { role: "assistant", content: { content: "Historical answer" } },
+      { role: "tool", content: { content: "Not in history" } },
       { role: "assistant", content: { content: "" } },
     ]);
     s.reset(history);
     const items = s.getState().items;
     expect(roles(items)).toEqual(["user", "assistant"]);
-    expect(items[0]).toMatchObject({ text: "带图", imageCount: 2, attempt: null });
+    expect(items[0]).toMatchObject({ text: "With image", imageCount: 2, attempt: null });
     expect(s.getState().attempts).toHaveLength(0);
     expect(s.pushEvent(1, { type: "delta", text: "stale" }).accepted).toBe(false);
     expect(s.getState().items).toBe(items);
     s.beginRun(2);
-    s.pushEvent(2, { type: "delta", text: "新" });
+    s.pushEvent(2, { type: "delta", text: "New" });
     s.flush();
     const ids = s.getState().items.map((i) => i.id);
     expect(new Set(ids).size).toBe(ids.length);

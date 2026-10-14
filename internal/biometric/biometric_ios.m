@@ -11,16 +11,16 @@ static char *nxDup(NSString *s) {
 }
 
 static NSString *nxBiometricMessage(NSError *error) {
-    if (!error) return @"面容验证未通过";
+    if (!error) return @"生物识别验证未通过";
     switch (error.code) {
         case LAErrorUserCancel:
         case LAErrorSystemCancel:
         case LAErrorAppCancel:
-            return @"已取消面容验证";
+            return @"已取消生物识别验证";
         case LAErrorBiometryLockout:
-            return @"面容验证已锁定，请使用密码解锁";
+            return @"生物识别验证已锁定，请使用密码解锁";
         default:
-            return error.localizedDescription ?: @"面容验证未通过";
+            return error.localizedDescription ?: @"生物识别验证未通过";
     }
 }
 
@@ -44,7 +44,7 @@ bool nx_biometric_evaluate(const char *creason, char **err_msg) {
         dispatch_semaphore_signal(sem);
     }];
     dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-    if (!ok && err_msg) *err_msg = nxDup(message ?: @"面容验证未通过");
+    if (!ok && err_msg) *err_msg = nxDup(message ?: @"生物识别验证未通过");
     return ok;
 }
 
@@ -64,12 +64,12 @@ static char *nxKeychainStatusError(OSStatus status, NSString *action) {
     NSString *message;
     switch (status) {
         case errSecUserCanceled:
-            message = @"已取消面容验证";
+            message = @"已取消生物识别验证";
             break;
         case errSecInvalidOwnerEdit:
         case errSecAuthFailed:
             // Face set changes (added/removed faces) invalidate the BiometryCurrentSet constraint; treat as verification failure
-            message = @"面容验证未通过，请使用密码解锁";
+            message = @"生物识别验证未通过，请使用密码解锁";
             break;
         default:
             message = [NSString stringWithFormat:@"%@失败(钥匙串状态 %d)", action, (int)status];

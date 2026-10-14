@@ -57,19 +57,19 @@ func runSync(h *harness) int {
 			if r := recover(); r != nil {
 				message := fmt.Sprintf("run: panic: %v", r)
 				harnessErrors = append(harnessErrors, message)
-				h.check("e2e 执行异常", false, message)
+				h.check("e2e execution error", false, message)
 			}
 		}()
 		if err := h.prepare(); err != nil {
 			harnessErrors = append(harnessErrors, "build: "+err.Error())
-			h.check("e2e 执行异常", false, err.Error())
+			h.check("e2e execution error", false, err.Error())
 			return
 		}
 		var err error
 		server, work, err = syncBody(h)
 		if err != nil {
 			harnessErrors = append(harnessErrors, "run: "+err.Error())
-			h.check("e2e 执行异常", false, err.Error())
+			h.check("e2e execution error", false, err.Error())
 		}
 	}()
 	if server != nil {
@@ -119,8 +119,8 @@ func runSync(h *harness) int {
 	if err := os.Rename(temporary, reportPath); err != nil {
 		fatalf("%v", err)
 	}
-	fmt.Printf("\n通过 %d 项, 失败 %d 项\n", passed, h.failed)
-	fmt.Printf("报告: %s\n", reportPath)
+	fmt.Printf("\n%d passed, %d failed\n", passed, h.failed)
+	fmt.Printf("report: %s\n", reportPath)
 	if h.failed > 0 {
 		for _, entry := range h.checks {
 			if entry.Status != "passed" {
@@ -151,7 +151,7 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err := server.start(); err != nil {
 		return server, work, err
 	}
-	fmt.Println("== 账号初始化 ==")
+	fmt.Println("== account initialization ==")
 	initCode, err := server.initCode()
 	if err != nil {
 		return server, work, err
@@ -179,7 +179,7 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err != nil {
 		return server, work, err
 	}
-	h.check("超管初始化", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin initialization", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
 	alice := newClient(server.port)
 	if err := alice.login("alice", alicePassword); err != nil {
 		return server, work, err
@@ -187,10 +187,10 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err := alice.me(); err != nil {
 		return server, work, err
 	}
-	h.check("登录并获取用户 ID", alice.userID != "", fmt.Sprintf("user_id=%s", alice.userID))
+	h.check("log in and get user ID", alice.userID != "", fmt.Sprintf("user_id=%s", alice.userID))
 	aliceDEK := getStr(aliceBundle, "dek")
 
-	fmt.Println("== 设备一推送密文对象 ==")
+	fmt.Println("== device one pushes encrypted objects ==")
 	now := time.Now().UnixMilli()
 	groupID := syntheticID()
 	assetID := syntheticID()
@@ -237,10 +237,10 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err != nil {
 		return server, work, err
 	}
-	h.check("设备一首批推送", status == 200 && getFloat(body, "applied") == 6, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("first push from device one", status == 200 && getFloat(body, "applied") == 6, fmt.Sprintf("HTTP %d %v", status, body))
 	head := getStr(body, "head")
 
-	fmt.Println("== 服务端密文与盲存检查 ==")
+	fmt.Println("== server ciphertext and blind-storage checks ==")
 	canaries := []string{
 		"E2E 生产-canary-组", "e2e-canary-凭据", "e2e-canary-secret-值", "e2e-canary-片段", "e2e-canary-资产",
 		"192.0.2.10", "e2e-canary-host.internal", "e2e-canary-fingerprint-值", "e2e-canary-档案", "e2e-canary-api-key-值",
@@ -269,7 +269,7 @@ func syncBody(h *harness) (*instance, string, error) {
 		seqs = append(seqs, seq)
 	}
 	rows.Close()
-	h.check("服务端对象行数", len(blobs) == 6, fmt.Sprintf("rows=%d", len(blobs)))
+	h.check("server object row count", len(blobs) == 6, fmt.Sprintf("rows=%d", len(blobs)))
 	var leaks []string
 	for _, canary := range canaries {
 		for _, blob := range blobs {
@@ -278,29 +278,29 @@ func syncBody(h *harness) (*instance, string, error) {
 			}
 		}
 	}
-	h.check("服务端行不含明文", len(leaks) == 0, fmt.Sprintf("leaks=%v", leaks))
+	h.check("server rows contain no plaintext", len(leaks) == 0, fmt.Sprintf("leaks=%v", leaks))
 	seqSorted := slices.IsSorted(seqs)
 	distinct := map[int64]bool{}
 	for _, seq := range seqs {
 		distinct[seq] = true
 	}
-	h.check("seq 单调连续", seqSorted && len(distinct) == 6, fmt.Sprintf("seqs=%v", seqs))
+	h.check("seq is monotonic and contiguous", seqSorted && len(distinct) == 6, fmt.Sprintf("seqs=%v", seqs))
 	var headRow string
 	headErr := db.QueryRow("SELECT head_hash FROM user_sync_head WHERE user_id = ?", alice.userID).Scan(&headRow)
-	h.check("head 行存在且为哈希", headErr == nil && headRow == head && len(headRow) == 64, fmt.Sprintf("head_row=%q", headRow))
+	h.check("head row exists and contains a hash", headErr == nil && headRow == head && len(headRow) == 64, fmt.Sprintf("head_row=%q", headRow))
 	db.Close()
 
-	fmt.Println("== 幂等重推 ==")
+	fmt.Println("== idempotent re-push ==")
 	status, body, err = alice.request("POST", "/sync/v2/push", map[string]interface{}{
 		"protocol": 2, "known_head": head, "objects": objects,
 	}, true)
 	if err != nil {
 		return server, work, err
 	}
-	h.check("重复推送幂等", status == 200 && getFloat(body, "applied") == 0 && getFloat(body, "skipped") == 6 &&
+	h.check("repeated push is idempotent", status == 200 && getFloat(body, "applied") == 0 && getFloat(body, "skipped") == 6 &&
 		getStr(body, "head") == head, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== 设备二拉取与端到端解密 ==")
+	fmt.Println("== device two pulls and decrypts end to end ==")
 	device2 := newClient(server.port)
 	if err := device2.login("alice", alicePassword); err != nil {
 		return server, work, err
@@ -313,7 +313,7 @@ func syncBody(h *harness) (*instance, string, error) {
 		return server, work, err
 	}
 	pulled := getList(body, "objects")
-	h.check("设备二全量拉取", status == 200 && len(pulled) == 6, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("device two pulls all objects", status == 200 && len(pulled) == 6, fmt.Sprintf("HTTP %d %v", status, body))
 	roundtripOK := true
 	for _, item := range payloads {
 		var entry map[string]interface{}
@@ -342,16 +342,16 @@ func syncBody(h *harness) (*instance, string, error) {
 			roundtripOK = false
 		}
 	}
-	h.check("拉取对象可端到端解密", roundtripOK, "open mismatch")
+	h.check("pulled objects decrypt end to end", roundtripOK, "open mismatch")
 
-	fmt.Println("== 分叉/回滚检测 ==")
+	fmt.Println("== fork/rollback detection ==")
 	status, body, err = device2.request("POST", "/sync/v2/push", map[string]interface{}{
 		"protocol": 2, "known_head": genesisHead(alice.userID), "objects": objects[:1],
 	}, true)
 	if err != nil {
 		return server, work, err
 	}
-	h.check("过期 head 推送被拒绝(409)", status == 409, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("stale head push is rejected (409)", status == 409, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = device2.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
@@ -363,9 +363,9 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err != nil {
 		return server, work, err
 	}
-	h.check("拉取合并后重推成功", status == 200 && getFloat(body, "skipped") == 1, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("re-push succeeds after pull and merge", status == 200 && getFloat(body, "skipped") == 1, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== ids 清单 ==")
+	fmt.Println("== ids listing ==")
 	status, body, err = device2.request("POST", "/sync/v2/ids", map[string]interface{}{"protocol": 2}, false)
 	if err != nil {
 		return server, work, err
@@ -378,16 +378,16 @@ func syncBody(h *harness) (*instance, string, error) {
 			idOK = false
 		}
 	}
-	h.check("ids 清单返回 blob 哈希", idOK, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("ids listing returns blob hashes", idOK, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== 多用户隔离 ==")
+	fmt.Println("== multi-user isolation ==")
 	status, body, err = alice.request("POST", "/admin/users", map[string]interface{}{
 		"username": "bob", "password": bobPassword, "display_name": "bob",
 	}, true)
 	if err != nil {
 		return server, work, err
 	}
-	h.check("超管创建 bob", status == 200 && getStr(getMap(body, "user"), "username") == "bob", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin creates bob", status == 200 && getStr(getMap(body, "user"), "username") == "bob", fmt.Sprintf("HTTP %d %v", status, body))
 	out, err = h.helperRun("gen-dek", bobPassword)
 	if err != nil {
 		return server, work, err
@@ -413,16 +413,16 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err != nil {
 		return server, work, err
 	}
-	h.check("bob 上传 DEK 信封", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("bob uploads DEK envelope", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = bob.request("POST", "/sync/v2/pull", map[string]interface{}{"protocol": 2, "since_seq": 0}, false)
 	if err != nil {
 		return server, work, err
 	}
-	h.check("bob 拉取为空(隔离)", status == 200 && len(getList(body, "objects")) == 0, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("bob pulls an empty result (isolation)", status == 200 && len(getList(body, "objects")) == 0, fmt.Sprintf("HTTP %d %v", status, body))
 	_, err = h.helperRunStdin(base64.StdEncoding.EncodeToString(blobs[assetID]), "open", getStr(bobBundle, "dek"), assetID, "asset")
-	h.check("bob 的 DEK 无法解开 alice 对象", err != nil, "wrong key opened alice blob")
+	h.check("bob's DEK cannot decrypt alice's object", err != nil, "wrong key opened alice blob")
 
-	fmt.Println("== 重启持久化 ==")
+	fmt.Println("== persistence across restart ==")
 	server.stop()
 	if err := server.start(); err != nil {
 		return server, work, err
@@ -438,6 +438,6 @@ func syncBody(h *harness) (*instance, string, error) {
 	if err != nil {
 		return server, work, err
 	}
-	h.check("重启后对象仍在", status == 200 && len(getList(body, "objects")) == 6, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("objects persist after restart", status == 200 && len(getList(body, "objects")) == 6, fmt.Sprintf("HTTP %d %v", status, body))
 	return server, work, nil
 }

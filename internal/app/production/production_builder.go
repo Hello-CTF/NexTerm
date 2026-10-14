@@ -98,7 +98,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if err := credentialVault.InitMaster(ctx, ""); err != nil {
 			return nil, err
 		}
-		config.Config.Logger.Info("凭据库未初始化，已自动完成无密码初始化")
+		config.Config.Logger.Info("credential vault was not initialized; completed passwordless initialization automatically")
 	}
 	profileManager, err := profiles.NewManager(ctx, database)
 	if err != nil {

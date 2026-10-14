@@ -99,7 +99,7 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 		return Spec{}, err
 	}
 	if strings.TrimSpace(args.SessionID) == "" {
-		return Spec{}, ipc.BadParam(errors.New("sessionId 不能为空"))
+		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
 	host := strings.TrimSpace(args.TargetHost)
 	if host == "" {
@@ -121,7 +121,7 @@ func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, 
 		return Spec{}, err
 	}
 	if strings.TrimSpace(args.SessionID) == "" {
-		return Spec{}, ipc.BadParam(errors.New("sessionId 不能为空"))
+		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
 	if s.env.exposed() && !args.AcknowledgeRisk {
 		return Spec{}, ipc.NewError(ipc.CodeNeedsConfirm, "服务端 SOCKS5 是无认证代理，监听非回环地址前必须确认开放风险").WithDetail(ExposureRisk{
@@ -141,7 +141,7 @@ func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec
 		return Spec{}, err
 	}
 	if strings.TrimSpace(args.SessionID) == "" {
-		return Spec{}, ipc.BadParam(errors.New("sessionId 不能为空"))
+		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
 	host := strings.TrimSpace(args.TargetHost)
 	if host == "" {

@@ -121,8 +121,8 @@ describe("PublicShareConnection contract", () => {
 
   it("parses error text frames", () => {
     const { socket, recorded } = connect("tok");
-    socket.emitMessage(JSON.stringify({ type: "error", code: "expired", message: "分享授权已过期" }));
-    expect(recorded.errors).toEqual([{ code: "expired", message: "分享授权已过期" }]);
+    socket.emitMessage(JSON.stringify({ type: "error", code: "expired", message: "share authorization expired" }));
+    expect(recorded.errors).toEqual([{ code: "expired", message: "share authorization expired" }]);
   });
 
   it("ignores unknown and malformed text frames without throwing", () => {

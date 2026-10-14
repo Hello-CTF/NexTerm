@@ -212,7 +212,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
             value={query}
             spellCheck={false}
             placeholder="过滤当前分块…"
-            title="在已加载的分块内过滤行；翻页后需重新输入"
+            title="在已加载的分块内过滤行；翻页后仍按当前条件过滤"
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>

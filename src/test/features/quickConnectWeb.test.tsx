@@ -107,8 +107,8 @@ afterEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [] });
 });
 
-describe("QuickConnect web 模式 (服务端装配)", () => {
-  it("输入 user@host:port 只出现「保存为资产并连接」, 不再提供临时连接", async () => {
+describe("QuickConnect web mode (server assembly)", () => {
+  it("shows only save-as-asset-and-connect for user@host:port, without a temporary connection", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
       createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
@@ -124,7 +124,7 @@ describe("QuickConnect web 模式 (服务端装配)", () => {
     expect(view.container.textContent).not.toContain("临时连接");
   });
 
-  it("保存为资产不回填服务器 OS 用户 (session_quick_connect_user 已禁用)", async () => {
+  it("does not prefill the server OS user when saving as an asset (session_quick_connect_user is disabled)", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = mount(
       createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),

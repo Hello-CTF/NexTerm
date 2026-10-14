@@ -144,20 +144,20 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("上传覆盖确认（FileBrowser）", () => {
+describe("upload overwrite confirmation (FileBrowser)", () => {
   beforeEach(async () => {
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("无同名文件时不询问，直接上传", async () => {
+  it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("~/nginx-access.log"));
   });
 
-  it("同名文件时确认框点名远端路径；取消则不上传、远端保持原样", async () => {
+  it("names the remote path in the confirmation for a same-named file; cancelling skips upload and leaves the remote unchanged", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
@@ -176,7 +176,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("保持原样"));
   });
 
-  it("确认后按原路径覆盖上传", async () => {
+  it("overwrites the original path after confirmation", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
@@ -186,7 +186,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
   });
 
-  it("同名目录同样拦截并标明是目录", async () => {
+  it("also blocks same-named directories and identifies them as directories", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "dir"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
@@ -202,7 +202,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
-  it("预检（stat）失败则中止上传，不盲目覆盖", async () => {
+  it("aborts upload when the stat precheck fails instead of blindly overwriting", async () => {
     mocks.list.mockImplementation((_s: string, p: string) =>
       p === "~"
         ? Promise.resolve([entry("a.txt", "file"), entry("sub", "dir")])
@@ -227,7 +227,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
   });
 
-  it("当前目录列表未加载时回退 fresh stat：冲突仍拦截，取消不上传", async () => {
+  it("falls back to fresh stat when the current directory listing is unloaded: still detects conflicts and cancel prevents upload", async () => {
     const never = new Promise<FileEntryDto[]>(() => {});
     mocks.list
       .mockImplementationOnce(() => never)
@@ -248,7 +248,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
-  it("当前目录列表未加载且 fresh stat 失败时中止上传", async () => {
+  it("aborts upload when the current directory listing is unloaded and fresh stat fails", async () => {
     const never = new Promise<FileEntryDto[]>(() => {});
     mocks.list
       .mockImplementationOnce(() => never)
@@ -263,7 +263,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
     await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
   });
 
-  it("当前目录列表已加载时不重复 stat", async () => {
+  it("does not repeat stat when the current directory listing is already loaded", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
@@ -277,7 +277,7 @@ describe("上传覆盖确认（FileBrowser）", () => {
   });
 });
 
-describe("上传覆盖确认（FileTree）", () => {
+describe("upload overwrite confirmation (FileTree)", () => {
   function remountTree(): void {
     mounted?.unmount();
     mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
@@ -288,13 +288,13 @@ describe("上传覆盖确认（FileTree）", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
   });
 
-  it("无同名文件时不询问，直接上传", async () => {
+  it("uploads directly without asking when no same-named file exists", async () => {
     click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false));
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("同名文件取消则不上传，确认才覆盖", async () => {
+  it("skips a same-named file upload on cancel and overwrites on confirmation", async () => {
     mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("nginx-access.log"));

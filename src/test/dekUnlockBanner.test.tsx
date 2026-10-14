@@ -106,26 +106,26 @@ afterEach(() => {
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
-describe("可见性", () => {
-  it("无登录用户时不显示", () => {
+describe("visibility", () => {
+  it("hidden without a signed-in user", () => {
     seedAuth({ user: null });
     mounted = mountBanner();
     expect(banner()).toBeNull();
   });
 
-  it("DEK 已在内存(已解锁)时不显示", () => {
+  it("hidden when the DEK is already in memory (unlocked)", () => {
     seedAuth({ dek: DEK });
     mounted = mountBanner();
     expect(banner()).toBeNull();
   });
 
-  it("gate 未就绪时不显示", () => {
+  it("hidden while the gate is not ready", () => {
     seedAuth({ gate: "login" });
     mounted = mountBanner();
     expect(banner()).toBeNull();
   });
 
-  it("会话恢复但 DEK 未解锁时显示横幅", () => {
+  it("shows the banner when the session is restored but the DEK is locked", () => {
     seedAuth({});
     mounted = mountBanner();
     expect(banner()).not.toBeNull();
@@ -134,8 +134,8 @@ describe("可见性", () => {
   });
 });
 
-describe("解锁", () => {
-  it("输入正确密码点「解锁」: 调 unlockDEK 成功, toast 提示并横幅消失", async () => {
+describe("unlock", () => {
+  it("calls unlockDEK with the correct password, shows a toast, and dismisses the banner", async () => {
     seedAuth({});
     mounted = mountBanner();
     setInputValue(passwordInput()!, "pw-1");
@@ -148,7 +148,7 @@ describe("解锁", () => {
     expect(banner()).toBeNull();
   });
 
-  it("密码错误: 内联报错、密码框清空, 重试正确密码(回车提交)后解锁", async () => {
+  it("shows an inline error and clears the password on failure, then unlocks with the correct password on Enter", async () => {
     mocks.unwrap.mockRejectedValueOnce(new Error("密码错误，无法解开数据密钥"));
     seedAuth({});
     mounted = mountBanner();
@@ -172,8 +172,8 @@ describe("解锁", () => {
   });
 });
 
-describe("稍后", () => {
-  it("dismiss 后不再显示; 重新挂载(刷新)后恢复显示", async () => {
+describe("later", () => {
+  it("stays hidden after dismiss and reappears after remounting (refresh)", async () => {
     seedAuth({});
     mounted = mountBanner();
     expect(banner()).not.toBeNull();

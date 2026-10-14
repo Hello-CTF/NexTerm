@@ -80,17 +80,17 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面可见性", () => {
-  it("darwin 主密码库锁定时显示解锁引导, 不出现生物识别分支", async () => {
+describe("desktop visibility", () => {
+  it("shows unlock guidance for a locked master-password vault on darwin without the biometric branch", async () => {
     mounted = mountBanner();
     await flushUntil(() => banner() !== null);
-    expect(banner()!.textContent).toContain("数据密钥未解锁，同步已暂停；输入主密码即可恢复同步与加密内容");
+    expect(banner()!.textContent).toContain("凭据库已锁定，同步已暂停；输入保护密码即可恢复同步并使用凭据");
     expect(passwordInput()).not.toBeNull();
     expect(banner()!.textContent).not.toContain("生物识别");
     expect(mocks.bioStatus).not.toHaveBeenCalled();
   });
 
-  it("windows 与 linux 同样显示", async () => {
+  it("also shows the banner on Windows and Linux", async () => {
     for (const os of ["windows", "linux"]) {
       mocks.platform.mockResolvedValue(os);
       mounted = mountBanner();
@@ -101,7 +101,7 @@ describe("桌面可见性", () => {
     }
   });
 
-  it("凭据库未锁定时不显示", async () => {
+  it("hides the banner when the vault is unlocked", async () => {
     vaultLocked = false;
     mounted = mountBanner();
     await flush();
@@ -110,8 +110,8 @@ describe("桌面可见性", () => {
   });
 });
 
-describe("桌面解锁", () => {
-  it("输入主密码点「解锁」: 调 vault_unlock 成功, toast 提示并横幅消失", async () => {
+describe("desktop unlock", () => {
+  it("calls vault_unlock with the master password, shows a toast, and dismisses the banner", async () => {
     mounted = mountBanner();
     await flushUntil(() => banner() !== null);
     setInputValue(passwordInput()!, "master-pw-1");
@@ -122,7 +122,7 @@ describe("桌面解锁", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已解锁，正在恢复同步");
   });
 
-  it("密码错误: 内联报错、密码框清空, 重试正确密码后解锁", async () => {
+  it("shows an inline error and clears the password on failure, then unlocks with the correct password", async () => {
     mocks.unlock.mockImplementationOnce(() => Promise.reject(new Error("主密码错误，无法解锁凭据库")));
     mounted = mountBanner();
     await flushUntil(() => banner() !== null);
@@ -142,8 +142,8 @@ describe("桌面解锁", () => {
   });
 });
 
-describe("稍后", () => {
-  it("dismiss 后不再显示", async () => {
+describe("later", () => {
+  it("stays hidden after dismiss", async () => {
     mounted = mountBanner();
     await flushUntil(() => banner() !== null);
     clickButton(mounted.container, "稍后");

@@ -11,7 +11,7 @@ export async function pickInlineKeyFile(): Promise<InlineKeySelection | null> {
   if (browserFilesAvailable()) {
     const picked = await pickBrowserFile();
     if (!picked) return null;
-    if (picked.size > 64 * 1024) throw new Error("文件超过 64KB，不是私钥");
+    if (picked.size > 64 * 1024) throw new Error("私钥文件不能超过 64 KB");
     return { path: picked.name, content: await picked.text() };
   }
   const path = await pickKeyFile();

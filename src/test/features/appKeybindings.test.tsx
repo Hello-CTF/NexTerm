@@ -97,8 +97,8 @@ beforeEach(() => {
             id: "p1",
             activeTabId: "t1",
             tabs: [
-              { id: "t1", kind: "settings", title: "设置", closable: true },
-              { id: "t2", kind: "audit", title: "审计", closable: true },
+              { id: "t1", kind: "settings", title: "Settings", closable: true },
+              { id: "t2", kind: "audit", title: "Audit", closable: true },
               { id: "t3", kind: "settings", title: "重命名过的标签", closable: true },
             ],
           },

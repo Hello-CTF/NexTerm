@@ -19,7 +19,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: unknown): void {
-    console.error("[NexTerm] 界面渲染崩溃", error);
+    console.error("[NexTerm] UI rendering crashed", error);
   }
 
   render() {

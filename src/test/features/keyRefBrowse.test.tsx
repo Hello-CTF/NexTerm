@@ -106,18 +106,18 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe.each<FormKind>(["credential", "asset"])("Web 模式 %s 私钥来源", (kind) => {
-  it("默认「存入凭据库」，不再把暂存路径当本地路径引用", () => {
+describe.each<FormKind>(["credential", "asset"])("Web private key source for %s", (kind) => {
+  it("defaults to storing keys in the credential vault instead of treating staged paths as local file references", () => {
     mocks.available.mockReturnValue(true);
     mounted = mountKeyForm(kind);
     expect(inlineFileInput(mounted.container)).not.toBeNull();
     expect(mocks.pickKeyFile).not.toHaveBeenCalled();
   });
 
-  it("引用本地文件面板没有浏览按钮，只保留服务器路径输入", () => {
+  it("shows only the server path input without a browse button in reference mode", () => {
     mocks.available.mockReturnValue(true);
     mounted = mountKeyForm(kind);
-    clickButton(mounted.container, "引用本地文件");
+    clickButton(mounted.container, kind === "asset" ? "引用文件路径" : "引用本地文件");
     const input = refPathInput(mounted.container, kind);
     expect(input.closest("div")?.querySelector("button")).toBeNull();
     expect(mounted.container.textContent).toContain("服务器上的私钥路径");
@@ -125,8 +125,8 @@ describe.each<FormKind>(["credential", "asset"])("Web 模式 %s 私钥来源", (
   });
 });
 
-describe.each<FormKind>(["credential", "asset"])("桌面模式 %s 私钥来源", (kind) => {
-  it("保留「浏览…」经原生对话框写入路径引用", async () => {
+describe.each<FormKind>(["credential", "asset"])("Desktop private key source for %s", (kind) => {
+  it("keeps the native browse dialog for writing a file path reference", async () => {
     mocks.available.mockReturnValue(false);
     mocks.pickKeyFile.mockResolvedValue("/keys/id_rsa");
     mounted = mountKeyForm(kind);

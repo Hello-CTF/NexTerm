@@ -5,7 +5,7 @@ import { IconChevronDown, IconChevronRight } from "../../ui/icons";
 export const SYNC_CONSOLE_TITLE = "账号同步";
 export const SYNC_AUTO_BADGE = "自动同步";
 export const SYNC_INTERVAL_LABEL = "每 60 秒";
-export const SYNC_MERGE_GUIDE = "登录并解锁数据密钥后，系统会先拉取并合并云端内容，再推送本机变更。";
+export const SYNC_MERGE_GUIDE = "数据会自动在本机与云端之间同步。";
 
 interface SyncOptInItem {
   key: keyof SyncKindOptIn;
@@ -25,7 +25,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     key: "aiProfile",
     summary: "AI 模型档案",
     label: "同步 AI 模型档案",
-    hint: "默认开启。关闭后不再同步模型档案；API 密钥仅在凭据库解锁时随档案同步。",
+    hint: "默认开启。关闭后不再同步模型档案；含 API 密钥的档案仅在凭据库解锁时同步。",
   },
   {
     key: "aiPermission",

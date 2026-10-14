@@ -348,7 +348,7 @@ func (f *remoteAPIFixture) serveAccountDeviceRevoke(w http.ResponseWriter, r *ht
 
 func (f *remoteAPIFixture) serveAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if f.identity(r).Role != account.RoleSuperadmin {
-		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超管权限"))
+		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超级管理员权限"))
 		return
 	}
 	writeSyncJSON(w, http.StatusOK, map[string]any{"users": []map[string]any{
@@ -359,7 +359,7 @@ func (f *remoteAPIFixture) serveAdminUsers(w http.ResponseWriter, r *http.Reques
 
 func (f *remoteAPIFixture) serveAdminUserCreate(w http.ResponseWriter, r *http.Request) {
 	if f.identity(r).Role != account.RoleSuperadmin {
-		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超管权限"))
+		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "需要超级管理员权限"))
 		return
 	}
 	var request struct {

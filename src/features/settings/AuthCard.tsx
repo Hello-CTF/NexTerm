@@ -182,7 +182,7 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          下方「账号同步」区域会读取云端副本进行对比，不会自动推送或应用，需手动触发。不登录也能继续本地使用。
+          登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -555,7 +555,7 @@ function TotpCard() {
         )}
       </div>
 
-      <p className="nx-hint mb-3">两步验证配置不会同步，换设备后需重新绑定。</p>
+      <p className="nx-hint mb-3">两步验证绑定在服务端账号上，换设备登录仍使用同一认证器，无需重新绑定。</p>
 
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">

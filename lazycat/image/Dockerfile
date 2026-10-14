@@ -12,7 +12,7 @@ RUN apt-get update \
 COPY nexterm-server /usr/local/bin/nexterm-server
 COPY entrypoint.sh /usr/local/bin/nexterm-server-entrypoint
 RUN test -x /usr/local/bin/nexterm-server \
-    || { echo "FATAL: nexterm-server 没有执行位（构建上下文里的权限丢了？）" >&2; exit 1; } \
+    || { echo "FATAL: nexterm-server is not executable (were permissions lost in the build context?)" >&2; exit 1; } \
     && chmod 0755 /usr/local/bin/nexterm-server-entrypoint
 
 ENV NEXTERM_LISTEN=0.0.0.0:8080 \

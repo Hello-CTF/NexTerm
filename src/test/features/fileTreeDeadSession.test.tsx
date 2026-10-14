@@ -114,7 +114,7 @@ const NEW_SESSION = {
 const NEW_LOCAL_SESSION = {
   id: "s-local",
   assetId: null,
-  name: "本机",
+  name: "Local",
   kind: "local",
   status: "connected" as const,
   tabs: [],
@@ -251,8 +251,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("FileTree 会话已删除", () => {
-  it("自动重连失败后显示真实原因与「重新连接这台主机」，不提供无效的「重试」，工具栏给出真实禁用原因", async () => {
+describe("FileTree deleted session", () => {
+  it("after automatic reconnect fails, shows the real cause and a manual reconnect action, omits the ineffective retry action, and explains disabled toolbar actions", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
     mounted = mountTree();
@@ -273,7 +273,7 @@ describe("FileTree 会话已删除", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("检测到死会话后自动重连一次：fresh connect 同步工作区会话，树复用并加载，不重复工作区/会话", async () => {
+  it("automatically reconnects once after detecting a dead session: fresh connect synchronizes the workspace session, reuses and loads the tree, and avoids duplicate workspaces/sessions", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
@@ -292,7 +292,7 @@ describe("FileTree 会话已删除", () => {
     expect(toolbarButton("上传到当前目录")?.disabled).toBe(false);
   });
 
-  it("新会话仍被删除时只为新会话再自动重连一次，随后停止不循环", async () => {
+  it("reconnects only once more when the new session is also deleted, then stops without looping", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mounted = mountTree();
 
@@ -304,7 +304,7 @@ describe("FileTree 会话已删除", () => {
     expect(button("重新连接这台主机")).toBeDefined();
   });
 
-  it("自动重连进行中展示「正在重新连接…」并禁用按钮，失败后回退为手动按钮", async () => {
+  it("shows a reconnecting state and disables the button during automatic reconnect, then restores the manual button after failure", async () => {
     seedWorkspace({ assetId: "asset-1" });
     const pending = deferred<unknown>();
     mocks.connect.mockReturnValue(pending.promise);
@@ -320,7 +320,7 @@ describe("FileTree 会话已删除", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("取消主机密钥变更确认：不信任、不重试，工作区会话保持原样，手动点击才会再试", async () => {
+  it("canceling host-key change confirmation does not trust or retry, preserves the workspace session, and retries only after a manual click", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(CHANGED_HOST_KEY);
     mounted = mountTree();
@@ -339,7 +339,7 @@ describe("FileTree 会话已删除", () => {
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2));
   });
 
-  it("自动重连失败：报告真实错误，工作区会话保持原样，手动重试成功恢复", async () => {
+  it("automatic reconnect failure: reports the real error, preserves the workspace session, and recovers after a successful manual retry", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.connect.mockRejectedValue(new Error("dial tcp 127.0.0.1:22: connect: connection refused"));
     mounted = mountTree();
@@ -366,7 +366,7 @@ describe("FileTree 会话已删除", () => {
     expect(workspaceSessionId()).toBe("s2");
   });
 
-  it("本地会话（无资产）自动回退 connectLocal，同样同步工作区会话", async () => {
+  it("local sessions without assets automatically fall back to connectLocal and synchronize the workspace session", async () => {
     seedWorkspace();
     mocks.list.mockImplementation((sid: string) =>
       sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
@@ -379,7 +379,7 @@ describe("FileTree 会话已删除", () => {
     expect(workspaceSessionId()).toBe("s-local");
   });
 
-  it("设备工作区死会话自动走设备连接重连，同步工作区会话", async () => {
+  it("dead sessions in device workspaces automatically reconnect through the device connection and synchronize the workspace session", async () => {
     seedWorkspace({ assetId: "device/d-1", assetKind: "device", title: "build-box" });
     mocks.connectDevice.mockResolvedValue(NEW_DEVICE_SESSION);
     mocks.list.mockImplementation((sid: string) =>
@@ -398,7 +398,7 @@ describe("FileTree 会话已删除", () => {
     expect(toastTexts()).toContain("已重新连接");
   });
 
-  it("ssh 资产真实不存在时报出资产不存在的真实原因，不盲目重试", async () => {
+  it("reports the real missing-asset error for an ssh asset that no longer exists instead of blindly retrying", async () => {
     seedWorkspace({ assetId: "asset-gone" });
     mocks.connect.mockRejectedValue({ code: "not_found", message: "资产不存在" });
     mounted = mountTree();
@@ -412,8 +412,8 @@ describe("FileTree 会话已删除", () => {
   });
 });
 
-describe("FileTree 瞬时文件错误", () => {
-  it("保留真实错误与「重试」，工具栏不禁用，重试成功恢复，不引导重新连接", async () => {
+describe("FileTree transient file errors", () => {
+  it("preserves the real error and retry action, leaves the toolbar enabled, recovers after a successful retry, and does not suggest reconnecting", async () => {
     seedWorkspace({ assetId: "asset-1" });
     mocks.list.mockRejectedValueOnce({ code: "sftp", message: "SFTP：连接被对端重置" });
     mocks.list.mockResolvedValue(ENTRIES.map((e) => ({ ...e })));

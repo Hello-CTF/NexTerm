@@ -661,7 +661,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
         <span className="nx-card-title">恢复密钥（仅显示一次）</span>
       </div>
       <p className="nx-hint">
-        这是找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
+        这是自行找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
       </p>
       <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
         <code className="nx-code break-all font-mono text-[13px]">{revealed ? issue.formatted : "•".repeat(39)}</code>

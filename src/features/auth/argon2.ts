@@ -330,8 +330,8 @@ export function argon2idKey(
   threads: number,
   keyLen: number,
 ): Uint8Array {
-  if (time < 1) throw new Error("argon2: 迭代次数过小");
-  if (threads < 1) throw new Error("argon2: 并行度过低");
+  if (time < 1) throw new Error("argon2: time cost too small");
+  if (threads < 1) throw new Error("argon2: parallelism too small");
 
   const h0 = initHash(password, salt, time, memoryKiB, threads, keyLen);
 

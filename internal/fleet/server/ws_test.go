@@ -84,7 +84,7 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 	owner := f.createUser(t, "ws-owner")
 	deviceID, secret := enrollWSAgent(t, f, owner, "ws-box")
 
-	t.Run("凭证有效得到 hello_ok", func(t *testing.T) {
+	t.Run("valid credentials return hello_ok", func(t *testing.T) {
 		response := helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 			Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
 		})
@@ -92,7 +92,7 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 			t.Fatalf("hello response = %+v", response)
 		}
 	})
-	t.Run("协议版本不匹配得到 version_mismatch", func(t *testing.T) {
+	t.Run("protocol mismatch returns version_mismatch", func(t *testing.T) {
 		response := helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 			Type: "hello", Protocol: agent.ProtocolVersion + 1, DeviceID: deviceID, Secret: secret,
 		})
@@ -103,7 +103,7 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 			t.Fatalf("version_mismatch frame must carry the server version for agent self-upgrade, got %q", response.ServerVersion)
 		}
 	})
-	t.Run("密钥错误得到 forbidden", func(t *testing.T) {
+	t.Run("invalid secret returns forbidden", func(t *testing.T) {
 		response := helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 			Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: "wrong",
 		})
@@ -111,7 +111,7 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 			t.Fatalf("hello response = %+v", response)
 		}
 	})
-	t.Run("已吊销设备得到 forbidden", func(t *testing.T) {
+	t.Run("revoked device returns forbidden", func(t *testing.T) {
 		other := f.createUser(t, "ws-revoker")
 		revokedID, revokedSecret := enrollWSAgent(t, f, other, "ws-revoked")
 		session := f.session(t, other)
@@ -138,7 +138,7 @@ func TestDeviceWSAuthOffRejected(t *testing.T) {
 	}
 	_, raw, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+agent.PathDeviceWS, nil)
 	if err == nil {
-		t.Fatal("auth=off 下 /ws/device 仍允许升级")
+		t.Fatal("auth=off allowed /ws/device upgrade")
 	}
 	if raw != nil && raw.StatusCode != http.StatusForbidden {
 		t.Fatalf("dial status = %d, want 403", raw.StatusCode)
@@ -395,7 +395,7 @@ func (c *presenceCapture) waitFor(t *testing.T, count int) []ipc.DeviceStatusEve
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("等待 %d 个设备状态事件超时, 当前 %+v", count, c.snapshot())
+	t.Fatalf("timed out waiting for %d device status events, current %+v", count, c.snapshot())
 	return nil
 }
 
@@ -404,7 +404,7 @@ func (c *presenceCapture) requireNoPresenceEvent(t *testing.T, want int) {
 	t.Helper()
 	time.Sleep(300 * time.Millisecond)
 	if events := c.snapshot(); len(events) != want {
-		t.Fatalf("设备状态事件数 = %d, want %d: %+v", len(events), want, events)
+		t.Fatalf("device status event count = %d, want %d: %+v", len(events), want, events)
 	}
 }
 
@@ -419,7 +419,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	helloDevice(t, control, hello)
 	events := capture.waitFor(t, 1)
 	if events[0].DeviceID != deviceID || !events[0].Online {
-		t.Fatalf("首个事件 = %+v, want 设备上线", events[0])
+		t.Fatalf("first event = %+v, want device online", events[0])
 	}
 	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOnline); len(ids) != 1 || ids[0] != deviceID {
 		t.Fatalf("online audit asset_ids=%v", ids)
@@ -431,7 +431,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, _, err := control.Read(readCtx); err == nil {
-		t.Fatal("被顶替的控制通道仍然打开")
+		t.Fatal("replaced control channel is still open")
 	}
 	capture.requireNoPresenceEvent(t, 1)
 
@@ -439,7 +439,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	_ = replacement.Close(websocket.StatusNormalClosure, "")
 	events = capture.waitFor(t, 2)
 	if events[1].DeviceID != deviceID || events[1].Online {
-		t.Fatalf("第二个事件 = %+v, want 设备离线", events[1])
+		t.Fatalf("second event = %+v, want device offline", events[1])
 	}
 	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 1 || ids[0] != deviceID {
 		t.Fatalf("offline audit asset_ids=%v", ids)
@@ -450,7 +450,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	helloDevice(t, reconnected, hello)
 	events = capture.waitFor(t, 3)
 	if events[2].DeviceID != deviceID || !events[2].Online {
-		t.Fatalf("第三个事件 = %+v, want 设备重新上线", events[2])
+		t.Fatalf("third event = %+v, want device back online", events[2])
 	}
 
 	// Revocation kick: KickDevice already removed the table entry, so the unregistration callback never fires; the revocation path makes up the offline record.
@@ -460,7 +460,7 @@ func TestDevicePresenceLifecycle(t *testing.T) {
 	}
 	events = capture.waitFor(t, 4)
 	if events[3].DeviceID != deviceID || events[3].Online {
-		t.Fatalf("第四个事件 = %+v, want 吊销后离线", events[3])
+		t.Fatalf("fourth event = %+v, want device offline after revocation", events[3])
 	}
 	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 2 || ids[1] != deviceID {
 		t.Fatalf("offline audit asset_ids=%v", ids)
@@ -488,7 +488,7 @@ func TestDevicePresenceShutdownSilent(t *testing.T) {
 	}
 	capture.requireNoPresenceEvent(t, 1)
 	if ids := auditAssetIDs(t, f.service.db, auditKindDeviceOffline); len(ids) != 0 {
-		t.Fatalf("关停写出了离线审计: %v", ids)
+		t.Fatalf("shutdown wrote offline audits: %v", ids)
 	}
 }
 
@@ -511,7 +511,7 @@ func waitForAppVersion(t *testing.T, f *httpFixture, deviceID, want string) {
 		lastErr = err
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("等待 app_version 刷新为 %q 超时, 当前 %q err=%v", want, got, lastErr)
+	t.Fatalf("timed out waiting for app_version to become %q, current %q err=%v", want, got, lastErr)
 }
 
 func TestDeviceWSHelloRefreshesAppVersion(t *testing.T) {

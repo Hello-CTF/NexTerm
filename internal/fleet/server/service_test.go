@@ -132,7 +132,7 @@ func TestDevicePresenceTransitionDedup(t *testing.T) {
 
 	fixture.service.deviceOffline("dev-dedup")
 	if rows := fixture.auditRows(t, auditKindDeviceOffline); len(rows) != 0 {
-		t.Fatalf("未上线先下线写出了离线审计: %v", rows)
+		t.Fatalf("offline-before-online wrote an offline audit: %v", rows)
 	}
 
 	fixture.service.deviceOnline("dev-dedup")

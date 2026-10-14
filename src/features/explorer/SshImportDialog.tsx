@@ -20,7 +20,7 @@ const ACTION_LABELS: Record<string, string> = {
   "skip-duplicate": "重复 · 跳过",
   "conflict-alias": "别名冲突",
   "conflict-endpoint": "地址冲突",
-  "blocked-jump": "跳板机不可导入",
+  "blocked-jump": "跳板配置不可导入",
 };
 
 const DIAGNOSTIC_LABELS: Record<string, string> = {
@@ -28,7 +28,7 @@ const DIAGNOSTIC_LABELS: Record<string, string> = {
   "match-skipped": "Match 块已跳过",
   "key-unreadable": "文件无法读取",
   "symlink-unresolved": "符号链接无法解析",
-  "symlink-escape": "符号链接指向目录外",
+  "symlink-escape": "符号链接指向扫描目录外",
   "limit-truncated": "超出数量上限",
   "home-missing": "SSH 目录不存在",
   "config-unparsed": "配置文件解析失败",
@@ -248,7 +248,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       autoComplete="off"
                     />
                     <span className="nx-hint mt-1.5 block">
-                      留空使用默认路径。只在点「预览」时读取一次，不做后台扫描。
+                      留空使用默认路径。点击「预览」时读取，不做后台扫描；导入时会重新读取并校验。
                     </span>
                   </div>
                 )}
@@ -274,7 +274,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                         onChange={(e) => setConfirmed(e.target.checked)}
                       />
                       <span>
-                        我确认允许 NexTerm 读取本机 Termius 数据（仅本次，读取后展示预览，不会自动导入）
+                        我确认允许 NexTerm 在本次导入流程中读取本机 Termius 数据（先展示预览；点击导入前不会写入资产或凭据）
                       </span>
                     </label>
                     <span className="nx-hint mt-1.5 block">
@@ -291,7 +291,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   {phase === "loading" ? "正在读取并生成预览…" : "正在导入…"}
                 </div>
                 <div className="nx-hint mt-1">
-                  {phase === "loading" ? "仅读取一次，完成后显示预览" : "写入资产库与凭据库"}
+                  {phase === "loading" ? "仅生成预览，不会写入资产或凭据" : "写入资产库与凭据库"}
                 </div>
               </div>
             )}
@@ -327,7 +327,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
                 <div className="nx-hint mt-3">
-                  可在资产树与凭据列表中查看新条目。
+                  可在资产树与凭据列表中查看导入结果。
                 </div>
               </div>
             )}
@@ -355,7 +355,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             )}
             {phase === "preview" && importableCount > 0 && (
               <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
-                导入全部可新增项（{importableCount}）
+                导入已勾选的新增项（{importableCount}）
               </button>
             )}
             {phase === "preview" && (

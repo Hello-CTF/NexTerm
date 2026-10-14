@@ -95,7 +95,7 @@ export async function aesGcmOpen(key: Uint8Array, blob: Uint8Array, aad: Uint8Ar
     );
     return new Uint8Array(pt);
   } catch {
-    throw new CryptoError("decrypt", "凭据解密失败（密钥不匹配或数据损坏）");
+    throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
   }
 }
 
@@ -299,7 +299,7 @@ export async function tryOpenSyncObject(
       // Try the next kind
     }
   }
-  throw new CryptoError("decrypt", "凭据解密失败（密钥不匹配或数据损坏）");
+  throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
 }
 
 export async function objectPayloadHash(plaintext: Uint8Array): Promise<string> {

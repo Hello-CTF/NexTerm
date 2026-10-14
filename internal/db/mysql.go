@@ -88,7 +88,7 @@ func mysqlDescribe(ctx context.Context, connection *mysqlConnection, schema, tab
 		return TableDescribe{}, err
 	}
 	if table == "" {
-		return TableDescribe{}, badParam(errors.New("table 不能为空"))
+		return TableDescribe{}, badParam(errors.New("表名不能为空"))
 	}
 
 	description := TableDescribe{Columns: []TableColumn{}, Indexes: []TableIndex{}}
@@ -248,7 +248,7 @@ func mysqlSchema(ctx context.Context, connection *mysqlConnection, schema string
 		return "", internalError("读取当前 MySQL 数据库", err)
 	}
 	if !current.Valid || current.String == "" {
-		return "", badParam(errors.New("未选择数据库，请提供 schema"))
+		return "", badParam(errors.New("未选择数据库，请先选择 schema"))
 	}
 	return current.String, nil
 }

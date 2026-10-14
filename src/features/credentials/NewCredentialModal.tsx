@@ -181,7 +181,7 @@ export function NewCredentialModal({
               placeholder="例如：db-prod"
               onChange={(e) => setName(e.target.value)}
             />
-            <span className="nx-hint mt-1.5 block">名称用来区分这条凭据给哪台主机用，之后选凭据时按名字认。</span>
+            <span className="nx-hint mt-1.5 block">名称用于区分凭据，之后选择凭据时会显示。</span>
           </div>
 
           {isKey ? (

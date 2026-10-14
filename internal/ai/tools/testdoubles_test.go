@@ -258,10 +258,14 @@ func (f *fakeTerminal) Rename(_ context.Context, tabID, title string) error {
 
 type fakeDatabase struct {
 	result db.QueryResult
+	tables []string
 }
 
 func (f *fakeDatabase) Tables(context.Context, string, string) ([]string, error) {
-	return []string{"users"}, nil
+	if f.tables == nil {
+		return []string{"users"}, nil
+	}
+	return f.tables, nil
 }
 func (f *fakeDatabase) Describe(context.Context, string, string, string) (db.TableDescribe, error) {
 	return db.TableDescribe{Columns: []db.TableColumn{}, Indexes: []db.TableIndex{}}, nil

@@ -269,7 +269,7 @@ func (s *Service) requireFleetSuperadmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := identityFrom(r)
 		if identity == nil || identity.Role != account.RoleSuperadmin {
-			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "需要超管权限")))
+			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "需要超级管理员权限")))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -434,7 +434,7 @@ func (s *Service) serveDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	var since int64
 	if raw := r.URL.Query().Get("since_ms"); raw != "" {
 		if _, err := fmt.Sscanf(raw, "%d", &since); err != nil {
-			writeFleetFailure(w, ipc.BadParam(fmt.Errorf("since_ms 必须是整数")))
+			writeFleetFailure(w, ipc.BadParam(fmt.Errorf("指标起始时间（毫秒时间戳）必须是整数")))
 			return
 		}
 	}

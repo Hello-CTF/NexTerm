@@ -235,8 +235,8 @@ afterEach(() => {
   setViewportWidth(1024);
 });
 
-describe("触屏 More 按钮复用同一业务菜单", () => {
-  it("FileTree 行内 ⋯ 打开与右键相同的菜单", async () => {
+describe("touch More buttons reuse the same action menus", () => {
+  it("FileTree row ⋯ opens the same menu as right-click", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
@@ -263,7 +263,7 @@ describe("触屏 More 按钮复用同一业务菜单", () => {
     await waitFor(() => expect(mocks.promptText).toHaveBeenCalled());
   });
 
-  it("FileBrowser 行内 ⋯ 与工具栏 ⋯ 各自打开对应菜单", async () => {
+  it("FileBrowser row and toolbar ⋯ buttons open their respective menus", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
@@ -299,7 +299,7 @@ describe("触屏 More 按钮复用同一业务菜单", () => {
     expect(blankLabels.some((l) => l.includes("刷新"))).toBe(true);
   });
 
-  it("FileBrowser 大小/修改时间列与低频工具栏按钮带窄屏隐藏类", async () => {
+  it("FileBrowser size and modified-time columns plus low-frequency toolbar buttons have narrow-screen hiding classes", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
@@ -319,8 +319,8 @@ describe("触屏 More 按钮复用同一业务菜单", () => {
   });
 });
 
-describe("单行 Enter 提交表单的 IME 守卫", () => {
-  it("FileBrowser 路径框：IME 组合中 Enter 不跳转，普通 Enter 跳转", async () => {
+describe("IME guards for single-line Enter-to-submit forms", () => {
+  it("FileBrowser path input: Enter during IME composition does not navigate; regular Enter navigates", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     const input = mounted!.container.querySelector<HTMLInputElement>(".nx-toolbar input");
@@ -338,7 +338,7 @@ describe("单行 Enter 提交表单的 IME 守卫", () => {
     );
   });
 
-  it("FileTree 路径编辑：IME 组合中 Enter 不提交，普通 Enter 提交", async () => {
+  it("FileTree path editing: Enter during IME composition does not submit; regular Enter submits", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
 
@@ -363,7 +363,7 @@ describe("单行 Enter 提交表单的 IME 守卫", () => {
     await waitFor(() => expect(mocks.fsList).toHaveBeenCalledWith("s1", "/var"));
   });
 
-  it("MountPanel 远端路径：IME 组合中 Enter 不创建，普通 Enter 创建", async () => {
+  it("MountPanel remote path: Enter during IME composition does not create; regular Enter creates", async () => {
     mounted = mountWithClient(createElement(MountPanel, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("断开"));
     const input = mounted!.container.querySelector<HTMLInputElement>(
@@ -380,7 +380,7 @@ describe("单行 Enter 提交表单的 IME 守卫", () => {
     await waitFor(() => expect(mocks.mountCreate).toHaveBeenCalledTimes(1));
   });
 
-  it("分组重命名：IME 组合中 Enter 不保存，普通 Enter 保存", async () => {
+  it("group rename: Enter during IME composition does not save; regular Enter saves", async () => {
     mocks.groupUpdate.mockClear();
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
@@ -406,8 +406,8 @@ describe("单行 Enter 提交表单的 IME 守卫", () => {
   });
 });
 
-describe("MountPanel 窄屏结构", () => {
-  it("提示行可换行，列名使用本地挂载点且不展示挂载时间", async () => {
+describe("MountPanel narrow-screen layout", () => {
+  it("hint rows wrap, the column is labeled local mount point, and mount time is not shown", async () => {
     mounted = mountWithClient(createElement(MountPanel, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("断开"));
 
@@ -421,8 +421,8 @@ describe("MountPanel 窄屏结构", () => {
   });
 });
 
-describe("MountPanel 可选凭据折叠", () => {
-  it("用户名/密码默认折叠，点「使用其他凭据（可选）」后展开", async () => {
+describe("MountPanel optional credentials collapse", () => {
+  it("username and password are collapsed by default and expand after clicking Use other credentials (optional)", async () => {
     mounted = mountWithClient(createElement(MountPanel, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("断开"));
 
@@ -432,7 +432,7 @@ describe("MountPanel 可选凭据折叠", () => {
     const toggle = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("使用其他凭据"),
     );
-    if (!toggle) throw new Error("凭据折叠按钮未找到");
+    if (!toggle) throw new Error("credential collapse toggle not found");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     click(toggle);
 
@@ -448,12 +448,12 @@ describe("MountPanel 可选凭据折叠", () => {
   });
 });
 
-describe("凭据 overlay dock 选中后收起", () => {
+describe("credential overlay dock collapses after selection", () => {
   function allTabs() {
     return useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
   }
 
-  it("≤820px 视口点凭据行后左 dock 收起并打开详情", async () => {
+  it("clicking a credential row at a viewport width of ≤820px collapses the left dock and opens details", async () => {
     setViewportWidth(320);
     mounted = mountWithClient(createElement(CredentialsSidebar));
     await waitFor(() => expect(mounted!.container.textContent).toContain("db-prod"));
@@ -470,7 +470,7 @@ describe("凭据 overlay dock 选中后收起", () => {
     );
   });
 
-  it("宽视口点凭据行不收起左 dock", async () => {
+  it("clicking a credential row in a wide viewport does not collapse the left dock", async () => {
     setViewportWidth(1280);
     mounted = mountWithClient(createElement(CredentialsSidebar));
     await waitFor(() => expect(mounted!.container.textContent).toContain("db-prod"));
@@ -488,8 +488,8 @@ describe("凭据 overlay dock 选中后收起", () => {
   });
 });
 
-describe("凭据头部与新建弹窗窄屏结构", () => {
-  it("CredentialsPanel 头部徽标窄屏隐藏、主按钮不裁", async () => {
+describe("narrow-screen layout for the credentials header and new-credential modal", () => {
+  it("CredentialsPanel header badges hide on narrow screens and the primary button is not clipped", async () => {
     mounted = mountWithClient(createElement(CredentialsPanel, { credId: "c1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("已解锁"));
 
@@ -514,7 +514,7 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
     expect(create?.className ?? "").toContain("shrink-0");
   });
 
-  it("NewCredentialModal 类型图标窄屏隐藏、footer 常驻", async () => {
+  it("NewCredentialModal type icons hide on narrow screens and the footer remains visible", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(
       createElement(
@@ -541,12 +541,12 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
 });
 
 
-describe("设备会话面板直接渲染", () => {
+describe("device session panels render directly", () => {
   const DEVICE_SESSIONS = [
-    { id: "s-dev", assetId: "device/d-1", assetName: "边缘网关", kind: "device", status: "connected", controller: "" },
+    { id: "s-dev", assetId: "device/d-1", assetName: "edge-gateway", kind: "device", status: "connected", controller: "" },
   ];
 
-  it("FileTree 对设备会话渲染正常文件树，左栏宽度壳层不变", async () => {
+  it("FileTree renders a normal file tree for device sessions without changing the left-panel width shell", async () => {
     useUi.setState({ sessions: DEVICE_SESSIONS as never, leftWidth: 300 });
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s-dev" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
@@ -557,7 +557,7 @@ describe("设备会话面板直接渲染", () => {
     expect(mounted!.container.textContent).not.toContain("设备会话不支持");
   });
 
-  it("FileBrowser 对设备会话渲染正常 nx-pane 面板", async () => {
+  it("FileBrowser renders a normal nx-pane panel for device sessions", async () => {
     useUi.setState({ sessions: DEVICE_SESSIONS as never });
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s-dev" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));

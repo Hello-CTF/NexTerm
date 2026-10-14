@@ -20,7 +20,7 @@ export async function confirmMultilinePaste(text: string): Promise<boolean> {
     .slice(0, 5)
     .map((line) => (line.length > 120 ? `${line.slice(0, 120)}…` : line));
   const suffix = lines.length > preview.length ? `\n…（共 ${lines.length} 行）` : "";
-  return ask(`即将向终端粘贴 ${lines.length} 行文本：\n\n${preview.join("\n")}${suffix}`, {
+  return ask(`即将向终端粘贴 ${lines.length} 行文本。多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。\n\n${preview.join("\n")}${suffix}`, {
     title: "粘贴多行文本",
     kind: "warning",
   });

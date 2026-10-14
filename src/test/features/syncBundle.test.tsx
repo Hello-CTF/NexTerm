@@ -71,12 +71,12 @@ const BUNDLE = {
   protocol: 1,
   origin: "other-device",
   exportedAt: 1_700_000_000_000,
-  groups: [{ id: "g9", parentId: null, name: "包分组", sort: 0, createdAt: 1, updatedAt: 2 }],
+  groups: [{ id: "g9", parentId: null, name: "bundle group", sort: 0, createdAt: 1, updatedAt: 2 }],
   assets: [
-    { id: "a1", groupId: null, kind: "ssh", name: "web-01（旧）", host: "10.0.0.1", port: 22, username: "deploy", authKind: "password", keyPath: null, credId: "c1", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 50, deletedAt: null },
+    { id: "a1", groupId: null, kind: "ssh", name: "web-01 (old)", host: "10.0.0.1", port: 22, username: "deploy", authKind: "password", keyPath: null, credId: "c1", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 50, deletedAt: null },
     { id: "a9", groupId: "g9", kind: "ssh", name: "new-01", host: "10.0.0.9", port: 22, username: "root", authKind: "password", keyPath: null, credId: null, optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 60, deletedAt: null },
   ],
-  creds: [{ id: "c1", name: "生产口令", kind: "password", secret: "sup3r-s3cret" }],
+  creds: [{ id: "c1", name: "production password", kind: "password", secret: "sup3r-s3cret" }],
 };
 
 let mounted: MountedView | undefined;
@@ -125,8 +125,8 @@ function pickDesktopBundle(fileName: string, payload: string) {
   mocks.readBundleFile.mockResolvedValue(payload);
 }
 
-describe("SyncBundleCard 导出", () => {
-  it("默认不含凭据：导出调用 exportAssets(ids, false)，摘要不出现任何秘密", async () => {
+describe("SyncBundleCard export", () => {
+  it("excludes credentials by default, calls exportAssets(ids, false), and omits every secret from the summary", async () => {
     mocks.exportAssets.mockResolvedValue({
       protocol: 1,
       origin: "local",
@@ -148,22 +148,26 @@ describe("SyncBundleCard 导出", () => {
     expect(text()).toContain("凭据 0");
   });
 
-  it("勾选凭据后出现安全警告，导出以 withCreds=true 调用", async () => {
+  it("shows a security warning after credentials are selected and exports with withCreds=true", async () => {
     mocks.exportAssets.mockResolvedValue({
       protocol: 1,
       origin: "local",
       exportedAt: Date.now(),
       groups: [],
       assets: [{ id: "a1" }],
-      creds: [{ id: "c1", name: "生产口令", kind: "password", secret: "sup3r-s3cret" }],
+      creds: [{ id: "c1", name: "production password", kind: "password", secret: "sup3r-s3cret" }],
       warnings: [],
     });
     await mountCard();
+    expect(text()).toContain("导出凭据（密码、内联私钥和 API Key 会随资产包写入）");
+    expect(text()).toContain("路径引用仅保存路径，目标环境必须能访问同一路径");
     const credsToggle = [...mounted!.container.querySelectorAll("label")].find((l) =>
       l.textContent?.includes("导出凭据"),
     )!;
     click(credsToggle.querySelector('input[type="checkbox"]')!);
-    await flushUntil(() => text().includes("可还原的凭据明文"));
+    await flushUntil(() => text().includes("资产包将包含敏感凭据信息"));
+    expect(text()).toContain("任何拿到文件的人都能读取密码、内联私钥和 API Key");
+    expect(text()).not.toContain("私钥文件也会内联到资产包中");
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
     clickButton(mounted!.container, "导出资产包（.nxbm）");
     await flushUntil(() => text().includes("已导出"));
@@ -172,18 +176,18 @@ describe("SyncBundleCard 导出", () => {
     expect(text()).not.toContain("sup3r-s3cret");
   });
 
-  it("导出失败时内联报错", async () => {
-    mocks.exportAssets.mockRejectedValue(new Error("凭据库已锁定"));
+  it("shows export failures inline", async () => {
+    mocks.exportAssets.mockRejectedValue(new Error("vault is locked"));
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
     clickButton(mounted!.container, "导出资产包（.nxbm）");
-    await flushUntil(() => text().includes("凭据库已锁定"));
+    await flushUntil(() => text().includes("vault is locked"));
     expect(text()).not.toContain("已导出（.nxbm 容器）");
   });
 });
 
-describe("SyncBundleCard 导入", () => {
-  it("非法 JSON：显示错误且不调用 sync_import", async () => {
+describe("SyncBundleCard import", () => {
+  it("shows an error for invalid JSON without calling sync_import", async () => {
     pickDesktopBundle("broken.nxbm", "not-json{");
     await mountCard();
     openImport();
@@ -192,7 +196,7 @@ describe("SyncBundleCard 导入", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("协议版本不符：显示错误且不调用 sync_import", async () => {
+  it("shows an error for an unsupported protocol version without calling sync_import", async () => {
     pickDesktopBundle("future.nxbm", JSON.stringify({ protocol: 99, groups: [], assets: [], creds: [] }));
     await mountCard();
     openImport();
@@ -201,7 +205,7 @@ describe("SyncBundleCard 导入", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("结构损坏（assets 不是数组）：显示错误且不调用 sync_import", async () => {
+  it("shows an error for a malformed structure where assets is not an array without calling sync_import", async () => {
     pickDesktopBundle("bad-shape.nxbm", JSON.stringify({ protocol: 1, assets: "nope" }));
     await mountCard();
     openImport();
@@ -210,7 +214,7 @@ describe("SyncBundleCard 导入", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("合法包：预览来源/计数/凭据安全提示（不渲染秘密），确认后展示 ImportReport", async () => {
+  it("previews origin, counts, and credential safety for a valid bundle without rendering secrets, then shows ImportReport after confirmation", async () => {
     pickDesktopBundle("bundle.nxbm", JSON.stringify(BUNDLE));
     mocks.importBundle.mockResolvedValue({
       groupsCreated: 1,
@@ -224,7 +228,7 @@ describe("SyncBundleCard 导入", () => {
       snippetsUpdated: 0,
       skippedNewer: 0,
       refused: 0,
-      warnings: ["资产 a9 引用的分组 g9 不存在，已清除该引用"],
+      warnings: ["asset a9 references missing group g9; the reference was cleared"],
     });
     await mountCard();
     openImport();
@@ -233,19 +237,19 @@ describe("SyncBundleCard 导入", () => {
     expect(text()).toContain("other-device");
     expect(text()).toContain("资产 2");
     expect(text()).toContain("凭据 1");
-    expect(text()).toContain("生产口令");
+    expect(text()).toContain("production password");
     expect(text()).toContain("1 条本机已存在");
     expect(text()).not.toContain("sup3r-s3cret");
 
     clickButton(mounted!.container, "确认导入 2 条资产");
     await flushUntil(() => text().includes("导入结果"));
     expect(mocks.importBundle).toHaveBeenCalledWith(BUNDLE, false);
-    expect(text()).toContain("资产 新建 1 / 更新 1");
-    expect(text()).toContain("凭据 新建 0 / 更新 1");
-    expect(text()).toContain("已清除该引用");
+    expect(text()).toContain("资产：新建 1 / 更新 1");
+    expect(text()).toContain("凭据：新建 0 / 更新 1");
+    expect(text()).toContain("reference was cleared");
   });
 
-  it("悬空凭据提示仅在本机也缺少同 ID 凭据时清除引用", async () => {
+  it("clears dangling credential references only when the local credential with the same ID is also missing", async () => {
     const dangling = {
       ...BUNDLE,
       assets: BUNDLE.assets.map((asset) => (asset.id === "a1" ? { ...asset, credId: "c-missing" } : asset)),
@@ -261,7 +265,7 @@ describe("SyncBundleCard 导入", () => {
     expect(text()).not.toContain("导入后这些引用会被清除");
   });
 
-  it("强制覆盖较新条目：force 以 true 传递", async () => {
+  it("passes force=true when newer local entries must be overwritten", async () => {
     pickDesktopBundle("bundle.nxbm", JSON.stringify(BUNDLE));
     mocks.importBundle.mockResolvedValue({
       groupsCreated: 0,
@@ -290,14 +294,14 @@ describe("SyncBundleCard 导入", () => {
     expect(mocks.importBundle).toHaveBeenCalledWith(BUNDLE, true);
   });
 
-  it("仅分组更新且资产全跳过时仍判定为成功写入", async () => {
+  it("treats the import as a successful write when only a group changes and every asset is skipped", async () => {
     pickDesktopBundle(
       "groups-only.nxbm",
       JSON.stringify({
         protocol: 1,
         origin: "other-device",
         exportedAt: Date.now(),
-        groups: [{ id: "g1", parentId: null, name: "只有分组", sort: 0, createdAt: 1, updatedAt: 2 }],
+        groups: [{ id: "g1", parentId: null, name: "groups only", sort: 0, createdAt: 1, updatedAt: 2 }],
         assets: [{ ...BUNDLE.assets[0], updatedAt: 50 }],
         creds: [],
       }),
@@ -314,7 +318,7 @@ describe("SyncBundleCard 导入", () => {
       snippetsUpdated: 0,
       skippedNewer: 1,
       refused: 0,
-      warnings: ["资产 a1 的本机版本较新，已跳过；如需覆盖请使用强制同步"],
+      warnings: ["asset a1 is newer locally and was skipped; use force sync to overwrite"],
     });
     await mountCard();
     openImport();
@@ -333,7 +337,7 @@ describe("SyncBundleCard 导入", () => {
     expect(reportBox?.className).not.toContain("nx-alert-danger");
   });
 
-  it("含删除标记的包：预览提示会标记删除本机资产", async () => {
+  it("warns in the preview that a bundle with deletion markers will mark local assets deleted", async () => {
     const withTombstone = {
       ...BUNDLE,
       assets: BUNDLE.assets.map((a) => (a.id === "a1" ? { ...a, deletedAt: 123 } : a)),
@@ -347,14 +351,14 @@ describe("SyncBundleCard 导入", () => {
   });
 });
 
-describe("SyncBundleCard 分区引用", () => {
-  it("说明引用上方「账号同步」分区,不再叫「资产同步」", async () => {
+describe("SyncBundleCard section references", () => {
+  it("refers to the account sync section above rather than calling it asset sync", async () => {
     await mountCard();
     expect(text()).toContain("与上方「账号同步」的推送和拉取互不影响");
     expect(text()).not.toContain("「资产同步」");
   });
 
-  it("默认只显示说明与导出/导入按钮,点击再展开对应区域", async () => {
+  it("shows only the description and export/import buttons by default, expanding each area on demand", async () => {
     mounted = withClient(createElement(SyncBundleCard));
     await flushUntil(() => text().includes("与上方「账号同步」的推送和拉取互不影响"));
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();

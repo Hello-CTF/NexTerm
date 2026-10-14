@@ -201,7 +201,7 @@ function optInCheckbox(index: number): HTMLInputElement {
   return box;
 }
 
-// Opt-in toggles render only after kindOptInGet arrives asynchronously; collapsed by default, click "同步内容开关" when not auto-expanded (nothing enabled)
+// Opt-in toggles render only after kindOptInGet arrives asynchronously; collapsed by default, open the sync content section when not auto-expanded (nothing enabled)
 async function flushUntilOptInRendered(): Promise<void> {
   await flushUntil(() => button("同步内容开关") !== undefined);
   if ((mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) < 2) {
@@ -256,8 +256,8 @@ afterEach(() => {
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
-describe("M165 opt-in 默认关", () => {
-  it("不收集 known_host/AI 档案, 远端对应对象也不应用, 开关渲染为未勾选", async () => {
+describe("M165 opt-ins disabled by default", () => {
+  it("does not collect known_host or AI profiles, apply matching remote objects, and renders both toggles unchecked", async () => {
     const khWire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     const pWire = await remoteFixtureWire("p-1", "ai_profile", GO_SYNC_FIXTURES.aiProfileFull!, 2);
     mocks.syncIds.mockResolvedValue({
@@ -294,8 +294,8 @@ describe("M165 opt-in 默认关", () => {
   });
 });
 
-describe("M165 known_host 同步", () => {
-  it("开启后收集/对比/推送(Go fixture 字节), 二次同步收敛", async () => {
+describe("M165 known_host sync", () => {
+  it("collects, compares, and pushes after enabling, then converges on the second sync (Go fixture bytes)", async () => {
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 1, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
@@ -329,7 +329,7 @@ describe("M165 known_host 同步", () => {
     expect(mocks.applyObjects).not.toHaveBeenCalled();
   });
 
-  it("known_host 墓碑: 开关关闭时被过滤不推送; 开启后推送且保留冲突三元组", async () => {
+  it("filters a known_host tombstone while disabled and pushes it with the conflict triple after enabling", async () => {
     mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
     mocks.collectTombstones.mockResolvedValue({
       tombstones: [{ id: "kh-del", targetKind: "known_host", deletedAt: 700, host: "10.0.0.9", port: 22, keyType: "ssh-ed25519" }],
@@ -357,8 +357,8 @@ describe("M165 known_host 同步", () => {
   });
 });
 
-describe("M165 AI 档案同步", () => {
-  it("revealed 档案推送明文密钥(Go fixture 字节); locked 档案记 warning 不进推送", async () => {
+describe("M165 AI profile sync", () => {
+  it("pushes plaintext keys for revealed profiles (Go fixture bytes) and warns about locked profiles without pushing them", async () => {
     optInState = { knownHost: false, aiProfile: true };
     mocks.collectAIProfiles.mockResolvedValue({
       profiles: [
@@ -383,7 +383,7 @@ describe("M165 AI 档案同步", () => {
     expect(await openPushed(objects[0], "ai_profile")).toBe(fixtureText("aiProfileFull"));
   });
 
-  it("远端 AI 档案在开关开启时应用(aiProfileObject 原样下发)", async () => {
+  it("applies a remote AI profile when its toggle is enabled (aiProfileObject passed through as-is)", async () => {
     optInState = { knownHost: false, aiProfile: true };
     mocks.collectAIProfiles.mockResolvedValue({ profiles: [], hasMore: false });
     const wire = await remoteFixtureWire("p-1", "ai_profile", GO_SYNC_FIXTURES.aiProfileFull!, 1);
@@ -407,8 +407,8 @@ describe("M165 AI 档案同步", () => {
   });
 });
 
-describe("M166 AI 权限与偏好同步", () => {
-  it("AI 权限和外观快捷键也进入同步对象并推送", async () => {
+describe("M166 AI permission and preference sync", () => {
+  it("includes AI permissions, appearance, and keybindings in sync objects and pushes them", async () => {
     optInState = { knownHost: false, aiProfile: false, aiPermission: true, preferences: true };
     mocks.collectAIPermission.mockResolvedValue({ id: "global", mode: "silent", dangerRules: ["rm -rf /"], updatedAt: 100, found: true });
     mocks.collectPreferences.mockResolvedValue([
@@ -432,7 +432,7 @@ describe("M166 AI 权限与偏好同步", () => {
     expect(await openPushed(objects.find((o) => o.id === "preference:keybinding.newTerminal")!, "preference")).toBe('{"id":"preference:keybinding.newTerminal","key":"keybinding.newTerminal","value":"Mod+Shift+t","updatedAt":100}');
   });
 
-  it("AI 授权与权限模式默认开启, 设备授权/规则/模式进入同步对象并推送", async () => {
+  it("enables AI grants and permission modes by default and pushes device grants, rules, and modes", async () => {
     optInState = { knownHost: false, aiProfile: false, aiGrant: true };
     mocks.collectAIGrants.mockResolvedValue({
       grants: [{ id: "device/dev-1", deviceId: "dev-1", kinds: ["terminal_write"], updatedAt: 100 }],
@@ -457,7 +457,7 @@ describe("M166 AI 权限与偏好同步", () => {
     expect(await openPushed(objects.find((o) => o.id === "mode/dev-1")!, "ai_grant")).toBe('{"id":"mode/dev-1","deviceId":"dev-1","mode":"read_only","updatedAt":100}');
   });
 
-  it("关闭开关后不收集对象，也不推送对应墓碑", async () => {
+  it("does not collect objects or push matching tombstones after disabling their toggles", async () => {
     mocks.collectTombstones.mockResolvedValue({
       tombstones: [
         { id: "global", targetKind: "ai_permission", deletedAt: 700 },
@@ -483,7 +483,7 @@ describe("M166 AI 权限与偏好同步", () => {
   });
 });
 
-describe("M165 R2 开关切换竞态", () => {
+describe("M165 R2 opt-in toggle races", () => {
   function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((res) => {
@@ -494,7 +494,7 @@ describe("M165 R2 开关切换竞态", () => {
 
   const KNOWN_HOST_TOMBSTONE = { id: "kh-del", targetKind: "known_host", deletedAt: 700, host: "10.0.0.9", port: 22, keyType: "ssh-ed25519" };
 
-  it("on->off 延迟推送: reload 完成前推送保持禁用, 关闭后墓碑不得删除远端", async () => {
+  it("keeps push disabled during an on-to-off reload and never deletes the remote tombstone after disabling", async () => {
     optInState = { knownHost: true, aiProfile: false };
     mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
     mocks.collectTombstones.mockResolvedValue({ tombstones: [KNOWN_HOST_TOMBSTONE], hasMore: false });
@@ -524,7 +524,7 @@ describe("M165 R2 开关切换竞态", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("乱序 load: 开启的慢 load 后完成, 已禁用种类不得回写到可推送快照", async () => {
+  it("discards a late load from the enabled state and never writes the disabled kind back into the pushable snapshot", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const slowLoad = deferred<void>();
     mocks.collectKnownHosts.mockImplementation(async () => {
@@ -545,7 +545,7 @@ describe("M165 R2 开关切换竞态", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("on->off 延迟应用: reload 完成前应用保持禁用, 远端对象不再应用", async () => {
+  it("keeps apply disabled during an on-to-off reload and no longer applies remote objects", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
@@ -570,7 +570,7 @@ describe("M165 R2 开关切换竞态", () => {
   });
 });
 
-describe("CompareConsole 自动同步", () => {
+describe("CompareConsole automatic sync", () => {
   function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((res) => {
@@ -579,7 +579,7 @@ describe("CompareConsole 自动同步", () => {
     return { promise, resolve };
   }
 
-  it("应用远端对象时不在同一轮推送空的本机 winner", async () => {
+  it("does not push an empty local winner set in the same round that applies remote objects", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
@@ -599,7 +599,7 @@ describe("CompareConsole 自动同步", () => {
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
   });
 
-  it("读取快照完成前不应用或推送", async () => {
+  it("does not apply or push before the snapshot has finished loading", async () => {
     optInState = { knownHost: true, aiProfile: false };
     const wire = await remoteFixtureWire("kh-2", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-2", seq: 1, blob_hash: "h2" }], head: "head-1", max_seq: 1 });

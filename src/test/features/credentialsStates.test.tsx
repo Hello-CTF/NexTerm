@@ -81,24 +81,24 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
-describe("CredentialsSidebar 状态", () => {
-  it("列表失败时给出真实错误与重试，而不是「还没有任何凭据」", async () => {
-    mocks.listCredentials.mockRejectedValue(new Error("保险库打不开"));
+describe("CredentialsSidebar states", () => {
+  it("list failure shows the real error with a retry, not the empty state", async () => {
+    mocks.listCredentials.mockRejectedValue(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("凭据列表加载失败"));
-    expect(text()).toContain("保险库打不开");
+    expect(text()).toContain("vault unavailable");
     expect(text()).not.toContain("还没有任何凭据");
   });
 
-  it("重试后恢复，真空才显示「还没有任何凭据」", async () => {
-    mocks.listCredentials.mockRejectedValueOnce(new Error("保险库打不开"));
+  it("after retry it recovers; only a truly empty vault shows the empty state", async () => {
+    mocks.listCredentials.mockRejectedValueOnce(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("凭据列表加载失败"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("还没有任何凭据"));
   });
 
-  it("「未使用」使用语义 warning 前景", async () => {
+  it("the Unused badge uses the semantic warning foreground", async () => {
     mocks.listCredentials.mockResolvedValue([UNUSED_CRED]);
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("未使用"));
@@ -108,7 +108,7 @@ describe("CredentialsSidebar 状态", () => {
     expect(badge?.className).toContain("var(--nx-fg-warning)");
   });
 
-  it("筛选 chip 选中态用 accent 色板，未选中 hover 用中性色反馈", async () => {
+  it("filter chips use the accent palette when selected and neutral hover feedback when unselected", async () => {
     mocks.listCredentials.mockResolvedValue([
       UNUSED_CRED,
       { id: "c2", name: "deploy-key", kind: "private_key", usedBy: [], createdAt: 1, updatedAt: 1 },
@@ -127,7 +127,7 @@ describe("CredentialsSidebar 状态", () => {
     expect(key.className).not.toContain("var(--color-accent)");
   });
 
-  it("点击筛选 chip 切换 aria-pressed，再次点击恢复全部", async () => {
+  it("clicking a filter chip toggles aria-pressed; clicking again restores All", async () => {
     mocks.listCredentials.mockResolvedValue([
       UNUSED_CRED,
       { id: "c2", name: "deploy-key", kind: "private_key", usedBy: [], createdAt: 1, updatedAt: 1 },
@@ -149,14 +149,14 @@ describe("CredentialsSidebar 状态", () => {
     expect(chip("私钥").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("加载中带 role=status 语义，而不是静默纯文本", async () => {
+  it("loading exposes role=status semantics instead of silent plain text", async () => {
     mocks.listCredentials.mockReturnValue(new Promise(() => {}));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
     expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("加载中");
   });
 
-  it("真空态 sidebar 与 panel 统一为「还没有任何凭据」", async () => {
+  it("sidebar and panel share the same empty state", async () => {
     mocks.listCredentials.mockResolvedValue([]);
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("还没有任何凭据"));
@@ -166,23 +166,23 @@ describe("CredentialsSidebar 状态", () => {
   });
 });
 
-describe("CredentialsPanel 状态", () => {
-  it("列表失败时显示错误与重试，而不是「还没有任何凭据」", async () => {
-    mocks.listCredentials.mockRejectedValue(new Error("保险库打不开"));
+describe("CredentialsPanel states", () => {
+  it("list failure shows the error with a retry, not the empty state", async () => {
+    mocks.listCredentials.mockRejectedValue(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => text().includes("凭据列表加载失败"));
     expect(text()).not.toContain("还没有任何凭据");
   });
 
-  it("重试后恢复真空态", async () => {
-    mocks.listCredentials.mockRejectedValueOnce(new Error("保险库打不开"));
+  it("retry recovers to the empty state", async () => {
+    mocks.listCredentials.mockRejectedValueOnce(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => text().includes("凭据列表加载失败"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("还没有任何凭据"));
   });
 
-  it("加载中带 role=status 语义", async () => {
+  it("loading exposes role=status semantics", async () => {
     mocks.listCredentials.mockReturnValue(new Promise(() => {}));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
@@ -190,8 +190,8 @@ describe("CredentialsPanel 状态", () => {
   });
 });
 
-describe("CredentialsPanel 凭据库状态徽标", () => {
-  it("未初始化显示「未初始化」而不是「未启用密码保护」", async () => {
+describe("CredentialsPanel vault status badges", () => {
+  it("uninitialized shows Not initialized instead of password protection off", async () => {
     mocks.vaultStatus.mockResolvedValue({
       initialized: false,
       mode: "not_init",
@@ -204,7 +204,7 @@ describe("CredentialsPanel 凭据库状态徽标", () => {
     expect(text()).not.toContain("未启用密码保护");
   });
 
-  it("空密码库显示「已启用 · 未设密码」，锁定态不出现横幅并自动静默解锁", async () => {
+  it("passwordless vault shows Enabled - no password; the locked state shows no banner and silently auto-unlocks", async () => {
     mocks.vaultStatus.mockResolvedValue({
       initialized: true,
       mode: "master",
@@ -220,7 +220,7 @@ describe("CredentialsPanel 凭据库状态徽标", () => {
     expect(mocks.unlock).toHaveBeenCalledWith("");
   });
 
-  it("主密码库锁定时显示「已锁定」徽标与解锁横幅，不自动解锁", async () => {
+  it("locked master-password vault shows the Locked badge and unlock banner without auto-unlocking", async () => {
     mocks.vaultStatus.mockResolvedValue({
       initialized: true,
       mode: "master",
@@ -235,7 +235,7 @@ describe("CredentialsPanel 凭据库状态徽标", () => {
   });
 });
 
-describe("NewCredentialModal 表单与键盘", () => {
+describe("NewCredentialModal form and keyboard", () => {
   function mountModal() {
     const onClose = vi.fn();
     const onSaved = vi.fn();
@@ -256,7 +256,7 @@ describe("NewCredentialModal 表单与键盘", () => {
     return el;
   }
 
-  it("把可见 label 关联到对应控件", () => {
+  it("visible labels are associated with their controls", () => {
     mountModal();
     const doc = mounted!.container;
     const nameLabel = [...doc.querySelectorAll("label")].find((l) => l.textContent?.trim() === "名称");
@@ -272,7 +272,7 @@ describe("NewCredentialModal 表单与键盘", () => {
     expect(valueInput!.autocomplete).toBe("off");
   });
 
-  it("打开时焦点落在名称输入框", () => {
+  it("focus lands on the name input on open", () => {
     mountModal();
     const doc = mounted!.container;
     const nameLabel = [...doc.querySelectorAll("label")].find((l) => l.textContent?.trim() === "名称");
@@ -280,7 +280,7 @@ describe("NewCredentialModal 表单与键盘", () => {
     expect(document.activeElement).toBe(nameInput);
   });
 
-  it("Escape 关闭弹层", () => {
+  it("Escape closes the modal", () => {
     const { onClose } = mountModal();
     act(() => {
       modalEl().dispatchEvent(
@@ -290,7 +290,7 @@ describe("NewCredentialModal 表单与键盘", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("Tab 在弹层内循环（焦点陷阱）", () => {
+  it("Tab cycles within the modal (focus trap)", () => {
     mountModal();
     const focusables = [
       ...modalEl().querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"),
@@ -307,7 +307,7 @@ describe("NewCredentialModal 表单与键盘", () => {
     expect(document.activeElement).toBe(first);
   });
 
-  it("role=dialog + aria-modal + 标题关联", () => {
+  it("role=dialog + aria-modal + labelled-by title", () => {
     mountModal();
     const modal = modalEl();
     expect(modal.getAttribute("role")).toBe("dialog");
@@ -318,14 +318,14 @@ describe("NewCredentialModal 表单与键盘", () => {
   });
 });
 
-describe("凭据 amber 文字语义化（源码守卫）", () => {
+describe("Credential amber text semantics (source guard)", () => {
   const files = [
     "CredentialsSidebar.tsx",
     "CredentialsPanel.tsx",
     "NewCredentialModal.tsx",
   ];
   for (const file of files) {
-    it(`${file} 不再使用低对比度 amber 文字类`, () => {
+    it(`${file} no longer uses low-contrast amber text classes`, () => {
       const src = readFileSync(`src/features/credentials/${file}`, "utf8");
       expect(src).not.toMatch(/text-amber-(400|500)\b/);
     });

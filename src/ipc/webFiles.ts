@@ -98,7 +98,7 @@ async function readStagedRef(res: Response, what: string): Promise<StagedRef> {
   const body = (await res.json()) as { data?: Partial<StagedRef> };
   const id = body.data?.id;
   const path = body.data?.path;
-  if (!id || !path) throw new Error(`${what}失败：服务端没回 id / path`);
+  if (!id || !path) throw new Error(`${what}失败：服务端未返回 id / path`);
   return { id, path };
 }
 
@@ -136,7 +136,7 @@ async function askSaveHandle(
     return { handle: await win.showSaveFilePicker({ suggestedName: name }) };
   } catch (e) {
     if (isUserCancel(e)) return "cancelled";
-    console.warn("[files] showSaveFilePicker 失败，交付阶段回落到锚点下载", e);
+    console.warn("[files] showSaveFilePicker failed during delivery; falling back to anchor download", e);
     return "unavailable";
   }
 }
@@ -224,7 +224,7 @@ export async function saveBrowserBlob(name: string, data: Blob): Promise<boolean
       return true;
     } catch (e) {
       if (isUserCancel(e)) return false;
-      console.warn("[files] showSaveFilePicker 失败，回落到锚点下载", e);
+      console.warn("[files] showSaveFilePicker failed; falling back to anchor download", e);
     }
   }
   anchorDownload(name, data);

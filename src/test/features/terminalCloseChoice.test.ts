@@ -71,14 +71,14 @@ function tabsRemaining(): AppTab[] {
   return useUi.getState().workspaces[0].panes[0].tabs;
 }
 
-describe("终端关闭偏好分派", () => {
+describe("terminal close preference dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
     setTerminalCloseAction("ask");
   });
 
-  it("ask 偏好弹出选择：转到后台 primary 在前、直接关闭 danger 在后，带记住勾选", async () => {
+  it("shows choices for ask with background primary first, close directly as danger last, and a remember checkbox", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
@@ -99,7 +99,7 @@ describe("终端关闭偏好分派", () => {
     expect(getTerminalPrefs().closeAction).toBe("ask");
   });
 
-  it("ask 弹窗选直接关闭则杀进程", async () => {
+  it("kills the process when close directly is chosen in the ask dialog", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
@@ -114,7 +114,7 @@ describe("终端关闭偏好分派", () => {
     expect(toastText()).not.toContain("已转入后台");
   });
 
-  it("ask 弹窗选直接关闭但二次确认取消则保留标签，不写偏好", async () => {
+  it("keeps the tab and does not save the preference when the second confirmation is cancelled after choosing close directly", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: true });
@@ -127,7 +127,7 @@ describe("终端关闭偏好分派", () => {
     expect(getTerminalPrefs().closeAction).toBe("ask");
   });
 
-  it("ask 弹窗取消则保留标签，无任何 IPC", async () => {
+  it("keeps the tab without any IPC when the ask dialog is cancelled", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.askChoiceRemember.mockResolvedValueOnce(null);
@@ -138,7 +138,7 @@ describe("终端关闭偏好分派", () => {
     expect(tabsRemaining()).toEqual([tab]);
   });
 
-  it("勾选「以后都按此选择」把所选写入偏好，之后不再询问", async () => {
+  it("saves the selected action when remember this choice is checked and skips future prompts", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: true });
@@ -157,7 +157,7 @@ describe("终端关闭偏好分派", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
   });
 
-  it("kill 偏好直接结束进程，不弹窗", async () => {
+  it("ends the process directly without dialogs for the kill preference", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     setTerminalCloseAction("kill");
@@ -170,7 +170,7 @@ describe("终端关闭偏好分派", () => {
     expect(tabsRemaining()).toEqual([]);
   });
 
-  it("detach 偏好直接转入后台，不弹窗", async () => {
+  it("moves to the background directly without dialogs for the detach preference", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     setTerminalCloseAction("detach");
@@ -182,7 +182,7 @@ describe("终端关闭偏好分派", () => {
     expect(toastText()).toContain("已转入后台");
   });
 
-  it("不可 detach 的类型保持现有确认分支，不受偏好影响", async () => {
+  it("keeps the existing confirmation branch for types that cannot detach regardless of preference", async () => {
     const tab = execTerminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     setTerminalCloseAction("kill");
@@ -196,15 +196,15 @@ describe("终端关闭偏好分派", () => {
   });
 });
 
-describe("批量关闭合并弹窗", () => {
+describe("consolidated batch close dialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
     setTerminalCloseAction("ask");
   });
 
-  it("多个运行中 SSH 终端只弹一次选择，不带记住勾选", async () => {
-    const files: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
+  it("shows one choice without a remember checkbox for multiple running SSH terminals", async () => {
+    const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), terminal("t3"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
 
@@ -225,8 +225,8 @@ describe("批量关闭合并弹窗", () => {
     expect(getTerminalPrefs().closeAction).toBe("ask");
   });
 
-  it("批量弹窗取消：终端保留，非终端标签照常关闭，不算失败", async () => {
-    const files: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
+  it("keeps terminals, closes non-terminal tabs normally, and reports no failure when the batch dialog is cancelled", async () => {
+    const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce(null);
 
@@ -237,8 +237,8 @@ describe("批量关闭合并弹窗", () => {
     expect(toastText()).not.toContain("未能关闭");
   });
 
-  it("批量选直接关闭但二次确认取消：终端保留，非终端标签照常关闭", async () => {
-    const files: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
+  it("keeps terminals and closes non-terminal tabs when the second confirmation is cancelled after choosing close directly in batch", async () => {
+    const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
     mocks.ask.mockResolvedValueOnce(false);
@@ -250,9 +250,9 @@ describe("批量关闭合并弹窗", () => {
     expect(toastText()).not.toContain("未能关闭");
   });
 
-  it("批量只含非终端标签时不弹窗", async () => {
-    const f1: AppTab = { id: "f1", kind: "files", title: "文件", closable: true };
-    const f2: AppTab = { id: "f2", kind: "files", title: "文件2", closable: true };
+  it("does not show a dialog for batches containing only non-terminal tabs", async () => {
+    const f1: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
+    const f2: AppTab = { id: "f2", kind: "files", title: "Files2", closable: true };
     seed([{ id: "p", tabs: [f1, f2], activeTabId: "f1" }]);
 
     await requestCloseTabs(["f1", "f2"]);
@@ -261,7 +261,7 @@ describe("批量关闭合并弹窗", () => {
     expect(tabsRemaining()).toEqual([]);
   });
 
-  it("批量中的 blocked 终端保持各自的确认分支", async () => {
+  it("keeps separate confirmation branches for blocked terminals in a batch", async () => {
     seed([{ id: "p", tabs: [terminal("t1"), execTerminal("e1")], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
 
@@ -276,7 +276,7 @@ describe("批量关闭合并弹窗", () => {
     expect(tabsRemaining()).toEqual([]);
   });
 
-  it("kill 偏好下批量关闭不弹窗，全部直接结束", async () => {
+  it("ends all processes directly without dialogs for a kill-preference batch close", async () => {
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
     setTerminalCloseAction("kill");
 
@@ -290,14 +290,14 @@ describe("批量关闭合并弹窗", () => {
   });
 });
 
-describe("关闭按钮 tooltip 随偏好联动", () => {
+describe("close button tooltip follows preference", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setTerminalCloseAction("ask");
     seed([{ id: "p", tabs: [], activeTabId: null }]);
   });
 
-  it("ask/kill/detach 三种偏好的提示文案", () => {
+  it("shows tooltip text for ask, kill, and detach preferences", () => {
     const tab = terminal();
     expect(closeActionHint(tab)).toBe("转入后台运行或结束进程");
     expect(closeTabHint(tab)).toBe("关闭标签（转入后台运行或结束进程）");

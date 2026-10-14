@@ -12,11 +12,11 @@ describe("askChoice fallback without registered handlers", () => {
       return true;
     };
     try {
-      const result = await askChoice("要如何处理？", {
+      const result = await askChoice("How should this be handled?", {
         level: "warning",
         choices: [
-          { key: "detach", label: "后台继续运行" },
-          { key: "kill", label: "结束进程", danger: true },
+          { key: "detach", label: "Keep running in background" },
+          { key: "kill", label: "End process", danger: true },
         ],
       });
       expect(result).toBeNull();

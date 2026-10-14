@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -105,6 +107,7 @@ func (h *compactionHandler) summaryCallTimeout() time.Duration {
 }
 
 func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*schema.Message) (string, error) {
+	contextMsgs = provider.ProjectModelMessages(contextMsgs)
 	chunks := chunkMessagesForSummary(contextMsgs, h.summaryChunkPayloadBytes())
 	texts := make([]string, 0, len(chunks))
 	for index, chunk := range chunks {
@@ -401,6 +404,18 @@ func truncateContentsToBudget(messages []*schema.Message, budget int) []*schema.
 				continue
 			}
 			copied := *message
+			if message.Role == schema.Tool {
+				target := len(message.Content) - remaining
+				if target < 0 {
+					target = 0
+				}
+				if content, ok := truncateToolResultJSON(message.Content, target); ok {
+					copied.Content = content
+					remaining -= len(message.Content) - len(copied.Content)
+					result[index] = &copied
+					continue
+				}
+			}
 			keep := len(copied.Content) - remaining - len("[History Truncated]") - 1
 			if keep < 0 {
 				keep = 0
@@ -412,6 +427,65 @@ func truncateContentsToBudget(messages []*schema.Message, budget int) []*schema.
 		}
 	}
 	return result
+}
+
+func truncateToolResultJSON(content string, budget int) (string, bool) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &envelope); err != nil || envelope == nil {
+		return "", false
+	}
+	var text string
+	if raw, exists := envelope["text"]; !exists || json.Unmarshal(raw, &text) != nil {
+		return "", false
+	}
+	var modelText string
+	hasModelText := false
+	if raw, exists := envelope["modelText"]; exists {
+		if json.Unmarshal(raw, &modelText) != nil {
+			return "", false
+		}
+		hasModelText = true
+	}
+	build := func(keep int) (string, error) {
+		display, _ := prefixBytes(text, keep)
+		encodedText, err := json.Marshal(display + "\n[History Truncated]")
+		if err != nil {
+			return "", err
+		}
+		envelope["text"] = encodedText
+		if hasModelText {
+			model, _ := prefixBytes(modelText, keep)
+			encodedModelText, err := json.Marshal(model + "\n[History Truncated]")
+			if err != nil {
+				return "", err
+			}
+			envelope["modelText"] = encodedModelText
+		}
+		encoded, err := json.Marshal(envelope)
+		return string(encoded), err
+	}
+	if budget < 0 {
+		budget = 0
+	}
+	best, err := build(0)
+	if err != nil {
+		return "", false
+	}
+	low, high := 0, len(text)
+	for low <= high {
+		keep := low + (high-low)/2
+		candidate, err := build(keep)
+		if err != nil {
+			return "", false
+		}
+		if len(candidate) <= budget {
+			best = candidate
+			low = keep + 1
+		} else {
+			high = keep - 1
+		}
+	}
+	return best, true
 }
 
 func summaryText(message *schema.Message) string {

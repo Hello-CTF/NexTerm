@@ -25,8 +25,8 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
-describe("compareSummary 汇总统计", () => {
-  it("覆盖读取中/空态/有差异/全一致四种形态", () => {
+describe("compareSummary summary statistics", () => {
+  it("covers loading, empty, different, and fully synchronized states", () => {
     expect(compareSummary(null)).toBe("读取中…");
     expect(compareSummary([])).toBe("本机与云端都还没有可同步的内容");
     expect(compareSummary(ROWS)).toBe("共 4 条 · 一致 1 条 · 差异 3 条");
@@ -34,8 +34,8 @@ describe("compareSummary 汇总统计", () => {
   });
 });
 
-describe("CompareDetails 行渲染", () => {
-  it("折叠时只见汇总, 展开后逐行渲染名称/类型/状态徽章", async () => {
+describe("CompareDetails row rendering", () => {
+  it("shows only the summary when collapsed and renders names, types, and status badges after expanding", async () => {
     mounted = mount(createElement(CompareDetails, { rows: ROWS }));
     expect(text()).toContain("共 4 条 · 一致 1 条 · 差异 3 条");
     expect(text()).not.toContain("web-01");
@@ -54,7 +54,7 @@ describe("CompareDetails 行渲染", () => {
     expect(text()).toContain("凭据");
   });
 
-  it("kind 为空的行(云端不可解对象)不渲染类型标", async () => {
+  it("does not render a type badge for rows with an empty kind (undecryptable cloud objects)", async () => {
     mounted = mount(createElement(CompareDetails, { rows: ROWS }));
     clickButton(mounted.container, "对比详情");
     await flush();
@@ -71,7 +71,7 @@ describe("CompareDetails 行渲染", () => {
     expect(normal.querySelectorAll("span").length).toBe(3);
   });
 
-  it("行徽章附带判定说明(title)", async () => {
+  it("includes the decision explanation in row badge titles", async () => {
     mounted = mount(createElement(CompareDetails, { rows: ROWS }));
     clickButton(mounted.container, "对比详情");
     await flush();
@@ -81,7 +81,7 @@ describe("CompareDetails 行渲染", () => {
     expect(row?.title).toContain("密钥不匹配");
   });
 
-  it("rows 为 null 显示读取占位, error 时隐藏占位", async () => {
+  it("shows a loading placeholder for null rows and hides it on error", async () => {
     mounted = mount(createElement(CompareDetails, { rows: null }));
     expect(text()).toContain("读取中…");
     clickButton(mounted.container, "对比详情");
@@ -95,7 +95,7 @@ describe("CompareDetails 行渲染", () => {
     expect(text()).not.toContain("正在读取本机与云端数据…");
   });
 
-  it("空行数组展开后显示空态文案", async () => {
+  it("shows the empty-state message after expanding an empty row array", async () => {
     mounted = mount(createElement(CompareDetails, { rows: [] }));
     clickButton(mounted.container, "对比详情");
     await flush();

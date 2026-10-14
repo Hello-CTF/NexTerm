@@ -23,7 +23,7 @@ describe("resyncSessions", () => {
     useUi.setState({ sessions: [], toasts: [], sessionResyncFailed: false });
   });
 
-  it("用服务端权威列表替换本地 sessions", async () => {
+  it("replaces local sessions with the authoritative server list", async () => {
     const authoritative = [session("s1", "failed"), session("s2", "connected")];
     vi.mocked(sessionApi.list).mockResolvedValue(authoritative);
     useUi.setState({ sessions: [session("stale", "connected")] });
@@ -33,7 +33,7 @@ describe("resyncSessions", () => {
     expect(useUi.getState().sessions).toEqual(authoritative);
   });
 
-  it("拉取失败时保留现有 sessions", async () => {
+  it("preserves existing sessions when fetching fails", async () => {
     vi.mocked(sessionApi.list).mockRejectedValue(new Error("down"));
     const existing = [session("keep", "reconnecting")];
     useUi.setState({ sessions: existing });
@@ -43,7 +43,7 @@ describe("resyncSessions", () => {
     expect(useUi.getState().sessions).toEqual(existing);
   });
 
-  it("拉取失败时给出错误 toast 反馈", async () => {
+  it("shows an error toast when fetching fails", async () => {
     vi.mocked(sessionApi.list).mockRejectedValue(new Error("down"));
 
     await useUi.getState().resyncSessions();
@@ -55,7 +55,7 @@ describe("resyncSessions", () => {
     expect(toasts[0].text).toContain("down");
   });
 
-  it("连续失败只提示一次，不重复弹 toast", async () => {
+  it("shows only one toast for consecutive failures", async () => {
     vi.mocked(sessionApi.list).mockRejectedValue(new Error("down"));
 
     await useUi.getState().resyncSessions();
@@ -65,7 +65,7 @@ describe("resyncSessions", () => {
     expect(useUi.getState().toasts).toHaveLength(1);
   });
 
-  it("恢复成功后再次失败会重新提示", async () => {
+  it("shows a new toast when a failure follows a successful recovery", async () => {
     vi.mocked(sessionApi.list).mockRejectedValueOnce(new Error("down"));
     await useUi.getState().resyncSessions();
     const firstId = useUi.getState().toasts[0]?.id;

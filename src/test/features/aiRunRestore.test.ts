@@ -195,7 +195,7 @@ describe("run journal replay", () => {
     { type: "delta", seq: 2, text: "先看一下" },
     { type: "toolCall", seq: 3, id: "call-1", name: "exec_commands", display: "$ ls", args: {} },
     { type: "toolResult", seq: 4, id: "call-1", ok: true, summary: "ok", text: "file", truncated: false, exitCode: 0 },
-    { type: "questionRequired", seq: 5, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-1", requestId: "req-1", attempt: 1 },
+    { type: "questionRequired", seq: 5, id: "ask-1", question: { question: "Continue?", options: ["Continue"] }, confirmationNonce: "nonce-1", requestId: "req-1", attempt: 1 },
   ];
 
   it("rebuilds the transcript and keeps the pending question answerable", () => {
@@ -221,7 +221,7 @@ describe("run journal replay", () => {
     for (const event of journal) stream.pushEvent(7, event);
     stream.flush();
     expect(stream.getState().items.filter((item) => item.role === "tool")).toHaveLength(1);
-    stream.pushEvent(7, { type: "done", seq: 6, answer: "完成了", turns: 1, tokensIn: 3, tokensOut: 5 });
+    stream.pushEvent(7, { type: "done", seq: 6, answer: "Done", turns: 1, tokensIn: 3, tokensOut: 5 });
     const state = stream.getState();
     expect(state.attempts[0]?.outcome).toBe("done");
     expect(state.items.filter((item) => item.role === "outcome")).toHaveLength(1);
@@ -233,7 +233,7 @@ describe("run journal replay", () => {
     stream.beginRun(7, "chat");
     stream.bindJob(7, "job-1");
     for (const event of journal) stream.pushEvent(7, event);
-    stream.pushEvent(7, { type: "error", seq: 6, message: "AI 任务因应用重启而中断", retryable: true });
+    stream.pushEvent(7, { type: "error", seq: 6, message: "AI task interrupted by application restart", retryable: true });
     const state = stream.getState();
     expect(state.attempts[0]?.outcome).toBe("error");
     expect(pendingInteraction(state, 7, "question")).toBeNull();

@@ -268,10 +268,10 @@ func (s *Service) audit(ctx context.Context, sessionID, operation, remote, point
 
 func validateCreate(platform string, args CreateArgs) error {
 	if strings.TrimSpace(args.RemotePath) == "" {
-		return errors.New("remotePath 不能为空")
+		return errors.New("远端路径不能为空")
 	}
 	if strings.TrimSpace(args.LocalPoint) == "" {
-		return errors.New("localPoint 不能为空")
+		return errors.New("挂载点不能为空")
 	}
 	if strings.ContainsRune(args.RemotePath, 0) || strings.ContainsRune(args.LocalPoint, 0) {
 		return errors.New("挂载路径不能包含 NUL 字符")
@@ -303,7 +303,7 @@ func validateCreate(platform string, args CreateArgs) error {
 		}
 		if strings.Contains(args.RemotePath[:colon], "@") {
 			if args.Username != "" {
-				return errors.New("remotePath 已包含用户名，请勿重复提供 username")
+				return errors.New("远端路径已包含用户名，请勿重复填写用户名")
 			}
 		} else if args.Username != "" {
 			if err := validateSSHUsername(args.Username); err != nil {
@@ -316,7 +316,7 @@ func validateCreate(platform string, args CreateArgs) error {
 
 func validateRemove(platform string, args RemoveArgs) error {
 	if strings.TrimSpace(args.LocalPoint) == "" {
-		return errors.New("localPoint 不能为空")
+		return errors.New("挂载点不能为空")
 	}
 	if strings.ContainsRune(args.LocalPoint, 0) {
 		return errors.New("挂载路径不能包含 NUL 字符")

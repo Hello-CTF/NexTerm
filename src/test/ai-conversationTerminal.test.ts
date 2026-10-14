@@ -16,7 +16,7 @@ describe("MaxIterations terminal outcome", () => {
     const state = beginRun(createConversation(), 1);
     const result = applyAiEvent(state, 1, {
       type: "error",
-      message: "AI 任务达到最大迭代次数（24），已终止",
+      message: "AI task reached the maximum iteration count (24) and was stopped",
       retryable: false,
       maxIterations: true,
     });
@@ -26,18 +26,18 @@ describe("MaxIterations terminal outcome", () => {
       outcome: "error",
       retryable: false,
       maxIterations: true,
-      text: "AI 任务达到最大迭代次数（24），已终止",
+      text: "AI task reached the maximum iteration count (24) and was stopped",
     });
   });
 
   it("does not mark plain errors as maxIterations", () => {
     const state = beginRun(createConversation(), 1);
-    const retryable = applyAiEvent(state, 1, { type: "error", message: "网络中断", retryable: true });
+    const retryable = applyAiEvent(state, 1, { type: "error", message: "Network interrupted", retryable: true });
     expect(outcomeOf(retryable.state)).toMatchObject({ outcome: "error", retryable: true });
     expect(outcomeOf(retryable.state)?.maxIterations).toBeUndefined();
     const fatal = applyAiEvent(beginRun(createConversation(), 1), 1, {
       type: "error",
-      message: "鉴权失败",
+      message: "Authentication failed",
       retryable: false,
     });
     expect(outcomeOf(fatal.state)?.maxIterations).toBeUndefined();
@@ -60,7 +60,7 @@ describe("MaxIterations terminal outcome", () => {
     }).state;
     const result = applyAiEvent(state, 1, {
       type: "error",
-      message: "AI 任务达到最大迭代次数（2），已终止",
+      message: "AI task reached the maximum iteration count (2) and was stopped",
       retryable: false,
       maxIterations: true,
     });

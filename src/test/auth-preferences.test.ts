@@ -94,7 +94,7 @@ afterEach(() => {
 });
 
 describe("mergeWithDefaults", () => {
-  it("账号覆盖优先于设备本地值,缺省回退到安全默认", () => {
+  it("prioritizes account overrides over device-local values and falls back to safe defaults", () => {
     const defaults = { osc52: false, fontSize: 13 };
     expect(mergeWithDefaults(defaults)).toEqual({ osc52: false, fontSize: 13 });
     expect(mergeWithDefaults(defaults, { osc52: true })).toEqual({ osc52: true, fontSize: 13 });
@@ -103,13 +103,13 @@ describe("mergeWithDefaults", () => {
   });
 });
 
-describe("账号级键位覆盖(M140 扁平白名单键)", () => {
-  it("未注册后端时只有设备本地值,不冒充账号覆盖", () => {
+describe("account-level keybinding overrides (M140 flat allowlisted keys)", () => {
+  it("uses only device-local values without a registered backend and does not invent account overrides", () => {
     expect(getAccountPreferenceStore()).toBeNull();
     expect(getKeybinding("newTerminal")).toBe("Mod+t");
   });
 
-  it("注册后端后账号扁平覆盖生效,写回持久化为单个扁平键", async () => {
+  it("applies flat account overrides after registration and persists writes as individual flat keys", async () => {
     const store = memoryStore({ "keybinding.newTerminal": "Mod+Shift+t" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
@@ -119,7 +119,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     expect(store.puts).toEqual([{ "keybinding.closeTab": "Mod+Shift+w" }]);
   });
 
-  it("连续改键保留已加载的账号快照,设备本地层只含本机改过的键", async () => {
+  it("keeps the loaded account snapshot across key changes and stores only locally changed keys on the device", async () => {
     const store = memoryStore({
       "keybinding.newTerminal": "Mod+Shift+t",
       "keybinding.closeTab": "Mod+Shift+w",
@@ -141,7 +141,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     });
   });
 
-  it("改回默认值时清除账号覆盖", async () => {
+  it("clears the account override when a key is restored to its default", async () => {
     const store = memoryStore({ "keybinding.newTerminal": "Mod+Shift+t" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
@@ -152,7 +152,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     expect(store.clears).toContainEqual(["keybinding.newTerminal"]);
   });
 
-  it("resetKeybinding 清除对应账号覆盖并回默认", async () => {
+  it("clears the matching account override and restores the default in resetKeybinding", async () => {
     const store = memoryStore({ "keybinding.closeTab": "Mod+Shift+w" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("closeTab")).toBe("Mod+Shift+w"));
@@ -163,7 +163,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     expect(store.clears).toContainEqual(["keybinding.closeTab"]);
   });
 
-  it("resetAllKeybindings 清除全部账号键位覆盖并回默认", async () => {
+  it("clears all account keybinding overrides and restores defaults in resetAllKeybindings", async () => {
     const store = memoryStore({
       "keybinding.closeTab": "Mod+Shift+w",
       "keybinding.newTerminal": "Mod+Shift+t",
@@ -184,7 +184,7 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
     ]);
   });
 
-  it("设备本地值与账号覆盖并存时账号优先", async () => {
+  it("prioritizes account overrides when both device-local values and account overrides exist", async () => {
     window.localStorage.setItem("nexterm.keybindings.v1", JSON.stringify({ newTerminal: "Mod+y" }));
     loadKeybindings();
     expect(getKeybinding("newTerminal")).toBe("Mod+y");
@@ -195,8 +195,8 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
   });
 });
 
-describe("账号主题偏好", () => {
-  it("账号覆盖生效但不改本机值，注销后恢复本机主题", async () => {
+describe("account theme preferences", () => {
+  it("applies account overrides without changing the device value and restores the device theme after unregistering", async () => {
     const theme = await import("../app/theme");
     theme.setThemeMode("system");
     const store = memoryStore({ "appearance.themeMode": "light" });
@@ -208,7 +208,7 @@ describe("账号主题偏好", () => {
     expect(theme.getThemeMode()).toBe("system");
   });
 
-  it("本机切换主题写回账号", async () => {
+  it("writes local theme changes back to the account", async () => {
     const store = memoryStore({});
     registerAccountPreferenceStore(store);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -220,15 +220,15 @@ describe("账号主题偏好", () => {
   });
 });
 
-describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本地 < 账号覆盖)", () => {
-  it("仅有服务端默认时生效,未声明的键仍回内置默认", async () => {
+describe("server global defaults in the keybinding snapshot (built-in < server < local < account)", () => {
+  it("applies server defaults when present and keeps built-in defaults for undeclared keys", async () => {
     const store = memoryStore({}, { "keybinding.newTerminal": "Mod+Shift+t" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
     expect(getKeybinding("closeTab")).toBe("Mod+w");
   });
 
-  it("服务端默认 < 设备本地 < 账号覆盖 逐层优先", async () => {
+  it("prioritizes server defaults, device-local values, and account overrides in ascending order", async () => {
     window.localStorage.setItem(
       "nexterm.keybindings.v1",
       JSON.stringify({ newTerminal: "Mod+y", quickConnect: "Mod+Shift+j" }),
@@ -247,7 +247,7 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
     expect(getKeybinding("toggleSplit")).toBe("Mod+\\");
   });
 
-  it("resetKeybinding 清账号覆盖后落到服务端默认而不是内置默认", async () => {
+  it("falls back to the server default rather than the built-in default after resetKeybinding", async () => {
     const store = memoryStore(
       { "keybinding.newTerminal": "Mod+Shift+t" },
       { "keybinding.newTerminal": "Mod+Shift+g" },
@@ -260,7 +260,7 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
     expect(store.clears).toContainEqual(["keybinding.newTerminal"]);
   });
 
-  it("resetAllKeybindings 清本地与账号覆盖,保留服务端默认层", async () => {
+  it("clears local and account overrides in resetAllKeybindings while preserving server defaults", async () => {
     const store = memoryStore(
       { "keybinding.closeTab": "Mod+Shift+w" },
       { "keybinding.closeTab": "Mod+Shift+c", "keybinding.newTerminal": "Mod+Shift+g" },
@@ -276,7 +276,7 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
     expect(store.clears.flat().sort()).toEqual(["keybinding.closeTab", "keybinding.quickConnect"]);
   });
 
-  it("reclaimTakeover 走服务端默认与账号覆盖(线上白名单键)", async () => {
+  it("uses server defaults and account overrides for reclaimTakeover (production allowlisted key)", async () => {
     const store = memoryStore(
       { "keybinding.reclaimTakeover": "Mod+Shift+y" },
       { "keybinding.commandPalette": "Mod+Shift+p" },
@@ -291,8 +291,8 @@ describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本
   });
 });
 
-describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
-  it("注册后按真实形状加载 defaults/overrides 并重建快照(继承超管全局默认)", async () => {
+describe("production path: flat HTTP preference-store contract", () => {
+  it("loads defaults/overrides in their real shape after registration and rebuilds the snapshot with inherited superadmin defaults", async () => {
     prefsMocks.get.mockResolvedValue({
       defaults: { "appearance.terminalFontSize": 16, "input.selectionAutoCopy": true },
       overrides: { "keybinding.newTerminal": "Mod+Shift+t", "appearance.terminalTheme": "light" },
@@ -312,7 +312,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
   });
 
-  it("写回与清除走线上扁平键,reset 后回默认", async () => {
+  it("writes and clears flat production keys and falls back to defaults after reset", async () => {
     prefsMocks.get.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
     prefsMocks.put.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
 
@@ -336,7 +336,7 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
     expect(getAppearancePrefs().terminalTheme).toBe("dark");
   });
 
-  it("账号切换时旧账号晚到的响应不覆盖新状态(代次保护)", async () => {
+  it("does not overwrite new state with a late response from the previous account (generation guard)", async () => {
     let resolveA: ((view: AccountPreferenceView) => void) | undefined;
     const storeA: AccountPreferenceStore = {
       getView: () => new Promise((resolve) => {
@@ -358,8 +358,8 @@ describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
   });
 });
 
-describe("auth store 偏好存储生命周期", () => {
-  it("register 后注册偏好存储,logout 注销", async () => {
+describe("auth store preference-store lifecycle", () => {
+  it("registers the preference store after register and unregisters it on logout", async () => {
     const { useAuth } = await import("../features/auth/store");
     authApiMocks.register.mockResolvedValue({ user: DEMO_USER });
     authApiMocks.logout.mockResolvedValue({ ok: true });
@@ -373,7 +373,7 @@ describe("auth store 偏好存储生命周期", () => {
     expect(useAuth.getState().user).toBeNull();
   }, 30000);
 
-  it("401 会话过期时注销偏好存储", async () => {
+  it("unregisters the preference store when the session expires with 401", async () => {
     const { useAuth } = await import("../features/auth/store");
     const { SESSION_EXPIRED_EVENT } = await import("../ipc/authApi");
     useAuth.setState({ user: DEMO_USER, dek: null, gate: "ready", pendingRecoveryKey: null, error: null });

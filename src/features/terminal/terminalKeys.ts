@@ -31,7 +31,7 @@ export const TERMINAL_KEY_CATALOG: TerminalKeySpec[] = [
   { id: "ctrl-k", label: "^K", title: "Ctrl+K（删除到行尾）", data: "\x0b" },
   { id: "ctrl-l", label: "^L", title: "Ctrl+L（清屏）", data: "\x0c" },
   { id: "ctrl-r", label: "^R", title: "Ctrl+R（历史搜索）", data: "\x12" },
-  { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除整行）", data: "\x15" },
+  { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除到行首）", data: "\x15" },
   { id: "ctrl-w", label: "^W", title: "Ctrl+W（删除前一个词）", data: "\x17" },
 ];
 

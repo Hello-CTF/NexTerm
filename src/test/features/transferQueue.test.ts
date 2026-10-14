@@ -22,29 +22,29 @@ function entry(name: string, kind = "file"): FileEntryDto {
   };
 }
 
-describe("uniqueRemoteName（保留两者自动重命名）", () => {
-  it("在扩展名前插入序号", () => {
+describe("uniqueRemoteName (automatic keep-both renaming)", () => {
+  it("inserts a sequence number before the extension", () => {
     expect(uniqueRemoteName("a.txt", new Set(["a.txt"]))).toBe("a (1).txt");
     expect(uniqueRemoteName("a.tar.gz", new Set(["a.tar.gz"]))).toBe("a.tar (1).gz");
   });
 
-  it("无扩展名与点文件追加序号", () => {
+  it("appends a sequence number to extensionless names and dotfiles", () => {
     expect(uniqueRemoteName("README", new Set(["README"]))).toBe("README (1)");
     expect(uniqueRemoteName(".env", new Set([".env"]))).toBe(".env (1)");
   });
 
-  it("序号被占用则继续递增", () => {
+  it("continues incrementing when sequence numbers are taken", () => {
     const taken = new Set(["a.txt", "a (1).txt", "a (2).txt"]);
     expect(uniqueRemoteName("a.txt", taken)).toBe("a (3).txt");
   });
 
-  it("无冲突时原名可用（调用方保证只在冲突时调用）", () => {
+  it("handles names without conflicts (callers guarantee invocation only on conflicts)", () => {
     expect(uniqueRemoteName("b.txt", new Set(["a.txt"]))).toBe("b (1).txt");
   });
 });
 
 describe("findConflict", () => {
-  it("按名称找同名项，找不到返回 undefined", () => {
+  it("finds same-named entries and returns undefined when absent", () => {
     const siblings = [entry("a.txt"), entry("sub", "dir")];
     expect(findConflict("a.txt", siblings)?.name).toBe("a.txt");
     expect(findConflict("sub", siblings)?.kind).toBe("dir");
@@ -52,7 +52,7 @@ describe("findConflict", () => {
   });
 });
 
-describe("conflictCaseInsensitive（大小写不敏感目标判定）", () => {
+describe("conflictCaseInsensitive (case-insensitive target detection)", () => {
   beforeEach(() => {
     setWindowsPlatform(false);
     setMacPlatform(false);
@@ -63,11 +63,11 @@ describe("conflictCaseInsensitive（大小写不敏感目标判定）", () => {
     setMacPlatform(false);
   });
 
-  it("winrm 会话始终折叠大小写（NTFS 语义）", () => {
+  it("always folds case for winrm sessions (NTFS semantics)", () => {
     expect(conflictCaseInsensitive("winrm")).toBe(true);
   });
 
-  it("ssh/docker/device 会话保持大小写敏感，不受桌面系统影响", () => {
+  it("keeps ssh/docker/device sessions case-sensitive regardless of the desktop OS", () => {
     setWindowsPlatform(true);
     setMacPlatform(true);
     expect(conflictCaseInsensitive("ssh")).toBe(false);
@@ -75,7 +75,7 @@ describe("conflictCaseInsensitive（大小写不敏感目标判定）", () => {
     expect(conflictCaseInsensitive("device")).toBe(false);
   });
 
-  it("local 会话跟随桌面系统：Windows 或 macOS 折叠，其余不折叠", () => {
+  it("follows the desktop OS for local sessions: fold on Windows or macOS, but not elsewhere", () => {
     expect(conflictCaseInsensitive("local")).toBe(false);
     setWindowsPlatform(true);
     expect(conflictCaseInsensitive("local")).toBe(true);
@@ -85,8 +85,8 @@ describe("conflictCaseInsensitive（大小写不敏感目标判定）", () => {
   });
 });
 
-describe("按会话类型匹配冲突", () => {
-  it("winrm：仅大小写不同的名称算冲突", () => {
+describe("conflict matching by session type", () => {
+  it("treats names differing only by case as conflicts for winrm", () => {
     const ci = conflictCaseInsensitive("winrm");
     const siblings = [entry("a.txt"), entry("Sub", "dir")];
     expect(findConflict("A.txt", siblings, ci)?.name).toBe("a.txt");
@@ -94,14 +94,14 @@ describe("按会话类型匹配冲突", () => {
     expect(findConflict("b.txt", siblings, ci)).toBeUndefined();
   });
 
-  it("ssh：仅大小写不同的名称不算冲突", () => {
+  it("does not treat names differing only by case as conflicts for ssh", () => {
     const ci = conflictCaseInsensitive("ssh");
     expect(findConflict("A.txt", [entry("a.txt")], ci)).toBeUndefined();
   });
 });
 
-describe("大小写不敏感目标上的保留两者重命名", () => {
-  it("takenNames 按目标折叠写入与查询", () => {
+describe("keep-both renaming on case-insensitive targets", () => {
+  it("folds takenNames writes and lookups for the target", () => {
     const folded = takenNames(["ReadMe.md"], true);
     expect(folded.has("readme.md")).toBe(true);
     folded.add("NEW.txt");
@@ -111,14 +111,14 @@ describe("大小写不敏感目标上的保留两者重命名", () => {
     expect(exact.has("ReadMe.md")).toBe(true);
   });
 
-  it("生成的名字永不与现有项仅大小写不同地撞名", () => {
+  it("never generates a name that collides with an existing entry only by case", () => {
     const taken = takenNames(["A.TXT", "a (1).txt"], true);
     expect(uniqueRemoteName("a.txt", taken)).toBe("a (2).txt");
     taken.add("a (2).txt");
     expect(uniqueRemoteName("a.txt", taken)).toBe("a (3).txt");
   });
 
-  it("大小写敏感目标保持原语义", () => {
+  it("preserves case-sensitive target semantics", () => {
     const taken = takenNames(["a.txt"], false);
     expect(uniqueRemoteName("A.TXT", taken)).toBe("A (1).TXT");
   });

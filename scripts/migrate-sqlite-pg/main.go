@@ -16,9 +16,9 @@ import (
 )
 
 func main() {
-	sqlitePath := flag.String("sqlite", "", "SQLite 数据库文件路径")
+	sqlitePath := flag.String("sqlite", "", "SQLite database file path")
 	pgDSN := flag.String("pg-dsn", "", "PostgreSQL DSN")
-	dryRun := flag.Bool("dry-run", false, "只统计不写入")
+	dryRun := flag.Bool("dry-run", false, "count rows only; do not write")
 	flag.Parse()
 	if *sqlitePath == "" || *pgDSN == "" {
 		fmt.Fprintln(os.Stderr, "usage: migrate-sqlite-pg --sqlite PATH --pg-dsn DSN [--dry-run]")

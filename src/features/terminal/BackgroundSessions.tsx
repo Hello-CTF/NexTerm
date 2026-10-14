@@ -194,7 +194,7 @@ export function BackgroundSessions({
             <tr>
               <th style={{ width: 190 }}>所属会话</th>
               <th style={{ width: 130 }}>终端</th>
-              <th>最近输出</th>
+              <th>最近输出时间</th>
               <th style={{ width: 208 }} />
             </tr>
           </thead>

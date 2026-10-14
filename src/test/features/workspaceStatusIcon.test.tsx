@@ -85,7 +85,7 @@ beforeEach(() => {
           {
             id: "p1",
             activeTabId: "t1",
-            tabs: [{ id: "t1", kind: "settings", title: "设置", closable: true }],
+            tabs: [{ id: "t1", kind: "settings", title: "Settings", closable: true }],
           },
         ],
         activePaneId: "p1",

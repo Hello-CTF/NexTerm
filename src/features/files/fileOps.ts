@@ -16,7 +16,7 @@ export function parseOctalMode(input: string): ParsedMode {
   if (!/^[0-7]{1,4}$/.test(text))
     return { ok: false, reason: "权限只能是 0-7 的八进制数字（最多 4 位）" };
   const mode = parseInt(text, 8);
-  if (mode > 0o777) return { ok: false, reason: "权限超出范围（最大 777）" };
+  if (mode > 0o777) return { ok: false, reason: "权限超出范围（最大为八进制 777）" };
   return { ok: true, mode };
 }
 

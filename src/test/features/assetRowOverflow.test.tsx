@@ -63,7 +63,7 @@ import { useUi } from "../../app/store";
 const GROUP = {
   id: "g1",
   parentId: null,
-  name: "生产",
+  name: "production",
   sort: 0,
   createdAt: 1,
   updatedAt: 1,
@@ -93,7 +93,7 @@ const WEB = {
 const LOCAL = {
   ...WEB,
   id: "a2",
-  name: "本机终端",
+  name: "local terminal",
   kind: "local",
   host: "",
   port: 0,
@@ -268,9 +268,9 @@ describe("asset row actions on coarse pointers", () => {
   it("omits delete for builtin assets", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("本机终端"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("local terminal"));
 
-    openOverflow(rowByName(mounted!.container, "本机终端"));
+    openOverflow(rowByName(mounted!.container, "local terminal"));
     await flush();
     expect(menuLabels()).toEqual(["连接", "编辑", "克隆", "复制链接", "隐藏"]);
   });
@@ -309,10 +309,10 @@ describe("asset row actions on coarse pointers", () => {
   it("collapses group row actions into an overflow menu as well", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
 
     const groupRow = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
-      (r) => r.textContent?.includes("生产") && r.querySelector(".nx-count"),
+      (r) => r.textContent?.includes("production") && r.querySelector(".nx-count"),
     );
     if (!groupRow) throw new Error("group row not found");
     expect(groupRow.querySelector(".nx-row-actions")).toBeNull();

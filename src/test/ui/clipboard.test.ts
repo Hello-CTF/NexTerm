@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("copyText", () => {
-  it("writeText 成功时不走 wails 与 execCommand", async () => {
+  it("does not use wails or execCommand when writeText succeeds", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     stubClipboard(writeText);
     await copyText("hello");
@@ -63,7 +63,7 @@ describe("copyText", () => {
     expect(mocks.execCommand).not.toHaveBeenCalled();
   });
 
-  it("writeText 拒绝时桌面端走 wails SetText", async () => {
+  it("falls back to wails SetText on desktop when writeText rejects", async () => {
     mocks.env.WEB = false;
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
     await copyText("hello");
@@ -71,7 +71,7 @@ describe("copyText", () => {
     expect(mocks.execCommand).not.toHaveBeenCalled();
   });
 
-  it("剪贴板 API 缺失时桌面端直接走 wails", async () => {
+  it("uses wails directly on desktop when the clipboard API is missing", async () => {
     mocks.env.WEB = false;
     stubClipboard(undefined);
     await copyText("hello");
@@ -79,7 +79,7 @@ describe("copyText", () => {
     expect(mocks.execCommand).not.toHaveBeenCalled();
   });
 
-  it("writeText 与 wails 都失败时走 execCommand 兜底并清理临时元素", async () => {
+  it("falls back to execCommand and cleans up temporary elements when writeText and wails fail", async () => {
     mocks.env.WEB = false;
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
     mocks.setText.mockRejectedValue(new Error("wails down"));
@@ -88,14 +88,14 @@ describe("copyText", () => {
     expect(document.querySelector("textarea")).toBeNull();
   });
 
-  it("web 环境跳过 wails 直接 execCommand 兜底", async () => {
+  it("skips wails and uses execCommand on web", async () => {
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
     await copyText("hello");
     expect(mocks.setText).not.toHaveBeenCalled();
     expect(mocks.execCommand).toHaveBeenCalledWith("copy");
   });
 
-  it("全部失败时抛出首个错误", async () => {
+  it("throws the first error when all fallbacks fail", async () => {
     mocks.env.WEB = false;
     const denied = new Error("denied");
     stubClipboard(vi.fn().mockRejectedValue(denied));
@@ -104,7 +104,7 @@ describe("copyText", () => {
     await expect(copyText("hello")).rejects.toBe(denied);
   });
 
-  it("全链路不可用（execCommand 缺失）时抛错", async () => {
+  it("throws when the entire fallback chain is unavailable (execCommand missing)", async () => {
     stubClipboard(undefined);
     Object.defineProperty(document, "execCommand", {
       value: undefined,
@@ -116,7 +116,7 @@ describe("copyText", () => {
 });
 
 describe("readText", () => {
-  it("readText 可用时直接返回，不走 wails", async () => {
+  it("returns navigator readText results directly without using wails", async () => {
     const navigatorRead = vi.fn().mockResolvedValue("hello");
     stubClipboardReader(navigatorRead);
     await expect(readText()).resolves.toBe("hello");
@@ -124,28 +124,28 @@ describe("readText", () => {
     expect(mocks.text).not.toHaveBeenCalled();
   });
 
-  it("剪贴板 API 缺失时桌面端走 wails Text", async () => {
+  it("uses wails Text on desktop when the clipboard API is missing", async () => {
     mocks.env.WEB = false;
     stubClipboardReader(undefined);
     await expect(readText()).resolves.toBe("wails-text");
     expect(mocks.text).toHaveBeenCalledTimes(1);
   });
 
-  it("readText 拒绝时桌面端回退 wails Text", async () => {
+  it("falls back to wails Text on desktop when readText rejects", async () => {
     mocks.env.WEB = false;
     stubClipboardReader(vi.fn().mockRejectedValue(new Error("denied")));
     await expect(readText()).resolves.toBe("wails-text");
     expect(mocks.text).toHaveBeenCalledTimes(1);
   });
 
-  it("web 环境不走 wails，原样抛出错误", async () => {
+  it("rethrows the original error on web without using wails", async () => {
     const denied = new Error("denied");
     stubClipboardReader(vi.fn().mockRejectedValue(denied));
     await expect(readText()).rejects.toBe(denied);
     expect(mocks.text).not.toHaveBeenCalled();
   });
 
-  it("readText 与 wails 都失败时抛出首个错误", async () => {
+  it("throws the first error when readText and wails both fail", async () => {
     mocks.env.WEB = false;
     const denied = new Error("denied");
     stubClipboardReader(vi.fn().mockRejectedValue(denied));
@@ -153,7 +153,7 @@ describe("readText", () => {
     await expect(readText()).rejects.toBe(denied);
   });
 
-  it("web 环境剪贴板 API 缺失时抛错", async () => {
+  it("throws on web when the clipboard API is missing", async () => {
     stubClipboardReader(undefined);
     await expect(readText()).rejects.toThrow("剪贴板不可用");
     expect(mocks.text).not.toHaveBeenCalled();

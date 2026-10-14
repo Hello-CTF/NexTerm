@@ -11,7 +11,7 @@ function touch(type: string, x: number, y: number, target: Element, count = 1): 
   target.dispatchEvent(event);
 }
 
-describe("长按转上下文菜单", () => {
+describe("long press to context menu", () => {
   let host: HTMLDivElement | null = null;
 
   beforeAll(() => {
@@ -39,7 +39,7 @@ describe("长按转上下文菜单", () => {
     return click;
   }
 
-  it("单指按住 500ms 在起始坐标派发 contextmenu", () => {
+  it("dispatches contextmenu at the initial coordinates after a 500ms single-touch hold", () => {
     const { el, menus } = mount();
     touch("touchstart", 100, 200, el);
     vi.advanceTimersByTime(499);
@@ -52,7 +52,7 @@ describe("长按转上下文菜单", () => {
     dispatchClick(el);
   });
 
-  it("500ms 前抬手不派发", () => {
+  it("does not dispatch when released before 500ms", () => {
     const { el, menus } = mount();
     touch("touchstart", 100, 200, el);
     vi.advanceTimersByTime(300);
@@ -61,7 +61,7 @@ describe("长按转上下文菜单", () => {
     expect(menus).toHaveLength(0);
   });
 
-  it("移动超过 12px 取消, 容差内仍触发", () => {
+  it("cancels after movement beyond 12px but still triggers within tolerance", () => {
     const { el, menus } = mount();
     touch("touchstart", 100, 200, el);
     touch("touchmove", 113, 200, el);
@@ -75,14 +75,14 @@ describe("长按转上下文菜单", () => {
     dispatchClick(el);
   });
 
-  it("多指触摸不启动长按计时", () => {
+  it("does not start the long-press timer for multi-touch", () => {
     const { el, menus } = mount();
     touch("touchstart", 100, 200, el, 2);
     vi.advanceTimersByTime(1000);
     expect(menus).toHaveLength(0);
   });
 
-  it("xterm 区域长按不抢占自带的文本选择", () => {
+  it("does not override xterm's built-in text selection on long press", () => {
     const { el, menus } = mount();
     const term = document.createElement("div");
     term.className = "xterm";
@@ -94,7 +94,7 @@ describe("长按转上下文菜单", () => {
     expect(menus).toHaveLength(0);
   });
 
-  it("菜单弹出后吞掉抬手的那次 click", () => {
+  it("swallows the release click after opening the menu", () => {
     const { el, menus } = mount();
     const clicks: MouseEvent[] = [];
     el.addEventListener("click", (event) => clicks.push(event as MouseEvent));
@@ -106,7 +106,7 @@ describe("长按转上下文菜单", () => {
     expect(click.defaultPrevented).toBe(true);
   });
 
-  it("未弹出菜单时 click 正常通过", () => {
+  it("allows click through when no menu opens", () => {
     const { el } = mount();
     const clicks: MouseEvent[] = [];
     el.addEventListener("click", (event) => clicks.push(event as MouseEvent));
@@ -115,7 +115,7 @@ describe("长按转上下文菜单", () => {
     expect(click.defaultPrevented).toBe(false);
   });
 
-  it("计时到期前元素脱离文档不派发", () => {
+  it("does not dispatch if the element leaves the document before the timer expires", () => {
     const { el, menus } = mount();
     touch("touchstart", 100, 200, el);
     el.remove();

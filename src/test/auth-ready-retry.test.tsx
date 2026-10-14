@@ -237,8 +237,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
-  it("gate 进 ready 后资产树(含分组)/凭据/片段/凭据库状态全部恢复, toast 不做全清", async () => {
+describe("data refetch after successful auth=on login (real AssetTree)", () => {
+  it("restores the asset tree, groups, credentials, snippets, and vault state after the gate becomes ready without clearing every toast", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     // Before login: asset tree sits in the 401 error state, status bar vault unavailable
@@ -277,7 +277,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(toasts.some((t) => t.kind === "info")).toBe(true);
   });
 
-  it("登出清空账号级缓存与会话/凭据库状态, 重新登录再次取到数据", async () => {
+  it("clears account-scoped caches and session/vault state on logout and refetches them after another login", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     authed = true;
@@ -299,7 +299,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(text()).toContain("生产");
   });
 
-  it("登出后迟到的旧账号会话列表与凭据库状态不得回写", async () => {
+  it("does not write back late session-list or vault responses from the old account after logout", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     authed = true;
@@ -344,7 +344,7 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
     expect(vaultStatusText()).not.toContain("凭据库已解锁");
   });
 
-  it("登录前发出的在途请求迟到后不得污染新会话(资产查询与凭据库状态)", async () => {
+  it("does not let in-flight pre-login requests pollute the new session (asset queries and vault state)", async () => {
     const staleAssets = deferred<never>();
     const staleVault = deferred<never>();
     mocks.assetList.mockImplementation(() => (authed ? Promise.resolve([ASSET]) : staleAssets.promise));
@@ -379,8 +379,8 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree)", () => {
   });
 });
 
-describe("toast 生命周期", () => {
-  it("error 8s / info 3.5s 自动消失, 无需上下文清理兜底", async () => {
+describe("toast lifecycle", () => {
+  it("expires errors after 8s and info toasts after 3.5s without context-cleanup fallbacks", async () => {
     vi.useFakeTimers();
     try {
       useUi.getState().pushToast("error", "布局同步失败：访问令牌无效或缺失");

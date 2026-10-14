@@ -185,7 +185,7 @@ describe("shortcuts editor", () => {
     expect(after?.checked).toBe(true);
   });
 
-  it("选中自动复制已开启时高级设置仍默认折叠,手动展开后可见", () => {
+  it("keeps advanced settings collapsed by default when auto-copy is enabled and reveals them on manual expansion", () => {
     mounted?.unmount();
     act(() => setSelectionAutoCopy(true));
     mounted = mount(createElement(ShortcutsCard));
@@ -204,7 +204,7 @@ describe("shortcuts editor", () => {
     expect(checkbox?.checked).toBe(true);
   });
 
-  it("手动折叠后外部写入不再强行展开", () => {
+  it("does not force advanced settings open after external writes following a manual collapse", () => {
     const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
       (b) => b.textContent?.trim() === "高级设置",
     );

@@ -37,7 +37,7 @@ func TestCountUsersAndListUsers(t *testing.T) {
 		t.Fatalf("list order=%s,%s", users[0].Username, users[1].Username)
 	}
 	if users[0].PasswordHash() == "" {
-		t.Fatal("ListUsers 必须返回完整账号记录")
+		t.Fatal("ListUsers must return complete account records")
 	}
 }
 
@@ -74,7 +74,7 @@ func TestSetUserDisabledRevokesSessions(t *testing.T) {
 		t.Fatalf("re-enabled login: %v", err)
 	}
 	if _, err := a.ValidateSession(ctx, token); err == nil {
-		t.Fatal("吊销的会话不得因恢复账号而复活")
+		t.Fatal("revoked sessions must not be revived when the account is re-enabled")
 	}
 
 	if err := a.SetUserDisabled(ctx, "missing", true); err == nil || ipc.NormalizeError(err).Code != ipc.CodeNotFound {
@@ -169,12 +169,12 @@ func TestCreateUserWithEnvelopesAtomic(t *testing.T) {
 	a, _ := testAccounts(t)
 	failDEKInsertTrigger(t, a)
 	if _, err := a.CreateUserWithEnvelopes(ctx, "alice", "", "password-1", testEnvelopes(t)); err == nil {
-		t.Fatal("信封写入失败必须让创建失败")
+		t.Fatal("envelope write failure must fail user creation")
 	}
 	dropFailDEKInsertTrigger(t, a)
 	count, err := a.CountUsers(ctx)
 	if err != nil || count != 0 {
-		t.Fatalf("失败不得留下部分账号: count=%d err=%v", count, err)
+		t.Fatalf("failure must not leave a partial account: count=%d err=%v", count, err)
 	}
 	user, err := a.CreateUserWithEnvelopes(ctx, "alice", "", "password-1", testEnvelopes(t))
 	if err != nil {
@@ -182,7 +182,7 @@ func TestCreateUserWithEnvelopesAtomic(t *testing.T) {
 	}
 	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
 	if err != nil || len(stored.DEKEnvelope) == 0 {
-		t.Fatalf("信封未随账号写入: %v", err)
+		t.Fatalf("envelope was not written with the account: %v", err)
 	}
 }
 
@@ -195,22 +195,22 @@ func TestInitSuperadminWithEnvelopesAtomic(t *testing.T) {
 	}
 	failDEKInsertTrigger(t, a)
 	if _, err := a.InitSuperadminWithEnvelopes(ctx, code, "root", "password-1", testEnvelopes(t)); err == nil {
-		t.Fatal("信封写入失败必须让初始化失败")
+		t.Fatal("envelope write failure must fail initialization")
 	}
 	dropFailDEKInsertTrigger(t, a)
 	count, err := a.CountUsers(ctx)
 	if err != nil || count != 0 {
-		t.Fatalf("失败不得留下部分账号: count=%d err=%v", count, err)
+		t.Fatalf("failure must not leave a partial account: count=%d err=%v", count, err)
 	}
 	user, err := a.InitSuperadminWithEnvelopes(ctx, code, "root", "password-1", testEnvelopes(t))
 	if err != nil {
-		t.Fatalf("初始化码必须保持未消费: %v", err)
+		t.Fatalf("initialization code must remain unconsumed: %v", err)
 	}
 	if user.Role != RoleSuperadmin {
 		t.Fatalf("role=%s", user.Role)
 	}
 	if _, err := a.InitSuperadminWithEnvelopes(ctx, code, "root2", "password-2", testEnvelopes(t)); err == nil {
-		t.Fatal("初始化码一次性语义被破坏")
+		t.Fatal("initialization code one-time semantics were violated")
 	}
 }
 
@@ -226,14 +226,14 @@ func TestInsertUserDEKEnvelopesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.InsertUserDEKEnvelopes(ctx, user.ID, second); err == nil || !errors.Is(err, ErrDEKEnvelopesExist) {
-		t.Fatalf("第二次上传必须冲突: %v", err)
+		t.Fatalf("second upload must conflict: %v", err)
 	}
 	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(stored.KDFSalt, first.KDFSalt) {
-		t.Fatal("首次上传的信封被覆盖")
+		t.Fatal("first uploaded envelope was overwritten")
 	}
 
 	done := make(chan error, 2)
@@ -249,6 +249,6 @@ func TestInsertUserDEKEnvelopesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(storedAfter.KDFSalt, first.KDFSalt) {
-		t.Fatal("并发上传覆盖了既有信封")
+		t.Fatal("concurrent upload overwrote the existing envelope")
 	}
 }

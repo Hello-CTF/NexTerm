@@ -109,8 +109,8 @@ function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
 }
 
-describe("资产表单主机/端口内联校验", () => {
-  it("主机失焦后立即报错，错误与字段程序化关联且相邻", async () => {
+describe("asset form host/port inline validation", () => {
+  it("shows an error immediately after host blur, programmatically associated with and adjacent to the field", async () => {
     mountEditor();
     await flush();
     const host = hostInput();
@@ -123,7 +123,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(host.parentElement?.contains(error)).toBe(true);
   });
 
-  it("主机空闲约 500ms 后自动校验，无需失焦", async () => {
+  it("validates the host after about 500ms idle without requiring blur", async () => {
     mountEditor();
     await flush();
     const host = hostInput();
@@ -136,7 +136,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(fieldError(host)?.textContent).toBe("主机不能包含空格");
   });
 
-  it("主机留空失焦提示必填", async () => {
+  it("reports a required host when it is empty on blur", async () => {
     mountEditor();
     await flush();
     const host = hostInput();
@@ -145,7 +145,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(fieldError(host)?.textContent).toBe("请填写主机");
   });
 
-  it("修正主机后空闲 500ms 自动清除错误", async () => {
+  it("clears the host error automatically after 500ms idle once corrected", async () => {
     mountEditor();
     await flush();
     const host = hostInput();
@@ -158,7 +158,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(fieldError(host)).toBeNull();
   });
 
-  it("端口越界失焦报错，修正后失焦立即清除", async () => {
+  it("reports an out-of-range port on blur and clears the error immediately after correction", async () => {
     mountEditor();
     await flush();
     const port = portInput();
@@ -172,7 +172,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(fieldError(port)).toBeNull();
   });
 
-  it("端口非整数空闲 500ms 后报错", async () => {
+  it("reports a non-integer port after 500ms idle", async () => {
     mountEditor();
     await flush();
     const port = portInput();
@@ -182,7 +182,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(fieldError(port)?.textContent).toBe("端口需在 1-65535 之间");
   });
 
-  it("合法主机与端口不产生错误", async () => {
+  it("produces no errors for a valid host and port", async () => {
     mountEditor();
     await flush();
     const host = hostInput();
@@ -197,7 +197,7 @@ describe("资产表单主机/端口内联校验", () => {
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("320/390 窄屏下错误文本折行不溢出", async () => {
+  it("wraps error text without overflowing at 320/390 widths", async () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mountEditor();
@@ -222,7 +222,7 @@ describe("资产表单主机/端口内联校验", () => {
   });
 });
 
-describe("资产表单保存被主机/端口校验阻塞", () => {
+describe("asset form saving is blocked by host/port validation", () => {
   function saveButton(): HTMLButtonElement {
     const button = [...mounted!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "保存",
@@ -237,7 +237,7 @@ describe("资产表单保存被主机/端口校验阻塞", () => {
     setInputValue(input, name);
   }
 
-  it("主机非法时保存按钮禁用，修正后恢复", async () => {
+  it("disables save for an invalid host and re-enables it after correction", async () => {
     mountEditor();
     await flush();
     fillName("web-01");
@@ -252,7 +252,7 @@ describe("资产表单保存被主机/端口校验阻塞", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
-  it("端口越界时保存按钮禁用且不会提交", async () => {
+  it("disables save and prevents submission for an out-of-range port", async () => {
     mountEditor();
     await flush();
     fillName("web-01");
@@ -267,7 +267,7 @@ describe("资产表单保存被主机/端口校验阻塞", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
-  it("主机留空时保存按钮禁用", async () => {
+  it("disables save when the host is empty", async () => {
     mountEditor();
     await flush();
     fillName("web-01");

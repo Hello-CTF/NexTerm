@@ -191,8 +191,8 @@ afterEach(() => {
   container = null;
 });
 
-describe("XtermView 应用级快捷键放行", () => {
-  it("注册 xterm custom key handler 并放行 Mod+Shift+P / Mod+Shift+K 给 window 级 App 处理", async () => {
+describe("XtermView app-level shortcut passthrough", () => {
+  it("registers the xterm custom key handler and passes Mod+Shift+P / Mod+Shift+K to the window-level App handler", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
     expect(harness.keyHandler).not.toBeNull();
@@ -200,7 +200,7 @@ describe("XtermView 应用级快捷键放行", () => {
     expect(handledByXterm({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true })).toBe(false);
   });
 
-  it("普通输入与非应用键位仍由 xterm 处理", async () => {
+  it("leaves ordinary input and non-app shortcuts to xterm", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
     expect(handledByXterm({ key: "x", code: "KeyX" })).toBe(true);
@@ -210,7 +210,7 @@ describe("XtermView 应用级快捷键放行", () => {
     expect(handledByXterm({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
   });
 
-  it("repeat 与 IME 组合期间不放行", async () => {
+  it("does not pass through repeat events or IME composition", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
     expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, repeat: true })).toBe(true);
@@ -219,7 +219,7 @@ describe("XtermView 应用级快捷键放行", () => {
     );
   });
 
-  it("键位覆盖同步后按新绑定放行", async () => {
+  it("passes through updated bindings after keybinding overrides sync", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
     setKeybinding("commandPalette", "Mod+Shift+g");

@@ -112,7 +112,7 @@ function setTerminalWorkspace(tabId: string | null) {
                   {
                     id: "t1",
                     kind: "terminal" as const,
-                    title: "终端 1",
+                    title: "Terminal 1",
                     tabId,
                     closable: true,
                   },
@@ -143,8 +143,8 @@ beforeEach(() => {
   useAssetVisibility.setState({ hiddenIds: [], showHidden: false });
   mocks.list.mockResolvedValue([{ ...WEB }, { ...BUILD }]);
   mocks.snippetList.mockResolvedValue([
-    { id: "sn1", name: "磁盘水位", body: "df -h && du -sh /data/*", groupId: null, sort: 1 },
-    { id: "sn2", name: "多行重启", body: "systemctl restart app\nsystemctl status app", groupId: null, sort: 2 },
+    { id: "sn1", name: "disk usage", body: "df -h && du -sh /data/*", groupId: null, sort: 1 },
+    { id: "sn2", name: "multi-line restart", body: "systemctl restart app\nsystemctl status app", groupId: null, sort: 2 },
   ]);
   mocks.ask.mockResolvedValue(true);
   mocks.create.mockImplementation((args: Partial<Asset> & { kind: string; name: string }) =>
@@ -172,40 +172,40 @@ async function mountPalette(props: { onClose: () => void; onEditAsset?: (a: Asse
   await flush();
 }
 
-describe("命令面板片段条目", () => {
-  it("列出片段并插入到当前终端", async () => {
+describe("command palette snippet entries", () => {
+  it("lists snippets and inserts one into the active terminal", async () => {
     setTerminalWorkspace("kernel-1");
     const onClose = vi.fn();
     await mountPalette({ onClose });
-    expect(optionByText(mounted!.container, "插入片段 磁盘水位")).toBeTruthy();
+    expect(optionByText(mounted!.container, "插入片段 disk usage")).toBeTruthy();
 
-    setInputValue(searchInput(mounted!.container), "磁盘");
-    click(optionByText(mounted!.container, "插入片段 磁盘水位"));
+    setInputValue(searchInput(mounted!.container), "disk");
+    click(optionByText(mounted!.container, "插入片段 disk usage"));
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write).toHaveBeenCalledWith("kernel-1", new TextEncoder().encode("df -h && du -sh /data/*"));
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已插入「磁盘水位」"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已插入「disk usage」"));
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("没有活动终端时提示且不写终端", async () => {
+  it("shows a toast and does not write to a terminal when no terminal is active", async () => {
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "插入片段 磁盘水位")).toBeTruthy();
+    expect(optionByText(mounted!.container, "插入片段 disk usage")).toBeTruthy();
 
-    setInputValue(searchInput(mounted!.container), "磁盘");
-    click(optionByText(mounted!.container, "插入片段 磁盘水位"));
+    setInputValue(searchInput(mounted!.container), "disk");
+    click(optionByText(mounted!.container, "插入片段 disk usage"));
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端")));
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
-  it("含回车的片段先经安全确认，取消则不写入", async () => {
+  it("requires safety confirmation for snippets with line breaks and does not write when cancelled", async () => {
     setTerminalWorkspace("kernel-1");
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "插入片段 多行重启")).toBeTruthy();
+    expect(optionByText(mounted!.container, "插入片段 multi-line restart")).toBeTruthy();
 
-    setInputValue(searchInput(mounted!.container), "多行");
+    setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(false);
-    click(optionByText(mounted!.container, "插入片段 多行重启"));
+    click(optionByText(mounted!.container, "插入片段 multi-line restart"));
     await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("回车或换行"),
@@ -214,14 +214,14 @@ describe("命令面板片段条目", () => {
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
-  it("含回车的片段确认后按原样写入", async () => {
+  it("writes snippets with line breaks unchanged after confirmation", async () => {
     setTerminalWorkspace("kernel-1");
     await mountPalette({ onClose: vi.fn() });
-    expect(optionByText(mounted!.container, "插入片段 多行重启")).toBeTruthy();
+    expect(optionByText(mounted!.container, "插入片段 multi-line restart")).toBeTruthy();
 
-    setInputValue(searchInput(mounted!.container), "多行");
+    setInputValue(searchInput(mounted!.container), "multi-line");
     mocks.ask.mockResolvedValueOnce(true);
-    click(optionByText(mounted!.container, "插入片段 多行重启"));
+    click(optionByText(mounted!.container, "插入片段 multi-line restart"));
     await waitFor(() =>
       expect(mocks.write).toHaveBeenCalledWith(
         "kernel-1",
@@ -231,8 +231,8 @@ describe("命令面板片段条目", () => {
   });
 });
 
-describe("命令面板资产二级操作", () => {
-  it("每个可见资产都有连接/编辑/克隆/隐藏条目", async () => {
+describe("command palette asset secondary actions", () => {
+  it("provides connect, edit, clone, and hide entries for every visible asset", async () => {
     await mountPalette({ onClose: vi.fn() });
     expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
 
@@ -242,7 +242,7 @@ describe("命令面板资产二级操作", () => {
     }
   });
 
-  it("数据库不提供默认打开第一个资产的通用入口，保留逐资产连接", async () => {
+  it("does not offer a generic database action that opens the first asset and keeps per-asset connections", async () => {
     mocks.list.mockResolvedValue([
       assetOf({ id: "db", name: "db-01", kind: "postgres", host: "10.0.0.9", port: 5432 }),
     ]);
@@ -253,7 +253,7 @@ describe("命令面板资产二级操作", () => {
     expect(optionByText(mounted!.container, "连接 db-01")).toBeTruthy();
   });
 
-  it("编辑条目把资产交给现有编辑器流程", async () => {
+  it("passes the asset to the existing editor flow from the edit entry", async () => {
     const onEditAsset = vi.fn();
     await mountPalette({ onClose: vi.fn(), onEditAsset });
     expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
@@ -263,7 +263,7 @@ describe("命令面板资产二级操作", () => {
     expect(onEditAsset).toHaveBeenCalledWith(expect.objectContaining({ id: "a1", name: "web-01" }));
   });
 
-  it("克隆复用现有创建路径并共享凭据引用", async () => {
+  it("cloning reuses the existing creation flow and shares credential references", async () => {
     await mountPalette({ onClose: vi.fn() });
     expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
 
@@ -276,7 +276,7 @@ describe("命令面板资产二级操作", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("web-01 副本"));
   });
 
-  it("隐藏后该资产从面板消失且不触碰数据", async () => {
+  it("hiding removes the asset from the palette without modifying data", async () => {
     await mountPalette({ onClose: vi.fn() });
     expect(optionByText(mounted!.container, "连接 web-01")).toBeTruthy();
 
@@ -295,7 +295,7 @@ describe("命令面板资产二级操作", () => {
     ).toBe(false);
   });
 
-  it("显示隐藏时条目变为取消隐藏", async () => {
+  it("showing hidden assets changes the entry to unhide", async () => {
     useAssetVisibility.getState().hide("a1");
     useAssetVisibility.getState().setShowHidden(true);
     await mountPalette({ onClose: vi.fn() });

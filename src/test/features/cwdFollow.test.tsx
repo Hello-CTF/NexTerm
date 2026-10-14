@@ -47,7 +47,7 @@ function seedWorkspace(options: { kind?: string; tabId?: string; secondTabId?: s
   const first: AppTab = {
     id: "t1",
     kind: "terminal",
-    title: "终端 1",
+    title: "Terminal 1",
     sessionId: SID,
     tabId: options.tabId ?? "k1",
     closable: true,
@@ -57,7 +57,7 @@ function seedWorkspace(options: { kind?: string; tabId?: string; secondTabId?: s
     tabs.push({
       id: "t2",
       kind: "terminal",
-      title: "终端 2",
+      title: "Terminal 2",
       sessionId: SID,
       tabId: options.secondTabId,
       closable: true,
@@ -156,7 +156,7 @@ afterEach(() => {
 });
 
 describe("normalizeFollowTarget", () => {
-  it("去掉尾部斜杠并保留根与盘符", () => {
+  it("strips trailing slashes and preserves root and drive prefixes", () => {
     expect(normalizeFollowTarget("/srv/www/")).toBe("/srv/www");
     expect(normalizeFollowTarget("/")).toBe("/");
     expect(normalizeFollowTarget("C:\\")).toBe("C:/");
@@ -164,8 +164,8 @@ describe("normalizeFollowTarget", () => {
   });
 });
 
-describe("FileTree 跟随终端目录", () => {
-  it("默认开启：cwd 事件后文件树跳到终端目录", async () => {
+describe("FileTree terminal-directory follow", () => {
+  it("on by default: the file tree jumps to the terminal directory on cwd events", async () => {
     seedWorkspace();
     mountTree();
     await flush();
@@ -177,7 +177,7 @@ describe("FileTree 跟随终端目录", () => {
     expect(mounted!.container.textContent).toContain("srv");
   });
 
-  it("手动导航不被跟随抢回：终端重报同一 cwd 时不重复跳转", async () => {
+  it("manual navigation is not overridden: a re-reported same cwd does not jump again", async () => {
     seedWorkspace();
     mountTree();
     await flush();
@@ -196,7 +196,7 @@ describe("FileTree 跟随终端目录", () => {
     expect(listCalls().filter((p) => p === "/srv/www")).toHaveLength(callsBefore);
   });
 
-  it("关闭开关后不跟随，重新开启立即对齐到终端当前目录", async () => {
+  it("no following while toggled off; re-enabling aligns to the terminal's current directory immediately", async () => {
     seedWorkspace();
     mountTree();
     await flush();
@@ -215,7 +215,7 @@ describe("FileTree 跟随终端目录", () => {
     await waitFor(() => expect(listCalls()).toContain("/srv/www"));
   });
 
-  it("跟随失败停留当前目录，只提示一次，不影响后续跟随", async () => {
+  it("a failed follow stays on the current directory, notifies once, and does not break later follows", async () => {
     seedWorkspace();
     mocks.list.mockImplementation((_sid: string, dir: string) =>
       dir.startsWith("/bad") ? Promise.reject(new Error("permission denied")) : Promise.resolve([]),
@@ -238,7 +238,7 @@ describe("FileTree 跟随终端目录", () => {
     expect(toastTexts()).toHaveLength(1);
   });
 
-  it("忽略过期版本与无关终端的 cwd 事件", async () => {
+  it("ignores stale-version and unrelated-terminal cwd events", async () => {
     seedWorkspace({ secondTabId: "k2" });
     mountTree();
     await flush();
@@ -255,7 +255,7 @@ describe("FileTree 跟随终端目录", () => {
     expect(listCalls()).not.toContain("/stale");
   });
 
-  it("切换到另一个终端标签后跟随新终端的 cwd", async () => {
+  it("follows the new terminal's cwd after switching to another terminal tab", async () => {
     seedWorkspace({ secondTabId: "k2" });
     mountTree();
     await flush();
@@ -274,7 +274,7 @@ describe("FileTree 跟随终端目录", () => {
     expect(listCalls()).not.toContain("/first/again");
   });
 
-  it("winrm 会话不显示跟随开关", async () => {
+  it("winrm sessions do not show the follow toggle", async () => {
     seedWorkspace({ kind: "winrm" });
     mountTree();
     await flush();
@@ -282,8 +282,8 @@ describe("FileTree 跟随终端目录", () => {
   });
 });
 
-describe("FileBrowser 跟随终端目录", () => {
-  it("cwd 事件后文件列表跳到终端目录", async () => {
+describe("FileBrowser terminal-directory follow", () => {
+  it("the file list jumps to the terminal directory on cwd events", async () => {
     seedWorkspace();
     mountBrowser();
     await flush();
@@ -297,8 +297,8 @@ describe("FileBrowser 跟随终端目录", () => {
   });
 });
 
-describe("cwd 记录生命周期", () => {
-  it("tab 关闭后清理其 cwd 记录", async () => {
+describe("cwd record lifecycle", () => {
+  it("closing a tab cleans up its cwd record", async () => {
     seedWorkspace();
     mountTree();
     await flush();
@@ -325,7 +325,7 @@ describe("cwd 记录生命周期", () => {
     expect(cwdFollowMapSizeForTest()).toBe(0);
   });
 
-  it("会话工作区移除后清理其终端的 cwd 记录", async () => {
+  it("removing a session workspace cleans up its terminals' cwd records", async () => {
     seedWorkspace({ secondTabId: "k2" });
     mountTree();
     await flush();
@@ -339,7 +339,7 @@ describe("cwd 记录生命周期", () => {
     expect(cwdFollowMapSizeForTest()).toBe(0);
   });
 
-  it("存活 tab 的 cwd 记录不受剪枝影响", async () => {
+  it("live tabs' cwd records survive pruning", async () => {
     seedWorkspace({ secondTabId: "k2" });
     mountTree();
     await flush();

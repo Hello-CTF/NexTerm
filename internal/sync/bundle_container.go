@@ -84,7 +84,7 @@ func parseBundleHeader(data []byte) (*bundleHeader, error) {
 		if h.kdf.Time == 0 || h.kdf.Time > bundleMaxKDFTime ||
 			h.kdf.MemoryKiB < 8*1024 || h.kdf.MemoryKiB > bundleMaxKDFMemory ||
 			h.kdf.Threads == 0 || h.kdf.Threads > bundleMaxKDFThreads {
-			return nil, ipc.NewError(ipc.CodeBadParam, "资产包 KDF 参数越界")
+			return nil, ipc.NewError(ipc.CodeBadParam, "资产包加密参数无效或不受支持")
 		}
 		if h.cipherLen != h.plainLen+bundleGCMTagSize {
 			return nil, ipc.NewError(ipc.CodeBadParam, "资产包长度字段不一致")

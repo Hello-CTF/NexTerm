@@ -276,7 +276,7 @@ describe("pane tab context menu bulk close", () => {
     return item;
   }
 
-  it("含批量关闭项，单侧无标签时对应项禁用", async () => {
+  it("includes batch close items and disables the side with no tabs", async () => {
     mounted = mountApp();
     await flush();
 
@@ -293,7 +293,7 @@ describe("pane tab context menu bulk close", () => {
     expect(menuButton("关闭右侧全部标签").disabled).toBe(true);
   });
 
-  it("关闭左侧全部标签只关对应标签", async () => {
+  it("closes only the tabs to the left", async () => {
     mounted = mountApp();
     await flush();
 
@@ -305,7 +305,7 @@ describe("pane tab context menu bulk close", () => {
     );
   });
 
-  it("关闭右侧全部标签只关对应标签", async () => {
+  it("closes only the tabs to the right", async () => {
     mounted = mountApp();
     await flush();
 

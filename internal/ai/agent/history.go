@@ -30,6 +30,7 @@ type historyRow struct {
 	Tool      string          `json:"tool"`
 	OK        bool            `json:"ok"`
 	Text      string          `json:"text"`
+	ModelText string          `json:"modelText,omitempty"`
 	Summary   string          `json:"summary"`
 	Truncated bool            `json:"truncated"`
 	ExitCode  int             `json:"exitCode"`
@@ -81,6 +82,9 @@ func (r *Runner) persistToolResultRows(ctx context.Context, current *job, messag
 		"truncated": result.Truncated,
 		"exitCode":  result.ExitCode,
 		"panic":     result.Panic,
+	}
+	if result.ModelText != "" {
+		row["modelText"] = result.ModelText
 	}
 	if err := r.store.MsgInsert(ctx, current.args.ConversationID, historyTypeToolResult, row, nil, nil); err != nil {
 		return err
@@ -139,7 +143,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			groupAnswered = map[string]struct{}{}
 			groupToolEnd = len(messages) - 1
 		case historyTypeToolResult:
-			envelope, err := json.Marshal(tools.Output{OK: persisted.OK, Text: persisted.Text, ExitCode: persisted.ExitCode, Truncated: persisted.Truncated, Panic: persisted.Panic})
+			envelope, err := json.Marshal(tools.Output{OK: persisted.OK, Text: persisted.Text, ModelText: persisted.ModelText, ExitCode: persisted.ExitCode, Truncated: persisted.Truncated, Panic: persisted.Panic})
 			if err != nil {
 				continue
 			}

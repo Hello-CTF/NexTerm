@@ -637,7 +637,7 @@ describe("Docker insight controls (M61)", () => {
     await waitFor(() => expect(mockedText()).toContain("这个目录是空的"));
   });
 
-  it("toolbar summary says 加载中 only while pending and 加载失败 after a failure", async () => {
+  it("toolbar summary shows the loading state only while pending and the failure state after an error", async () => {
     const pending = deferred<ContainerSummary[]>();
     mocks.ps.mockReturnValue(pending.promise);
     mounted = mountPanel();
@@ -648,7 +648,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).not.toContain("容器状态加载中");
   });
 
-  it("failed containers query turns the toolbar summary into 加载失败 with an actionable daemon hint", async () => {
+  it("failed containers query shows a failure summary with an actionable Docker daemon hint", async () => {
     mocks.ps.mockRejectedValueOnce(
       new Error("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"),
     );
@@ -708,7 +708,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).not.toContain("跟随中断");
   });
 
-  it("log follow ends instead of claiming 跟随中 once the container is no longer running", async () => {
+  it("log follow ends instead of reporting an active follow once the container is no longer running", async () => {
     mocks.logsAttach.mockResolvedValue("tab-1");
     const m = (mounted = mountPanel());
     await waitFor(() => expect(m.container.querySelectorAll('button[title="查看日志"]').length).toBe(2));

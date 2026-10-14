@@ -393,6 +393,13 @@ export function TranscriptHistoryPanel({
   };
 
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
+    if (summary.syncOptIn) {
+      const ok = await ask(
+        "关闭这条记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。",
+        { title: "关闭账号同步", kind: "warning" },
+      );
+      if (!ok) return;
+    }
     const optIn = !summary.syncOptIn;
     try {
       await transcriptApi.syncOptIn(summary.id, optIn);
@@ -504,7 +511,7 @@ export function TranscriptHistoryPanel({
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
                             title={
                               summary.syncOptIn
-                                ? "此记录已通过账号同步到其他设备，点击关闭同步"
+                                ? "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留"
                                 : "通过账号将此记录同步到其他设备（端到端加密）"
                             }
                             aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}

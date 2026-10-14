@@ -87,18 +87,18 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
-describe("DockerPanel 查询状态", () => {
+describe("DockerPanel query states", () => {
   it("shows the real error with retry instead of the empty state when docker ps fails", async () => {
-    mocks.dockerPs.mockRejectedValue(new Error("daemon 未运行"));
+    mocks.dockerPs.mockRejectedValue(new Error("daemon unavailable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("容器列表加载失败 · daemon 未运行"));
+    await flushUntil(() => text().includes("容器列表加载失败 · daemon unavailable"));
     expect(text()).not.toContain("这台主机上还没有容器");
     expect(text()).toContain("容器状态加载失败");
     expect(text()).not.toContain("容器状态加载中");
   });
 
   it("retry recovers into the true empty state", async () => {
-    mocks.dockerPs.mockRejectedValueOnce(new Error("daemon 未运行"));
+    mocks.dockerPs.mockRejectedValueOnce(new Error("daemon unavailable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("容器列表加载失败"));
     clickButton(mounted!.container, "重试");
@@ -118,7 +118,7 @@ describe("DockerPanel 查询状态", () => {
   });
 
   it("images tab gets the same error/retry treatment", async () => {
-    mocks.dockerImages.mockRejectedValue(new Error("镜像仓库不可达"));
+    mocks.dockerImages.mockRejectedValue(new Error("image registry unreachable"));
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1" }));
     await flush();
     const imagesTab = [...mounted!.container.querySelectorAll("button")].find((b) =>
@@ -126,22 +126,22 @@ describe("DockerPanel 查询状态", () => {
     );
     expect(imagesTab).toBeTruthy();
     click(imagesTab!);
-    await flushUntil(() => text().includes("镜像仓库不可达"));
+    await flushUntil(() => text().includes("image registry unreachable"));
     expect(text()).not.toContain("本机没有镜像");
   });
 });
 
-describe("ForwardPanel 查询状态", () => {
+describe("ForwardPanel query states", () => {
   it("shows error plus retry instead of the empty state when the list query fails", async () => {
-    mocks.forwardList.mockRejectedValue(new Error("转发服务离线"));
+    mocks.forwardList.mockRejectedValue(new Error("forward service offline"));
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("转发列表加载失败 · 转发服务离线"));
+    await flushUntil(() => text().includes("转发列表加载失败 · forward service offline"));
     expect(text()).not.toContain("还没有任何转发");
     expect(text()).not.toContain("转发列表加载中");
   });
 
   it("retry recovers into the true empty state", async () => {
-    mocks.forwardList.mockRejectedValueOnce(new Error("转发服务离线"));
+    mocks.forwardList.mockRejectedValueOnce(new Error("forward service offline"));
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("转发列表加载失败"));
     clickButton(mounted!.container, "重试");
@@ -162,7 +162,7 @@ describe("ForwardPanel 查询状态", () => {
     expect(input!.autocomplete).toBe("off");
   });
 
-  it("两个实例同挂时 label 各自关联到本实例的输入框", async () => {
+  it("associates each label with its own instance's input when two instances are mounted", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(
       createElement(
@@ -182,25 +182,25 @@ describe("ForwardPanel 查询状态", () => {
       const label = [...panel.querySelectorAll("label")].find((l) =>
         l.textContent?.includes("本地端口"),
       );
-      expect(label, `${panelId} 缺少本地端口 label`).toBeTruthy();
+      expect(label, `${panelId} is missing the local port label`).toBeTruthy();
       const input = panel.querySelector<HTMLInputElement>(`input[id="${label!.htmlFor}"]`);
-      expect(input, `${panelId} 的 label 必须解析到本实例内的输入框`).not.toBeNull();
+      expect(input, `${panelId} label must resolve to an input in this instance`).not.toBeNull();
       return label!.htmlFor;
     };
     expect(htmlForOf("fp-1")).not.toBe(htmlForOf("fp-2"));
   });
 });
 
-describe("MountPanel 查询状态", () => {
+describe("MountPanel query states", () => {
   it("shows error plus retry instead of the empty state when the list query fails", async () => {
-    mocks.mountList.mockRejectedValue(new Error("挂载服务异常"));
+    mocks.mountList.mockRejectedValue(new Error("mount service failure"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
-    await flushUntil(() => text().includes("挂载列表加载失败 · 挂载服务异常"));
+    await flushUntil(() => text().includes("挂载列表加载失败 · mount service failure"));
     expect(text()).not.toContain("本机当前没有挂载点");
   });
 
   it("retry recovers into the true empty state", async () => {
-    mocks.mountList.mockRejectedValueOnce(new Error("挂载服务异常"));
+    mocks.mountList.mockRejectedValueOnce(new Error("mount service failure"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("挂载列表加载失败"));
     clickButton(mounted!.container, "重试");
@@ -209,16 +209,16 @@ describe("MountPanel 查询状态", () => {
   });
 });
 
-describe("AuditView 查询状态", () => {
+describe("AuditView query states", () => {
   it("surfaces the load failure with retry instead of the empty hint", async () => {
-    mocks.auditQuery.mockRejectedValue(new Error("审计库不可用"));
+    mocks.auditQuery.mockRejectedValue(new Error("audit database unavailable"));
     mounted = withClient(createElement(AuditView));
-    await flushUntil(() => text().includes("审计记录加载失败 · 审计库不可用"));
+    await flushUntil(() => text().includes("审计记录加载失败 · audit database unavailable"));
     expect(text()).not.toContain("暂无记录");
   });
 
   it("retry after failure reaches the true empty state", async () => {
-    mocks.auditQuery.mockRejectedValueOnce(new Error("审计库不可用"));
+    mocks.auditQuery.mockRejectedValueOnce(new Error("audit database unavailable"));
     mounted = withClient(createElement(AuditView));
     await flushUntil(() => text().includes("审计记录加载失败"));
     clickButton(mounted!.container, "重试");

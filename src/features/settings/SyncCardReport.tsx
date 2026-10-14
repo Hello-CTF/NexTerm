@@ -48,14 +48,14 @@ export function ImportReportView({
     <div className={`mt-3 nx-alert ${touched > 0 ? "" : "nx-alert-danger"}`}>
       <div className="mb-1 font-semibold">{title}</div>
       <div className="font-mono text-[11px]">
-        资产 新建 {data.assetsCreated} / 更新 {data.assetsUpdated}； 凭据 新建 {data.credsCreated} / 更新{" "}
+        资产：新建 {data.assetsCreated} / 更新 {data.assetsUpdated}；凭据：新建 {data.credsCreated} / 更新{" "}
         {data.credsUpdated}
-        {data.credsDeleted > 0 ? ` / 删除 ${data.credsDeleted}` : ""}； 分组 新建 {data.groupsCreated} / 更新{" "}
+        {data.credsDeleted > 0 ? ` / 删除 ${data.credsDeleted}` : ""}；分组：新建 {data.groupsCreated} / 更新{" "}
         {data.groupsUpdated}
         {data.snippetsCreated + data.snippetsUpdated > 0
-          ? `； 片段 新建 ${data.snippetsCreated} / 更新 ${data.snippetsUpdated}`
+          ? `；片段：新建 ${data.snippetsCreated} / 更新 ${data.snippetsUpdated}`
           : ""}
-        ； 跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}； 被拒 {data.refused}
+        ；跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}；被拒 {data.refused}
       </div>
       {details.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-neutral-300">

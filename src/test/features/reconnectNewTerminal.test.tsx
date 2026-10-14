@@ -87,7 +87,7 @@ async function waitUntil(assertion: () => void, timeout = 5000): Promise<void> {
 
 function newTerminalButton(): HTMLButtonElement {
   const btn = document.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]');
-  if (!btn) throw new Error("rail 新建终端 button not found");
+  if (!btn) throw new Error("rail new terminal button not found");
   return btn;
 }
 
@@ -123,7 +123,7 @@ beforeEach(() => {
           {
             id: "p1",
             activeTabId: "t1",
-            tabs: [{ id: "t1", kind: "settings", title: "设置", closable: true }],
+            tabs: [{ id: "t1", kind: "settings", title: "Settings", closable: true }],
           },
         ],
         activePaneId: "p1",
@@ -139,8 +139,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("断线后新建终端: 重连一次点击到底", () => {
-  it("重连成功后自动打开终端标签, 无需二次点击", async () => {
+describe("New terminal after disconnect: one-click reconnect", () => {
+  it("opens a terminal tab automatically after a successful reconnect without a second click", async () => {
     mocks.sessionList
       .mockResolvedValueOnce([session("disconnected")])
       .mockResolvedValueOnce([session("reconnecting")])
@@ -160,7 +160,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     expect(toasts.filter((t) => t.kind === "error").map((t) => t.text)).toEqual([]);
   });
 
-  it("重连未能启动时报错且不打开终端", async () => {
+  it("reports an error and does not open a terminal when reconnect fails to start", async () => {
     mocks.sessionReconnect.mockResolvedValue(false);
     mounted = mountApp();
     await flush();
@@ -169,7 +169,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     await waitUntil(() =>
       expect(
         useUi.getState().toasts.some(
-          (t) => t.kind === "error" && t.text === "重连失败：重连未能启动",
+          (t) => t.kind === "error" && t.text === "重新连接失败：重连未能启动",
         ),
       ).toBe(true),
     );
@@ -179,7 +179,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     expect(isSessionReconnectPending("s1")).toBe(false);
   });
 
-  it("重连等待期间的重复点击不会重复发起重连或开多个终端", async () => {
+  it("does not duplicate reconnects or terminal tabs when clicked repeatedly while waiting", async () => {
     mocks.sessionList
       .mockResolvedValueOnce([session("disconnected")])
       .mockResolvedValueOnce([session("reconnecting")])
@@ -198,7 +198,7 @@ describe("断线后新建终端: 重连一次点击到底", () => {
     expect(toasts.some((t) => t.text === "正在重连，连接成功后自动新建终端")).toBe(true);
   });
 
-  it("重连等待中会话已 connected 时再点不会重复打开终端", async () => {
+  it("does not open duplicate terminals when the session becomes connected while reconnect is pending", async () => {
     mocks.sessionList
       .mockResolvedValueOnce([session("disconnected")])
       .mockResolvedValue([session("reconnecting")]);
@@ -222,11 +222,11 @@ describe("断线后新建终端: 重连一次点击到底", () => {
 });
 
 describe("reconnectSessionAndWait", () => {
-  it("默认等待上限覆盖后端重连生命周期(10 次尝试退避合计 181s)", () => {
+  it("covers the backend reconnect lifecycle with the default wait limit: 10 attempts and 181 seconds of backoff", () => {
     expect(SESSION_RECONNECT_WAIT_MS).toBeGreaterThanOrEqual(181_000);
   });
 
-  it("首次 list 读到启动前的旧 disconnected 不误判, reconnecting 后 connected 正常返回", async () => {
+  it("ignores a stale pre-start disconnected result from the first list and returns after reconnecting becomes connected", async () => {
     mocks.sessionList
       .mockResolvedValueOnce([session("disconnected")])
       .mockResolvedValueOnce([session("disconnected")])
@@ -240,7 +240,7 @@ describe("reconnectSessionAndWait", () => {
     expect(result?.status).toBe("connected");
   });
 
-  it("进入重连后 failed 时以中文原因拒绝", async () => {
+  it("rejects with the localized reason when the session fails after entering reconnect", async () => {
     mocks.sessionList
       .mockResolvedValueOnce([session("reconnecting")])
       .mockResolvedValue([session("failed")]);
@@ -251,7 +251,7 @@ describe("reconnectSessionAndWait", () => {
     expect(isSessionReconnectPending("s1")).toBe(false);
   });
 
-  it("一直未连上时按超时拒绝", async () => {
+  it("rejects on timeout when the connection never succeeds", async () => {
     mocks.sessionList.mockResolvedValue([session("reconnecting")]);
 
     await expect(
@@ -259,7 +259,7 @@ describe("reconnectSessionAndWait", () => {
     ).rejects.toThrow("重连超时");
   });
 
-  it("超时后 inflight 清理, 可再次发起重连", async () => {
+  it("clears the inflight request after timeout so reconnect can be started again", async () => {
     mocks.sessionList.mockResolvedValue([session("reconnecting")]);
     await expect(
       reconnectSessionAndWait(session("disconnected"), { timeoutMs: 30, intervalMs: 10 }),
@@ -274,7 +274,7 @@ describe("reconnectSessionAndWait", () => {
     expect(isSessionReconnectPending("s1")).toBe(false);
   });
 
-  it("超过 20s 后成功仍返回(默认超时, 短轮询模拟长重连)", async () => {
+  it("still returns success after 20 seconds with the default timeout and short polling simulating a long reconnect", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -295,7 +295,7 @@ describe("reconnectSessionAndWait", () => {
     }
   });
 
-  it("主机指纹确认取消时返回 null 且不发起重连", async () => {
+  it("returns null and does not reconnect when host key confirmation is canceled", async () => {
     mocks.probeHostKey.mockResolvedValue({
       state: "unknown",
       host: "10.0.0.8",

@@ -288,11 +288,11 @@ describe("KnownHostsCard", () => {
 
   it("surfaces a list failure with a working retry", async () => {
     mocks.knownHostList
-      .mockRejectedValueOnce(new Error("磁盘炸了"))
+      .mockRejectedValueOnce(new Error("disk failure"))
       .mockResolvedValueOnce([KH1]);
     mounted = mount(createElement(KnownHostsCard));
     await flush();
-    expect(mounted.container.textContent).toContain("磁盘炸了");
+    expect(mounted.container.textContent).toContain("disk failure");
 
     clickButton(mounted.container, "重试");
     await flush();
@@ -351,7 +351,7 @@ describe("KnownHostsCard", () => {
   it("keeps the entry and reports when the revoke itself fails", async () => {
     mocks.knownHostList.mockResolvedValue([KH1]);
     mocks.ask.mockResolvedValue(true);
-    mocks.knownHostRemove.mockRejectedValue(new Error("只读数据库"));
+    mocks.knownHostRemove.mockRejectedValue(new Error("read-only database"));
     mounted = mount(createElement(KnownHostsCard));
     await flush();
 
@@ -363,7 +363,7 @@ describe("KnownHostsCard", () => {
   });
 });
 
-describe("SyncCard（Web 账号同步）", () => {
+describe("SyncCard (web account sync)", () => {
   let mounted: MountedView | undefined;
 
   afterEach(() => {
@@ -371,7 +371,7 @@ describe("SyncCard（Web 账号同步）", () => {
     mounted = undefined;
   });
 
-  it("未登录时只有账号卡一个登录入口,同步控制台不重复渲染", async () => {
+  it("renders only the account-card login entry when logged out, without a duplicate sync console", async () => {
     seedLoggedOut();
     mounted = mountSyncCard();
     await flush();
@@ -386,7 +386,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(text).not.toContain("解锁数据密钥");
   });
 
-  it("已登录未解锁时显示解锁表单,输入密码解锁", async () => {
+  it("shows the unlock form when logged in without an unlocked data key and unlocks it with the password", async () => {
     seedAuthed(false);
     mounted = mountSyncCard();
     await flush();
@@ -402,10 +402,10 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mocks.authDekGet).toHaveBeenCalled();
   });
 
-  it("解锁后显示本机与云端的对比状态", async () => {
+  it("shows local and cloud comparison states after unlocking", async () => {
     seedAuthed(true);
     mocks.groupList.mockResolvedValue([
-      { id: "g1", parentId: null, name: "生产环境", sort: 0, createdAt: 1, updatedAt: 100 },
+      { id: "g1", parentId: null, name: "production", sort: 0, createdAt: 1, updatedAt: 100 },
     ]);
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -464,7 +464,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(text).toContain("仅本机"); // g1/db-02 are local-only
   });
 
-  it("推送调用 /sync/v2/push 使用最新 head", async () => {
+  it("calls /sync/v2/push with the latest head", async () => {
     seedAuthed(true);
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -495,7 +495,7 @@ describe("SyncCard（Web 账号同步）", () => {
     );
   });
 
-  it("云端较新的对象不会被推送(winner 集合跳过远端胜出项)", async () => {
+  it("does not push objects that are newer in the cloud because the winner set skips remote winners", async () => {
     seedAuthed(true);
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -527,7 +527,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
-  it("平修订号按 payload hash 决胜:本地载荷 hash 较大才推送", async () => {
+  it("breaks equal-revision ties by payload hash and pushes only when the local hash is larger", async () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64, objectPayloadHash } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
@@ -556,7 +556,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mounted.container.textContent).toContain(`待推送 ${expected} 项`);
   });
 
-  it("真 409(他端已更新)时重新对账并以新 head 重试一次", async () => {
+  it("recomputes comparison state and retries once with the new head after a real 409 from another device", async () => {
     seedAuthed(true);
     const { AuthApiError } = await import("../../ipc/authApi");
     mocks.collectAssets.mockResolvedValue({
@@ -577,7 +577,7 @@ describe("SyncCard（Web 账号同步）", () => {
     });
     // The first push really returns a 409 error; the retry succeeds with the new head
     mocks.syncPush
-      .mockRejectedValueOnce(new AuthApiError("forbidden", "同步头不一致", 409))
+      .mockRejectedValueOnce(new AuthApiError("forbidden", "sync head mismatch", 409))
       .mockResolvedValueOnce({ protocol: 2, head: "head-1", max_seq: 1, applied: 1, skipped: 0 });
 
     mounted = mountSyncCard();
@@ -589,7 +589,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mocks.syncPush).toHaveBeenNthCalledWith(2, "head-1", expect.any(Array));
   });
 
-  it("head 变化且远端同 ID 更新时,重新对账后不覆盖他端新数据", async () => {
+  it("does not overwrite another device's newer data after the head changes and the same remote ID is updated", async () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
@@ -619,7 +619,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mounted.container.textContent).toContain("待推送 0 项");
   });
 
-  it("按条 opt-in 的会话记录被收集并推送(默认不同步)", async () => {
+  it("collects and pushes per-record opted-in transcripts, which are disabled by default", async () => {
     seedAuthed(true);
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
@@ -652,7 +652,7 @@ describe("SyncCard（Web 账号同步）", () => {
     );
   });
 
-  it("多页会话记录按 done/nextSeq 读全后再推送", async () => {
+  it("reads every transcript page according to done and nextSeq before pushing", async () => {
     seedAuthed(true);
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
@@ -698,7 +698,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(parsed.content).toHaveLength(3);
   });
 
-  it("相同 payload hash 的会话记录不重复推送(二次空同步)", async () => {
+  it("does not push a transcript again when its payload hash is unchanged, making the second sync empty", async () => {
     seedAuthed(true);
     const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../../features/auth/crypto");
     const { GO_SYNC_FIXTURES } = await import("../auth-sync-fixtures");
@@ -725,7 +725,7 @@ describe("SyncCard（Web 账号同步）", () => {
     expect(mounted.container.textContent).toContain("当前待应用 0 项");
   });
 
-  it("会话记录读取失败时显式报错而不是吞成空数组", async () => {
+  it("surfaces transcript read failures instead of swallowing them as an empty array", async () => {
     seedAuthed(true);
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
@@ -736,14 +736,14 @@ describe("SyncCard（Web 账号同步）", () => {
         startedAt: 1, endedAt: 2, bytes: 3, chunks: 1, truncated: false, active: false, syncOptIn: true, contentOmitted: false,
       },
     ]);
-    mocks.transcriptRead.mockRejectedValue(new Error("磁盘不可读"));
+    mocks.transcriptRead.mockRejectedValue(new Error("disk unreadable"));
 
     mounted = mountSyncCard();
-    await flushUntil(() => mounted!.container.textContent?.includes("磁盘不可读"));
+    await flushUntil(() => mounted!.container.textContent?.includes("disk unreadable"));
     expect(mounted.container.textContent).not.toContain("web-01 的会话记录");
   });
 
-  it("拉取并应用:远端胜出对象经 applyObjects 应用并重新计算对比", async () => {
+  it("applies remote-winning objects through applyObjects during pull and recomputes the comparison", async () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
@@ -810,13 +810,13 @@ describe("SyncCard（Web 账号同步）", () => {
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
   });
 
-  it("凭据库未解锁时应用显示 skipped/warning 而不是静默成功", async () => {
+  it("shows skipped and warning states instead of silent success when applying with a locked vault", async () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     const blob = await sealSyncObject(
       dek,
-      utf8Bytes(JSON.stringify({ id: "c1", name: "生产口令", kind: "password", secret: "s3cret", updatedAt: 1 })),
+      utf8Bytes(JSON.stringify({ id: "c1", name: "production password", kind: "password", secret: "s3cret", updatedAt: 1 })),
       "c1",
       "credential",
     );
@@ -826,22 +826,22 @@ describe("SyncCard（Web 账号同步）", () => {
       applied: 0,
       identical: 0,
       skipped: 1,
-      objects: [{ id: "c1", kind: "credential", result: "skipped", warning: "凭据库已锁定, 请先解锁" }],
+      objects: [{ id: "c1", kind: "credential", result: "skipped", warning: "vault is locked; unlock it first" }],
     });
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    // Wait for the remote objects to finish loading (the credential row appears) before the button becomes available as "拉取并应用 (1)"
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
+    // Wait for the remote objects to finish loading and the credential row to appear before the apply button becomes available
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("production password"));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前待应用 1 项"));
     await runAutoSync();
-    await flushUntil(() => mounted!.container.textContent?.includes("凭据库已锁定"));
-    expect(mounted.container.textContent).toContain("c1: 凭据库已锁定, 请先解锁");
+    await flushUntil(() => mounted!.container.textContent?.includes("vault is locked"));
+    expect(mounted.container.textContent).toContain("c1: vault is locked; unlock it first");
   });
 });
 
-describe("connectAsset 主机指纹确认", () => {
-  const asset = { id: "asset-1", name: "测试机", kind: "ssh" };
+describe("connectAsset host-key confirmation", () => {
+  const asset = { id: "asset-1", name: "test-host", kind: "ssh" };
   const pendingDetail = {
     host: "10.0.0.8",
     port: 22,
@@ -852,7 +852,7 @@ describe("connectAsset 主机指纹确认", () => {
   const sessionInfo = {
     id: "s1",
     assetId: "asset-1",
-    name: "测试机",
+    name: "test-host",
     kind: "ssh",
     status: "connected",
     tabs: [],
@@ -864,7 +864,7 @@ describe("connectAsset 主机指纹确认", () => {
     useUi.setState({ pushToast: mocks.toast, sessions: [], workspaces: [], activeWorkspaceId: null });
   });
 
-  it("首次连接时弹出指纹确认，显式接受后记录信任并重连", async () => {
+  it("asks for fingerprint confirmation on first connection, records trust after explicit acceptance, and reconnects", async () => {
     mocks.sessionConnect
       .mockRejectedValueOnce({
         code: "host_key_pending",
@@ -894,7 +894,7 @@ describe("connectAsset 主机指纹确认", () => {
     expect(useUi.getState().sessions.some((s) => s.id === "s1")).toBe(true);
   });
 
-  it("确认后重试仍 pending 时不再弹重复错误", async () => {
+  it("does not show a duplicate error when the retry remains pending after confirmation", async () => {
     mocks.sessionConnect.mockRejectedValue({
       code: "host_key_pending",
       message: "unknown SSH host key for 10.0.0.8:22",
@@ -911,7 +911,7 @@ describe("connectAsset 主机指纹确认", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.any(String));
   });
 
-  it("密钥变更时弹出变更警告并展示原指纹与新指纹", async () => {
+  it("shows a changed-key warning with the old and new fingerprints", async () => {
     const changedDetail = {
       ...pendingDetail,
       changed: true,
@@ -943,7 +943,7 @@ describe("connectAsset 主机指纹确认", () => {
     expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
   });
 
-  it("拒绝确认时不记录信任、不再重连", async () => {
+  it("does not record trust or reconnect when confirmation is declined", async () => {
     mocks.sessionConnect.mockRejectedValueOnce({
       code: "host_key_pending",
       message: "unknown SSH host key for 10.0.0.8:22",
@@ -958,7 +958,7 @@ describe("connectAsset 主机指纹确认", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", "已取消连接");
   });
 
-  it("记录信任后重连失败时上报错误", async () => {
+  it("reports an error when reconnect fails after trust is recorded", async () => {
     mocks.sessionConnect
       .mockRejectedValueOnce({
         code: "host_key_pending",
@@ -980,7 +980,7 @@ describe("connectAsset 主机指纹确认", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
   });
 
-  it("指纹 detail 不完整时不写账本也不重连", async () => {
+  it("does not write the ledger or reconnect when fingerprint detail is incomplete", async () => {
     mocks.sessionConnect.mockRejectedValueOnce({
       code: "host_key_pending",
       message: "unknown SSH host key for 10.0.0.8:22",

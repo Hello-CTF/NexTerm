@@ -135,8 +135,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("状态栏同步状态", () => {
-  it("未配置同步链接时显示本地模式", async () => {
+describe("status bar sync state", () => {
+  it("shows local mode when no sync link is configured", async () => {
     mocks.syncLinkGet.mockResolvedValue({
       url: "",
       username: "",
@@ -151,7 +151,7 @@ describe("状态栏同步状态", () => {
     expect(syncStatusText()).toBe("同步：本地模式");
   });
 
-  it("已配置同步链接时显示已配置", async () => {
+  it("shows configured when a sync link is configured", async () => {
     mocks.syncLinkGet.mockResolvedValue({
       url: "https://sync.example.com",
       username: "alice",
@@ -166,7 +166,7 @@ describe("状态栏同步状态", () => {
     expect(syncStatusText()).toBe("同步：已配置");
   });
 
-  it("url、username 或密码任一缺失时显示本地模式", async () => {
+  it("shows local mode when the URL, username, or password is missing", async () => {
     for (const patch of [{ url: "" }, { username: "" }, { hasPassword: false }]) {
       mocks.syncLinkGet.mockResolvedValue({ ...SAVED_LINK, ...patch });
       const view = mountApp();
@@ -179,7 +179,7 @@ describe("状态栏同步状态", () => {
     }
   });
 
-  it("浏览器（服务端）模式显示服务端浏览器模式，不读取同步链接", async () => {
+  it("shows server browser mode in browser mode without reading the sync link", async () => {
     envState.WEB = true;
     envState.TRANSPORT = "web";
     mounted = mountApp();
@@ -236,7 +236,7 @@ async function loginSyncAccount(): Promise<void> {
   clickButton(document.body, "登录");
 }
 
-describe("账号同步卡（桌面端）", () => {
+describe("desktop account sync card", () => {
   beforeEach(() => {
     mocks.syncStatus.mockResolvedValue({
       configured: false,
@@ -251,7 +251,7 @@ describe("账号同步卡（桌面端）", () => {
     mocks.syncLinkSet.mockResolvedValue(SAVED_LINK);
   });
 
-  it("登录时以账号+密码调用 linkSet 完成同步配置,不自动执行首次同步", async () => {
+  it("calls linkSet with the account and password on login without automatically running the first sync", async () => {
     mounted = mountAppWithSyncCard();
     await flush();
     expect(syncStatusText()).toBe("同步：本地模式");
@@ -270,18 +270,18 @@ describe("账号同步卡（桌面端）", () => {
     expect(document.body.textContent).not.toContain("立即同步");
   });
 
-  it("单条同步开关指引指向「终端历史」分区", async () => {
+  it("points per-record sync guidance to the terminal history section", async () => {
     mounted = mountAppWithSyncCard();
     await flushUntil(() => document.querySelector("#sync-url") !== null);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("如需同步，请在「终端历史」中为对应记录开启同步");
+    expect(text).toContain("终端录像默认不同步，可在「终端历史」中单独开启");
     expect(text).not.toContain("到「会话记录」里");
   });
 });
 
-describe("手动同步入口已移除", () => {
-  it("Mod+Shift+S 不再触发同步动作", async () => {
+describe("removed manual sync entry", () => {
+  it("does not trigger a sync action on Mod+Shift+S", async () => {
     mounted = mountApp();
     await flushUntil(() => syncStatusText() === "同步：本地模式");
 
@@ -289,7 +289,7 @@ describe("手动同步入口已移除", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("Mod+Shift+L 锁定凭据库", async () => {
+  it("locks the credential vault on Mod+Shift+L", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
     await flush();

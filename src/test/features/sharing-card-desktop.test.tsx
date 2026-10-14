@@ -163,8 +163,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("分享卡片 · 桌面端已登录", () => {
-  it("列表经 remote 代理渲染: 设备名/方向/权限/状态与公开链接, 零 fetch", async () => {
+describe("Share card - desktop logged in", () => {
+  it("renders device names, directions, permissions, states, and public links through remote proxies without fetch", async () => {
     seedLoggedIn();
     seedSharing();
     mounted = mountWithClient(createElement(ShareCard));
@@ -182,7 +182,7 @@ describe("分享卡片 · 桌面端已登录", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("创建主机分享走 remote create: 用户名 trim 后提交并刷新列表, 设备下拉只列终端开启的接入设备", async () => {
+  it("creates a host share through remote create with a trimmed username and refreshed list, listing only terminal-enabled devices", async () => {
     seedLoggedIn();
     seedSharing();
     mounted = mountWithClient(createElement(ShareCard));
@@ -208,7 +208,7 @@ describe("分享卡片 · 桌面端已登录", () => {
     await flushUntil(() => mocks.hostShares.mock.calls.length >= 2);
   });
 
-  it("吊销主机分享需确认, 确认后走 remote revoke 并刷新", async () => {
+  it("confirms before revoking a host share, then revokes through remote and refreshes", async () => {
     seedLoggedIn();
     seedSharing();
     mocks.ask.mockResolvedValue(true);
@@ -225,7 +225,7 @@ describe("分享卡片 · 桌面端已登录", () => {
     await flushUntil(() => mocks.hostShares.mock.calls.length >= 2);
   });
 
-  it("吊销公开链接走 remote revokeLink", async () => {
+  it("revokes a public link through remote revokeLink", async () => {
     seedLoggedIn();
     seedSharing();
     mocks.ask.mockResolvedValue(true);
@@ -241,7 +241,7 @@ describe("分享卡片 · 桌面端已登录", () => {
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("公开链接");
   });
 
-  it("普通用户 (adminUsers 探测失败) 可吊销自己授予的分享, 方向文案按本人视角", async () => {
+  it("lets a regular user revoke their own granted shares when adminUsers probing fails, with direction copy from their perspective", async () => {
     seedLoggedIn(false);
     seedSharing();
     mocks.ask.mockResolvedValue(true);

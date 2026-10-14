@@ -109,7 +109,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 	code := set.String("code", "", "设备注册码 (必填)")
 	name := set.String("name", "", "设备名 (默认主机名)")
 	dataDir := set.String("data-dir", "", "数据目录 (默认 NEXTERM_DATA_DIR)")
-	insecure := set.Bool("insecure", false, "跳过 TLS 证书校验 (仅限自签名)")
+	insecure := set.Bool("insecure", false, "跳过 TLS 证书校验（仅用于受信任的自签名服务器）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -216,7 +216,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	store := StoreAt(dir)
 	config, err := store.Load()
 	if errors.Is(err, ErrNotEnrolled) {
-		fmt.Fprintln(stderr, "agent run: 设备未注册, 请先执行 agent enroll")
+		fmt.Fprintln(stderr, "agent run: 设备未注册，请先执行 agent enroll")
 		return ExitError
 	}
 	if err != nil {
@@ -244,13 +244,13 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	case err == nil:
 		return ExitOK
 	case errors.Is(err, errUpgradeStaged):
-		fmt.Fprintln(stdout, "agent: 协议版本不兼容, 已从官方 release 下载并校验新版本, 延迟替换脚本将完成升级并拉起服务")
+		fmt.Fprintln(stdout, "agent: 协议版本不兼容，已从官方 release 下载并校验新版本；延迟替换脚本将完成升级并启动服务")
 		return ExitOK
 	case errors.Is(err, ErrRevoked):
 		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；请执行 agent enroll 接入新设备")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
-		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容, 自升级不可用或已失败, 请用 install-device.sh 重装")
+		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，自动升级不可用或已失败，请使用 install-device.sh 重新安装")
 		return ExitProtocol
 	default:
 		fmt.Fprintln(stderr, "agent run:", err)

@@ -113,7 +113,7 @@ async function mountPanel(): Promise<void> {
   await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
 }
 
-describe("GrantPanel 设备长期授权管理", () => {
+describe("GrantPanel long-term device grants", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.web = false;
@@ -129,7 +129,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     useAuth.setState({ user: null });
   });
 
-  it("默认全部关闭，并说明授权是安装级而非按用户隔离", async () => {
+  it("disables everything by default and explains that grants are installation-scoped rather than user-scoped", async () => {
     await mountPanel();
     const text = view!.container.textContent ?? "";
     expect(text).toContain("默认关闭");
@@ -146,7 +146,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(text).not.toContain("已授权：");
   });
 
-  it("数据库资产不显示授权入口，规则设备下拉同样排除", async () => {
+  it("hides grant controls for database assets and excludes them from rule device options", async () => {
     await mountPanel();
     expect(() => rowFor("数据库")).toThrow();
     const text = view!.container.textContent ?? "";
@@ -161,7 +161,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(options).not.toContain("数据库");
   });
 
-  it("开启授权前弹出显式确认，确认后按所选种类调用授权", async () => {
+  it("requires explicit confirmation before granting and grants the selected kinds", async () => {
     await mountPanel();
     clickButton(rowFor("生产 Web"), "开启授权");
     await flush();
@@ -178,7 +178,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启"));
   });
 
-  it("可勾选命令执行后一并授权", async () => {
+  it("can include command execution in the grant", async () => {
     await mountPanel();
     const row = rowFor("生产 Web");
     clickButton(row, "○ 命令执行");
@@ -188,7 +188,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write", "session_exec"]);
   });
 
-  it("取消确认则不发起授权", async () => {
+  it("does not grant when confirmation is canceled", async () => {
     mocks.ask.mockResolvedValue(false);
     await mountPanel();
     clickButton(rowFor("生产 Web"), "开启授权");
@@ -197,7 +197,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(rowFor("生产 Web").textContent).toContain("未授权");
   });
 
-  it("撤销授权前弹出显式确认，确认后恢复未授权并按权限模式说明后果", async () => {
+  it("requires confirmation before revoking and explains the resulting permission-mode behavior", async () => {
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
     await mountPanel();
     expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
@@ -213,7 +213,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("按当前权限模式处理"));
   });
 
-  it("取消撤销确认则不发起撤销", async () => {
+  it("does not revoke when revocation is canceled", async () => {
     mocks.ask.mockResolvedValue(false);
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["terminal_write"], updatedAt: 1 }]);
     await mountPanel();
@@ -223,7 +223,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(rowFor("生产 Web").textContent).toContain("已授权：终端写入");
   });
 
-  it("列表加载失败展示错误并可重试", async () => {
+  it("shows list-loading errors and allows retry", async () => {
     mocks.grantList.mockRejectedValueOnce(new Error("设备授权未配置"));
     view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
     await flushUntil(() => view!.container.textContent?.includes("加载失败") === true);
@@ -233,7 +233,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(rowFor("生产 Web").textContent).toContain("未授权");
   });
 
-  it("开启失败提示错误且保持未授权", async () => {
+  it("shows grant failures and leaves the device unauthorized", async () => {
     mocks.grantSet.mockRejectedValue(new Error("设备授权种类仅支持 terminal_write/session_exec"));
     await mountPanel();
     clickButton(rowFor("生产 Web"), "开启授权");
@@ -243,7 +243,7 @@ describe("GrantPanel 设备长期授权管理", () => {
   });
 });
 
-describe("GrantPanel 授权规则", () => {
+describe("GrantPanel authorization rules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.assetList.mockResolvedValue(ASSETS);
@@ -261,7 +261,7 @@ describe("GrantPanel 授权规则", () => {
     return row;
   }
 
-  it("展示规则范围与有效期，永久规则明确标注", async () => {
+  it("shows rule scopes and expiration and explicitly marks permanent rules", async () => {
     mocks.ruleList.mockResolvedValue([
       { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
       { id: "rule-2", deviceId: "asset-2", action: "exec_commands", path: "", expiresAt: 4102444800000, createdAt: 1, updatedAt: 1 },
@@ -277,7 +277,7 @@ describe("GrantPanel 授权规则", () => {
     expect(expiring.textContent).toContain("过期");
   });
 
-  it("撤销规则前弹出显式确认，确认后调用撤销", async () => {
+  it("requires confirmation before revoking a rule and calls revoke after confirmation", async () => {
     mocks.ruleList.mockResolvedValue([
       { id: "rule-1", deviceId: "asset-1", action: "write_file", path: "/var/log/**", expiresAt: 0, createdAt: 1, updatedAt: 1 },
     ]);
@@ -293,7 +293,7 @@ describe("GrantPanel 授权规则", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已撤销授权规则"));
   });
 
-  it("添加规则：确认范围与有效期后调用 ruleSet", async () => {
+  it("confirms scope and expiration before calling ruleSet when adding a rule", async () => {
     mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
       Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
     );
@@ -320,7 +320,7 @@ describe("GrantPanel 授权规则", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已添加授权规则"));
   });
 
-  it("写文件动作缺路径时禁用添加；命令动作不需要路径", async () => {
+  it("disables adding a file-write rule without a path and does not require a path for command rules", async () => {
     await mountPanel();
     clickButton(view!.container, "添加规则");
     await flush();
@@ -332,7 +332,7 @@ describe("GrantPanel 授权规则", () => {
     expect(addButton()?.disabled).toBe(false);
   });
 
-  it("取消添加确认则不调用 ruleSet", async () => {
+  it("does not call ruleSet when add confirmation is canceled", async () => {
     mocks.ask.mockResolvedValue(false);
     await mountPanel();
     clickButton(view!.container, "添加规则");
@@ -345,7 +345,7 @@ describe("GrantPanel 授权规则", () => {
   });
 });
 
-describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () => {
+describe("GrantPanel web permission boundaries (only server superadmins can make changes)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.web = true;
@@ -359,7 +359,7 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
     useUi.setState({ pushToast: mocks.toast });
   });
 
-  it("非超管登录用户只读: 提示超管管理, 隐藏全部变更入口", async () => {
+  it("keeps logged-in non-superadmins read-only with a superadmin hint and hides all mutation controls", async () => {
     useAuth.setState({ user: accountOf("user") });
     view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
     await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
@@ -374,7 +374,7 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
     expect(view!.container.querySelector("select[aria-label='规则设备']")).toBeNull();
   });
 
-  it("超管登录用户保留全部变更入口", async () => {
+  it("keeps all mutation controls available to logged-in superadmins", async () => {
     useAuth.setState({ user: accountOf("superadmin") });
     view = mount(createElement(GrantPanel, { onClose: mocks.onClose }));
     await flushUntil(() => view!.container.querySelectorAll("div.rounded-lg").length > 0);
@@ -389,7 +389,7 @@ describe("GrantPanel web 模式权限边界 (服务端仅超管可变更)", () =
 });
 
 
-describe("GrantPanel fleet 设备授权目标", () => {
+describe("GrantPanel fleet device grant targets", () => {
   const GATEWAY = {
     id: "d-1",
     name: "边缘网关",
@@ -413,7 +413,7 @@ describe("GrantPanel fleet 设备授权目标", () => {
     useAuth.setState({ user: null });
   });
 
-  it("fleet 设备以 device/<id> 作为授权目标并带设备徽标，已吊销设备不出现", async () => {
+  it("uses device/<id> for fleet grant targets, shows a device badge, and omits revoked devices", async () => {
     mocks.fleetDevices.mockResolvedValue({
       devices: [GATEWAY, { ...GATEWAY, id: "d-2", name: "旧网关", revoked_at: 1720000000000 }],
     });
@@ -431,7 +431,7 @@ describe("GrantPanel fleet 设备授权目标", () => {
     await flushUntil(() => rowFor("边缘网关").textContent?.includes("已授权：终端写入") === true);
   });
 
-  it("规则设备下拉包含 fleet 设备，保存规则使用 device/<id>", async () => {
+  it("includes fleet devices in rule device options and saves rules with device/<id>", async () => {
     mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
       Promise.resolve({ id: "rule-new", deviceId, action, path, expiresAt, createdAt: 1, updatedAt: 1 }),
     );
@@ -453,14 +453,14 @@ describe("GrantPanel fleet 设备授权目标", () => {
     expect(expiresAt).toBe(0);
   });
 
-  it("fleet 设备列表失败时降级为仅资产目标，不显示加载失败", async () => {
+  it("falls back to asset-only targets without showing a load error when fleet device loading fails", async () => {
     mocks.fleetDevices.mockRejectedValue(new Error("登录服务端账号后可用"));
     await mountPanel();
     expect(rowFor("生产 Web").textContent).toContain("未授权");
     expect(view!.container.textContent ?? "").not.toContain("加载失败");
   });
 
-  it("规则引用未知 device id 时按原始 id 渲染", async () => {
+  it("renders the original id when a rule references an unknown device id", async () => {
     mocks.ruleList.mockResolvedValue([
       { id: "rule-x", deviceId: "device/gone", action: "exec_commands", path: "", expiresAt: 0, createdAt: 1, updatedAt: 1 },
     ]);

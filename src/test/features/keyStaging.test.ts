@@ -37,7 +37,7 @@ describe("inline private-key selection", () => {
     mocks.available.mockReturnValue(true);
     const text = vi.fn(async () => "NOT A KEY");
     mocks.pickBrowserFile.mockResolvedValue({ name: "large.bin", size: 64 * 1024 + 1, text });
-    await expect(pickInlineKeyFile()).rejects.toThrow("文件超过 64KB，不是私钥");
+    await expect(pickInlineKeyFile()).rejects.toThrow("私钥文件不能超过 64 KB");
     expect(text).not.toHaveBeenCalled();
     expect(mocks.stageFile).not.toHaveBeenCalled();
   });

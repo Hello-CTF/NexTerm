@@ -710,7 +710,7 @@ export function DevicesView() {
                 <div className="flex items-start gap-2">
                   <IconInfo size={14} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    接入码<b className="text-red-300">仅显示一次</b>，只能使用一次，有效期至 {formatTime(issued.expiresAt)}。接入码经服务器兑换为设备凭证；凭证仅保存在设备本地，本页面不再显示。
+                    接入码只能使用一次，有效期至 {formatTime(issued.expiresAt)}；完成后不再显示。设备凭证原文仅保存在设备本地，服务端只保存散列。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

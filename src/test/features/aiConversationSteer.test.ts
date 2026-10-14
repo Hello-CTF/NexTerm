@@ -143,7 +143,7 @@ describe("AiSidebar mid-run steering", () => {
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
     mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
@@ -167,99 +167,99 @@ describe("AiSidebar mid-run steering", () => {
   });
 
   it("steers the running job through the same input — no new panel, no new run", async () => {
-    await send(view!, "排查一下");
+    await send(view!, "Investigate");
     expect(mocks.chat).toHaveBeenCalledOnce();
     expect(textareaOf(view!).placeholder).toContain("Enter 发送补充指令");
     expect(view!.container.querySelectorAll("textarea")).toHaveLength(1);
 
-    await steer(view!, "顺便看看内存");
-    expect(mocks.steer).toHaveBeenCalledWith("job-1", "顺便看看内存");
+    await steer(view!, "Check memory as well");
+    expect(mocks.steer).toHaveBeenCalledWith("job-1", "Check memory as well");
     expect(mocks.chat).toHaveBeenCalledOnce();
-    expect(textOf(view!)).toContain("顺便看看内存");
+    expect(textOf(view!)).toContain("Check memory as well");
     expect(textOf(view!)).toContain("等待送达");
 
-    emit({ type: "steered", text: "顺便看看内存" });
+    emit({ type: "steered", text: "Check memory as well" });
     await flush();
     expect(textOf(view!)).toContain("已送达");
     expect(textOf(view!)).not.toContain("等待送达");
 
-    emit({ type: "done", answer: "排查完了" });
+    emit({ type: "done", answer: "Investigation complete" });
     await flush();
-    expect(textOf(view!)).toContain("排查完了");
+    expect(textOf(view!)).toContain("Investigation complete");
   });
 
   it("keeps the bubble delivered when the steered event races ahead of the RPC response", async () => {
-    await send(view!, "跑个长任务");
+    await send(view!, "Run a long task");
     const rpc = deferred<void>();
     mocks.steer.mockReturnValueOnce(rpc.promise);
 
     const textarea = textareaOf(view!);
-    setInputValue(textarea, "先别动数据库");
+    setInputValue(textarea, "Do not touch the database");
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
-    emit({ type: "steered", text: "先别动数据库" });
+    emit({ type: "steered", text: "Do not touch the database" });
     await flush();
     expect(textOf(view!)).toContain("已送达");
 
     rpc.resolve();
     await flush();
     expect(textOf(view!)).toContain("已送达");
-    emit({ type: "done", answer: "完了" });
+    emit({ type: "done", answer: "Done" });
     await flush();
   });
 
   it("marks the steer dropped and restores the input when the kernel rejects it", async () => {
-    await send(view!, "跑个命令");
+    await send(view!, "Run a command");
     mocks.steer.mockRejectedValueOnce(new Error("AI 任务不存在或已结束"));
-    await steer(view!, "其实别跑");
-    expect(mocks.steer).toHaveBeenCalledWith("job-1", "其实别跑");
+    await steer(view!, "Actually, do not run it");
+    expect(mocks.steer).toHaveBeenCalledWith("job-1", "Actually, do not run it");
     expect(textOf(view!)).toContain("未送达");
-    expect(textareaOf(view!).value).toBe("其实别跑");
+    expect(textareaOf(view!).value).toBe("Actually, do not run it");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("补充指令未送达"));
   });
 
   it("settles steer bubbles in FIFO order — dropped first, then delivered", async () => {
-    await send(view!, "继续");
-    await steer(view!, "第一条");
-    await steer(view!, "第二条");
+    await send(view!, "Continue");
+    await steer(view!, "First");
+    await steer(view!, "Second");
     expect(textOf(view!).match(/等待送达/g)?.length).toBe(2);
 
-    emit({ type: "steerDropped", text: "第一条" });
+    emit({ type: "steerDropped", text: "First" });
     await flush();
     let texts = textOf(view!);
-    expect(texts).toContain("第一条");
-    expect(texts.indexOf("未送达")).toBeLessThan(texts.indexOf("第二条"));
+    expect(texts).toContain("First");
+    expect(texts.indexOf("未送达")).toBeLessThan(texts.indexOf("Second"));
     expect(texts.match(/等待送达/g)?.length).toBe(1);
 
-    emit({ type: "steered", text: "第二条" });
+    emit({ type: "steered", text: "Second" });
     await flush();
     texts = textOf(view!);
     expect(texts).toContain("已送达");
     expect(texts).not.toContain("等待送达");
 
-    emit({ type: "steered", text: "第二条" });
+    emit({ type: "steered", text: "Second" });
     await flush();
     expect(textOf(view!)).toBe(texts);
   });
 
   it("settles pending steers as dropped when the run ends, and Enter then starts a new run", async () => {
-    await send(view!, "查一下");
-    await steer(view!, "等等，先看磁盘");
+    await send(view!, "Check it");
+    await steer(view!, "Wait, check the disk first");
     expect(textOf(view!)).toContain("等待送达");
 
-    emit({ type: "done", answer: "查完了" });
+    emit({ type: "done", answer: "Done checking" });
     await flush();
     expect(textOf(view!)).toContain("未送达");
 
-    await steer(view!, "下一个问题");
+    await steer(view!, "Next question");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
     expect(mocks.steer).toHaveBeenCalledOnce();
   });
 
   it("stop drops pending steers immediately", async () => {
-    await send(view!, "跑起来");
-    await steer(view!, "补充一句");
+    await send(view!, "Start it");
+    await steer(view!, "Add a note");
     expect(textOf(view!)).toContain("等待送达");
 
     click(view!.container.querySelector('button[title^="停止当前任务"]')!);
@@ -269,7 +269,7 @@ describe("AiSidebar mid-run steering", () => {
   });
 
   it("Enter with an empty input while busy is a no-op", async () => {
-    await send(view!, "跑着");
+    await send(view!, "Running");
     await steer(view!, "   ");
     expect(mocks.steer).not.toHaveBeenCalled();
     expect(mocks.chat).toHaveBeenCalledOnce();

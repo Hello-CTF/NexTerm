@@ -92,7 +92,7 @@ function syncStatus(loggedIn: boolean, username = "", userId = "") {
 // Regular user: the adminUsers probe is rejected by the server (403), identity falls back to the minimal view.
 function seedUser() {
   mocks.status.mockResolvedValue(syncStatus(true, "alice", "u-alice"));
-  mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "需要超级管理员权限" });
+  mocks.adminUsers.mockRejectedValue({ code: "forbidden", message: "Super administrator access required" });
 }
 
 function seedAdmin() {
@@ -138,8 +138,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("桌面端账号卡·未登录", () => {
-  it("link 未登录时两卡均不渲染", async () => {
+describe("desktop account card signed-out state", () => {
+  it("renders neither card while the link is signed out", async () => {
     mocks.status.mockResolvedValue(syncStatus(false));
     mountCards("all");
     await flush();
@@ -148,7 +148,7 @@ describe("桌面端账号卡·未登录", () => {
     expect(mocks.adminUsers).not.toHaveBeenCalled();
   });
 
-  it("invalidate [\"sync-link\"] 后身份自动刷新: 登出即隐藏", async () => {
+  it("refreshes identity after invalidating [\"sync-link\"] and hides the card on logout", async () => {
     seedUser();
     const { client } = mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
@@ -161,8 +161,8 @@ describe("桌面端账号卡·未登录", () => {
   });
 });
 
-describe("桌面端账号卡·普通用户", () => {
-  it("显示当前账号与普通用户徽章,无退出登录/添加设备入口,TOTP 注明浏览器管理", async () => {
+describe("desktop account card regular user", () => {
+  it("shows the current account and regular-user badge, hides logout/add-device actions, and notes browser-managed TOTP", async () => {
     seedUser();
     mountCards("all");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("MacBook"));
@@ -180,7 +180,7 @@ describe("桌面端账号卡·普通用户", () => {
     expect(text).not.toContain("开放注册");
   });
 
-  it("改密走 remoteAccountApi.changePassword 并当场展示一次性恢复密钥", async () => {
+  it("changes the password through remoteAccountApi.changePassword and immediately shows the one-time recovery key", async () => {
     seedUser();
     mocks.changePassword.mockResolvedValue({ ok: true, recoveryKey: "AAAA-BBBB-CCCC-DDDD" });
     mountCards("auth");
@@ -199,7 +199,7 @@ describe("桌面端账号卡·普通用户", () => {
     expect(mounted!.container.textContent ?? "").toContain("新的恢复密钥（仅显示一次）");
   });
 
-  it("改密失败如实显示错误", async () => {
+  it("shows password-change failures as-is", async () => {
     seedUser();
     mocks.changePassword.mockRejectedValue({ code: "invalid_credentials", message: "当前密码不正确" });
     mountCards("auth");
@@ -214,7 +214,7 @@ describe("桌面端账号卡·普通用户", () => {
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("当前密码不正确"));
   });
 
-  it("吊销设备先确认,确认后经代理吊销并刷新列表", async () => {
+  it("confirms before revoking a device, then revokes through the proxy and refreshes the list", async () => {
     seedUser();
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("MacBook"));
@@ -226,7 +226,7 @@ describe("桌面端账号卡·普通用户", () => {
     await flushUntil(() => mocks.devices.mock.calls.length >= 2);
   });
 
-  it("取消确认时不吊销", async () => {
+  it("does not revoke the device when confirmation is canceled", async () => {
     seedUser();
     mocks.ask.mockResolvedValue(false);
     mountCards("auth");
@@ -238,8 +238,8 @@ describe("桌面端账号卡·普通用户", () => {
   });
 });
 
-describe("桌面端账号卡·超级管理员", () => {
-  it("身份探测命中用户列表: 显示超级管理员徽章与最近登录", async () => {
+describe("desktop account card superadmin", () => {
+  it("shows the superadmin badge and latest login after the identity probe finds the user list", async () => {
     seedAdmin();
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("root"));
@@ -249,7 +249,7 @@ describe("桌面端账号卡·超级管理员", () => {
     expect(text).toContain("最近登录");
   });
 
-  it("用户管理列出全部用户并标注自己,注册开关区隐藏并注明", async () => {
+  it("lists every user with a self marker and hides the registration toggle with an explanation", async () => {
     seedAdmin();
     mountCards("account");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
@@ -264,7 +264,7 @@ describe("桌面端账号卡·超级管理员", () => {
     expect(rowOf(mounted!.container, "root").querySelectorAll("button")).toHaveLength(0);
   });
 
-  it("创建用户经代理提交用户名与初始密码", async () => {
+  it("creates a user through the proxy with a username and initial password", async () => {
     seedAdmin();
     mountCards("account");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
@@ -281,7 +281,7 @@ describe("桌面端账号卡·超级管理员", () => {
     await flushUntil(() => mocks.adminUsers.mock.calls.length >= 2);
   });
 
-  it("禁用用户经 adminSetUserState(disabled) 并刷新", async () => {
+  it("disables a user through adminSetUserState(disabled) and refreshes", async () => {
     seedAdmin();
     mountCards("account");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
@@ -295,7 +295,7 @@ describe("桌面端账号卡·超级管理员", () => {
     await flushUntil(() => mocks.adminUsers.mock.calls.length >= 2);
   });
 
-  it("重置用户经 adminSetUserState(reset_required) 并保留确认文案", async () => {
+  it("resets a user through adminSetUserState(reset_required) and preserves the confirmation copy", async () => {
     seedAdmin();
     mountCards("account");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));

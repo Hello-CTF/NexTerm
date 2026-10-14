@@ -232,8 +232,8 @@ afterEach(() => {
   container = null;
 });
 
-describe("XtermView 图片粘贴拦截", () => {
-  it("纯图片剪贴板触发 onPasteImages 并阻止默认粘贴", async () => {
+describe("XtermView image paste interception", () => {
+  it("invokes onPasteImages and prevents default paste for an image-only clipboard", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -248,7 +248,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(harness.write).not.toHaveBeenCalled();
   });
 
-  it("含纯文本的混合剪贴板不拦截, 文本粘贴保持原样", async () => {
+  it("does not intercept a mixed clipboard containing plain text and preserves normal text paste", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -261,7 +261,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("图片+非图片文件混合剪贴板不拦截, 整体交还默认处理", async () => {
+  it("does not intercept a mixed image and non-image file clipboard and falls back to default handling as a whole", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -277,7 +277,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("非图片文件拖放不拦截", async () => {
+  it("does not intercept non-image file drops", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -290,7 +290,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("图片+非图片文件混合拖放不拦截, 不丢弃非图片内容", async () => {
+  it("does not intercept mixed image and non-image file drops and preserves non-image content", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -306,7 +306,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("图片+文本混合拖放与 paste 一致放行, 不上传也不 preventDefault", async () => {
+  it("passes mixed image and text drops through like paste without upload or preventDefault", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -319,7 +319,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("图片拖放触发 onPasteImages 并阻止默认行为", async () => {
+  it("invokes onPasteImages and prevents default behavior for image drops", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
@@ -333,7 +333,7 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("dragover 只在拖入文件时阻止默认以允许放置", async () => {
+  it("prevents default dragover behavior only for files to allow dropping", async () => {
     await show({ sessionId: "session", tabId: "pending", onPasteImages: vi.fn() });
 
     const withFiles = dragOverEvent(["Files"]);

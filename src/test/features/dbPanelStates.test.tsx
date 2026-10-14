@@ -78,7 +78,7 @@ function text(): string {
 function editor(): EditorView {
   const element = mounted?.container.querySelector<HTMLElement>(".cm-editor");
   const view = element ? EditorView.findFromDOM(element) : null;
-  if (!view) throw new Error("SQL 编辑器未找到");
+  if (!view) throw new Error("SQL editor not found");
   return view;
 }
 
@@ -93,20 +93,20 @@ function keyRow(key: string): Element {
   const row = [...(mounted?.container.querySelectorAll(".nx-row") ?? [])].find(
     (candidate) => candidate.textContent?.trim() === key,
   );
-  if (!row) throw new Error(`键行未找到: ${key}`);
+  if (!row) throw new Error(`key row not found: ${key}`);
   return row;
 }
 
-describe("DbPanel MySQL 状态", () => {
-  it("schema 列表失败时给出真实错误与重试，而不是「没有表」", async () => {
-    mocks.schemas.mockRejectedValue(new Error("连接已断开"));
+describe("DbPanel MySQL states", () => {
+  it("schema list failure shows the real error with a retry, not the no-tables state", async () => {
+    mocks.schemas.mockRejectedValue(new Error("connection lost"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => text().includes("数据库列表加载失败 · 连接已断开"));
+    await flushUntil(() => text().includes("数据库列表加载失败 · connection lost"));
     expect(text()).not.toContain("此数据库中没有表");
   });
 
-  it("重试后恢复，真空库才显示「此数据库中没有表」", async () => {
-    mocks.schemas.mockRejectedValueOnce(new Error("连接已断开"));
+  it("after retry it recovers; only a truly empty database shows the no-tables state", async () => {
+    mocks.schemas.mockRejectedValueOnce(new Error("connection lost"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("数据库列表加载失败"));
     clickButton(mounted!.container, "重试");
@@ -114,23 +114,23 @@ describe("DbPanel MySQL 状态", () => {
     expect(mocks.schemas).toHaveBeenCalledTimes(2);
   });
 
-  it("表列表失败时内联报错并可重试", async () => {
-    mocks.tables.mockRejectedValueOnce(new Error("权限不足"));
+  it("table list failure shows an inline error and can be retried", async () => {
+    mocks.tables.mockRejectedValueOnce(new Error("permission denied"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => text().includes("表列表加载失败 · 权限不足"));
+    await flushUntil(() => text().includes("表列表加载失败 · permission denied"));
     expect(text()).not.toContain("此数据库中没有表");
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("此数据库中没有表"));
   });
 
-  it("表列表成功后渲染表名 chips", async () => {
+  it("table names render as chips after a successful load", async () => {
     mocks.tables.mockResolvedValue(["orders", "users"]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("users"));
     expect(text()).not.toContain("表列表加载中");
   });
 
-  it("工具栏没有「历史（即将推出）」死按钮", async () => {
+  it("the toolbar has no dead History (coming soon) button", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     expect(
@@ -142,8 +142,8 @@ describe("DbPanel MySQL 状态", () => {
   });
 });
 
-describe("DbPanel PostgreSQL 状态", () => {
-  it("默认选中第一个非系统 schema，标题标注 PostgreSQL", async () => {
+describe("DbPanel PostgreSQL states", () => {
+  it("selects the first non-system schema by default and labels the title PostgreSQL", async () => {
     mocks.schemas.mockResolvedValue(["pg_catalog", "public"]);
     mocks.tables.mockResolvedValue(["orders"]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
@@ -152,7 +152,7 @@ describe("DbPanel PostgreSQL 状态", () => {
     expect(mocks.tables).toHaveBeenCalledWith("c1", "public");
   });
 
-  it("空 schema 显示「没有表或视图」", async () => {
+  it("an empty schema shows the no-tables-or-views state", async () => {
     mocks.schemas.mockResolvedValue(["public"]);
     mocks.tables.mockResolvedValue([]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
@@ -160,16 +160,16 @@ describe("DbPanel PostgreSQL 状态", () => {
   });
 });
 
-describe("DbPanel Redis 状态", () => {
-  it("SCAN 失败时给出真实错误与重试，而不是「没有匹配的键」", async () => {
-    mocks.redisScan.mockRejectedValue(new Error("LOADING 错误"));
+describe("DbPanel Redis states", () => {
+  it("SCAN failure shows the real error with a retry, not the no-keys state", async () => {
+    mocks.redisScan.mockRejectedValue(new Error("LOADING error"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => text().includes("键列表加载失败 · LOADING 错误"));
+    await flushUntil(() => text().includes("键列表加载失败 · LOADING error"));
     expect(text()).not.toContain("没有匹配的键");
   });
 
-  it("重试后恢复，空结果才显示「没有匹配的键」", async () => {
-    mocks.redisScan.mockRejectedValueOnce(new Error("LOADING 错误"));
+  it("after retry it recovers; only an empty result shows no matching keys", async () => {
+    mocks.redisScan.mockRejectedValueOnce(new Error("LOADING error"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("键列表加载失败"));
     clickButton(mounted!.container, "重试");
@@ -177,7 +177,7 @@ describe("DbPanel Redis 状态", () => {
     expect(mocks.redisScan).toHaveBeenCalledTimes(2);
   });
 
-  it("键详情失败时内联报错并可重试", async () => {
+  it("key detail failure shows an inline error and can be retried", async () => {
     mocks.redisScan.mockResolvedValue([0, ["k1"]]);
     mocks.redisInspect.mockRejectedValue(new Error("WRONGTYPE"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
@@ -198,7 +198,7 @@ describe("DbPanel Redis 状态", () => {
     );
   });
 
-  it("键详情加载中显示 pending 而不是「从左侧选一个键」", async () => {
+  it("key detail loading shows pending instead of the pick-a-key placeholder", async () => {
     mocks.redisScan.mockResolvedValue([0, ["k1"]]);
     let resolveInspect!: (v: unknown) => void;
     mocks.redisInspect.mockImplementation(
@@ -219,7 +219,7 @@ describe("DbPanel Redis 状态", () => {
     );
   });
 
-  it("空页但 cursor 未归零时提示继续下一页，而不是「没有匹配的键」", async () => {
+  it("an empty page with a non-zero cursor prompts for the next page instead of no matching keys", async () => {
     mocks.redisScan.mockResolvedValueOnce([5, []]).mockResolvedValueOnce([0, ["k1"]]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("本页没有匹配的键"));
@@ -232,23 +232,23 @@ describe("DbPanel Redis 状态", () => {
     expect(text()).not.toContain("本页没有匹配");
   });
 
-  it("下一页失败后重新 SCAN 会清除分页错误", async () => {
+  it("a fresh SCAN clears the pagination error after a failed next page", async () => {
     mocks.redisScan
       .mockResolvedValueOnce([5, ["k1"]])
-      .mockRejectedValueOnce(new Error("连接重置"))
+      .mockRejectedValueOnce(new Error("connection reset"))
       .mockResolvedValueOnce([0, ["k2"]]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("k1"));
     clickButton(mounted!.container, "下一页");
-    await flushUntil(() => text().includes("下一页加载失败 · 连接重置"));
+    await flushUntil(() => text().includes("下一页加载失败 · connection reset"));
     clickButton(mounted!.container, "SCAN");
     await flushUntil(() => !text().includes("下一页加载失败") && text().includes("k2"));
     expect(text()).toContain("k2");
   });
 });
 
-describe("DbPanel SQL 回归", () => {
-  it("MySQL chips 使用当前数据库并转义完整标识符", async () => {
+describe("DbPanel SQL regressions", () => {
+  it("MySQL chips use the current database and escape the full identifier", async () => {
     mocks.schemas.mockResolvedValue(["mydb", "Sales DB"]);
     mocks.tables.mockImplementation((_connId, schema) =>
       Promise.resolve(schema === "Sales DB" ? ["Order `select"] : ["orders"]),
@@ -268,7 +268,7 @@ describe("DbPanel SQL 回归", () => {
     );
   });
 
-  it("PostgreSQL chips 使用双引号并双写标识符内的引号", async () => {
+  it("PostgreSQL chips use double quotes and double embedded quotes", async () => {
     mocks.schemas.mockResolvedValue(["public"]);
     mocks.tables.mockResolvedValue(['Order "Details']);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "postgres" }));
@@ -281,7 +281,7 @@ describe("DbPanel SQL 回归", () => {
     );
   });
 
-  it("旧 schema 的表列表响应不会覆盖新选择", async () => {
+  it("a stale schema's table-list response does not override the new selection", async () => {
     const first = deferred<string[]>();
     const second = deferred<string[]>();
     mocks.schemas.mockResolvedValue(["first", "second"]);
@@ -305,7 +305,7 @@ describe("DbPanel SQL 回归", () => {
     expect(text()).not.toContain("old_table");
   });
 
-  it("结构分别呈现字段和索引且不显示伪造耗时", async () => {
+  it("structure shows fields and indexes separately without a fake duration", async () => {
     mocks.tables.mockResolvedValue(["Order Details"]);
     mocks.columns.mockResolvedValue({
       columns: [
@@ -338,7 +338,7 @@ describe("DbPanel SQL 回归", () => {
     expect(text()).not.toContain("8ms");
   });
 
-  it("表列表可展开全部并在折叠状态搜索全部表", async () => {
+  it("the table list expands all and searches all tables while collapsed", async () => {
     mocks.tables.mockResolvedValue(
       Array.from({ length: 65 }, (_, index) => `table_${String(index).padStart(2, "0")}`),
     );
@@ -359,7 +359,7 @@ describe("DbPanel SQL 回归", () => {
     expect(text()).not.toContain("table_63");
   });
 
-  it("手动刷新重新获取当前数据库的表", async () => {
+  it("manual refresh refetches the current database's tables", async () => {
     mocks.tables
       .mockResolvedValueOnce(["orders"])
       .mockResolvedValueOnce(["orders", "users"]);
@@ -373,7 +373,7 @@ describe("DbPanel SQL 回归", () => {
     expect(mocks.tables).toHaveBeenLastCalledWith("c1", "mydb");
   });
 
-  it("DDL 成功后自动刷新并显示新表", async () => {
+  it("a successful DDL auto-refreshes and shows the new table", async () => {
     mocks.tables
       .mockResolvedValueOnce(["orders"])
       .mockResolvedValueOnce(["orders", "audit log"]);
@@ -398,8 +398,8 @@ describe("DbPanel SQL 回归", () => {
   });
 });
 
-describe("DbPanel Redis 竞态回归", () => {
-  it("旧键详情响应不会覆盖新选择的键", async () => {
+describe("DbPanel Redis race regressions", () => {
+  it("a stale key-detail response does not override the newly selected key", async () => {
     const first = deferred<unknown>();
     const second = deferred<unknown>();
     mocks.redisScan.mockResolvedValue([0, ["k1", "k2"]]);
@@ -422,7 +422,7 @@ describe("DbPanel Redis 竞态回归", () => {
     expect(text()).not.toContain('"old"');
   });
 
-  it("相同 SCAN 进行中忽略重复请求", async () => {
+  it("duplicate requests are ignored while the same SCAN is in flight", async () => {
     const pending = deferred<[number, string[]]>();
     mocks.redisScan.mockReturnValue(pending.promise);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
@@ -436,7 +436,7 @@ describe("DbPanel Redis 竞态回归", () => {
     await flushUntil(() => text().includes("没有匹配的键"));
   });
 
-  it("SCAN 首页和后续页都会按 key 去重", async () => {
+  it("keys are deduplicated across the first and later SCAN pages", async () => {
     mocks.redisScan
       .mockResolvedValueOnce([7, ["k1", "k1", "k2"]])
       .mockResolvedValueOnce([0, ["k2", "k3"]]);
@@ -451,7 +451,7 @@ describe("DbPanel Redis 竞态回归", () => {
     ).toEqual(["k1", "k2", "k3"]);
   });
 
-  it("旧 pattern 的迟到响应不会覆盖新扫描", async () => {
+  it("a late response for an old pattern does not override the new scan", async () => {
     const initial = deferred<[number, string[]]>();
     const current = deferred<[number, string[]]>();
     mocks.redisScan.mockImplementation((_connId, _cursor, scanPattern) =>
@@ -475,7 +475,7 @@ describe("DbPanel Redis 竞态回归", () => {
     expect(text()).not.toContain("old-key");
   });
 
-  it("旧 cursor 的迟到分页响应不会覆盖重新扫描", async () => {
+  it("a late page response for an old cursor does not override the fresh scan", async () => {
     const page = deferred<[number, string[]]>();
     const refresh = deferred<[number, string[]]>();
     mocks.redisScan

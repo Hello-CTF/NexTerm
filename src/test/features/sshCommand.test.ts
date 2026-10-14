@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import { formatSshCommand, sshCommandCopyable } from "../../features/explorer/sshCommand";
 
 describe("formatSshCommand", () => {
-  it("拼接 user@host, 默认端口 22 省略 -p", () => {
+  it("joins user@host and omits -p for default port 22", () => {
     expect(formatSshCommand({ host: "10.0.0.8", port: 22, username: "root" })).toBe(
       "ssh root@10.0.0.8",
     );
   });
 
-  it("非默认端口追加 -p port", () => {
+  it("appends -p port for non-default ports", () => {
     expect(formatSshCommand({ host: "edge.example.com", port: 2222, username: "deploy" })).toBe(
       "ssh deploy@edge.example.com -p 2222",
     );
   });
 
-  it("用户名或端口缺省时省略对应片段", () => {
+  it("omits segments for missing usernames or ports", () => {
     expect(formatSshCommand({ host: "example.com", port: null, username: null })).toBe(
       "ssh example.com",
     );
@@ -23,7 +23,7 @@ describe("formatSshCommand", () => {
     );
   });
 
-  it("字段先裁剪再拼接", () => {
+  it("trims fields before joining them", () => {
     expect(formatSshCommand({ host: " 10.0.0.8 ", port: 22, username: " root " })).toBe(
       "ssh root@10.0.0.8",
     );
@@ -31,12 +31,12 @@ describe("formatSshCommand", () => {
 });
 
 describe("sshCommandCopyable", () => {
-  it("ssh / docker 且有主机才可复制", () => {
+  it("allows copying SSH and Docker commands only when a host is present", () => {
     expect(sshCommandCopyable({ kind: "ssh", host: "10.0.0.8" })).toBe(true);
     expect(sshCommandCopyable({ kind: "docker", host: "10.0.0.8" })).toBe(true);
   });
 
-  it("无主机或非 SSH 传输不出现", () => {
+  it("does not offer copying without a host or for non-SSH transports", () => {
     expect(sshCommandCopyable({ kind: "ssh", host: null })).toBe(false);
     expect(sshCommandCopyable({ kind: "ssh", host: "   " })).toBe(false);
     expect(sshCommandCopyable({ kind: "winrm", host: "10.0.0.8" })).toBe(false);

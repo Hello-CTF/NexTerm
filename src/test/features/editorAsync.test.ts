@@ -217,7 +217,7 @@ describe("FileEditor in-flight save safeguards", () => {
   });
 });
 
-describe("FileEditor 读写失败提示", () => {
+describe("FileEditor read and save error messages", () => {
   let mounted: MountedView | undefined;
   beforeEach(() => {
     vi.clearAllMocks();
@@ -232,7 +232,7 @@ describe("FileEditor 读写失败提示", () => {
     mounted = undefined;
   });
 
-  it("打开失败用全角冒号前缀并关闭编辑器", async () => {
+  it("uses a full-width colon prefix for open failures and closes the editor", async () => {
     mocks.read.mockRejectedValueOnce(new Error("permission denied"));
     const onClose = vi.fn();
     mounted = mount(createElement(FileEditor, { sessionId: "s", path: "/a.txt", onClose }));
@@ -242,7 +242,7 @@ describe("FileEditor 读写失败提示", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("保存失败用全角冒号前缀", async () => {
+  it("uses a full-width colon prefix for save failures", async () => {
     mocks.write.mockRejectedValueOnce(new Error("disk full"));
     mounted = await mountEditor();
     editDocument("changed");

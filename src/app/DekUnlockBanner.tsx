@@ -282,8 +282,8 @@ function NativeVaultUnlockBanner() {
       <IconLock size={13} className="shrink-0 text-amber-300" />
       <span className="min-w-0 truncate">
         {mobile
-          ? `数据密钥未解锁，同步已暂停；输入主密码或使用${bioLabel}解锁`
-          : "数据密钥未解锁，同步已暂停；输入主密码即可恢复同步与加密内容"}
+          ? `凭据库已锁定，同步已暂停；输入保护密码或使用${bioLabel}解锁`
+          : "凭据库已锁定，同步已暂停；输入保护密码即可恢复同步并使用凭据"}
       </span>
       <div className="nx-spacer" />
       {error && (
@@ -302,7 +302,7 @@ function NativeVaultUnlockBanner() {
       {canFaceUnlock &&
         (confirmDisable ? (
           <>
-            <span className="min-w-0 shrink truncate text-amber-300">关闭后下次需输入主密码解锁</span>
+            <span className="min-w-0 shrink truncate text-amber-300">关闭后下次需输入保护密码解锁</span>
             <button
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
@@ -344,8 +344,8 @@ function NativeVaultUnlockBanner() {
       <input
         className="nx-input nx-input-sm w-40 shrink-0"
         type="password"
-        placeholder="主密码"
-        aria-label="主密码"
+        placeholder="保护密码"
+        aria-label="保护密码"
         autoComplete="current-password"
         value={password}
         disabled={busy}

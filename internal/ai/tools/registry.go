@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 )
 
@@ -256,20 +256,22 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 
 		return Fail(fmt.Errorf("操作已执行，但结果记录失败：%w", err))
 	case record.Audit.State == outcome.AuditFailed:
+		if branch.ModelText == "" {
+			branch.ModelText = provider.ProjectModelOutput(call.Name, branch.OK, branch.Text, branch.Truncated, branch.Panic)
+		}
 		branch.Text += "\n[结果审计写入失败: " + record.Audit.Error + "]"
+		branch.ModelText += "\n[audit write failed: " + provider.ProjectModelErrorText(record.Audit.Error) + "]"
 		return branch
 	default:
 		return branch
 	}
 }
 
-const execFailureMarker = "[执行失败:"
-
 func completionFromOutput(output Output) (outcome.Completion, error) {
 	if !output.OK {
 		return outcome.Completion{}, errors.New(output.Text)
 	}
-	if output.Truncated || strings.Contains(output.Text, execFailureMarker) {
+	if output.Truncated || output.ExecFailed {
 		return outcome.Completion{}, errors.New("工具输出被截断或传输失败，无法确定执行结果")
 	}
 	if output.ExitUnknown {

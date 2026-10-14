@@ -87,8 +87,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("webTransport 重连时序", () => {
-  it("掉线后用同一通道 id 重连，且只有重连才通知 reopen", async () => {
+describe("webTransport reconnection timing", () => {
+  it("reconnects with the same channel ID after a drop and notifies reopen only for reconnections", async () => {
     const { newBinaryChannel, onChannelReopen } = await import("../ipc/webTransport");
     const channel = newBinaryChannel();
     const reopened = vi.fn();
@@ -111,7 +111,7 @@ describe("webTransport 重连时序", () => {
     expect(reopened).toHaveBeenCalledTimes(1);
   });
 
-  it("重连退避按 300ms 指数增长，open 后重置", async () => {
+  it("increases reconnect backoff exponentially from 300ms and resets it after open", async () => {
     const { newBinaryChannel } = await import("../ipc/webTransport");
     newBinaryChannel();
     const first = FakeWebSocket.instances[0];
@@ -135,7 +135,7 @@ describe("webTransport 重连时序", () => {
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
-  it("dispose 后不再重连、不再通知", async () => {
+  it("does not reconnect or notify after dispose", async () => {
     const { newBinaryChannel, onChannelReopen, disposeChannel } = await import("../ipc/webTransport");
     const channel = newBinaryChannel();
     const reopened = vi.fn();
@@ -152,7 +152,7 @@ describe("webTransport 重连时序", () => {
     off();
   });
 
-  it("重连成功后二进制帧与 JSON 文本帧仍按序解码投递", async () => {
+  it("continues decoding and delivering binary and JSON text frames in order after reconnecting", async () => {
     const { newBinaryChannel } = await import("../ipc/webTransport");
     const channel = newBinaryChannel();
     const received: unknown[] = [];
@@ -170,7 +170,7 @@ describe("webTransport 重连时序", () => {
     expect(received).toEqual([new Uint8Array([1, 2, 3]), { type: "delta", text: "x" }]);
   });
 
-  it("单个 reopen 订阅者抛错不影响其他订阅者", async () => {
+  it("one reopen subscriber throwing does not affect other subscribers", async () => {
     const { newBinaryChannel, onChannelReopen } = await import("../ipc/webTransport");
     const channel = newBinaryChannel();
     const good = vi.fn();
@@ -188,7 +188,7 @@ describe("webTransport 重连时序", () => {
     expect(good).toHaveBeenCalledTimes(1);
   });
 
-  it("events.ts 的 WEB 通道把重连通知接到 onChannelReopen（验收同一路径）", async () => {
+  it("routes WEB channel reconnect notifications from events.ts to onChannelReopen (acceptance path)", async () => {
     const events = await import("../ipc/events");
     const frames: number[][] = [];
     const channel = events.createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
@@ -213,8 +213,8 @@ describe("webTransport 重连时序", () => {
   });
 });
 
-describe("events 断线恢复游标", () => {
-  it("事件 id 推进游标，重连以 since 续传", async () => {
+describe("events reconnection recovery cursor", () => {
+  it("advances the cursor from event IDs and resumes with since after reconnecting", async () => {
     const { subscribeEvent } = await import("../ipc/webTransport");
     const seen: unknown[] = [];
     subscribeEvent("session://status", (payload) => seen.push(payload));
@@ -232,7 +232,7 @@ describe("events 断线恢复游标", () => {
     expect(FakeWebSocket.instances[1].url).toContain("/ws/events?since=2");
   });
 
-  it("resync 标记更新游标并通知注册者，后续事件照常分发", async () => {
+  it("updates the cursor and notifies subscribers on resync, then continues dispatching events", async () => {
     const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
     const seen: unknown[] = [];
     const resynced = vi.fn();
@@ -253,7 +253,7 @@ describe("events 断线恢复游标", () => {
     expect(seen).toEqual([{ b: 1 }]);
   });
 
-  it("resync 订阅者抛错不影响后续事件分发", async () => {
+  it("a resync subscriber throwing does not affect later event dispatch", async () => {
     const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
     const seen: unknown[] = [];
     subscribeEvent("session://status", (payload) => seen.push(payload));

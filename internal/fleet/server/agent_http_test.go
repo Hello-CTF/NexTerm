@@ -48,10 +48,10 @@ func TestAgentSyncRequiresDeviceCredential(t *testing.T) {
 		body   map[string]any
 		status int
 	}{
-		{"正确凭证", map[string]any{"device_id": deviceID, "secret": secret}, http.StatusOK},
-		{"密钥错误", map[string]any{"device_id": deviceID, "secret": "wrong"}, http.StatusForbidden},
-		{"设备不匹配", map[string]any{"device_id": "01J5OTHER0000000000000000", "secret": secret}, http.StatusForbidden},
-		{"缺少设备 ID", map[string]any{"secret": secret}, http.StatusForbidden},
+		{"valid credentials", map[string]any{"device_id": deviceID, "secret": secret}, http.StatusOK},
+		{"invalid secret", map[string]any{"device_id": deviceID, "secret": "wrong"}, http.StatusForbidden},
+		{"device mismatch", map[string]any{"device_id": "01J5OTHER0000000000000000", "secret": secret}, http.StatusForbidden},
+		{"missing device ID", map[string]any{"secret": secret}, http.StatusForbidden},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

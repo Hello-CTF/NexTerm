@@ -184,8 +184,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("凭据库未初始化前置弹窗（凭据入口）", () => {
-  it("sidebar 未初始化时点「新建凭据」先弹初始化浮层，而不是新建表单", async () => {
+describe("Vault-not-initialized gate (credentials entry)", () => {
+  it("sidebar: New Credential with an uninitialized vault opens the init modal first, not the create form", async () => {
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
     expect(mounted!.container.querySelector(".nx-modal")).toBeNull();
@@ -197,7 +197,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("初始化成功后回到原动作：自动打开新建凭据表单", async () => {
+  it("after init succeeds it resumes the original action: opens the new-credential form", async () => {
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
     click(mounted!.container.querySelector('button[title="新建凭据"]')!);
@@ -212,7 +212,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(initModal()).toBeNull();
   });
 
-  it("初始化浮层保持 8 位密码校验，短密码不能提交", async () => {
+  it("init modal keeps the 8-character minimum; short passwords cannot be submitted", async () => {
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
     click(mounted!.container.querySelector('button[title="新建凭据"]')!);
@@ -226,7 +226,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("初始化浮层留空密码可直接完成初始化", async () => {
+  it("init modal completes initialization with an empty password", async () => {
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
     click(mounted!.container.querySelector('button[title="新建凭据"]')!);
@@ -242,7 +242,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已完成初始化，未设置密码");
   });
 
-  it("取消初始化则不打开新建表单，也不调用初始化", async () => {
+  it("canceling init neither opens the create form nor calls initialize", async () => {
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
     click(mounted!.container.querySelector('button[title="新建凭据"]')!);
@@ -254,7 +254,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("已初始化时直接打开新建凭据，不出现初始化浮层", async () => {
+  it("initialized vault opens the new-credential form directly, with no init modal", async () => {
     mocks.vaultStatus.mockResolvedValue(DPAPI_VAULT);
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('button[title="新建凭据"]'));
@@ -265,7 +265,7 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("panel 工具栏与空态「新建凭据」同样先弹初始化浮层", async () => {
+  it("panel toolbar and empty-state New Credential also show the init modal first", async () => {
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() =>
       [...mounted!.container.querySelectorAll("button")].some(
@@ -289,8 +289,8 @@ describe("凭据库未初始化前置弹窗（凭据入口）", () => {
   });
 });
 
-describe("凭据库未初始化前置弹窗（资产流程）", () => {
-  it("新建资产（密码认证）打开即弹初始化浮层，先于任何填写", async () => {
+describe("Vault-not-initialized gate (asset flows)", () => {
+  it("new asset (password auth) shows the init modal immediately, before any input", async () => {
     mounted = withClient(
       createElement(AssetEditor, { kind: "asset", onClose: () => {}, onSaved: () => {} }),
     );
@@ -300,7 +300,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     expect(mocks.setCredential).not.toHaveBeenCalled();
   });
 
-  it("初始化后回到资产表单：已填内容保留，保存不再被「尚未初始化」拒绝", async () => {
+  it("after init it returns to the asset form: input is preserved and save is no longer rejected as not initialized", async () => {
     const onSaved = vi.fn();
     mounted = withClient(
       createElement(AssetEditor, { kind: "asset", onClose: () => {}, onSaved }),
@@ -329,7 +329,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     }
   });
 
-  it("取消初始化后资产表单仍在，可继续编辑（不丢已填内容）", async () => {
+  it("canceling init keeps the asset form open for editing without losing input", async () => {
     mounted = withClient(
       createElement(AssetEditor, { kind: "asset", onClose: () => {}, onSaved: () => {} }),
     );
@@ -345,7 +345,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("编辑已有资产不主动弹初始化浮层", async () => {
+  it("editing an existing asset does not proactively show the init modal", async () => {
     mounted = withClient(
       createElement(AssetEditor, {
         kind: "asset",
@@ -360,7 +360,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     expect(mocks.initMaster).not.toHaveBeenCalled();
   });
 
-  it("编辑已有资产并输入新密码时先弹初始化浮层，取消后已填内容保留", async () => {
+  it("typing a new password when editing an existing asset shows the init modal first; canceling preserves input", async () => {
     mounted = withClient(
       createElement(AssetEditor, {
         kind: "asset",
@@ -386,7 +386,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     expect(assetEditorModal()).not.toBeNull();
   });
 
-  it("编辑路径完成初始化后保存：新密码写入凭据库并更新资产", async () => {
+  it("editing: save after init writes the new password to the vault and updates the asset", async () => {
     const onSaved = vi.fn();
     mounted = withClient(
       createElement(AssetEditor, {
@@ -419,7 +419,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
     }
   });
 
-  it("编辑资产改选「存入凭据库」新建私钥时同样先弹初始化浮层", async () => {
+  it("switching to Save-to-vault for a new private key when editing also shows the init modal first", async () => {
     mounted = withClient(
       createElement(AssetEditor, {
         kind: "asset",
@@ -446,7 +446,7 @@ describe("凭据库未初始化前置弹窗（资产流程）", () => {
   });
 });
 
-describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
+describe("Locked-vault unlock gate on asset save (M205 finding 5)", () => {
   function mountLockedEditor(onSaved: () => void) {
     mocks.vaultStatus.mockResolvedValue(LOCKED_VAULT);
     mounted = withClient(
@@ -468,7 +468,7 @@ describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
     return input;
   }
 
-  it("locked 时保存先弹解锁，解锁成功后才写凭据库", async () => {
+  it("when locked, save prompts for unlock first and writes to the vault only after success", async () => {
     const onSaved = vi.fn();
     await mountLockedEditor(onSaved);
     mocks.promptText.mockResolvedValue("right-password");
@@ -485,7 +485,7 @@ describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
     await flushUntil(() => onSaved.mock.calls.length > 0);
   });
 
-  it("解锁失败当场报错并中止保存，表单数据保留", async () => {
+  it("failed unlock reports the error and aborts the save, preserving form data", async () => {
     await mountLockedEditor(vi.fn());
     mocks.promptText.mockResolvedValue("wrong-password");
     mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
@@ -502,7 +502,7 @@ describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
     expect(assetEditorModal()).not.toBeNull();
   });
 
-  it("取消解锁则中止保存，不调用凭据接口", async () => {
+  it("canceling unlock aborts the save without calling vault APIs", async () => {
     await mountLockedEditor(vi.fn());
     mocks.promptText.mockResolvedValue(null);
 
@@ -517,7 +517,7 @@ describe("资产保存的 locked 解锁前置（M205 发现 5）", () => {
   });
 });
 
-describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
+describe("Locked-vault unlock gate on new credential (M205 finding 5)", () => {
   function mountLockedModal(onSaved: () => void) {
     mocks.vaultStatus.mockResolvedValue(LOCKED_VAULT);
     mounted = withClient(
@@ -533,7 +533,7 @@ describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
     setInputValue(valueInput, "s3cret");
   }
 
-  it("locked 时保存先弹解锁，成功后按所填内容创建", async () => {
+  it("when locked, save prompts for unlock first, then creates with the entered values", async () => {
     const onSaved = vi.fn();
     mountLockedModal(onSaved);
     mocks.promptText.mockResolvedValue("right-password");
@@ -551,7 +551,7 @@ describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
     expect(onSaved).toHaveBeenCalledWith("cred-1");
   });
 
-  it("无密码凭据库锁定后保存直接静默解锁，不弹密码输入", async () => {
+  it("saving with a locked passwordless vault silently unlocks without prompting", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_LOCKED_VAULT);
     const onSaved = vi.fn();
     mounted = withClient(
@@ -576,7 +576,7 @@ describe("新建凭据的 locked 解锁前置（M205 发现 5）", () => {
     await flushUntil(() => onSaved.mock.calls.length > 0);
   });
 
-  it("解锁失败不创建凭据，已填内容保留", async () => {
+  it("failed unlock does not create the credential and preserves input", async () => {
     mountLockedModal(vi.fn());
     mocks.promptText.mockResolvedValue("wrong-password");
     mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });

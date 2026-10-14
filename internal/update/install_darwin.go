@@ -4,7 +4,6 @@ package update
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +19,7 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 	}
 	attach := exec.CommandContext(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mountpoint, archive)
 	if output, err := attach.CombinedOutput(); err != nil {
-		return fmt.Errorf("hdiutil attach 失败: %w (%s)", err, output)
+		return userErrorf(UserErrorIO, "hdiutil attach 失败: %w (%s)", err, output)
 	}
 	defer func() {
 		_ = exec.Command("hdiutil", "detach", "-force", mountpoint).Run()
@@ -37,15 +36,15 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) error {
 		}
 	}
 	if appName == "" {
-		return fmt.Errorf("dmg 中没有 .app: %s", filepath.Base(archive))
+		return userErrorf(UserErrorIO, "dmg 中没有 .app: %s", filepath.Base(archive))
 	}
 	target := filepath.Join("/Applications", appName)
 	if err := os.RemoveAll(target); err != nil {
-		return fmt.Errorf("清理旧应用失败: %w", err)
+		return userErrorf(UserErrorIO, "清理旧应用失败: %w", err)
 	}
 	copy := exec.CommandContext(ctx, "ditto", filepath.Join(mountpoint, appName), target)
 	if output, err := copy.CombinedOutput(); err != nil {
-		return fmt.Errorf("复制 %s 到 /Applications 失败: %w (%s)", appName, err, output)
+		return userErrorf(UserErrorIO, "复制 %s 到 /Applications 失败: %w (%s)", appName, err, output)
 	}
 	executable := filepath.Join(target, "Contents", "MacOS", filepath.Base(m.ExePath))
 	if _, err := os.Stat(executable); err == nil {

@@ -429,7 +429,7 @@ async function pullLatest(
     }
   } catch (e) {
     failed = true;
-    console.warn("[NexTerm] 拉取服务端布局失败", e);
+    console.warn("[NexTerm] Failed to fetch server layout", e);
   } finally {
     fetchInFlight = false;
   }

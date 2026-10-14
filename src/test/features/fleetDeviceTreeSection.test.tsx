@@ -175,7 +175,7 @@ const LOCAL_ASSET = {
 };
 
 const WEB_ASSET = { ...LOCAL_ASSET, id: "a-web", kind: "ssh", name: "web-asset", host: "10.0.0.8", port: 22, builtin: false };
-const GROUP = { id: "g1", parentId: null, name: "生产", sort: 0, createdAt: 1, updatedAt: 1 };
+const GROUP = { id: "g1", parentId: null, name: "Production", sort: 0, createdAt: 1, updatedAt: 1 };
 
 interface RecordedCall {
   url: string;
@@ -315,8 +315,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("资产树设备行 · 位置与登录门控", () => {
-  it("设备行渲染在「本机终端」之后、其他资产与分组之前", async () => {
+describe("Asset tree device rows - placement and login gating", () => {
+  it("renders device rows after the local terminal and before other assets and groups", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -326,14 +326,14 @@ describe("资产树设备行 · 位置与登录门控", () => {
     const localIdx = children.findIndex((el) => el.textContent?.includes("本机终端"));
     const deviceIdx = children.findIndex((el) => el.textContent?.includes("web-01"));
     const webIdx = children.findIndex((el) => el.textContent?.includes("web-asset"));
-    const groupIdx = children.findIndex((el) => el.textContent?.includes("生产"));
+    const groupIdx = children.findIndex((el) => el.textContent?.includes("Production"));
     expect(localIdx).toBeGreaterThanOrEqual(0);
     expect(deviceIdx).toBeGreaterThan(localIdx);
     expect(webIdx).toBeGreaterThan(deviceIdx);
     expect(groupIdx).toBeGreaterThan(deviceIdx);
   });
 
-  it("未登录不渲染设备行, 不发任何 fleet 请求, 也不订阅事件", async () => {
+  it("renders no device rows, sends no fleet requests, and subscribes to no events when logged out", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(null);
     mountTree();
@@ -348,8 +348,8 @@ describe("资产树设备行 · 位置与登录门控", () => {
   });
 });
 
-describe("资产树设备行 · 仅渲染设备行", () => {
-  it("有在线设备时只渲染设备行: 无分区标题/计数/刷新按钮, 也无任何提示行", async () => {
+describe("Asset tree device rows - rows only", () => {
+  it("renders only device rows for online devices with no section title, count, refresh button, or hint rows", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -363,7 +363,7 @@ describe("资产树设备行 · 仅渲染设备行", () => {
     }
   });
 
-  it("设备列表加载中: 不渲染任何设备内容, 也无加载提示", async () => {
+  it("renders no device content or loading hint while the device list is loading", async () => {
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
       const u = String(url);
       const method = init.method ?? "GET";
@@ -382,7 +382,7 @@ describe("资产树设备行 · 仅渲染设备行", () => {
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 
-  it("设备列表加载失败: 不渲染错误行或重试按钮", async () => {
+  it("renders no error row or retry button when device loading fails", async () => {
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
       const u = String(url);
       const method = init.method ?? "GET";
@@ -402,7 +402,7 @@ describe("资产树设备行 · 仅渲染设备行", () => {
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 
-  it("没有接入设备: 不渲染空态提示", async () => {
+  it("renders no empty-state hint when no devices are enrolled", async () => {
     const calls = route({ devices: [] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -414,7 +414,7 @@ describe("资产树设备行 · 仅渲染设备行", () => {
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 
-  it("设备都不在线: 不渲染全离线提示, 也不显示离线设备行", async () => {
+  it("renders no all-offline hint or offline device rows when every device is offline", async () => {
     const calls = route({ devices: [OFFLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -428,8 +428,8 @@ describe("资产树设备行 · 仅渲染设备行", () => {
   });
 });
 
-describe("资产树设备行 · 行行为", () => {
-  it("单击与 Enter 都打开设备终端工作区, 且没有独立「终端」按钮", async () => {
+describe("Asset tree device rows - row behavior", () => {
+  it("opens the device terminal workspace on click and Enter without a separate terminal button", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -454,7 +454,7 @@ describe("资产树设备行 · 行行为", () => {
     expect(deviceTerminalTabs()).toHaveLength(1);
   });
 
-  it("离线设备不在资产树显示; 终端关闭的在线设备禁用并给出提示, 点击不打开终端", async () => {
+  it("hides offline devices and disables online devices with terminal disabled, showing a hint and not opening a terminal on click", async () => {
     route({ devices: [OFFLINE_DEVICE, TERMINAL_DISABLED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -474,7 +474,7 @@ describe("资产树设备行 · 行行为", () => {
     expect(deviceWorkspace()).toBeUndefined();
   });
 
-  it("已吊销设备不在资产树显示 (不是灰显)", async () => {
+  it("omits revoked devices from the tree rather than dimming them", async () => {
     route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -483,7 +483,7 @@ describe("资产树设备行 · 行行为", () => {
     expect(tree().textContent).not.toContain("old-laptop");
   });
 
-  it("上下文菜单的吊销项为 danger 样式, 行内吊销按钮为 is-danger", async () => {
+  it("uses danger styling for the context-menu revoke item and is-danger for the inline revoke button", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -502,7 +502,7 @@ describe("资产树设备行 · 行行为", () => {
     expect(revokeItem?.classList.contains("is-danger")).toBe(true);
   });
 
-  it("方向键从设备行移动焦点到相邻树行", async () => {
+  it("moves focus between device rows and adjacent tree rows with arrow keys", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -530,8 +530,8 @@ describe("资产树设备行 · 行行为", () => {
   });
 });
 
-describe("资产树设备行 · 自动收敛", () => {
-  it("WEB 每 60 秒轮询重新拉取设备列表, 他处吊销随刷新消失", async () => {
+describe("Asset tree device rows - automatic convergence", () => {
+  it("polls every 60 seconds on WEB and removes devices revoked elsewhere after refresh", async () => {
     vi.useFakeTimers();
     let devices: unknown[] = [ONLINE_DEVICE];
     const calls: RecordedCall[] = [];
@@ -560,7 +560,7 @@ describe("资产树设备行 · 自动收敛", () => {
     expect(deviceFetches()).toBeGreaterThan(before);
   });
 
-  it("device://status 事件实时使设备行上下线, 不重拉列表; 未知设备 ID 忽略", async () => {
+  it("moves device rows online and offline in real time with device://status without refetching and ignores unknown device IDs", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
@@ -585,7 +585,7 @@ describe("资产树设备行 · 自动收敛", () => {
     expect(calls.length).toBe(fetchesBefore);
   });
 
-  it("事件 WS 重连 resync 时立即重取设备列表, 不等下一轮轮询", async () => {
+  it("refetches devices immediately on a WebSocket resync without waiting for the next poll", async () => {
     vi.useFakeTimers();
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
@@ -605,8 +605,8 @@ describe("资产树设备行 · 自动收敛", () => {
   });
 });
 
-describe("资产树设备行 · 吊销两次确认", () => {
-  it("两个 warning 都确认后才吊销, 成功后设备立即从资产树移除", async () => {
+describe("Asset tree device rows - two-step revoke confirmation", () => {
+  it("revokes only after both warnings are confirmed and removes the device immediately on success", async () => {
     const calls = route({ devices: [ONLINE_DEVICE, SECOND_ONLINE] });
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -625,7 +625,7 @@ describe("资产树设备行 · 吊销两次确认", () => {
     expect(tree().textContent).toContain("nas-01");
   });
 
-  it("第一个确认取消: 不再弹第二个, 不发请求", async () => {
+  it("does not show the second confirmation or send a request when the first is canceled", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
@@ -640,7 +640,7 @@ describe("资产树设备行 · 吊销两次确认", () => {
     expect(tree().textContent).toContain("web-01");
   });
 
-  it("第二个确认取消: 不发请求, 设备保留", async () => {
+  it("does not send a request and keeps the device when the second confirmation is canceled", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     mocks.ask.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     seedUser(SUPERADMIN);
@@ -655,8 +655,8 @@ describe("资产树设备行 · 吊销两次确认", () => {
   });
 });
 
-describe("设备管理视图复用 MetricsPanel 回归", () => {
-  it("DevicesView 展开指标同样渲染趋势 SVG 与采样统计", async () => {
+describe("DevicesView MetricsPanel reuse regression", () => {
+  it("renders trend SVG and sample statistics when expanding metrics in DevicesView", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));

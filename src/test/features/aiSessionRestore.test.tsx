@@ -152,13 +152,13 @@ describe("AiSidebar session restore", () => {
     mocks.runs.mockResolvedValue([]);
     mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "排查 502", updatedAt: 0 }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Investigate 502", updatedAt: 0 }]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([
       { role: "user", content: { role: "user", content: "旧问题" } },
       { role: "assistant", content: { role: "assistant", content: "旧回答" } },
     ]);
-    mocks.promptText.mockResolvedValue("安装 nginx");
+    mocks.promptText.mockResolvedValue("Install nginx");
     mocks.ask.mockResolvedValue(true);
     mocks.takeoverEnter.mockResolvedValue({ token: "tok-1" });
     mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
@@ -205,7 +205,7 @@ describe("AiSidebar session restore", () => {
   }
 
   it("restores the bound conversation on mount instead of a blank session", async () => {
-    bindConversation("conv-1", "排查 502");
+    bindConversation("conv-1", "Investigate 502");
     mountSidebar();
     await flushReplay();
 
@@ -216,31 +216,31 @@ describe("AiSidebar session restore", () => {
   });
 
   it("continues the restored conversation instead of creating a blank replacement", async () => {
-    bindConversation("conv-1", "排查 502");
+    bindConversation("conv-1", "Investigate 502");
     mountSidebar();
     await flushReplay();
 
-    await send("接着问");
+    await send("Follow up");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "conv-1" }),
     );
   });
 
   it("stays blank when the bound conversation no longer exists", async () => {
-    bindConversation("conv-gone", "已删除的会话");
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "排查 502", updatedAt: 0 }]);
+    bindConversation("conv-gone", "Deleted conversation");
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Investigate 502", updatedAt: 0 }]);
     mountSidebar();
     await flushReplay();
 
     expect(textOf(view!)).toContain("新建会话");
-    await send("新问题");
+    await send("New question");
     expect(mocks.chat).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: undefined }),
     );
   });
 
   it("offers retry when the message reload fails transiently", async () => {
-    bindConversation("conv-1", "排查 502");
+    bindConversation("conv-1", "Investigate 502");
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
@@ -254,8 +254,8 @@ describe("AiSidebar session restore", () => {
     expect(textOf(view!)).not.toContain("会话加载失败");
   });
 
-  it("恢复失败后删除当前会话会清除错误态，不留无法重试的旧错误", async () => {
-    bindConversation("conv-1", "排查 502");
+  it("clears the error state after deleting the current conversation following a restore failure", async () => {
+    bindConversation("conv-1", "Investigate 502");
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
@@ -263,7 +263,7 @@ describe("AiSidebar session restore", () => {
 
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
-    click(view!.container.querySelector('button[aria-label="删除会话「排查 502」"]')!);
+    click(view!.container.querySelector('button[aria-label="删除会话「Investigate 502」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
     await flush();
 
@@ -273,7 +273,7 @@ describe("AiSidebar session restore", () => {
   });
 
   it("replays an interrupted run with a pending question into the restored session", async () => {
-    bindConversation("conv-1", "排查 502");
+    bindConversation("conv-1", "Investigate 502");
     mocks.runs.mockResolvedValue([runOf({})]);
     mocks.runEvents.mockResolvedValue([
       {
@@ -324,7 +324,7 @@ describe("AiSidebar session restore", () => {
       { jobId: "job-old", callId: "ask-1", nonce: "nonce-old", text: "继续" },
       expect.anything(),
     );
-    emit({ type: "done", answer: "做完了" });
+    emit({ type: "done", answer: "Done" });
     await flush();
     expect(useUi.getState().aiBusy).toBe(false);
   });
@@ -332,11 +332,11 @@ describe("AiSidebar session restore", () => {
   it("clears usage and todos when switching to another conversation", async () => {
     mountSidebar();
     await flush();
-    await send("当前问题");
+    await send("Current question");
     emit({ type: "usage", promptTokens: 5000, completionTokens: 100, cachedTokens: 0, contextWindow: 10000 });
     emit({
       type: "todos",
-      items: [{ content: "采集数据", status: "in_progress" }],
+      items: [{ content: "Collect data", status: "in_progress" }],
     });
     await flush();
     const ring = () => view!.container.querySelector('span[role="img"]');
@@ -361,7 +361,7 @@ describe("AiSidebar session restore", () => {
   it("shows a waiting phase while a confirmation card is pending", async () => {
     mountSidebar();
     await flush();
-    await send("跑个命令");
+    await send("Run a command");
     emit({ type: "status", phase: "thinking", turn: 1 });
     await flush();
     expect(textOf(view!)).toContain("正在思考");
@@ -385,11 +385,11 @@ describe("AiSidebar session restore", () => {
   it("shows a waiting phase while a question card is pending", async () => {
     mountSidebar();
     await flush();
-    await send("问吧");
+    await send("Ask a question");
     emit({
       type: "questionRequired",
       id: "q-1",
-      question: { question: "继续吗？", options: ["继续"] },
+      question: { question: "Continue?", options: ["继续"] },
       confirmationNonce: "nonce-q",
     });
     await flush();
@@ -407,7 +407,7 @@ describe("AiSidebar session restore", () => {
     mocks.chat.mockImplementationOnce(
       () => new Promise<{ jobId: string; conversationId: string }>((res) => { resolveChat = res; }),
     );
-    await send("启动中");
+    await send("Starting");
 
     const textarea = view!.container.querySelector("textarea")!;
     setInputValue(textarea, "先补充一句");
@@ -429,7 +429,7 @@ describe("AiSidebar session restore", () => {
   });
 
   it("restores the latest usage from run events", async () => {
-    bindConversation("conv-1", "排查 502");
+    bindConversation("conv-1", "Investigate 502");
     mocks.runs.mockResolvedValue([
       runOf({ id: "job-new", status: "completed", createdAt: 2000 }),
       runOf({ id: "job-old", status: "completed", createdAt: 1000 }),

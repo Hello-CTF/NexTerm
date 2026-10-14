@@ -15,7 +15,7 @@ import { GLOBAL_AI_BOARD_KEY, useUi, type AppTab, type Pane, type Workspace } fr
 import { sanitizeLayout, serializeLayout } from "../../app/layout";
 
 function paneTab(id: string): AppTab {
-  return { id, kind: "terminal", title: `终端 ${id}`, sessionId: "s-1", tabId: `bt-${id}`, closable: true };
+  return { id, kind: "terminal", title: `Terminal ${id}`, sessionId: "s-1", tabId: `bt-${id}`, closable: true };
 }
 
 function pane(id: string, tabIds: string[], activeTabId: string | null = null): Pane {
@@ -26,7 +26,7 @@ function workspace(id: string, panes: Pane[]): Workspace {
   return {
     id,
     kind: "session",
-    title: `主机 ${id}`,
+    title: `Host ${id}`,
     sessionId: `s-${id}`,
     panes,
     activePaneId: panes[0].id,
@@ -53,13 +53,13 @@ beforeEach(() => {
 });
 
 describe("reorderIndex", () => {
-  it("合法移动返回落点, to 越界时 clamp 到边界", () => {
+  it("returns the destination for valid moves and clamps out-of-range to values", () => {
     expect(reorderIndex(4, 0, 2)).toEqual({ from: 0, to: 2 });
     expect(reorderIndex(3, 0, 99)).toEqual({ from: 0, to: 2 });
     expect(reorderIndex(3, 2, -5)).toEqual({ from: 2, to: 0 });
   });
 
-  it("from 越界/非整数/原地不动时返回 null", () => {
+  it("returns null for out-of-range or non-integer from values, or no-op moves", () => {
     expect(reorderIndex(3, 3, 0)).toBeNull();
     expect(reorderIndex(3, -1, 0)).toBeNull();
     expect(reorderIndex(3, 0.5, 1)).toBeNull();
@@ -71,17 +71,17 @@ describe("reorderIndex", () => {
 });
 
 describe("moveItem", () => {
-  it("前移与后移后元素落在目标下标", () => {
+  it("places moved elements at the target index for forward and backward moves", () => {
     expect(moveItem(["a", "b", "c", "d"], 0, 2)).toEqual(["b", "c", "a", "d"]);
     expect(moveItem(["a", "b", "c", "d"], 3, 1)).toEqual(["a", "d", "b", "c"]);
   });
 
-  it("to 越界 clamp 到首尾", () => {
+  it("clamps out-of-range to values to the first or last index", () => {
     expect(moveItem(["a", "b", "c"], 0, 99)).toEqual(["b", "c", "a"]);
     expect(moveItem(["a", "b", "c"], 2, -1)).toEqual(["c", "a", "b"]);
   });
 
-  it("无效输入返回原数组引用且不改动原数组", () => {
+  it("returns the original array reference without mutation for invalid input", () => {
     const items = ["a", "b", "c"];
     expect(moveItem(items, 1, 1)).toBe(items);
     expect(moveItem(items, -1, 0)).toBe(items);
@@ -90,7 +90,7 @@ describe("moveItem", () => {
     expect(items).toEqual(["a", "b", "c"]);
   });
 
-  it("有效移动不改动原数组", () => {
+  it("does not mutate the original array for valid moves", () => {
     const items = ["a", "b", "c"];
     moveItem(items, 0, 2);
     expect(items).toEqual(["a", "b", "c"]);
@@ -98,7 +98,7 @@ describe("moveItem", () => {
 });
 
 describe("moveTabInPane", () => {
-  it("只重排目标 Pane 的 tabs, activeTabId 与其余 state 不变", () => {
+  it("reorders only the target pane's tabs and preserves activeTabId and the rest of state", () => {
     seedPanes();
     const before = useUi.getState();
     before.moveTabInPane("p1", 0, 2);
@@ -114,14 +114,14 @@ describe("moveTabInPane", () => {
     expect(after.sessions).toBe(before.sessions);
   });
 
-  it("toIndex 越界时 clamp 到末尾", () => {
+  it("clamps out-of-range toIndex values to the end", () => {
     seedPanes();
     useUi.getState().moveTabInPane("p1", 0, 99);
     const ws1 = useUi.getState().workspaces.find((w) => w.id === "ws-1");
     expect(ws1?.panes[0].tabs.map((t) => t.id)).toEqual(["t2", "t3", "t1"]);
   });
 
-  it("fromIndex 无效或原地不动时 no-op", () => {
+  it("no-ops for invalid fromIndex values or no-op moves", () => {
     seedPanes();
     const st = () => useUi.getState();
     const before = st().workspaces;
@@ -132,7 +132,7 @@ describe("moveTabInPane", () => {
     expect(st().workspaces).toBe(before);
   });
 
-  it("paneId 不存在时 no-op", () => {
+  it("no-ops when paneId does not exist", () => {
     seedPanes();
     const before = useUi.getState().workspaces;
     useUi.getState().moveTabInPane("ghost", 0, 1);
@@ -141,7 +141,7 @@ describe("moveTabInPane", () => {
 });
 
 describe("moveAiTab", () => {
-  it("只重排目标看板, activeTabId 与其他看板不变", () => {
+  it("reorders only the target board and preserves activeTabId and other boards", () => {
     const st = () => useUi.getState();
     const a = st().ensureAiBoard("ws-1").tabs[0].id;
     const b = st().addAiTab("ws-1");
@@ -157,7 +157,7 @@ describe("moveAiTab", () => {
     expect(st().aiBoards[GLOBAL_AI_BOARD_KEY]).toBe(otherBefore);
   });
 
-  it("boardKey 不存在或 index 无效时 no-op", () => {
+  it("no-ops when boardKey does not exist or index is invalid", () => {
     const st = () => useUi.getState();
     st().ensureAiBoard("ws-1");
     st().addAiTab("ws-1");
@@ -170,8 +170,8 @@ describe("moveAiTab", () => {
   });
 });
 
-describe("布局序列化保持排序结果", () => {
-  it("serialize/sanitize 往返后 pane 与看板标签顺序与激活态不变", () => {
+describe("layout serialization preserves ordering", () => {
+  it("preserves pane and board tab order and active state across serialize/sanitize round trips", () => {
     const st = () => useUi.getState();
     useUi.setState({
       workspaces: [workspace("ws-1", [pane("p1", ["t1", "t2", "t3"], "t3")])],

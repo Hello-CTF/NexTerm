@@ -78,8 +78,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("SettingsView 凭据库闲置自动锁定", () => {
-  it("主密码模式显示当前值，保存后调用 vault_set_autolock", async () => {
+describe("SettingsView vault idle auto-lock", () => {
+  it("shows the current value in master-password mode and calls vault_set_autolock on save", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     expect(autoLockInput()!.value).toBe("30");
@@ -92,7 +92,7 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
     await flushUntil(() => mocks.vaultStatus.mock.calls.length >= 2);
   });
 
-  it("别处变更 vault-status 后经共享 query 自动刷新，无需重新挂载", async () => {
+  it("refreshes through the shared query after vault-status changes elsewhere without remounting", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     expect(autoLockInput()!.value).toBe("30");
@@ -104,7 +104,7 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
     expect(autoLockInput()).toBeNull();
   });
 
-  it("0 表示禁用并照常保存", async () => {
+  it("saves zero to disable auto-lock", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "0");
@@ -115,7 +115,7 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已禁用闲置自动锁定");
   });
 
-  it("越界或非整数输入只提示错误，不发起调用", async () => {
+  it("rejects out-of-range and non-integer input without making a call", async () => {
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     for (const bad of ["1441", "-1", "1.5", ""]) {
@@ -128,18 +128,18 @@ describe("SettingsView 凭据库闲置自动锁定", () => {
     }
   });
 
-  it("保存失败时提示错误且不乐观更新", async () => {
-    mocks.setAutoLock.mockRejectedValueOnce({ code: "bad_param", message: "自动锁时长需在 0（禁用）至 1440 分钟之间" });
+  it("shows the error on save failure without an optimistic update", async () => {
+    mocks.setAutoLock.mockRejectedValueOnce({ code: "bad_param", message: "auto-lock minutes must be between 0 (disabled) and 1440" });
     mounted = withClient(createElement(SettingsView));
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "1440");
     clickButton(mounted.container, "保存");
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
-    expect(mocks.toast).toHaveBeenCalledWith("error", "参数错误：自动锁时长需在 0（禁用）至 1440 分钟之间");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "参数错误：auto-lock minutes must be between 0 (disabled) and 1440");
     expect(autoLockInput()!.value).toBe("1440");
   });
 
-  it("非主密码模式不显示自动锁定设置", async () => {
+  it("hides auto-lock settings outside master-password mode", async () => {
     mocks.vaultStatus.mockResolvedValue(DPAPI_VAULT);
     mounted = withClient(createElement(SettingsView));
     await flush();

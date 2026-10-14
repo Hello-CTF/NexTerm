@@ -56,7 +56,7 @@ import { DialogHost } from "../../ui/DialogHost";
 
 const CRED: Credential = {
   id: "c1",
-  name: "部署密钥",
+  name: "Deployment key",
   kind: "private_key",
   createdAt: 1,
   updatedAt: 1,
@@ -123,7 +123,7 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("凭据 destructive 确认（R42, real DialogHost）", () => {
+describe("Credential destructive confirmations (R42, real DialogHost)", () => {
   async function openModal(): Promise<HTMLElement> {
     await waitFor(() =>
       expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull(),
@@ -138,14 +138,14 @@ describe("凭据 destructive 确认（R42, real DialogHost）", () => {
     );
   }
 
-  it("清除口令：警示浮层（alertdialog），取消即中止", async () => {
+  it("clearing the passphrase shows a warning overlay (alertdialog), and canceling aborts", async () => {
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
 
     clickButton(mounted!.container, "清除口令");
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.textContent).toContain("清除这条私钥的口令");
+    expect(modal.textContent).toContain("清除凭据库中保存的私钥口令");
     await closeModal(modal, "取消");
     expect(mocks.updateCredential).not.toHaveBeenCalled();
 
@@ -157,7 +157,7 @@ describe("凭据 destructive 确认（R42, real DialogHost）", () => {
     );
   });
 
-  it("删除凭据：警示浮层并讲清引用影响，取消即中止", async () => {
+  it("deleting a credential shows a warning overlay explaining reference impact, and canceling aborts", async () => {
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
 
@@ -177,8 +177,8 @@ describe("凭据 destructive 确认（R42, real DialogHost）", () => {
   });
 });
 
-describe("解锁与空引用文案", () => {
-  it("解锁提示标题无尾冒号，解锁成功有 toast", async () => {
+describe("Unlock and empty-reference copy", () => {
+  it("has no trailing colon in the unlock prompt title and shows a toast after a successful unlock", async () => {
     mocks.status.mockResolvedValue({ initialized: true, unlocked: false, mode: "master" });
     mocks.unlock.mockResolvedValue(undefined);
     mocks.promptText.mockResolvedValue("hunter2");
@@ -195,20 +195,20 @@ describe("解锁与空引用文案", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已解锁");
   });
 
-  it("解锁失败当场说明保护密码错误", async () => {
+  it("immediately reports an incorrect master password when unlocking fails", async () => {
     mocks.status.mockResolvedValue({ initialized: true, unlocked: false, mode: "master" });
-    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
+    mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "Incorrect master password" });
     mocks.promptText.mockResolvedValue("wrong");
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("凭据库已锁定"));
 
     clickButton(mounted!.container, "解锁");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误：Incorrect master password"),
     );
   });
 
-  it("凭据详情自动隐藏倒计时用「秒」而不是「s」", async () => {
+  it("uses seconds rather than s in the credential detail auto-hide countdown", async () => {
     mocks.revealCredential.mockResolvedValue({
       kind: "private_key",
       value: "PRIVATE KEY BODY",
@@ -226,7 +226,7 @@ describe("解锁与空引用文案", () => {
     expect(mounted!.container.textContent).not.toContain("15s 后自动隐藏");
   });
 
-  it("未被引用的凭据：空态只说事实，不堆冗余指引", async () => {
+  it("states only the fact for an unreferenced credential, without redundant guidance", async () => {
     mocks.listCredentials.mockResolvedValue([{ ...CRED, usedBy: [] }]);
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));

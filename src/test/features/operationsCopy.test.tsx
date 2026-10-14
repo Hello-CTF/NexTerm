@@ -121,7 +121,7 @@ beforeEach(() => {
   mocks.images.mockResolvedValue([]);
   mocks.action.mockResolvedValue(undefined);
   mocks.imagePull.mockResolvedValue("");
-  mocks.logsAttach.mockRejectedValue(new Error("daemon 未响应"));
+  mocks.logsAttach.mockRejectedValue(new Error("daemon unavailable"));
   mocks.schemas.mockResolvedValue(["mydb"]);
   mocks.tables.mockResolvedValue([]);
   mocks.query.mockResolvedValue({
@@ -172,8 +172,8 @@ function withClient(node: React.ReactElement): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
-describe("DockerPanel 文案", () => {
-  it("容器操作 toast 用中文动作，失败用全角冒号", async () => {
+describe("DockerPanel copy", () => {
+  it("uses Chinese actions in container operation toasts and full-width colons on failure", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("web"));
 
@@ -182,14 +182,14 @@ describe("DockerPanel 文案", () => {
       expect(mocks.toast).toHaveBeenCalledWith("success", "已重启 web"),
     );
 
-    mocks.action.mockRejectedValueOnce(new Error("daemon 未响应"));
+    mocks.action.mockRejectedValueOnce(new Error("daemon unavailable"));
     click(mounted.container.querySelector('button[title="停止"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "停止 web 失败：daemon 未响应"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "停止 web 失败：daemon unavailable"),
     );
   });
 
-  it("状态徽章中文化，旁边保留 Docker 原始 status", async () => {
+  it("localizes status badges while preserving the original Docker status beside them", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("worker"));
     expect(text()).toContain("运行中");
@@ -199,7 +199,7 @@ describe("DockerPanel 文案", () => {
     expect(text()).not.toContain("exit 0 · 已停止");
   });
 
-  it("工具栏标注真实刷新节奏，镜像空态与容器一致", async () => {
+  it("states the actual refresh cadence in the toolbar and uses the same empty-state style for images and containers", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("自动刷新"));
     expect(text()).not.toContain("容器 5s · 镜像与主机概览 30s 自动刷新");
@@ -216,7 +216,7 @@ describe("DockerPanel 文案", () => {
     expect(text()).not.toContain("本机没有镜像");
   });
 
-  it("拉取镜像提示成句，失败用全角冒号", async () => {
+  it("uses complete sentences for image pull feedback and a full-width colon on failure", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("web"));
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="拉取镜像名称"]')!;
@@ -230,25 +230,25 @@ describe("DockerPanel 文案", () => {
     );
 
     setInputValue(input, "redis:7");
-    mocks.imagePull.mockRejectedValueOnce(new Error("registry 超时"));
+    mocks.imagePull.mockRejectedValueOnce(new Error("registry timeout"));
     clickButton(mounted.container, "拉取");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "拉取失败：registry 超时"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "拉取失败：registry timeout"),
     );
   });
 
-  it("日志附加失败提示中文化并用全角冒号", async () => {
+  it("localizes log attach failures and uses a full-width colon", async () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("web"));
     click(mounted.container.querySelector('button[title="查看日志"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "读取日志失败：daemon 未响应"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "读取日志失败：daemon unavailable"),
     );
   });
 });
 
-describe("DbPanel 文案", () => {
-  it("SQL 运行术语统一为「运行」", async () => {
+describe("DbPanel copy", () => {
+  it("standardizes SQL execution terminology as run", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("mydb"));
     expect(text()).toContain("输入 SQL");
@@ -263,13 +263,13 @@ describe("DbPanel 文案", () => {
     expect(text()).not.toContain("执行成功");
   });
 
-  it("Redis 控制台说明与真实行为一致，不引用内部章节号", async () => {
+  it("describes actual Redis console behavior without internal section references", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("控制台"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
-    if (!bar) throw new Error("控制台折叠条未找到");
+    if (!bar) throw new Error("console collapse bar not found");
     click(bar);
     await flushUntil(() => text().includes("控制台 · 危险命令执行前需要确认"));
     expect(text()).toContain("控制台 · 危险命令执行前需要确认，其余命令直接执行");
@@ -278,8 +278,8 @@ describe("DbPanel 文案", () => {
   });
 });
 
-describe("ForwardPanel 文案", () => {
-  it("转发类型徽章与表单按钮叫法一致", async () => {
+describe("ForwardPanel copy", () => {
+  it("uses matching forward type badges and form button labels", async () => {
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s" }));
     await flushUntil(() => text().includes("10.0.0.8"));
     expect(text()).toContain("静态转发");
@@ -287,7 +287,7 @@ describe("ForwardPanel 文案", () => {
     expect(text()).not.toContain("本地静态");
   });
 
-  it("本机监听的成功 toast 标明仅本机可访问", async () => {
+  it("states localhost-only access in the successful local-listen toast", async () => {
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s" }));
     await flushUntil(() => text().includes("10.0.0.8"));
     clickButton(mounted.container, "创建");
@@ -300,8 +300,8 @@ describe("ForwardPanel 文案", () => {
   });
 });
 
-describe("AuditView 文案", () => {
-  it("页脚只承诺来源与有退出码时展示，不承诺齐全，不引用内部章节号", async () => {
+describe("AuditView copy", () => {
+  it("states only sources and conditional exit-code display without promising completeness or citing internal sections", async () => {
     mocks.auditQuery.mockResolvedValue([
       {
         id: 1,

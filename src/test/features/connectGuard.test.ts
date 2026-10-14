@@ -73,7 +73,7 @@ afterEach(() => {
 });
 
 describe("connectAsset in-flight guard", () => {
-  it("同一资产在途时重复调用只发起一次连接", async () => {
+  it("duplicate calls for the same in-flight asset start only one connection", async () => {
     const gate = deferred<SessionInfo>();
     mocks.sessionConnect.mockReturnValueOnce(gate.promise);
 
@@ -90,7 +90,7 @@ describe("connectAsset in-flight guard", () => {
     expect(useUi.getState().connectingAssetIds).not.toContain("asset-1");
   });
 
-  it("不同资产的连接互不阻塞", async () => {
+  it("connections to different assets do not block each other", async () => {
     const other = { id: "asset-2", name: "db-01", kind: "ssh" };
     const [a, b] = (await Promise.all([
       connectAsset(SSH_ASSET),
@@ -101,7 +101,7 @@ describe("connectAsset in-flight guard", () => {
     expect(b).toEqual({ ok: true });
   });
 
-  it("失败后守卫清除，显式重试可以再次连接", async () => {
+  it("clears the guard after failure so an explicit retry can connect again", async () => {
     mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "connection refused" });
     const failed = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(failed.ok).toBe(false);
@@ -113,7 +113,7 @@ describe("connectAsset in-flight guard", () => {
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
   });
 
-  it("在途期间不阻塞显式断开", async () => {
+  it("does not block explicit disconnects while a connection is in flight", async () => {
     const gate = deferred<SessionInfo>();
     mocks.sessionConnect.mockReturnValueOnce(gate.promise);
 
@@ -126,18 +126,18 @@ describe("connectAsset in-flight guard", () => {
     await pending;
   });
 
-  it("成功连接写入最近使用记录", async () => {
+  it("successful connections are recorded in recent history", async () => {
     await connectAsset(SSH_ASSET);
     expect(useConnectHistory.getState().entries["asset-1"]?.count).toBe(1);
   });
 
-  it("失败连接不写入最近使用记录", async () => {
+  it("failed connections are not recorded in recent history", async () => {
     mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "boom" });
     await connectAsset(SSH_ASSET);
     expect(useConnectHistory.getState().entries["asset-1"]).toBeUndefined();
   });
 
-  it("数据库资产同样受守卫保护", async () => {
+  it("database assets are protected by the same guard", async () => {
     const dbAsset = { id: "db-1", name: "mysql-01", kind: "mysql" };
     const gate = deferred<{ connId: string }>();
     mocks.dbConnect.mockReturnValueOnce(gate.promise);
@@ -153,7 +153,7 @@ describe("connectAsset in-flight guard", () => {
     expect(b).toEqual({ ok: true });
   });
 
-  it("凭据解锁被取消时返回 canceled 且不发起连接", async () => {
+  it("returns canceled when credential unlock is canceled and does not connect", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mocks.promptText.mockResolvedValue(null);
 
@@ -168,10 +168,10 @@ describe("connectAsset in-flight guard", () => {
   });
 });
 
-describe("connectAsset 资产工作区去重", () => {
+describe("connectAsset asset workspace deduplication", () => {
   function seedSessionWorkspace(sessionStatus: SessionInfo["status"], withTerminalTab = false) {
     const tabs = withTerminalTab
-      ? [{ id: "t1", kind: "terminal" as const, title: "终端 1", sessionId: "s1", closable: true }]
+      ? [{ id: "t1", kind: "terminal" as const, title: "Terminal 1", sessionId: "s1", closable: true }]
       : [];
     useUi.setState({
       sessions: [{ ...SESSION, status: sessionStatus }],
@@ -193,7 +193,7 @@ describe("connectAsset 资产工作区去重", () => {
     });
   }
 
-  it("资产已有活会话工作区时再次连接直接跳转，不发起新连接", async () => {
+  it("reconnecting with an existing live-session workspace jumps to it without starting a new connection", async () => {
     seedSessionWorkspace("connected", true);
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -204,7 +204,7 @@ describe("connectAsset 资产工作区去重", () => {
     expect(workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
   });
 
-  it("工作区还在但终端标签已关闭时，再次连接补开终端标签", async () => {
+  it("reopens a terminal tab when the workspace remains but its terminal tab was closed", async () => {
     seedSessionWorkspace("connected");
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -215,7 +215,7 @@ describe("connectAsset 资产工作区去重", () => {
     expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s1")).toBe(true);
   });
 
-  it("资产工作区会话已断开时直接重连，终端标签原地接管", async () => {
+  it("reconnects directly when the asset workspace session is disconnected and takes over the existing terminal tab", async () => {
     seedSessionWorkspace("disconnected");
     mocks.probeHostKey.mockResolvedValue({ state: "known" });
     mocks.sessionReconnect.mockResolvedValue(true);
@@ -231,10 +231,10 @@ describe("connectAsset 资产工作区去重", () => {
     expect(activeWorkspaceId).toBe("ws-1");
   });
 
-  it("重连失败（会话已删除）时清掉残留工作区走全新连接", async () => {
+  it("cleans up the stale workspace and starts a fresh connection when reconnecting fails because the session was deleted", async () => {
     seedSessionWorkspace("disconnected");
     mocks.probeHostKey.mockResolvedValue({ state: "known" });
-    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "会话不存在" });
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
 
     const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -244,7 +244,7 @@ describe("connectAsset 资产工作区去重", () => {
     expect(workspaces[0]?.id).not.toBe("ws-1");
   });
 
-  it("数据库资产已有工作区时再次连接直接跳转，不发起新连接", async () => {
+  it("reconnecting a database asset with an existing workspace jumps to it without starting a new connection", async () => {
     useUi.setState({
       workspaces: [
         {
@@ -271,23 +271,23 @@ describe("connectAsset 资产工作区去重", () => {
   });
 });
 
-describe("connectAsset 连接前解锁凭据库", () => {
+describe("connectAsset unlocks the credential vault before connecting", () => {
   const lockedAsset = { id: "asset-9", name: "locked-01", kind: "ssh", credId: "cred-1" };
 
-  it("保护密码错误时当场报错并中止连接，不当作解锁成功继续", async () => {
+  it("reports an incorrect master password immediately and aborts the connection instead of continuing as if unlocked", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mocks.promptText.mockResolvedValue("wrong-password");
-    mocks.vaultUnlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });
+    mocks.vaultUnlock.mockRejectedValue({ code: "bad_master_password", message: "Incorrect master password" });
 
     const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: false, canceled: true });
     expect(mocks.vaultUnlock).toHaveBeenCalledWith("wrong-password");
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
     expect(mocks.dbConnect).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误：Incorrect master password");
   });
 
-  it("解锁成功后继续发起连接", async () => {
+  it("continues connecting after a successful unlock", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mocks.promptText.mockResolvedValue("right-password");
     mocks.vaultUnlock.mockResolvedValue(undefined);
@@ -297,7 +297,7 @@ describe("connectAsset 连接前解锁凭据库", () => {
     expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-9");
   });
 
-  it("数据库资产连接前同样先解锁凭据库", async () => {
+  it("also unlocks the credential vault before connecting database assets", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mocks.promptText.mockResolvedValue("right-password");
     mocks.vaultUnlock.mockResolvedValue(undefined);
@@ -314,7 +314,7 @@ describe("connectAsset 连接前解锁凭据库", () => {
     expect(mocks.dbConnect).toHaveBeenCalledWith("db-9");
   });
 
-  it("status 查询失败时保持放行，不阻塞连接", async () => {
+  it("allows the connection when the status query fails", async () => {
     mocks.vaultStatus.mockRejectedValue(new Error("status down"));
 
     const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;

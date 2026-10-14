@@ -106,15 +106,15 @@ afterEach(() => {
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
-describe("AccountCard 超管用户管理", () => {
-  it("非超管不渲染", async () => {
+describe("AccountCard superadmin user management", () => {
+  it("does not render for non-superadmins", async () => {
     useAuth.setState({ user: { ...SELF, role: "user" } });
     mounted = mountCard();
     await flush();
     expect(mounted.container.textContent ?? "").not.toContain("用户管理");
   });
 
-  it("列出用户与状态,自己不可禁用/重置", async () => {
+  it("lists users and their states without allowing self-disable or self-reset", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const text = mounted.container.textContent ?? "";
@@ -127,7 +127,7 @@ describe("AccountCard 超管用户管理", () => {
     expect(selfRow?.textContent).not.toContain("禁用");
   });
 
-  it("仅 active 用户显示禁用,其他状态的非本人用户仍保留重置", async () => {
+  it("shows disable only for active users while keeping reset for other non-self states", async () => {
     const disabled = { ...ALICE, id: "u-disabled", username: "disabled", state: "disabled" as const };
     const resetRequired = { ...ALICE, id: "u-reset", username: "reset", state: "reset_required" as const };
     mocks.users.mockResolvedValue({ users: [SELF, ALICE, disabled, resetRequired] });
@@ -146,7 +146,7 @@ describe("AccountCard 超管用户管理", () => {
     expect(actionLabels("reset")).toEqual(["重置"]);
   });
 
-  it("创建用户提交用户名与初始密码", async () => {
+  it("submits the username and initial password when creating a user", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     clickButton(mounted.container, "添加用户");
@@ -161,7 +161,7 @@ describe("AccountCard 超管用户管理", () => {
     await flushUntil(() => mocks.users.mock.calls.length >= 2);
   });
 
-  it("禁用用户先确认,确认后调用并刷新", async () => {
+  it("confirms before disabling a user, then calls the API and refreshes", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
@@ -175,7 +175,7 @@ describe("AccountCard 超管用户管理", () => {
     expect(mocks.disableUser).toHaveBeenCalledWith("u-alice");
   });
 
-  it("取消确认时不调用禁用", async () => {
+  it("does not disable the user when confirmation is canceled", async () => {
     mocks.ask.mockResolvedValue(false);
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
@@ -188,7 +188,7 @@ describe("AccountCard 超管用户管理", () => {
     expect(mocks.disableUser).not.toHaveBeenCalled();
   });
 
-  it("重置用户确认说明数据密钥,会话,MFA 绑定与云端密文恢复路径", async () => {
+  it("explains data keys, sessions, MFA bindings, and cloud ciphertext recovery in the reset confirmation", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("alice"));
     const aliceRow = [...mounted.container.querySelectorAll("div")].find(
@@ -207,8 +207,8 @@ describe("AccountCard 超管用户管理", () => {
   });
 });
 
-describe("AccountCard 注册开关", () => {
-  it("读取当前开关状态并保存新状态", async () => {
+describe("AccountCard registration toggle", () => {
+  it("loads the current toggle state and saves the new state", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("开放注册"));
     const checkbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -228,7 +228,7 @@ describe("AccountCard 注册开关", () => {
     );
   });
 
-  it("保存后刷新 /auth/status 的注册开关缓存", async () => {
+  it("refreshes the /auth/status registration-toggle cache after saving", async () => {
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("开放注册"));
     const checkbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;

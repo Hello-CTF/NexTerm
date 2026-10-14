@@ -115,7 +115,7 @@ async function flushReplay() {
   });
 }
 
-describe("AiSidebar 忙状态滞留修复", () => {
+describe("AiSidebar stuck busy-state fixes", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -173,14 +173,14 @@ describe("AiSidebar 忙状态滞留修复", () => {
     view = null;
   });
 
-  it("补齐永久失败后忙状态落地：标签可直接关闭", async () => {
+  it("settles the busy state after a permanent replay failure so the tab can be closed directly", async () => {
     await flush();
-    await send(view!, "你好");
-    emit({ type: "delta", text: "一", seq: 1 });
+    await send(view!, "Hello");
+    emit({ type: "delta", text: "one", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockRejectedValue(new Error("offline"));
 
-    emit({ type: "delta", text: "三", seq: 3 });
+    emit({ type: "delta", text: "three", seq: 3 });
     await flushReplay();
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -200,14 +200,14 @@ describe("AiSidebar 忙状态滞留修复", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(stuckTabId);
   });
 
-  it("补齐永久失败落地后，手动重新补齐仍能找回结局", async () => {
+  it("manually replaying after a permanent failure still recovers the final outcome", async () => {
     await flush();
-    await send(view!, "你好");
-    emit({ type: "delta", text: "一", seq: 1 });
+    await send(view!, "Hello");
+    emit({ type: "delta", text: "one", seq: 1 });
     act(runFrames);
     mocks.runEvents.mockRejectedValue(new Error("offline"));
 
-    emit({ type: "delta", text: "三", seq: 3 });
+    emit({ type: "delta", text: "three", seq: 3 });
     await flushReplay();
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -220,8 +220,8 @@ describe("AiSidebar 忙状态滞留修复", () => {
     expect(useUi.getState().aiBusy).toBe(false);
 
     mocks.runEvents.mockResolvedValue([
-      { type: "delta", text: "二", seq: 2 },
-      { type: "delta", text: "三", seq: 3 },
+      { type: "delta", text: "two", seq: 2 },
+      { type: "delta", text: "three", seq: 3 },
       { type: "done", answer: "完整答案", seq: 4 },
     ]);
     clickButton(view!.container, "重新补齐");
@@ -232,9 +232,9 @@ describe("AiSidebar 忙状态滞留修复", () => {
     expect(textOf(view!)).not.toContain("补齐失败");
   });
 
-  it("恢复的待答运行看门狗耗尽后忙状态落地，标签可关闭", async () => {
+  it("settles the busy state after the restored pending-answer run watchdog expires so the tab can be closed", async () => {
     vi.useFakeTimers();
-    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "旧会话", updatedAt: 0 }]);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Old conversation", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([]);
     mocks.runs.mockResolvedValue([
       {
@@ -265,7 +265,7 @@ describe("AiSidebar 忙状态滞留修复", () => {
         {
           id: "req-1",
           kind: "question",
-          question: "继续吗？",
+          question: "Continue?",
           options: [],
           expiresAt: "2000-01-01T00:00:00Z",
         },
@@ -275,7 +275,7 @@ describe("AiSidebar 忙状态滞留修复", () => {
     useUi.setState({
       aiBoards: {
         [GLOBAL_AI_BOARD_KEY]: {
-          tabs: [{ id: "tab-bound", title: "旧会话", conversationId: "conv-1" }],
+          tabs: [{ id: "tab-bound", title: "Old conversation", conversationId: "conv-1" }],
           activeTabId: "tab-bound",
         },
       },
@@ -302,7 +302,7 @@ describe("AiSidebar 忙状态滞留修复", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(restoredTabId);
   });
 
-  it("发送消息后权限面板自动关闭", async () => {
+  it("closes the permission panel automatically after sending a message", async () => {
     await flush();
     const shield = view!.container.querySelector<HTMLButtonElement>(
       'button[title^="AI 权限与模式"]',
@@ -323,12 +323,12 @@ describe("AiSidebar 忙状态滞留修复", () => {
     );
     expect(textOf(view!)).toContain("AI 权限");
 
-    await send(view!, "问题");
+    await send(view!, "Question");
     expect(textOf(view!)).not.toContain("AI 权限");
     expect(mocks.chat).toHaveBeenCalledTimes(1);
   });
 
-  it("权限面板按当前设备设置模式，可清除设备覆盖跟随全局默认", async () => {
+  it("applies the permission mode for the current device and can clear the device override to follow the global default", async () => {
     await flush();
     mocks.getPermission.mockImplementation((scope?: unknown) =>
       Promise.resolve(

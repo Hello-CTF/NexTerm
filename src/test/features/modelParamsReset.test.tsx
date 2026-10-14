@@ -80,7 +80,7 @@ async function mountManager(profile: ModelProfile): Promise<void> {
 }
 
 describe("resetModelParams / modelParamsAtDefaults", () => {
-  it("只重置参数字段，保留 id、名称、地址、密钥与模型名", () => {
+  it("resets only parameter fields and preserves id, name, address, key, and model", () => {
     const reset = resetModelParams(SAVED);
     expect(reset).toEqual({ ...SAVED, ...MODEL_PARAM_DEFAULTS });
     expect(reset.id).toBe("p1");
@@ -90,7 +90,7 @@ describe("resetModelParams / modelParamsAtDefaults", () => {
     expect(reset.name).toBe("公司 DeepSeek");
   });
 
-  it("识别参数是否处于默认", () => {
+  it("detects whether parameters are at their defaults", () => {
     expect(modelParamsAtDefaults(resetModelParams(SAVED))).toBe(true);
     expect(modelParamsAtDefaults(SAVED)).toBe(false);
     expect(modelParamsAtDefaults({ ...resetModelParams(SAVED), stream: false })).toBe(false);
@@ -100,7 +100,7 @@ describe("resetModelParams / modelParamsAtDefaults", () => {
   });
 });
 
-describe("ModelManager 恢复默认参数", () => {
+describe("ModelManager reset parameters to defaults", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
@@ -115,7 +115,7 @@ describe("ModelManager 恢复默认参数", () => {
     view = null;
   });
 
-  it("重置参数但保留密钥与身份字段，且不触发保存", async () => {
+  it("resets parameters without saving while preserving the key and identity fields", async () => {
     await mountManager(SAVED);
 
     clickButton(view!.container, "高级参数");
@@ -150,7 +150,7 @@ describe("ModelManager 恢复默认参数", () => {
     expect(view!.container.textContent).toContain("有未保存的修改");
   });
 
-  it("重置后点保存把清空结果写入档案，温度与上下文窗口不传", async () => {
+  it("saves cleared parameters after reset and omits temperature and context window", async () => {
     await mountManager(SAVED);
 
     clickButton(view!.container, "高级参数");
@@ -168,7 +168,7 @@ describe("ModelManager 恢复默认参数", () => {
     expect(mocks.save.mock.calls[0][0]).toEqual(expected);
   });
 
-  it("参数已在默认时按钮禁用", async () => {
+  it("disables the reset button when parameters are already at their defaults", async () => {
     await mountManager({ ...SAVED, ...MODEL_PARAM_DEFAULTS, fallbackModel: null });
 
     const reset = [...view!.container.querySelectorAll("button")].find(
@@ -178,7 +178,7 @@ describe("ModelManager 恢复默认参数", () => {
   });
 });
 
-describe("ModelManager 高级参数折叠", () => {
+describe("ModelManager advanced parameters collapsed", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
@@ -193,7 +193,7 @@ describe("ModelManager 高级参数折叠", () => {
     view = null;
   });
 
-  it("参数全默认时高级参数折叠,点击展开后才看得到字段", async () => {
+  it("collapses advanced parameters when all values are at their defaults and reveals fields only after expanding", async () => {
     await mountManager({ ...SAVED, ...MODEL_PARAM_DEFAULTS, fallbackModel: null });
 
     const toggle = [...view!.container.querySelectorAll("button")].find(
@@ -210,7 +210,7 @@ describe("ModelManager 高级参数折叠", () => {
     expect(inputFor("回退模型").value).toBe("");
   });
 
-  it("任一高级参数非默认时也默认折叠,手动展开后可见", async () => {
+  it("also collapses advanced parameters by default when any value differs from its default and reveals it after manual expansion", async () => {
     await mountManager(SAVED);
 
     const toggle = [...view!.container.querySelectorAll("button")].find(
@@ -226,7 +226,7 @@ describe("ModelManager 高级参数折叠", () => {
     expect(inputFor("回退模型").value).toBe("fb-1");
   });
 
-  it("最大输出/超时/熔断任一非空时也默认折叠,手动展开后可见", async () => {
+  it("also collapses advanced parameters by default when max output, timeouts, or circuit breaking is set and reveals them after manual expansion", async () => {
     await mountManager({
       ...SAVED,
       ...MODEL_PARAM_DEFAULTS,
@@ -246,11 +246,11 @@ describe("ModelManager 高级参数折叠", () => {
     expect(inputFor("最大输出").value).toBe("4096");
   });
 
-  it("切换档案后高级参数回到折叠", async () => {
+  it("collapses advanced parameters again after switching profiles", async () => {
     const plain: ModelProfile = {
       ...SAVED,
       id: "p2",
-      name: "默认档案",
+      name: "Default profile",
       ...MODEL_PARAM_DEFAULTS,
       fallbackModel: null,
     };
@@ -262,7 +262,7 @@ describe("ModelManager 高级参数折叠", () => {
     await flush();
     expect(inputFor("温度").value).toBe("1.2");
 
-    clickButton(view!.container, "默认档案");
+    clickButton(view!.container, "Default profile");
     await flush();
 
     const toggle = [...view!.container.querySelectorAll("button")].find(

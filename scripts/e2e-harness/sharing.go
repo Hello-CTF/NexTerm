@@ -217,7 +217,7 @@ func runSharing(h *harness) error {
 	if err := server.start(); err != nil {
 		return err
 	}
-	fmt.Println("== 超管初始化 ==")
+	fmt.Println("== superadmin initialization ==")
 	initCode, err := server.initCode()
 	if err != nil {
 		return err
@@ -229,24 +229,24 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("超管初始化", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin initialization", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
 	alice := newClient(server.port)
 	if err := alice.login("alice", alicePassword); err != nil {
 		return err
 	}
 
-	fmt.Println("== 用户与设备准备 ==")
+	fmt.Println("== user and device setup ==")
 	status, body, err = alice.request("POST", "/admin/users", map[string]interface{}{"username": "bob", "password": bobPassword}, true)
 	if err != nil {
 		return err
 	}
-	h.check("超管创建 bob", status == 200 && getStr(getMap(body, "user"), "username") == "bob", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin creates bob", status == 200 && getStr(getMap(body, "user"), "username") == "bob", fmt.Sprintf("HTTP %d %v", status, body))
 	bobID := getStr(getMap(body, "user"), "id")
 	status, body, err = alice.request("POST", "/admin/users", map[string]interface{}{"username": "carol", "password": carolPassword}, true)
 	if err != nil {
 		return err
 	}
-	h.check("超管创建 carol", status == 200 && getStr(getMap(body, "user"), "username") == "carol", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin creates carol", status == 200 && getStr(getMap(body, "user"), "username") == "carol", fmt.Sprintf("HTTP %d %v", status, body))
 	bob := newClient(server.port)
 	if err := bob.login("bob", bobPassword); err != nil {
 		return err
@@ -261,16 +261,16 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("配置接入地址", status == 200 && len(getList(body, "base_urls")) == 1, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("configure server base URLs", status == 200 && len(getList(body, "base_urls")) == 1, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("POST", "/device/enroll-codes", map[string]interface{}{"ttl_ms": 600000}, true)
 	if err != nil {
 		return err
 	}
-	h.check("签发接入码", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("issue enrollment code", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
 	enrollCode := getStr(body, "code")
 
 	stdout, rc, stderr := enrollAgent(h, baseURL, enrollCode, agentDir, "sharing-box")
-	h.check("agent enroll 子命令", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
+	h.check("agent enroll subcommand", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
 	configPath := filepath.Join(agentDir, "fleet", "agent.json")
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
@@ -287,7 +287,7 @@ func runSharing(h *harness) error {
 		return err
 	}
 	desired, desiredOK := getBool(body, "desired_autostart")
-	h.check("关闭期望自启动", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("disable desired autostart", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
 	agentConfig["desired_autostart"] = false
 	agentConfig["metrics_interval_ms"] = 5000
 	encoded, err := json.Marshal(agentConfig)
@@ -319,9 +319,9 @@ func runSharing(h *harness) error {
 	}); err != nil {
 		return err
 	}
-	h.check("agent 控制通道上线", getStr(getMap(deviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", deviceRow()))
+	h.check("agent control channel comes online", getStr(getMap(deviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", deviceRow()))
 
-	fmt.Println("== owner 经桥接建会话 ==")
+	fmt.Println("== owner creates a session through the bridge ==")
 	stateDigest, err := localStateDigest(filepath.Join(agentDir, "durable", "supervisor"))
 	if err != nil {
 		return err
@@ -345,42 +345,42 @@ func runSharing(h *harness) error {
 		return err
 	}
 	relay.close()
-	h.check("owner 桥接创建会话", sessionID != "", fmt.Sprintf("info=%v", info))
+	h.check("owner creates a session through the bridge", sessionID != "", fmt.Sprintf("info=%v", info))
 
-	fmt.Println("== 公开只读链接 ==")
+	fmt.Println("== public read-only link ==")
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("创建只读链接", status == 200 && getStr(body, "permission") == "read" && getStr(body, "token") != "", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("create read-only link", status == 200 && getStr(body, "permission") == "read" && getStr(body, "token") != "", fmt.Sprintf("HTTP %d %v", status, body))
 	readLinkID := getStr(body, "id")
 	readToken := getStr(body, "token")
 
-	fmt.Println("== 公开页面 plain GET ==")
+	fmt.Println("== public page plain GET ==")
 	status, _, indexBody, err := plainGet(server.port, "/")
 	if err != nil {
 		return err
 	}
-	h.check("根路径 SPA 服务", status == 200 && strings.Contains(indexBody, "<title>NexTerm</title>") &&
+	h.check("root path serves the SPA", status == 200 && strings.Contains(indexBody, "<title>NexTerm</title>") &&
 		strings.Contains(indexBody, `window.__NEXTERM_TRANSPORT__="web"`), fmt.Sprintf("HTTP %d %s", status, truncate(indexBody, 120)))
 	status, cacheControl, tokenBody, err := plainGet(server.port, "/share/public/"+readToken)
 	if err != nil {
 		return err
 	}
-	h.check("有效 token plain GET 服务同一 SPA", status == 200 && tokenBody == indexBody, fmt.Sprintf("HTTP %d", status))
-	h.check("token URL 响应 no-store", cacheControl == "no-store", fmt.Sprintf("Cache-Control=%q", cacheControl))
+	h.check("valid token plain GET serves the same SPA", status == 200 && tokenBody == indexBody, fmt.Sprintf("HTTP %d", status))
+	h.check("token URL responds with no-store", cacheControl == "no-store", fmt.Sprintf("Cache-Control=%q", cacheControl))
 	status, _, invalidBody, err := plainGet(server.port, "/share/public/not-a-real-token")
 	if err != nil {
 		return err
 	}
-	h.check("无效 token plain GET 同样服务 SPA (不校验 token)", status == 200 && invalidBody == indexBody, fmt.Sprintf("HTTP %d", status))
+	h.check("invalid token plain GET also serves the SPA (token is not validated)", status == 200 && invalidBody == indexBody, fmt.Sprintf("HTTP %d", status))
 	postCode, err := postStatus(server.port, "/share/public/"+readToken)
 	if err != nil {
 		return err
 	}
-	h.check("POST 公开 token URL 不落入 SPA (405)", postCode == 405, fmt.Sprintf("HTTP %d", postCode))
+	h.check("POST to public token URL does not fall through to SPA (405)", postCode == 405, fmt.Sprintf("HTTP %d", postCode))
 
 	viewer, err := newShareViewer(server.port, "/share/public/"+readToken, nil)
 	if err != nil {
@@ -390,30 +390,30 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("只读 ready 帧", getStr(ready, "permission") == "read" && getStr(ready, "session_id") == sessionID &&
+	h.check("read-only ready frame", getStr(ready, "permission") == "read" && getStr(ready, "session_id") == sessionID &&
 		keysSubset(ready, readyFrameKeys), fmt.Sprintf("ready=%v", ready))
 	if err := viewer.expectOutput([]byte("READY-42"), 15*time.Second); err != nil {
 		return err
 	}
-	h.check("只读 viewer 收到会话输出", true, "")
+	h.check("read-only viewer receives session output", true, "")
 	if err := viewer.ws.send(websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
 		return err
 	}
 	if err := viewer.expectSilent(2 * time.Second); err != nil {
-		h.check("只读输入被静默丢弃", false, err.Error())
+		h.check("read-only input is silently discarded", false, err.Error())
 	} else {
-		h.check("只读输入被静默丢弃", true, "")
+		h.check("read-only input is silently discarded", true, "")
 	}
 	viewer.ws.close()
 
-	fmt.Println("== 公开读写链接 ==")
+	fmt.Println("== public read-write link ==")
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": true, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("创建读写链接", status == 200 && getStr(body, "permission") == "read_write", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("create read-write link", status == 200 && getStr(body, "permission") == "read_write", fmt.Sprintf("HTTP %d %v", status, body))
 	writeToken := getStr(body, "token")
 	rwViewer, err := newShareViewer(server.port, "/share/public/"+writeToken, nil)
 	if err != nil {
@@ -423,7 +423,7 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("读写 ready 帧", getStr(ready, "permission") == "read_write", fmt.Sprintf("ready=%v", ready))
+	h.check("read-write ready frame", getStr(ready, "permission") == "read_write", fmt.Sprintf("ready=%v", ready))
 	if err := rwViewer.expectOutput([]byte("READY-42"), 15*time.Second); err != nil {
 		return err
 	}
@@ -431,18 +431,18 @@ func runSharing(h *harness) error {
 		return err
 	}
 	if err := rwViewer.expectOutput([]byte("hello-42"), 15*time.Second); err != nil {
-		h.check("读写输入到达会话并回显", false, err.Error())
+		h.check("read-write input reaches the session and echoes", false, err.Error())
 	} else {
-		h.check("读写输入到达会话并回显", true, "")
+		h.check("read-write input reaches the session and echoes", true, "")
 	}
 
-	fmt.Println("== 吊销 ==")
+	fmt.Println("== revocation ==")
 	status, body, err = alice.request("POST", fmt.Sprintf("/share/links/%s/revoke", readLinkID), map[string]interface{}{}, true)
 	if err != nil {
 		return err
 	}
 	okFlag, _ := getBool(body, "ok")
-	h.check("吊销只读链接", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("revoke read-only link", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("GET", "/share/links", nil, false)
 	if err != nil {
 		return err
@@ -458,27 +458,27 @@ func runSharing(h *harness) error {
 		return err
 	}
 	okFlag, _ = getBool(body, "ok")
-	h.check("吊销读写链接", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("revoke read-write link", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
 	errorFrame, err := rwViewer.expectError(30 * time.Second)
 	if err != nil {
-		h.check("吊销停止活跃 viewer (错误帧)", false, err.Error())
+		h.check("revocation stops active viewers (error frame)", false, err.Error())
 	} else {
-		h.check("吊销停止活跃 viewer (错误帧)", strings.Contains(getStr(errorFrame, "message"), "吊销"), fmt.Sprintf("frame=%v", errorFrame))
+		h.check("revocation stops active viewers (error frame)", strings.Contains(getStr(errorFrame, "message"), "吊销"), fmt.Sprintf("frame=%v", errorFrame))
 	}
 	if err := rwViewer.expectClosed(10 * time.Second); err != nil {
 		return err
 	}
 	revokedStatus := wsHandshakeStatus(server.port, "/share/public/"+writeToken)
-	h.check("吊销后 token 不可再用", revokedStatus == 403, fmt.Sprintf("status=%d", revokedStatus))
+	h.check("token cannot be reused after revocation", revokedStatus == 403, fmt.Sprintf("status=%d", revokedStatus))
 
-	fmt.Println("== 过期 ==")
+	fmt.Println("== expiration ==")
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 60000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("创建 60s 短时效链接", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("create a short-lived 60s link", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
 	expiringToken := getStr(body, "token")
 	expiringViewer, err := newShareViewer(server.port, "/share/public/"+expiringToken, nil)
 	if err != nil {
@@ -489,34 +489,34 @@ func runSharing(h *harness) error {
 	}
 	errorFrame, err = expiringViewer.expectError(100 * time.Second)
 	if err != nil {
-		h.check("过期停止活跃 viewer", false, err.Error())
+		h.check("expiration stops active viewers", false, err.Error())
 	} else {
-		h.check("过期停止活跃 viewer", strings.Contains(getStr(errorFrame, "message"), "过期"), fmt.Sprintf("frame=%v", errorFrame))
+		h.check("expiration stops active viewers", strings.Contains(getStr(errorFrame, "message"), "过期"), fmt.Sprintf("frame=%v", errorFrame))
 	}
 	if err := expiringViewer.expectClosed(10 * time.Second); err != nil {
 		return err
 	}
 	expiredStatus := wsHandshakeStatus(server.port, "/share/public/"+expiringToken)
-	h.check("过期后 token 不可再用", expiredStatus == 403, fmt.Sprintf("status=%d", expiredStatus))
+	h.check("token cannot be reused after expiration", expiredStatus == 403, fmt.Sprintf("status=%d", expiredStatus))
 
-	fmt.Println("== 注册分享打开终端 ==")
+	fmt.Println("== open a terminal through a registered share ==")
 	status, body, err = carol.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
 	if err != nil {
 		return err
 	}
-	h.check("无分享用户打开被拒", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("user without a share is rejected when opening", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": deviceID, "recipient_username": "bob", "write": true, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("授予 bob 主机分享", status == 200 && getStr(body, "permission") == "read_write", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("grant bob a host share", status == 200 && getStr(body, "permission") == "read_write", fmt.Sprintf("HTTP %d %v", status, body))
 	shareID := getStr(body, "id")
 	if extra := extraKeys(body, hostShareViewKeys); len(extra) > 0 {
-		h.check("主机分享视图无多余字段", false, fmt.Sprintf("keys=%v", sortedKeysOf(body)))
+		h.check("host share view has no extra fields", false, fmt.Sprintf("keys=%v", sortedKeysOf(body)))
 	} else {
-		h.check("主机分享视图无多余字段", true, "")
+		h.check("host share view has no extra fields", true, "")
 	}
 
 	bobHeader := http.Header{}
@@ -529,22 +529,22 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("bob 打开新终端", getStr(ready, "permission") == "read_write" && getStr(ready, "session_id") != "", fmt.Sprintf("ready=%v", ready))
+	h.check("bob opens a new terminal", getStr(ready, "permission") == "read_write" && getStr(ready, "session_id") != "", fmt.Sprintf("ready=%v", ready))
 	if err := bobViewer.ws.send(websocket.MessageBinary, []byte("echo hi-42\n")); err != nil {
 		return err
 	}
 	if err := bobViewer.expectOutput([]byte("hi-42"), 15*time.Second); err != nil {
-		h.check("bob 终端输入输出", false, err.Error())
+		h.check("bob terminal input and output", false, err.Error())
 	} else {
-		h.check("bob 终端输入输出", true, "")
+		h.check("bob terminal input and output", true, "")
 	}
 
-	fmt.Println("== 权限收缩 read_write -> read ==")
+	fmt.Println("== permission reduction read_write -> read ==")
 	if err := bobViewer.ws.send(websocket.MessageBinary, []byte("while true; do echo tick; sleep 0.5; done\n")); err != nil {
 		return err
 	}
 	if err := bobViewer.expectOutput([]byte("tick"), 15*time.Second); err != nil {
-		h.check("收缩前终端持续输出", false, err.Error())
+		h.check("terminal keeps producing output before reduction", false, err.Error())
 	}
 	status, body, err = alice.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": deviceID, "recipient_username": "bob", "write": false, "ttl_ms": 3600000,
@@ -552,7 +552,7 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("收缩为只读分享", status == 200 && getStr(body, "permission") == "read", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("reduce to a read-only share", status == 200 && getStr(body, "permission") == "read", fmt.Sprintf("HTTP %d %v", status, body))
 	time.Sleep(3 * time.Second)
 	if err := bobViewer.ws.send(websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
 		return err
@@ -569,8 +569,8 @@ func runSharing(h *harness) error {
 		}
 		shrinkOutput = append(shrinkOutput, chunk...)
 	}
-	h.check("收缩后输出继续", bytes.Contains(shrinkOutput, []byte("tick")), fmt.Sprintf("output=%q", tailBytes(shrinkOutput, 200)))
-	h.check("收缩后输入被丢弃", !bytes.Contains(shrinkOutput, []byte("nope-42")), fmt.Sprintf("output=%q", tailBytes(shrinkOutput, 200)))
+	h.check("output continues after reduction", bytes.Contains(shrinkOutput, []byte("tick")), fmt.Sprintf("output=%q", tailBytes(shrinkOutput, 200)))
+	h.check("input is discarded after reduction", !bytes.Contains(shrinkOutput, []byte("nope-42")), fmt.Sprintf("output=%q", tailBytes(shrinkOutput, 200)))
 	bobViewer.ws.close()
 
 	status, body, err = alice.request("POST", fmt.Sprintf("/share/host-shares/%s/revoke", shareID), map[string]interface{}{}, true)
@@ -578,21 +578,21 @@ func runSharing(h *harness) error {
 		return err
 	}
 	okFlag, _ = getBool(body, "ok")
-	h.check("吊销主机分享", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("revoke host share", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = bob.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
 	if err != nil {
 		return err
 	}
-	h.check("吊销后 bob 打开被拒", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("bob is rejected when opening after revocation", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== 普通 owner 以用户名创建主机分享 ==")
+	fmt.Println("== regular owner creates a host share by username ==")
 	status, body, err = alice.request("POST", "/device/enroll-codes", map[string]interface{}{"ttl_ms": 600000, "user_id": bobID}, true)
 	if err != nil {
 		return err
 	}
-	h.check("超管代 bob 签发接入码", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin issues an enrollment code for bob", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
 	stdout, rc, stderr = enrollAgent(h, baseURL, getStr(body, "code"), bobAgentDir, "bob-box")
-	h.check("bob agent enroll 子命令", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
+	h.check("bob agent enroll subcommand", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
 	bobConfigPath := filepath.Join(bobAgentDir, "fleet", "agent.json")
 	raw, err = os.ReadFile(bobConfigPath)
 	if err != nil {
@@ -608,7 +608,7 @@ func runSharing(h *harness) error {
 		return err
 	}
 	desired, desiredOK = getBool(body, "desired_autostart")
-	h.check("bob 关闭期望自启动", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("bob disables desired autostart", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
 	bobConfig["desired_autostart"] = false
 	encoded, err = json.Marshal(bobConfig)
 	if err != nil {
@@ -638,21 +638,21 @@ func runSharing(h *harness) error {
 	}); err != nil {
 		return err
 	}
-	h.check("bob agent 控制通道上线", getStr(getMap(bobDeviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", bobDeviceRow()))
+	h.check("bob agent control channel comes online", getStr(getMap(bobDeviceRow(), "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", bobDeviceRow()))
 	status, body, err = bob.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": bobDeviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("普通 owner 无效用户名 404", status == 404 && getStr(getMap(body, "error"), "code") == "not_found", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("regular owner gets 404 for an invalid username", status == 404 && getStr(getMap(body, "error"), "code") == "not_found", fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = bob.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": bobDeviceID, "recipient_username": "carol", "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("普通 owner 以用户名创建分享", status == 200 && getStr(body, "permission") == "read" &&
+	h.check("regular owner creates a share by username", status == 200 && getStr(body, "permission") == "read" &&
 		getStr(body, "recipient_username") == "carol" && getStr(body, "owner_username") == "bob", fmt.Sprintf("HTTP %d %v", status, body))
 	carolHeader := http.Header{}
 	carolHeader.Set("Cookie", sessionCookie+"="+carol.cookie)
@@ -664,26 +664,26 @@ func runSharing(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("carol 经 bob 的分享打开新终端", getStr(ready, "permission") == "read" && getStr(ready, "session_id") != "", fmt.Sprintf("ready=%v", ready))
+	h.check("carol opens a new terminal through bob's share", getStr(ready, "permission") == "read" && getStr(ready, "session_id") != "", fmt.Sprintf("ready=%v", ready))
 	carolViewer.ws.close()
 	bobAgent.stop()
 	cleanupHelper(bobAgentDir)
 
-	fmt.Println("== 守护代理离线 ==")
+	fmt.Println("== agent daemon offline ==")
 	status, body, err = alice.request("POST", "/share/host-shares", map[string]interface{}{
 		"device_id": deviceID, "recipient_username": "bob", "write": true, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("重新授予 bob", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("re-grant bob", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": true, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("离线前创建读写链接", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("create read-write link before going offline", status == 200, fmt.Sprintf("HTTP %d %v", status, body))
 	offlineToken := getStr(body, "token")
 	offlineViewer, err := newShareViewer(server.port, "/share/public/"+offlineToken, nil)
 	if err != nil {
@@ -694,40 +694,40 @@ func runSharing(h *harness) error {
 	}
 	agent.stop()
 	if err := offlineViewer.expectClosed(15 * time.Second); err != nil {
-		h.check("agent 离线停止活跃分享流", false, err.Error())
+		h.check("agent offline stops active share streams", false, err.Error())
 	} else {
-		h.check("agent 离线停止活跃分享流", true, "")
+		h.check("agent offline stops active share streams", true, "")
 	}
 	offlineStatus := wsHandshakeStatus(server.port, "/share/public/"+offlineToken)
-	h.check("离线后公开链接 503", offlineStatus == 503, fmt.Sprintf("status=%d", offlineStatus))
+	h.check("public link returns 503 after going offline", offlineStatus == 503, fmt.Sprintf("status=%d", offlineStatus))
 	status, body, err = bob.request("GET", fmt.Sprintf("/share/devices/%s/terminal", deviceID), nil, false)
 	if err != nil {
 		return err
 	}
-	h.check("离线后注册打开 503", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("registered open returns 503 after going offline", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("POST", "/share/links", map[string]interface{}{
 		"device_id": deviceID, "session_id": sessionID, "write": false, "ttl_ms": 3600000,
 	}, true)
 	if err != nil {
 		return err
 	}
-	h.check("离线后创建链接 503", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("creating a link returns 503 after going offline", status == 503, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== 无效 token WS 门禁 ==")
+	fmt.Println("== invalid token WS gate ==")
 	invalidStatus := wsHandshakeStatus(server.port, "/share/public/not-a-real-token")
-	h.check("无效 token WS 握手仍被拒", invalidStatus == 403, fmt.Sprintf("status=%d", invalidStatus))
+	h.check("invalid token WS handshake is still rejected", invalidStatus == 403, fmt.Sprintf("status=%d", invalidStatus))
 
-	fmt.Println("== 披露防线 ==")
+	fmt.Println("== disclosure defenses ==")
 	status, body, err = newClient(server.port).request("GET", "/share/links", nil, false)
 	if err != nil {
 		return err
 	}
-	h.check("匿名访问分享管理 401", status == 401, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("anonymous access to share management returns 401", status == 401, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = newClient(server.port).request("POST", "/sync/v2/pull", map[string]interface{}{"since": 0}, false)
 	if err != nil {
 		return err
 	}
-	h.check("匿名访问同步协议被拒", status == 401 || status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("anonymous access to sync protocol is rejected", status == 401 || status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("GET", "/share/links", nil, false)
 	if err != nil {
 		return err
@@ -744,6 +744,6 @@ func runSharing(h *harness) error {
 			leakFree = false
 		}
 	}
-	h.check("链接列表无 token 字段", status == 200 && leakFree, fmt.Sprintf("extra=%v", leaked))
+	h.check("link list has no token field", status == 200 && leakFree, fmt.Sprintf("extra=%v", leaked))
 	return nil
 }

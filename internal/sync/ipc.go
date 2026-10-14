@@ -106,7 +106,7 @@ func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
 func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindOptIn, error) {
 	userID, ok := s.kindOptInUserID(ctx)
 	if !ok {
-		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步 opt-in")
+		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步内容开关")
 	}
 	if patch.KnownHost != nil {
 		if err := s.store.SetKnownHostSyncOptIn(ctx, userID, *patch.KnownHost); err != nil {

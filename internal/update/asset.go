@@ -86,14 +86,14 @@ func fileSHA256(path string) (string, error) {
 func verifyChecksumFile(path, assetName string, sums map[string]string) error {
 	expected, ok := sums[assetName]
 	if !ok {
-		return fmt.Errorf("%s 缺少 %s 的校验和", checksumsAssetName, assetName)
+		return userErrorf(UserErrorIO, "%s 缺少 %s 的校验和", checksumsAssetName, assetName)
 	}
 	actual, err := fileSHA256(path)
 	if err != nil {
-		return fmt.Errorf("计算 %s 摘要失败: %w", assetName, err)
+		return userErrorf(UserErrorIO, "计算 %s 摘要失败: %w", assetName, err)
 	}
 	if actual != expected {
-		return fmt.Errorf("%s 的 SHA256 校验失败：期望 %s，实际 %s", assetName, expected, actual)
+		return userErrorf(UserErrorIO, "%s 的 SHA256 校验失败：期望 %s，实际 %s", assetName, expected, actual)
 	}
 	return nil
 }

@@ -81,8 +81,8 @@ function seedWorkspace(): void {
             id: "p1",
             activeTabId: "t1",
             tabs: [
-              { id: "t1", kind: "settings", title: "设置", closable: true },
-              { id: "t2", kind: "audit", title: "审计", closable: true },
+              { id: "t1", kind: "settings", title: "Settings", closable: true },
+              { id: "t2", kind: "audit", title: "Audit", closable: true },
             ],
           },
         ],
@@ -124,7 +124,7 @@ describe("panel-level error boundary", () => {
     expect(alert?.textContent).toContain("settings exploded");
 
     const tablist = mounted.container.querySelector('[role="tablist"][aria-label="标签页"]');
-    expect(tablist?.textContent).toContain("审计");
+    expect(tablist?.textContent).toContain("Audit");
 
     const close = panel?.querySelector<HTMLButtonElement>('[role="alert"] button:last-child');
     expect(close?.textContent).toBe("关闭标签");

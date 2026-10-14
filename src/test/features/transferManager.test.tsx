@@ -287,18 +287,19 @@ beforeEach(() => {
   useTransferStore.setState({ tasks: [], runningId: null });
 });
 
-afterEach(() => {
+afterEach(async () => {
   mounted?.unmount();
   mounted = undefined;
+  await flush();
 });
 
-describe("统一传输队列面板（FileBrowser）", () => {
+describe("unified transfer queue panel (FileBrowser)", () => {
   beforeEach(async () => {
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("上传进入队列：显示方向、远端路径与进行中状态，完成后给出可懂提示", async () => {
+  it("queues uploads with direction, remote path, and in-progress status, then shows a clear completion toast", async () => {
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
@@ -312,7 +313,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     expect((panel!.textContent ?? "").indexOf(LOCAL_FILE)).toBeLessThan(
       (panel!.textContent ?? "").indexOf("~/nginx-access.log"),
     );
-    expect(panel!.textContent).toContain("进行中");
+    expect(panel!.textContent).toContain("1 个未结束");
 
     resolveUpload(42_118);
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
@@ -321,7 +322,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     expect(successText).not.toMatch(/task/i);
   });
 
-  it("进度事件实时更新面板百分比", async () => {
+  it("updates the panel percentage in real time from progress events", async () => {
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
@@ -336,7 +337,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
   });
 
-  it("失败任务在面板显示错误，toast 说明路径与原因，不暴露内部 taskId", async () => {
+  it("shows task errors in the panel and includes the path and reason in the toast without exposing the internal taskId", async () => {
     mocks.upload.mockRejectedValueOnce(new Error("connection reset"));
 
     click(buttonByTitle(mounted!.container, "上传"));
@@ -352,7 +353,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
   });
 
-  it("下载进入队列：显示本地落点，完成后交付并提示", async () => {
+  it("queues downloads with a local destination, then delivers the file and notifies on completion", async () => {
     let resolveDownload!: (v: number) => void;
     mocks.download.mockReturnValueOnce(new Promise<number>((r) => (resolveDownload = r)));
 
@@ -366,7 +367,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     expect((panel!.textContent ?? "").indexOf("~/a.txt")).toBeLessThan(
       (panel!.textContent ?? "").indexOf(LOCAL_SAVE),
     );
-    expect(panel!.textContent).toContain("进行中");
+    expect(panel!.textContent).toContain("1 个未结束");
 
     resolveDownload(10);
     await waitFor(() =>
@@ -376,7 +377,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
   });
 
-  it("排队中的任务可取消；运行中的任务不受影响", async () => {
+  it("allows cancelling queued tasks without affecting the running task", async () => {
     let resolveFirst!: (v: number) => void;
     mocks.upload
       .mockReturnValueOnce(new Promise<number>((r) => (resolveFirst = r)))
@@ -404,7 +405,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     expect(mocks.upload).toHaveBeenCalledTimes(1);
   });
 
-  it("取消排队中的上传会清理本地暂存文件，运行中的任务不受影响", async () => {
+  it("cleans the local staged file when cancelling a queued upload without affecting the running task", async () => {
     mocks.upload.mockReset();
     mocks.upload.mockResolvedValue(100);
     let resolveFirst!: (v: number) => void;
@@ -433,7 +434,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
   });
 
-  it("进度条具备完整的 aria 数值属性", async () => {
+  it("exposes complete aria numeric attributes on the progress bar", async () => {
     mocks.upload.mockReset();
     mocks.upload.mockResolvedValue(100);
     let resolveUpload!: (v: number) => void;
@@ -458,7 +459,7 @@ describe("统一传输队列面板（FileBrowser）", () => {
     await flush();
   });
 
-  it("清除已结束后面板收起", async () => {
+  it("collapses the panel after clearing finished tasks", async () => {
     click(buttonByTitle(mounted!.container, "上传"));
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
 
@@ -469,13 +470,13 @@ describe("统一传输队列面板（FileBrowser）", () => {
   });
 });
 
-describe("拖拽上传（FileBrowser）", () => {
+describe("drag-and-drop upload (FileBrowser)", () => {
   beforeEach(async () => {
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("拖入文件进入当前目录并进入队列", async () => {
+  it("queues dropped files in the current directory", async () => {
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["x"], "d.txt")]);
 
@@ -487,14 +488,14 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("拖到目录行上则上传到该目录", async () => {
+  it("uploads into a directory when files are dropped on its row", async () => {
     dropOn(rowByPath(mounted!.container, "~/sub"), [new File(["x"], "d.txt")]);
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/sub/d.txt", false),
     );
   });
 
-  it("冲突时选择保留两者：自动重命名后上传", async () => {
+  it("renames automatically and uploads after choosing keep both for a conflict", async () => {
     mockHomeEntries([["a.txt", "file"], ["d.txt", "file"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/d.txt")).toBeTruthy());
@@ -513,7 +514,7 @@ describe("拖拽上传（FileBrowser）", () => {
     );
   });
 
-  it("逐冲突询问：覆盖走原路径，保留两者自动重命名", async () => {
+  it("asks per conflict: overwrites the original path or renames to keep both", async () => {
     mockHomeEntries([
       ["a.txt", "file"],
       ["d.txt", "file"],
@@ -532,7 +533,7 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.askChoice).toHaveBeenCalledTimes(2);
   });
 
-  it("同批大小写变体重名（winrm）：自动保留两者，不弹冲突也不报错", async () => {
+  it("automatically keeps both case-variant names in one winrm batch without a conflict prompt or error", async () => {
     useUi.setState({ sessions: [sessionOfKind("winrm")] });
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "X.TXT")]);
@@ -544,7 +545,7 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
   });
 
-  it("同批完全重名（ssh）：自动保留两者，不弹冲突也不报错", async () => {
+  it("automatically keeps both identical names in one ssh batch without a conflict prompt or error", async () => {
     useUi.setState({ sessions: [sessionOfKind("ssh")] });
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "x.txt")]);
@@ -556,7 +557,7 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
   });
 
-  it("策略可应用到本次队列：skip-all 只问一次，其余冲突同样跳过", async () => {
+  it("applies skip-all to the current queue: asks once and skips every remaining conflict", async () => {
     mockHomeEntries([
       ["a.txt", "file"],
       ["d.txt", "file"],
@@ -580,7 +581,7 @@ describe("拖拽上传（FileBrowser）", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("跳过"));
   });
 
-  it("冲突对话框取消则整批不上传，远端保持原样", async () => {
+  it("cancels the entire batch without uploading when the conflict dialog is cancelled and leaves the remote unchanged", async () => {
     mockHomeEntries([["a.txt", "file"], ["d.txt", "file"]]);
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/d.txt")).toBeTruthy());
@@ -600,13 +601,13 @@ describe("拖拽上传（FileBrowser）", () => {
   });
 });
 
-describe("拖拽上传（FileTree）", () => {
+describe("drag-and-drop upload (FileTree)", () => {
   beforeEach(async () => {
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
   });
 
-  it("拖入文件上传到当前目录并进入队列", async () => {
+  it("uploads dropped files to the current directory and queues them", async () => {
     const tree = mounted!.container.querySelector("[role='tree']")!;
     dropOn(tree, [new File(["x"], "d.txt")]);
 
@@ -620,17 +621,17 @@ describe("拖拽上传（FileTree）", () => {
   });
 });
 
-describe("文件夹上传（FileBrowser）", () => {
+describe("folder upload (FileBrowser)", () => {
   beforeEach(async () => {
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("工具栏提供上传文件夹入口", () => {
+  it("provides a folder upload entry in the toolbar", () => {
     expect(buttonByTitle(mounted!.container, "上传本地文件夹到当前目录")).toBeTruthy();
   });
 
-  it("逐文件上传（默认）：遍历文件夹按相对路径入队，WEB 暂存与相对路径一一对应", async () => {
+  it("per-file upload (default): traverses the folder and queues relative paths with matching WEB staging paths", async () => {
     let seq = 0;
     mocks.stageFile.mockImplementation(async (f: File) => {
       seq += 1;
@@ -658,7 +659,7 @@ describe("文件夹上传（FileBrowser）", () => {
     expect(modeDialogChoices()).toEqual(["perFile"]);
   });
 
-  it("winrm 会话不提供打包上传选项", async () => {
+  it("does not offer packed upload for winrm sessions", async () => {
     useUi.setState({ sessions: [sessionOfKind("winrm")] });
     mocks.askChoice.mockResolvedValueOnce("perFile");
     const list = mounted!.container.querySelector("[role='tree']")!;
@@ -669,7 +670,7 @@ describe("文件夹上传（FileBrowser）", () => {
     expect(mocks.packUpload).not.toHaveBeenCalled();
   });
 
-  it("winrm 会话拒绝名称含反斜杠的条目：报错、清理暂存、不上传", async () => {
+  it("rejects entries with backslashes for winrm: reports an error, cleans staging, and skips upload", async () => {
     useUi.setState({ sessions: [sessionOfKind("winrm")] });
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a\\b.jpg")])]);
@@ -685,7 +686,7 @@ describe("文件夹上传（FileBrowser）", () => {
     expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/a\\b.jpg");
   });
 
-  it("ssh 会话可选择打包上传：调用 packUploadAndExtract 并清理暂存", async () => {
+  it("allows packed upload for ssh: calls packUploadAndExtract and cleans staging", async () => {
     useUi.setState({ sessions: [sessionOfKind("ssh")] });
     mocks.askChoice.mockResolvedValueOnce("pack");
     const list = mounted!.container.querySelector("[role='tree']")!;
@@ -725,7 +726,7 @@ describe("文件夹上传（FileBrowser）", () => {
     );
   });
 
-  it("取消方式对话框则整批不上传并清理暂存", async () => {
+  it("cancels the mode dialog without uploading the batch and cleans staging", async () => {
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
 
@@ -738,7 +739,7 @@ describe("文件夹上传（FileBrowser）", () => {
     expect(mocks.dropStaged).toHaveBeenCalledWith("/staged/b.jpg");
   });
 
-  it("空文件夹不弹方式对话框，直接创建远端目录", async () => {
+  it("creates remote directories for an empty folder without showing the mode dialog", async () => {
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(list, [fakeDir("pics", [fakeDir("empty", [])])]);
 
@@ -754,7 +755,7 @@ describe("文件夹上传（FileBrowser）", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
-  it("目标已有同名文件夹：选择跳过同名文件后只上传不冲突的文件", async () => {
+  it("uploads only non-conflicting files after choosing to skip same-named files in an existing target folder", async () => {
     mocks.list.mockImplementation((_s: string, p: string) => {
       if (p === "~")
         return Promise.resolve([entry("a.txt", "file"), entry("pics", "dir")]);
@@ -786,17 +787,17 @@ describe("文件夹上传（FileBrowser）", () => {
   });
 });
 
-describe("文件夹上传（FileTree）", () => {
+describe("folder upload (FileTree)", () => {
   beforeEach(async () => {
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
   });
 
-  it("工具栏提供上传文件夹入口", () => {
+  it("provides a folder upload entry in the toolbar", () => {
     expect(buttonByTitle(mounted!.container, "上传文件夹到当前目录")).toBeTruthy();
   });
 
-  it("拖入文件夹遍历后按相对路径上传到当前目录", async () => {
+  it("traverses a dropped folder and uploads its relative paths to the current directory", async () => {
     mocks.askChoice.mockResolvedValueOnce("perFile");
     const tree = mounted!.container.querySelector("[role='tree']")!;
     dropFoldersOn(tree, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
@@ -807,20 +808,20 @@ describe("文件夹上传（FileTree）", () => {
   });
 });
 
-describe("原生拖拽上传（wails native drop）", () => {
+describe("native drag-and-drop upload (wails native drop)", () => {
   beforeEach(async () => {
     remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("FileBrowser 与 FileTree 的放置面都带 data-file-drop-target", async () => {
+  it("marks both FileBrowser and FileTree drop surfaces with data-file-drop-target", async () => {
     expect(mounted!.container.querySelector("[data-file-drop-target]")).not.toBeNull();
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mounted!.container.querySelector("[data-file-drop-target]")).not.toBeNull();
   });
 
-  it("原生文件拖放按真实路径入队上传到当前目录", async () => {
+  it("queues native file drops by their real paths in the current directory", async () => {
     stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
     emitNativeDrop({ paths: [{ path: "/local/d.txt", dir: false }], x: 5, y: 5 });
 
@@ -831,7 +832,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     expect(mocks.listFolder).not.toHaveBeenCalled();
   });
 
-  it("原生拖放落到目录行时上传进该行目录", async () => {
+  it("uploads native drops into the directory row they land on", async () => {
     const row = mounted!.container.querySelector("[data-drop-path]")!;
     expect(row.getAttribute("data-drop-path")).toBe("~/sub");
     stubElementFromPoint(row);
@@ -842,7 +843,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     );
   });
 
-  it("原生文件夹拖放走 local_folder_list 枚举后逐文件上传", async () => {
+  it("enumerates native folder drops through local_folder_list and uploads files individually", async () => {
     mocks.listFolder.mockResolvedValue({
       name: "pics",
       files: [{ relativePath: "a.jpg", localPath: "/local/pics/a.jpg", size: 5, mtimeMs: 1 }],
@@ -858,7 +859,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     expect(mocks.listFolder).toHaveBeenCalledWith("/local/pics");
   });
 
-  it("HTML5 拖放与原生事件同源到达时去重，一次放置只上传一次", async () => {
+  it("deduplicates HTML5 and native drops from the same source and uploads only once per drop", async () => {
     stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["x"], "e.txt")]);
@@ -870,7 +871,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/e.txt", "~/e.txt", false);
   });
 
-  it("放置点在面板放置面之外时忽略事件", async () => {
+  it("ignores events when the drop point is outside the panel drop surface", async () => {
     const outside = document.createElement("div");
     document.body.appendChild(outside);
     stubElementFromPoint(outside);
@@ -881,7 +882,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     expect(mocks.listFolder).not.toHaveBeenCalled();
   });
 
-  it("畸形负载被忽略", async () => {
+  it("ignores malformed payloads", async () => {
     stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
     emitNativeDrop({ taskId: "srv-1" });
     emitNativeDrop({ paths: [], x: 1, y: 1 });
@@ -891,7 +892,7 @@ describe("原生拖拽上传（wails native drop）", () => {
     expect(mocks.listFolder).not.toHaveBeenCalled();
   });
 
-  it("FileTree 原生文件拖放按真实路径入队上传", async () => {
+  it("queues native file drops in FileTree by their real paths", async () => {
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));

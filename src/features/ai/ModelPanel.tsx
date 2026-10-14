@@ -736,14 +736,14 @@ export function ModelManager({
               </div>
 
               <div className="nx-hint mt-0.5">
-                API Key 加密后保存在本机，仅在发起请求时发送到你配置的模型端点，不会上传到 NexTerm 服务器。
+                API Key 由当前 NexTerm 实例加密保存；模型请求仅发往你配置的端点。
               </div>
             </div>
           ) : (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center">
               <IconKey size={20} className="text-[var(--nx-fg-tertiary)]" />
               <div className="nx-hint max-w-[280px]">
-                从左侧选择档案进行编辑，或点击 + 新增；也可使用预设填充。
+                从档案列表选择档案进行编辑，或点击 + 新增；也可使用预设填充。
               </div>
               <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void newProfile()}>
                 <IconPlus size={12} />
@@ -1032,7 +1032,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
         <div className="nx-modal-header">
           <IconKey size={14} className="text-neutral-400" />
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
-          <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥加密保存在本机</span>
+          <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥由当前实例加密保存</span>
           <div className="nx-spacer" />
           <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭" onClick={() => void requestClose()}>
             <IconClose size={13} />

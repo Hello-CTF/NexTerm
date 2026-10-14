@@ -859,7 +859,7 @@ export const useUi = create<UiState>((set, get) => ({
       if (epoch !== sessionsEpoch) return;
       set({ sessions: list, sessionResyncFailed: false });
     } catch (e) {
-      console.error("[NexTerm] 刷新会话列表失败", e);
+      console.error("[NexTerm] Failed to refresh session list", e);
       if (epoch !== sessionsEpoch || options?.silent) return;
       if (get().sessionResyncFailed) return;
       set({ sessionResyncFailed: true });

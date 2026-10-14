@@ -47,7 +47,7 @@ function seedWorkspaceWithTerminal() {
               {
                 id: "t1",
                 kind: "terminal" as const,
-                title: "终端 1",
+                title: "Terminal 1",
                 sessionId: "s1",
                 tabId: "bt1",
                 closable: true,
@@ -72,8 +72,8 @@ beforeEach(() => {
   mocks.sessionList.mockResolvedValue([{ ...SESSION, tabs: [] }]);
 });
 
-describe("closeTab 后会话列表同步", () => {
-  it("关闭最后一个终端标签后 sessions 刷新为无标签(状态栏可显示空闲)", async () => {
+describe("session list resynchronization after closeTab", () => {
+  it("closing the last terminal tab refreshes sessions with no tabs so the status bar can show idle", async () => {
     seedWorkspaceWithTerminal();
     const ok = await useUi.getState().closeTab("t1", "kill");
     expect(ok).toBe(true);
@@ -83,7 +83,7 @@ describe("closeTab 后会话列表同步", () => {
     });
   });
 
-  it("转入后台后 sessions 刷新仍保留该标签(后台会话可接管)", async () => {
+  it("detaching to the background refreshes sessions while retaining the tab for background-session takeover", async () => {
     seedWorkspaceWithTerminal();
     mocks.sessionList.mockResolvedValue([{ ...SESSION, tabs: ["bt1"] }]);
     const ok = await useUi.getState().closeTab("t1", "detach");
@@ -95,8 +95,8 @@ describe("closeTab 后会话列表同步", () => {
   });
 });
 
-describe("terminalApi.closeTab 调用点静态守卫", () => {
-  it("每个关闭终端的调用点所在文件都刷新会话列表", () => {
+describe("terminalApi.closeTab call-site static guard", () => {
+  it("every file that closes a terminal tab resynchronizes the session list", () => {
     const sources = import.meta.glob("../../**/*.{ts,tsx}", {
       query: "?raw",
       import: "default",

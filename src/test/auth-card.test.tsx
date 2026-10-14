@@ -49,8 +49,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("AuthCard 未登录账号卡", () => {
-  it("auth=off 实例:只显示账号功能已关闭的说明,没有任何登录/初始化入口", async () => {
+describe("AuthCard signed-out account card", () => {
+  it("shows only the auth-disabled explanation for auth=off, with no login or initialization entry", async () => {
     seed({ initialized: false, auth: "off" });
     mounted = mountCard();
     await flush();
@@ -61,7 +61,7 @@ describe("AuthCard 未登录账号卡", () => {
     expect(useAuth.getState().gate).toBe("ready");
   });
 
-  it("未初始化的 loopback 实例:显示显式初始化入口与匿名说明", async () => {
+  it("shows an explicit initialization entry and anonymous-use explanation for an uninitialized loopback instance", async () => {
     seed({ initialized: false, auth: "loopback" });
     mounted = mountCard();
     await flush();
@@ -71,7 +71,7 @@ describe("AuthCard 未登录账号卡", () => {
     expect(useAuth.getState().gate).toBe("setup");
   });
 
-  it("未初始化的 auth=on 实例:同样提供初始化入口", async () => {
+  it("also offers initialization for an uninitialized auth=on instance", async () => {
     seed({ initialized: false, auth: "on" });
     mounted = mountCard();
     await flush();
@@ -81,7 +81,7 @@ describe("AuthCard 未登录账号卡", () => {
     expect(useAuth.getState().gate).toBe("setup");
   });
 
-  it("已初始化未登录:显示登录入口,不显示初始化入口", async () => {
+  it("shows login but not initialization for an initialized signed-out instance", async () => {
     seed({ initialized: true, auth: "on" });
     mounted = mountCard();
     await flush();
@@ -91,13 +91,13 @@ describe("AuthCard 未登录账号卡", () => {
     expect(useAuth.getState().gate).toBe("login");
   });
 
-  it("未登录文案说明账号同步需手动推送或应用", async () => {
+  it("explains automatic synchronization and continued local use while signed out", async () => {
     seed({ initialized: true, auth: "on" });
     mounted = mountCard();
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("账号当前未登录");
-    expect(text).toContain("读取云端副本进行对比，不会自动推送或应用，需手动触发");
-    expect(text).toContain("不登录也能继续本地使用");
+    expect(text).toContain("登录后，数据会自动在本机与云端之间同步；不登录也能继续本地使用");
+    expect(text).not.toContain("读取云端副本进行对比，不会自动推送或应用，需手动触发");
   });
 });

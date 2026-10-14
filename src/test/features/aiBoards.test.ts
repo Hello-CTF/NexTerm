@@ -17,7 +17,7 @@ function workspace(id: string): Workspace {
   return {
     id,
     kind: "session",
-    title: `主机 ${id}`,
+    title: `Host ${id}`,
     sessionId: `s-${id}`,
     panes: [{ id: `pane-${id}`, tabs: [], activeTabId: null }],
     activePaneId: `pane-${id}`,
@@ -37,8 +37,8 @@ beforeEach(() => {
   });
 });
 
-describe("AI 看板 store 动作", () => {
-  it("ensureAiBoard 幂等地创建至少一个标签的看板", () => {
+describe("AI board store actions", () => {
+  it("ensureAiBoard idempotently creates a board with at least one tab", () => {
     const first = useUi.getState().ensureAiBoard("ws-1");
     expect(first.tabs).toHaveLength(1);
     expect(first.activeTabId).toBe(first.tabs[0].id);
@@ -47,7 +47,7 @@ describe("AI 看板 store 动作", () => {
     expect(useUi.getState().ensureAiBoard("ws-2").tabs).toHaveLength(1);
   });
 
-  it("addAiTab 追加并激活新标签, setActiveAiTab 切换, closeAiTab 关闭并激活相邻标签", () => {
+  it("addAiTab appends and activates a new tab, setActiveAiTab switches tabs, and closeAiTab closes and activates an adjacent tab", () => {
     const st = () => useUi.getState();
     const board = st().ensureAiBoard("ws-1");
     const tabA = board.tabs[0].id;
@@ -68,10 +68,10 @@ describe("AI 看板 store 动作", () => {
     expect(st().aiBoards["ws-1"].activeTabId).toBe(tabB);
   });
 
-  it("关闭唯一标签时重置为全新标签, 不留空看板", () => {
+  it("closing the only tab resets it to a fresh tab without leaving an empty board", () => {
     const st = () => useUi.getState();
     const tabA = st().ensureAiBoard("ws-1").tabs[0].id;
-    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "旧会话" });
+    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "Old conversation" });
     st().closeAiTab("ws-1", tabA);
     const board = st().aiBoards["ws-1"];
     expect(board.tabs).toHaveLength(1);
@@ -80,17 +80,17 @@ describe("AI 看板 store 动作", () => {
     expect(board.activeTabId).toBe(board.tabs[0].id);
   });
 
-  it("updateAiTab 只改目标标签", () => {
+  it("updateAiTab changes only the target tab", () => {
     const st = () => useUi.getState();
     const tabA = st().ensureAiBoard("ws-1").tabs[0].id;
     const tabB = st().addAiTab("ws-1");
-    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "排查 502" });
+    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "Investigate 502" });
     const board = st().aiBoards["ws-1"];
-    expect(board.tabs[0]).toMatchObject({ id: tabA, conversationId: "conv-1", title: "排查 502" });
+    expect(board.tabs[0]).toMatchObject({ id: tabA, conversationId: "conv-1", title: "Investigate 502" });
     expect(board.tabs[1]).toMatchObject({ id: tabB, title: "新会话" });
   });
 
-  it("closeWorkspace 清理对应看板, 不动其他看板", async () => {
+  it("closeWorkspace cleans up the corresponding board without touching other boards", async () => {
     const st = () => useUi.getState();
     useUi.setState({ workspaces: [workspace("ws-1"), workspace("ws-2")], activeWorkspaceId: "ws-1" });
     st().ensureAiBoard("ws-1");
@@ -103,25 +103,25 @@ describe("AI 看板 store 动作", () => {
   });
 });
 
-describe("AI 看板布局持久化", () => {
-  it("serializeLayout 写出 aiBoards, sanitizeLayout 原样读回", () => {
+describe("AI board layout persistence", () => {
+  it("serializeLayout writes aiBoards and sanitizeLayout reads them back unchanged", () => {
     const st = () => useUi.getState();
     useUi.setState({ workspaces: [workspace("ws-1")], activeWorkspaceId: "ws-1" });
     const tabA = st().ensureAiBoard("ws-1").tabs[0].id;
-    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "排查 502" });
+    st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "Investigate 502" });
     st().ensureAiBoard(GLOBAL_AI_BOARD_KEY);
 
     const dto = serializeLayout(useUi.getState());
     expect(dto).not.toBeNull();
     const parsed = sanitizeLayout(JSON.parse(JSON.stringify(dto)));
     expect(parsed?.aiBoards?.["ws-1"]).toEqual({
-      tabs: [{ id: tabA, title: "排查 502", conversationId: "conv-1" }],
+      tabs: [{ id: tabA, title: "Investigate 502", conversationId: "conv-1" }],
       activeTabId: tabA,
     });
     expect(parsed?.aiBoards?.[GLOBAL_AI_BOARD_KEY]?.tabs).toHaveLength(1);
   });
 
-  it("sanitizeLayout 丢弃不属于任何工作区的看板分组, 保留全局分组", () => {
+  it("sanitizeLayout discards board groups that do not belong to any workspace and preserves the global group", () => {
     const parsed = sanitizeLayout({
       v: 2,
       workspaces: [workspace("ws-1")],
@@ -135,7 +135,7 @@ describe("AI 看板布局持久化", () => {
     expect(Object.keys(parsed?.aiBoards ?? {}).sort()).toEqual([GLOBAL_AI_BOARD_KEY, "ws-1"].sort());
   });
 
-  it("旧版本布局整体判无效, 缺 aiBoards 字段同样判无效", () => {
+  it("layouts from older versions are invalid, as are layouts missing the aiBoards field", () => {
     expect(
       sanitizeLayout({
         v: 1,
@@ -153,7 +153,7 @@ describe("AI 看板布局持久化", () => {
     ).toBeNull();
   });
 
-  it("看板标签缺字段时被清洗: 无 id 丢弃, 无标题回落「新会话」, 激活标签指向存在的标签", () => {
+  it("board tabs with missing fields are sanitized: entries without an id are dropped, a missing title falls back to the default conversation title, and the active tab points to an existing tab", () => {
     const parsed = sanitizeLayout({
       v: 2,
       workspaces: [workspace("ws-1")],
@@ -161,9 +161,9 @@ describe("AI 看板布局持久化", () => {
       aiBoards: {
         "ws-1": {
           tabs: [
-            { title: "没有 id" },
+            { title: "missing id" },
             { id: "ai-1", title: "  " },
-            { id: "ai-2", title: "正常", conversationId: "conv-1" },
+            { id: "ai-2", title: "Normal", conversationId: "conv-1" },
           ],
           activeTabId: "ai-gone",
         },
@@ -172,7 +172,7 @@ describe("AI 看板布局持久化", () => {
     expect(parsed?.aiBoards?.["ws-1"]).toEqual({
       tabs: [
         { id: "ai-1", title: "新会话", conversationId: undefined },
-        { id: "ai-2", title: "正常", conversationId: "conv-1" },
+        { id: "ai-2", title: "Normal", conversationId: "conv-1" },
       ],
       activeTabId: "ai-2",
     });

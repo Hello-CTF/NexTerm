@@ -81,8 +81,8 @@ function switchToRemote(): void {
   clickButton(mounted!.container, "远程转发");
 }
 
-describe("ForwardPanel 远程转发（-R）", () => {
-  it("切换到远程转发：渲染远端监听地址与目标字段，端口默认 18080", async () => {
+describe("ForwardPanel remote forwarding (-R)", () => {
+  it("renders remote listen address and target fields after switching to remote forwarding, with port 18080 by default", async () => {
     mountForward();
     await flush();
     expect(mounted!.container.querySelector('input[aria-label="远端监听地址"]')).toBeNull();
@@ -94,7 +94,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(inputBy('input[aria-label="目标端口"]')).toBeTruthy();
   });
 
-  it("远端监听地址为空时提交：内联报错、焦点落在监听地址、不发起创建", async () => {
+  it("shows an inline error and focuses the listen address when it is empty on submit, without creating", async () => {
     mountForward();
     await flush();
     switchToRemote();
@@ -110,7 +110,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
-  it("远端端口与目标端口非法时提交：分别内联报错", async () => {
+  it("shows separate inline errors for invalid remote and target ports on submit", async () => {
     mountForward();
     await flush();
     switchToRemote();
@@ -124,7 +124,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(mocks.forwardCreateRemote).not.toHaveBeenCalled();
   });
 
-  it("远端监听地址失焦立即报错，修正后失焦立即清除", async () => {
+  it("reports an invalid remote listen address on blur and clears it immediately after correction", async () => {
     mountForward();
     await flush();
     switchToRemote();
@@ -139,7 +139,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(fieldError(bindHost)).toBeNull();
   });
 
-  it("合法输入提交：以绑定地址与服务端目标调用 createRemote", async () => {
+  it("calls createRemote with the bind address and server-side target for valid input", async () => {
     mountForward();
     await flush();
     switchToRemote();
@@ -158,10 +158,10 @@ describe("ForwardPanel 远程转发（-R）", () => {
     );
   });
 
-  it("非回环绑定触发 needs_confirm：确认后带 acknowledgeRisk 重试", async () => {
+  it("requires needs_confirm for non-loopback binding and retries with acknowledgeRisk after confirmation", async () => {
     mocks.forwardCreateRemote
       .mockRejectedValueOnce(
-        Object.assign(new Error("需要确认"), { code: "needs_confirm", detail: { listenHost: "0.0.0.0" } }),
+        Object.assign(new Error("Confirmation required"), { code: "needs_confirm", detail: { listenHost: "0.0.0.0" } }),
       )
       .mockResolvedValueOnce({ id: "f1", kind: "remote" });
     mountForward();
@@ -185,7 +185,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     );
   });
 
-  it("列表渲染远程转发条目：类型徽标与远端监听地址", async () => {
+  it("renders remote forwarding entries with type badges and remote listen addresses", async () => {
     mocks.forwardList.mockResolvedValue([
       {
         id: "f1",
@@ -207,7 +207,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
   });
 
-  it("停止失败时如实报错，不虚报成功", async () => {
+  it("reports stop failures without claiming success", async () => {
     mocks.forwardList.mockResolvedValue([
       {
         id: "f1",
@@ -222,7 +222,7 @@ describe("ForwardPanel 远程转发（-R）", () => {
     ]);
     mocks.forwardRemove.mockRejectedValue({
       code: "io",
-      message: "转发监听关闭失败（远端端口可能仍在监听）: ssh: cancel-tcpip-forward failed",
+      message: "Failed to close the forwarding listener (the remote port may still be listening): ssh: cancel-tcpip-forward failed",
     });
     mountForward();
     await flush();

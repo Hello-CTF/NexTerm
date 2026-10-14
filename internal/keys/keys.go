@@ -47,7 +47,7 @@ func Generate(opts Options) (*KeyPair, error) {
 	switch algorithm {
 	case AlgorithmEd25519:
 		if opts.RSABits != 0 {
-			return nil, ipc.NewError(ipc.CodeBadParam, "生成密钥失败: ed25519 不支持 RSA 位数参数")
+			return nil, ipc.NewError(ipc.CodeBadParam, "生成密钥失败: Ed25519 密钥不支持设置 RSA 位数")
 		}
 		_, signer, err = ed25519.GenerateKey(rand.Reader)
 	case AlgorithmRSA:

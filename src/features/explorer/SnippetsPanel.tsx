@@ -148,7 +148,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   <button
                     className="nx-icon-btn nx-icon-btn-sm"
                     title="编辑片段"
-                    aria-label="编辑片段"
+                    aria-label={`编辑片段「${s.name}」`}
                     disabled={deletingId === s.id}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -160,7 +160,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   <button
                     className="nx-icon-btn nx-icon-btn-sm is-danger"
                     title="删除片段"
-                    aria-label="删除片段"
+                    aria-label={`删除片段「${s.name}」`}
                     disabled={deletingId === s.id}
                     onClick={(e) => {
                       e.stopPropagation();

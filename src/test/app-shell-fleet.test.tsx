@@ -76,8 +76,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("app 壳 · 设备管理导航", () => {
-  it("桌面端显示设备管理入口,仅展示入口不发 HTTP", async () => {
+describe("app shell device management navigation", () => {
+  it("shows the device management entry on desktop without making HTTP requests", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountApp();
     await flushUntil(() => document.querySelector('button[aria-label="设置"]') !== null);

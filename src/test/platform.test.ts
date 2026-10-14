@@ -26,25 +26,25 @@ function setViewport(width: number, height: number): void {
 }
 
 describe("isLandscapeFullScreen", () => {
-  it("粗指针横屏且短边小于 500 判定为横屏全屏", () => {
+  it("matches coarse-pointer landscape viewports whose short edge is below 500", () => {
     coarse = true;
     setViewport(800, 360);
     expect(isLandscapeFullScreen()).toBe(true);
   });
 
-  it("粗指针竖屏不判定", () => {
+  it("does not match coarse-pointer portrait viewports", () => {
     coarse = true;
     setViewport(360, 800);
     expect(isLandscapeFullScreen()).toBe(false);
   });
 
-  it("粗指针横屏但短边不小于 500 不判定", () => {
+  it("does not match coarse-pointer landscape viewports whose short edge is at least 500", () => {
     coarse = true;
     setViewport(1024, 600);
     expect(isLandscapeFullScreen()).toBe(false);
   });
 
-  it("非粗指针一律不判定", () => {
+  it("never matches non-coarse pointers", () => {
     coarse = false;
     setViewport(800, 360);
     expect(isLandscapeFullScreen()).toBe(false);

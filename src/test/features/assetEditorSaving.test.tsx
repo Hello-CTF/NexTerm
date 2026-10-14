@@ -88,8 +88,8 @@ function fillHost(host: string) {
   setInputValue(input, host);
 }
 
-describe("AssetEditor 保存防重", () => {
-  it("保存进行中禁用按钮并忽略重复点击", async () => {
+describe("AssetEditor duplicate-save prevention", () => {
+  it("disables the save button and ignores repeated clicks while saving", async () => {
     const { onSaved } = mountEditor();
     await flush();
     const gate = deferred<{ id: string }>();
@@ -115,21 +115,21 @@ describe("AssetEditor 保存防重", () => {
     expect(onSaved).toHaveBeenCalledOnce();
   });
 
-  it("保存失败显示内联错误并恢复可点", async () => {
+  it("shows an inline error after a failed save and re-enables the button", async () => {
     mountEditor();
     await flush();
-    mocks.create.mockRejectedValueOnce(new Error("名称已存在"));
+    mocks.create.mockRejectedValueOnce(new Error("name already exists"));
     fillName("web-01");
     fillHost("10.0.0.8");
     clickButton(mounted!.container, "保存");
-    await flushUntil(() => text().includes("名称已存在"));
+    await flushUntil(() => text().includes("name already exists"));
     const saveBtn = [...mounted!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "保存",
     ) as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(false);
     mocks.create.mockResolvedValueOnce({ id: "a1" });
     click(saveBtn);
-    await flushUntil(() => !text().includes("名称已存在"));
+    await flushUntil(() => !text().includes("name already exists"));
     expect(mocks.create).toHaveBeenCalledTimes(2);
   });
 });

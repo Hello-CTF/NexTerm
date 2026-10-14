@@ -109,8 +109,8 @@ afterEach(() => {
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
-describe("设置分区导航", () => {
-  it("工具栏带「全局」范围标记", async () => {
+describe("Settings section navigation", () => {
+  it("shows the global scope badge in the toolbar", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const badge = mounted.container.querySelector(
@@ -119,7 +119,7 @@ describe("设置分区导航", () => {
     expect(badge?.textContent).toBe("全局");
   });
 
-  it("渲染全部分区小标签,目标分区都真实存在", async () => {
+  it("renders every section chip with a real target section", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     expect(chips().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
@@ -134,7 +134,7 @@ describe("设置分区导航", () => {
     }
   });
 
-  it("小标签是原生按钮(键盘可达),点击直达对应分区", async () => {
+  it("uses native keyboard-accessible buttons for chips and scrolls to the corresponding section on click", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     for (const chip of chips()) {
@@ -147,7 +147,7 @@ describe("设置分区导航", () => {
     expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
   });
 
-  it("宽屏目录点击直达对应分区并标记当前分区", async () => {
+  it("scrolls to a section from the wide-screen TOC and marks it current", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const target = document.getElementById("settings-vault")!;
@@ -158,7 +158,7 @@ describe("设置分区导航", () => {
     expect(vaultEntry.className).toContain("bg-neutral-800/70");
   });
 
-  it("宽屏目录折叠后保留图标导航,展开后恢复全部分区", async () => {
+  it("keeps icon navigation after collapsing the wide-screen TOC and restores all sections after expansion", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const toggle = tocToggle();
@@ -189,7 +189,7 @@ describe("设置分区导航", () => {
     expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
   });
 
-  it("目录展开/折叠状态持久化到本地存储", async () => {
+  it("persists TOC expansion state to local storage", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     expect(tocToggle().getAttribute("aria-expanded")).toBe("true");
@@ -210,7 +210,7 @@ describe("设置分区导航", () => {
     expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(SECTION_LABELS);
   });
 
-  it("右侧内容滚动后宽屏目录高亮跟随当前分区", async () => {
+  it("follows the current section in the wide-screen TOC after the content scrolls", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const scrollContainer = mounted.container.querySelector<HTMLElement>("div.overflow-y-auto");
@@ -259,8 +259,8 @@ describe("设置分区导航", () => {
   });
 });
 
-describe("AI 拦截规则文案", () => {
-  it("主文与脚注都如实写明各模式下的命中行为", async () => {
+describe("AI interception rule copy", () => {
+  it("describes the behavior for each mode accurately in the main text and footnote", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
@@ -272,8 +272,8 @@ describe("AI 拦截规则文案", () => {
   });
 });
 
-describe("AI 拦截规则草稿", () => {
-  it("预填草稿定位到规则区且失焦不静默保存，Enter 才写入", async () => {
+describe("AI interception rule drafts", () => {
+  it("locates the rule section for prefilled drafts, does not save on blur, and writes only on Enter", async () => {
     useUi.setState({ aiRulePrefill: "kubectl delete" });
     mounted = withClient(createElement(SettingsView));
     await flush();
@@ -300,8 +300,8 @@ describe("AI 拦截规则草稿", () => {
   });
 });
 
-describe("统一登录入口(Web 未登录)", () => {
-  it("整个设置页只有一个登录按钮,分享卡不再放第二个登录入口", async () => {
+describe("Unified login entry (Web logged out)", () => {
+  it("has only one login button across settings and no second login entry in the share card", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const loginButtons = [...mounted!.container.querySelectorAll("button")].filter(

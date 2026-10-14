@@ -108,8 +108,8 @@ function openImport() {
   clickButton(mounted!.container, "导入资产包");
 }
 
-describe("SyncBundleCard 网页版资产包", () => {
-  it("网页版导出为未加密 .nxbm 容器，不出现口令输入", async () => {
+describe("SyncBundleCard browser asset bundles", () => {
+  it("exports an unencrypted .nxbm container in the browser without showing passphrase inputs", async () => {
     await mountCard();
     expect(text()).toContain("浏览器导出为未加密的 .nxbm 容器");
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
@@ -127,7 +127,7 @@ describe("SyncBundleCard 网页版资产包", () => {
     expect(mocks.writeBundleFile).not.toHaveBeenCalled();
   });
 
-  it("选中加密的 .nxbm 容器：明确提示去桌面版导入", async () => {
+  it("explicitly directs the user to import an encrypted .nxbm container on desktop", async () => {
     mocks.pickBundleBuffer.mockResolvedValue({ name: "backup.nxbm", buffer: encryptedNxbm() });
     await mountCard();
     openImport();
@@ -137,7 +137,7 @@ describe("SyncBundleCard 网页版资产包", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("未加密的 .nxbm 容器在网页版照常预览导入", async () => {
+  it("previews and imports an unencrypted .nxbm container normally in the browser", async () => {
     mocks.pickBundleBuffer.mockResolvedValue({
       name: "plain.nxbm",
       buffer: buildPlaintextNxbm(
@@ -160,7 +160,7 @@ describe("SyncBundleCard 网页版资产包", () => {
     expect(text()).toContain("old-device");
   });
 
-  it("非 .nxbm 文件明确拒绝", async () => {
+  it("explicitly rejects non-.nxbm files", async () => {
     mocks.pickBundleBuffer.mockResolvedValue({
       name: "legacy.json",
       buffer: new TextEncoder().encode(JSON.stringify({ protocol: 1 })).buffer as ArrayBuffer,

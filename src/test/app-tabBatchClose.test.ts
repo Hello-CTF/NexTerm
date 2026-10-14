@@ -65,8 +65,8 @@ beforeEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, sessions: [sessionInfo()], toasts: [] });
 });
 
-describe("批量关闭部分失败", () => {
-  it("成功的关闭,失败的保留并在标签上标出原因", async () => {
+describe("partial failures during batch close", () => {
+  it("closes successful tabs, retains failures, and marks their reasons", async () => {
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2"), terminal("t3")], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
@@ -85,7 +85,7 @@ describe("批量关闭部分失败", () => {
     expect(texts).toContain("1 个标签未能关闭，已保留并在标签上标出原因");
   });
 
-  it("用户取消确认不算失败,不标记也不进汇总", async () => {
+  it("does not count canceled confirmations as failures or include them in the summary", async () => {
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
@@ -103,9 +103,9 @@ describe("批量关闭部分失败", () => {
     );
   });
 
-  it("带旧失败标记的标签本轮被取消时不进汇总", async () => {
+  it("excludes a tab with an old failure marker when this round is canceled", async () => {
     useUi.setState({
-      workspaces: [ws([{ id: "p", tabs: [terminal("t1"), { ...terminal("t2"), closeError: "上次失败" }], activeTabId: "t1" }])],
+      workspaces: [ws([{ id: "p", tabs: [terminal("t1"), { ...terminal("t2"), closeError: "previous failure" }], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
       sessions: [{ ...sessionInfo(), kind: "winrm" }],
     });
@@ -121,7 +121,7 @@ describe("批量关闭部分失败", () => {
     );
   });
 
-  it("单个标签关闭失败同样标出原因,重试成功后标签消失", async () => {
+  it("marks a single-tab close failure and removes the tab after a successful retry", async () => {
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1")], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
@@ -140,7 +140,7 @@ describe("批量关闭部分失败", () => {
     expect(tabById("t1")).toBeUndefined();
   });
 
-  it("数据库标签断开失败时保留并标出原因", async () => {
+  it("retains a database tab and marks the reason when disconnection fails", async () => {
     const dbTab: AppTab = { id: "db1", kind: "db", title: "SQL", connId: "c1", dbKind: "mysql", closable: true };
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1"), dbTab], activeTabId: "t1" }])],
@@ -158,7 +158,7 @@ describe("批量关闭部分失败", () => {
     );
   });
 
-  it("批量选直接关闭但二次确认取消时终端保留,不算失败", async () => {
+  it("keeps terminals without counting a failure when direct close is selected but the second confirmation is canceled", async () => {
     useUi.setState({
       workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",

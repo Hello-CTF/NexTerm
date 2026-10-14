@@ -56,8 +56,8 @@ afterEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [], leftMode: "assets" });
 });
 
-describe("connectDevice 打开设备工作区", () => {
-  it("全新连接建立会话、开独立工作区并打开终端标签", async () => {
+describe("connectDevice opens device workspaces", () => {
+  it("a fresh connection creates a session and a separate workspace with a terminal tab", async () => {
     const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(1);
@@ -75,14 +75,14 @@ describe("connectDevice 打开设备工作区", () => {
     expect(tabs.some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
   });
 
-  it("设备工作区连接后自动切到文件栏 (与 ssh 会话一致)", async () => {
+  it("automatically switches to the files panel after connecting a device workspace, consistent with SSH sessions", async () => {
     useUi.setState({ leftMode: "assets" });
     await connectDevice(DEVICE);
     expect(useUi.getState().leftMode).toBe("files");
     expect(useUi.getState().leftOpen).toBe(true);
   });
 
-  it("同一设备在途时重复调用只发起一次连接", async () => {
+  it("duplicate calls for the same in-flight device start only one connection", async () => {
     const gate = deferred<SessionInfo>();
     mocks.sessionConnectDevice.mockReturnValueOnce(gate.promise);
 
@@ -99,11 +99,11 @@ describe("connectDevice 打开设备工作区", () => {
     expect(useUi.getState().connectingAssetIds).not.toContain("device/d-1");
   });
 
-  it("连接失败返回错误并 toast, 守卫清除后可重试", async () => {
-    mocks.sessionConnectDevice.mockRejectedValueOnce({ code: "forbidden", message: "设备已关闭终端访问" });
+  it("returns the error and shows a toast on connection failure, then allows a retry after the guard clears", async () => {
+    mocks.sessionConnectDevice.mockRejectedValueOnce({ code: "forbidden", message: "Terminal access is disabled for this device" });
     const failed = (await connectDevice(DEVICE)) as ConnectOutcome;
-    expect(failed).toEqual({ ok: false, error: "设备已关闭终端访问" });
-    expect(mocks.toast).toHaveBeenCalledWith("error", "设备已关闭终端访问");
+    expect(failed).toEqual({ ok: false, error: "Terminal access is disabled for this device" });
+    expect(mocks.toast).toHaveBeenCalledWith("error", "Terminal access is disabled for this device");
     expect(useUi.getState().workspaces.every((w) => w.assetId !== "device/d-1")).toBe(true);
 
     const retried = (await connectDevice(DEVICE)) as ConnectOutcome;
@@ -111,15 +111,15 @@ describe("connectDevice 打开设备工作区", () => {
     expect(mocks.sessionConnectDevice).toHaveBeenCalledTimes(2);
   });
 
-  it("deviceAssetId 与后端伪资产 id 一致", () => {
+  it("deviceAssetId matches the backend pseudo-asset id", () => {
     expect(deviceAssetId("d-1")).toBe("device/d-1");
   });
 });
 
-describe("connectDevice 工作区去重", () => {
+describe("connectDevice workspace deduplication", () => {
   function seedDeviceWorkspace(sessionStatus: SessionInfo["status"], withTerminalTab = false) {
     const tabs = withTerminalTab
-      ? [{ id: "t1", kind: "terminal" as const, title: "终端 1", sessionId: "s-dev-1", closable: true }]
+      ? [{ id: "t1", kind: "terminal" as const, title: "Terminal 1", sessionId: "s-dev-1", closable: true }]
       : [];
     useUi.setState({
       sessions: [{ ...DEVICE_SESSION, status: sessionStatus }],
@@ -141,7 +141,7 @@ describe("connectDevice 工作区去重", () => {
     });
   }
 
-  it("已有活会话工作区时再次打开直接跳转, 不发起新连接", async () => {
+  it("reopening with an existing live-session workspace jumps to it without starting a new connection", async () => {
     seedDeviceWorkspace("connected", true);
     const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -149,7 +149,7 @@ describe("connectDevice 工作区去重", () => {
     expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
   });
 
-  it("工作区还在但终端标签已关闭时, 再次打开补开终端标签", async () => {
+  it("reopens a terminal tab when the workspace remains but its terminal tab was closed", async () => {
     seedDeviceWorkspace("connected");
     const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
@@ -158,7 +158,7 @@ describe("connectDevice 工作区去重", () => {
     expect(ws?.panes.flatMap((p) => p.tabs).some((t) => t.kind === "terminal" && t.sessionId === "s-dev-1")).toBe(true);
   });
 
-  it("会话已断开时直接重连, 不发起新连接", async () => {
+  it("reconnects directly when the session is disconnected without starting a new connection", async () => {
     seedDeviceWorkspace("disconnected");
     mocks.sessionReconnect.mockResolvedValue(true);
     mocks.sessionList.mockResolvedValue([{ ...DEVICE_SESSION, status: "connected" }]);
@@ -170,9 +170,9 @@ describe("connectDevice 工作区去重", () => {
     expect(useUi.getState().activeWorkspaceId).toBe("ws-dev");
   });
 
-  it("重连失败 (会话已删除) 时清掉残留工作区走全新连接", async () => {
+  it("cleans up the stale workspace and starts a fresh connection when reconnecting fails because the session was deleted", async () => {
     seedDeviceWorkspace("disconnected");
-    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "会话不存在" });
+    mocks.sessionReconnect.mockRejectedValue({ code: "not_found", message: "Session not found" });
 
     const outcome = (await connectDevice(DEVICE)) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });

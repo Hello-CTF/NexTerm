@@ -118,7 +118,8 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 
 // resolveHomeEntry applies the strict path checks for one directory entry and
 // reports whether it should be inspected as a key candidate. resolved is the
-// real path used for dedupe; isSymlink marks entries reached via a symlink.
+// target path in the scanned directory's original form, used for dedupe;
+// isSymlink marks entries reached via a symlink.
 func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved string, isSymlink, ok bool) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -131,11 +132,12 @@ func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved str
 			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-unresolved", Source: path, Message: "symlink target cannot be resolved"})
 			return "", false, false
 		}
-		if !pathWithin(dir, target) {
+		rel, ok := homePathRel(dir, target)
+		if !ok {
 			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-escape", Source: path, Message: "symlink points outside the scanned directory"})
 			return "", false, false
 		}
-		resolved = target
+		resolved = filepath.Join(dir, rel)
 		isSymlink = true
 	} else {
 		if !info.Mode().IsRegular() {
@@ -194,12 +196,22 @@ func supportedHomeKeyType(keyType string) bool {
 	return strings.HasPrefix(keyType, "ecdsa-sha2-") || strings.HasPrefix(keyType, "sk-ecdsa-sha2-")
 }
 
-func pathWithin(base, target string) bool {
+func homePathRel(base, target string) (string, bool) {
+	base = canonicalHomePath(base)
+	target = canonicalHomePath(target)
 	rel, err := filepath.Rel(base, target)
-	if err != nil {
-		return false
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return rel, true
+}
+
+func canonicalHomePath(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return resolved
 }
 
 // PreviewHome scans an SSH home directory (normally ~/.ssh) for private keys

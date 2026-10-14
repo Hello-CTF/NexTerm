@@ -57,11 +57,13 @@ func (r *Registry) dockerLogs(ctx context.Context, scope Scope, raw []byte) Outp
 	if err != nil {
 		return Fail(err)
 	}
+	modelText := ""
 	if logs == "" {
 		logs = "日志为空"
+		modelText = "no logs"
 	}
 	text, truncated := capText(logs)
-	return Output{OK: true, Text: text, Truncated: truncated}
+	return Output{OK: true, Text: text, ModelText: modelText, Truncated: truncated}
 }
 
 func (r *Registry) dockerExec(ctx context.Context, scope Scope, raw []byte) Output {
@@ -83,11 +85,13 @@ func (r *Registry) dockerExec(ctx context.Context, scope Scope, raw []byte) Outp
 		return Fail(err)
 	}
 	text := result.Output
+	modelText := ""
 	if text == "" {
 		text = "(无输出)"
+		modelText = "(no output)"
 	}
 	text, truncated := capText(text)
-	return Output{OK: result.ExitCode == 0, Text: text, ExitCode: result.ExitCode, Truncated: truncated}
+	return Output{OK: result.ExitCode == 0, Text: text, ModelText: modelText, ExitCode: result.ExitCode, Truncated: truncated}
 }
 
 func (r *Registry) dockerControl(ctx context.Context, scope Scope, raw []byte) Output {

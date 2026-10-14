@@ -261,7 +261,7 @@ export function MemoryCard() {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。默认开启，可逐项关闭。
+        让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。记忆注入和记忆工具默认开启，可分别关闭。
       </p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">

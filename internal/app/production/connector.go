@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -127,9 +128,9 @@ func (c *productionConnector) reportInitialCommandFailure(ctx context.Context, c
 	}
 	cause := execErr
 	if cause == nil {
-		cause = fmt.Errorf("退出码 %d: %s", *result.ExitCode, truncatedInitialCommandStderr(result.Stderr))
+		cause = fmt.Errorf("exit code %d: %s", *result.ExitCode, truncatedInitialCommandStderr(result.Stderr))
 	}
-	reportAppError(ctx, c.events, "session", "初始命令执行失败，未在会话中运行，请检查资产的初始命令配置", fmt.Errorf("命令 %q: %w", command, cause))
+	reportAppError(ctx, c.events, "session", "初始命令执行失败，未在会话中运行，请检查资产的初始命令配置", fmt.Errorf("command %q: %w", command, cause))
 }
 
 func truncatedInitialCommandStderr(stderr string) string {
@@ -175,6 +176,9 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 	}
 	if options.Username == "" {
 		options.Username = "root"
+	}
+	if (options.ForwardAgent || options.AuthKind == "agent") && options.AgentSocket == "" && os.Getenv("SSH_AUTH_SOCK") == "" {
+		return ssh.Config{}, ipc.NewError(ipc.CodeBadParam, "SSH agent 已启用，但未配置 agent socket，且 SSH_AUTH_SOCK 环境变量为空")
 	}
 	config := ssh.Config{
 		Host: options.Host, Port: options.Port, User: options.Username, HostKeys: c.hostKeys,

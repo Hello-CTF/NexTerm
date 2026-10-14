@@ -86,9 +86,9 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "仅允许查看；设备长期授权仅放行普通终端写入或命令执行，其余修改及无法判断的操作均拒绝" },
+  { value: "read_only", label: "只读", hint: "仅允许查看；设备长期授权和授权规则仅放行匹配的普通操作，其余操作均拒绝" },
   { value: "read_write", label: "读写", hint: "只读操作直接执行；普通操作先确认，选择「本轮允许此类」后，本轮同类操作不再确认（文件写入限同目录）；高危或无法判断的操作仍逐次确认" },
-  { value: "silent", label: "自动执行", hint: "普通改动直接执行；高危或无法判断的操作仍逐次确认，禁止操作始终拒绝" },
+  { value: "silent", label: "自动执行", hint: "普通操作直接执行；高危或无法判断的操作仍逐次确认，禁止操作始终拒绝" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -294,7 +294,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
 
   const scopeLabel =
-    activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.title : "本机 / 全局";
+    activeWorkspace && activeWorkspace.kind !== "tools" ? activeWorkspace.title : "当前实例 / 全局";
 
   return (
     <aside
@@ -1574,7 +1574,7 @@ function AiChatTab({
       }
     } catch {
     }
-    const ok = await ask(`删除会话「${c.title || "（未命名会话）"}」？消息记录一并清除，不可恢复。`, {
+    const ok = await ask(`删除会话「${c.title || "（未命名会话）"}」？消息记录、运行记录和定时任务将一并清除，不可恢复。`, {
       kind: "warning",
     });
     if (!ok) return;
@@ -1625,7 +1625,7 @@ function AiChatTab({
     if (files.length === 0) return;
     void Promise.all(files.map(readAsDataUrl))
       .then((urls) => setImages((prev) => [...prev, ...urls]))
-      .catch((err) => pushToast("error", `读取图片失败：${describeError(err)}`));
+      .catch((err) => pushToast("error", describeError(err)));
   };
 
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1669,7 +1669,7 @@ function AiChatTab({
       choices: [
         { key: "allow", label: "允许", hint: "AI 可以执行命令", primary: true },
         { key: "readonly", label: "只读", hint: "AI 只能查看，不能执行命令" },
-        { key: "abort", label: "退出", hint: "不启动接管", danger: true },
+        { key: "abort", label: "取消", hint: "不启动接管", danger: true },
       ],
     });
     if (choice !== "allow" && choice !== "readonly") return;
@@ -2159,7 +2159,7 @@ function AiChatTab({
                       ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                     }}
                   >
-                    加为拦截规则
+                    去设置拦截规则
                   </button>
                 )}
               </div>

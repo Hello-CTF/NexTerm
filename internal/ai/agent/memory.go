@@ -156,7 +156,7 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 	if len(input.IDs) == 0 {
 		return tools.Fail(errors.New("ids 不能为空"))
 	}
-	var builder strings.Builder
+	var builder, modelBuilder strings.Builder
 	redactions := 0
 	for _, id := range input.IDs {
 		entry, err := store.Get(ctx, scope, id)
@@ -169,22 +169,30 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 
 		content, redacted := memory.RedactText(entry.Content)
 		marker := ""
+		modelMarker := ""
 		if entry.Redacted || redacted {
 			marker = " [已脱敏]"
+			modelMarker = " [redacted]"
 		}
 		if redacted {
 			redactions++
 		}
 		fmt.Fprintf(&builder, "— %s（主题 %s，版本 %d%s）\n%s\n", entry.ID, entry.Topic, entry.Version, marker, content)
+		fmt.Fprintf(&modelBuilder, "- %s (topic %s, version %d%s)\n%s\n", entry.ID, entry.Topic, entry.Version, modelMarker, content)
 	}
 	text, cut := prefixBytes(builder.String(), memoryRecallMaxBytes)
+	modelText, modelCut := prefixBytes(modelBuilder.String(), memoryRecallMaxBytes)
 	if redactions > 0 {
 		text += fmt.Sprintf("\n[%d 条内容包含疑似密钥，已脱敏]", redactions)
+		modelText += fmt.Sprintf("\n[%d entries contained suspected secrets and were redacted]", redactions)
 	}
 	if cut {
 		text += "\n[输出已截断]"
 	}
-	return tools.OK(text)
+	if cut || modelCut {
+		modelText += "\n[output truncated]"
+	}
+	return tools.Output{OK: true, Text: text, ModelText: modelText, Truncated: cut}
 }
 
 func memoryForgetOutput(ctx context.Context, store *memory.Store, scope memory.Scope, input memoryForgetArgs) tools.Output {

@@ -31,7 +31,7 @@ vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 
 import { UsageSummarySection } from "../../features/ai/ModelPanel";
 
-describe("模型用量汇总", () => {
+describe("Model usage summary", () => {
   beforeEach(() => {
     mocks.overview.mockResolvedValue({
       profiles: [{ id: "profile-1", name: "公司 DeepSeek" }],
@@ -50,7 +50,7 @@ describe("模型用量汇总", () => {
     document.body.innerHTML = "";
   });
 
-  it("按场景与档案渲染 token、缓存写入与延迟", async () => {
+  it("renders tokens, cache writes, and latency by scenario and profile", async () => {
     const view = mount(createElement(UsageSummarySection));
     await flush();
     const text = view.container.textContent ?? "";
@@ -66,7 +66,7 @@ describe("模型用量汇总", () => {
     view.unmount();
   });
 
-  it("用量接口失败时显示错误而不是空白", async () => {
+  it("shows the error instead of a blank view when the usage request fails", async () => {
     mocks.usageSummary.mockRejectedValue(new Error("boom"));
     const view = mount(createElement(UsageSummarySection));
     await flush();
@@ -74,7 +74,7 @@ describe("模型用量汇总", () => {
     view.unmount();
   });
 
-  it("空数据显示占位文案", async () => {
+  it("shows placeholder text when usage data is empty", async () => {
     mocks.usageSummary.mockResolvedValue([]);
     const view = mount(createElement(UsageSummarySection));
     await flush();

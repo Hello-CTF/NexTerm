@@ -66,8 +66,8 @@ function profile(overrides: Partial<TestProfile> & { id: string; name: string })
   };
 }
 
-const PROFILE_MASKED = profile({ id: "p-masked", name: "脱敏档案", apiKey: MASKED_KEY });
-const PROFILE_EMPTY = profile({ id: "p-empty", name: "无密钥档案", apiKey: "" });
+const PROFILE_MASKED = profile({ id: "p-masked", name: "Masked profile", apiKey: MASKED_KEY });
+const PROFILE_EMPTY = profile({ id: "p-empty", name: "Keyless profile", apiKey: "" });
 
 type TestJob = {
   id: string;
@@ -125,7 +125,7 @@ describe("CronPanel masked key presentation", () => {
     mounted = undefined;
   });
 
-  it("档案选择器把脱敏密钥如实标注为已保存，而非不可用", async () => {
+  it("marks a masked key as saved in the profile selector instead of unavailable", async () => {
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
     clickButton(mounted.container, "新建定时任务");
@@ -133,48 +133,48 @@ describe("CronPanel masked key presentation", () => {
       'select[aria-label="模型档案"]',
     )!;
     const labels = [...select.options].map((o) => o.textContent ?? "");
-    const maskedOption = labels.find((l) => l.includes("脱敏档案 · example-model"));
-    expect(maskedOption).toContain("脱敏档案 · example-model（密钥已保存）");
+    const maskedOption = labels.find((l) => l.includes("Masked profile · example-model"));
+    expect(maskedOption).toContain("Masked profile · example-model（密钥已保存）");
     expect(maskedOption).not.toContain("密钥不可用");
-    const emptyOption = labels.find((l) => l.includes("无密钥档案 · example-model"));
-    expect(emptyOption).toContain("无密钥档案 · example-model");
+    const emptyOption = labels.find((l) => l.includes("Keyless profile · example-model"));
+    expect(emptyOption).toContain("Keyless profile · example-model");
     expect(emptyOption).not.toContain("密钥已保存");
     expect(emptyOption).not.toContain("密钥不可用");
     expect(labels.join("\n")).not.toContain(MASKED_KEY);
     expect(labels.join("\n")).not.toContain(REAL_KEY);
   });
 
-  it("任务行把脱敏密钥档案标注为密钥已保存", async () => {
+  it("marks a profile with a masked key as having a saved key in the job row", async () => {
     mocks.list.mockResolvedValue([
-      job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-masked" }),
+      job({ id: "j-1", sessionId: "c-1", name: "Disk inspection", modelProfileId: "p-masked" }),
     ]);
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("档案密钥已保存");
-    expect(text).toContain("档案「脱敏档案」");
+    expect(text).toContain("档案「Masked profile」");
     expect(text).not.toContain("档案密钥不可用");
     expect(text).not.toContain(MASKED_KEY);
     expect(text).not.toContain(REAL_KEY);
   });
 
-  it("无密钥档案的任务行既不标注已保存也不标注不可用", async () => {
+  it("does not mark a job row with a keyless profile as saved or unavailable", async () => {
     mocks.list.mockResolvedValue([
-      job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-empty" }),
+      job({ id: "j-1", sessionId: "c-1", name: "Disk inspection", modelProfileId: "p-empty" }),
     ]);
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("档案「无密钥档案」");
+    expect(text).toContain("档案「Keyless profile」");
     expect(text).not.toContain("档案密钥已保存");
     expect(text).not.toContain("档案密钥不可用");
   });
 
-  it("未知档案仍如实标注档案已删除，且不标注密钥已保存", async () => {
+  it("still marks an unknown profile as deleted and does not mark its key as saved", async () => {
     mocks.list.mockResolvedValue([
-      job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-ghost" }),
+      job({ id: "j-1", sessionId: "c-1", name: "Disk inspection", modelProfileId: "p-ghost" }),
     ]);
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
@@ -186,10 +186,10 @@ describe("CronPanel masked key presentation", () => {
     expect(text).not.toContain("档案密钥不可用");
   });
 
-  it("档案读取失败时保持状态未知，不误报已保存或已删除", async () => {
-    mocks.modelOverview.mockRejectedValue(new Error("档案服务不可用"));
+  it("keeps the state unknown when loading profiles fails, without falsely reporting saved or deleted", async () => {
+    mocks.modelOverview.mockRejectedValue(new Error("Profile service unavailable"));
     mocks.list.mockResolvedValue([
-      job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", modelProfileId: "p-masked" }),
+      job({ id: "j-1", sessionId: "c-1", name: "Disk inspection", modelProfileId: "p-masked" }),
     ]);
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();

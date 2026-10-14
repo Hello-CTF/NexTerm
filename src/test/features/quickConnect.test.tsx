@@ -93,7 +93,7 @@ const WEB2 = assetOf({ id: "a-web2", name: "web-02", host: "10.0.0.18" });
 const DB = assetOf({ id: "a-db", name: "db-01", kind: "mysql", host: "10.0.0.9", port: 3306 });
 const LOCAL = assetOf({
   id: "a-local",
-  name: "当前设备",
+  name: "Current device",
   kind: "local",
   host: null,
   port: null,
@@ -218,8 +218,8 @@ afterEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [] });
 });
 
-describe("QuickConnect 渲染与最近/频次排序", () => {
-  it("按连接历史排序，未连接资产按名称排在后面", async () => {
+describe("QuickConnect rendering and recency/frequency ordering", () => {
+  it("sorts by connection history and places unconnected assets afterward by name", async () => {
     const now = Date.now();
     useConnectHistory.setState({
       entries: { "a-db": { count: 1, at: now - 60_000 } },
@@ -228,27 +228,27 @@ describe("QuickConnect 渲染与最近/频次排序", () => {
     const names = options(view.container).map((o) => o.textContent ?? "");
     expect(names[0]).toContain("db-01");
     expect(names.some((n) => n.includes("web-01"))).toBe(true);
-    expect(names.some((n) => n.includes("当前设备"))).toBe(true);
+    expect(names.some((n) => n.includes("Current device"))).toBe(true);
   });
 
-  it("本机资产显示「本机」徽章且不参与探测", async () => {
+  it("shows the local badge for the built-in local asset and excludes it from probing", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
-    const localRow = options(view.container).find((o) => o.textContent?.includes("当前设备"));
+    const localRow = options(view.container).find((o) => o.textContent?.includes("Current device"));
     expect(localRow?.textContent).toContain("本机");
     await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalled());
     const probedIds = mocks.probeBatch.mock.calls[0]?.[0] as string[];
     expect(probedIds).not.toContain("a-local");
   });
 
-  it("隐藏的资产不出现在列表中", async () => {
+  it("omits hidden assets from the list", async () => {
     useAssetVisibility.getState().hide("a-web");
     const view = await mountSettled({ onClose: vi.fn() });
     expect(options(view.container).some((o) => o.textContent?.includes("web-01"))).toBe(false);
   });
 });
 
-describe("QuickConnect 资产搜索", () => {
-  it("按名称过滤", async () => {
+describe("QuickConnect asset search", () => {
+  it("filters by name", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     setInputValue(searchInput(view.container), "db-01");
     await flush();
@@ -257,7 +257,7 @@ describe("QuickConnect 资产搜索", () => {
     expect(rows[0]?.textContent).toContain("db-01");
   });
 
-  it("按主机过滤", async () => {
+  it("filters by host", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     setInputValue(searchInput(view.container), "10.0.0.8");
     await flush();
@@ -266,17 +266,17 @@ describe("QuickConnect 资产搜索", () => {
     expect(rows[0]?.textContent).toContain("web-01");
   });
 
-  it("无匹配时给出空态提示", async () => {
+  it("shows an empty-state hint when nothing matches", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
-    setInputValue(searchInput(view.container), "不存在的资产");
+    setInputValue(searchInput(view.container), "missing asset");
     await flush();
     expect(options(view.container)).toHaveLength(0);
     expect(view.container.textContent).toContain("没有匹配的资产");
   });
 });
 
-describe("QuickConnect 键盘可达", () => {
-  it("方向键移动活动项并同步 aria-activedescendant", async () => {
+describe("QuickConnect keyboard access", () => {
+  it("moves the active option with arrow keys and updates aria-activedescendant", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     const input = searchInput(view.container);
     expect(input.getAttribute("aria-activedescendant")).toBe(options(view.container)[0]?.id);
@@ -292,7 +292,7 @@ describe("QuickConnect 键盘可达", () => {
     expect(input.getAttribute("aria-activedescendant")).toBe(rows[0]?.id);
   });
 
-  it("Home/End 跳到首尾", async () => {
+  it("jumps to the first and last options with Home and End", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     const input = searchInput(view.container);
     const rows = options(view.container);
@@ -304,7 +304,7 @@ describe("QuickConnect 键盘可达", () => {
     expect(input.getAttribute("aria-activedescendant")).toBe(rows[0]?.id);
   });
 
-  it("Enter 连接活动项，Escape 关闭", async () => {
+  it("connects the active option with Enter and closes with Escape", async () => {
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
     const input = searchInput(view.container);
@@ -320,7 +320,7 @@ describe("QuickConnect 键盘可达", () => {
     expect(onClose2).toHaveBeenCalledTimes(1);
   });
 
-  it("Tab 焦点被困在弹层内", async () => {
+  it("traps Tab focus inside the overlay", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     const modal = view.container.querySelector<HTMLElement>('[role="dialog"]');
     expect(modal).toBeTruthy();
@@ -331,8 +331,8 @@ describe("QuickConnect 键盘可达", () => {
   });
 });
 
-describe("QuickConnect 连接失败与重试（failure-state）", () => {
-  it("连接失败时内联展示错误且不关闭，重试可再次发起", async () => {
+describe("QuickConnect connection failures and retries", () => {
+  it("shows connection errors inline without closing and allows retry", async () => {
     const onClose = vi.fn();
     mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "connection refused" });
     const view = await mountSettled({ onClose });
@@ -353,7 +353,7 @@ describe("QuickConnect 连接失败与重试（failure-state）", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("资产列表加载失败时展示错误并可重试", async () => {
+  it("shows asset-list loading errors and supports retry", async () => {
     mocks.list.mockRejectedValueOnce({ code: "io", message: "list boom" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
@@ -364,8 +364,8 @@ describe("QuickConnect 连接失败与重试（failure-state）", () => {
   });
 });
 
-describe("QuickConnect in-flight 连接守卫", () => {
-  it("在途期间重复 Enter 不重复发起连接，行内显示连接中", async () => {
+describe("QuickConnect in-flight connection guard", () => {
+  it("does not duplicate connections on repeated Enter and shows the connecting state inline", async () => {
     const gate = deferred<typeof SESSION>();
     mocks.sessionConnect.mockReturnValueOnce(gate.promise);
     const onClose = vi.fn();
@@ -387,13 +387,13 @@ describe("QuickConnect in-flight 连接守卫", () => {
   });
 });
 
-describe("QuickConnect 可达性指示", () => {
-  it("探测结果以可达/不可达圆点呈现", async () => {
+describe("QuickConnect reachability indicators", () => {
+  it("renders reachable and unreachable dots from probe results", async () => {
     mocks.probeBatch.mockImplementation(async (ids: string[]) => ({
       results: ids.map((id) =>
         id === "a-web"
           ? { assetId: id, reachable: true, durationMs: 12 }
-          : { assetId: id, reachable: false, error: "dial tcp 超时", durationMs: 2500 },
+          : { assetId: id, reachable: false, error: "dial tcp timeout", durationMs: 2500 },
       ),
     }));
     const view = await mountSettled({ onClose: vi.fn() });
@@ -411,7 +411,7 @@ describe("QuickConnect 可达性指示", () => {
     expect(mocks.probeBatch.mock.calls[0]?.[2]).toBe(8);
   });
 
-  it("探测期间显示检测中状态", async () => {
+  it("shows the checking state while probing", async () => {
     const gate = deferred<{ results: unknown[] }>();
     mocks.probeBatch.mockReturnValueOnce(gate.promise);
     const view = await mountSettled({ onClose: vi.fn() });
@@ -422,7 +422,7 @@ describe("QuickConnect 可达性指示", () => {
     await flush();
   });
 
-  it("批量探测失败时展示错误并可重试", async () => {
+  it("shows batch probe failures and supports retry", async () => {
     mocks.probeBatch.mockRejectedValueOnce({ code: "io", message: "probe down" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
@@ -433,8 +433,8 @@ describe("QuickConnect 可达性指示", () => {
   });
 });
 
-describe("QuickConnect Retry 按钮键盘激活不被 Enter 快捷键劫持", () => {
-  it("连接错误后聚焦重试按 Enter 保留原生行为，不连当前活动项", async () => {
+describe("QuickConnect Retry keyboard activation is not hijacked by the Enter shortcut", () => {
+  it("preserves native Enter behavior on a focused retry button after a connection error instead of connecting the active option", async () => {
     mocks.list.mockResolvedValue([{ ...WEB }, { ...WEB2 }, { ...LOCAL }]);
     mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "connection refused" });
     const view = await mountSettled({ onClose: vi.fn() });
@@ -463,7 +463,7 @@ describe("QuickConnect Retry 按钮键盘激活不被 Enter 快捷键劫持", ()
     expect(mocks.sessionConnect).not.toHaveBeenCalledWith("a-web2");
   });
 
-  it("探测错误后聚焦重试按 Enter 保留原生行为，不触发连接", async () => {
+  it("preserves native Enter behavior on a focused retry button after a probe error without connecting", async () => {
     mocks.probeBatch.mockRejectedValueOnce({ code: "io", message: "probe down" });
     const view = await mountSettled({ onClose: vi.fn() });
     const alert = await waitForAlert(view.container);
@@ -481,7 +481,7 @@ describe("QuickConnect Retry 按钮键盘激活不被 Enter 快捷键劫持", ()
     expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
   });
 
-  it("重试后焦点回到搜索框，Escape 仍可关闭", async () => {
+  it("returns focus to the search input after retry and still closes with Escape", async () => {
     mocks.sessionConnect.mockRejectedValue({ code: "io", message: "down" });
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -504,8 +504,8 @@ describe("QuickConnect Retry 按钮键盘激活不被 Enter 快捷键劫持", ()
   });
 });
 
-describe("QuickConnect 屏幕阅读器与响应式契约", () => {
-  it("弹层具备完整 dialog/combobox/listbox 语义", async () => {
+describe("QuickConnect screen reader and responsive contracts", () => {
+  it("provides complete dialog, combobox, and listbox semantics", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     const dialog = view.container.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute("aria-modal")).toBe("true");
@@ -520,7 +520,7 @@ describe("QuickConnect 屏幕阅读器与响应式契约", () => {
     }
   });
 
-  it("弹层使用受限高的命令弹层类，列表可滚动", async () => {
+  it("uses the constrained-height command overlay class and a scrollable list", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     const modal = view.container.querySelector(".nx-command-modal");
     expect(modal?.className).toContain("nx-modal");
@@ -530,8 +530,8 @@ describe("QuickConnect 屏幕阅读器与响应式契约", () => {
   });
 });
 
-describe("QuickConnect 快速连接", () => {
-  it("输入 user@host:port 时出现临时连接与保存为资产两行，Enter 默认临时连接", async () => {
+describe("QuickConnect ad-hoc connections", () => {
+  it("shows ad-hoc and save-as-asset rows for user@host:port, defaulting Enter to the ad-hoc connection", async () => {
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
     const input = searchInput(view.container);
@@ -563,7 +563,7 @@ describe("QuickConnect 快速连接", () => {
     expect(mocks.setCredential).not.toHaveBeenCalled();
   });
 
-  it("密码留空时使用 SSH agent 认证", async () => {
+  it("uses SSH agent authentication when the password is blank", async () => {
     mocks.promptText.mockResolvedValue("");
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -581,7 +581,7 @@ describe("QuickConnect 快速连接", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("取消密码输入不发起连接也不关闭弹层", async () => {
+  it("does not connect or close the overlay when password entry is canceled", async () => {
     mocks.promptText.mockResolvedValue(null);
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -595,11 +595,11 @@ describe("QuickConnect 快速连接", () => {
     expect(view.container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("复用 host key 审批：确认后信任并重试成功", async () => {
+  it("reuses host-key approval, trusts the key, and retries successfully", async () => {
     mocks.sessionConnectQuick
       .mockRejectedValueOnce({
         code: "host_key_pending",
-        message: "主机指纹待确认",
+        message: "host key confirmation required",
         detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
       })
       .mockResolvedValueOnce(QUICK_SESSION);
@@ -620,10 +620,10 @@ describe("QuickConnect 快速连接", () => {
     expect(mocks.sessionConnectQuick).toHaveBeenCalledTimes(2);
   });
 
-  it("连接失败时内联展示错误，重试可再次发起", async () => {
+  it("shows connection failures inline and allows retry", async () => {
     mocks.sessionConnectQuick.mockRejectedValueOnce({
       code: "ssh",
-      message: "SSH 连接 example.com:2222 失败：认证失败，请检查用户名、密码或 SSH agent 配置",
+      message: "SSH connection to example.com:2222 failed: authentication failed; check the username, password, or SSH agent configuration",
     });
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -633,7 +633,7 @@ describe("QuickConnect 快速连接", () => {
     pressKey(searchInput(view.container), "Enter");
     await flush();
     const alert = await waitForAlert(view.container);
-    expect(alert.textContent).toContain("认证失败");
+    expect(alert.textContent).toContain("authentication failed");
     expect(onClose).not.toHaveBeenCalled();
 
     const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
@@ -642,7 +642,7 @@ describe("QuickConnect 快速连接", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("保存为资产并连接：落库凭据与资产后走既有资产连接流程", async () => {
+  it("stores the credential and asset before using the existing asset connection flow when saving as an asset", async () => {
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
     setInputValue(searchInput(view.container), "example.com:2222");
@@ -674,7 +674,7 @@ describe("QuickConnect 快速连接", () => {
     expect(mocks.deleteCredential).not.toHaveBeenCalled();
   });
 
-  it("资产创建失败时回滚已保存的凭据，不留孤儿凭据", async () => {
+  it("rolls back the saved credential without leaving an orphan when asset creation fails", async () => {
     mocks.assetCreate.mockRejectedValueOnce({ code: "io", message: "asset create boom" });
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -690,7 +690,7 @@ describe("QuickConnect 快速连接", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("资产已创建但连接失败时保留凭据", async () => {
+  it("preserves the credential when the asset is created but its connection fails", async () => {
     mocks.sessionConnect.mockRejectedValueOnce({ code: "ssh", message: "connect boom" });
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
@@ -704,7 +704,7 @@ describe("QuickConnect 快速连接", () => {
     expect(mocks.deleteCredential).not.toHaveBeenCalled();
   });
 
-  it("输入 quick target 后重置光标，Enter 激活临时连接而不是旧资产行", async () => {
+  it("resets the active option after a quick target is entered so Enter starts the ad-hoc connection instead of the previous asset row", async () => {
     const onClose = vi.fn();
     const view = await mountSettled({ onClose });
     const input = searchInput(view.container);
@@ -734,7 +734,7 @@ describe("QuickConnect 快速连接", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("输入无法解析时不出现快速连接行，保持资产搜索", async () => {
+  it("keeps asset search without quick-connection rows when input cannot be parsed", async () => {
     const view = await mountSettled({ onClose: vi.fn() });
     setInputValue(searchInput(view.container), "web-01");
     await flush();
@@ -749,7 +749,7 @@ describe("QuickConnect 快速连接", () => {
     expect(options(view.container)[0]?.textContent).toContain("web-01");
   });
 
-  it("在途期间重复 Enter 不重复发起快速连接", async () => {
+  it("does not duplicate ad-hoc connections on repeated Enter while one is in flight", async () => {
     const gate = deferred<typeof QUICK_SESSION>();
     mocks.sessionConnectQuick.mockReturnValueOnce(gate.promise);
     const onClose = vi.fn();

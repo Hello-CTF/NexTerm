@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,7 @@ func reminderName(message string) string {
 	if len(runes) > 40 {
 		message = string(runes[:40]) + "…"
 	}
-	return "提醒: " + message
+	return "提醒：" + message
 }
 
 func cronModule(runtime *cronRuntime) Module {
@@ -177,21 +178,59 @@ type cronSetEnabledRequest struct {
 	Enabled   bool   `json:"enabled"`
 }
 
+func cronIPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+	switch {
+	case errors.Is(err, profiles.ErrProfileNotFound), errors.Is(err, profiles.ErrNoActiveProfile), errors.Is(err, profiles.ErrProfileKeyUnavailable):
+		return aiIPCError(err)
+	case errors.Is(err, cron.ErrNotFound):
+		return ipc.WrapError(ipc.CodeNotFound, cron.ErrNotFound.Error(), err)
+	case errors.Is(err, cron.ErrConflict):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrConflict.Error(), err)
+	case errors.Is(err, cron.ErrJobLimit):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobLimit.Error(), err)
+	case errors.Is(err, cron.ErrJobRunning):
+		return ipc.WrapError(ipc.CodeBadParam, cron.ErrJobRunning.Error(), err)
+	case errors.Is(err, cron.ErrInvalidSchedule):
+		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+	case errors.Is(err, cron.ErrStorage):
+		slog.Error("cron IPC storage error", "error", err)
+		return ipc.WrapError(ipc.CodeInternal, cron.ErrStorage.Error(), err)
+	default:
+		return err
+	}
+}
+
 func (c *cronRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "cron_register", func(ctx context.Context, _ *ipc.Call, input cronRegisterRequest) (cron.Job, error) {
+				if strings.TrimSpace(input.SessionID) == "" {
+					return cron.Job{}, ipc.BadParam(errors.New("定时任务必须关联一个会话"))
+				}
+				if strings.TrimSpace(input.Prompt) == "" {
+					return cron.Job{}, ipc.BadParam(errors.New("定时任务的提示词不能为空"))
+				}
+				if input.TimeoutMS < 0 {
+					return cron.Job{}, ipc.BadParam(errors.New("超时时间不能为负数"))
+				}
 				if c.conversations != nil {
 					if _, err := c.conversations.ConvGet(ctx, input.SessionID); err != nil {
-						return cron.Job{}, err
+						return cron.Job{}, cronIPCError(err)
 					}
 				}
 				if input.ModelProfileID != "" && c.profiles != nil {
 					if _, ok := c.profiles.Profile(input.ModelProfileID); !ok {
-						return cron.Job{}, profiles.ErrProfileNotFound
+						return cron.Job{}, cronIPCError(profiles.ErrProfileNotFound)
 					}
 				}
-				return c.scheduler.Register(ctx, cron.Registration{
+				job, err := c.scheduler.Register(ctx, cron.Registration{
 					SessionID:      input.SessionID,
 					Name:           input.Name,
 					Prompt:         input.Prompt,
@@ -201,26 +240,33 @@ func (c *cronRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 					Timeout:        time.Duration(input.TimeoutMS) * time.Millisecond,
 					ModelProfileID: input.ModelProfileID,
 				})
+				return job, cronIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "cron_list", func(ctx context.Context, _ *ipc.Call, input cronJobRequest) ([]cron.Job, error) {
-				return c.scheduler.List(ctx, input.SessionID)
+				if strings.TrimSpace(input.SessionID) == "" {
+					return nil, ipc.BadParam(errors.New("定时任务必须关联一个会话"))
+				}
+				jobs, err := c.scheduler.List(ctx, input.SessionID)
+				return jobs, cronIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "cron_get", func(ctx context.Context, _ *ipc.Call, input cronJobRequest) (cron.Job, error) {
-				return c.scheduler.Get(ctx, input.SessionID, input.JobID)
+				job, err := c.scheduler.Get(ctx, input.SessionID, input.JobID)
+				return job, cronIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "cron_set_enabled", func(ctx context.Context, _ *ipc.Call, input cronSetEnabledRequest) (cron.Job, error) {
-				return c.scheduler.SetEnabled(ctx, input.SessionID, input.JobID, input.Enabled)
+				job, err := c.scheduler.SetEnabled(ctx, input.SessionID, input.JobID, input.Enabled)
+				return job, cronIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "cron_unregister", func(ctx context.Context, _ *ipc.Call, input cronJobRequest) (any, error) {
-				return nil, c.scheduler.Unregister(ctx, input.SessionID, input.JobID)
+				return nil, cronIPCError(c.scheduler.Unregister(ctx, input.SessionID, input.JobID))
 			})
 		},
 	}

@@ -80,14 +80,14 @@ func TestLocalFolderListWalksTreeWithForwardSlashRels(t *testing.T) {
 	byRel := map[string]localFolderFileDTO{}
 	for _, f := range result.Files {
 		if strings.Contains(f.RelativePath, `\`) {
-			t.Fatalf("relativePath 含反斜杠: %q", f.RelativePath)
+			t.Fatalf("relativePath contains backslash: %q", f.RelativePath)
 		}
 		byRel[f.RelativePath] = f
 	}
 	for rel, size := range map[string]int64{"a.txt": 1, "sub/c.txt": 3, "sub/deep/b.txt": 2} {
 		entry, ok := byRel[rel]
 		if !ok {
-			t.Fatalf("缺少 %s: %+v", rel, result.Files)
+			t.Fatalf("missing %s: %+v", rel, result.Files)
 		}
 		if entry.Size != size || entry.MtimeMs == 0 {
 			t.Fatalf("%s = %+v", rel, entry)
@@ -97,10 +97,10 @@ func TestLocalFolderListWalksTreeWithForwardSlashRels(t *testing.T) {
 			t.Fatalf("%s localPath = %q, want %q", rel, entry.LocalPath, wantLocal)
 		}
 		if !filepath.IsAbs(entry.LocalPath) {
-			t.Fatalf("%s localPath 不是绝对路径: %q", rel, entry.LocalPath)
+			t.Fatalf("%s localPath is not absolute: %q", rel, entry.LocalPath)
 		}
 		if runtime.GOOS != "windows" && strings.Contains(entry.LocalPath, `\`) {
-			t.Fatalf("非 Windows localPath 含反斜杠: %q", entry.LocalPath)
+			t.Fatalf("non-Windows localPath contains backslash: %q", entry.LocalPath)
 		}
 	}
 	if len(result.EmptyDirs) != 2 || result.EmptyDirs[0] != "empty" || result.EmptyDirs[1] != "half/leaf" {
@@ -125,7 +125,7 @@ func TestLocalFolderListSkipsSymlinks(t *testing.T) {
 		}
 	}
 	if created == 0 {
-		t.Skip("当前平台无法创建符号链接")
+		t.Skip("cannot create symlinks on the current platform")
 	}
 
 	result, ipcErr := dispatchLocalFolderList(t, newLocalFolderDispatcher(t), root)
@@ -137,7 +137,7 @@ func TestLocalFolderListSkipsSymlinks(t *testing.T) {
 	}
 	for _, f := range result.Files {
 		if strings.Contains(f.RelativePath, "outside") || strings.Contains(f.RelativePath, "link") {
-			t.Fatalf("符号链接未被跳过: %+v", f)
+			t.Fatalf("symlinks were not skipped: %+v", f)
 		}
 	}
 	if len(result.EmptyDirs) != 0 {
@@ -183,7 +183,7 @@ func TestLocalFolderListEmptyFolder(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.Files == nil || result.EmptyDirs == nil {
-		t.Fatal("空结果必须编码为 [] 而非 null")
+		t.Fatal("empty result must encode as [] instead of null")
 	}
 }
 

@@ -28,8 +28,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("分享卡片 · 桌面端未登录", () => {
-  it("渲染登录引导卡且零请求, 按钮滚向「账号同步」分区", async () => {
+describe("Share card - desktop logged out", () => {
+  it("renders login guidance without requests and scrolls the button to the Account Sync section", async () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     const scrollIntoView = vi.fn();

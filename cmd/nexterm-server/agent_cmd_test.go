@@ -19,10 +19,10 @@ func TestAgentCLIDispatch(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"无子命令", []string{"agent"}},
-		{"未知子命令", []string{"agent", "bogus"}},
-		{"enroll 缺必填", []string{"agent", "enroll"}},
-		{"enroll 缺接入码", []string{"agent", "enroll", "--server", "http://127.0.0.1:1"}},
+		{"missing subcommand", []string{"agent"}},
+		{"unknown subcommand", []string{"agent", "bogus"}},
+		{"enroll missing required flags", []string{"agent", "enroll"}},
+		{"enroll missing enrollment code", []string{"agent", "enroll", "--server", "http://127.0.0.1:1"}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

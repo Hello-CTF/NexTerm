@@ -23,7 +23,7 @@ function captureRpc() {
   return calls;
 }
 
-describe("sync collection 读取线上契约", () => {
+describe("sync collection read wire contract", () => {
   beforeEach(() => {
     vi.resetModules();
     installWebEnv();
@@ -32,7 +32,7 @@ describe("sync collection 读取线上契约", () => {
     vi.unstubAllGlobals();
   });
 
-  it("collectAssets 使用嵌套 args 信封且 includeDeleted 显式", async () => {
+  it("collectAssets wraps args and always sends includeDeleted", async () => {
     const calls = captureRpc();
     const { syncApi } = await import("../ipc/commands");
 
@@ -49,7 +49,7 @@ describe("sync collection 读取线上契约", () => {
     ]);
   });
 
-  it("collectTombstones 分页参数扁平传递", async () => {
+  it("passes collectTombstones pagination fields directly", async () => {
     const calls = captureRpc();
     const { syncApi } = await import("../ipc/commands");
 
@@ -64,7 +64,7 @@ describe("sync collection 读取线上契约", () => {
     ]);
   });
 
-  it("collectCredentials revealSecrets 显式且分页参数精确", async () => {
+  it("collectCredentials always sends revealSecrets and exact pagination fields", async () => {
     const calls = captureRpc();
     const { syncApi } = await import("../ipc/commands");
 

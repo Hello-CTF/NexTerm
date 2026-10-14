@@ -86,7 +86,7 @@ describe("SOCKS exposure confirmation", () => {
     mocks.createSocks
       .mockRejectedValueOnce({
         code: "needs_confirm",
-        message: "需要确认",
+        message: "confirmation required",
         detail: { risk: "unauthenticated_exposed_socks", listenHost: "0.0.0.0", authentication: "none" },
       })
       .mockResolvedValueOnce({ id: "f1", kind: "socks" });
@@ -118,7 +118,7 @@ describe("SOCKS exposure confirmation", () => {
     mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
     mocks.createSocks.mockRejectedValueOnce({
       code: "needs_confirm",
-      message: "需要确认",
+      message: "confirmation required",
       detail: { risk: "unauthenticated_exposed_socks", listenHost: "0.0.0.0", authentication: "none" },
     });
     mocks.ask.mockResolvedValue(false);
@@ -136,7 +136,7 @@ describe("SOCKS exposure confirmation", () => {
     mocks.createSocks
       .mockRejectedValueOnce({
         code: "needs_confirm",
-        message: "需要确认",
+        message: "confirmation required",
         detail: { listenHost: "0.0.0.0", authentication: "none" },
       })
       .mockResolvedValueOnce({ id: "f1", kind: "socks" });
@@ -156,7 +156,7 @@ describe("SOCKS exposure confirmation", () => {
   });
 });
 
-describe("停止转发确认（R42, real DialogHost）", () => {
+describe("stop forward confirmation (R42, real DialogHost)", () => {
   let mounted: MountedView | undefined;
   beforeEach(() => {
     vi.clearAllMocks();

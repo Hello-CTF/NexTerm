@@ -106,8 +106,8 @@ afterEach(() => {
   resetStore();
 });
 
-describe("TOTP 登录第二步(store)", () => {
-  it("密码通过后拿到 MFA 挑战: 挂起票据而不是建立会话", async () => {
+describe("second step of TOTP login (store)", () => {
+  it("holds an MFA challenge ticket after password verification instead of creating a session", async () => {
     useAuth.setState({ gate: "login" });
     await useAuth.getState().login("root", "pw-123456");
     const state = useAuth.getState();
@@ -118,7 +118,7 @@ describe("TOTP 登录第二步(store)", () => {
     expect(getCsrfToken()).toBeNull();
   });
 
-  it("verifyMfa 成功后完成登录: 记 CSRF、解 DEK、进门", async () => {
+  it("completes login after verifyMfa by recording CSRF, unwrapping the DEK, and entering the app", async () => {
     await useAuth.getState().login("root", "pw-123456");
     await useAuth.getState().verifyMfa("123456");
     const state = useAuth.getState();
@@ -130,7 +130,7 @@ describe("TOTP 登录第二步(store)", () => {
     expect(getCsrfToken()).toBe("csrf-mfa");
   });
 
-  it("verifyMfa 失败保留票据并记错误, cancelMfa 清除", async () => {
+  it("keeps the ticket and error after verifyMfa fails and clears them in cancelMfa", async () => {
     mocks.totpLogin.mockRejectedValue({ code: "forbidden", message: "验证码错误" });
     await useAuth.getState().login("root", "pw-123456");
     await expect(useAuth.getState().verifyMfa("000000")).rejects.toMatchObject({ code: "forbidden" });
@@ -143,8 +143,8 @@ describe("TOTP 登录第二步(store)", () => {
   });
 });
 
-describe("AuthGate TOTP 挑战表单", () => {
-  it("pendingMfa 时渲染两步验证表单,提交走 verifyMfa", async () => {
+describe("AuthGate TOTP challenge form", () => {
+  it("renders the two-factor form for pendingMfa and submits through verifyMfa", async () => {
     useAuth.setState({ gate: "login", pendingMfa: { ticket: "ticket-1", username: "root", password: "pw" } });
     mounted = mount(createElement(AuthGate));
     await flushUntil(() => mounted!.container.textContent?.includes("两步验证"));
@@ -157,7 +157,7 @@ describe("AuthGate TOTP 挑战表单", () => {
     expect(useAuth.getState().pendingMfa).toBeNull();
   });
 
-  it("返回按钮取消 MFA 挑战,回到密码登录", async () => {
+  it("cancels the MFA challenge with the back button and returns to password login", async () => {
     useAuth.setState({ gate: "login", pendingMfa: { ticket: "ticket-1", username: "root", password: "pw" } });
     mounted = mount(createElement(AuthGate));
     await flushUntil(() => mounted!.container.textContent?.includes("两步验证"));

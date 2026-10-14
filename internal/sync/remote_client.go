@@ -307,13 +307,13 @@ func remoteAPIError(status int, rpcErr *ipc.Error) error {
 	}
 	switch {
 	case status == http.StatusBadRequest:
-		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("远端服务拒绝了请求参数(HTTP %d)", status))
+		return ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("远端服务拒绝了请求参数（HTTP %d）", status))
 	case status == http.StatusForbidden || status == http.StatusTooManyRequests:
-		return ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("远端服务拒绝了请求(HTTP %d)", status))
+		return ipc.NewError(ipc.CodeForbidden, fmt.Sprintf("远端服务拒绝了请求（HTTP %d）", status))
 	case status == http.StatusNotFound:
-		return ipc.NewError(ipc.CodeNotFound, fmt.Sprintf("远端资源不存在或该功能未启用(HTTP %d)", status))
+		return ipc.NewError(ipc.CodeNotFound, fmt.Sprintf("远端资源不存在或该功能未启用（HTTP %d）", status))
 	case status >= http.StatusInternalServerError:
-		return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("远端服务暂不可用(HTTP %d)", status))
+		return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("远端服务暂不可用（HTTP %d）", status))
 	default:
 		return ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端服务返回 HTTP %d", status))
 	}

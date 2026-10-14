@@ -21,14 +21,14 @@ import { serializeLayout } from "../../app/layout";
 const SESSION: SessionInfo = {
   id: "s1",
   assetId: "a1",
-  name: "测试机",
+  name: "test-host",
   kind: "ssh",
   status: "connected",
   tabs: [],
   createdAt: 0,
 };
 
-const ASSET = { id: "a1", name: "测试机", kind: "ssh" };
+const ASSET = { id: "a1", name: "test-host", kind: "ssh" };
 
 function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
@@ -52,8 +52,8 @@ beforeEach(() => {
   });
 });
 
-describe("窄屏连接后优先终端", () => {
-  it("保留用户显式关闭的左栏与面板模式，不写入隐藏偏好", async () => {
+describe("Terminal priority after connecting on narrow screens", () => {
+  it("preserves explicitly closed sidebars and panel modes without writing hidden preferences", async () => {
     setViewportWidth(500);
     useUi.setState({ leftOpen: false, leftMode: "assets", rightOpen: false });
 
@@ -72,7 +72,7 @@ describe("窄屏连接后优先终端", () => {
     expect(pane?.activeTabId).toBe(terminal?.id);
   });
 
-  it("用户显式打开的左栏保持原模式，不被连接流程改成文件树", async () => {
+  it("keeps the original mode of an explicitly open sidebar instead of changing it to the file tree", async () => {
     setViewportWidth(500);
     useUi.setState({ leftOpen: true, leftMode: "credentials" });
 
@@ -83,7 +83,7 @@ describe("窄屏连接后优先终端", () => {
     expect(s.leftMode).toBe("credentials");
   });
 
-  it("持久化布局中的面板偏好与宽度不被窄屏连接改动", async () => {
+  it("does not change persisted panel preferences or widths when connecting on narrow screens", async () => {
     setViewportWidth(500);
     useUi.getState().setLeftWidth(300);
     useUi.getState().setRightWidth(420);
@@ -102,8 +102,8 @@ describe("窄屏连接后优先终端", () => {
   });
 });
 
-describe("宽屏连接保持既有布局行为", () => {
-  it("连接后仍自动展开左栏文件树", async () => {
+describe("Existing layout behavior on wide screens", () => {
+  it("still expands the file tree sidebar after connecting", async () => {
     setViewportWidth(1280);
     useUi.setState({ leftOpen: false, leftMode: "assets" });
 
@@ -116,8 +116,8 @@ describe("宽屏连接保持既有布局行为", () => {
   });
 });
 
-describe("布局偏好重载后保留", () => {
-  it("窄屏连接不改写已持久化宽度，重载 store 后宽度仍在", async () => {
+describe("Layout preferences after reloading", () => {
+  it("does not rewrite persisted widths on narrow screens; widths remain after reloading the store", async () => {
     setViewportWidth(500);
     useUi.getState().setLeftWidth(300);
 

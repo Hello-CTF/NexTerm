@@ -634,7 +634,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       ? "目录不能使用日志查看器"
       : !selectedEditableFile
         ? "非文本文件不能使用日志查看器"
-        : "用只读日志查看器打开选中文件（SFTP 分块读取，不整文件下载）";
+        : "用只读日志查看器打开选中文件（分块读取，不整文件下载）";
 
   return (
     <div className="nx-pane">

@@ -8,8 +8,8 @@ function windowWith(value: Record<string, unknown>, search = "") {
   return { ...value, location: { search } };
 }
 
-describe("desktop/web 检测", () => {
-  it("显式 desktop 标记和 Wails 全局都识别为桌面", async () => {
+describe("desktop/web detection", () => {
+  it("recognizes explicit desktop markers and the Wails global as desktop", async () => {
     vi.stubGlobal("window", windowWith({ __NEXTERM_TRANSPORT__: "desktop" }));
     let env = await import("../ipc/env");
     expect(env.TRANSPORT).toBe("desktop");
@@ -20,7 +20,7 @@ describe("desktop/web 检测", () => {
     expect(env.TRANSPORT).toBe("desktop");
   });
 
-  it("Web 标记与普通浏览器兜底都是 web", async () => {
+  it("treats explicit web markers and plain browser fallback as web", async () => {
     vi.stubGlobal("window", windowWith({ __NEXTERM_TRANSPORT__: "web" }));
     let env = await import("../ipc/env");
     expect(env.TRANSPORT).toBe("web");
@@ -40,7 +40,7 @@ describe("desktop/web 检测", () => {
     expect(env.TRANSPORT).toBe("desktop");
   });
 
-  it("clientId 持久化并在存储不可用时稳定退回内存", async () => {
+  it("persists clientId and consistently falls back to memory when storage is unavailable", async () => {
     const values = new Map<string, string>();
     const localStorage = {
       getItem: (key: string) => values.get(key) ?? null,

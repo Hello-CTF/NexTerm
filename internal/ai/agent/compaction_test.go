@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
@@ -394,6 +396,79 @@ func TestDurableOversizedLatestExchangeSummarized(t *testing.T) {
 	}
 }
 
+func TestDurableCompactionTruncatesToolEnvelopeAndKeepsEnglishProjection(t *testing.T) {
+	chat := &compactionModel{generate: func(context.Context, []*schema.Message) (*schema.Message, error) {
+		return schema.AssistantMessage("摘要：近期工具输出", nil), nil
+	}}
+	_, storage := compactionRunner(t, chat, 2000)
+	conversation, err := storage.ConvCreate(context.Background(), "最近消息后的超大工具结果", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := storage.MsgInsert(ctx, conversation.ID, "user", map[string]any{"role": "user", "content": "最近的问题"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(ctx, conversation.ID, historyTypeToolCall, map[string]any{
+		"type": historyTypeToolCall, "jobId": "job-1", "id": "call-1", "name": "wait_for", "args": map[string]any{"pattern": "done"},
+	}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	largeText := "等待超时，最近输出：\n用户输出" + strings.Repeat("x", 12000)
+	if err := storage.MsgInsert(ctx, conversation.ID, historyTypeToolResult, map[string]any{
+		"type": historyTypeToolResult, "jobId": "job-1", "id": "call-1", "tool": "wait_for", "ok": false, "text": largeText, "exitCode": 1, "truncated": false,
+	}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := storage.MsgList(ctx, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newCompactionHandler(chat, 2000, nil)
+	fitted, err := handler.compactHistory(ctx, historyMessages(rows, "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolMessage *schema.Message
+	for _, message := range fitted {
+		if message.Role == schema.Tool {
+			toolMessage = message
+		}
+	}
+	if toolMessage == nil || !json.Valid([]byte(toolMessage.Content)) {
+		t.Fatalf("compaction produced invalid tool JSON: %+v", toolMessage)
+	}
+	var truncated map[string]any
+	if err := json.Unmarshal([]byte(toolMessage.Content), &truncated); err != nil {
+		t.Fatal(err)
+	}
+	text, ok := truncated["text"].(string)
+	if !ok || !strings.HasPrefix(text, "等待超时，最近输出：\n") || !strings.Contains(text, "[History Truncated]") {
+		t.Fatalf("truncated Chinese tool text = %q", text)
+	}
+	projected := provider.ProjectModelMessages(fitted)
+	var projectedTool *schema.Message
+	for _, message := range projected {
+		if message.Role == schema.Tool {
+			projectedTool = message
+		}
+	}
+	if projectedTool == nil || !json.Valid([]byte(projectedTool.Content)) {
+		t.Fatalf("projection produced invalid tool JSON: %+v", projectedTool)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(projectedTool.Content), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := envelope["modelText"]; exists {
+		t.Fatalf("modelText leaked after compaction: %+v", envelope)
+	}
+	projectedText, ok := envelope["text"].(string)
+	if !ok || !strings.HasPrefix(projectedText, "wait timed out, recent output:\n") || !strings.Contains(projectedText, "[History Truncated]") {
+		t.Fatalf("reloaded English tool projection = %q", projectedText)
+	}
+}
+
 func TestDurableOversizedLatestExchangeSummaryFailure(t *testing.T) {
 	chat := &compactionModel{generate: func(context.Context, []*schema.Message) (*schema.Message, error) {
 		return nil, errors.New("模型不可用")
@@ -728,5 +803,43 @@ func TestSummarizeAllKeepsToolPairing(t *testing.T) {
 	}
 	if !paired {
 		t.Fatal("small assistant/tool pair was split across chunks")
+	}
+}
+
+func TestSummarizeAllProjectsToolResultsBeforeSegmentation(t *testing.T) {
+	t.Parallel()
+	chat := &compactionModel{generate: func(_ context.Context, _ []*schema.Message) (*schema.Message, error) {
+		return schema.AssistantMessage("摘要：保留用户数据", nil), nil
+	}}
+	handler := newCompactionHandler(chat, 64, nil)
+	content := `{"ok":false,"text":"等待超时，最近输出：\n用户最近输出` + strings.Repeat("数据", 1000) + `","exitCode":1,"truncated":false}`
+	message := schema.ToolMessage(content, "orphan")
+	message.ToolName = "wait_for"
+	if _, err := handler.summarizeAll(context.Background(), []*schema.Message{message}); err != nil {
+		t.Fatal(err)
+	}
+	inputs := chat.snapshotGenerateInputs()
+	if len(inputs) < 2 {
+		t.Fatalf("oversized tool result was not segmented: %d inputs", len(inputs))
+	}
+	projectedSeen := false
+	userDataSeen := false
+	for _, input := range inputs {
+		flattened := flattenMessages(input)
+		if strings.Contains(flattened, "等待超时，最近输出") {
+			t.Fatalf("Chinese machine header reached summary input: %s", flattened)
+		}
+		if strings.Contains(flattened, "wait timed out, recent output:") {
+			projectedSeen = true
+		}
+		if strings.Contains(flattened, "用户最近输出") {
+			userDataSeen = true
+		}
+	}
+	if !projectedSeen || !userDataSeen {
+		t.Fatalf("projection evidence missing: English header=%v user data=%v", projectedSeen, userDataSeen)
+	}
+	if message.Content != content {
+		t.Fatalf("compaction mutated the original tool message: %s", message.Content)
 	}
 }

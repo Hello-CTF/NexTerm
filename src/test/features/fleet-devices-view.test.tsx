@@ -198,8 +198,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("设备管理视图 · 角色差异", () => {
-  it("工具栏带「全局」范围标记", async () => {
+describe("Device management view - role differences", () => {
+  it("shows the global scope badge in the toolbar", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -210,7 +210,7 @@ describe("设备管理视图 · 角色差异", () => {
     expect(badge?.textContent).toBe("全局");
   });
 
-  it("超管看到 owner 徽章与接入地址编辑器", async () => {
+  it("shows the owner badge and base URL editor to superadmins", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -227,7 +227,7 @@ describe("设备管理视图 · 角色差异", () => {
     expect(document.body.textContent).toContain("共 4 台");
   });
 
-  it("普通用户看不到 owner 徽章与编辑器, 接入地址只读", async () => {
+  it("hides the owner badge and editor from regular users and keeps base URLs read-only", async () => {
     route(fleetHandler());
     seedUser(PLAIN_USER);
     mounted = mountWithClient(createElement(DevicesView));
@@ -244,7 +244,7 @@ describe("设备管理视图 · 角色差异", () => {
     expect(card?.textContent).not.toContain("alice");
   });
 
-  it("未登录时只给说明(零按钮, 登录入口唯一在「账号」卡), 不发任何 fleet 请求", async () => {
+  it("shows only the guide with zero buttons and no fleet requests when logged out, leaving login solely to the account card", async () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });
     mounted = mountWithClient(createElement(DevicesView));
@@ -255,7 +255,7 @@ describe("设备管理视图 · 角色差异", () => {
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
 
-  it("auth=off 时如实显示账号功能已关闭, 不指向登录入口, 不发任何 fleet 请求", async () => {
+  it("accurately reports disabled account features with no login link or fleet requests when auth=off", async () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: false, registration_open: false, auth: "off" } });
     mounted = mountWithClient(createElement(DevicesView));
@@ -268,8 +268,8 @@ describe("设备管理视图 · 角色差异", () => {
   });
 });
 
-describe("设备管理视图 · 设备列表与指标", () => {
-  it("在线设备显示心跳与当前接入地址, 指标展开展示 CPU/内存/磁盘/运行时长并可刷新", async () => {
+describe("Device management view - device list and metrics", () => {
+  it("shows heartbeat and current base URL for online devices and renders refreshable CPU, memory, disk, and uptime metrics when expanded", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -293,7 +293,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     await flushUntil(() => calls.filter((c) => c.url === "/fleet/devices/d-1/metrics").length === 2);
   });
 
-  it("搜索与全部/在线/离线/已吊销过滤只筛选当前列表, 不发新请求", async () => {
+  it("filters the current list locally by search and all/online/offline/revoked status without new requests", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -340,7 +340,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     expect(calls).toHaveLength(requestCount);
   });
 
-  it("离线设备显示离线徽章与离线自启动提示", async () => {
+  it("shows offline badges and offline autostart hints for offline devices", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -352,7 +352,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     expect(card?.textContent).toContain("未运行");
   });
 
-  it("非 agent 设备提示没有运行状态, 已吊销设备不再给操作按钮", async () => {
+  it("reports missing runtime status for non-agent devices and provides no actions for revoked devices", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -370,7 +370,7 @@ describe("设备管理视图 · 设备列表与指标", () => {
     expect([...(revokedCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.includes("吊销"))).toBe(false);
   });
 
-  it("空列表给接入引导, 列表失败给错误与重试", async () => {
+  it("shows enrollment guidance for an empty list and an error with retry for a failed list request", async () => {
     route(fleetHandler({ devices: { devices: [] } }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -384,8 +384,8 @@ describe("设备管理视图 · 设备列表与指标", () => {
   });
 });
 
-describe("设备管理视图 · 接入码签发", () => {
-  it("签发后只显示一次, 带有效期/单次使用说明与真实 agent 接入命令", async () => {
+describe("Device management view - enrollment code issuance", () => {
+  it("shows expiration and single-use guidance with the real agent enrollment commands after issuance", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -402,8 +402,9 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(enrollCall?.body).toEqual({ ttl_ms: 900_000 });
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("仅显示一次");
     expect(text).toContain("只能使用一次");
+    expect(text).toContain("完成后不再显示");
+    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
     expect(text).toContain("高级说明：多地址、手动接入与服务管理");
     expect(text).toContain("执行完成后刷新列表");
     expect(text).toContain("随用户登录自动启动");
@@ -455,7 +456,48 @@ describe("设备管理视图 · 接入码签发", () => {
     });
   });
 
-  it("clipboard 不可用时复制接入码与命令给出明确错误", async () => {
+  it("clears the enrollment code after Done across refresh, panel reopen, and view remount", async () => {
+    const calls = route(fleetHandler());
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const enrollToggle = () =>
+      [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement;
+    click(enrollToggle());
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成") as HTMLButtonElement);
+    await waitFor(() => {
+      expect(document.body.textContent).not.toContain("fleet-code-1");
+    });
+
+    const deviceRequests = calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "刷新") as HTMLButtonElement);
+    await flush();
+    expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThan(deviceRequests);
+    expect(document.body.textContent).not.toContain("fleet-code-1");
+
+    click(enrollToggle());
+    expect(enrollToggle().getAttribute("aria-expanded")).toBe("false");
+    click(enrollToggle());
+    expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "签发接入码")).toBe(true);
+    expect(document.body.textContent).not.toContain("fleet-code-1");
+    await flush();
+
+    mounted.unmount();
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    click(enrollToggle());
+    expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "签发接入码")).toBe(true);
+    expect(document.body.textContent).not.toContain("fleet-code-1");
+    await flush();
+  });
+
+  it("reports clear errors when copying the enrollment code or command while the clipboard is unavailable", async () => {
     const toast = vi.fn();
     useUi.setState({ pushToast: toast });
     route(fleetHandler());
@@ -479,7 +521,7 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败，请手动复制");
   });
 
-  it("接入地址 loading/error/ready 控制签发与覆盖保存, 失败可重试", async () => {
+  it("gates issuance and overwrite saving on base URL loading, error, and ready states and allows retry after failure", async () => {
     const firstBaseUrls = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     let baseUrlCalls = 0;
     let enrollCalls = 0;
@@ -535,8 +577,8 @@ describe("设备管理视图 · 接入码签发", () => {
   });
 });
 
-describe("设备管理视图 · 吊销与自启动", () => {
-  it("吊销需确认, 确认后 POST 并刷新列表", async () => {
+describe("Device management view - revocation and autostart", () => {
+  it("requires confirmation to revoke and sends POST before refreshing the list", async () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -553,7 +595,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("吊销确认被取消时不发请求", async () => {
+  it("sends no request when revoke confirmation is canceled", async () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(false);
     seedUser(SUPERADMIN);
@@ -568,7 +610,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
   });
 
-  it("在线设备切换自启动直接生效, 不弹确认", async () => {
+  it("applies autostart changes to online devices directly without confirmation", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -585,7 +627,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
     expect(autostartCall?.body).toEqual({ desired: false });
   });
 
-  it("离线设备切换自启动先确认'只存期望状态'", async () => {
+  it("confirms that offline autostart changes only save desired state", async () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -606,7 +648,7 @@ describe("设备管理视图 · 吊销与自启动", () => {
   });
 });
 
-describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", () => {
+describe("Device management view - autostart drift from installed/enabled", () => {
   function agentWith(serviceState: { installed: boolean; enabled: boolean; active: boolean }, desired: boolean) {
     return {
       devices: [
@@ -620,7 +662,7 @@ describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", ()
     };
   }
 
-  it("已启用但未运行: 无漂移, 运行状态单列未运行", async () => {
+  it("reports no drift when enabled but not running and lists not running separately", async () => {
     route(fleetHandler({ devices: agentWith({ installed: true, enabled: true, active: false }, true) }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -634,7 +676,7 @@ describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", ()
     expect(card?.textContent).not.toContain("未生效");
   });
 
-  it("未启用但进程在跑: 报未生效漂移", async () => {
+  it("reports ineffective drift when disabled but the process is running", async () => {
     route(fleetHandler({ devices: agentWith({ installed: true, enabled: false, active: true }, true) }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -647,8 +689,8 @@ describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", ()
   });
 });
 
-describe("设备管理视图 · 接入命令 shell quoting", () => {
-  it("URL path 含 ; 与 $() 时被单引号包裹, 不会被 shell 当命令语法", async () => {
+describe("Device management view - enrollment command shell quoting", () => {
+  it("single-quotes semicolons and command substitutions in URL paths so the shell cannot interpret them", async () => {
     route(fleetHandler({ baseUrls: { base_urls: [{ url: "https://nexterm.example.com/mirror;v2/$(id)" }] } }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
@@ -666,8 +708,8 @@ describe("设备管理视图 · 接入命令 shell quoting", () => {
   });
 });
 
-describe("设备管理视图 · 账号切换隔离", () => {
-  it("user.id 变化后旧设备与一次性接入码立即清除, 旧账号晚到响应不覆盖新账号", async () => {
+describe("Device management view - account switching isolation", () => {
+  it("clears old devices and the one-time enrollment code immediately when user.id changes and ignores the old account's late response", async () => {
     const lateAdminDevices = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     const userDevices = {
       devices: [{ ...AGENT_DEVICE, id: "d-9", name: "user-device", owner: undefined }],
@@ -720,8 +762,8 @@ describe("设备管理视图 · 账号切换隔离", () => {
   });
 });
 
-describe("设备管理视图 · 签发在途的账号隔离", () => {
-  it("切换账号后旧账号的签发响应/finally 均不写入, 旧接入码永不出现", async () => {
+describe("Device management view - account isolation during issuance", () => {
+  it("writes neither the old account's issuance response nor its finally state after switching accounts, so the old code never appears", async () => {
     const lateIssue = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
     let issueCalls = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
@@ -776,8 +818,8 @@ describe("设备管理视图 · 签发在途的账号隔离", () => {
   });
 });
 
-describe("设备管理视图 · 上下线实时事件", () => {
-  it("device://status 实时翻转在线状态, 不重新拉列表; 未知设备 ID 忽略", async () => {
+describe("Device management view - real-time online/offline events", () => {
+  it("flips online state in real time with device://status without refetching and ignores unknown device IDs", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));

@@ -1,9 +1,11 @@
 package ipc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -140,8 +142,27 @@ func TestNormalizeErrorPreservesStructuredErrors(t *testing.T) {
 	if got := NormalizeError(original); got != original {
 		t.Fatalf("NormalizeError returned %+v", got)
 	}
-	if got := NormalizeError(errors.New("plain")); got.Code != CodeInternal {
-		t.Fatalf("plain error code = %s", got.Code)
+}
+
+func TestNormalizeErrorLogsPlainErrorAndHidesDetails(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	plain := errors.New("plain")
+	got := NormalizeError(plain)
+	if got.Code != CodeInternal || got.Message != "内部错误，请稍后重试" {
+		t.Fatalf("normalized error = %+v, want generic internal error", got)
+	}
+	if strings.Contains(got.Message, plain.Error()) {
+		t.Fatalf("normalized message leaks original error: %q", got.Message)
+	}
+	if !errors.Is(got, plain) {
+		t.Fatal("normalized error lost the original cause")
+	}
+	if output := logs.String(); !strings.Contains(output, "internal IPC error") || !strings.Contains(output, "error=plain") {
+		t.Fatalf("log output = %q, want the original error", output)
 	}
 }
 

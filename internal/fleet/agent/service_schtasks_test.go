@@ -46,7 +46,7 @@ func (r *xmlCaptureRunner) Run(ctx context.Context, name string, args ...string)
 func utf16LEToString(t *testing.T, data []byte) string {
 	t.Helper()
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xFE {
-		t.Fatalf("任务 XML 必须以 UTF-16LE BOM 开头, got % x (len %d)", data[:min(4, len(data))], len(data))
+		t.Fatalf("task XML must start with a UTF-16LE BOM, got % x (len %d)", data[:min(4, len(data))], len(data))
 	}
 	u16 := make([]uint16, 0, (len(data)-2)/2)
 	for i := 2; i+1 < len(data); i += 2 {
@@ -70,11 +70,11 @@ func TestWindowsTaskXMLStructure(t *testing.T) {
 		"<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
 	} {
 		if !strings.Contains(xml, expected) {
-			t.Fatalf("任务 XML 缺少 %q:\n%s", expected, xml)
+			t.Fatalf("task XML is missing %q:\n%s", expected, xml)
 		}
 	}
 	if strings.Contains(xml, "InteractiveToken") {
-		t.Fatalf("InteractiveToken 会让 console 子系统进程弹黑窗, 任务 XML 不得出现:\n%s", xml)
+		t.Fatalf("InteractiveToken would show a console window for console-subsystem processes; task XML must not contain it:\n%s", xml)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestWindowsTaskXMLEscapesSpecialCharacters(t *testing.T) {
 		`<Arguments>run --data-dir C:\data\&lt;x&gt;&amp;y</Arguments>`,
 	} {
 		if !strings.Contains(xml, expected) {
-			t.Fatalf("转义后的任务 XML 缺少 %q:\n%s", expected, xml)
+			t.Fatalf("escaped task XML is missing %q:\n%s", expected, xml)
 		}
 	}
 }
@@ -93,7 +93,7 @@ func TestWindowsTaskXMLEscapesSpecialCharacters(t *testing.T) {
 func TestWindowsTaskXMLIncludesCommandPrefix(t *testing.T) {
 	xml := windowsTaskXML(`DESKTOP\dev`, `C:\NexTerm\nexterm-server.exe`, `C:\data`, []string{"agent"})
 	if !strings.Contains(xml, `<Arguments>agent run --data-dir C:\data</Arguments>`) {
-		t.Fatalf("内嵌分发的任务 XML 必须带 agent 前缀:\n%s", xml)
+		t.Fatalf("task XML for embedded distribution must include the agent prefix:\n%s", xml)
 	}
 }
 
@@ -129,17 +129,17 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 		t.Fatalf("install commands = %+v", capture.commands)
 	}
 	if capture.commands[0].name != "sc.exe" || strings.Join(capture.commands[0].args, " ") != "stop NexTermAgent" {
-		t.Fatalf("第一步必须停旧系统服务: %+v", capture.commands[0])
+		t.Fatalf("first step must stop the legacy system service: %+v", capture.commands[0])
 	}
 	if capture.commands[1].name != "sc.exe" || strings.Join(capture.commands[1].args, " ") != "delete NexTermAgent" {
-		t.Fatalf("第二步必须删旧系统服务: %+v", capture.commands[1])
+		t.Fatalf("second step must delete the legacy system service: %+v", capture.commands[1])
 	}
 	create := capture.commands[2]
 	if create.name != "schtasks.exe" || create.args[0] != "/Create" || create.args[1] != "/TN" || create.args[2] != "NexTermAgent" || create.args[3] != "/XML" || create.args[5] != "/F" {
-		t.Fatalf("注册命令形态错误: %+v", create)
+		t.Fatalf("registration command has an invalid shape: %+v", create)
 	}
 	if last := capture.commands[3]; last.name != "schtasks.exe" || strings.Join(last.args, " ") != "/Run /TN NexTermAgent" {
-		t.Fatalf("注册后必须立即启动任务: %+v", last)
+		t.Fatalf("task must start immediately after registration: %+v", last)
 	}
 	xml := utf16LEToString(t, capture.xml)
 	for _, expected := range []string{
@@ -149,11 +149,11 @@ func TestSchtasksInstallCommandsAndXML(t *testing.T) {
 		`<Arguments>run --data-dir C:\Users\dev\AppData\Local\NexTerm</Arguments>`,
 	} {
 		if !strings.Contains(xml, expected) {
-			t.Fatalf("落盘的任务 XML 缺少 %q:\n%s", expected, xml)
+			t.Fatalf("written task XML is missing %q:\n%s", expected, xml)
 		}
 	}
 	if _, err := os.Stat(create.args[4]); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("临时 XML 文件必须被清理: %v", err)
+		t.Fatalf("temporary XML file must be removed: %v", err)
 	}
 }
 
@@ -172,17 +172,17 @@ func TestSchtasksInstallMigratesLegacyService(t *testing.T) {
 		t.Fatal(err)
 	}
 	if capture.createCalls != 1 {
-		t.Fatalf("旧服务清除后必须注册计划任务, createCalls = %d", capture.createCalls)
+		t.Fatalf("scheduled task must be registered after legacy service cleanup, createCalls = %d", capture.createCalls)
 	}
 
 	runner.responses["sc.exe delete NexTermAgent"] = "[SC] OpenService FAILED 5:\n\nAccess is denied.\n"
 	runner.errors = map[string]error{"sc.exe delete NexTermAgent": realExitError(t)}
 	err := manager.Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "管理员") {
-		t.Fatalf("旧服务删除被拒绝必须提示管理员权限, got %v", err)
+		t.Fatalf("legacy service deletion denial must mention administrator privileges, got %v", err)
 	}
 	if capture.createCalls != 1 {
-		t.Fatal("旧服务未清除时不得注册计划任务")
+		t.Fatal("scheduled task must not be registered before legacy service cleanup")
 	}
 }
 
@@ -205,14 +205,14 @@ func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
 	capture.createOut, capture.createErr = "ERROR: Access is denied.\n", realExitError(t)
 	err := newWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "拒绝访问") {
-		t.Fatalf("注册被拒绝必须可操作化, got %v", err)
+		t.Fatalf("registration denial must be actionable, got %v", err)
 	}
 
 	capture = &xmlCaptureRunner{fakeRunner: &fakeRunner{responses: baseResponses(), errors: baseErrors()}}
 	capture.createErr = errors.New(`exec: "schtasks.exe": executable file not found in %PATH%`)
 	err = newWindowsManager(capture).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "schtasks.exe 不可用") {
-		t.Fatalf("schtasks 缺失必须明确报出, got %v", err)
+		t.Fatalf("missing schtasks must be reported explicitly, got %v", err)
 	}
 
 	runner := &fakeRunner{responses: baseResponses(), errors: baseErrors()}
@@ -220,7 +220,7 @@ func TestSchtasksInstallReportsCreateAndRunFailures(t *testing.T) {
 	runner.errors["schtasks.exe /Run /TN NexTermAgent"] = realExitError(t)
 	err = newWindowsManager(&xmlCaptureRunner{fakeRunner: runner}).Install(context.Background(), `C:\NexTerm\nexterm-agent.exe`, `C:\NexTerm`)
 	if err == nil || !strings.Contains(err.Error(), "启动计划任务失败") {
-		t.Fatalf("启动失败必须报出, got %v", err)
+		t.Fatalf("task start failure must be reported, got %v", err)
 	}
 }
 
@@ -251,28 +251,28 @@ func TestSchtasksStatusStates(t *testing.T) {
 	runner.responses[psKey] = "Weird\n"
 	status = manager.Status(ctx)
 	if status.LastError == "" || !strings.Contains(status.LastError, "无法识别") {
-		t.Fatalf("未知状态必须报出: %+v", status)
+		t.Fatalf("unknown state must be reported: %+v", status)
 	}
 
 	runner.errors = map[string]error{psKey: realExitError(t)}
 	runner.responses[psKey] = "Get-ScheduledTask : 系统找不到指定的文件。\n"
 	status = manager.Status(ctx)
 	if !status.Installed || status.LastError == "" {
-		t.Fatalf("powershell 失败必须保留 installed 事实并暴露 LastError: %+v", status)
+		t.Fatalf("PowerShell failure must preserve installed state and expose LastError: %+v", status)
 	}
 
 	runner.errors = map[string]error{queryKey: realExitError(t)}
 	runner.responses[queryKey] = "ERROR: The system cannot find the file specified.\n"
 	status = manager.Status(ctx)
 	if status.Installed || status.Enabled || status.Active || status.LastError != "" {
-		t.Fatalf("任务不存在必须是正常的未安装结果: %+v", status)
+		t.Fatalf("a missing task must produce a normal uninstalled result: %+v", status)
 	}
 
 	runner.errors = map[string]error{queryKey: errors.New(`exec: "schtasks.exe": executable file not found in %PATH%`)}
 	runner.responses[queryKey] = ""
 	status = manager.Status(ctx)
 	if status.Installed || status.LastError == "" {
-		t.Fatalf("schtasks 不可用必须暴露 LastError: %+v", status)
+		t.Fatalf("unavailable schtasks must expose LastError: %+v", status)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestSchtasksUninstall(t *testing.T) {
 	for i, expected := range expectedOrder {
 		got := runner.commands[i].name + " " + strings.Join(runner.commands[i].args, " ")
 		if got != expected {
-			t.Fatalf("uninstall 第 %d 步 = %q, want %q", i, got, expected)
+			t.Fatalf("uninstall step %d = %q, want %q", i, got, expected)
 		}
 	}
 
@@ -314,17 +314,17 @@ func TestSchtasksUninstall(t *testing.T) {
 	runner.errors[deleteKey] = realExitError(t)
 	runner.responses[deleteKey] = "ERROR: The system cannot find the file specified.\n"
 	if err := manager.Uninstall(context.Background()); err != nil {
-		t.Fatalf("任务不存在时 uninstall 必须成功: %v", err)
+		t.Fatalf("uninstall must succeed when the task does not exist: %v", err)
 	}
 	runner.responses[deleteKey] = "错误: 找不到指定的文件。\n"
 	if err := manager.Uninstall(context.Background()); err != nil {
-		t.Fatalf("本地化任务不存在文案也必须容忍: %v", err)
+		t.Fatalf("localized missing-task output must also be tolerated: %v", err)
 	}
 
 	runner.responses[deleteKey] = "ERROR: Access is denied.\n"
 	err := manager.Uninstall(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "拒绝访问") {
-		t.Fatalf("删除被拒绝必须可操作化, got %v", err)
+		t.Fatalf("deletion denial must be actionable, got %v", err)
 	}
 
 	runner.responses[deleteKey] = ""
@@ -332,7 +332,7 @@ func TestSchtasksUninstall(t *testing.T) {
 	runner.responses["sc.exe delete NexTermAgent"] = "[SC] OpenService FAILED 5:\n"
 	err = manager.Uninstall(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "管理员") {
-		t.Fatalf("旧系统服务清理失败必须提示管理员权限, got %v", err)
+		t.Fatalf("legacy system service cleanup failure must mention administrator privileges, got %v", err)
 	}
 }
 
@@ -346,6 +346,6 @@ func TestSchtasksUninstallReportsMissingTool(t *testing.T) {
 	}
 	err := newWindowsManager(runner).Uninstall(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "schtasks.exe 不可用") {
-		t.Fatalf("schtasks 缺失必须明确报出, got %v", err)
+		t.Fatalf("missing schtasks must be reported explicitly, got %v", err)
 	}
 }

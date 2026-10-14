@@ -19,14 +19,14 @@ function ruleBlock(selector: string): string {
   throw new Error(`unbalanced block: ${selector}`);
 }
 
-describe("行内操作条的几何稳定性（CSS 机制）", () => {
-  it("常驻行内操作条占位布局，只用 visibility 控制显隐", () => {
+describe("row action bar geometric stability (CSS mechanics)", () => {
+  it("reserves layout for persistent row actions and toggles only visibility", () => {
     const base = ruleBlock(".nx-row-reserve-actions .nx-row-actions");
     expect(base).toMatch(/display:\s*flex/);
     expect(base).toMatch(/visibility:\s*hidden/);
   });
 
-  it("hover / 选中 / focus-within 只切 visibility，不回退 display 切换", () => {
+  it("hover, selected, and focus-within states toggle only visibility without display switching", () => {
     expect(css).toMatch(
       /\.nx-row-reserve-actions:hover \.nx-row-actions,\s*\.nx-row-reserve-actions\.is-selected \.nx-row-actions,\s*\.nx-row-reserve-actions:focus-within \.nx-row-actions\s*\{/,
     );
@@ -35,7 +35,7 @@ describe("行内操作条的几何稳定性（CSS 机制）", () => {
     expect(reveal).not.toMatch(/display:/);
   });
 
-  it("coarse pointer 下常驻行内操作条常显，行高不再随交互变化", () => {
+  it("keeps persistent row actions visible for coarse pointers without changing row height during interaction", () => {
     const coarse = css.slice(css.indexOf("@media (pointer: coarse)"));
     const start = coarse.indexOf(".nx-row-reserve-actions .nx-row-actions");
     expect(start).toBeGreaterThan(0);
@@ -44,7 +44,7 @@ describe("行内操作条的几何稳定性（CSS 机制）", () => {
     expect(body).toMatch(/visibility:\s*visible/);
   });
 
-  it("旧的 display 切换显隐路径与文件侧特判不再保留", () => {
+  it("removes legacy display-based visibility switching and file-specific rules", () => {
     expect(css).not.toContain(".nx-files-row");
     expect(css).not.toMatch(/\.nx-row:hover \.nx-row-actions/);
   });

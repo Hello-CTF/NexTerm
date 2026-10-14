@@ -111,10 +111,10 @@ func captureSession(t *testing.T, call accountCall) *accountTestSession {
 		}
 	}
 	if session.cookie == nil {
-		t.Fatal("响应缺少会话 cookie")
+		t.Fatal("response is missing session cookie")
 	}
 	if want := int(account.SessionAbsoluteTTL / time.Second); session.cookie.MaxAge != want {
-		t.Fatalf("会话 cookie MaxAge = %d, 期望 %d(与绝对 TTL 对齐, 重启客户端不掉线)", session.cookie.MaxAge, want)
+		t.Fatalf("session cookie MaxAge = %d, want %d (aligned with absolute TTL so the client stays logged in across restarts)", session.cookie.MaxAge, want)
 	}
 	return session
 }
@@ -245,7 +245,7 @@ func TestAccountHTTPLogoutAndLogoutAll(t *testing.T) {
 	session := fixture.login(t, "root", "password-a2")
 	second := fixture.login(t, "root", "password-a2")
 	if session.cookie.Value == second.cookie.Value {
-		t.Fatal("每次登录必须签发新会话")
+		t.Fatal("each login must issue a new session")
 	}
 
 	if call := fixture.call(t, http.MethodPost, "/auth/logout", nil, session, "", nil); call.status != http.StatusForbidden {
@@ -321,10 +321,10 @@ func TestAccountHTTPCookieSecurityAttributes(t *testing.T) {
 		}
 	}
 	if cookie == nil {
-		t.Fatal("缺少会话 cookie")
+		t.Fatal("missing session cookie")
 	}
 	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" || cookie.Secure {
-		t.Fatalf("cookie 属性不符: %+v", cookie)
+		t.Fatalf("cookie attributes do not match: %+v", cookie)
 	}
 
 	tlsConfig := testConfig(t, false)
@@ -356,7 +356,7 @@ func TestAccountHTTPCookieSecurityAttributes(t *testing.T) {
 		}
 	}
 	if !secure {
-		t.Fatal("TLS 下会话 cookie 必须带 Secure")
+		t.Fatal("session cookie must have Secure under TLS")
 	}
 }
 
@@ -501,7 +501,7 @@ func TestAccountHTTPPasswordChange(t *testing.T) {
 
 	newSalt := currentDEKSalt(t, fixture, session)
 	if oldSalt == newSalt {
-		t.Fatal("密码变更必须重包账号加密密钥")
+		t.Fatal("password change must rewrap the data key")
 	}
 }
 
@@ -722,10 +722,10 @@ func TestAccountHTTPNoRawDEK(t *testing.T) {
 	raw := base64.StdEncoding.EncodeToString(dek)
 	encoded, _ := json.Marshal(call.body)
 	if strings.Contains(string(encoded), raw) {
-		t.Fatal("响应不得包含明文 DEK")
+		t.Fatal("response must not contain plaintext DEK")
 	}
 	if strings.Contains(string(encoded), "password_hash") {
-		t.Fatal("响应不得包含密码哈希")
+		t.Fatal("response must not contain password hash")
 	}
 	envelope, err := base64.StdEncoding.DecodeString(call.body["dek_envelope"].(string))
 	if err != nil || len(envelope) == 0 {
@@ -752,7 +752,7 @@ func TestAccountHTTPDEKUploadOnce(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodPost, "/auth/dek", upload, dave, dave.csrf, nil); call.status != http.StatusConflict {
 		t.Fatalf("dek re-upload status=%d", call.status)
-	} else if failure := call.body["error"].(map[string]any); failure["code"] != "bad_param" || !strings.Contains(failure["message"].(string), "账号加密密钥已存在") {
+	} else if failure := call.body["error"].(map[string]any); failure["code"] != "bad_param" || !strings.Contains(failure["message"].(string), "数据密钥已存在") {
 		t.Fatalf("dek re-upload failure=%v", failure)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusOK {
@@ -935,7 +935,7 @@ func TestAccountHTTPCORSDevFrontend(t *testing.T) {
 		t.Fatalf("preflight headers=%q", headers)
 	}
 	if response.Header.Get("Access-Control-Allow-Credentials") != "true" {
-		t.Fatal("预检必须允许 credentials")
+		t.Fatal("preflight must allow credentials")
 	}
 	if response.Header.Get("Access-Control-Allow-Origin") != devOrigin {
 		t.Fatalf("preflight origin=%q", response.Header.Get("Access-Control-Allow-Origin"))
@@ -1009,7 +1009,7 @@ func TestAccountHTTPDEKUploadConcurrent(t *testing.T) {
 		}
 	}
 	if oks != 1 || conflicts != 1 {
-		t.Fatalf("并发上传必须恰好一个成功一个冲突: ok=%d conflict=%d", oks, conflicts)
+		t.Fatalf("concurrent uploads must have exactly one success and one conflict: ok=%d conflict=%d", oks, conflicts)
 	}
 }
 
@@ -1046,11 +1046,11 @@ END`); err != nil {
 
 	call := fixture.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
 	if call.status != http.StatusOK || call.body["initialized"] != false {
-		t.Fatalf("失败不得留下部分账号: status=%d body=%v", call.status, call.body)
+		t.Fatalf("failure must not leave a partial account: status=%d body=%v", call.status, call.body)
 	}
 	call = fixture.call(t, http.MethodPost, "/auth/init", initBody, nil, "", nil)
 	if call.status != http.StatusOK {
-		t.Fatalf("初始化码必须可重试: status=%d body=%v", call.status, call.body)
+		t.Fatalf("initialization code must be retryable: status=%d body=%v", call.status, call.body)
 	}
 	adminSession := captureSession(t, call)
 
@@ -1072,7 +1072,7 @@ END`); err != nil {
 		t.Fatal(err)
 	}
 	if call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "alice", "password": "password-q2"}, nil, "", nil); call.status != http.StatusForbidden {
-		t.Fatalf("失败不得留下可登录账号: status=%d", call.status)
+		t.Fatalf("failure must not leave a login-capable account: status=%d", call.status)
 	}
 	call = fixture.call(t, http.MethodPost, "/auth/register", registerBody, nil, "", nil)
 	if call.status != http.StatusOK {

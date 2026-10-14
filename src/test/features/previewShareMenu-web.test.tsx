@@ -58,8 +58,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("PreviewShareMenu WEB 分流", () => {
-  it("创建经 previewApi 直连并用 previewPublicUrl 拼公开 URL, 默认 write:false", async () => {
+describe("PreviewShareMenu WEB dispatch", () => {
+  it("creates directly through previewApi and builds the public URL with previewPublicUrl, defaulting write to false", async () => {
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
     clickButton(container, "预览链接");
@@ -72,7 +72,7 @@ describe("PreviewShareMenu WEB 分流", () => {
     expect(mocks.remoteCreate).not.toHaveBeenCalled();
   });
 
-  it("勾选允许控制后创建传 write:true, 成功后勾选重置为未选", async () => {
+  it("sends write:true after checking allow control and resets the checkbox after success", async () => {
     mounted = mountWithClient(createElement(PreviewShareMenu, { tabId: "tab-1", sessionName: "web-01" }));
     const container = mounted.container;
     clickButton(container, "预览链接");
@@ -93,7 +93,7 @@ describe("PreviewShareMenu WEB 分流", () => {
     expect(checkbox!.checked).toBe(false);
   });
 
-  it("进行中的链接按 permission 显示只读/可控制徽章, 缺失或未知值按只读", async () => {
+  it("shows read-only or controllable badges for active links by permission, defaulting missing or unknown values to read-only", async () => {
     mocks.listPreviewLinks.mockResolvedValue({
       links: [
         {
@@ -124,7 +124,7 @@ describe("PreviewShareMenu WEB 分流", () => {
     expect(badges.filter((text) => text === "只读")).toHaveLength(2);
   });
 
-  it("列表按 tabId 直接过滤, 不查桌面中继状态", async () => {
+  it("filters the list directly by tabId without querying desktop relay state", async () => {
     mocks.listPreviewLinks.mockResolvedValue({
       links: [
         { id: "l-1", owner_id: "u-1", session_id: "tab-1", created_at: NOW - 60_000, expires_at: NOW + 3_600_000 },

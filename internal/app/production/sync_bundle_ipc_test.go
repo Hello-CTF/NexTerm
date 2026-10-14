@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -228,6 +230,50 @@ func sourceDBSnippetUpsert(ctx context.Context, database *store.Store, id, name,
 	_, err := database.DB().ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at)
 VALUES(?,NULL,?,?,0,?,?)`, id, name, body, createdAt, updatedAt)
 	return err
+}
+
+func TestSyncBundleExportSourceFilePrivateKey(t *testing.T) {
+	database, credentialVault, syncService := newSyncBundleTestService(t, false, true)
+	ctx := t.Context()
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	const keyBody = "-----BEGIN OPENSSH PRIVATE KEY-----\nsource-file-key-body\n-----END OPENSSH PRIVATE KEY-----\n"
+	if err := os.WriteFile(keyPath, []byte(keyBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reference := vault.ReferencedPrivateKey(keyPath, nil).Encode()
+	credID := ids.New()
+	nonce, blob, err := credentialVault.EncryptCredential(ctx, reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CredentialPut(ctx, store.CredentialInput{
+		ID: credID, Name: "referenced key", Kind: vault.KindPrivateKey, Nonce: nonce, Blob: blob, KEKHint: credentialVault.KEKHint(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assetID := ids.New()
+	seedSyncBundleAsset(t, database, store.AssetRow{
+		ID: assetID, Kind: "ssh", Name: "web-01", CredID: &credID, OptionsJSON: "{}", CreatedAt: 100, UpdatedAt: 200,
+	})
+
+	dispatcher := registerSyncBundleDispatcher(t, syncService)
+	export := decodeSyncBundleResponse[syncservice.SyncBundle](t, dispatchSyncBundle(t, dispatcher, syncservice.CommandExport, map[string]any{
+		"assetIds": []string{assetID}, "withCreds": true,
+	}))
+	if len(export.Creds) != 1 || export.Creds[0].Secret != reference {
+		t.Fatal("source:file credential must retain its path-only payload")
+	}
+	payload := vault.ParsePrivateKeyPayload(export.Creds[0].Secret)
+	if payload.File == nil || *payload.File != keyPath || payload.Key != nil {
+		t.Fatalf("exported private key payload = %+v, want only file reference %q", payload, keyPath)
+	}
+	encoded, err := json.Marshal(export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "source-file-key-body") {
+		t.Fatal("source:file private key body must not be inlined into the bundle")
+	}
 }
 
 func TestSyncBundleExportRequiresUnlockedVaultForCreds(t *testing.T) {
@@ -878,7 +924,7 @@ func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
 		}))
 	}
 
-	t.Run("stale+stale 只计一次跳过", func(t *testing.T) {
+	t.Run("stale+stale counts one skip", func(t *testing.T) {
 		id := tombstoneGroup(t)
 		report := importGroups(t, []map[string]any{
 			{"id": id, "name": "旧一", "sort": 0, "createdAt": 100, "updatedAt": 100},
@@ -895,7 +941,7 @@ func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
 		}
 	})
 
-	t.Run("fresh+stale 最终决策为跳过", func(t *testing.T) {
+	t.Run("fresh+stale ends with skip decision", func(t *testing.T) {
 		id := tombstoneGroup(t)
 		report := importGroups(t, []map[string]any{
 			{"id": id, "name": "早期新", "sort": 0, "createdAt": 100, "updatedAt": ids.NowMS() + 10000},
@@ -912,7 +958,7 @@ func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
 		}
 	})
 
-	t.Run("stale+fresh 采用最后一项", func(t *testing.T) {
+	t.Run("stale+fresh uses the last entry", func(t *testing.T) {
 		id := tombstoneGroup(t)
 		report := importGroups(t, []map[string]any{
 			{"id": id, "name": "早期旧", "sort": 0, "createdAt": 100, "updatedAt": 100},
@@ -930,7 +976,7 @@ func TestSyncBundleGroupImportDuplicateLastIndexWins(t *testing.T) {
 		}
 	})
 
-	t.Run("子分组引用最终被跳过的重复父级", func(t *testing.T) {
+	t.Run("child group references duplicate parent skipped in final decision", func(t *testing.T) {
 		parentID := tombstoneGroup(t)
 		childID := ids.New()
 		report := importGroups(t, []map[string]any{

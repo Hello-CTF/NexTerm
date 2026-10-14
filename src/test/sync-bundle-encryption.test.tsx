@@ -118,8 +118,8 @@ function exportButton(): HTMLButtonElement {
   return btn;
 }
 
-describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
-  it("勾选资产后即可导出，不再有格式选择", async () => {
+describe("SyncBundleCard single .nxbm export format", () => {
+  it("enables export after selecting assets without offering a format choice", async () => {
     await mountCard();
     expect(exportButton().disabled).toBe(true);
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
@@ -128,7 +128,7 @@ describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
     expect(mounted!.container.querySelector("#bundle-password")).not.toBeNull();
   });
 
-  it("口令不一致禁用导出并提示，一致后放行", async () => {
+  it("disables export for mismatched passphrases and enables it once they match", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
@@ -140,7 +140,7 @@ describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
     await flushUntil(() => !exportButton().disabled);
   });
 
-  it("带口令导出走 .nxbm 容器写入并携带口令，摘要标注已加密", async () => {
+  it("writes password-protected exports as .nxbm with the password and marks the summary as encrypted", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
@@ -159,7 +159,7 @@ describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
     expect(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.value).toBe("");
   });
 
-  it("留空口令导出明文 .nxbm 容器", async () => {
+  it("exports an unencrypted .nxbm container when the passphrase is blank", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
     click(exportButton());
@@ -173,8 +173,8 @@ describe("SyncBundleCard 导出单一 .nxbm 格式", () => {
   });
 });
 
-describe("SyncBundleCard 加密导入", () => {
-  it("桌面端读到加密包时提示输入口令并用口令重读同一文件", async () => {
+describe("SyncBundleCard encrypted import", () => {
+  it("prompts for a passphrase after reading an encrypted bundle on desktop and rereads the same file with it", async () => {
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
     mocks.readBundleFile
       .mockRejectedValueOnce({ code: "bad_param", message: "资产包已加密，请提供口令" })
@@ -194,7 +194,7 @@ describe("SyncBundleCard 加密导入", () => {
     expect(text()).toContain("backup.nxbm");
   });
 
-  it("口令错误时展示解密失败原因", async () => {
+  it("shows the decryption failure reason for an incorrect passphrase", async () => {
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
     mocks.readBundleFile
       .mockRejectedValueOnce({ code: "bad_param", message: "资产包已加密，请提供口令" })
@@ -207,7 +207,7 @@ describe("SyncBundleCard 加密导入", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("取消口令输入时安静返回，不报错也不导入", async () => {
+  it("returns quietly when passphrase entry is canceled without reporting an error or importing", async () => {
     mocks.openWailsFile.mockResolvedValue("/home/user/backup.nxbm");
     mocks.readBundleFile.mockRejectedValue({ code: "bad_param", message: "资产包已加密，请提供口令" });
     mocks.promptText.mockResolvedValue(null);
@@ -220,7 +220,7 @@ describe("SyncBundleCard 加密导入", () => {
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
-  it("桌面端导入提示只声明 .nxbm", async () => {
+  it("mentions only .nxbm in the desktop import hint", async () => {
     await mountCard();
     openImport();
     await flushUntil(() => text().includes("选择资产包文件"));
@@ -229,8 +229,8 @@ describe("SyncBundleCard 加密导入", () => {
   });
 });
 
-describe("SyncBundleCard 口令行窄屏结构", () => {
-  it("口令行可换行、输入框可收缩", async () => {
+describe("SyncBundleCard passphrase row responsive layout", () => {
+  it("allows the passphrase row to wrap and its input to shrink", async () => {
     await mountCard();
     const row = mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.closest("div")!;
     expect(row.className).toContain("flex-wrap");

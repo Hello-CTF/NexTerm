@@ -103,7 +103,7 @@ function seedWorkspace(withSession: boolean): void {
           {
             id: "p1",
             activeTabId: "t1",
-            tabs: [{ id: "t1", kind: "settings", title: "设置", closable: true }],
+            tabs: [{ id: "t1", kind: "settings", title: "Settings", closable: true }],
           },
         ],
         activePaneId: "p1",
@@ -155,8 +155,8 @@ afterEach(() => {
   useUi.setState({ appDialog: null, toasts: [] });
 });
 
-describe("新建终端（App openNewTerminal）主机指纹确认", () => {
-  it("断开的 ssh 会话：pending 时弹指纹确认，取消则不重连", async () => {
+describe("Host key confirmation when creating a terminal (App openNewTerminal)", () => {
+  it("shows the fingerprint dialog for a disconnected ssh session in pending state and does not reconnect after cancellation", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
@@ -184,7 +184,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(toastTexts()).toContain("已取消重连");
   });
 
-  it("changed 时弹出变更警告并展示原/新指纹，接受后记账并重连", async () => {
+  it("shows the changed-key warning with old and new fingerprints, then records the key and reconnects after acceptance", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
@@ -218,7 +218,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     );
   });
 
-  it("指纹未变化时不弹窗直接重连", async () => {
+  it("reconnects directly without a dialog when the fingerprint is unchanged", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
@@ -239,7 +239,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
-  it("probe 自身报 host_key_pending（跳板机）时弹确认，取消则不重连", async () => {
+  it("shows confirmation when probe itself reports host_key_pending for a jump host and does not reconnect after cancellation", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({
       code: "host_key_pending",
@@ -271,7 +271,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(toastTexts()).toContain("已取消重连");
   });
 
-  it("probe 报 changed 时展示原/新指纹，接受后记账并重连", async () => {
+  it("shows old and new fingerprints when probe reports changed, then records the key and reconnects after acceptance", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({
       code: "host_key_pending",
@@ -309,7 +309,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     );
   });
 
-  it("探测不可用时回退为直接重连，不弹窗", async () => {
+  it("falls back to direct reconnect without a dialog when probing is unavailable", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({ code: "not_found", message: "unknown command" });
     mocks.reconnect.mockResolvedValue(true);
@@ -323,7 +323,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("非 ssh 会话不探测指纹直接重连", async () => {
+  it("reconnects non-ssh sessions directly without probing the fingerprint", async () => {
     seedWorkspace(true);
     mocks.sessionList.mockImplementation(async () =>
       mocks.reconnect.mock.calls.length > 0
@@ -341,7 +341,7 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("工作区只剩资产时：connect 报 host_key_pending，取消不重试，接受后重试并开终端", async () => {
+  it("handles host_key_pending from connect for an asset-only workspace, aborting on cancellation and retrying to open a terminal on acceptance", async () => {
     seedWorkspace(false);
     mocks.sessionList.mockResolvedValue([]);
     mocks.connect
@@ -388,8 +388,8 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
   });
 });
 
-describe("指纹确认弹窗去重", () => {
-  it("connectAsset 已持有弹窗时，新建终端加入同一弹窗而不是再弹一次", async () => {
+describe("Host key confirmation dialog deduplication", () => {
+  it("shares the existing connectAsset dialog when creating a terminal instead of opening another", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
@@ -433,7 +433,7 @@ describe("指纹确认弹窗去重", () => {
     expect(mocks.probeHostKey).toHaveBeenCalledTimes(1);
   });
 
-  it("共享弹窗取消时，两条路径都不连接", async () => {
+  it("does not connect through either path when the shared dialog is cancelled", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",

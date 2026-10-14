@@ -47,7 +47,7 @@ func (h *harness) check(name string, ok bool, detail string) {
 }
 
 func (h *harness) summarize() int {
-	fmt.Printf("\n通过 %d 项, 失败 %d 项\n", len(h.checks)-h.failed, h.failed)
+	fmt.Printf("\n%d passed, %d failed\n", len(h.checks)-h.failed, h.failed)
 	if h.failed > 0 {
 		return 1
 	}
@@ -201,7 +201,7 @@ func tailBytes(b []byte, n int) []byte {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "用法: e2e-harness <device|sharing|sync> [--bin PATH] [--helper PATH] [--no-build]")
+	fmt.Fprintln(os.Stderr, "usage: e2e-harness <device|sharing|sync> [--bin PATH] [--helper PATH] [--no-build]")
 	os.Exit(2)
 }
 
@@ -215,9 +215,9 @@ func main() {
 	}
 	root := repoRoot()
 	flags := flag.NewFlagSet("e2e-harness "+scenario, flag.ExitOnError)
-	bin := flags.String("bin", filepath.Join(root, "target", "go-build", "nexterm-server-e2e"), "server 二进制路径")
-	helper := flags.String("helper", filepath.Join(root, "target", "go-build", "syncv2-helper-e2e"), "syncv2-helper 二进制路径")
-	noBuild := flags.Bool("no-build", false, "复用既有二进制, 不重新构建")
+	bin := flags.String("bin", filepath.Join(root, "target", "go-build", "nexterm-server-e2e"), "server binary path")
+	helper := flags.String("helper", filepath.Join(root, "target", "go-build", "syncv2-helper-e2e"), "syncv2-helper binary path")
+	noBuild := flags.Bool("no-build", false, "reuse existing binaries; do not rebuild")
 	flags.Parse(os.Args[2:])
 	h := &harness{root: root, bin: *bin, helper: *helper, noBuild: *noBuild, checks: []checkEntry{}}
 	if scenario == "sync" {

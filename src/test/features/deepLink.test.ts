@@ -58,14 +58,14 @@ beforeEach(() => {
 });
 
 describe("parseDeepLinkAssetId", () => {
-  it("解析 nexterm://connect/<id>", () => {
+  it("parses nexterm://connect/<id>", () => {
     expect(parseDeepLinkAssetId("nexterm://connect/a-1")).toBe("a-1");
     expect(parseDeepLinkAssetId("nexterm://connect/a-1/")).toBe("a-1");
     expect(parseDeepLinkAssetId("nexterm://connect/a%20b")).toBe("a b");
     expect(parseDeepLinkAssetId("  nexterm://connect/a-1  ")).toBe("a-1");
   });
 
-  it("拒绝其他形状", () => {
+  it("rejects other shapes", () => {
     expect(parseDeepLinkAssetId("")).toBeNull();
     expect(parseDeepLinkAssetId("nexterm://connect/")).toBeNull();
     expect(parseDeepLinkAssetId("nexterm://open/a-1")).toBeNull();
@@ -76,7 +76,7 @@ describe("parseDeepLinkAssetId", () => {
 });
 
 describe("openDeepLink", () => {
-  it("资产存在时打开对应工作区", async () => {
+  it("opens the corresponding workspace when the asset exists", async () => {
     mocks.get.mockResolvedValue(assetOf({ id: "a-1", name: "web-1", credId: "cred-1" }));
     await openDeepLink("nexterm://connect/a-1");
     expect(mocks.get).toHaveBeenCalledWith("a-1");
@@ -88,21 +88,27 @@ describe("openDeepLink", () => {
     });
   });
 
-  it("资产不存在时提示且不连接", async () => {
+  it("shows an error and does not connect when the asset is missing", async () => {
     mocks.get.mockRejectedValue({ code: "not_found", message: "missing" });
     await openDeepLink("nexterm://connect/nope");
     expect(mocks.connectAsset).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("不存在"));
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("打开链接对应的资产失败，请确认资产仍存在后重试"),
+    );
   });
 
-  it("资产已删除时提示且不连接", async () => {
+  it("shows an error and does not connect when the asset is deleted", async () => {
     mocks.get.mockResolvedValue(assetOf({ id: "a-1", name: "web-1", deletedAt: 5 }));
     await openDeepLink("nexterm://connect/a-1");
     expect(mocks.connectAsset).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("不存在"));
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("打开链接对应的资产失败，请确认资产仍存在后重试"),
+    );
   });
 
-  it("链接无法识别时提示", async () => {
+  it("shows an error for an unrecognized link", async () => {
     await openDeepLink("nexterm://wat");
     expect(mocks.get).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法识别"));
@@ -110,7 +116,7 @@ describe("openDeepLink", () => {
 });
 
 describe("copyAssetDeepLink", () => {
-  it("写入 nexterm:// 链接到剪贴板", async () => {
+  it("writes the nexterm:// link to the clipboard", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     expect(assetDeepLink("a-1")).toBe("nexterm://connect/a-1");
@@ -121,7 +127,7 @@ describe("copyAssetDeepLink", () => {
     );
   });
 
-  it("复制失败时提示重试", async () => {
+  it("shows a retry error when copying fails", async () => {
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
     copyAssetDeepLink("a-1");
     await vi.waitFor(() =>

@@ -6,23 +6,23 @@ import {
 } from "../../features/fleet/format";
 
 describe("formatTime", () => {
-  it("0 显示从未", () => {
+  it("returns the never placeholder for 0", () => {
     expect(formatTime(0)).toBe("从未");
   });
 
-  it("统一为 YYYY-MM-DD HH:mm 本地时间", () => {
+  it("formats local time as YYYY-MM-DD HH:mm", () => {
     expect(formatTime(new Date(2026, 0, 2, 3, 4).getTime())).toBe("2026-01-02 03:04");
     expect(formatTime(new Date(2026, 11, 31, 23, 59).getTime())).toBe("2026-12-31 23:59");
   });
 });
 
 describe("formatBytes", () => {
-  it("非法输入显示占位符", () => {
+  it("shows a placeholder for invalid input", () => {
     expect(formatBytes(Number.NaN)).toBe("—");
     expect(formatBytes(-1)).toBe("—");
   });
 
-  it("按 1024 进位并保留一位小数", () => {
+  it("uses 1024-based units with one decimal place", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(1023)).toBe("1023 B");
     expect(formatBytes(1024)).toBe("1.0 KiB");
@@ -33,7 +33,7 @@ describe("formatBytes", () => {
 });
 
 describe("fleet/format re-export", () => {
-  it("与 ui/format 是同一实现", () => {
+  it("uses the same implementation as ui/format", () => {
     expect(fleetFormatBytes).toBe(formatBytes);
     expect(fleetFormatTime).toBe(formatTime);
   });

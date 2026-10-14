@@ -1,7 +1,7 @@
 // Asset tree device rows: mounts server-enrolled devices into the asset tree as plain rows, with no section chrome of any kind -
 // no header row, no count, no refresh button, and no placeholder hints. While the device list is loading, when it failed to load,
 // when no devices are enrolled, and when every device is offline, the component renders null and leaves no visual trace in the
-// tree; management (enrollment, manual refresh, error/offline details) lives in the 设备管理 view.
+// tree; management (enrollment, manual refresh, error/offline details) lives in the device management view.
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter opens a remote terminal, no separate "terminal" button).

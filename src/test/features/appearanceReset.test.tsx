@@ -22,11 +22,11 @@ function resetButton(container: ParentNode): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
     (b) => b.textContent?.trim() === "恢复默认",
   ) as HTMLButtonElement | undefined;
-  if (!button) throw new Error("恢复默认 button not found");
+  if (!button) throw new Error("Reset to defaults button not found");
   return button;
 }
 
-describe("AppearanceCard 恢复默认", () => {
+describe("AppearanceCard reset to defaults", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
@@ -40,7 +40,7 @@ describe("AppearanceCard 恢复默认", () => {
     mounted = undefined;
   });
 
-  it("把主题恢复为跟随系统并持久化，布局等其他本地数据不受影响", () => {
+  it("resets the theme to follow the system and persists it without affecting other local data such as layout", () => {
     localStorage.setItem("nexterm.layout.v1", JSON.stringify({ leftWidth: 300, rightWidth: 400 }));
     mounted = mount(createElement(AppearanceCard));
 
@@ -62,13 +62,13 @@ describe("AppearanceCard 恢复默认", () => {
     expect(system?.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("已是默认主题时按钮禁用", () => {
+  it("disables the button when the theme is already at its default", () => {
     useUi.getState().setThemeMode("system");
     mounted = mount(createElement(AppearanceCard));
     expect(resetButton(mounted.container).disabled).toBe(true);
   });
 
-  it("恢复默认后重新加载模块仍是默认值", async () => {
+  it("retains defaults after reloading the module following a reset", async () => {
     mounted = mount(createElement(AppearanceCard));
     clickButton(mounted.container, "高级设置");
     clickButton(mounted.container, "恢复默认");

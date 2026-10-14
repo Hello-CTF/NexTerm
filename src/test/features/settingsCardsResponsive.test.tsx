@@ -75,7 +75,7 @@ beforeEach(() => {
   mocks.memoryGet.mockResolvedValue({
     id: ULID,
     topic: "operations",
-    content: `重启安排在 02:00；令牌 ${LONG_TOKEN} 不换行会溢出`,
+    content: `Restart scheduled for 02:00; token ${LONG_TOKEN} must not overflow without wrapping`,
     version: 3,
     redacted: true,
     createdAt: 1,
@@ -90,8 +90,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("MemoryCard 窄屏结构", () => {
-  it("ULID 截断但保留完整值入口，行可折行", async () => {
+describe("MemoryCard narrow-screen layout", () => {
+  it("truncates the ULID while preserving full-value access and allowing rows to wrap", async () => {
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => mounted!.container.textContent?.includes(ULID) ?? false);
     const idSpan = [...mounted.container.querySelectorAll("span")].find(
@@ -107,7 +107,7 @@ describe("MemoryCard 窄屏结构", () => {
     expect(mounted.container.textContent).toContain("v3 ·");
   });
 
-  it("展开正文 pre 对长 token 断行", async () => {
+  it("wraps long tokens in expanded pre content", async () => {
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => mounted!.container.textContent?.includes(ULID) ?? false);
     const row = [...mounted.container.querySelectorAll("button")].find((b) =>
@@ -120,7 +120,7 @@ describe("MemoryCard 窄屏结构", () => {
     expect(pre?.textContent).toContain(LONG_TOKEN);
   });
 
-  it("两个开关行整行是 label，点文字即切换", async () => {
+  it("makes both toggle rows full labels so clicking their text toggles them", async () => {
     mounted = mount(createElement(MemoryCard));
     await flushUntil(() => {
       const input = mounted!.container.querySelector<HTMLInputElement>(
@@ -143,8 +143,8 @@ describe("MemoryCard 窄屏结构", () => {
   });
 });
 
-describe("KnownHostsCard 窄屏结构", () => {
-  it("长主机名截断且 title 带完整值，keyType 与撤销按钮常驻", async () => {
+describe("KnownHostsCard narrow-screen layout", () => {
+  it("truncates long hostnames with the full value in the title and keeps keyType and revoke actions visible", async () => {
     mounted = mount(createElement(KnownHostsCard));
     await flushUntil(() => mounted!.container.textContent?.includes(KNOWN_HOST.host) ?? false);
     const hostSpan = [...mounted.container.querySelectorAll("span")].find((s) =>

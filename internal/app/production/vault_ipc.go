@@ -89,7 +89,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 		func() error {
 			return ipc.Register(dispatcher, "vault_set_autolock", func(ctx context.Context, _ *ipc.Call, input vaultAutoLockRequest) (any, error) {
 				if input.Minutes == nil {
-					return nil, ipc.BadParam(fmt.Errorf("自动锁时长需在 0（禁用）至 1440 分钟之间"))
+					return nil, ipc.BadParam(fmt.Errorf("自动锁定时长需在 0（禁用）至 1440 分钟之间"))
 				}
 				return nil, credentialVault.SetAutoLock(ctx, *input.Minutes)
 			})

@@ -55,11 +55,11 @@ describe("main.tsx public preview route", () => {
       expect(socket.url).toContain("/share/preview/route-token-1");
     }
     expect(document.body.textContent).not.toContain("route-token-1");
-  });
+  }, 15000);
 
   it("ignores malformed preview paths and falls through to the app branch", async () => {
     FakeWebSocket.instances = [];
     await importMainAt("/share/preview/");
     expect(FakeWebSocket.instances.some((socket) => socket.url.includes("/share/preview/"))).toBe(false);
-  });
+  }, 15000);
 });

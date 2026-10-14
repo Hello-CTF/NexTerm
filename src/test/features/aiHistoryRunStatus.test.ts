@@ -82,7 +82,7 @@ describe("runStatusOf", () => {
   });
 });
 
-describe("AiSidebar 历史会话运行状态", () => {
+describe("AiSidebar history conversation run status", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
@@ -138,7 +138,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     await flush();
   }
 
-  it("给在途会话显示运行中徽章，空闲会话无徽章", async () => {
+  it("shows a running badge for in-flight conversations and no badge for idle conversations", async () => {
     await openHistory();
     await flushUntil(() => text().includes("运行中"));
     expect(text()).toContain("在途会话");
@@ -150,7 +150,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     expect(badges).not.toContain("待恢复");
   });
 
-  it("中断未结束的会话显示待恢复徽章", async () => {
+  it("shows a resume-pending badge for unfinished interrupted conversations", async () => {
     mocks.runs.mockImplementation(async (id: string) =>
       id === "c-1" ? [runOf({ status: "interrupted" })] : [],
     );
@@ -158,7 +158,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     await flushUntil(() => text().includes("待恢复"));
   });
 
-  it("徽章不混进打开按钮的文本里", async () => {
+  it("keeps badges out of the open button text", async () => {
     await openHistory();
     await flushUntil(() => text().includes("运行中"));
     const row = [...mounted!.container.querySelectorAll("button")].find(
@@ -167,7 +167,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     expect(row).toBeTruthy();
   });
 
-  it("阻止删除有在途运行的会话，且不弹确认框", async () => {
+  it("blocks deleting conversations with in-flight runs without asking for confirmation", async () => {
     await openHistory();
     await flushUntil(() => text().includes("运行中"));
 
@@ -179,7 +179,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     expect(text()).toContain("在途会话");
   });
 
-  it("阻止删除有中断待恢复运行的会话", async () => {
+  it("blocks deleting conversations with interrupted runs awaiting resume", async () => {
     mocks.runs.mockImplementation(async (id: string) =>
       id === "c-1" ? [runOf({ status: "interrupted" })] : [],
     );
@@ -193,7 +193,7 @@ describe("AiSidebar 历史会话运行状态", () => {
     expect(mocks.conversationDelete).not.toHaveBeenCalled();
   });
 
-  it("空闲会话照常走确认删除", async () => {
+  it("still confirms deletion for idle conversations", async () => {
     await openHistory();
     await flushUntil(() => text().includes("运行中"));
 
@@ -205,8 +205,8 @@ describe("AiSidebar 历史会话运行状态", () => {
     expect(text()).not.toContain("空闲会话");
   });
 
-  it("运行状态查询失败时按空闲处理，不阻塞删除", async () => {
-    mocks.runs.mockRejectedValue(new Error("网络抖动"));
+  it("treats conversations as idle when run-status loading fails and does not block deletion", async () => {
+    mocks.runs.mockRejectedValue(new Error("Network jitter"));
     await openHistory();
     await flush();
 

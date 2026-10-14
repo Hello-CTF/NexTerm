@@ -131,8 +131,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("AuditView 命令视图", () => {
-  it("切换到命令视图按 command_query 加载, 渲染命令/来源/退出码并保留 OSC 133 覆盖说明", async () => {
+describe("AuditView command view", () => {
+  it("loads with command_query after switching to command view, renders commands/sources/exit codes, and preserves OSC 133 coverage notes", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
 
@@ -157,34 +157,34 @@ describe("AuditView 命令视图", () => {
     expect(body).toContain("共 3 条");
   });
 
-  it("设备/用户/会话过滤传入 command_query 与 command_count", async () => {
+  it("passes device/user/session filters to command_query and command_count", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
     const deviceSelect = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
-    if (!deviceSelect) throw new Error("设备过滤下拉未出现");
+    if (!deviceSelect) throw new Error("Device filter select did not appear");
     setSelectValue(deviceSelect, "a-1");
     await flushUntil(() => mocks.commandQuery.mock.calls.length >= 2);
     expect(mocks.commandQuery).toHaveBeenLastCalledWith({ assetId: "a-1", userId: undefined, sessionId: undefined, limit: 100, offset: 0 });
     expect(mocks.commandCount).toHaveBeenLastCalledWith({ assetId: "a-1", userId: undefined, sessionId: undefined });
 
     const userInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="按用户过滤"]');
-    if (!userInput) throw new Error("用户过滤输入框未出现");
+    if (!userInput) throw new Error("User filter input did not appear");
     setInputValue(userInput, "u-1");
     await flushUntil(() => mocks.commandQuery.mock.calls.length >= 3);
     expect(mocks.commandQuery).toHaveBeenLastCalledWith({ assetId: "a-1", userId: "u-1", sessionId: undefined, limit: 100, offset: 0 });
 
     const sessionInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="按会话过滤"]');
-    if (!sessionInput) throw new Error("会话过滤输入框未出现");
+    if (!sessionInput) throw new Error("Session filter input did not appear");
     setInputValue(sessionInput, "s-1");
     await flushUntil(() => mocks.commandQuery.mock.calls.length >= 4);
     expect(mocks.commandQuery).toHaveBeenLastCalledWith({ assetId: "a-1", userId: "u-1", sessionId: "s-1", limit: 100, offset: 0 });
     expect(mocks.commandCount).toHaveBeenLastCalledWith({ assetId: "a-1", userId: "u-1", sessionId: "s-1" });
   });
 
-  it("空态与失败态如实呈现覆盖限制与错误", async () => {
+  it("shows coverage limitations and errors accurately in empty and failed states", async () => {
     mocks.commandCount.mockResolvedValue({ total: 0 });
     mocks.commandQuery.mockResolvedValue([]);
     mounted = mount(createElement(AuditView));
@@ -200,7 +200,7 @@ describe("AuditView 命令视图", () => {
     expect(text(mounted.container)).toContain("网络中断");
   });
 
-  it("非超管登录用户不提供用户过滤入口且查询不带 userId (服务端强制收敛)", async () => {
+  it("does not offer user filtering or include userId in queries for non-superadmin users (enforced by the server)", async () => {
     useAuth.setState({ user: accountOf("user") });
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
@@ -212,7 +212,7 @@ describe("AuditView 命令视图", () => {
     expect(mocks.commandCount).toHaveBeenCalledWith({ assetId: undefined, userId: undefined, sessionId: undefined });
   });
 
-  it("超管登录用户保留用户过滤入口", async () => {
+  it("keeps user filtering for superadmin users", async () => {
     useAuth.setState({ user: accountOf("superadmin") });
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
@@ -222,7 +222,7 @@ describe("AuditView 命令视图", () => {
     expect(mounted.container.querySelector('input[aria-label="按用户过滤"]')).not.toBeNull();
   });
 
-  it("命令视图可切回审计视图", async () => {
+  it("switches back from command view to audit view", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);
     clickButton(mounted.container, "命令");

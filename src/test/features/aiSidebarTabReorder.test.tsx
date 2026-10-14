@@ -146,7 +146,7 @@ function fireDrag(
   return { event, data, dt };
 }
 
-describe("AiSidebar 标签排序", () => {
+describe("AiSidebar tab reordering", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -201,7 +201,7 @@ describe("AiSidebar 标签排序", () => {
     view = null;
   });
 
-  it("右键菜单左移/右移标签, 边界项禁用, activeTabId 不变", async () => {
+  it("moves tabs left and right from the context menu, disables boundary items, and preserves activeTabId", async () => {
     await flush();
     openTabMenu(view!, 0);
     expect(menuItem(view!, "左移标签").disabled).toBe(true);
@@ -227,7 +227,7 @@ describe("AiSidebar 标签排序", () => {
     expect(activeStoreTabId()).toBe("tab-b");
   });
 
-  it("Ctrl+Shift+ArrowLeft/Right 移动当前标签, 焦点保持在原节点", async () => {
+  it("moves the active tab with Ctrl+Shift+ArrowLeft/Right while keeping focus on the original node", async () => {
     await flush();
     const tabB = stripTabs(view!)[1];
     act(() => tabB.focus());
@@ -247,7 +247,7 @@ describe("AiSidebar 标签排序", () => {
     expect(document.activeElement).toBe(tabB);
   });
 
-  it("移动键在边界为 no-op, 未按 Ctrl+Shift 的方向键不触发移动", async () => {
+  it("makes movement keys no-ops at boundaries and ignores arrow keys without Ctrl+Shift", async () => {
     await flush();
     const tabB = stripTabs(view!)[1];
     act(() => tabB.focus());
@@ -278,7 +278,7 @@ describe("AiSidebar 标签排序", () => {
     expect(storeTabIds()).toEqual(["tab-a", "tab-c", "tab-b"]);
   });
 
-  it("拖拽排序: 前半段插到目标之前, 后半段插到目标之后, activeTabId 不变", async () => {
+  it("drag reordering inserts before the target in the first half and after it in the second half, preserving activeTabId", async () => {
     await flush();
     const tabs = stripTabs(view!);
     tabs.forEach((el, i) => stubRect(el, i * 100, 80));
@@ -304,7 +304,7 @@ describe("AiSidebar 标签排序", () => {
     expect(stripTabs(view!).map((el) => el.textContent)).toEqual(["甲", "乙", "丙"]);
   });
 
-  it("dragover 指示 class 随位置切换, dragleave/dragend 清除且不改动顺序", async () => {
+  it("switches dragover indicator classes by position and clears them on dragleave and dragend without changing order", async () => {
     await flush();
     const tabs = stripTabs(view!);
     tabs.forEach((el, i) => stubRect(el, i * 100, 80));
@@ -331,7 +331,7 @@ describe("AiSidebar 标签排序", () => {
     expect(storeTabIds()).toEqual(["tab-a", "tab-b", "tab-c"]);
   });
 
-  it("异源拖拽与自身投放被忽略", async () => {
+  it("ignores foreign drags and dropping a tab onto itself", async () => {
     await flush();
     const tabs = stripTabs(view!);
     tabs.forEach((el, i) => stubRect(el, i * 100, 80));

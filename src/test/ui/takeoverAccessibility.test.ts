@@ -26,7 +26,7 @@ import { resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 const takeover: TakeoverState = {
   tabId: "terminal-1",
   token: "ownership-token",
-  task: "检查服务状态",
+  task: "Check service status",
   allowWrite: true,
   startedAt: Date.now(),
 };
@@ -119,7 +119,7 @@ describe("takeover accessibility and overlay priority", () => {
     );
     act(() => {
       useUi.setState({
-        appDialog: { kind: "ask", message: "先关闭确认框", level: "warning", resolve },
+        appDialog: { kind: "ask", message: "Close the confirmation first", level: "warning", resolve },
       });
     });
 

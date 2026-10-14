@@ -122,8 +122,8 @@ afterEach(() => {
   resetStore();
 });
 
-describe("mfa_required 强制绑定门(store)", () => {
-  it("登录会话未绑定且 mfa_required: 进强制绑定门并暂存密码, 不拉 DEK", async () => {
+describe("mfa_required forced-enrollment gate (store)", () => {
+  it("enters forced enrollment and stashes the password for an unbound mfa_required login without fetching the DEK", async () => {
     await useAuth.getState().login("bob", "pw-123456");
     const state = useAuth.getState();
     expect(state.gate).toBe("mfa_enroll");
@@ -133,7 +133,7 @@ describe("mfa_required 强制绑定门(store)", () => {
     expect(mocks.dekGet).not.toHaveBeenCalled();
   });
 
-  it("绑定完成后 finishMfaEnrollment 用暂存密码解 DEK 进入应用", async () => {
+  it("unwraps the DEK with the stashed password and enters the app after finishMfaEnrollment", async () => {
     await useAuth.getState().login("bob", "pw-123456");
     mocks.me.mockResolvedValue({ user: BOUND_USER, csrf_token: "csrf-2", mfa_required: true });
     await useAuth.getState().finishMfaEnrollment();
@@ -143,7 +143,7 @@ describe("mfa_required 强制绑定门(store)", () => {
     expect(state.mfaEnrollmentPassword).toBeNull();
   });
 
-  it("刷新恢复的门没有暂存密码: 绑定完成后直接进门, DEK 留待解锁", async () => {
+  it("enters the app directly after enrollment when a refreshed gate has no stashed password and leaves DEK unlocking for later", async () => {
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     await useAuth.getState().refresh();
     expect(useAuth.getState().gate).toBe("mfa_enroll");
@@ -156,7 +156,7 @@ describe("mfa_required 强制绑定门(store)", () => {
     expect(state.dek).toBeNull();
   });
 
-  it("已绑定或未强制策略的会话不进强制绑定门", async () => {
+  it("does not enter forced enrollment for already-bound sessions or sessions without an enforced policy", async () => {
     mocks.login.mockResolvedValue({ user: BOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     await useAuth.getState().login("bob", "pw-123456");
     expect(useAuth.getState().gate).toBe("ready");
@@ -168,8 +168,8 @@ describe("mfa_required 强制绑定门(store)", () => {
   });
 });
 
-describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
-  it("自动开始绑定: 确认动态码 → 展示恢复码 → 保存后进入应用", async () => {
+describe("mfa_required forced-enrollment gate (AuthGate form)", () => {
+  it("starts enrollment automatically, confirms the code, shows recovery codes, and enters the app after saving", async () => {
     useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
     // AuthGate runs refresh() on mount: me() returns an unbound + mfa_required session, so the gate stays on the forced-binding page.
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
@@ -192,7 +192,7 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
     expect(useAuth.getState().mfaEnrollmentPassword).toBeNull();
   });
 
-  it("恢复码复制失败时保留手动复制路径,用户确认后可进入应用", async () => {
+  it("keeps a manual-copy path when recovery-code copying fails and still lets the user enter after confirmation", async () => {
     useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     mounted = mount(createElement(AuthGate));
@@ -211,7 +211,7 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
     expect(mounted.container.textContent).toContain("AAAA-BBBB-CCCC-DDDD");
   });
 
-  it("setup 失败显示错误并可重试", async () => {
+  it("shows setup failures and allows retrying", async () => {
     useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     mocks.totpSetup.mockRejectedValueOnce({ code: "forbidden", message: "尝试过于频繁，请稍后再试" });
@@ -224,7 +224,7 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
     expect(mounted.container.textContent).toContain("otpauth://totp/");
   });
 
-  it("复制链接与密钥走剪贴板链路, 失败时提示手动复制", async () => {
+  it("copies the link and secret through the clipboard and suggests manual copying on failure", async () => {
     useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
     mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
     mounted = mount(createElement(AuthGate));
@@ -252,13 +252,13 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
   });
 });
 
-describe("TotpCard 换绑", () => {
+describe("TotpCard re-enrollment", () => {
   function mountCard(): MountedView {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return mount(createElement(QueryClientProvider, { client }, createElement(AuthCard)));
   }
 
-  it("已绑定用户换绑必须提供当前凭据, setup 携带 reverify", async () => {
+  it("requires the current credential for re-enrollment and passes reverify to setup", async () => {
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
       user: BOUND_USER,
@@ -285,7 +285,7 @@ describe("TotpCard 换绑", () => {
     );
   });
 
-  it("恢复码复制失败时明确提示,用户确认后可关闭一次性页面", async () => {
+  it("shows a clear recovery-code copy failure and lets the user close the one-time page after confirmation", async () => {
     const { useUi } = await import("../app/store");
     useUi.setState({ pushToast: mocks.toast });
     useAuth.setState({
@@ -317,7 +317,7 @@ describe("TotpCard 换绑", () => {
     expect(mounted.container.textContent).toContain("AAAA-BBBB-CCCC-DDDD");
   });
 
-  it("卡片常驻提示两步验证配置不随同步走", async () => {
+  it("explains in the card that the TOTP binding lives on the server account and is reused on other devices", async () => {
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
       user: BOUND_USER,
@@ -331,12 +331,12 @@ describe("TotpCard 换绑", () => {
     mocks.totpStatus.mockResolvedValue({ enabled: true, pending: false, mfa_required: false, recovery_codes_left: 8 });
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已开启"));
-    expect(mounted.container.textContent).toContain("两步验证配置不会同步，换设备后需重新绑定");
+    expect(mounted.container.textContent).toContain("两步验证绑定在服务端账号上，换设备登录仍使用同一认证器，无需重新绑定");
   });
 });
 
-describe("mfa_enrollment_required 全局事件", () => {
-  it("任意 API 收到 mfa_enrollment_required 时, 已登录未绑定会话切入强制绑定门", async () => {
+describe("mfa_enrollment_required global event", () => {
+  it("moves an authenticated unbound session into forced enrollment when any API returns mfa_enrollment_required", async () => {
     useAuth.setState({
       status: { initialized: true, registration_open: false, auth: "on" },
       user: UNBOUND_USER,

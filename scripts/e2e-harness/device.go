@@ -126,7 +126,7 @@ func runDevice(h *harness) error {
 	if err := server.start(); err != nil {
 		return err
 	}
-	fmt.Println("== 超管初始化 ==")
+	fmt.Println("== superadmin initialization ==")
 	initCode, err := server.initCode()
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("超管初始化", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("superadmin initialization", status == 200 && getStr(getMap(body, "user"), "username") == "alice", fmt.Sprintf("HTTP %d %v", status, body))
 	alice := newClient(server.port)
 	if err := alice.login("alice", alicePassword); err != nil {
 		return err
@@ -148,28 +148,28 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("配置接入地址", status == 200 && len(getList(body, "base_urls")) == 1, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("configure server base URLs", status == 200 && len(getList(body, "base_urls")) == 1, fmt.Sprintf("HTTP %d %v", status, body))
 
 	status, body, err = alice.request("POST", "/device/enroll-codes", map[string]interface{}{"ttl_ms": 600000}, false)
 	if err != nil {
 		return err
 	}
-	h.check("写操作缺 CSRF 被拒绝", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("write request without CSRF is rejected", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = alice.request("POST", "/device/enroll-codes", map[string]interface{}{"ttl_ms": 600000}, true)
 	if err != nil {
 		return err
 	}
-	h.check("签发接入码", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("issue enrollment code", status == 200 && getStr(body, "code") != "", fmt.Sprintf("HTTP %d %v", status, body))
 	enrollCode := getStr(body, "code")
 
 	stdout, rc, stderr := enrollAgent(h, baseURL, enrollCode, agentDir, "e2e-box")
-	h.check("agent enroll 子命令", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
+	h.check("agent enroll subcommand", rc == 0 && strings.Contains(stdout, "注册成功"), fmt.Sprintf("rc=%d %s %s", rc, stdout, stderr))
 	configPath := filepath.Join(agentDir, "fleet", "agent.json")
 	mode := 0
 	if info, err := os.Stat(configPath); err == nil {
 		mode = int(info.Mode().Perm())
 	}
-	h.check("enroll 配置 0600", mode == 0o600, fmt.Sprintf("mode=%#o", mode))
+	h.check("enroll config is 0600", mode == 0o600, fmt.Sprintf("mode=%#o", mode))
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
@@ -185,14 +185,14 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("接入码单次性", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("enrollment code is single-use", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 
 	status, body, err = alice.request("POST", fmt.Sprintf("/fleet/devices/%s/autostart", deviceID), map[string]interface{}{"desired": false}, true)
 	if err != nil {
 		return err
 	}
 	desired, desiredOK := getBool(body, "desired_autostart")
-	h.check("关闭期望自启动", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("disable desired autostart", status == 200 && desiredOK && !desired, fmt.Sprintf("HTTP %d %v", status, body))
 	agentConfig["desired_autostart"] = false
 	agentConfig["metrics_interval_ms"] = 5000
 	encoded, err := json.Marshal(agentConfig)
@@ -203,7 +203,7 @@ func runDevice(h *harness) error {
 		return err
 	}
 
-	fmt.Println("== agent run 在线 ==")
+	fmt.Println("== agent run online ==")
 	agent, err = startAgent(h, agentDir, filepath.Join(work, "agent.log"))
 	if err != nil {
 		return err
@@ -227,9 +227,9 @@ func runDevice(h *harness) error {
 		return err
 	}
 	row := deviceRow()
-	h.check("控制通道上线并上报 current_url", getStr(getMap(row, "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", row))
+	h.check("control channel comes online and reports current_url", getStr(getMap(row, "agent"), "current_url") == baseURL, fmt.Sprintf("row=%v", row))
 
-	fmt.Println("== sync 指标 ==")
+	fmt.Println("== sync metrics ==")
 	status, body, err = newClient(server.port).request("POST", "/agent/sync", map[string]interface{}{
 		"device_id": deviceID,
 		"secret":    deviceSecret,
@@ -243,7 +243,7 @@ func runDevice(h *harness) error {
 	}
 	desired, desiredOK = getBool(body, "desired_autostart")
 	terminalEnabled, _ := getBool(body, "terminal_enabled")
-	h.check("直接 sync 上报", status == 200 && desiredOK && !desired && terminalEnabled, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("direct sync report", status == 200 && desiredOK && !desired && terminalEnabled, fmt.Sprintf("HTTP %d %v", status, body))
 
 	metricsSamples := func() []interface{} {
 		_, body, err := alice.request("GET", fmt.Sprintf("/fleet/devices/%s/metrics", deviceID), nil, false)
@@ -268,7 +268,7 @@ func runDevice(h *harness) error {
 		return err
 	}
 	samplesJSON, _ := json.Marshal(metricsSamples())
-	h.check("sync 指标可读回", sawDirect(), fmt.Sprintf("samples=%s", truncate(string(samplesJSON), 300)))
+	h.check("sync metrics can be read back", sawDirect(), fmt.Sprintf("samples=%s", truncate(string(samplesJSON), 300)))
 	sawNatural := func() bool {
 		for _, sample := range metricsSamples() {
 			if cpuOf(sample) != 42.5 {
@@ -281,9 +281,9 @@ func runDevice(h *harness) error {
 		return err
 	}
 	samplesJSON, _ = json.Marshal(metricsSamples())
-	h.check("agent 自然 sync 落库", sawNatural(), fmt.Sprintf("samples=%s", truncate(string(samplesJSON), 300)))
+	h.check("natural agent sync is persisted", sawNatural(), fmt.Sprintf("samples=%s", truncate(string(samplesJSON), 300)))
 
-	fmt.Println("== 出站桥接与 resume ==")
+	fmt.Println("== outbound bridge and resume ==")
 	stateDigest, err := localStateDigest(filepath.Join(agentDir, "durable", "supervisor"))
 	if err != nil {
 		return err
@@ -294,7 +294,7 @@ func runDevice(h *harness) error {
 	if err := waitUntil(10*time.Second, "device list exposes state digest", func() bool { return listedDigest() == stateDigest }); err != nil {
 		return err
 	}
-	h.check("设备列表下发 state digest", listedDigest() == stateDigest, fmt.Sprintf("listed=%q", listedDigest()))
+	h.check("device list returns state digest", listedDigest() == stateDigest, fmt.Sprintf("listed=%q", listedDigest()))
 
 	relayHeader := http.Header{}
 	relayHeader.Set("Cookie", sessionCookie+"="+alice.cookie)
@@ -339,7 +339,7 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("桥接 attach 会话", getStr(attached, "id") == sessionID, fmt.Sprintf("info=%v", attached))
+	h.check("bridge attaches to session", getStr(attached, "id") == sessionID, fmt.Sprintf("info=%v", attached))
 	var output []byte
 	deadline := time.Now().Add(15 * time.Second)
 	for !bytes.Contains(output, []byte("READY-42")) && time.Now().Before(deadline) {
@@ -349,7 +349,7 @@ func runDevice(h *harness) error {
 		}
 		output = append(output, chunk...)
 	}
-	h.check("桥接读取会话输出", bytes.Contains(output, []byte("READY-42")), fmt.Sprintf("output=%q", tailBytes(output, 200)))
+	h.check("bridge reads session output", bytes.Contains(output, []byte("READY-42")), fmt.Sprintf("output=%q", tailBytes(output, 200)))
 	if err := first.detach(); err != nil {
 		return err
 	}
@@ -364,7 +364,7 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("expect incarnation resume 成功", getStr(resumed, "id") == sessionID, fmt.Sprintf("info=%v", resumed))
+	h.check("expected incarnation resumes successfully", getStr(resumed, "id") == sessionID, fmt.Sprintf("info=%v", resumed))
 	var backlog []byte
 	deadline = time.Now().Add(10 * time.Second)
 	for !bytes.Contains(backlog, []byte("LATE-7")) && time.Now().Before(deadline) {
@@ -374,7 +374,7 @@ func runDevice(h *harness) error {
 		}
 		backlog = append(backlog, chunk...)
 	}
-	h.check("resume 补读断开期间输出", bytes.Contains(backlog, []byte("LATE-7")), fmt.Sprintf("backlog=%q", tailBytes(backlog, 200)))
+	h.check("resume reads output produced while disconnected", bytes.Contains(backlog, []byte("LATE-7")), fmt.Sprintf("backlog=%q", tailBytes(backlog, 200)))
 	if err := second.detach(); err != nil {
 		return err
 	}
@@ -385,14 +385,14 @@ func runDevice(h *harness) error {
 		return err
 	}
 	if _, err := third.attach(sessionID, createdAtNs, "wrong-incarnation"); err == nil {
-		h.check("错误 incarnation 被拒绝", false, "attach succeeded with wrong incarnation")
+		h.check("wrong incarnation is rejected", false, "attach succeeded with wrong incarnation")
 	} else {
 		var wire *wireError
 		detail := fmt.Sprintf("err=%v", err)
 		if errors.As(err, &wire) {
 			detail = fmt.Sprintf("code=%s", wire.code)
 		}
-		h.check("错误 incarnation 被拒绝", errors.As(err, &wire) && wire.code == "identity", detail)
+		h.check("wrong incarnation is rejected", errors.As(err, &wire) && wire.code == "identity", detail)
 	}
 	third.ws.close()
 
@@ -404,9 +404,9 @@ func runDevice(h *harness) error {
 		return err
 	}
 	killer.ws.close()
-	h.check("kill_session 清理会话", true, "")
+	h.check("kill_session cleans up the session", true, "")
 
-	fmt.Println("== 协议错误 ==")
+	fmt.Println("== protocol errors ==")
 	helloPayload := func(protocol int, secret string) []byte {
 		raw, _ := json.Marshal(map[string]interface{}{"type": "hello", "protocol": protocol, "device_id": deviceID, "secret": secret})
 		return raw
@@ -426,7 +426,7 @@ func runDevice(h *harness) error {
 	if message.err == nil && message.kind == websocket.MessageText {
 		json.Unmarshal(message.payload, &errorFrame)
 	}
-	h.check("协议版本不匹配回 version_mismatch", getStr(errorFrame, "code") == "version_mismatch", fmt.Sprintf("frame=%v", errorFrame))
+	h.check("protocol mismatch returns version_mismatch", getStr(errorFrame, "code") == "version_mismatch", fmt.Sprintf("frame=%v", errorFrame))
 	ws.close()
 
 	ws, _, err = dialWS(server.port, "/ws/device", nil)
@@ -444,28 +444,28 @@ func runDevice(h *harness) error {
 	if message.err == nil && message.kind == websocket.MessageText {
 		json.Unmarshal(message.payload, &errorFrame)
 	}
-	h.check("错误凭证回 forbidden", getStr(errorFrame, "code") == "forbidden", fmt.Sprintf("frame=%v", errorFrame))
+	h.check("invalid credentials return forbidden", getStr(errorFrame, "code") == "forbidden", fmt.Sprintf("frame=%v", errorFrame))
 	ws.close()
 
-	fmt.Println("== 吊销 ==")
+	fmt.Println("== revocation ==")
 	status, body, err = alice.request("POST", fmt.Sprintf("/fleet/devices/%s/revoke", deviceID), map[string]interface{}{}, true)
 	if err != nil {
 		return err
 	}
 	okFlag, _ := getBool(body, "ok")
-	h.check("吊销设备", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("revoke device", status == 200 && okFlag, fmt.Sprintf("HTTP %d %v", status, body))
 	exitCode, err := agent.result(15 * time.Second)
 	if err != nil {
 		return err
 	}
-	h.check("agent 收到 revoke 并以退出码 3 停止", exitCode == agentExitRevoked, fmt.Sprintf("exit=%d", exitCode))
+	h.check("agent receives revoke and exits with code 3", exitCode == agentExitRevoked, fmt.Sprintf("exit=%d", exitCode))
 	status, body, err = newClient(server.port).request("POST", "/agent/sync", map[string]interface{}{"device_id": deviceID, "secret": deviceSecret}, false)
 	if err != nil {
 		return err
 	}
-	h.check("吊销后 sync 403", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("sync returns 403 after revocation", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 
-	fmt.Println("== --auth=off 关闭 fleet ==")
+	fmt.Println("== --auth=off disables fleet ==")
 	offServer, err := newInstance(h, work, "server-off", masterKey, "off", "")
 	if err != nil {
 		return err
@@ -478,18 +478,18 @@ func runDevice(h *harness) error {
 	if err != nil {
 		return err
 	}
-	h.check("off 下 enroll 403", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("enroll returns 403 when off", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = newClient(offServer.port).request("POST", "/agent/sync", map[string]interface{}{"device_id": "x", "secret": "y"}, false)
 	if err != nil {
 		return err
 	}
-	h.check("off 下 agent/sync 403", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("agent/sync returns 403 when off", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	status, body, err = newClient(offServer.port).request("GET", "/fleet/devices", nil, false)
 	if err != nil {
 		return err
 	}
-	h.check("off 下 fleet 管理 403", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
+	h.check("fleet management returns 403 when off", status == 403, fmt.Sprintf("HTTP %d %v", status, body))
 	wsStatus := wsHandshakeStatus(offServer.port, "/ws/device")
-	h.check("off 下 /ws/device 403", wsStatus == 403, fmt.Sprintf("status=%d", wsStatus))
+	h.check("/ws/device returns 403 when off", wsStatus == 403, fmt.Sprintf("status=%d", wsStatus))
 	return nil
 }

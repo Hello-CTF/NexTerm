@@ -125,7 +125,7 @@ const HOME_ENTRIES: FileEntryDto[] = [
 const GROUP = {
   id: "g1",
   parentId: null,
-  name: "生产",
+  name: "production",
   sort: 0,
   createdAt: 1,
   updatedAt: 1,
@@ -192,7 +192,7 @@ beforeEach(() => {
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.listCredentials.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([
-    { id: "sn1", name: "看容器状态", body: "docker ps", groupId: null, sort: 1 },
+    { id: "sn1", name: "check container status", body: "docker ps", groupId: null, sort: 1 },
   ]);
   useUi.setState({ leftOpen: true, pushToast: vi.fn(), workspaces: [], sessions: [] });
 });
@@ -201,8 +201,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("行内操作条常驻占位的 DOM 契约", () => {
-  it("FileTree 行带 nx-row-reserve-actions，操作条按钮常驻 DOM", async () => {
+describe("persistent row action bar DOM contract", () => {
+  it("gives FileTree rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
@@ -215,7 +215,7 @@ describe("行内操作条常驻占位的 DOM 契约", () => {
     expect(actionLabels(row)).toEqual(["下载 notes.txt", "删除 notes.txt", "更多操作 notes.txt"]);
   });
 
-  it("FileBrowser 行带 nx-row-reserve-actions，操作条按钮常驻 DOM", async () => {
+  it("gives FileBrowser rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
@@ -228,7 +228,7 @@ describe("行内操作条常驻占位的 DOM 契约", () => {
     expect(actionLabels(row)).toEqual(["更多操作 notes.txt"]);
   });
 
-  it("资产行带 nx-row-reserve-actions，操作条按钮常驻 DOM", async () => {
+  it("gives asset rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
@@ -246,38 +246,38 @@ describe("行内操作条常驻占位的 DOM 契约", () => {
     ]);
   });
 
-  it("分组行带 nx-row-reserve-actions，操作条按钮常驻 DOM", async () => {
+  it("gives group rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("production"));
 
     const header = [...mounted!.container.querySelectorAll<HTMLElement>(".nx-row")].find(
-      (r) => r.textContent?.includes("生产") && r.querySelector(".nx-count"),
+      (r) => r.textContent?.includes("production") && r.querySelector(".nx-count"),
     );
-    if (!header) throw new Error("group header row not found: 生产");
+    if (!header) throw new Error("group header row not found: production");
     expect(header.className).toContain("nx-row-reserve-actions");
     expect(actionLabels(header)).toEqual([
-      "在分组「生产」内新建资产",
-      "重命名分组「生产」",
-      "删除分组「生产」",
+      "在分组「production」内新建资产",
+      "重命名分组「production」",
+      "删除分组「production」",
     ]);
   });
 
-  it("片段行带 nx-row-reserve-actions，操作条按钮常驻 DOM", async () => {
+  it("gives snippet rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
     stubPointer(false);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("check container status"));
 
     const row = [...mounted!.container.querySelectorAll<HTMLElement>(".nx-row")].find((r) =>
-      r.textContent?.includes("看容器状态"),
+      r.textContent?.includes("check container status"),
     );
-    if (!row) throw new Error("snippet row not found: 看容器状态");
+    if (!row) throw new Error("snippet row not found: check container status");
     expect(row.className).toContain("nx-row-reserve-actions");
     expect(actionLabels(row)).toEqual([
-      "插入片段「看容器状态」",
-      "执行片段「看容器状态」",
-      "编辑片段",
-      "删除片段",
+      "插入片段「check container status」",
+      "执行片段「check container status」",
+      "编辑片段「check container status」",
+      "删除片段「check container status」",
     ]);
   });
 });

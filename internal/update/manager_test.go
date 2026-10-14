@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -222,6 +223,9 @@ func TestCheckServerModeReportsCanInstallFalse(t *testing.T) {
 }
 
 func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux deb install test")
+	}
 	fixture := linuxFixture(t, "0.3.0", false)
 	server := fixture.server(t)
 	executable := filepath.Join(t.TempDir(), "nexterm-desktop")
@@ -312,11 +316,11 @@ func TestInstallServerModeDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Installed || !strings.Contains(result.UnavailableReason, "server 模式") {
+	if result.Installed || !strings.Contains(result.UnavailableReason, "服务端模式") {
 		t.Fatalf("result = %+v", result)
 	}
 	restart := manager.Restart(context.Background())
-	if restart.Restarted || !strings.Contains(restart.UnavailableReason, "server 模式") {
+	if restart.Restarted || !strings.Contains(restart.UnavailableReason, "服务端模式") {
 		t.Fatalf("restart = %+v", restart)
 	}
 }
@@ -347,10 +351,10 @@ func TestInstallTargetFor(t *testing.T) {
 		wantTarget  string
 		wantInPlace bool
 	}{
-		{"运行中的就是安装版则原位替换", installed, installed, fallbackDir, installed, true},
-		{"散装副本装到登记位置并重启过去", loose, installed, fallbackDir, installed, false},
-		{"无登记时散装副本装到默认目录", loose, "", fallbackDir, fallbackExe, false},
-		{"登记与默认都没有时退回原位替换", loose, "", "", loose, true},
+		{"installed executable replaces in place", installed, installed, fallbackDir, installed, true},
+		{"loose copy installs to registered location and restarts there", loose, installed, fallbackDir, installed, false},
+		{"unregistered loose copy installs to default directory", loose, "", fallbackDir, fallbackExe, false},
+		{"missing registration and default falls back to in-place replacement", loose, "", "", loose, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

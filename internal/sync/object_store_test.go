@@ -157,7 +157,7 @@ func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
 	}
 	cost := wireObjectCost(big)
 	if cost <= maxPullWireBytes/2 || cost > maxPullWireBytes {
-		t.Fatalf("wireObjectCost(%d MiB)=%d, 期望介于半数与满额预算之间", len(big)>>20, cost)
+		t.Fatalf("wireObjectCost(%d MiB)=%d, want between half and full budget", len(big)>>20, cost)
 	}
 
 	pulled, _, maxSeq, _, done, err := store.pull(ctx, userID, 0, nil, maxPullWireBytes)

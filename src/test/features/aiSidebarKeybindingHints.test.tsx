@@ -180,7 +180,7 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
           tabId: "t1",
           jobId: "job-t",
           token: "tok-2",
-          task: "安装 nginx",
+          task: "Install nginx",
           allowWrite: true,
           startedAt: Date.now(),
         },

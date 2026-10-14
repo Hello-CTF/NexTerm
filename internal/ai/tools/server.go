@@ -62,9 +62,18 @@ func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Ou
 	if err != nil {
 		return Fail(err)
 	}
-	var output strings.Builder
+	capOutput := func(text string) (string, string, bool) {
+		display, cut := capText(text)
+		model := display
+		if cut {
+			model = strings.TrimSuffix(display, "\n[输出已截断]") + "\n[output truncated]"
+		}
+		return display, model, cut
+	}
+	var output, modelOutput strings.Builder
 	exitCode := 0
 	truncated := false
+	execFailed := false
 	for _, command := range args.Commands {
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
@@ -73,17 +82,22 @@ func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Ou
 		result, execErr := transport.Exec(commandContext, command, base.ExecOptions{Timeout: time.Duration(args.Timeout) * time.Second, ExpectedGeneration: transport.Generation()})
 		cancel()
 		fmt.Fprintf(&output, "$ %s\n", command)
-		stdout, stdoutCut := capText(result.Stdout)
-		stderr, stderrCut := capText(result.Stderr)
+		fmt.Fprintf(&modelOutput, "$ %s\n", command)
+		stdout, modelStdout, stdoutCut := capOutput(result.Stdout)
+		stderr, modelStderr, stderrCut := capOutput(result.Stderr)
 		truncated = truncated || stdoutCut || stderrCut || result.Truncated
 		output.WriteString(stdout)
+		modelOutput.WriteString(modelStdout)
 		if stderr != "" {
 			output.WriteString("\n[stderr]\n")
 			output.WriteString(stderr)
+			modelOutput.WriteString("\n[stderr]\n")
+			modelOutput.WriteString(modelStderr)
 		}
 		if result.ExitCode != nil {
 			exitCode = *result.ExitCode
 			fmt.Fprintf(&output, "\n[exit_code=%d]\n", exitCode)
+			fmt.Fprintf(&modelOutput, "\n[exit_code=%d]\n", exitCode)
 		}
 		if execErr != nil {
 			if ctx.Err() != nil {
@@ -93,12 +107,16 @@ func (r *Registry) execCommands(ctx context.Context, scope Scope, raw []byte) Ou
 				return Fail(execErr)
 			}
 			exitCode = 1
+			execFailed = true
 			fmt.Fprintf(&output, "\n[执行失败: %v]\n", execErr)
+			fmt.Fprintf(&modelOutput, "\n[execution failed: %v]\n", execErr)
 		}
 		output.WriteByte('\n')
+		modelOutput.WriteByte('\n')
 	}
-	text, cut := capText(output.String())
-	return Output{OK: true, Text: text, ExitCode: exitCode, Truncated: truncated || cut}
+	text, _, cut := capOutput(output.String())
+	_, modelText, _ := capOutput(modelOutput.String())
+	return Output{OK: true, Text: text, ModelText: modelText, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed}
 }
 
 func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
@@ -219,11 +237,13 @@ func (r *Registry) searchFiles(ctx context.Context, scope Scope, raw []byte) Out
 		return Fail(err)
 	}
 	text := strings.Join(search.results, "\n")
+	modelText := ""
 	if text == "" {
 		text = "无匹配"
+		modelText = "no matches"
 	}
 	text, cut := capText(text)
-	return Output{OK: true, Text: text, Truncated: search.truncated || cut}
+	return Output{OK: true, Text: text, ModelText: modelText, Truncated: search.truncated || cut}
 }
 
 type fileSearch struct {

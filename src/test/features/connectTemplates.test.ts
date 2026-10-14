@@ -7,7 +7,7 @@ const KEY = "nexterm.connectTemplates.v1";
 
 function validInput(): ConnectTemplateInput {
   return {
-    name: "生产模板",
+    name: "Production template",
     kind: "ssh",
     port: 2222,
     username: "deploy",
@@ -36,16 +36,16 @@ beforeEach(() => {
 });
 
 describe("connectTemplates", () => {
-  it("add 追加并持久化, remove 删除并持久化", async () => {
+  it("add appends and persists, remove deletes and persists", async () => {
     const store = await loadStore();
     const created = store.getState().add(validInput());
     expect(created.id).toBeTruthy();
-    expect(store.getState().templates.map((t) => t.name)).toEqual(["生产模板"]);
+    expect(store.getState().templates.map((t) => t.name)).toEqual(["Production template"]);
     const persisted = JSON.parse(localStorage.getItem(KEY) ?? "[]") as Record<string, unknown>[];
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toMatchObject({
       id: created.id,
-      name: "生产模板",
+      name: "Production template",
       kind: "ssh",
       port: 2222,
       username: "deploy",
@@ -63,7 +63,7 @@ describe("connectTemplates", () => {
     expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
   });
 
-  it("remove 不存在的 id 不动存储", async () => {
+  it("remove with a missing id leaves storage unchanged", async () => {
     const store = await loadStore();
     const created = store.getState().add(validInput());
     const before = localStorage.getItem(KEY);
@@ -72,22 +72,22 @@ describe("connectTemplates", () => {
     expect(localStorage.getItem(KEY)).toBe(before);
   });
 
-  it("启动时清洗非法条目并补默认值", async () => {
+  it("sanitizes invalid entries and applies defaults at startup", async () => {
     localStorage.setItem(
       KEY,
       JSON.stringify([
         null,
         "junk",
-        { name: "缺 id" },
-        { id: "x", name: "坏类型", kind: "telnet" },
-        { id: "t1", name: "完整", kind: "ssh" },
+        { name: "Missing id" },
+        { id: "x", name: "Invalid kind", kind: "telnet" },
+        { id: "t1", name: "Complete", kind: "ssh" },
       ]),
     );
     const store = await loadStore();
     expect(store.getState().templates).toEqual([
       expect.objectContaining({
         id: "t1",
-        name: "完整",
+        name: "Complete",
         kind: "ssh",
         port: 22,
         username: "",
@@ -102,7 +102,7 @@ describe("connectTemplates", () => {
     ]);
   });
 
-  it("localStorage 损坏时按空列表处理", async () => {
+  it("treats corrupted localStorage as an empty list", async () => {
     localStorage.setItem(KEY, "{not json");
     const store = await loadStore();
     expect(store.getState().templates).toEqual([]);

@@ -58,8 +58,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("web /rpc CSRF 传输", () => {
-  it("带账号会话时 /rpc 请求携带 X-NexTerm-CSRF 头", async () => {
+describe("web /rpc CSRF transport", () => {
+  it("includes X-NexTerm-CSRF on /rpc requests with an account session", async () => {
     useWebTransport();
     const calls = captureFetch(() => ({ status: 200, body: JSON.stringify({ ok: true, data: [] }) }));
     const { commands, authApi } = await importWeb();
@@ -73,7 +73,7 @@ describe("web /rpc CSRF 传输", () => {
     expect(calls[0].headers["X-NexTerm-CSRF"]).toBe("csrf-1");
   });
 
-  it("无会话(loopback/auth=off): 共享预取 /auth/me 失败后 /rpc 不携带 CSRF 头照常发出", async () => {
+  it("without a session (loopback/auth=off): sends /rpc without a CSRF header after the shared /auth/me prefetch fails", async () => {
     useWebTransport();
     const calls = captureFetch((url) => {
       if (url.includes("/auth/me")) {
@@ -82,7 +82,7 @@ describe("web /rpc CSRF 传输", () => {
           status: 403,
           body: JSON.stringify({
             ok: false,
-            error: { code: "forbidden", message: "当前为共享工作区模式（未启用账号登录），账号功能不可用" },
+            error: { code: "forbidden", message: "Account features are unavailable in shared workspace mode (account login is disabled)" },
           }),
         };
       }
@@ -101,7 +101,7 @@ describe("web /rpc CSRF 传输", () => {
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(1);
   });
 
-  it("冷启动 token 缺失: 并发 /rpc 共享一次 /auth/me, 全部等待后携带新令牌发出, 零 403", async () => {
+  it("on cold-start token miss: concurrent /rpc calls share one /auth/me request, wait, then send with the new token and no 403s", async () => {
     useWebTransport();
     let resolveMe: (value: { status: number; body: string }) => void = () => {};
     const meGate = new Promise<{ status: number; body: string }>((resolve) => {
@@ -151,7 +151,7 @@ describe("web /rpc CSRF 传输", () => {
     expect(authApi.getCsrfToken()).toBe("csrf-new");
   });
 
-  it("未登录: 共享预取 401 照常派发 SESSION_EXPIRED, 请求按现状走 403 重试路径抛错, 后续调用不挂起", async () => {
+  it("when logged out: shared prefetch 401 still dispatches SESSION_EXPIRED, requests follow the existing 403 retry path and reject, and later calls do not hang", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", {
       __NEXTERM_TRANSPORT__: "web",
@@ -162,7 +162,7 @@ describe("web /rpc CSRF 传输", () => {
       if (url.includes("/auth/me")) {
         return {
           status: 401,
-          body: JSON.stringify({ ok: false, error: { code: "forbidden", message: "会话无效或缺失" } }),
+          body: JSON.stringify({ ok: false, error: { code: "forbidden", message: "Session is invalid or missing" } }),
         };
       }
       return { status: 403, body: RPC_CSRF_FAILURE };
@@ -172,21 +172,21 @@ describe("web /rpc CSRF 传输", () => {
 
     await expect(commands.assetApi.list()).rejects.toMatchObject({
       code: "forbidden",
-      message: "会话无效或缺失",
+      message: "Session is invalid or missing",
     });
     expect(dispatchEvent).toHaveBeenCalled();
 
     // Later calls are neither suspended nor re-prefetched: /rpc goes out bare and errors the same way through the 403 retry path
     await expect(commands.sessionApi.list()).rejects.toMatchObject({
       code: "forbidden",
-      message: "会话无效或缺失",
+      message: "Session is invalid or missing",
     });
     // /auth/me fired 3 times in total: 1 shared prefetch + 1 refresh per request via the 403 retry path
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(3);
     expect(calls.filter((call) => call.url === "/rpc")).toHaveLength(2);
   });
 
-  it("CSRF 403 时经 /auth/me 刷新并重试同一请求一次,重试携带新令牌", async () => {
+  it("refreshes through /auth/me on CSRF 403 and retries the same request once with the new token", async () => {
     useWebTransport();
     let rpcAttempts = 0;
     const calls = captureFetch((url) => {
@@ -215,7 +215,7 @@ describe("web /rpc CSRF 传输", () => {
     expect(authApi.getCsrfToken()).toBe("csrf-2");
   });
 
-  it("重试后仍是 CSRF 403 时不再重试", async () => {
+  it("does not retry again when the retry still returns CSRF 403", async () => {
     useWebTransport();
     const calls = captureFetch((url) => {
       if (url.includes("/auth/me")) {
@@ -238,9 +238,9 @@ describe("web /rpc CSRF 传输", () => {
     expect(calls.filter((call) => call.url.includes("/auth/me"))).toHaveLength(1);
   });
 
-  it("非 CSRF 的 403 不重试也不刷新会话", async () => {
+  it("does not retry or refresh the session for non-CSRF 403 responses", async () => {
     useWebTransport();
-    const error = { code: "forbidden", message: "没有权限" };
+    const error = { code: "forbidden", message: "Permission denied" };
     const calls = captureFetch(() => ({ status: 403, body: JSON.stringify({ ok: false, error }) }));
     const { commands, authApi } = await importWeb();
     authApi.setCsrfToken("csrf-1");

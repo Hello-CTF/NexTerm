@@ -19,6 +19,8 @@ type biometricEnableRequest struct {
 	Password string `json:"password"`
 }
 
+var errBiometricVaultLocked = errors.New("凭据库已锁定，请先解锁再启用生物识别")
+
 // biometricBackend isolates platform-specific implementations; tests swap in fakes.
 type biometricBackend interface {
 	Current() (biometric.Status, error)
@@ -62,7 +64,7 @@ func registerBiometricCommands(dispatcher *ipc.Dispatcher, backend biometricBack
 					return nil, ipc.BadParam(errors.New("解锁材料为空"))
 				}
 				if vaultState == nil || !vaultState.Status().Unlocked {
-					return nil, errors.New("凭据库未解锁, 请先解锁后再启用生物识别")
+					return nil, ipc.WrapError(ipc.CodeVaultLocked, errBiometricVaultLocked.Error(), errBiometricVaultLocked)
 				}
 				return nil, backend.Enable(input.Password)
 			})

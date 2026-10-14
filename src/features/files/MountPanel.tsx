@@ -47,7 +47,7 @@ function MountUnavailable({ reason }: { reason: string }) {
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
             远程文件读写请走左侧<span className="text-neutral-300">「文件树」</span>
-            （SFTP 通道，不需要任何本机依赖）。
+            （不需要任何本机依赖）。
           </p>
         </div>
       </div>

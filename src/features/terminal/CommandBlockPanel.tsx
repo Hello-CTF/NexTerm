@@ -45,7 +45,7 @@ export function CommandBlockPanel({
     }
     try {
       await copyText(text);
-      onToast("success", `已复制块 #${index}（${text.length} 字符）`);
+      onToast("success", `已复制块 #${index}`);
     } catch (e) {
       onToast("error", `复制失败：${describeError(e)}`);
     }

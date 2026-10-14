@@ -44,7 +44,7 @@ function advancedToggle(container: ParentNode): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
     (b) => b.textContent?.trim() === "高级设置",
   );
-  if (!button) throw new Error("高级设置 toggle not found");
+  if (!button) throw new Error("Advanced settings toggle not found");
   return button as HTMLButtonElement;
 }
 
@@ -53,7 +53,7 @@ function ensureAdvancedOpen(container: ParentNode): void {
   if (toggle.getAttribute("aria-expanded") === "false") click(toggle);
 }
 
-describe("AppearanceCard 外观偏好", () => {
+describe("AppearanceCard appearance preferences", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
@@ -90,7 +90,7 @@ describe("AppearanceCard 外观偏好", () => {
     expect(groupButton(mounted.container, "界面字号", "14.5").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("自定义界面字号：选中后出现数字输入，提交后持久化并标记自定义", () => {
+  it("custom interface font size: reveals a numeric input when selected, persists on submit, and marks the preset as custom", () => {
     act(() => resetAppearancePrefs());
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;
@@ -215,7 +215,7 @@ describe("AppearanceCard 外观偏好", () => {
     expect(getAppearancePrefs().uiFontScale).toBe(1);
   });
 
-  it("高级设置默认折叠可手动切换；非默认偏好也不再自动展开", () => {
+  it("advanced settings are collapsed by default and can be toggled manually; non-default preferences no longer auto-expand them", () => {
     act(() => resetAppearancePrefs());
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;

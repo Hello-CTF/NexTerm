@@ -77,7 +77,7 @@ export function AppearanceCard() {
         <span className="nx-badge">{current}</span>
       </div>
       <p className="nx-hint mb-3.5">
-        界面配色随主题切换；终端与代码编辑器有独立的主题与字号，默认深色，不受界面主题影响。
+        界面配色随主题切换；终端与代码编辑器有独立的主题和字号设置，默认深色，也可选择跟随界面主题。
       </p>
       <div className="nx-segment" role="group" aria-label="界面主题">
         {THEME_OPTIONS.map((option) => (

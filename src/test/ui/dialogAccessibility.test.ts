@@ -80,7 +80,7 @@ describe("shared dialog accessibility", () => {
 
   it("labels and traps a warning dialog, makes the background inert, and restores focus", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
-    trigger.textContent = "打开确认框";
+    trigger.textContent = "Open confirmation";
     trigger.focus();
     document.body.style.overflow = "scroll";
     const resolve = vi.fn();
@@ -135,8 +135,8 @@ describe("shared dialog accessibility", () => {
     act(() => {
       useUi.setState({
         appChoice: {
-          title: "终端仍在运行",
-          message: "选择关闭方式",
+          title: "Terminal still running",
+          message: "Choose how to close",
           level: "warning",
           options: [
             { key: "detach", label: "后台继续运行", primary: true },
@@ -181,7 +181,7 @@ describe("shared dialog accessibility", () => {
     mounted = mount(createElement(DialogHost));
     act(() => {
       useUi.setState({
-        appDialog: { kind: "ask", message: "第一阶段", level: "warning", resolve: firstResolve },
+        appDialog: { kind: "ask", message: "First stage", level: "warning", resolve: firstResolve },
       });
     });
 
@@ -200,7 +200,7 @@ describe("shared dialog accessibility", () => {
   it("initializes a prompt that is already active when mounted", () => {
     const resolve = vi.fn();
     useUi.setState({
-      textPrompt: { message: "输入名称", value: "ready", resolve },
+      textPrompt: { message: "Enter a name", value: "ready", resolve },
     });
     mounted = mount(createElement(PromptModal));
     const input = mounted.container.querySelector("input");
@@ -218,7 +218,7 @@ describe("shared dialog accessibility", () => {
     mounted = mount(createElement(PromptModal));
     act(() => {
       useUi.setState({
-        textPrompt: { message: "输入名称", value: "seed", resolve },
+        textPrompt: { message: "Enter a name", value: "seed", resolve },
       });
     });
     const input = mounted.container.querySelector("input");
@@ -247,7 +247,7 @@ describe("shared dialog accessibility", () => {
     mounted = mount(createElement(PromptModal));
     act(() => {
       useUi.setState({
-        textPrompt: { message: "输入名称", value: "seed", resolve },
+        textPrompt: { message: "Enter a name", value: "seed", resolve },
       });
     });
     const cancel = findButton(mounted.container, "取消");
@@ -262,7 +262,7 @@ describe("shared dialog accessibility", () => {
     mounted = mount(createElement(PromptModal));
     act(() => {
       useUi.setState({
-        textPrompt: { message: "任务描述", value: "", multiLine: true, resolve },
+        textPrompt: { message: "Task description", value: "", multiLine: true, resolve },
       });
     });
     const input = mounted.container.querySelector("textarea");
@@ -285,7 +285,7 @@ describe("shared dialog accessibility", () => {
           { id: 1, kind: "success", text: "保存完成" },
           { id: 2, kind: "error", text: "连接失败" },
         ],
-        appDialog: { kind: "message", message: "结果", level: "info", resolve: vi.fn() },
+        appDialog: { kind: "message", message: "Result", level: "info", resolve: vi.fn() },
       });
     });
 

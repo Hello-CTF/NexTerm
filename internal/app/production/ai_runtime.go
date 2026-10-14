@@ -135,7 +135,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 func aiModelFactory(manager *profiles.Manager) agent.ModelFactory {
 	return func(ctx context.Context) (model.BaseChatModel, uint64, error) {
 		if _, ok := manager.ActiveProfile(); !ok {
-			return nil, 0, errors.New("未配置活动 AI 模型")
+			return nil, 0, errors.New("尚未选择要使用的 AI 模型档案")
 		}
 		client, err := manager.ActiveClient()
 		if err != nil {

@@ -145,8 +145,8 @@ function withQueryClient(node: React.ReactNode): React.ReactElement {
   return createElement(QueryClientProvider, { client }, node);
 }
 
-describe("Enter 提交的 IME 守卫", () => {
-  it("Redis 匹配模式：组合中 Enter 不触发 SCAN，普通 Enter 触发", async () => {
+describe("IME guards for Enter submission", () => {
+  it("does not scan from the Redis pattern input during composition and scans on normal Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
     const callsAfterLoad = mocks.redisScan.mock.calls.length;
@@ -159,13 +159,13 @@ describe("Enter 提交的 IME 守卫", () => {
     expect(mocks.redisScan).toHaveBeenCalledTimes(callsAfterLoad + 1);
   });
 
-  it("Redis 控制台：组合中 Enter 不执行，普通 Enter 执行", async () => {
+  it("does not execute from the Redis console during composition and executes on normal Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
-    if (!bar) throw new Error("控制台折叠条未找到");
+    if (!bar) throw new Error("console collapse bar not found");
     click(bar);
     await flushUntil(
       () => mounted!.container.querySelector('input[aria-label="Redis 命令"]') !== null,
@@ -181,7 +181,7 @@ describe("Enter 提交的 IME 守卫", () => {
     expect(mocks.redisCommand).toHaveBeenCalledWith("c1", ["INFO", "memory"]);
   });
 
-  it("MySQL 编辑器：组合中 Ctrl+Enter 不执行，普通 Ctrl+Enter 执行", async () => {
+  it("does not execute from the MySQL editor during composition and executes on normal Ctrl+Enter", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => mocks.schemas.mock.calls.length > 0);
     const host = mounted.container.querySelector<HTMLElement>(".bg-term");
@@ -192,7 +192,7 @@ describe("Enter 提交的 IME 守卫", () => {
     await flushUntil(() => mocks.query.mock.calls.length > 0);
   });
 
-  it("Docker 拉取输入：组合中 Enter 不拉取，普通 Enter 拉取", async () => {
+  it("does not pull from the Docker pull input during composition and pulls on normal Enter", async () => {
     mounted = mount(withQueryClient(createElement(DockerPanel, { sessionId: "s" })));
     await flushUntil(() => mocks.ps.mock.calls.length > 0);
     const input = mounted.container.querySelector<HTMLInputElement>('[aria-label="拉取镜像名称"]');
@@ -204,7 +204,7 @@ describe("Enter 提交的 IME 守卫", () => {
     await flushUntil(() => mocks.imagePull.mock.calls.length > 0);
   });
 
-  it("转发目标端口：组合中 Enter 不创建，普通 Enter 创建", async () => {
+  it("does not create from the forward target port during composition and creates on normal Enter", async () => {
     mounted = mount(withQueryClient(createElement(ForwardPanel, { sessionId: "s" })));
     await flushUntil(() =>
       [...mounted!.container.querySelectorAll("button")].some(
@@ -220,8 +220,8 @@ describe("Enter 提交的 IME 守卫", () => {
   });
 });
 
-describe("小屏响应式结构契约", () => {
-  it("MySQL：运行按钮 sticky-right，编辑器可收缩，结果区有最小高度", async () => {
+describe("small-screen responsive structure contract", () => {
+  it("keeps the MySQL run button sticky-right, shrinks the editor, and gives the result region a minimum height", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => mocks.schemas.mock.calls.length > 0);
     const runButton = [...mounted.container.querySelectorAll("button")].find(
@@ -237,7 +237,7 @@ describe("小屏响应式结构契约", () => {
     expect(resultRegion).toBeTruthy();
   });
 
-  it("Redis：窄屏堆叠布局类存在，宽屏恢复 272px 侧栏", async () => {
+  it("provides stacked Redis layout classes on narrow screens and restores the 272px sidebar on wide screens", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
     const pane = mounted.container.querySelector(".nx-pane");
@@ -249,7 +249,7 @@ describe("小屏响应式结构契约", () => {
     expect(sideColumn?.className).toContain("min-[560px]:w-[272px]");
   });
 
-  it("Docker 容器表：操作列 sticky-right，触控目标放大，次要 hint 小屏隐藏", async () => {
+  it("keeps Docker container actions sticky-right, enlarges touch targets, and hides secondary hints on small screens", async () => {
     mounted = mount(withQueryClient(createElement(DockerPanel, { sessionId: "s" })));
     await flushUntil(() => Boolean(mounted!.container.querySelector("tbody td.sticky")));
     const table = mounted.container.querySelector("table");
@@ -276,7 +276,7 @@ describe("小屏响应式结构契约", () => {
     expect(hiddenHints.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("Docker 镜像表：删除操作列 sticky-right", async () => {
+  it("keeps the delete action column sticky-right in the Docker images table", async () => {
     mocks.images.mockResolvedValue([
       {
         id: "sha256:abc",
@@ -299,7 +299,7 @@ describe("小屏响应式结构契约", () => {
     expect(lastTd?.className).toContain("right-0");
   });
 
-  it("ContainerInsight：工具栏可换行，统计表容器列 sticky-left 且有最小宽度", async () => {
+  it("wraps the ContainerInsight toolbar and keeps the stats container column sticky-left with a minimum width", async () => {
     mounted = mount(
       withQueryClient(
         createElement(ContainerInsight, {
@@ -329,7 +329,7 @@ describe("小屏响应式结构契约", () => {
     }
   });
 
-  it("转发列表：停止操作列 sticky-right", async () => {
+  it("keeps the stop action column sticky-right in the forward list", async () => {
     mocks.list.mockResolvedValue([
       {
         id: "f1",

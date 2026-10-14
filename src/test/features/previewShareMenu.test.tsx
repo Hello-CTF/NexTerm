@@ -108,11 +108,11 @@ describe("PreviewShareMenu", () => {
   it("surfaces create errors inline", async () => {
     mocks.fetch
       .mockImplementationOnce(async () => respond({ links: [] }))
-      .mockImplementationOnce(async () => respond({ ok: false, error: { code: "forbidden", message: "终端不属于该用户" } }, 403));
+      .mockImplementationOnce(async () => respond({ ok: false, error: { code: "forbidden", message: "terminal does not belong to this user" } }, 403));
     const view = await mountMenu();
     clickButton(view.container, "创建链接");
     await flush();
-    expect(view.container.textContent).toContain("终端不属于该用户");
+    expect(view.container.textContent).toContain("terminal does not belong to this user");
     expect(view.container.textContent).not.toContain("/share/preview/");
   });
 });

@@ -72,8 +72,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("生成密钥对对话框", () => {
-  it("名称为空时禁止生成", () => {
+describe("Generate key pair dialog", () => {
+  it("disables generation when the name is empty", () => {
     mounted = mountModal();
     const button = [...mounted.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "生成并入库",
@@ -81,7 +81,7 @@ describe("生成密钥对对话框", () => {
     expect(button.disabled).toBe(true);
   });
 
-  it("生成成功展示指纹与 authorized_keys 公钥行", async () => {
+  it("shows the fingerprint and authorized_keys public key after successful generation", async () => {
     mounted = mountModal();
     const nameInput = mounted.container.querySelector<HTMLInputElement>(
       'input[placeholder="例如：github-deploy"]',
@@ -101,7 +101,7 @@ describe("生成密钥对对话框", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已复制指纹");
   });
 
-  it("RSA 算法与口令传递给 IPC", async () => {
+  it("passes the RSA algorithm and passphrase to IPC", async () => {
     mocks.generateKey.mockResolvedValue({ ...GENERATED, algorithm: "rsa", publicKey: "ssh-rsa AAAAB3Fake" });
     mounted = mountModal();
     clickButton(mounted.container, "RSA 4096");
@@ -117,7 +117,7 @@ describe("生成密钥对对话框", () => {
     );
   });
 
-  it("生成失败 toast 错误并保持表单", async () => {
+  it("shows an error toast on generation failure and preserves the form", async () => {
     mocks.generateKey.mockRejectedValue({ code: "bad_param", message: "已存在同名凭据" });
     mounted = mountModal();
     setInputValue(
@@ -132,7 +132,7 @@ describe("生成密钥对对话框", () => {
     expect(mounted.container.textContent).toContain("生成并入库");
   });
 
-  it("locked 时先弹解锁再生成，解锁成功才调用 IPC", async () => {
+  it("prompts for unlock before generating while locked and calls IPC only after a successful unlock", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, mode: "master", unlocked: false });
     mocks.promptText.mockResolvedValue("right-password");
     mounted = mountModal();
@@ -150,7 +150,7 @@ describe("生成密钥对对话框", () => {
     await waitFor(() => expect(mocks.generateKey).toHaveBeenCalledWith("deploy-key", "ed25519", undefined));
   });
 
-  it("解锁失败当场报错，不生成且表单保留", async () => {
+  it("reports unlock failure inline without generating and preserves the form", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, mode: "master", unlocked: false });
     mocks.promptText.mockResolvedValue("wrong-password");
     mocks.unlock.mockRejectedValue({ code: "bad_master_password", message: "保护密码错误" });

@@ -106,17 +106,17 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
-describe("SyncCard 桌面端状态", () => {
-  it("同步配置读取失败时内联报错并可重试", async () => {
-    mocks.linkGet.mockRejectedValueOnce(new Error("配置损坏"));
+describe("SyncCard desktop states", () => {
+  it("reports sync configuration read failures inline and supports retry", async () => {
+    mocks.linkGet.mockRejectedValueOnce(new Error("corrupt configuration"));
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => text().includes("同步配置读取失败 · 配置损坏"));
+    await flushUntil(() => text().includes("同步配置读取失败 · corrupt configuration"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => !text().includes("同步配置读取失败"));
     expect(mocks.linkGet).toHaveBeenCalledTimes(2);
   });
 
-  it("已保存链接回填 URL/用户名/insecure,密码保持空白", async () => {
+  it("repopulates the saved link URL, username, and insecure setting while keeping the password blank", async () => {
     mocks.linkGet.mockResolvedValue(SAVED_LINK);
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => (mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value ?? "") !== "");
@@ -135,7 +135,7 @@ describe("SyncCard 桌面端状态", () => {
     expect(insecureCheckbox.checked).toBe(false);
   });
 
-  it("已开启跳过证书校验时高级选项自动展开", async () => {
+  it("auto-expands advanced options when skip-certificate-verification is enabled", async () => {
     mocks.linkGet.mockResolvedValue({ ...SAVED_LINK, insecure: true });
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => (mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value ?? "") !== "");
@@ -145,7 +145,7 @@ describe("SyncCard 桌面端状态", () => {
     expect(insecureCheckbox.checked).toBe(true);
   });
 
-  it("登录时以账号+密码调用 linkSet(一次登录即完成同步配置)", async () => {
+  it("calls linkSet with the username and password on login, completing sync setup in one step", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
@@ -166,11 +166,11 @@ describe("SyncCard 桌面端状态", () => {
         password: "correct horse battery staple",
       }),
     );
-    expect(text()).toContain("登录后自动同步");
+    expect(text()).toContain("登录后，数据会自动在本机与云端之间同步");
     expect(text()).not.toContain("立即同步");
   });
 
-  it("未保存过密码时登录按钮要求输入密码", async () => {
+  it("requires password input before enabling login when no password has been saved", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
@@ -182,7 +182,7 @@ describe("SyncCard 桌面端状态", () => {
     expect(btn?.disabled).toBe(true);
   });
 
-  it("桌面端不渲染账号卡:全卡只有一个登录按钮,没有死的账号登录入口", async () => {
+  it("does not render the account card on desktop, leaving one login button and no dead account login entry", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     const loginButtons = [...mounted!.container.querySelectorAll("button")].filter(
@@ -193,18 +193,18 @@ describe("SyncCard 桌面端状态", () => {
   });
 });
 
-describe("ModelManager 状态", () => {
-  it("档案列表读取失败时显示错误与重试，而不是「还没有模型档案」", async () => {
-    mocks.overview.mockRejectedValueOnce(new Error("配置不可读"));
+describe("ModelManager states", () => {
+  it("shows an error and retry instead of the empty-profile state when the profile list fails to load", async () => {
+    mocks.overview.mockRejectedValueOnce(new Error("configuration unreadable"));
     mounted = mount(createElement(ModelManager));
-    await flushUntil(() => text().includes("档案列表加载失败 · 配置不可读"));
+    await flushUntil(() => text().includes("档案列表加载失败 · configuration unreadable"));
     expect(text()).not.toContain("还没有模型档案");
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("还没有模型档案"));
     expect(mocks.overview).toHaveBeenCalledTimes(2);
   });
 
-  it("首次成功后 reload 失败保留旧列表并显示刷新错误与重试", async () => {
+  it("retains the previous list and shows a refresh error with retry when reload fails after initial success", async () => {
     const saved = {
       id: "p1",
       name: "DeepSeek",
@@ -226,9 +226,9 @@ describe("ModelManager 状态", () => {
       ),
     );
 
-    mocks.overview.mockRejectedValueOnce(new Error("磁盘不可读"));
+    mocks.overview.mockRejectedValueOnce(new Error("disk unreadable"));
     clickButton(mounted!.container, "保存");
-    await flushUntil(() => text().includes("档案列表刷新失败 · 磁盘不可读"));
+    await flushUntil(() => text().includes("档案列表刷新失败 · disk unreadable"));
     expect(text()).toContain("DeepSeek");
     expect(text()).not.toContain("还没有模型档案");
 
@@ -239,12 +239,12 @@ describe("ModelManager 状态", () => {
     expect(mocks.overview).toHaveBeenCalledTimes(3);
   });
 
-  it("初始为空 → 保存成功 → reload 失败：列表显示新档案，不出现「还没有模型档案」", async () => {
+  it("shows the newly saved profile instead of the empty state when the initial list is empty, saving succeeds, and reload fails", async () => {
     mocks.overview.mockResolvedValueOnce({ profiles: [], activeId: null });
     mounted = mount(createElement(ModelManager));
     await flushUntil(() => text().includes("还没有模型档案"));
 
-    mocks.overview.mockRejectedValueOnce(new Error("磁盘不可读"));
+    mocks.overview.mockRejectedValueOnce(new Error("disk unreadable"));
     mocks.save.mockImplementation(async (p: { id: string; name: string }) => ({
       ...p,
       id: "new-id",
@@ -257,20 +257,20 @@ describe("ModelManager 状态", () => {
     const nameInput = mounted!.container.querySelector<HTMLInputElement>(
       `input[id="${nameLabel!.htmlFor}"]`,
     );
-    setInputValue(nameInput!, "新档案");
+    setInputValue(nameInput!, "new profile");
     clickButton(mounted!.container, "保存");
-    await flushUntil(() => text().includes("档案列表刷新失败 · 磁盘不可读"));
+    await flushUntil(() => text().includes("档案列表刷新失败 · disk unreadable"));
     const listHasNew = [...mounted!.container.querySelectorAll(".nx-menu-item")].some((b) =>
-      b.textContent?.includes("新档案"),
+      b.textContent?.includes("new profile"),
     );
-    expect(listHasNew, "保存成功后列表必须包含新档案，而非空态").toBe(true);
+    expect(listHasNew, "After saving, the list must contain the new profile, not the empty state").toBe(true);
     expect(text()).not.toContain("还没有模型档案");
 
     mocks.overview.mockResolvedValueOnce({
       profiles: [
         {
           id: "new-id",
-          name: "新档案",
+          name: "new profile",
           baseUrl: "",
           apiKey: "",
           model: "",
@@ -285,18 +285,18 @@ describe("ModelManager 状态", () => {
     });
     clickButton(mounted!.container, "重试");
     await flushUntil(() => !text().includes("档案列表刷新失败"));
-    expect(text()).toContain("新档案");
+    expect(text()).toContain("new profile");
   });
 });
 
-describe("ModelPanel 弹层键盘行为", () => {
+describe("ModelPanel modal keyboard behavior", () => {
   function modalEl(): HTMLElement {
     const el = mounted!.container.querySelector<HTMLElement>(".nx-modal");
     if (!el) throw new Error("modal not found");
     return el;
   }
 
-  it("Escape 触发关闭（无未保存修改时直接关闭）", async () => {
+  it("closes on Escape when there are no unsaved changes", async () => {
     const onClose = vi.fn();
     mounted = mount(createElement(ModelPanel, { onClose }));
     await flushUntil(() => text().includes("模型配置"));
@@ -309,7 +309,7 @@ describe("ModelPanel 弹层键盘行为", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("有未保存修改时 Escape 先弹放弃确认", async () => {
+  it("asks to discard unsaved changes before closing on Escape", async () => {
     const onClose = vi.fn();
     mocks.ask.mockResolvedValueOnce(false);
     mounted = mount(createElement(ModelPanel, { onClose }));
@@ -326,7 +326,7 @@ describe("ModelPanel 弹层键盘行为", () => {
     );
     act(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(input, "草稿");
+      setter.call(input, "draft");
       input!.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await flush();

@@ -95,8 +95,10 @@ Must be all green before committing; CI runs the same set:
 ## Multi-agent Collaboration
 
 - Parallel background agents are the default execution mode for any non-trivial work - never opt-in. The main thread only splits work into non-overlapping scopes, dispatches agents, makes merge decisions, and does final confirmation; it does not implement or investigate inline when an agent can do it.
+- Create and resume agents only through the dedicated Agent tool. Never spawn an AI agent through Bash, a CLI, a script, or a nested noninteractive AI process (including `kimi` or `kimi -p`); if a subagent has no Agent tool, it must do its assigned work directly instead of bypassing the boundary.
 - Agent scopes never overlap - one file is never assigned to two agents. Independent tasks always run concurrently; dependent tasks are explicitly sequenced.
 - Implementation and review are separate agents; authors never review their own work. Rebase onto the latest `master` before implementing, and once more before the single final integration.
+- Before resuming, check the task state and working tree, resume only the intended unfinished agent, and repeat only work whose result was never observed. After cancellation, check for CLI-spawned child AI processes because task cancellation may not cover them.
 - Mechanical waits (CI watches, release watches, builds) run as background tasks, never blocking the main thread.
 - Parallel work does not bypass the quality gates or the no-hand-edit rule for generated code.
 

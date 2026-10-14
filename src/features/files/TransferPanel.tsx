@@ -76,7 +76,7 @@ export function TransferPanel() {
     >
       <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-neutral-500">
         <span className="font-semibold text-neutral-300">传输队列</span>
-        <span>{active > 0 ? `${active} 个进行中` : "已全部结束"}</span>
+        <span>{active > 0 ? `${active} 个未结束` : "已全部结束"}</span>
         <span className="nx-spacer" />
         {active < tasks.length && (
           <button type="button" className="nx-link" onClick={clearFinishedTransfers}>

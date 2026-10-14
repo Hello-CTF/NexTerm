@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     tabId: "tab-a",
     jobId: "job-a",
     token: "token-a",
-    task: "安装 nginx",
+    task: "install nginx",
     allowWrite: true,
     startedAt: 1,
   },
@@ -43,45 +43,45 @@ function takeover(overrides: Partial<TakeoverState> = {}): TakeoverState {
 }
 
 describe("takeoverEndedIn", () => {
-  it("全新终端没有任何标记时未结束", () => {
+  it("reports no end for a fresh terminal without markers", () => {
     expect(takeoverEndedIn("deploy@web-01:~$ ")).toBe(false);
   });
 
-  it("只有上一次接管的结束标记时算已结束", () => {
+  it("treats only a previous takeover end marker as ended", () => {
     expect(takeoverEndedIn("$ \r\n[接管结束: 任务完成]\r\ndeploy@web-01:~$ ")).toBe(true);
   });
 
-  it("上一次结束标记与本次 EnterBanner 同屏时本次仍存活", () => {
+  it("keeps the current takeover alive when a previous end marker and the current EnterBanner share the snapshot", () => {
     const text =
       "[接管结束: 任务完成]\r\n[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\ndeploy@web-01:~$ ";
     expect(takeoverEndedIn(text)).toBe(false);
   });
 
-  it("EnterBanner 之后又出现结束标记才算已结束", () => {
+  it("reports ended only when an end marker appears after EnterBanner", () => {
     const text =
       "[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\n$ \r\n[接管结束: 用户退出]\r\n$ ";
     expect(takeoverEndedIn(text)).toBe(true);
   });
 
-  it("多个历史结束标记但无 EnterBanner 时仍算已结束", () => {
+  it("reports ended for multiple historical end markers without EnterBanner", () => {
     const text = "[接管结束: 任务完成]\r\n[接管结束: 用户退出]\r\n$ ";
     expect(takeoverEndedIn(text)).toBe(true);
   });
 });
 
 describe("restoredTakeoverAlive", () => {
-  it("快照里没有接管结束标记时认为接管仍存活", async () => {
+  it("keeps a restored takeover alive when the snapshot has no end marker", async () => {
     const snap = vi.fn().mockResolvedValue({ text: "deploy@web-01:~$ " });
     await expect(restoredTakeoverAlive(takeover(), snap)).resolves.toBe(true);
     expect(snap).toHaveBeenCalledWith("tab-a");
   });
 
-  it("快照里出现接管结束标记时认为接管已结束", async () => {
+  it("treats a restored takeover as ended when the snapshot contains an end marker", async () => {
     const snap = vi.fn().mockResolvedValue({ text: "[接管结束: 用户退出]\r\ndeploy@web-01:~$ " });
     await expect(restoredTakeoverAlive(takeover(), snap)).resolves.toBe(false);
   });
 
-  it("快照持续失败时按存活处理，不误清横幅", async () => {
+  it("treats a takeover as alive during persistent snapshot failures instead of clearing the banner incorrectly", async () => {
     vi.useFakeTimers();
     try {
       const snap = vi.fn().mockRejectedValue(new Error("offline"));
@@ -95,7 +95,7 @@ describe("restoredTakeoverAlive", () => {
   });
 });
 
-describe("TakeoverBanner 接管恢复", () => {
+describe("TakeoverBanner takeover restoration", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -111,7 +111,7 @@ describe("TakeoverBanner 接管恢复", () => {
     view = null;
   });
 
-  it("重载后恢复横幅；快照显示接管已结束时清掉横幅并提示", async () => {
+  it("restores the banner after reload, then clears it and notifies when the snapshot shows the takeover ended", async () => {
     mocks.snapshot.mockResolvedValue({ text: "[接管结束: 用户退出]\r\n$ " });
     view = mount(createElement(TakeoverBanner));
     expect(view.container.textContent).toContain("AI 正在操作此终端");
@@ -124,7 +124,7 @@ describe("TakeoverBanner 接管恢复", () => {
     expect(localStorage.getItem("nexterm.takeover.v1")).toBeNull();
   });
 
-  it("新的接管不触发存活探测，避免误清进行中的横幅", async () => {
+  it("does not probe liveness for a new takeover, avoiding clearing an active banner", async () => {
     useUi.getState().setTakeover(takeover({ tabId: "tab-b", token: "token-b" }));
     view = mount(createElement(TakeoverBanner));
     await flushProbe();
@@ -134,14 +134,14 @@ describe("TakeoverBanner 接管恢复", () => {
   });
 });
 
-describe("stealBack 对已结束的接管保持诚实", () => {
+describe("stealBack reports ended takeovers truthfully", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.cancel.mockResolvedValue(undefined);
     useUi.setState({ pushToast: mocks.toast });
   });
 
-  it("令牌过期时清横幅并提示已结束，而不是报错", async () => {
+  it("clears the banner and reports ended instead of erroring for an expired token", async () => {
     useUi.getState().setTakeover(takeover({ token: "stale" }));
     mocks.exit.mockRejectedValue(new Error("接管令牌已过期"));
     await stealBack();
@@ -149,7 +149,7 @@ describe("stealBack 对已结束的接管保持诚实", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端控制权已恢复。");
   });
 
-  it("任务不存在时同样按已结束处理", async () => {
+  it("also treats a missing task as ended", async () => {
     useUi.getState().setTakeover(takeover());
     mocks.exit.mockRejectedValue(new Error("接管任务不存在或已结束"));
     await stealBack();
@@ -157,7 +157,7 @@ describe("stealBack 对已结束的接管保持诚实", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端控制权已恢复。");
   });
 
-  it("其他失败仍然保留横幅并报错", async () => {
+  it("keeps the banner and reports errors for other failures", async () => {
     const current = takeover();
     useUi.getState().setTakeover(current);
     mocks.exit.mockRejectedValue(new Error("offline"));

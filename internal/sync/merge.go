@@ -105,14 +105,14 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 		// Credentials are not synced this round while the vault is locked/uninitialized (same deferred semantics as keyed AI profiles); other objects are collected as usual.
 		// Credentials stay out of objects, so no reconciliation state is written; the next round after unlock pushes them automatically.
 		if err := e.requireVault(ctx); err != nil {
-			report.warnf("%d 条凭据因凭据库未解锁本次不同步, 其余对象正常同步: %v", len(credentials), err)
+			report.warnf("%d 条凭据因凭据库未解锁而跳过本次同步，其余对象正常同步：%v", len(credentials), err)
 			credentials = nil
 		}
 	}
 	for _, row := range credentials {
 		secret, err := e.vault.DecryptCredentialString(ctx, row)
 		if err != nil {
-			report.warnf("凭据 %s 解密失败, 本次不同步: %v", row.ID, err)
+			report.warnf("凭据 %s 解密失败，本次不同步：%v", row.ID, err)
 			continue
 		}
 		payload, err := marshalObject(credentialObject{
@@ -164,7 +164,7 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 	for _, transcript := range transcripts {
 		payload, err := e.transcriptPayload(ctx, transcript)
 		if err != nil {
-			report.warnf("会话记录 %s 打包失败, 本次不同步: %v", transcript.ID, err)
+			report.warnf("会话记录 %s 打包失败，本次不同步：%v", transcript.ID, err)
 			continue
 		}
 		objects[transcript.ID] = localObject{KindTranscript, payload}
@@ -191,12 +191,12 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, op
 			if !errors.Is(err, errAIProfilesCorrupt) {
 				return nil, err
 			}
-			report.warnf("AI 模型档案数据损坏, 本次不同步: %v", err)
+			report.warnf("AI 模型档案数据损坏，本次不同步：%v", err)
 		} else {
 			for _, record := range profileState.Profiles {
 				key, err := e.revealAIProfileKey(ctx, record.APIKey)
 				if err != nil {
-					report.warnf("AI 模型档案 %s 解密失败, 本次不同步: %v", record.ID, err)
+					report.warnf("AI 模型档案 %s 解密失败，本次不同步：%v", record.ID, err)
 					continue
 				}
 				record.APIKey = key
@@ -323,7 +323,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	kind, plaintext, err := tryOpenObject(dek, object.Blob, object.ID)
 	if err != nil {
 		report.DecryptFailed++
-		report.warnf("对象 %s 解密失败(密钥不匹配或数据损坏), 已隔离", object.ID)
+		report.warnf("对象 %s 解密失败（密钥不匹配或数据损坏），已隔离", object.ID)
 		e.quarantineObject(ctx, userID, object.ID, hashBlob(object.Blob))
 		return
 	}
@@ -336,7 +336,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 	if kind == KindCredential {
 		if err := e.requireVault(ctx); err != nil {
 			report.PullSkipped++
-			report.warnf("凭据 %s 暂缓应用, 凭据库未解锁, 解锁后下一轮同步自动重试", object.ID)
+			report.warnf("凭据 %s 暂缓应用：凭据库未解锁，解锁后下一轮同步自动重试", object.ID)
 			return
 		}
 	}
@@ -367,7 +367,7 @@ func (e *Engine) quarantineObject(ctx context.Context, userID, objectID string, 
 func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload groupObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("分组对象载荷损坏: %v", err)
+		report.warnf("分组对象数据损坏：%v", err)
 		return false, false
 	}
 	local, err := e.store.GroupGet(ctx, payload.ID)
@@ -377,7 +377,7 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查分组 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查分组 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -388,7 +388,7 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 			CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
 		})
 		if err != nil {
-			report.warnf("分组 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("分组 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -403,7 +403,7 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 		if *parentID == "" {
 			parentID = nil
 		} else if _, err := e.store.GroupGet(ctx, *parentID); isNotFound(err) {
-			report.warnf("分组 %s 的父级 %s 不存在, 已按顶级分组导入", payload.ID, *parentID)
+			report.warnf("分组 %s 的父级 %s 不存在，已按顶级分组导入", payload.ID, *parentID)
 			parentID = nil
 		} else if err != nil {
 			report.warnf("无法检查分组 %s 的父级: %v", payload.ID, err)
@@ -418,10 +418,10 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 		}
 		switch mergedGroupTopology(payload.ID, parentID, parents) {
 		case groupTopologyCycle:
-			report.warnf("分组 %s 的父级会在合并后形成循环, 已按顶级分组导入", payload.ID)
+			report.warnf("分组 %s 的父级会在合并后形成循环，已按顶级分组导入", payload.ID)
 			parentID = nil
 		case groupTopologyTooDeep:
-			report.warnf("分组 %s 合并后的祖先链超过 64 层, 已按顶级分组导入", payload.ID)
+			report.warnf("分组 %s 合并后的祖先链超过 64 层，已按顶级分组导入", payload.ID)
 			parentID = nil
 		}
 	}
@@ -480,7 +480,7 @@ func (e *Engine) groupParents(ctx context.Context) (map[string]*string, error) {
 func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload assetObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("资产对象载荷损坏: %v", err)
+		report.warnf("资产对象数据损坏：%v", err)
 		return false, false
 	}
 	if payload.ID == store.BuiltinLocalAssetID {
@@ -505,7 +505,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 			UpdatedAt: local.UpdatedAt, DeletedAt: local.DeletedAt,
 		})
 		if err != nil {
-			report.warnf("资产 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("资产 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -517,7 +517,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		degraded.CredID = nil
 		degradedPayload, err := marshalObject(degraded)
 		if err != nil {
-			report.warnf("资产 %s 降级形态编码失败: %v", payload.ID, err)
+			report.warnf("资产 %s 的兼容格式编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(degradedPayload, localPayload) {
@@ -543,7 +543,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		if *row.GroupID == "" {
 			row.GroupID = nil
 		} else if _, err := e.store.GroupGet(ctx, *row.GroupID); isNotFound(err) {
-			report.warnf("资产 %s 引用的分组 %s 不存在, 已清除该引用", payload.ID, *row.GroupID)
+			report.warnf("资产 %s 引用的分组 %s 不存在，已清除该引用", payload.ID, *row.GroupID)
 			row.GroupID = nil
 		} else if err != nil {
 			report.warnf("无法检查资产 %s 的分组: %v", payload.ID, err)
@@ -556,7 +556,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		} else if _, err := e.store.CredentialGetRow(ctx, *row.CredID); isNotFound(err) {
 			// cred_id has an FK constraint (OnDelete:SET NULL); a dangling reference cannot be written to the database and can only be cleared by degradation;
 			// after marking the unresolved reference the engine does not reconcile, and the next round's re-pull restores the reference automatically via the degraded-form check once the credential arrives.
-			report.warnf("资产 %s 引用的凭据 %s 尚未同步到本机, 已暂时清除该引用, 凭据同步后自动恢复", payload.ID, *row.CredID)
+			report.warnf("资产 %s 引用的凭据 %s 尚未同步到本机，已暂时清除该引用，凭据同步后自动恢复", payload.ID, *row.CredID)
 			row.CredID = nil
 			report.markUnresolvedRef(payload.ID)
 		} else if err != nil {
@@ -574,7 +574,7 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload credentialObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("凭据对象载荷损坏: %v", err)
+		report.warnf("凭据对象数据损坏：%v", err)
 		return false, false
 	}
 	if err := e.requireVault(ctx); err != nil {
@@ -590,7 +590,7 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 	if tombstone, err := e.store.CredentialTombstoneGet(ctx, payload.ID); err == nil && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	} else if err != nil && !isNotFound(err) {
-		report.warnf("无法检查凭据 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查凭据 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	}
 	if exists {
@@ -603,7 +603,7 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 			ID: local.ID, Name: local.Name, Kind: local.Kind, Secret: secret, UpdatedAt: local.UpdatedAt,
 		})
 		if err != nil {
-			report.warnf("凭据 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("凭据 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -656,7 +656,7 @@ func (e *Engine) credentialUpsertTx(ctx context.Context, tx *gorm.DB, payload cr
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload snippetObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("片段对象载荷损坏: %v", err)
+		report.warnf("片段对象数据损坏：%v", err)
 		return false, false
 	}
 	local, err := e.store.SnippetGet(ctx, payload.ID)
@@ -666,7 +666,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查片段 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查片段 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -677,7 +677,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 			Sort: local.Sort, CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
 		})
 		if err != nil {
-			report.warnf("片段 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("片段 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -695,7 +695,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		if *row.GroupID == "" {
 			row.GroupID = nil
 		} else if _, err := e.store.GroupGet(ctx, *row.GroupID); isNotFound(err) {
-			report.warnf("片段 %s 引用的分组 %s 不存在, 已清除该引用", payload.ID, *row.GroupID)
+			report.warnf("片段 %s 引用的分组 %s 不存在，已清除该引用", payload.ID, *row.GroupID)
 			row.GroupID = nil
 		} else if err != nil {
 			report.warnf("无法检查片段 %s 的分组: %v", payload.ID, err)
@@ -712,7 +712,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
 	var payload tombstoneObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("墓碑对象载荷损坏: %v", err)
+		report.warnf("删除标记对象数据损坏：%v", err)
 		return false, false
 	}
 	switch payload.TargetKind {
@@ -735,7 +735,7 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 	case KindPreference:
 		return e.applyPreferenceTombstone(ctx, objectID, payload.DeletedAt, report, firstUserID(userIDs))
 	default:
-		report.warnf("墓碑对象目标种类 %s 不受支持", payload.TargetKind)
+		report.warnf("删除标记对象目标种类 %s 不受支持", payload.TargetKind)
 		return false, false
 	}
 }
@@ -751,12 +751,12 @@ func (e *Engine) applyGroupTombstone(ctx context.Context, objectID string, delet
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindGroup, deletedAt); err != nil {
-		report.warnf("分组 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("分组 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	if exists {
 		if err := e.store.GroupDelete(ctx, objectID); err != nil {
-			report.warnf("分组 %s 按墓碑删除失败: %v", objectID, err)
+			report.warnf("应用分组 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
 	}
@@ -774,12 +774,12 @@ func (e *Engine) applySnippetTombstone(ctx context.Context, objectID string, del
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindSnippet, deletedAt); err != nil {
-		report.warnf("片段 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("片段 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	if exists {
 		if err := e.store.SnippetDelete(ctx, objectID); err != nil {
-			report.warnf("片段 %s 按墓碑删除失败: %v", objectID, err)
+			report.warnf("应用片段 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
 	}
@@ -798,12 +798,12 @@ func (e *Engine) applyCredentialTombstone(ctx context.Context, objectID string, 
 	}
 	if exists {
 		if err := e.store.CredentialDeleteRow(ctx, objectID); err != nil {
-			report.warnf("凭据 %s 按墓碑删除失败: %v", objectID, err)
+			report.warnf("应用凭据 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
 	}
 	if err := e.store.CredentialTombstonePut(ctx, objectID, deletedAt); err != nil {
-		report.warnf("凭据 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("凭据 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	return true, false
@@ -821,7 +821,7 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 		return false, true
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindTranscript, deletedAt); err != nil {
-		report.warnf("会话记录 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("会话记录 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	if exists {
@@ -830,7 +830,7 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 			Where(transcript.ID.Eq(objectID)).
 			Where(ownerConditions(ctx, transcript.TableName())...).
 			Delete(); err != nil {
-			report.warnf("会话记录 %s 按墓碑删除失败: %v", objectID, err)
+			report.warnf("应用会话记录 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
 	}
@@ -840,15 +840,15 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 func (e *Engine) applyTranscriptObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload transcriptObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("会话记录对象载荷损坏: %v", err)
+		report.warnf("会话记录对象数据损坏：%v", err)
 		return false, false
 	}
 	if payload.EndedAt <= 0 {
-		report.warnf("会话记录 %s 未结束, 不同步", payload.ID)
+		report.warnf("会话记录 %s 未结束，不同步", payload.ID)
 		return false, false
 	}
 	if _, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查会话记录 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查会话记录 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found {
 		return false, false
@@ -903,11 +903,11 @@ func chunksToRows(chunks []transcriptChunkObject) []store.TranscriptChunkRow {
 func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload knownHostObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("已知主机对象载荷损坏: %v", err)
+		report.warnf("已知主机对象数据损坏：%v", err)
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查已知主机 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查已知主机 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.AddedAt {
 		return false, false
@@ -923,7 +923,7 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 			Fingerprint: local.Fingerprint, AddedAt: local.AddedAt,
 		})
 		if err != nil {
-			report.warnf("已知主机 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("已知主机 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -937,7 +937,7 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 	// the loser row is deleted and tombstoned at the winner's revision, so multiple devices converge on one object per host.
 	displacedID := ""
 	if conflict, found, err := e.store.KnownHostGet(ctx, payload.Host, payload.Port, payload.KeyType); err != nil {
-		report.warnf("无法检查已知主机 %s 的三元组冲突: %v", payload.ID, err)
+		report.warnf("无法检查已知主机 %s 的主机、端口和密钥类型组合冲突：%v", payload.ID, err)
 		return false, false
 	} else if found && conflict.ID != payload.ID {
 		conflictPayload, err := marshalObject(knownHostObject{
@@ -945,7 +945,7 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 			Fingerprint: conflict.Fingerprint, AddedAt: conflict.AddedAt,
 		})
 		if err != nil {
-			report.warnf("已知主机 %s 冲突载荷编码失败: %v", payload.ID, err)
+			report.warnf("已知主机 %s 冲突数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if !remoteWins(payload.AddedAt, conflict.AddedAt, plaintext, conflictPayload) {
@@ -957,7 +957,7 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 				incarnation = &local
 			}
 			if err := e.knownHostTombstoneLoser(ctx, payload, incarnation, conflict.AddedAt); err != nil {
-				report.warnf("已知主机冲突项 %s 的删除墓碑记录失败：%v", payload.ID, err)
+				report.warnf("已知主机冲突项 %s 的删除标记记录失败：%v", payload.ID, err)
 				return false, false
 			}
 			return false, false
@@ -1002,7 +1002,7 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 			return e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType})
 		})
 		if err != nil {
-			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
+			report.warnf("已知主机 %s 的冲突项删除标记记录失败：%v", objectID, err)
 			return false, false
 		}
 		return true, false
@@ -1024,7 +1024,7 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 		return e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta)
 	})
 	if err != nil {
-		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("已知主机 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	return true, false
@@ -1033,7 +1033,7 @@ func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, p
 func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload aiProfileObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("AI 模型档案对象载荷损坏: %v", err)
+		report.warnf("AI 模型档案对象数据损坏：%v", err)
 		return false, false
 	}
 	if payload.APIKey != "" {
@@ -1048,7 +1048,7 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 		return false, false
 	}
 	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
-		report.warnf("无法检查 AI 模型档案 %s 的删除墓碑: %v", payload.ID, err)
+		report.warnf("无法检查 AI 模型档案 %s 的删除标记：%v", payload.ID, err)
 		return false, false
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
@@ -1063,7 +1063,7 @@ func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, rep
 		local.APIKey = localKey
 		localPayload, err := marshalObject(aiProfilePayloadFromRecord(local, revision))
 		if err != nil {
-			report.warnf("AI 模型档案 %s 本地载荷编码失败: %v", payload.ID, err)
+			report.warnf("AI 模型档案 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
@@ -1106,14 +1106,14 @@ func (e *Engine) applyAIProfileTombstone(ctx context.Context, objectID string, d
 		return false, false
 	}
 	if err := e.syncTombstonePut(ctx, objectID, KindAIProfile, deletedAt); err != nil {
-		report.warnf("AI 模型档案 %s 的删除墓碑记录失败: %v", objectID, err)
+		report.warnf("AI 模型档案 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
 	if exists {
 		state.remove(objectID)
 		state.ensureActive()
 		if err := e.aiProfilesSave(ctx, state, revision, ""); err != nil {
-			report.warnf("AI 模型档案 %s 按墓碑删除失败: %v", objectID, err)
+			report.warnf("应用 AI 模型档案 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}
 	}
@@ -1122,21 +1122,21 @@ func (e *Engine) applyAIProfileTombstone(ctx context.Context, objectID string, d
 
 func unmarshalObject(plaintext []byte, dst any) error {
 	if err := json.Unmarshal(plaintext, dst); err != nil {
-		return ipc.WrapError(ipc.CodeBadParam, "同步对象载荷不是合法 JSON", err)
+		return ipc.WrapError(ipc.CodeBadParam, "同步对象数据不是合法 JSON", err)
 	}
 	return nil
 }
 
 func (e *Engine) requireVault(ctx context.Context) error {
 	if e.vault == nil {
-		return ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法同步凭据")
+		return ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用，无法同步凭据")
 	}
 	status := e.vault.Status()
 	if !status.Initialized {
-		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库未初始化, 无法同步凭据")
+		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库未初始化，无法同步凭据")
 	}
 	if !status.Unlocked {
-		return ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定, 请先解锁")
+		return ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
 	return nil
 }

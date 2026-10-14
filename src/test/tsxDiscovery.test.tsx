@@ -7,7 +7,7 @@ function DiscoveryProbe({ label }: { label: string }) {
   return <span>{label}</span>;
 }
 
-describe("TSX 测试发现回归 (M63)", () => {
+describe("TSX test discovery regression (M63)", () => {
   let mounted: MountedView | undefined;
 
   afterEach(() => {
@@ -15,7 +15,7 @@ describe("TSX 测试发现回归 (M63)", () => {
     mounted = undefined;
   });
 
-  it("标准门禁能编译并渲染 JSX", () => {
+  it("compiles and renders JSX under the standard quality gate", () => {
     mounted = mount(<DiscoveryProbe label="tsx-discovery-ok" />);
     expect(mounted.container.textContent).toBe("tsx-discovery-ok");
   });

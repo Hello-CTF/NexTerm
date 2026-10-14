@@ -189,7 +189,7 @@ describe("TerminalKeysBar configuration", () => {
   it("re-enables a catalog-only key at the end of the bar", () => {
     renderBar();
     openConfig();
-    toggleCheckbox(dialog()!, '在按键条中显示「Ctrl+U（删除整行）」');
+    toggleCheckbox(dialog()!, '在按键条中显示「Ctrl+U（删除到行首）」');
     const labels = barLabels();
     expect(labels[labels.length - 2]).toBe("^U");
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual([

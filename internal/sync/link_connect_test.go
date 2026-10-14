@@ -97,7 +97,7 @@ func TestLinkMFAFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := fixture.logins.Load(); got != 1 {
-		t.Fatalf("logins = %d, want 1 (MFA 完成复用票据会话, 不重登)", got)
+		t.Fatalf("logins = %d, want 1 (MFA completion reuses the ticket session without re-login)", got)
 	}
 }
 
@@ -135,7 +135,7 @@ func TestLinkResetRequiredFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := fixture.logins.Load(); got != 1 {
-		t.Fatalf("logins = %d, want 1 (reset 完成复用受限会话, 不重登)", got)
+		t.Fatalf("logins = %d, want 1 (reset completion reuses the restricted session without re-login)", got)
 	}
 
 	// The intermediate state is consumed: submitting a new password again must be rejected.

@@ -135,7 +135,7 @@ afterEach(() => {
 });
 
 describe("session://connect-progress badge", () => {
-  it("重连中展示第几跳与阶段, 徽标 title 带主机端口", async () => {
+  it("shows the hop number and stage while reconnecting, with host and port in the badge title", async () => {
     await act(async () => {
       await flush();
     });
@@ -168,7 +168,7 @@ describe("session://connect-progress badge", () => {
     expect(badge("重连中")?.textContent).toBe("重连中 · 目标主机 · 经跳板打开通道");
   });
 
-  it("连接中展示目标主机阶段", async () => {
+  it("shows the target-host stage while connecting", async () => {
     seedSession("connecting");
     await act(async () => {
       await flush();
@@ -186,7 +186,7 @@ describe("session://connect-progress badge", () => {
     expect(badge("连接中")?.textContent).toBe("连接中 · 目标主机 · TCP 拨号");
   });
 
-  it("清理后回到纯状态文案, 已连接后不再展示残留进度", async () => {
+  it("returns to plain status text after cleanup and shows no leftover progress once connected", async () => {
     await act(async () => {
       await flush();
     });
@@ -221,7 +221,7 @@ describe("session://connect-progress badge", () => {
     expect(badge("已连接")?.textContent).toBe("已连接");
   });
 
-  it("其他资产的进度不影响本会话徽标", async () => {
+  it("does not let progress from other assets affect this session's badge", async () => {
     await act(async () => {
       await flush();
     });

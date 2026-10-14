@@ -54,7 +54,7 @@ function seed(): void {
 				sessionId: "s-dev",
 				assetId: "device/d-1",
 				assetKind: "device",
-				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "终端", closable: true }] }],
+				panes: [{ id: "p1", activeTabId: "t1", tabs: [{ id: "t1", kind: "terminal", sessionId: "s-dev", title: "Terminal", closable: true }] }],
 				activePaneId: "p1",
 				splitRatio: 0.5,
 			},
@@ -66,7 +66,7 @@ function seed(): void {
 				sessionId: "s-ssh",
 				assetId: "a-1",
 				assetKind: "ssh",
-				panes: [{ id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", sessionId: "s-ssh", title: "终端", closable: true }] }],
+				panes: [{ id: "p2", activeTabId: "t2", tabs: [{ id: "t2", kind: "terminal", sessionId: "s-ssh", title: "Terminal", closable: true }] }],
 				activePaneId: "p2",
 				splitRatio: 0.5,
 			},
@@ -90,8 +90,8 @@ afterEach(() => {
 	useAuth.setState({ user: null });
 });
 
-describe("设备会话账号边界", () => {
-	it("账号 A->B: 设备工作区关闭且会话断开, ssh 工作区保留", async () => {
+describe("Device session account boundaries", () => {
+	it("account A to B: closes device workspaces and disconnects their sessions, preserves SSH workspaces", async () => {
 		useAuth.setState({ user: OTHER_USER });
 		await flushUntil(() => useUi.getState().workspaces.every((w) => w.assetKind !== "device"));
 
@@ -102,7 +102,7 @@ describe("设备会话账号边界", () => {
 		expect(useUi.getState().activeWorkspaceId).toBe("ws-ssh");
 	});
 
-	it("登出 (user 变 null): 设备工作区同样清理", async () => {
+	it("logout (user becomes null): also cleans up device workspaces", async () => {
 		useAuth.setState({ user: null });
 		await flushUntil(() => useUi.getState().workspaces.every((w) => w.assetKind !== "device"));
 
@@ -110,7 +110,7 @@ describe("设备会话账号边界", () => {
 		expect(useUi.getState().workspaces.map((w) => w.id)).toEqual(["ws-ssh"]);
 	});
 
-	it("身份从 null 解析完成 (桌面启动顺序): 不当作换账号, 设备工作区保留", async () => {
+	it("identity resolved from null (desktop startup order): not treated as an account switch, preserves device workspaces", async () => {
 		mounted?.unmount();
 		useAuth.setState({ user: null });
 		mounted = mountWithClient(createElement(DeviceSessionBoundary));
@@ -121,7 +121,7 @@ describe("设备会话账号边界", () => {
 		expect(mocks.disconnect).not.toHaveBeenCalled();
 	});
 
-	it("同身份刷新不清设备工作区", async () => {
+	it("refreshing with the same identity does not clear device workspaces", async () => {
 		useAuth.setState({ user: { ...USER } });
 		await flushUntil(() => mocks.disconnect.mock.calls.length === 0 && useUi.getState().workspaces.length === 2);
 		expect(useUi.getState().workspaces.some((w) => w.assetKind === "device")).toBe(true);

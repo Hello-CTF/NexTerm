@@ -1,4 +1,4 @@
-<!-- The 变化 section is generated at release time by .github/scripts/release-notes.mjs from conventional commits between the previous and current release tags; this template keeps only the hand-written sections below. -->
+<!-- The changes section is generated at release time by .github/scripts/release-notes.mjs from conventional commits between the previous and current release tags; this template keeps only the hand-written sections below. -->
 
 ### 亮点功能
 
@@ -25,7 +25,7 @@
 
 | 平台 | 文件 |
 |---|---|
-| Android | `NexTerm_*_android.apk`（ arm64 设备直接安装） |
+| Android | `NexTerm_*_android.apk`（arm64 设备直接安装） |
 | iOS | `NexTerm_*_ios.ipa`（ad-hoc 签名，TestFlight 需使用 Apple Distribution 签名重新构建） |
 
 **服务端（浏览器访问）**
@@ -50,7 +50,7 @@ tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可�
 
 **懒猫微服**
 
-在微服的应用中心里安装，不经这里下载：构建要连私有镜像仓库，凭证只在微服侧，出不了这条流水线。
+在微服的应用中心安装，无需从本 Release 下载：构建过程需要访问私有镜像仓库，凭证仅保存在微服侧，因此无法由这条 Release 流水线构建。
 
 ### macOS 未签名或未公证构建的首次打开说明
 
@@ -60,4 +60,4 @@ tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可�
 2. 系统设置 → 隐私与安全性，下拉到「安全性」，点「仍要打开」
 3. 之后正常双击即可
 
-如果提示的是「已损坏」而不是「无法验证开发者」，那是早期版本的签名缺陷，请改用最新版本；或用命令行修掉：`xattr -dr com.apple.quarantine /Applications/NexTerm.app`
+如果提示的是「已损坏」而不是「无法验证开发者」，那是早期版本的签名缺陷，请改用最新版本；或通过命令行移除隔离属性：`xattr -dr com.apple.quarantine /Applications/NexTerm.app`

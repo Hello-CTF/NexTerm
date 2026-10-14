@@ -68,8 +68,8 @@ function withClient(node: React.ReactElement): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
-describe("SyncCard 桌面端链接表单窄屏结构", () => {
-  it("链接表单输入框可收缩(min-w-0 flex-1),标签固定宽", async () => {
+describe("SyncCard desktop link form narrow-screen layout", () => {
+  it("allows link form inputs to shrink with min-w-0 flex-1 while labels keep a fixed width", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     for (const id of ["sync-url", "sync-user", "sync-pass"]) {
@@ -81,8 +81,8 @@ describe("SyncCard 桌面端链接表单窄屏结构", () => {
     expect(label.className).toContain("shrink-0");
   });
 
-  it("操作按钮行可换行,长错误文本可断词", async () => {
-    const longError = "同步头不一致:" + "很长的对端原因".repeat(20);
+  it("wraps the action button row and breaks long error text", async () => {
+    const longError = "Sync head mismatch:" + "very long remote reason".repeat(20);
     mocks.status.mockResolvedValue({
       configured: true,
       loggedIn: false,

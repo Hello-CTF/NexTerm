@@ -133,8 +133,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("两个浏览器标签页的 layout://changed 同步", () => {
-  it("一个标签保存后另一个标签实时拉取并按 revision 去重", async () => {
+describe("layout://changed synchronization between two browser tabs", () => {
+  it("pulls changes in real time after one tab saves and deduplicates by revision", async () => {
     const tabA = await openTab();
     server.data = JSON.stringify(layout(248, "initial"));
     const tabB = await openTab();
@@ -160,7 +160,7 @@ describe("两个浏览器标签页的 layout://changed 同步", () => {
     await vi.waitFor(() => expect(server.getCalls).toBe(4));
   });
 
-  it("resync（无 payload）强制刷新，即使 revision 未变", async () => {
+  it("forces a refresh on resync with no payload even when the revision is unchanged", async () => {
     server.data = JSON.stringify(layout(260, "server"));
     const tabA = await openTab();
     expect(tabA.store.getState().leftWidth).toBe(260);
@@ -170,7 +170,7 @@ describe("两个浏览器标签页的 layout://changed 同步", () => {
     await vi.waitFor(() => expect(tabA.store.getState().leftWidth).toBe(280));
   });
 
-  it("拉取在途期间连续 5 个 revision 事件不丢失，结束后追到最新", async () => {
+  it("does not lose five revision events while a pull is in flight and catches up to the latest after it finishes", async () => {
     server.data = JSON.stringify(layout(248, "v0"));
     const tabA = await openTab();
     const tabB = await openTab();

@@ -545,7 +545,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	for _, selection := range input.Keys {
 		item := keyByID[selection.ID]
 		if item == nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("密钥条目与最新预览不一致（源数据可能已变化），已跳过: %q", selection.ID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("密钥条目与最新预览不一致（源数据可能已变化），已跳过：%q", selection.ID))
 			result.Skipped++
 			continue
 		}
@@ -622,7 +622,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	for _, selection := range input.Hosts {
 		item := hostByID[selection.ID]
 		if item == nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("主机条目与最新预览不一致（源数据可能已变化），已跳过: %q", selection.ID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("主机条目与最新预览不一致（源数据可能已变化），已跳过：%q", selection.ID))
 			result.Skipped++
 			continue
 		}

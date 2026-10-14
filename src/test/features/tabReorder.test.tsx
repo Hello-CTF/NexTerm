@@ -197,7 +197,7 @@ function mountApp(): MountedView {
 }
 
 describe("tab drag reorder", () => {
-  it("dragstart 设置自定义 mime、move effect 与拖拽态样式", async () => {
+  it("sets the custom mime, move effect, and drag-state style on dragstart", async () => {
     mounted = mountApp();
     await flush();
 
@@ -219,7 +219,7 @@ describe("tab drag reorder", () => {
     expect(audit.className).not.toContain("nx-drag-source");
   });
 
-  it("dragover 按指针位置给出 before/after 插入指示", async () => {
+  it("shows before/after insertion indicators based on pointer position during dragover", async () => {
     mounted = mountApp();
     await flush();
 
@@ -247,7 +247,7 @@ describe("tab drag reorder", () => {
     expect(cred.className).not.toContain("nx-drop-before");
   });
 
-  it("dragover 拖到自身时不消费也不显示指示", async () => {
+  it("does not consume dragover or show an indicator over the dragged tab itself", async () => {
     mounted = mountApp();
     await flush();
 
@@ -268,7 +268,7 @@ describe("tab drag reorder", () => {
     expect(audit.className).not.toContain("nx-drop-after");
   });
 
-  it("drop 到目标左半侧时插入其前，activeTabId 不变", async () => {
+  it("inserts before the target on a left-half drop and preserves activeTabId", async () => {
     mounted = mountApp();
     await flush();
 
@@ -291,7 +291,7 @@ describe("tab drag reorder", () => {
     expect(cred.className).not.toContain("nx-drop-before");
   });
 
-  it("drop 到目标右半侧时插入其后", async () => {
+  it("inserts after the target on a right-half drop", async () => {
     mounted = mountApp();
     await flush();
 
@@ -310,7 +310,7 @@ describe("tab drag reorder", () => {
     expect(activeTabId()).toBe("t1");
   });
 
-  it("drop 到自身不改变顺序", async () => {
+  it("does not change order when dropping onto the dragged tab itself", async () => {
     mounted = mountApp();
     await flush();
 
@@ -324,7 +324,7 @@ describe("tab drag reorder", () => {
     expect(tabOrder()).toEqual(["t1", "t2", "t3"]);
   });
 
-  it("拖拽中的 click 不激活标签，dragend 后恢复激活", async () => {
+  it("does not activate a tab on click while dragging and restores activation after dragend", async () => {
     mounted = mountApp();
     await flush();
 
@@ -378,7 +378,7 @@ describe("cross-pane drag guard", () => {
     });
   }
 
-  it("跨 pane 拖拽不显示放置指示，drop 不消费且两侧顺序不变", async () => {
+  it("does not show a drop indicator or consume drop across panes and preserves order on both sides", async () => {
     useSplitPanes();
     mounted = mountApp();
     await flush();
@@ -413,7 +413,7 @@ describe("cross-pane drag guard", () => {
     });
   });
 
-  it("分屏下同 pane 拖拽排序不受影响", async () => {
+  it("allows same-pane drag reorder in split view", async () => {
     useSplitPanes();
     mounted = mountApp();
     await flush();
@@ -442,7 +442,7 @@ describe("tab context menu move", () => {
     return menu;
   }
 
-  it("边界标签对应移动项 disabled", async () => {
+  it("disables move items at the corresponding boundary tabs", async () => {
     mounted = mountApp();
     await flush();
 
@@ -458,7 +458,7 @@ describe("tab context menu move", () => {
     expect(menuButton("右移标签").disabled).toBe(true);
   });
 
-  it("右移标签移动后 activeTabId 不变", async () => {
+  it("preserves activeTabId after moving a tab right", async () => {
     mounted = mountApp();
     await flush();
 
@@ -470,7 +470,7 @@ describe("tab context menu move", () => {
     expect(tabByText(list, "设置").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("左移标签移动中间标签", async () => {
+  it("moves a middle tab left", async () => {
     mounted = mountApp();
     await flush();
 
@@ -483,7 +483,7 @@ describe("tab context menu move", () => {
 });
 
 describe("tab keyboard move", () => {
-  it("Ctrl+Shift+ArrowRight 移动当前标签且焦点跟随", async () => {
+  it("moves the active tab right with Ctrl+Shift+ArrowRight and follows focus", async () => {
     mounted = mountApp();
     await flush();
 
@@ -498,7 +498,7 @@ describe("tab keyboard move", () => {
     expect(document.activeElement).toBe(tabByText(list, "设置"));
   });
 
-  it("Ctrl+Shift+ArrowLeft 移动末尾标签", async () => {
+  it("moves the last tab left with Ctrl+Shift+ArrowLeft", async () => {
     mounted = mountApp();
     await flush();
 
@@ -511,7 +511,7 @@ describe("tab keyboard move", () => {
     expect(document.activeElement).toBe(tabByText(list, "凭据"));
   });
 
-  it("边界处 Ctrl+Shift+ArrowLeft 不消费事件也不移动", async () => {
+  it("does not consume Ctrl+Shift+ArrowLeft at the boundary or move the tab", async () => {
     mounted = mountApp();
     await flush();
 
@@ -525,7 +525,7 @@ describe("tab keyboard move", () => {
     expect(document.activeElement).toBe(settings);
   });
 
-  it("普通 ArrowRight 仍然只做激活导航", async () => {
+  it("keeps plain ArrowRight limited to activation navigation", async () => {
     mounted = mountApp();
     await flush();
 

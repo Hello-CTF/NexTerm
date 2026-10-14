@@ -294,7 +294,7 @@ export function SyncBundleCard() {
         <span className="nx-card-title">资产包（文件导入 / 导出）</span>
       </div>
       <p className="nx-hint mb-3.5">
-        将资产导出为 .nxbm 文件，或从文件导入本机。资产包仅通过文件传输，不经过服务器，与上方「账号同步」的推送和拉取互不影响。
+        将资产导出为 .nxbm 文件，或从文件导入本机；这与上方「账号同步」的推送和拉取互不影响。
       </p>
 
       {digestError && (
@@ -391,9 +391,9 @@ export function SyncBundleCard() {
             onChange={(e) => setWithCreds(e.target.checked)}
           />
           <span className="text-[12px] text-neutral-300">
-            导出凭据（密码 / 私钥会写进文件）
+            导出凭据（密码、内联私钥和 API Key 会随资产包写入）
             <span className="nx-hint block">
-              未勾选时，资产仅保留凭据引用；导入后需重新关联凭据。
+              路径引用仅保存路径，目标环境必须能访问同一路径；未勾选时，资产仅保留凭据引用，导入后需重新关联凭据。
             </span>
           </span>
         </label>
@@ -402,7 +402,7 @@ export function SyncBundleCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconShield size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>这个文件将包含可还原的凭据明文</b>：任何拿到文件的人都能登录对应服务器。请仅在可信设备之间传递，用后及时删除；私钥文件也会内联到资产包中。
+              <b>资产包将包含敏感凭据信息</b>：未加密导出时，任何拿到文件的人都能读取密码、内联私钥和 API Key；加密导出时，口令泄露也会造成同样风险。请仅在可信设备之间传递，用后及时删除。
             </div>
           </div>
         )}
@@ -454,7 +454,7 @@ export function SyncBundleCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconShield size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>未设置口令</b>：任何人都能直接读取导出的 .nxbm 文件，其中包括主机、账号和凭据内容。请仅在可信设备之间传递，用后及时删除。
+              <b>未设置口令</b>：任何人都能直接读取导出的 .nxbm 文件，其中包括主机和账号；若同时导出凭据，还包含凭据内容。请仅在可信设备之间传递，用后及时删除。
             </div>
           </div>
         )}

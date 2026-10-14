@@ -72,7 +72,7 @@ const PREVIEW: SshImportPreviewDto = {
       authMethod: "agent",
       source: "ssh-config",
       action: "skip-duplicate",
-      warnings: ["别名 web-01 已存在且端点相同"],
+      warnings: ["Alias web-01 already exists with the same endpoint"],
     },
     {
       id: "h2",
@@ -87,7 +87,7 @@ const PREVIEW: SshImportPreviewDto = {
       authMethod: "agent",
       source: "ssh-config",
       action: "conflict-alias",
-      warnings: ["别名 nat-01 已被一台端点不同的资产使用"],
+      warnings: ["Alias nat-01 is already used by an asset with a different endpoint"],
     },
   ],
   keys: [
@@ -112,7 +112,7 @@ const PREVIEW: SshImportPreviewDto = {
       warnings: [],
     },
   ],
-  diagnostics: [{ code: "host-pattern-skipped", source: "~/.ssh/config:12", message: "通配模式已跳过" }],
+  diagnostics: [{ code: "host-pattern-skipped", source: "~/.ssh/config:12", message: "Wildcard pattern skipped" }],
   truncated: false,
 };
 
@@ -149,8 +149,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("SSH 导入对话框", () => {
-  it("Termius 来源需要显式确认后才能预览", async () => {
+describe("SSH import dialog", () => {
+  it("requires explicit confirmation before previewing a Termius source", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "Termius");
     const previewButton = [...mounted.container.querySelectorAll("button")].find(
@@ -173,7 +173,7 @@ describe("SSH 导入对话框", () => {
     );
   });
 
-  it("预览展示冲突徽章、诊断与默认勾选", async () => {
+  it("shows conflict badges, diagnostics, and default selections in preview", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
@@ -196,7 +196,7 @@ describe("SSH 导入对话框", () => {
     expect(dupBox).toBeNull();
   });
 
-  it("应用导入展示结果并刷新查询", async () => {
+  it("shows import results and refreshes queries after applying", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
@@ -225,7 +225,7 @@ describe("SSH 导入对话框", () => {
     );
   });
 
-  it("冲突项可切换为覆盖并传递给 apply", async () => {
+  it("allows conflicts to switch to overwrite and passes them to apply", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
@@ -245,14 +245,14 @@ describe("SSH 导入对话框", () => {
     expect(args.hosts).toContainEqual({ id: "h2", action: "overwrite" });
   });
 
-  it("预览失败展示错误且可返回", async () => {
-    mocks.preview.mockRejectedValue({ code: "bad_param", message: "找不到 SSH 配置文件 /x" });
+  it("shows preview errors and allows returning", async () => {
+    mocks.preview.mockRejectedValue({ code: "bad_param", message: "SSH config file not found /x" });
     mounted = mountDialog();
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
     await flush();
     expect(mounted.container.querySelector("[role=alert]")?.textContent).toContain(
-      "找不到 SSH 配置文件",
+      "SSH config file not found",
     );
     clickButton(mounted.container, "返回");
     await flush();
@@ -260,8 +260,8 @@ describe("SSH 导入对话框", () => {
   });
 });
 
-describe("SSH ~/.ssh 目录快速导入", () => {
-  it("先填配置路径再切换到 ~/.ssh 目录时隐藏输入且请求不带旧路径", async () => {
+describe("quick import from the SSH ~/.ssh directory", () => {
+  it("hides the path input and omits the old path after switching from a config path to ~/.ssh", async () => {
     mounted = mountDialog();
     const pathInput = mounted.container.querySelector<HTMLInputElement>("input.nx-input")!;
     setInputValue(pathInput, "/home/demo/.ssh/config");
@@ -289,7 +289,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     );
   });
 
-  it("预览显示数量并默认勾选可新增项；一键导入只提交可新增项，不含手动 skip 与冲突覆盖", async () => {
+  it("shows counts and selects new items by default; one-click import submits only new items, excluding manual skips and conflict overwrites", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "~/.ssh 目录");
     clickButton(mounted.container, "预览");
@@ -331,7 +331,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
       skipped: 0,
       warnings: [],
     });
-    clickButton(mounted.container, "导入全部可新增项（1）");
+    clickButton(mounted.container, "导入已勾选的新增项（1）");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
     expect(mocks.apply).toHaveBeenCalledWith({
@@ -344,7 +344,7 @@ describe("SSH ~/.ssh 目录快速导入", () => {
     expect(mounted.container.textContent).toContain("新增密钥 1");
   });
 
-  it("凭据库未初始化且用户取消初始化时中止导入", async () => {
+  it("aborts import when the vault is uninitialized and the user cancels initialization", async () => {
     gateMocks.ensureVaultInit.mockResolvedValue(false);
     mounted = mountDialog();
     clickButton(mounted.container, "预览");

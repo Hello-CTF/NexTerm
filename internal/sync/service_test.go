@@ -65,6 +65,96 @@ func TestServiceBackgroundSync(t *testing.T) {
 	}
 }
 
+func TestServiceAutomaticSlowRoundEmitsCompletionAfterLastSuccessAt(t *testing.T) {
+	instance := newTestInstance(t, true)
+	server := newTestSyncServer(t)
+	ctx := context.Background()
+	const password = "alice-password"
+	server.createUser(t, "alice", password)
+	if _, err := instance.service.LinkSet(ctx, LinkPatch{
+		URL: testPtr(server.URL), Username: testPtr("alice"), Password: testPtr(password),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	idsReached := make(chan struct{})
+	releaseSync := make(chan struct{})
+	server.afterIDs = func() {
+		close(idsReached)
+		<-releaseSync
+	}
+	type completionResult struct {
+		status Status
+		err    error
+	}
+	completion := make(chan completionResult, 1)
+	instance.service.events = ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+		if event.Event != syncRoundCompleteTopic {
+			return nil
+		}
+		status, err := instance.service.Status(context.Background())
+		completion <- completionResult{status: status, err: err}
+		return nil
+	})
+	select {
+	case <-instance.service.wakeCh:
+	default:
+	}
+	instance.service.syncPeriod = time.Hour
+	if err := instance.service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		select {
+		case <-releaseSync:
+		default:
+			close(releaseSync)
+		}
+		if err := instance.service.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	select {
+	case <-idsReached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("automatic sync round did not reach the remote IDs request")
+	}
+	select {
+	case result := <-completion:
+		t.Fatalf("round completion emitted before the slow round finished: %+v", result)
+	default:
+	}
+	before, err := instance.service.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.LastSuccessAt.IsZero() {
+		t.Fatalf("LastSuccessAt before the slow round finished = %v, want zero", before.LastSuccessAt)
+	}
+
+	close(releaseSync)
+	var result completionResult
+	select {
+	case result = <-completion:
+	case <-time.After(3 * time.Second):
+		t.Fatal("automatic sync round did not emit round completion")
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if result.status.LastSuccessAt.IsZero() {
+		t.Fatal("round completion observed a zero LastSuccessAt")
+	}
+	after, err := instance.service.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.status.LastSuccessAt.Equal(after.LastSuccessAt) {
+		t.Fatalf("round completion LastSuccessAt = %v, current status = %v", result.status.LastSuccessAt, after.LastSuccessAt)
+	}
+}
+
 func TestServiceLinkSetWakesBackgroundSync(t *testing.T) {
 	instance := newTestInstance(t, true)
 	server := newTestSyncServer(t)

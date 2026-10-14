@@ -183,8 +183,8 @@ afterEach(() => {
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
 });
 
-describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
-  it("软删资产、两类墓碑与 revealed 凭据真实出现在 /sync/v2/push", async () => {
+describe("M141 collect consumption: complete local copies enter the push set (P1-1)", () => {
+  it("pushes soft-deleted assets, both tombstone kinds, and revealed credentials through /sync/v2/push", async () => {
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
@@ -232,7 +232,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(credPayload).toEqual({ id: "c1", name: "生产口令", kind: "password", secret: "s3cret", updatedAt: 50 });
   });
 
-  it("较新存活凭据不被旧墓碑覆盖", async () => {
+  it("does not overwrite a newer live credential with an older tombstone", async () => {
     mocks.collectCredentials.mockResolvedValue({
       credentials: [{ id: "c1", name: "新凭据", kind: "password", updatedAt: 500, secret: "new-secret", secretState: "revealed" }],
       hasMore: false,
@@ -250,7 +250,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(await openPushed(objects[0], "credential")).toEqual({ id: "c1", name: "新凭据", kind: "password", secret: "new-secret", updatedAt: 500 });
   });
 
-  it("collect 分页游标推进读完全部条目", async () => {
+  it("advances the collect cursor until every entry has been read", async () => {
     mocks.collectAssets.mockImplementation(async (_reveal: boolean, afterId?: string) => {
       if (afterId === "a1") {
         return {
@@ -278,7 +278,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(objects.map((o) => o.id).sort()).toEqual(["a1", "a2"]);
   });
 
-  it("locked/unavailable/error 凭据明确 warning 且不进入推送", async () => {
+  it("warns clearly for locked, unavailable, and failed credentials without pushing them", async () => {
     mocks.collectCredentials.mockResolvedValue({
       credentials: [
         { id: "c-locked", name: "锁定凭据", kind: "password", updatedAt: 1, secretState: "locked" },
@@ -298,7 +298,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("旧密钥云端对象隔离后，本机同名资产可推送覆盖", async () => {
+  it("allows the local object with the same ID to overwrite after isolating a cloud object encrypted with an old key", async () => {
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
@@ -320,7 +320,7 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
 
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("云端对象 a-1 解密失败"));
-    expect(text()).toContain("本机同名对象可推送覆盖");
+    expect(text()).toContain("本机同 ID 对象可推送覆盖");
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
 
@@ -331,8 +331,8 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
   });
 });
 
-describe("applySet 去重与二次同步收敛(P1-2)", () => {
-  it("已一致(同 hash)对象不进入 applySet,不重复调用 applyObjects", async () => {
+describe("applySet deduplication and second-sync convergence (P1-2)", () => {
+  it("skips already-identical objects with matching hashes and never calls applyObjects for them", async () => {
     // The remote is real Go fixture bytes; local collect gathers the same asset, payload byte-identical to Go -> same hash
     mocks.collectAssets.mockResolvedValue({
       assets: [
@@ -356,12 +356,12 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("remote-deleted 墓碑(group)应用一次后,二次同步不再重复应用/推送", async () => {
+  it("applies a remote-deleted group tombstone once and does not apply or push it again on the second sync", async () => {
     // Local has a live group g-del (revision 100); the cloud tombstone deletedAt 500 wins (group tombstones are the backend-supported deletion propagation path)
     let tombstoneApplied = false;
     mocks.groupList.mockImplementation(async () => {
       if (tombstoneApplied) return [];
-      return [{ id: "g-del", parentId: null, name: "旧分组", sort: 0, createdAt: 1, updatedAt: 100 }];
+      return [{ id: "g-del", parentId: null, name: "old-group", sort: 0, createdAt: 1, updatedAt: 100 }];
     });
     mocks.collectTombstones.mockImplementation(async () => {
       if (tombstoneApplied) return { tombstones: [{ id: "g-del", targetKind: "group", deletedAt: 500 }], hasMore: false };
@@ -393,7 +393,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("远端软删资产(带 deletedAt 的 assetObject)应用后,二次同步不再重复应用/推送", async () => {
+  it("applies a remote soft-deleted assetObject with deletedAt once and does not apply or push it again", async () => {
     // Asset deletion goes through the soft-deleted assetObject (asset tombstones are not supported by the backend); remote deletedAt 150 > local revision 100
     const liveAsset = {
       id: "a-del", groupId: "g1", kind: "ssh", name: "old <&> 01", host: "10.0.0.8", port: 22,
@@ -431,7 +431,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("revealed 凭据应用成功后,第二轮 apply/push 均为空(真实 Go fixture 字节)", async () => {
+  it("has an empty second apply/push round after applying a revealed credential (real Go fixture bytes)", async () => {
     // The remote credential is Go fixture bytes (name/secret contain <>& and U+2028); after applying, the local revealed credential is recollected,
     // payload byte-identical to Go -> already consistent, no more apply/push
     let applied = false;
@@ -475,14 +475,14 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
   });
 });
 
-describe("transcript endedAt 修订与内容补全(P1-3)", () => {
+describe("transcript endedAt revision and content completion (P1-3)", () => {
   const SUMMARY_OMITTED = {
     id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
     startedAt: 1, endedAt: 2, bytes: 3, chunks: 1, truncated: false, active: false, syncOptIn: true, contentOmitted: true,
   };
   const SUMMARY_FULL = { ...SUMMARY_OMITTED, contentOmitted: false };
 
-  it("本机 omitted、远端完整:远端胜出,走应用补全而不是推送省略版", async () => {
+  it("applies remote full content when local content is omitted instead of pushing the omitted version", async () => {
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
     ]);
@@ -512,7 +512,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("本机完整、远端 omitted:本地胜出并推送完整内容", async () => {
+  it("pushes complete local content when the remote content is omitted", async () => {
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
     ]);
@@ -541,7 +541,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     expect(new TextDecoder().decode(plaintext)).toBe(new TextDecoder().decode(base64ToBytes(GO_SYNC_FIXTURES.transcriptBasic!)));
   });
 
-  it("不同内容按 endedAt 裁决;本机胜出推送后二次同步两边一致", async () => {
+  it("uses endedAt to resolve differing content and converges both sides after the local version wins and is pushed", async () => {
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
     ]);

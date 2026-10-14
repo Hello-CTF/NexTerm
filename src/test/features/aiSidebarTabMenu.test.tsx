@@ -98,7 +98,7 @@ async function send(view: MountedView, text: string) {
   await flush();
 }
 
-describe("AiSidebar 标签右键菜单", () => {
+describe("AiSidebar tab context menu", () => {
   let view: MountedView | null = null;
 
   beforeEach(() => {
@@ -151,7 +151,7 @@ describe("AiSidebar 标签右键菜单", () => {
     view = null;
   });
 
-  it("右键标签弹出菜单，重新生成后按返回值更新标题", async () => {
+  it("opens the context menu on right-click and updates the title from the regenerated value", async () => {
     await flush();
     openTabMenu(view!);
     expect(menuItem(view!, "重新生成标题").disabled).toBe(false);
@@ -164,9 +164,9 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(view!.container.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("重新生成失败时提示且标题不变", async () => {
+  it("shows an error and keeps the title unchanged when regeneration fails", async () => {
     await flush();
-    mocks.conversationRetitle.mockRejectedValue(new Error("模型不可用"));
+    mocks.conversationRetitle.mockRejectedValue(new Error("Model unavailable"));
     openTabMenu(view!);
     click(menuItem(view!, "重新生成标题"));
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
@@ -178,9 +178,9 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].title).toBe("主机名: 旧主题");
   });
 
-  it("标签忙时菜单项禁用", async () => {
+  it("disables menu items while the tab is busy", async () => {
     await flush();
-    await send(view!, "长跑任务");
+    await send(view!, "Long-running task");
     expect(useUi.getState().aiBusy).toBe(true);
 
     openTabMenu(view!);
@@ -188,7 +188,7 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(mocks.conversationRetitle).not.toHaveBeenCalled();
   });
 
-  it("未绑定会话的标签菜单项禁用", async () => {
+  it("disables menu items for tabs without a bound conversation", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -197,7 +197,7 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(menuItem(view!, "重新生成标题").disabled).toBe(true);
   });
 
-  it("菜单含关闭与批量关闭项，单侧无标签时对应项禁用", async () => {
+  it("includes close and bulk-close items, disabling the side without tabs", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -211,7 +211,7 @@ describe("AiSidebar 标签右键菜单", () => {
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 1);
   });
 
-  it("关闭左侧全部标签只关对应标签", async () => {
+  it("closes only the tabs to the left", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -229,7 +229,7 @@ describe("AiSidebar 标签右键菜单", () => {
     ]);
   });
 
-  it("关闭右侧全部标签只关对应标签", async () => {
+  it("closes only the tabs to the right", async () => {
     await flush();
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -246,9 +246,9 @@ describe("AiSidebar 标签右键菜单", () => {
     ]);
   });
 
-  it("批量关闭遇到忙标签先确认，确认后停止并关闭", async () => {
+  it("asks for confirmation before bulk-closing a busy tab, then stops and closes it", async () => {
     await flush();
-    await send(view!, "长跑任务");
+    await send(view!, "Long-running task");
     expect(useUi.getState().aiBusy).toBe(true);
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
@@ -265,9 +265,9 @@ describe("AiSidebar 标签右键菜单", () => {
     expect(useUi.getState().aiBusy).toBe(false);
   });
 
-  it("批量关闭遇到忙标签可拒绝，拒绝后保留", async () => {
+  it("keeps a busy tab when bulk-close confirmation is rejected", async () => {
     await flush();
-    await send(view!, "长跑任务");
+    await send(view!, "Long-running task");
     useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
     await flush();
     mocks.ask.mockResolvedValue(false);

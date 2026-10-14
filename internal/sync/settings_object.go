@@ -255,7 +255,7 @@ func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *gorm.DB, id
 	if conflict != nil {
 		encoded, err := json.Marshal(conflict)
 		if err != nil {
-			return ipc.WrapError(ipc.CodeInternal, "无法编码冲突墓碑元数据", err)
+			return ipc.WrapError(ipc.CodeInternal, "无法编码冲突项删除标记元数据", err)
 		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},

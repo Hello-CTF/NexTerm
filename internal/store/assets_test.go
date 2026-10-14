@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -183,4 +184,23 @@ func TestAssetUpdateEmptyPatchAndMissingAsset(t *testing.T) {
 	}
 	_, err = db.AssetUpdate(ctx, ids.New(), AssetPatch{Name: ptr("x")})
 	requireCode(t, err, ipc.CodeNotFound)
+}
+
+func TestBuiltinAssetChineseCompatibility(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	row, err := db.AssetEnsureBuiltinLocal(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Name != "当前设备" {
+		t.Fatalf("built-in asset name = %q", row.Name)
+	}
+	if err := db.AssetDelete(ctx, BuiltinLocalAssetID); err == nil || !strings.Contains(err.Error(), "\"当前设备\"是内置资产，不能删除") {
+		t.Fatalf("built-in delete error = %v", err)
+	}
+	_, err = db.AssetUpsert(ctx, AssetRow{ID: BuiltinLocalAssetID})
+	if err == nil || !strings.Contains(err.Error(), "内置资产\"当前设备\"不接受同步写入（各设备身份相互独立）") {
+		t.Fatalf("built-in sync error = %v", err)
+	}
 }

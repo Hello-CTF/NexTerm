@@ -489,7 +489,7 @@ export function SettingsView() {
             <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
           </div>
           <p className="nx-hint mb-3.5">
-            可保存多份模型档案，并将其中一份设为当前。密钥加密后保存在当前运行环境的 SQLite 中；启用「同步 AI 模型档案」并解锁凭据库后，密钥才会随档案端到端加密同步。支持本地 Ollama、LM Studio 和 vLLM。
+            可保存多份模型档案，并将其中一份设为当前。密钥加密后保存在当前实例的数据库中；启用「同步 AI 模型档案」并解锁凭据库后，密钥才会随档案端到端加密同步。支持本地 Ollama、LM Studio 和 vLLM。
           </p>
 
           <ModelManager />

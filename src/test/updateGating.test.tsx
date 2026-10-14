@@ -32,7 +32,7 @@ const DEMO_STATUS: UpdateStatusDto = {
   available: true,
   currentVersion: "0.1.0-demo",
   version: "0.2.0-demo",
-  notes: "演示更新",
+  notes: "Demo update",
   prerelease: false,
   assetName: "NexTerm-desktop_0.2.0-demo_linux_amd64.deb",
   assetSize: 8 << 20,
@@ -64,8 +64,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("软件更新 · WEB 门控", () => {
-  it("有更新但不显示安装按钮,并说明服务端模式原因", async () => {
+describe("software updates - WEB gating", () => {
+  it("does not show the install button for available updates and explains the server-mode restriction", async () => {
     mocks.check.mockResolvedValue(DEMO_STATUS);
     mounted = mount(createElement(UpdateCard));
     clickButton(mounted.container, "立即检查");
@@ -81,13 +81,13 @@ describe("软件更新 · WEB 门控", () => {
     expect(mocks.install).not.toHaveBeenCalled();
   });
 
-  it("WEB 不显示更新横幅", async () => {
+  it("does not show the update banner on WEB", async () => {
     useUpdateStore.setState({ status: DEMO_STATUS });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
   });
 
-  it("WEB 不弹更新提醒", async () => {
+  it("does not prompt for updates on WEB", async () => {
     useUpdateStore.setState({ status: DEMO_STATUS });
     await promptUpdateIfNeeded();
     expect(mocks.install).not.toHaveBeenCalled();

@@ -98,7 +98,7 @@ vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetE
 vi.mock("../app/CommandPalette", () => ({
   CommandPalette: (props: { onOpenFiles?: () => void }) => (
     <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
-      打开文件浏览器
+      Open file browser
     </button>
   ),
 }));
@@ -270,8 +270,8 @@ describe("App workspace actions", () => {
   });
 });
 
-describe("App 工作区范围", () => {
-  it("工作区切换菜单不再提供「新建工作区」入口", async () => {
+describe("App workspace scope", () => {
+  it("does not offer a new-workspace action in the workspace switcher", async () => {
     useUi.setState({
       sessions: [sessionOf("s1")],
       workspaces: [workspaceOf("s1")],
@@ -280,7 +280,7 @@ describe("App 工作区范围", () => {
     mounted = mountApp();
     await flush();
     const switcher = mounted.container.querySelector('button[aria-label^="切换工作区"]');
-    if (!switcher) throw new Error("工作区切换按钮未找到");
+    if (!switcher) throw new Error("Workspace switcher not found");
     click(switcher);
     await flush();
     const text = mounted.container.textContent ?? "";
@@ -288,7 +288,7 @@ describe("App 工作区范围", () => {
     expect(text).not.toContain("新建工作区");
   });
 
-  it("后台会话与终端历史标签拿到所属工作区 id，而不是当前活动工作区", async () => {
+  it("passes the owning workspace id to background-session and terminal-history tabs instead of the active workspace", async () => {
     useUi.setState({
       sessions: [sessionOf("s1"), sessionOf("s2")],
       workspaces: [
@@ -300,8 +300,8 @@ describe("App 工作区范围", () => {
             {
               id: "pane",
               tabs: [
-                { id: "background", kind: "background", title: "后台会话", closable: true },
-                { id: "history", kind: "history", title: "终端历史", closable: true },
+                { id: "background", kind: "background", title: "Background sessions", closable: true },
+                { id: "history", kind: "history", title: "Terminal history", closable: true },
               ],
               activeTabId: "background",
             },
@@ -316,7 +316,7 @@ describe("App 工作区范围", () => {
     expect(mocks.historyProps[mocks.historyProps.length - 1]?.workspaceId).toBe("ws-host");
   });
 
-  it("数据库工作区里 AI 侧栏不绑定任何会话", async () => {
+  it("does not bind the AI sidebar to a session in a database workspace", async () => {
     useUi.setState({
       sessions: [sessionOf("s1")],
       workspaces: [
@@ -338,7 +338,7 @@ describe("App 工作区范围", () => {
     expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBeUndefined();
   });
 
-  it("会话工作区里 AI 侧栏绑定工作区会话；没有工作区时回退到第一个会话", async () => {
+  it("binds the AI sidebar to the workspace session and falls back to the first session without a workspace", async () => {
     mocks.sessionList.mockResolvedValue([sessionOf("s1"), sessionOf("s2")]);
     useUi.setState({
       sessions: [sessionOf("s1"), sessionOf("s2")],
@@ -360,7 +360,7 @@ describe("App 工作区范围", () => {
 });
 
 describe("App empty states", () => {
-  it("没有工作区时顶部引导指向资产", async () => {
+  it("points the top guidance to assets when no workspace exists", async () => {
     mounted = mountApp();
     await flush();
     expect(mounted.container.querySelector("header")?.textContent).toContain(
@@ -388,7 +388,7 @@ describe("App empty states", () => {
     useUi.setState({
       workspaces: [
         workspaceOf(undefined, [
-          { id: "broken-files", kind: "files", title: "文件", closable: true },
+          { id: "broken-files", kind: "files", title: "Files", closable: true },
         ]),
       ],
       activeWorkspaceId: "ws",
@@ -423,8 +423,8 @@ function pressCtrlT(): void {
   });
 }
 
-describe("App Ctrl+T 新建终端", () => {
-  it("当前工作区会话已连接时在该工作区新建终端标签", async () => {
+describe("App Ctrl+T new terminal", () => {
+  it("creates a terminal tab in the current workspace when its session is connected", async () => {
     mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
     useUi.setState({
       sessions: [sessionOf("s1")],
@@ -442,7 +442,7 @@ describe("App Ctrl+T 新建终端", () => {
     expect(mocks.connectLocal).not.toHaveBeenCalled();
   });
 
-  it("没有工作区时回退为本地终端", async () => {
+  it("falls back to a local terminal when no workspace exists", async () => {
     mocks.connectLocal.mockResolvedValue(sessionOf("local-1"));
     mounted = mountApp();
     await flush();
@@ -458,7 +458,7 @@ describe("App Ctrl+T 新建终端", () => {
     ).toBe(true);
   });
 
-  it("数据库工作区不能开终端,同样回退为本地终端", async () => {
+  it("also falls back to a local terminal for a database workspace", async () => {
     mocks.connectLocal.mockResolvedValue(sessionOf("local-2"));
     useUi.setState({
       workspaces: [
@@ -486,8 +486,8 @@ describe("App Ctrl+T 新建终端", () => {
   });
 });
 
-describe("App 标签栏标记", () => {
-  it("未读与关闭失败的标记渲染在标签上并进入 tooltip", async () => {
+describe("App tab markers", () => {
+  it("renders unread and close-failure markers on the tab and in its tooltip", async () => {
     useUi.setState({
       sessions: [sessionOf("s1")],
       workspaces: [
@@ -495,7 +495,7 @@ describe("App 标签栏标记", () => {
           {
             id: "t1",
             kind: "terminal",
-            title: "终端 1",
+            title: "Terminal 1",
             sessionId: "s1",
             tabId: "T1",
             closable: true,

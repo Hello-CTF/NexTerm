@@ -34,10 +34,12 @@ func (r *Registry) dbListTables(ctx context.Context, scope Scope, raw []byte) Ou
 		return Fail(err)
 	}
 	text := strings.Join(tables, "\n")
+	output := OK(text)
 	if text == "" {
-		text = "无表"
+		output.Text = "无表"
+		output.ModelText = "no tables"
 	}
-	return OK(text)
+	return output
 }
 
 func (r *Registry) dbDescribe(ctx context.Context, scope Scope, raw []byte) Output {
@@ -85,12 +87,15 @@ func (r *Registry) dbQuery(ctx context.Context, scope Scope, raw []byte) Output 
 		return Fail(err)
 	}
 	if result.Error != nil {
-		return Output{Text: *result.Error, ExitCode: 1}
+		return Output{Text: *result.Error, ModelText: *result.Error, ExitCode: 1}
 	}
-	var output strings.Builder
+	var output, modelOutput strings.Builder
+	writeShared := func(text string) {
+		output.WriteString(text)
+		modelOutput.WriteString(text)
+	}
 	if len(result.Columns) != 0 {
-		output.WriteString(strings.Join(result.Columns, " | "))
-		output.WriteByte('\n')
+		writeShared(strings.Join(result.Columns, " | ") + "\n")
 	}
 	displayed := len(result.Rows)
 	truncated := result.Truncated
@@ -108,17 +113,21 @@ func (r *Registry) dbQuery(ctx context.Context, scope Scope, raw []byte) Output 
 				cells[i] = string(encoded)
 			}
 		}
-		output.WriteString(strings.Join(cells, " | "))
-		output.WriteByte('\n')
+		writeShared(strings.Join(cells, " | ") + "\n")
 	}
 	if result.RowsAffected != 0 {
-		fmt.Fprintf(&output, "rowsAffected=%d\n", result.RowsAffected)
+		writeShared(fmt.Sprintf("rowsAffected=%d\n", result.RowsAffected))
 	}
 	if truncated {
 		fmt.Fprintf(&output, "仅显示前 %d 行（查询返回 %d 行）\n", displayed, len(result.Rows))
+		fmt.Fprintf(&modelOutput, "showing only the first %d rows (query returned %d rows)\n", displayed, len(result.Rows))
 	}
 	text, cut := capText(output.String())
-	return Output{OK: true, Text: text, Truncated: truncated || cut}
+	modelText, modelCut := capText(modelOutput.String())
+	if modelCut {
+		modelText = strings.TrimSuffix(modelText, "\n[输出已截断]") + "\n[output truncated]"
+	}
+	return Output{OK: true, Text: text, ModelText: modelText, Truncated: truncated || cut}
 }
 
 func (r *Registry) redisScan(ctx context.Context, scope Scope, raw []byte) Output {

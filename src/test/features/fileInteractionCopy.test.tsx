@@ -173,12 +173,12 @@ afterEach(() => {
   useUi.setState({ textPrompt: null });
 });
 
-describe("PromptModal 多行占位文案", () => {
-  it("通用多行弹窗不显示 AI 专用占位提示", () => {
+describe("PromptModal multiline placeholder copy", () => {
+  it("does not show the AI-specific placeholder in a generic multiline prompt", () => {
     const resolve = vi.fn();
     useUi.setState({
       textPrompt: {
-        message: "要发送到终端的命令（可多行，回车换行）",
+        message: "Command to send to the terminal (multiple lines allowed; Enter inserts a newline)",
         value: "",
         multiLine: true,
         resolve,
@@ -192,8 +192,8 @@ describe("PromptModal 多行占位文案", () => {
   });
 });
 
-describe("FileEditor 快捷键标签", () => {
-  it("保存按钮与撤销提示跟随平台 mod 约定显示 ⌘", async () => {
+describe("FileEditor shortcut labels", () => {
+  it("shows ⌘ in save and undo shortcuts when the platform modifier is ⌘", async () => {
     platformState.mod = "⌘";
     mounted = mount(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
     await waitFor(() =>
@@ -204,7 +204,7 @@ describe("FileEditor 快捷键标签", () => {
     ).not.toBeNull();
   });
 
-  it("非 mac 平台显示 Ctrl S", async () => {
+  it("shows Ctrl S on non-mac platforms", async () => {
     mounted = mount(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
     await waitFor(() =>
       expect(mounted!.container.querySelector(".nx-kbd")?.textContent).toBe("Ctrl S"),
@@ -212,8 +212,8 @@ describe("FileEditor 快捷键标签", () => {
   });
 });
 
-describe("FileTree ~ 归因", () => {
-  it("WinRM 会话直接从 / 开始，home 按钮明示不支持 ~", async () => {
+describe("FileTree tilde handling", () => {
+  it("starts WinRM sessions at / and marks ~ as unsupported on the home button", async () => {
     useUi.setState({ sessions: [session(SID, "winrm")] });
     mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
@@ -224,7 +224,7 @@ describe("FileTree ~ 归因", () => {
     expect(home?.disabled).toBe(true);
   });
 
-  it("sessions 后到的 WinRM 会话：~ 列表失败后自动切到 /，不停留在错误行", async () => {
+  it("falls back from ~ to / after WinRM session data arrives late, without leaving the error row", async () => {
     useUi.setState({ sessions: [] });
     mocks.list.mockImplementation((_s: string, p: string) =>
       p === "~" ? Promise.reject(new Error("tilde unsupported")) : Promise.resolve([]),
@@ -244,7 +244,7 @@ describe("FileTree ~ 归因", () => {
     expect(home?.disabled).toBe(true);
   });
 
-  it("SSH 会话 ~ 列表失败时显示真实错误，不甩锅 ~ 展开也不跳走", async () => {
+  it("shows the real error when an SSH ~ listing fails instead of blaming ~ expansion or navigating away", async () => {
     useUi.setState({ sessions: [session(SID, "ssh")] });
     mocks.list.mockRejectedValue(new Error("connection reset"));
     mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
@@ -260,8 +260,8 @@ describe("FileTree ~ 归因", () => {
   });
 });
 
-describe("FileBrowser 删除按钮", () => {
-  it("工具栏删除按钮有 hover 提示", async () => {
+describe("FileBrowser delete button", () => {
+  it("gives the toolbar delete button a hover tooltip", async () => {
     useUi.setState({ sessions: [session(SID, "ssh")] });
     mocks.list.mockResolvedValue([entry("a.txt", "file")]);
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SID }));
@@ -274,8 +274,8 @@ describe("FileBrowser 删除按钮", () => {
   });
 });
 
-describe("MountPanel 断开确认", () => {
-  it("断开挂载用 warning 级别确认", async () => {
+describe("MountPanel disconnect confirmation", () => {
+  it("uses a warning confirmation when disconnecting a mount", async () => {
     useUi.setState({ sessions: [session(SID, "ssh")] });
     mocks.mountList.mockResolvedValue([
       { localPoint: "Z:", remote: "user@host:/data", createdAt: 1 },

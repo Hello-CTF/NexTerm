@@ -26,7 +26,7 @@ export interface HitlFoldResult {
   changed: boolean;
 }
 
-const RESUMED_LABEL = "已在服务端回答";
+const RESUMED_LABEL = "已在服务端处理";
 const SWEPT_LABEL = "已在服务端结束";
 
 export function hitlTerminalLabel(reason: string): string {

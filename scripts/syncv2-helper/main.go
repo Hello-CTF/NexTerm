@@ -54,7 +54,7 @@ func objectAAD(id, kind string) []byte {
 func seal(dekHex, id, kind string) {
 	dek, err := hex.DecodeString(dekHex)
 	if err != nil || len(dek) != 32 {
-		fatal(fmt.Errorf("DEK 必须是 32 字节十六进制"))
+		fatal(fmt.Errorf("DEK must be a 32-byte hexadecimal string"))
 	}
 	plaintext, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -79,7 +79,7 @@ func seal(dekHex, id, kind string) {
 func open(dekHex, id, kind string) {
 	dek, err := hex.DecodeString(dekHex)
 	if err != nil || len(dek) != 32 {
-		fatal(fmt.Errorf("DEK 必须是 32 字节十六进制"))
+		fatal(fmt.Errorf("DEK must be a 32-byte hexadecimal string"))
 	}
 	encoded, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -90,7 +90,7 @@ func open(dekHex, id, kind string) {
 		fatal(err)
 	}
 	if len(blob) <= objectNonceSize {
-		fatal(fmt.Errorf("blob 长度不合法"))
+		fatal(fmt.Errorf("invalid blob length"))
 	}
 	block, err := aes.NewCipher(dek)
 	if err != nil {
@@ -109,25 +109,25 @@ func open(dekHex, id, kind string) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal(fmt.Errorf("用法: syncv2-helper <gen-dek|seal|open> ..."))
+		fatal(fmt.Errorf("usage: syncv2-helper <gen-dek|seal|open> ..."))
 	}
 	switch os.Args[1] {
 	case "gen-dek":
 		if len(os.Args) != 3 {
-			fatal(fmt.Errorf("用法: syncv2-helper gen-dek <password>"))
+			fatal(fmt.Errorf("usage: syncv2-helper gen-dek <password>"))
 		}
 		genDEK(os.Args[2])
 	case "seal":
 		if len(os.Args) != 5 {
-			fatal(fmt.Errorf("用法: syncv2-helper seal <dek-hex> <id> <kind>"))
+			fatal(fmt.Errorf("usage: syncv2-helper seal <dek-hex> <id> <kind>"))
 		}
 		seal(os.Args[2], os.Args[3], os.Args[4])
 	case "open":
 		if len(os.Args) != 5 {
-			fatal(fmt.Errorf("用法: syncv2-helper open <dek-hex> <id> <kind>"))
+			fatal(fmt.Errorf("usage: syncv2-helper open <dek-hex> <id> <kind>"))
 		}
 		open(os.Args[2], os.Args[3], os.Args[4])
 	default:
-		fatal(fmt.Errorf("未知子命令 %s", os.Args[1]))
+		fatal(fmt.Errorf("unknown subcommand %s", os.Args[1]))
 	}
 }

@@ -97,7 +97,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		v.mode = ModeMaster
 	case mode == "":
 	default:
-		slog.Warn("凭据库模式无法识别，按未初始化处理")
+		slog.Warn("unrecognized vault mode; treating vault as uninitialized")
 	}
 	if raw, err := readSetting(ctx, db, settingAutolock); err != nil {
 		v.noteLoadError(settingAutolock, err)
@@ -112,7 +112,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		if salt, err := base64.StdEncoding.DecodeString(raw); err == nil {
 			v.salt = salt
 		} else {
-			slog.Warn("主密码盐解码失败，按无盐处理", "error", err)
+			slog.Warn("failed to decode master password salt; continuing without salt", "error", err)
 		}
 	}
 	if raw, err := readSetting(ctx, db, settingPasswordless); err != nil {
@@ -123,14 +123,14 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 	if v.mode == ModeMaster && v.passwordless {
 		v.mu.Lock()
 		if err := v.unlockMasterLocked(ctx, ""); err != nil {
-			slog.Warn("无密码凭据库自动解锁失败，按锁定处理", "error", err)
+			slog.Warn("failed to auto-unlock passwordless vault; leaving vault locked", "error", err)
 		}
 		v.mu.Unlock()
 	}
 	if v.mode == ModeDPAPI {
 		v.mu.Lock()
 		if err := v.unlockDPAPILocked(ctx); err != nil {
-			slog.Warn("凭据库自动解锁失败，按未初始化处理", "error", err)
+			slog.Warn("failed to auto-unlock vault; treating vault as uninitialized", "error", err)
 			v.mode = ModeNotInit
 			v.clearKeysLocked()
 		}
@@ -151,7 +151,7 @@ func readSetting(ctx context.Context, db *store.Store, key string) (string, erro
 // noteLoadError records a setting read failure: the vault state is now unknown, and the init guard refuses a DEK rotation
 // so "cannot read" is never misread as "not initialized", which would make old ciphertext permanently undecryptable.
 func (v *Vault) noteLoadError(key string, err error) {
-	slog.Warn("读取凭据库设置失败，初始化将被拒绝", "setting", key, "error", err)
+	slog.Warn("failed to read vault setting; initialization will be rejected", "setting", key, "error", err)
 	if v.loadErr == nil {
 		v.loadErr = err
 	}
@@ -225,7 +225,7 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 		return err
 	}
 	if password != "" && len(password) < 8 {
-		return ipc.BadParam(errString("主密码至少 8 位；留空则表示不设置密码"))
+		return ipc.BadParam(errString("保护密码至少 8 位；留空则不设置密码"))
 	}
 	hasSecrets, err := v.hasUndecryptableSecrets(ctx)
 	if err != nil {
@@ -393,7 +393,7 @@ func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在\"设置 → 凭据保护\"中完成初始化")
 	}
 	if v.mode != ModeMaster {
-		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")
+		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 当前凭据库未使用保护密码")
 	}
 	if len(v.salt) == 0 {
 		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化")
@@ -444,7 +444,7 @@ func (v *Vault) clearKeysLocked() {
 
 func (v *Vault) SetAutoLock(ctx context.Context, minutes uint64) error {
 	if minutes > maxAutoLockMS/60_000 {
-		return ipc.BadParam(errString("自动锁时长需在 0（禁用）至 1440 分钟之间"))
+		return ipc.BadParam(errString("自动锁定时长需在 0（禁用）至 1440 分钟之间"))
 	}
 	milliseconds := minutes * 60_000
 	v.autoLockMu.Lock()
@@ -547,10 +547,10 @@ func (v *Vault) ChangeMasterPassword(ctx context.Context, oldPassword, newPasswo
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.mode != ModeMaster {
-		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")
+		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 当前凭据库未使用保护密码")
 	}
 	if newPassword != "" && len(newPassword) < 8 {
-		return ipc.BadParam(errString("主密码至少 8 位；留空则表示不设置密码"))
+		return ipc.BadParam(errString("保护密码至少 8 位；留空则不设置密码"))
 	}
 	if len(v.salt) == 0 {
 		return ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化")

@@ -1,9 +1,13 @@
 package aicontext
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestRenderIncludesScreenAndStablePrompt(t *testing.T) {
@@ -37,5 +41,31 @@ func TestBudgetTrimmingDropsLowPriorityAndStaysValid(t *testing.T) {
 	}
 	if bundle.Screen == "" {
 		t.Fatal("screen should have highest priority")
+	}
+}
+
+func TestDisconnectedTriggerMatchesActualToolResult(t *testing.T) {
+	prompt := SystemPrompt()
+	if !strings.Contains(prompt, `if a result says "disconnected"`) {
+		t.Fatalf("system prompt lacks the disconnected trigger: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Answer in Chinese.") {
+		t.Fatalf("system prompt no longer requires Chinese answers: %s", prompt)
+	}
+	message := schema.ToolMessage(`{"ok":false,"text":"连接已断开：数据库服务已关闭，请重新连接","exitCode":1,"truncated":false}`, "call-1")
+	message.ToolName = "db_query"
+	projected := provider.ProjectModelMessages([]*schema.Message{message})
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(projected[0].Content), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["text"] != "disconnected: database service is closed; reconnect" {
+		t.Fatalf("actual disconnect projection = %v", envelope["text"])
+	}
+	if message.Content == projected[0].Content {
+		t.Fatal("disconnect projection did not clone and change the model message")
+	}
+	if !strings.Contains(message.Content, "连接已断开：数据库服务已关闭，请重新连接") {
+		t.Fatalf("source disconnect text changed: %s", message.Content)
 	}
 }

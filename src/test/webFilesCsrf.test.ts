@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 // Non-mock HTTP contract: replicate requireAuth session/CSRF semantics with a real node http server
-// (POST/DELETE with a cookie session but a missing/wrong X-NexTerm-CSRF get 403 + "CSRF 校验失败",
+// (POST/DELETE with a cookie session but a missing/wrong X-NexTerm-CSRF gets 403 with a CSRF validation error,
 // and the rejection happens in middleware, the handler never runs), verifying stageFile/reserveTarget/deleteBlob
 // carry the M125 account-session CSRF header, that an exact CSRF 403 refreshes via /auth/me and retries the same request once,
 // other 403s are not retried, and uploads/deletes are not duplicated by the retry.
@@ -82,7 +82,7 @@ beforeAll(async () => {
       }
       if (req.method === "GET" && path === "/auth/me") {
         if (!cookie) {
-          sendJSON(res, 401, { ok: false, error: { code: "forbidden", message: "会话无效或缺失" } });
+          sendJSON(res, 401, { ok: false, error: { code: "forbidden", message: "Session is invalid or missing" } });
           return;
         }
         currentCsrf = `csrf-${observed.filter((entry) => entry.path === "/auth/me").length + 1}`;
@@ -105,7 +105,7 @@ beforeAll(async () => {
       }
       if (req.method === "POST" && path.startsWith("/files/blob")) {
         if (blobPostForbidden) {
-          sendJSON(res, 403, { ok: false, error: { code: "forbidden", message: "没有权限" } });
+          sendJSON(res, 403, { ok: false, error: { code: "forbidden", message: "Permission denied" } });
           return;
         }
         if (sessionRejected(req, cookie, csrf)) {
@@ -124,7 +124,7 @@ beforeAll(async () => {
         const id = new URL(path, "http://x").searchParams.get("id") ?? "";
         const record = stagedBlobs.get(id);
         if (!record) {
-          sendJSON(res, 404, { ok: false, error: { code: "not_found", message: "暂存文件不存在或已过期" } });
+          sendJSON(res, 404, { ok: false, error: { code: "not_found", message: "Staged file does not exist or has expired" } });
           return;
         }
         res.writeHead(200, { "content-type": "application/octet-stream" });
@@ -197,8 +197,8 @@ function pngBytes() {
   return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 }
 
-describe("webFiles blob 传输的会话/CSRF 契约", () => {
-  it("已登录会话 stageFile 携带 X-NexTerm-CSRF 成功暂存", async () => {
+describe("webFiles blob transfer session/CSRF contract", () => {
+  it("stageFile sends X-NexTerm-CSRF for a signed-in session and stages successfully", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
 
@@ -211,7 +211,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(handled.stage).toBe(1);
   });
 
-  it("authApi.login 建立会话后可直接暂存(复用 M125 登录 API)", async () => {
+  it("stageFile works immediately after authApi.login establishes a session (reusing the M125 login API)", async () => {
     const session = await authApi.login("u", "p");
     if (isMfaChallenge(session)) throw new Error("unexpected MFA challenge");
     // The caller remembers the CSRF token once the session is established (login may return an MFA challenge, so it cannot be remembered on the caller's behalf)
@@ -229,7 +229,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(upload[0]?.csrf).toBe("csrf-1");
   });
 
-  it("无会话(loopback/auth=off)不携带 CSRF 头且请求照常", async () => {
+  it("sends requests without a CSRF header when there is no session (loopback/auth=off)", async () => {
     const ref = await stageFile(new File([pngBytes()], "c.png", { type: "image/png" }));
 
     expect(ref.id.length).toBeGreaterThan(0);
@@ -239,7 +239,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(handled.stage).toBe(1);
   });
 
-  it("stageFile 令牌过期: 精确 CSRF 403 时经 /auth/me 刷新并重试一次, 上传不重复", async () => {
+  it("stageFile with an expired token refreshes through /auth/me on an exact CSRF 403 and retries once without duplicating the upload", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-stale");
 
@@ -257,7 +257,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(getCsrfToken()).toBe("csrf-2");
   });
 
-  it("stageFile 重试后仍是 CSRF 403 时不再重试", async () => {
+  it("stageFile does not retry again when the retry still returns CSRF 403", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-stale");
     alwaysCsrfFail = true;
@@ -272,7 +272,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(handled.stage).toBe(0);
   });
 
-  it("stageFile 非 CSRF 的 403 不重试也不刷新会话", async () => {
+  it("stageFile does not retry or refresh the session for non-CSRF 403 responses", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
     blobPostForbidden = true;
@@ -287,7 +287,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(handled.stage).toBe(0);
   });
 
-  it("reserveTarget 与 deleteBlob 携带会话 CSRF 头, 预留后可删除", async () => {
+  it("reserveTarget and deleteBlob send the session CSRF header, and reserved blobs can be deleted", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
 
@@ -310,7 +310,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(stagedBlobs.size).toBe(1);
   });
 
-  it("deleteBlob 令牌过期: 刷新重试一次, 删除只执行一次", async () => {
+  it("deleteBlob refreshes and retries once on token expiry, but deletes only once", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
 
@@ -330,7 +330,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(stagedBlobs.has(ref.id)).toBe(false);
   });
 
-  it("deleteBlob 非 CSRF 的失败保持静默(不抛出也不重试)", async () => {
+  it("deleteBlob stays silent for non-CSRF failures (no throw and no retry)", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
 
@@ -345,7 +345,7 @@ describe("webFiles blob 传输的会话/CSRF 契约", () => {
     expect(meCalls()).toHaveLength(0);
   });
 
-  it("相对 id/name 落点: requestSaveTarget 预留后 deliverStaged 按 id 回读、写入手柄并删除暂存", async () => {
+  it("relative id/name target: requestSaveTarget reserves, then deliverStaged reads by ID, writes the handle, and deletes the staged blob", async () => {
     jarCookie = "nexterm_session=s-1";
     setCsrfToken("csrf-1");
 

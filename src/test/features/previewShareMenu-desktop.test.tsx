@@ -87,8 +87,8 @@ function mountMenu(): HTMLDivElement {
   return mounted.container;
 }
 
-describe("PreviewShareMenu 桌面分流", () => {
-  it("创建走 preview_share_create 中继并展示后端拼好的 url", async () => {
+describe("PreviewShareMenu desktop dispatch", () => {
+  it("creates through the preview_share_create relay and displays the backend-assembled URL", async () => {
     const container = mountMenu();
     await flushUntil(() => container.querySelector("select") !== null);
     clickButton(container, "创建链接");
@@ -96,7 +96,7 @@ describe("PreviewShareMenu 桌面分流", () => {
     expect(mocks.create).toHaveBeenCalledWith("tab-1", 3_600_000);
   });
 
-  it("允许控制勾选禁用并提示第一期暂不支持控制", async () => {
+  it("disables the allow-control checkbox and explains that control is unsupported", async () => {
     const container = mountMenu();
     await flushUntil(() => mocks.active.mock.calls.length >= 1);
     await flush();
@@ -106,10 +106,10 @@ describe("PreviewShareMenu 桌面分流", () => {
     expect(checkbox).toBeDefined();
     expect(checkbox!.disabled).toBe(true);
     expect(checkbox!.checked).toBe(false);
-    expect(container.textContent).toContain("桌面中继创建的预览第一期暂不支持控制");
+    expect(container.textContent).toContain("桌面中继创建的预览暂不支持控制");
   });
 
-  it("列表按当前 tab 活跃中继的壳 id 过滤, 吊销走 remoteSharingApi", async () => {
+  it("filters the list by the active relay shell ID for the current tab and revokes through remoteSharingApi", async () => {
     mocks.previewLinks.mockResolvedValue({
       links: [
         linkOn("shell-1", "l-1"),
@@ -130,7 +130,7 @@ describe("PreviewShareMenu 桌面分流", () => {
     await flushUntil(() => mocks.previewLinks.mock.calls.length >= 2);
   });
 
-  it("当前 tab 无活跃中继时不列出任何链接", async () => {
+  it("lists no links when the current tab has no active relay", async () => {
     mocks.active.mockResolvedValue({});
     mocks.previewLinks.mockResolvedValue({ links: [linkOn("shell-9", "l-9")] });
     const container = mountMenu();
@@ -141,18 +141,18 @@ describe("PreviewShareMenu 桌面分流", () => {
   });
 });
 
-describe("TerminalPane 只读预览登录门控", () => {
+describe("TerminalPane read-only preview login gate", () => {
   function GateProbe() {
     const enabled = usePreviewShareEnabled();
     return <span>{enabled ? "on" : "off"}</span>;
   }
 
-  it("已登录桌面返回 true", async () => {
+  it("returns true for a logged-in desktop session", async () => {
     mounted = mountWithClient(createElement(GateProbe));
     await flushUntil(() => mounted!.container.textContent === "on");
   });
 
-  it("未登录桌面返回 false (入口隐藏)", async () => {
+  it("returns false for a logged-out desktop session and hides the entry", async () => {
     mocks.status.mockResolvedValue({ configured: false, loggedIn: false, seq: 0, verifiedAt: 0, lastError: "" });
     mounted = mountWithClient(createElement(GateProbe));
     await flushUntil(() => mounted!.container.textContent === "off");

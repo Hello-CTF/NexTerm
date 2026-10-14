@@ -169,13 +169,13 @@ afterEach(() => {
   useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [] });
 });
 
-describe("复制 SSH 命令", () => {
+describe("copy SSH command", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
-  it("默认端口复制为 ssh user@host 并提示", async () => {
+  it("copies ssh user@host for the default port and shows a toast", async () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "复制 SSH 命令");
     await waitFor(() =>
@@ -184,7 +184,7 @@ describe("复制 SSH 命令", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "已复制 SSH 命令：ssh root@10.0.0.8");
   });
 
-  it("非默认端口复制带 -p", async () => {
+  it("includes -p for a non-default port", async () => {
     openRowMenu(mounted!.container, "edge-1");
     clickMenuItem(mounted!.container, "复制 SSH 命令");
     await waitFor(() =>
@@ -192,7 +192,7 @@ describe("复制 SSH 命令", () => {
     );
   });
 
-  it("非 SSH 资产不提供复制项与换用户连接项", async () => {
+  it("does not offer copy or connect-as-user actions for non-SSH assets", async () => {
     openRowMenu(mounted!.container, "win-1");
     await flush();
     const labels = menuLabels(mounted!.container);
@@ -201,7 +201,7 @@ describe("复制 SSH 命令", () => {
     expect(labels.some((l) => l.includes("用其他用户名连接"))).toBe(false);
   });
 
-  it("剪贴板失败时提示复制失败", async () => {
+  it("shows a copy failure toast when clipboard writing fails", async () => {
     mocks.writeText.mockRejectedValueOnce(new Error("denied"));
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "复制 SSH 命令");
@@ -211,13 +211,13 @@ describe("复制 SSH 命令", () => {
   });
 });
 
-describe("用其他用户名连接", () => {
+describe("connect as another user", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
-  it("输入用户名后走快速连接, 密码留空用 agent", async () => {
+  it("uses quick connect with agent authentication after entering a username and leaving the password blank", async () => {
     mocks.promptText.mockResolvedValueOnce("ops").mockResolvedValueOnce("");
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "用其他用户名连接");
@@ -232,7 +232,7 @@ describe("用其他用户名连接", () => {
     expect(mocks.promptText).toHaveBeenNthCalledWith(1, "用其他用户名连接「web-1」", "root");
   });
 
-  it("输入密码时按密码认证", async () => {
+  it("uses password authentication when a password is entered", async () => {
     mocks.promptText.mockResolvedValueOnce("ops").mockResolvedValueOnce("secret");
     openRowMenu(mounted!.container, "edge-1");
     clickMenuItem(mounted!.container, "用其他用户名连接");
@@ -247,7 +247,7 @@ describe("用其他用户名连接", () => {
     );
   });
 
-  it("取消输入用户名不发起连接", async () => {
+  it("does not connect when username input is cancelled", async () => {
     mocks.promptText.mockResolvedValueOnce(null);
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "用其他用户名连接");
@@ -256,7 +256,7 @@ describe("用其他用户名连接", () => {
     expect(mocks.promptText).toHaveBeenCalledTimes(1);
   });
 
-  it("输入空白用户名不发起连接", async () => {
+  it("does not connect for a blank username", async () => {
     mocks.promptText.mockResolvedValueOnce("   ");
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "用其他用户名连接");

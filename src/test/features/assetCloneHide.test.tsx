@@ -79,7 +79,7 @@ import type { Asset } from "../../ipc/commands";
 const GROUP = {
   id: "g1",
   parentId: null,
-  name: "生产",
+  name: "production",
   sort: 0,
   createdAt: 1,
   updatedAt: 1,
@@ -173,13 +173,13 @@ afterEach(() => {
   useAssetVisibility.setState({ hiddenIds: [], showHidden: false });
 });
 
-describe("资产克隆", () => {
+describe("asset cloning", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
-  it("确认后创建共享凭据引用的新资产，不复制凭据内容", async () => {
+  it("creates an asset that shares credential references after confirmation without copying credential contents", async () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "克隆");
     await waitFor(() => expect(mocks.create).toHaveBeenCalled());
@@ -206,7 +206,7 @@ describe("资产克隆", () => {
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
   });
 
-  it("私钥路径引用也原样共享", async () => {
+  it("shares private key path references unchanged", async () => {
     openRowMenu(mounted!.container, "build-1");
     clickMenuItem(mounted!.container, "克隆");
     await waitFor(() => expect(mocks.create).toHaveBeenCalled());
@@ -215,7 +215,7 @@ describe("资产克隆", () => {
     );
   });
 
-  it("取消则不创建", async () => {
+  it("does not create an asset when cancelled", async () => {
     mocks.ask.mockResolvedValueOnce(false);
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "克隆");
@@ -224,13 +224,13 @@ describe("资产克隆", () => {
   });
 });
 
-describe("资产隐藏 / 取消隐藏", () => {
+describe("asset hiding and unhiding", () => {
   beforeEach(async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
-  it("隐藏只是展示状态：行消失、数据保留、可找回", async () => {
+  it("hiding only affects visibility: removes the row, preserves data, and allows recovery", async () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "隐藏");
     let eye: HTMLButtonElement | undefined;
@@ -270,7 +270,7 @@ describe("资产隐藏 / 取消隐藏", () => {
     expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).not.toContain("a1");
   });
 
-  it("搜索同样过滤隐藏资产，显示隐藏后可见", async () => {
+  it("search also filters hidden assets and reveals them when hidden assets are shown", async () => {
     useAssetVisibility.getState().hide("a1");
     const input = mounted!.container.querySelector<HTMLInputElement>("input.nx-input");
     if (!input) throw new Error("Search input not found");
@@ -283,7 +283,7 @@ describe("资产隐藏 / 取消隐藏", () => {
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
   });
 
-  it("删除已隐藏资产后清理可见性记录，眼睛计数不再残留", async () => {
+  it("deleting a hidden asset clears its visibility record and removes the eye count", async () => {
     useAssetVisibility.getState().hide("a1");
     useAssetVisibility.getState().setShowHidden(true);
     mounted = mountWithClient(createElement(AssetTree));

@@ -286,7 +286,7 @@ func (s *Service) compareWithSession(ctx context.Context, session *remoteSession
 		return CompareResult{}, err
 	}
 	if missed > 0 {
-		report.warnf("%d 个云端对象未能拉取(超出单页预算), 对比结果不包含它们", missed)
+		report.warnf("%d 个云端对象未能拉取（超出单页预算），对比结果不包含它们", missed)
 	}
 	// buildCompareRows shrinks remote/undecryptable as it matches, so the cloud object count must be taken first.
 	remoteCount := len(remote) + len(undecryptable)

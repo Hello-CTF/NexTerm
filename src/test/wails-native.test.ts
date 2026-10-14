@@ -14,8 +14,8 @@ afterEach(() => {
   vi.doUnmock("@wailsio/runtime");
 });
 
-describe("Wails 原生对话框", () => {
-  it("ask 保留标题/kind，并按按钮结果返回 boolean", async () => {
+describe("Wails native dialogs", () => {
+  it("preserves the title and kind for ask and returns a boolean based on the selected button", async () => {
     runtime.Dialogs.Warning.mockResolvedValue("确定");
     const { ask } = await import("../ui/dialogs");
 
@@ -30,7 +30,7 @@ describe("Wails 原生对话框", () => {
     });
   });
 
-  it("confirm/message 使用原生问题和信息框", async () => {
+  it("uses native question and info dialogs for confirm/message", async () => {
     runtime.Dialogs.Question.mockResolvedValue("取消");
     runtime.Dialogs.Info.mockResolvedValue("确定");
     const { confirmDialog, messageBox } = await import("../ui/dialogs");
@@ -43,7 +43,7 @@ describe("Wails 原生对话框", () => {
     });
   });
 
-  it("open 取消归一为 null，私钥 filters 保留所有文件", async () => {
+  it("normalizes open cancellation to null and preserves all-files in private key filters", async () => {
     runtime.Dialogs.OpenFile.mockResolvedValueOnce("").mockResolvedValueOnce("/tmp/id_ed25519");
     const { pickLocalFile, pickKeyFile } = await import("../ui/dialogs");
 
@@ -59,7 +59,7 @@ describe("Wails 原生对话框", () => {
     expect(options.Filters[1]).toEqual({ DisplayName: "所有文件", Pattern: "*" });
   });
 
-  it("save 传默认文件名并把取消归一为 null", async () => {
+  it("passes the default filename to save and normalizes cancellation to null", async () => {
     runtime.Dialogs.SaveFile.mockResolvedValue("");
     const { pickSavePath } = await import("../ui/dialogs");
 
@@ -67,7 +67,7 @@ describe("Wails 原生对话框", () => {
     expect(runtime.Dialogs.SaveFile).toHaveBeenCalledWith({ Filename: "audit.log" });
   });
 
-  it("应用内注册 handler 仍优先于原生弹框", async () => {
+  it("prefers registered in-app handlers over native dialogs", async () => {
     const { ask, registerDialogHandlers } = await import("../ui/dialogs");
     const customAsk = vi.fn().mockResolvedValue(true);
     registerDialogHandlers({
@@ -83,8 +83,8 @@ describe("Wails 原生对话框", () => {
   });
 });
 
-describe("Wails 窗口", () => {
-  it("最小化、最大化切换和关闭映射到当前窗口", async () => {
+describe("Wails window", () => {
+  it("maps minimize, maximize toggle, and close to the current window", async () => {
     const { minimiseWindow, toggleMaximiseWindow, closeWindow } = await import("../ipc/wails");
 
     await minimiseWindow();
@@ -96,7 +96,7 @@ describe("Wails 窗口", () => {
     expect(runtime.Window.Close).toHaveBeenCalledTimes(1);
   });
 
-  it("拖动区域使用 Wails CSS 契约", async () => {
+  it("uses the Wails CSS contract for drag regions", async () => {
     const { wailsDragRegionStyle } = await import("../app/platform");
     expect(wailsDragRegionStyle).toEqual({ "--wails-draggable": "drag" });
   });

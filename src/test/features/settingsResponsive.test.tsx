@@ -83,8 +83,8 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("SettingsView 响应式结构", () => {
-  it("窄屏保留顶部横向 chips,宽屏为左侧目录 + 右侧独立滚动内容", async () => {
+describe("SettingsView responsive structure", () => {
+  it("keeps horizontal chips on narrow screens and uses a left TOC with independently scrolling content on wide screens", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const nav = mounted.container.querySelector<HTMLElement>('nav[aria-label="设置分区"]');
@@ -105,7 +105,7 @@ describe("SettingsView 响应式结构", () => {
     expect(scroller!.querySelector("#settings-shortcuts")).not.toBeNull();
   });
 
-  it("快捷键网格窄屏单列、≥480px 双列", async () => {
+  it("uses one shortcuts column on narrow screens and two at 480px and above", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const grid = [...mounted.container.querySelectorAll("div")].find(
@@ -117,7 +117,7 @@ describe("SettingsView 响应式结构", () => {
     expect(grid!.querySelectorAll(".nx-kbd").length).toBe(KEYBINDING_ACTIONS.length);
   });
 
-  it("界面文字倍率 segment 可折行，其余 segment 保持单行结构", async () => {
+  it("allows the UI font scale segment to wrap while other segments stay on one line", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const container = mounted.container;
@@ -139,7 +139,7 @@ describe("SettingsView 响应式结构", () => {
     }
   });
 
-  it("外观高级设置与连通性测试默认折叠，可展开", async () => {
+  it("collapses appearance advanced settings and connectivity testing by default and expands them on demand", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const appearance = document.getElementById("settings-appearance")!;
@@ -162,7 +162,7 @@ describe("SettingsView 响应式结构", () => {
     expect(aiModel.textContent).toContain("测试当前模型连通性");
   });
 
-  it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {
+  it("wraps the AI model card header and connectivity test button", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const title = [...mounted.container.querySelectorAll(".nx-card-title")].find(
@@ -178,18 +178,18 @@ describe("SettingsView 响应式结构", () => {
     expect(button?.className).toContain("shrink");
   });
 
-  it("AI 模型卡密钥存储文案区分 Web 存储位置与同步条件", async () => {
+  it("distinguishes Web key storage location from sync conditions in the AI model card copy", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("密钥加密后保存在当前运行环境的 SQLite 中");
+    expect(text).toContain("密钥加密后保存在当前实例的数据库中");
     expect(text).toContain("启用「同步 AI 模型档案」并解锁凭据库后");
     expect(text).toContain("端到端加密同步");
     expect(text).not.toContain("不会上传");
     expect(text).not.toContain("明文存在本机 sqlite");
   });
 
-  it("连通性成功用成功色、失败用危险色", async () => {
+  it("uses success styling for successful connectivity and danger styling for failures", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     clickButton(mounted.container, "连通性测试");
@@ -216,7 +216,7 @@ describe("SettingsView 响应式结构", () => {
     expect(failAlert?.textContent).toContain("boom");
   });
 
-  it("新增规则输入框 Enter 提交、IME 组词中 Enter 不提交", async () => {
+  it("submits new rules on Enter but not during IME composition", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     clickButton(mounted.container, "添加一条规则");
@@ -234,7 +234,7 @@ describe("SettingsView 响应式结构", () => {
     expect(mocks.setPermission.mock.calls[0][0].dangerRules).toContain("rm -rf /");
   });
 
-  it("编辑规则输入框 Enter 失焦保存、IME 组词中 Enter 不触发", async () => {
+  it("saves edited rules on Enter but not during IME composition", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const input = mounted.container.querySelector<HTMLInputElement>(
@@ -252,7 +252,7 @@ describe("SettingsView 响应式结构", () => {
     expect(mocks.setPermission.mock.calls[0][0].dangerRules).toContain("kubectl delete --all");
   });
 
-  it("凭据保护开关整行是 label，点文字即可展开启用表单", async () => {
+  it("makes the credential protection toggle row a label so clicking its text expands the enable form", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const label = [...mounted.container.querySelectorAll("label")].find((l) =>
@@ -265,7 +265,7 @@ describe("SettingsView 响应式结构", () => {
     expect(mounted.container.querySelector('input[type="password"]')).toBeTruthy();
   });
 
-  it("终端 OSC 52 开关默认关闭，显式勾选后才允许远程写剪贴板", async () => {
+  it("disables the terminal OSC 52 toggle by default and allows remote clipboard writes only after explicit opt-in", async () => {
     useUi.setState({ terminalOsc52: false });
     localStorage.clear();
     mounted = withClient(createElement(SettingsView));
@@ -285,8 +285,8 @@ describe("SettingsView 响应式结构", () => {
   });
 });
 
-describe("AuditView 响应式与退出码语义", () => {
-  it("工具栏可换行，刷新无需横向滚动即可到达", async () => {
+describe("AuditView responsive behavior and exit-code semantics", () => {
+  it("wraps the toolbar so refresh remains reachable without horizontal scrolling", async () => {
     mocks.auditQuery.mockResolvedValue([]);
     mounted = mount(createElement(AuditView));
     await flush();
@@ -294,7 +294,7 @@ describe("AuditView 响应式与退出码语义", () => {
     expect(toolbar?.className).toContain("flex-wrap");
   });
 
-  it("退出码除颜色外带 ✓/✗ 符号与文字提示", async () => {
+  it("shows check and cross symbols plus text hints in addition to exit-code colors", async () => {
     mocks.auditQuery.mockResolvedValue([
       { id: 1, ts: 1728000000000, sessionId: null, assetId: null, source: "user", kind: "exec", payload: { cmd: "ls" }, exitCode: 0, durationMs: 12 },
       { id: 2, ts: 1728000001000, sessionId: null, assetId: null, source: "ai", kind: "exec", payload: { cmd: "rm" }, exitCode: 2, durationMs: 30 },

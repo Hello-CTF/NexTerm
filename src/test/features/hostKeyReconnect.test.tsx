@@ -185,7 +185,7 @@ afterEach(() => {
   useUi.setState({ toasts: [] });
 });
 
-describe("TerminalPane 失效终端重连（reconnectNow）主机指纹确认", () => {
+describe("Host key confirmation when reconnecting a dead terminal (reconnectNow)", () => {
   beforeEach(() => {
     mocks.attachDead = true;
     seed();
@@ -194,7 +194,7 @@ describe("TerminalPane 失效终端重连（reconnectNow）主机指纹确认", 
     );
   });
 
-  it("connect 报 host_key_pending 时弹确认，取消则不重试", async () => {
+  it("shows confirmation when connect reports host_key_pending and does not retry after cancellation", async () => {
     mocks.connect.mockRejectedValueOnce({
       code: "host_key_pending",
       message: "unknown SSH host key for 10.0.0.8:22",
@@ -220,7 +220,7 @@ describe("TerminalPane 失效终端重连（reconnectNow）主机指纹确认", 
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
-  it("接受后记账并重试，终端按新会话重置", async () => {
+  it("records the key and retries after acceptance, then resets the terminal to the new session", async () => {
     mocks.connect
       .mockRejectedValueOnce({
         code: "host_key_pending",
@@ -267,7 +267,7 @@ describe("TerminalPane 失效终端重连（reconnectNow）主机指纹确认", 
   });
 });
 
-describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", () => {
+describe("Host key confirmation for TerminalPane menu reconnect (reconnectSession)", () => {
   beforeEach(() => {
     seed({ status: "failed" });
     mounted = mount(
@@ -275,7 +275,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     );
   });
 
-  it("pending 时取消则不重连", async () => {
+  it("does not reconnect when a pending confirmation is cancelled", async () => {
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
       port: 22,
@@ -294,7 +294,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
-  it("changed 时接受后记账并重连", async () => {
+  it("records the key and reconnects after accepting a changed fingerprint", async () => {
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
       port: 22,
@@ -322,7 +322,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     );
   });
 
-  it("指纹未变化时不弹窗直接重连", async () => {
+  it("reconnects directly without a dialog when the fingerprint is unchanged", async () => {
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
       port: 22,
@@ -339,7 +339,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
-  it("probe 自身报 host_key_pending（跳板机）时取消则不重连", async () => {
+  it("does not reconnect after cancellation when probe itself reports host_key_pending for a jump host", async () => {
     mocks.probeHostKey.mockRejectedValue({
       code: "host_key_pending",
       message: "unknown SSH host key for jump.example:22",
@@ -363,7 +363,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
-  it("probe 报 changed 时接受后记账并重连", async () => {
+  it("records the key and reconnects after acceptance when probe reports changed", async () => {
     mocks.probeHostKey.mockRejectedValue({
       code: "host_key_pending",
       message: "SSH host key for jump.example:22 changed",
@@ -395,7 +395,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     );
   });
 
-  it("探测不可用回退为直接重连", async () => {
+  it("falls back to direct reconnect when probing is unavailable", async () => {
     mocks.probeHostKey.mockRejectedValue({ code: "not_found", message: "unknown command" });
     mocks.reconnect.mockResolvedValue(true);
     await flush();
@@ -405,7 +405,7 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("会话在点击前已被删除时说明真实原因而不是「请刷新后重试」", async () => {
+  it("explains that the session was deleted before the click instead of asking the user to refresh", async () => {
     mocks.probeHostKey.mockResolvedValue({
       host: "10.0.0.8",
       port: 22,

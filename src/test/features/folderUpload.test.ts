@@ -75,7 +75,7 @@ vi.mock("../../ipc/commands", () => ({
     read: async (path: string) => {
       h.calls.push(`read:${path}`);
       const content = h.localReads[path];
-      if (content === undefined) throw new Error(`无读取样本：${path}`);
+      if (content === undefined) throw new Error(`no read sample for ${path}`);
       return { path, size: atob(content).length, contentBase64: content };
     },
   },
@@ -146,7 +146,7 @@ async function waitForSettled(): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
-  throw new Error("传输任务未结束");
+  throw new Error("transfer tasks did not settle");
 }
 
 function b64(text: string): string {
@@ -178,8 +178,8 @@ beforeEach(() => {
   useTransferStore.setState({ tasks: [], runningId: null });
 });
 
-describe("桌面原生文件夹选择器", () => {
-  it("逐文件模式拿到真实 localPath，远端路径用正斜杠拼接", async () => {
+describe("desktop native folder picker", () => {
+  it("per-file mode uses real localPath, remote paths joined with forward slashes", async () => {
     h.listing = {
       name: "pics",
       files: [
@@ -197,14 +197,14 @@ describe("桌面原生文件夹选择器", () => {
     expect(h.toasts.some((t) => t.level === "error")).toBe(false);
   });
 
-  it("原生对话框取消时不做任何事", async () => {
+  it("native dialog cancel does nothing", async () => {
     h.pickedFolder = null;
     await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
     expect(h.calls).toEqual([]);
     expect(h.toasts).toEqual([]);
   });
 
-  it("枚举失败时报错 toast 且不上传", async () => {
+  it("enumeration failure shows an error toast and uploads nothing", async () => {
     h.listError = { code: "internal", message: "permission denied" };
     await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
     expect(h.toasts).toEqual([
@@ -213,13 +213,13 @@ describe("桌面原生文件夹选择器", () => {
     expect(h.calls).toEqual(["listFolder:/local/pics"]);
   });
 
-  it("空文件夹在远端创建目录", async () => {
+  it("empty folder creates the directory on the remote", async () => {
     await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
     expect(h.calls).toEqual(["listFolder:/local/pics", "mkdir:/data/pics"]);
     expect(h.toasts.some((t) => t.level === "success" && t.text.includes("pics"))).toBe(true);
   });
 
-  it("winrm 会话拒绝含反斜杠的名称", async () => {
+  it("winrm sessions reject names containing backslashes", async () => {
     h.kind = "winrm";
     h.listing = {
       name: "pics",
@@ -231,7 +231,7 @@ describe("桌面原生文件夹选择器", () => {
     expect(h.calls.some((c) => c.startsWith("upload:") || c.startsWith("write:"))).toBe(false);
   });
 
-  it("打包模式从 localFileApi.read 读取字节构建 tar", async () => {
+  it("pack mode builds the tar from bytes read via localFileApi.read", async () => {
     h.choice = "pack";
     h.listing = {
       name: "pics",
@@ -264,7 +264,7 @@ describe("桌面原生文件夹选择器", () => {
     expect(h.toasts.some((t) => t.level === "success")).toBe(true);
   });
 
-  it("打包读取大小与枚举不一致时中止", async () => {
+  it("pack aborts when the read size differs from the enumeration", async () => {
     h.choice = "pack";
     h.listing = { name: "pics", files: [nativeFile("a.txt", "/local/pics/a.txt", 3)], emptyDirs: [] };
     h.localReads = { "/local/pics/a.txt": b64("abcd") };
@@ -273,7 +273,7 @@ describe("桌面原生文件夹选择器", () => {
     expect(h.calls.some((c) => c.startsWith("write:"))).toBe(false);
   });
 
-  it("原生对话框不可用时回退 webkitdirectory 选择器（内容上传）", async () => {
+  it("falls back to the webkitdirectory picker when the native dialog is unavailable (content upload)", async () => {
     h.pickThrows = true;
     const realCreate = document.createElement.bind(document);
     let captured: HTMLInputElement | null = null;
@@ -305,8 +305,8 @@ describe("桌面原生文件夹选择器", () => {
   });
 });
 
-describe("桌面拖拽内容兜底", () => {
-  it("松散文件经 fs_write 内容上传", async () => {
+describe("desktop drag-drop content fallback", () => {
+  it("loose files upload via fs_write content upload", async () => {
     const files = [fakeFile("x.txt", "X"), fakeFile("y.txt", "YY")];
     const dt = dropOf(
       files.map((file) => ({ webkitGetAsEntry: () => null, getAsFile: () => file })),
@@ -319,7 +319,7 @@ describe("桌面拖拽内容兜底", () => {
     expect(h.calls.some((c) => c.startsWith("upload:"))).toBe(false);
   });
 
-  it("文件夹拖拽逐文件模式按文件夹前缀内容上传", async () => {
+  it("folder drag per-file mode uploads content under the folder prefix", async () => {
     const folder = dirEntry("pics", [
       fileEntry("a.txt", fakeFile("pics/a.txt", "A")),
       dirEntry("sub", [fileEntry("b.txt", fakeFile("pics/sub/b.txt", "BB"))]),
@@ -331,7 +331,7 @@ describe("桌面拖拽内容兜底", () => {
     expect(h.calls).toContain(`write:/data/pics/sub/b.txt:${b64("BB")}`);
   });
 
-  it("拖拽冲突走保留两者策略自动重命名", async () => {
+  it("drag conflicts use the keep-both strategy with auto rename", async () => {
     h.choice = "keepBoth";
     h.siblings = [{ name: "x.txt", kind: "file" }] as FileEntryDto[];
     const files = [fakeFile("x.txt", "X")];
@@ -345,8 +345,8 @@ describe("桌面拖拽内容兜底", () => {
   });
 });
 
-describe("WEB 拖拽路径不回归", () => {
-  it("web 松散文件仍走暂存 + fs_upload", async () => {
+describe("WEB drag-drop path does not regress", () => {
+  it("web loose files still go through staging + fs_upload", async () => {
     h.web = true;
     const files = [fakeFile("x.txt", "X")];
     const dt = dropOf(
@@ -361,7 +361,7 @@ describe("WEB 拖拽路径不回归", () => {
   });
 });
 
-describe("设备会话拖拽大小守卫", () => {
+describe("device session drag size guard", () => {
   const OVERSIZE = 65 * 1024 * 1024;
 
   function oversizedFile(rel: string): File {
@@ -370,7 +370,7 @@ describe("设备会话拖拽大小守卫", () => {
     return file;
   }
 
-  it("超限松散文件在前端拒绝：toast 指引上传按钮，零 IPC 零任务", async () => {
+  it("oversized loose files are rejected in the frontend: toast points to the upload button, zero IPC zero tasks", async () => {
     h.kind = "device";
     const big = oversizedFile("big.bin");
     const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
@@ -382,7 +382,7 @@ describe("设备会话拖拽大小守卫", () => {
     expect(useTransferStore.getState().tasks).toEqual([]);
   });
 
-  it("文件夹拖拽内含超限文件同样在模式选择前拒绝", async () => {
+  it("folder drags containing oversized files are likewise rejected before mode selection", async () => {
     h.kind = "device";
     const folder = dirEntry("pics", [
       fileEntry("a.txt", fakeFile("pics/a.txt", "A")),
@@ -398,7 +398,7 @@ describe("设备会话拖拽大小守卫", () => {
     expect(useTransferStore.getState().tasks).toEqual([]);
   });
 
-  it("device 会话原生选择器的大文件不受影响（路径流式上传）", async () => {
+  it("large files via the device native picker are unaffected (path streaming upload)", async () => {
     h.kind = "device";
     h.listing = {
       name: "pics",
@@ -411,7 +411,7 @@ describe("设备会话拖拽大小守卫", () => {
     expect(h.toasts.some((t) => t.level === "error")).toBe(false);
   });
 
-  it("非 device 会话超限文件仍可拖拽内容上传", async () => {
+  it("oversized files on non-device sessions can still drag-upload content", async () => {
     h.kind = "ssh";
     const big = oversizedFile("big.bin");
     const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
@@ -422,12 +422,12 @@ describe("设备会话拖拽大小守卫", () => {
   });
 });
 
-describe("无 webkitGetAsEntry 的平台拖拽", () => {
+describe("drag-drop on platforms without webkitGetAsEntry", () => {
   function pseudoFolderFile(name: string): File {
     return new File([], name, { lastModified: MTIME_MS });
   }
 
-  it("目录伪文件被过滤并明确提示，零 IPC 零任务", async () => {
+  it("directory pseudo-files are filtered with an explicit notice, zero IPC zero tasks", async () => {
     const pseudo = pseudoFolderFile("pics");
     const dt = dropOf([{ getAsFile: () => pseudo }], [pseudo]);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
@@ -441,7 +441,7 @@ describe("无 webkitGetAsEntry 的平台拖拽", () => {
     expect(useTransferStore.getState().tasks).toEqual([]);
   });
 
-  it("混拖时真实文件照常上传，目录伪文件不上传", async () => {
+  it("mixed drags upload real files as usual and skip directory pseudo-files", async () => {
     const pseudo = pseudoFolderFile("pics");
     const real = fakeFile("real.txt", "R");
     const dt = dropOf(
@@ -459,7 +459,7 @@ describe("无 webkitGetAsEntry 的平台拖拽", () => {
     expect(h.calls.some((c) => c.includes("pics"))).toBe(false);
   });
 
-  it("跳过多个条目时提示截断为前 3 个名称加总数", async () => {
+  it("the notice truncates to the first 3 names plus the total when multiple entries are skipped", async () => {
     const pseudos = ["a", "b", "c", "d", "e"].map(pseudoFolderFile);
     const dt = dropOf(pseudos.map((file) => ({ getAsFile: () => file })), pseudos);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
@@ -472,7 +472,7 @@ describe("无 webkitGetAsEntry 的平台拖拽", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("只有真实文件时不提示，按松散文件上传", async () => {
+  it("no notice when only real files are present, uploaded as loose files", async () => {
     const files = [fakeFile("x.txt", "X")];
     const dt = dropOf(files.map((file) => ({ getAsFile: () => file })), files);
     await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });

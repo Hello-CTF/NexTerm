@@ -37,7 +37,7 @@ function chunk(seq: number, ts: number, kind: number, text: string) {
 }
 
 describe("toReplayChunk", () => {
-  it("缺省 kind 按 output 处理", () => {
+  it("defaults kind to output", () => {
     const decoded = toReplayChunk({ seq: 1, ts: 10, dataBase64: b64("out") });
     expect(decoded.kind).toBe(TRANSCRIPT_KIND_OUTPUT);
     expect(new TextDecoder().decode(decoded.data)).toBe("out");
@@ -45,11 +45,11 @@ describe("toReplayChunk", () => {
 });
 
 describe("parseResizePayload", () => {
-  it("接受合法几何", () => {
+  it("accepts valid geometry", () => {
     expect(parseResizePayload(new TextEncoder().encode('{"cols":80,"rows":24}'))).toEqual({ cols: 80, rows: 24 });
   });
 
-  it("拒绝损坏与非正整数几何", () => {
+  it("rejects malformed, non-integer, and non-positive geometry", () => {
     expect(parseResizePayload(new TextEncoder().encode("not-json"))).toBeNull();
     expect(parseResizePayload(new TextEncoder().encode('{"cols":0,"rows":24}'))).toBeNull();
     expect(parseResizePayload(new TextEncoder().encode('{"cols":80.5,"rows":24}'))).toBeNull();
@@ -67,7 +67,7 @@ describe("TranscriptReplay", () => {
     chunk(4, 2500, TRANSCRIPT_KIND_RESIZE, '{"cols":120,"rows":40}'),
   ];
 
-  it("seek(0) 应用起始时刻的 resize 与 output", () => {
+  it("seek(0) applies the initial resize and output", () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
     expect(replay.seek(sink, 0)).toBe(0);
@@ -76,7 +76,7 @@ describe("TranscriptReplay", () => {
     expect(sink.writes).toEqual(["hello "]);
   });
 
-  it("playStep 按位置推进并忽略 input", () => {
+  it("playStep advances by position and ignores input", () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
     replay.seek(sink, 0);
@@ -92,7 +92,7 @@ describe("TranscriptReplay", () => {
     ]);
   });
 
-  it("后退 seek 重置终端并从零重放", () => {
+  it("seeking backward resets the terminal and replays from zero", () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
     replay.seek(sink, 0);
@@ -106,7 +106,7 @@ describe("TranscriptReplay", () => {
     expect(sink.writes.at(-1)).toBe("hello ");
   });
 
-  it("位置钳制在时长范围内,结束后不再应用", () => {
+  it("clamps position to the duration and stops applying chunks after the end", () => {
     const replay = new TranscriptReplay(chunks);
     const sink = new RecordingSink();
     expect(replay.durationMs()).toBe(1500);
@@ -116,7 +116,7 @@ describe("TranscriptReplay", () => {
     expect(sink.writes.length).toBe(writes);
   });
 
-  it("空时间轴时长为 0,seek 安全", () => {
+  it("uses zero duration for an empty timeline and seeks safely", () => {
     const replay = new TranscriptReplay([]);
     const sink = new RecordingSink();
     expect(replay.durationMs()).toBe(0);
@@ -126,7 +126,7 @@ describe("TranscriptReplay", () => {
 });
 
 describe("formatReplayClock", () => {
-  it("格式化为 mm:ss", () => {
+  it("formats time as mm:ss", () => {
     expect(formatReplayClock(0)).toBe("00:00");
     expect(formatReplayClock(65000)).toBe("01:05");
     expect(formatReplayClock(-5)).toBe("00:00");

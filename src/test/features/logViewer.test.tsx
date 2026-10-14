@@ -282,7 +282,7 @@ describe("LogViewer", () => {
     await waitForText(mounted, "line 0 ERROR boom");
   });
 
-  it("可通过编码选择按 GBK 解码，避免乱码", async () => {
+  it("decodes GBK through the encoding selector to avoid mojibake", async () => {
     mocks.readRange.mockImplementation(async () => gbkRangeResult());
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("�"));
@@ -298,7 +298,7 @@ describe("LogViewer", () => {
     expect(select.value).toBe("gbk");
   });
 
-  it("默认复用资产的终端编码设置解码日志", async () => {
+  it("uses the asset terminal encoding setting by default when decoding logs", async () => {
     mocks.assetList.mockResolvedValue([{ id: "a-gbk", options: { encoding: "gbk" } }]);
     useUi.setState({
       sessions: [
@@ -323,7 +323,7 @@ describe("LogViewer", () => {
     expect(select?.value).toBe("gbk");
   });
 
-  it("旧翻页响应不会覆盖新页面", async () => {
+  it("does not let an older page response replace the latest page", async () => {
     const previous = deferred<ReturnType<typeof rangeResult>>();
     const latest = deferred<ReturnType<typeof rangeResult>>();
     mocks.readRange.mockImplementation(
@@ -352,7 +352,7 @@ describe("LogViewer", () => {
     expect(mounted.container.textContent).not.toContain(`字节 ${CHUNK.toLocaleString()}–`);
   });
 
-  it("旧编码响应不会覆盖新响应，解码使用发起时的编码", async () => {
+  it("does not let an older encoding response replace the latest response and decodes with the encoding used at request time", async () => {
     const stale = deferred<ReturnType<typeof gbkRangeResult>>();
     const current = deferred<ReturnType<typeof gbkRangeResult>>();
     let request = 0;
@@ -388,7 +388,7 @@ describe("LogViewer", () => {
   });
 });
 
-describe("查看日志 entries", () => {
+describe("Log viewer entries", () => {
   it("FileTree context menu opens a read-only log tab", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: SESSION }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
@@ -426,7 +426,7 @@ describe("查看日志 entries", () => {
     const button = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent?.trim() === "日志",
     );
-    if (!button) throw new Error("toolbar 日志 button not found");
+    if (!button) throw new Error("toolbar log button not found");
     expect(button.disabled).toBe(false);
     click(button);
     await flush();
@@ -438,7 +438,7 @@ describe("查看日志 entries", () => {
     });
   });
 
-  it("FileBrowser context menu offers 查看日志 for files", async () => {
+  it("FileBrowser context menu offers the log viewer for files", async () => {
     mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("app.log"));
 

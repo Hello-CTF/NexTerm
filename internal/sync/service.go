@@ -19,6 +19,7 @@ const (
 	settingLink                 = "sync.link"
 	settingLinkSession          = "sync.link.session"
 	defaultBackgroundSyncPeriod = time.Minute
+	syncRoundCompleteTopic      = "sync://round-complete"
 )
 
 type Option func(*Service)
@@ -174,9 +175,11 @@ func (s *Service) syncBackground(ctx context.Context) {
 		return
 	}
 	wasLoggedIn := s.engine.hasSession()
-	if _, err := s.Sync(ctx); err != nil && ctx.Err() == nil {
-		s.engine.logger.Warn("background sync failed", "error", err)
+	_, syncErr := s.Sync(ctx)
+	if syncErr != nil && ctx.Err() == nil {
+		s.engine.logger.Warn("background sync failed", "error", syncErr)
 	}
+	_ = ipc.Emit(ctx, s.events, syncRoundCompleteTopic, struct{}{})
 	// Broadcast status when a background round establishes a new session (unlock wake/failure recovery), so an open settings page auto-refreshes to logged-in.
 	if !wasLoggedIn && s.engine.hasSession() {
 		_ = ipc.Emit(ctx, s.events, ipc.TopicSyncStatus, struct{}{})

@@ -48,8 +48,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("sharingApi 线上契约", () => {
-  it("主机分享列表走 GET /share/host-shares 且不带 CSRF 头", async () => {
+describe("sharingApi live contract", () => {
+  it("lists host shares via GET /share/host-shares without a CSRF header", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -59,7 +59,7 @@ describe("sharingApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
   });
 
-  it("创建主机分享走 POST /share/host-shares, 蛇形字段 + CSRF", async () => {
+  it("creates host shares via POST /share/host-shares with snake_case fields and CSRF", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -74,7 +74,7 @@ describe("sharingApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("吊销主机分享走 POST /share/host-shares/{id}/revoke, 路径编码且带 CSRF", async () => {
+  it("revokes host shares via POST /share/host-shares/{id}/revoke with an encoded path and CSRF", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -85,7 +85,7 @@ describe("sharingApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("公开链接列表走 GET /share/links 且不带 CSRF 头", async () => {
+  it("lists public links via GET /share/links without a CSRF header", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -95,7 +95,7 @@ describe("sharingApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
   });
 
-  it("吊销公开链接走 POST /share/links/{id}/revoke, 路径编码且带 CSRF", async () => {
+  it("revokes public links via POST /share/links/{id}/revoke with an encoded path and CSRF", async () => {
     const calls = capture();
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
@@ -106,12 +106,12 @@ describe("sharingApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
-  it("没有公开链接创建方法: 本切片不提供创建入口, 更不会伪造 session_id", () => {
+  it("does not expose public-link creation because this slice has no creation entry and never fabricates session_id", () => {
     expect((sharingApi as unknown as Record<string, unknown>).createLink).toBeUndefined();
     expect((sharingApi as unknown as Record<string, unknown>).linksCreate).toBeUndefined();
   });
 
-  it("响应蛇形字段原样映射进 DTO (列表不含 token)", async () => {
+  it("maps snake_case response fields into DTOs and omits tokens from lists", async () => {
     mocks.fetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -143,11 +143,11 @@ describe("sharingApi 线上契约", () => {
     expect(r.shares[0]).not.toHaveProperty("token");
   });
 
-  it("401 派发会话过期事件并规整错误", async () => {
+  it("dispatches a session-expired event and normalizes errors on 401", async () => {
     mocks.fetch.mockResolvedValue({
       ok: false,
       status: 401,
-      text: async () => JSON.stringify({ error: { code: "forbidden", message: "会话无效或缺失" } }),
+      text: async () => JSON.stringify({ error: { code: "forbidden", message: "session is invalid or missing" } }),
     });
     vi.stubGlobal("fetch", mocks.fetch);
 
@@ -156,7 +156,7 @@ describe("sharingApi 线上契约", () => {
 
     await expect(sharingApi.links()).rejects.toMatchObject({
       code: "forbidden",
-      message: "会话无效或缺失",
+      message: "session is invalid or missing",
       status: 401,
     });
     expect(expired).toHaveBeenCalledTimes(1);
