@@ -40,6 +40,7 @@ import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
+import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
 import {
   IconArchive,
@@ -298,6 +299,14 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     return root;
   };
 
+  const treeDropRef = useRef<HTMLDivElement>(null);
+  useNativeFileDrop(sessionId, {
+    surface: treeDropRef,
+    fallbackDir: targetDir,
+    knownSiblings: (dir) => dirMap.get(dir),
+    onSettled: () => refresh(),
+  });
+
   const newFileIn = async (dir: string) => {
     const name = await promptText("新建文件名", "");
     if (name === null) return;
@@ -375,6 +384,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const dropUpload = (event: ReactDragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    noteHtml5Drop();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? targetDir();
     void dropFolderUpload({
@@ -834,7 +844,9 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       <div
         role="tree"
         aria-label="文件"
+        ref={treeDropRef}
         className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
+        data-file-drop-target=""
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;

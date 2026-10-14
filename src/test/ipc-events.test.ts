@@ -53,6 +53,7 @@ describe("Wails events 与 channels", () => {
       "app://error",
       "app://deep-link",
       "device://status",
+      "files://dropped",
     ]);
     expect(layoutSource).toContain('"layout://changed"');
   });

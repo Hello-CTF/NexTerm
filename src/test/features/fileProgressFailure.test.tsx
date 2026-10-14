@@ -91,8 +91,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.list.mockResolvedValue([entry("a.txt", "file")]);
-  mocks.listenEvent.mockImplementation((_t: string, cb: (e: unknown) => void) => {
-    progressHandler = cb;
+  mocks.listenEvent.mockImplementation((t: string, cb: (e: unknown) => void) => {
+    if (t === "fs://progress") progressHandler = cb;
     return Promise.resolve(() => {});
   });
   useUi.setState({ pushToast: mocks.toast, workspaces: [], activeWorkspaceId: null, sessions: [] });

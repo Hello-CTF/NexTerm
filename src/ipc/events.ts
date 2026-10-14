@@ -33,6 +33,7 @@ export const EVENTS = {
   appError: "app://error",
   deepLink: "app://deep-link",
   deviceStatus: "device://status",
+  filesDropped: "files://dropped",
 } as const;
 
 export type { SessionStatusEvent, TerminalExitEvent } from "./types";
@@ -116,6 +117,19 @@ export interface AINotificationEvent {
 export interface DeviceStatusEvent {
   deviceId: string;
   online: boolean;
+}
+
+// Desktop native OS file drop, bridged by the desktop main from the wails WindowFilesDropped
+// event: real local paths with dir classification plus webview-relative drop coordinates.
+export interface NativeDroppedPath {
+  path: string;
+  dir: boolean;
+}
+
+export interface NativeFilesDroppedEvent {
+  paths: NativeDroppedPath[];
+  x: number;
+  y: number;
 }
 
 export interface StreamAnchorControl {

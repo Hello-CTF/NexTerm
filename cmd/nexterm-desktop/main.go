@@ -162,13 +162,17 @@ func run(args []string) int {
 		service.links.deliver(url)
 	})
 	window = wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:     "NexTerm",
-		URL:       "/",
-		Width:     1480,
-		Height:    920,
-		MinWidth:  960,
-		MinHeight: 600,
-		Frameless: true,
+		Title:          "NexTerm",
+		URL:            "/",
+		Width:          1480,
+		Height:         920,
+		MinWidth:       960,
+		MinHeight:      600,
+		Frameless:      true,
+		EnableFileDrop: true,
+	})
+	window.OnWindowEvent(wailsevents.Common.WindowFilesDropped, func(event *application.WindowEvent) {
+		emitFilesDropped(wailsApp, event)
 	})
 	streams.SetWindow(window)
 	if launchLink != "" {

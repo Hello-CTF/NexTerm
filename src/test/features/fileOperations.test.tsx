@@ -862,8 +862,8 @@ describe("终端入口的会话断开提示", () => {
 describe("操作不破坏既有状态", () => {
   it("传输进度条与无关 dirty 编辑器在操作后原样保留", async () => {
     let progressHandler: ((e: unknown) => void) | undefined;
-    mocks.listenEvent.mockImplementation((_t: string, cb: (e: unknown) => void) => {
-      progressHandler = cb;
+    mocks.listenEvent.mockImplementation((t: string, cb: (e: unknown) => void) => {
+      if (t === "fs://progress") progressHandler = cb;
       return Promise.resolve(() => {});
     });
     mounted = mountBrowser();
