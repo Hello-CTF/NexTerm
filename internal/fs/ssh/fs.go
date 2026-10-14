@@ -150,7 +150,14 @@ func (f *FS) Delete(ctx context.Context, remotePath string, directory bool) erro
 		return err
 	}
 	if directory {
-		err = f.client.RemoveDirectory(remotePath)
+		var info os.FileInfo
+		if info, err = f.client.Lstat(remotePath); err == nil {
+			if info.Mode()&fs.ModeSymlink != 0 {
+				err = f.client.Remove(remotePath)
+			} else {
+				err = f.removeTree(ctx, remotePath)
+			}
+		}
 	} else {
 		err = f.client.Remove(remotePath)
 	}
@@ -158,6 +165,35 @@ func (f *FS) Delete(ctx context.Context, remotePath string, directory bool) erro
 		return fmt.Errorf("SFTP delete %s: %w", remotePath, err)
 	}
 	return ctx.Err()
+}
+
+// removeTree deletes a directory bottom-up. ReadDir entries carry Lstat
+// semantics, so a symlink to a directory is removed as a link, never
+// recursed into.
+func (f *FS) removeTree(ctx context.Context, remotePath string) error {
+	infos, err := f.client.ReadDir(remotePath)
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if info.Name() == "." || info.Name() == ".." {
+			continue
+		}
+		child := path.Join(remotePath, info.Name())
+		if info.IsDir() {
+			if err := f.removeTree(ctx, child); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := f.client.Remove(child); err != nil {
+			return err
+		}
+	}
+	return f.client.RemoveDirectory(remotePath)
 }
 
 func (f *FS) Chmod(ctx context.Context, remotePath string, mode fs.FileMode) error {
