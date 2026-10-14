@@ -96,6 +96,87 @@ func TestSFTPFileOperationsBackupAndChecksum(t *testing.T) {
 	}
 }
 
+func TestSFTPDeleteSymlinkToDirectoryRemovesLink(t *testing.T) {
+	filesystem, root := newTestFS(t, nil)
+	ctx := context.Background()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "kept.txt"), []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Delete(ctx, "link", true); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := filesystem.Exists(ctx, "link"); err != nil || exists {
+		t.Fatalf("link exists = %v, %v", exists, err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "kept.txt"))
+	if err != nil || string(data) != "kept" {
+		t.Fatalf("target content = %q, %v", data, err)
+	}
+}
+
+func TestSFTPDeleteRecursively(t *testing.T) {
+	filesystem, root := newTestFS(t, nil)
+	ctx := context.Background()
+	if err := filesystem.Mkdir(ctx, "tree"); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Mkdir(ctx, "tree/sub"); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Mkdir(ctx, "tree/sub/deep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, "tree/top.txt", []byte("top"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, "tree/sub/deep/leaf.txt", []byte("leaf"), false); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "kept.txt"), []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "tree", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Delete(ctx, "tree", true); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := filesystem.Exists(ctx, "tree"); err != nil || exists {
+		t.Fatalf("tree exists = %v, %v", exists, err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "kept.txt"))
+	if err != nil || string(data) != "kept" {
+		t.Fatalf("symlink target content = %q, %v", data, err)
+	}
+
+	if err := filesystem.Mkdir(ctx, "empty"); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Delete(ctx, "empty", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, "plain.txt", []byte("plain"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Delete(ctx, "plain.txt", false); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := filesystem.Exists(ctx, "plain.txt"); err != nil || exists {
+		t.Fatalf("plain.txt exists = %v, %v", exists, err)
+	}
+}
+
 func TestSFTPHomeExpansion(t *testing.T) {
 	filesystem, root := newTestFS(t, nil)
 	ctx := context.Background()

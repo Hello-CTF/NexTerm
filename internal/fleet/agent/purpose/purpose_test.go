@@ -170,6 +170,9 @@ func TestFileServerMkdirListRenameDelete(t *testing.T) {
 		return c.Delete(ctx, renamed, false)
 	})
 	h.run(t, func(c *deviceproto.Client) error {
+		return c.WriteFile(ctx, filepath.Join(sub, "nested.txt"), []byte("nested"), false)
+	})
+	h.run(t, func(c *deviceproto.Client) error {
 		return c.Delete(ctx, sub, true)
 	})
 	h.run(t, func(c *deviceproto.Client) error {
