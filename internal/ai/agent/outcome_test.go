@@ -437,9 +437,19 @@ func TestEditResendConcurrentToolWriteDuringTruncate(t *testing.T) {
 	}
 	waitChannelClosed(t, started, "tool did not start")
 
-	messages, err := runner.Messages(context.Background(), firstResponse.ConversationID)
-	if err != nil || len(messages) != 4 {
-		t.Fatalf("pre-edit messages = %d err=%v", len(messages), err)
+	// The tool-call row is persisted by the job's event consumer, which can lag
+	// the blocked tool under load; poll until it lands.
+	var messages []MessageDTO
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		messages, err = runner.Messages(context.Background(), firstResponse.ConversationID)
+		if err == nil && len(messages) == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pre-edit messages = %d err=%v", len(messages), err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	target := ""
 	for _, message := range messages {

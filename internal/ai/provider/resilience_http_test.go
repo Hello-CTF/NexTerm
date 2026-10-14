@@ -305,8 +305,10 @@ func TestParseRetryAfter(t *testing.T) {
 
 func TestConcurrentClientUseRace(t *testing.T) {
 	var calls atomic.Int32
+	// Only the first 3 calls get 429: each ChatBlock makes at most 4 attempts
+	// (2 models, 1 retry each), so every request succeeds under any interleaving.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		if calls.Add(1)%3 == 0 {
+		if calls.Add(1) <= 3 {
 			writer.Header().Set("Retry-After", "0")
 			writer.WriteHeader(http.StatusTooManyRequests)
 			_, _ = writer.Write([]byte(`{"error":{"message":"slow down"}}`))
