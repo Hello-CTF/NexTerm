@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
-// Asset tree "Devices" section tests: section position (after the built-in local terminal, before other assets/groups), no render and
-// zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), only online devices are listed
-// (offline/agent-less rows hidden, terminal-closed rows stay but disabled), revoked not shown, revoke double-confirm and cancel,
-// context-menu revoke danger style, section refresh, DevicesView reusing MetricsPanel regression.
+// Asset tree device rows tests: row position (after the built-in local terminal, before other assets/groups), rows-only contract
+// (no header/count/refresh button, no loading/error/empty/all-offline hints - the component renders null in those states), no rows
+// and zero requests when logged out, click/Enter opens the device terminal (no separate "Terminal" button), only online devices are
+// listed (offline/agent-less rows hidden, terminal-closed rows stay but disabled), revoked not shown, revoke double-confirm and
+// cancel, context-menu revoke danger style, DevicesView reusing MetricsPanel regression.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { click, flush, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
@@ -250,14 +251,14 @@ function mountTree() {
   mounted = mountWithClient(createElement(AssetTree));
 }
 
-function section(): HTMLElement {
-  const el = document.querySelector<HTMLElement>('[role="group"][aria-label="设备"]');
-  if (!el) throw new Error("设备分区未渲染");
+function tree(): HTMLElement {
+  const el = document.querySelector<HTMLElement>('[role="tree"]');
+  if (!el) throw new Error("资产树未渲染");
   return el;
 }
 
 function deviceRow(name: string): HTMLElement {
-  const row = [...section().querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) => r.textContent?.includes(name));
+  const row = [...tree().querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) => r.textContent?.includes(name));
   if (!row) throw new Error(`设备行未找到: ${name}`);
   return row;
 }
@@ -314,18 +315,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("资产树「设备」分区 · 位置与登录门控", () => {
-  it("分区渲染在「本地终端」之后、其他资产与分组之前", async () => {
+describe("资产树设备行 · 位置与登录门控", () => {
+  it("设备行渲染在「本机终端」之后、其他资产与分组之前", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
-    await flushUntil(() => document.querySelector('[role="group"][aria-label="设备"]') !== null);
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    const tree = document.querySelector('[role="tree"]') as HTMLElement;
-    const children = [...tree.children];
+    const children = [...tree().children];
     const localIdx = children.findIndex((el) => el.textContent?.includes("本机终端"));
-    const deviceIdx = children.findIndex((el) => el.getAttribute("aria-label") === "设备");
+    const deviceIdx = children.findIndex((el) => el.textContent?.includes("web-01"));
     const webIdx = children.findIndex((el) => el.textContent?.includes("web-asset"));
     const groupIdx = children.findIndex((el) => el.textContent?.includes("生产"));
     expect(localIdx).toBeGreaterThanOrEqual(0);
@@ -334,13 +333,14 @@ describe("资产树「设备」分区 · 位置与登录门控", () => {
     expect(groupIdx).toBeGreaterThan(deviceIdx);
   });
 
-  it("未登录不渲染分区, 不发任何 fleet 请求, 也不订阅事件", async () => {
+  it("未登录不渲染设备行, 不发任何 fleet 请求, 也不订阅事件", async () => {
     const calls = route({ devices: [ONLINE_DEVICE] });
     seedUser(null);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
     await flush();
 
+    expect(tree().textContent ?? "").not.toContain("web-01");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
     expect(mocks.deviceStatusHandlers).toHaveLength(0);
@@ -348,7 +348,87 @@ describe("资产树「设备」分区 · 位置与登录门控", () => {
   });
 });
 
-describe("资产树「设备」分区 · 设备行行为", () => {
+describe("资产树设备行 · 仅渲染设备行", () => {
+  it("有在线设备时只渲染设备行: 无分区标题/计数/刷新按钮, 也无任何提示行", async () => {
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    expect(deviceRow("web-01").getAttribute("role")).toBe("treeitem");
+    expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="刷新设备列表"]')).toBeNull();
+    for (const hint of ["设备列表加载中", "设备列表加载失败", "还没有接入设备", "设备都不在线"]) {
+      expect(tree().textContent ?? "").not.toContain(hint);
+    }
+  });
+
+  it("设备列表加载中: 不渲染任何设备内容, 也无加载提示", async () => {
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const u = String(url);
+      const method = init.method ?? "GET";
+      const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(payload) });
+      if (u === "/fleet/devices" && method === "GET") return new Promise(() => {});
+      return json({ error: { code: "not_found", message: u } }, 404);
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
+    await flushUntil(() => mocks.fetch.mock.calls.some((c) => String(c[0]) === "/fleet/devices"));
+    await flush();
+
+    expect(tree().textContent ?? "").not.toContain("设备列表加载中");
+    expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
+  });
+
+  it("设备列表加载失败: 不渲染错误行或重试按钮", async () => {
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const u = String(url);
+      const method = init.method ?? "GET";
+      const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(payload) });
+      if (u === "/fleet/devices" && method === "GET") return json({ error: { code: "boom", message: "boom" } }, 500);
+      return json({ error: { code: "not_found", message: u } }, 404);
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
+    await flushUntil(() => mocks.fetch.mock.calls.some((c) => String(c[0]) === "/fleet/devices"));
+    await flush();
+
+    expect(tree().textContent ?? "").not.toContain("设备列表加载失败");
+    expect(tree().textContent ?? "").not.toContain("重试");
+    expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
+  });
+
+  it("没有接入设备: 不渲染空态提示", async () => {
+    const calls = route({ devices: [] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices" && c.method === "GET"));
+    await flush();
+
+    expect(tree().textContent ?? "").not.toContain("还没有接入设备");
+    expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
+  });
+
+  it("设备都不在线: 不渲染全离线提示, 也不显示离线设备行", async () => {
+    const calls = route({ devices: [OFFLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices" && c.method === "GET"));
+    await flush();
+
+    expect(tree().textContent ?? "").not.toContain("db-02");
+    expect(tree().textContent ?? "").not.toContain("设备都不在线");
+    expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
+  });
+});
+
+describe("资产树设备行 · 行行为", () => {
   it("单击与 Enter 都打开设备终端工作区, 且没有独立「终端」按钮", async () => {
     route({ devices: [ONLINE_DEVICE] });
     seedUser(SUPERADMIN);
@@ -357,7 +437,7 @@ describe("资产树「设备」分区 · 设备行行为", () => {
 
     const row = deviceRow("web-01");
     expect(row.getAttribute("role")).toBe("treeitem");
-    expect([...section().querySelectorAll("button")].some((b) => b.textContent?.trim() === "终端")).toBe(false);
+    expect([...row.querySelectorAll("button")].some((b) => b.textContent?.trim() === "终端")).toBe(false);
 
     click(row);
     await flushUntil(() => deviceWorkspace() !== undefined);
@@ -380,8 +460,8 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("noterm-01") ?? false);
 
-    expect(section().textContent).not.toContain("db-02");
-    expect(section().textContent).not.toContain("离线");
+    expect(tree().textContent).not.toContain("db-02");
+    expect(tree().textContent).not.toContain("离线");
 
     const noTerm = deviceRow("noterm-01");
     expect(noTerm.getAttribute("aria-disabled")).toBe("true");
@@ -394,13 +474,13 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     expect(deviceWorkspace()).toBeUndefined();
   });
 
-  it("已吊销设备不在分区显示 (不是灰显)", async () => {
+  it("已吊销设备不在资产树显示 (不是灰显)", async () => {
     route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    expect(section().textContent).not.toContain("old-laptop");
+    expect(tree().textContent).not.toContain("old-laptop");
   });
 
   it("上下文菜单的吊销项为 danger 样式, 行内吊销按钮为 is-danger", async () => {
@@ -409,7 +489,7 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    const inlineRevoke = section().querySelector<HTMLButtonElement>('button[aria-label="吊销 web-01"]');
+    const inlineRevoke = tree().querySelector<HTMLButtonElement>('button[aria-label="吊销 web-01"]');
     expect(inlineRevoke?.classList.contains("is-danger")).toBe(true);
 
     act(() => {
@@ -421,9 +501,36 @@ describe("资产树「设备」分区 · 设备行行为", () => {
     );
     expect(revokeItem?.classList.contains("is-danger")).toBe(true);
   });
+
+  it("方向键从设备行移动焦点到相邻树行", async () => {
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const rows = () => [...tree().querySelectorAll<HTMLElement>('[role="treeitem"]')];
+    const row = deviceRow("web-01");
+    act(() => {
+      row.focus();
+    });
+    expect(document.activeElement).toBe(row);
+
+    keydown(row, "ArrowDown");
+    const next = rows()[rows().indexOf(row) + 1];
+    expect(next).toBeDefined();
+    expect(document.activeElement).toBe(next);
+
+    act(() => {
+      row.focus();
+    });
+    keydown(row, "ArrowUp");
+    const prev = rows()[rows().indexOf(row) - 1];
+    expect(prev).toBeDefined();
+    expect(document.activeElement).toBe(prev);
+  });
 });
 
-describe("资产树「设备」分区 · 自动收敛", () => {
+describe("资产树设备行 · 自动收敛", () => {
   it("WEB 每 60 秒轮询重新拉取设备列表, 他处吊销随刷新消失", async () => {
     vi.useFakeTimers();
     let devices: unknown[] = [ONLINE_DEVICE];
@@ -444,12 +551,12 @@ describe("资产树「设备」分区 · 自动收敛", () => {
     const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
     const before = deviceFetches();
 
-    // After a revoke elsewhere, the next 60s poll removes the device from the section.
+    // After a revoke elsewhere, the next 60s poll removes the device row.
     devices = [{ ...ONLINE_DEVICE, revoked_at: NOW - 60_000 }];
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    await flushUntil(() => !(section().textContent ?? "").includes("web-01"));
+    await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
     expect(deviceFetches()).toBeGreaterThan(before);
   });
 
@@ -465,16 +572,16 @@ describe("资产树「设备」分区 · 自动收敛", () => {
 
     act(() => handler({ deviceId: "d-x", online: false }));
     await flush();
-    expect(section().textContent).toContain("web-01");
+    expect(tree().textContent).toContain("web-01");
 
     act(() => handler({ deviceId: "d-1", online: false }));
     await flush();
-    expect(section().textContent ?? "").not.toContain("web-01");
+    expect(tree().textContent ?? "").not.toContain("web-01");
     expect(calls.length).toBe(fetchesBefore);
 
     act(() => handler({ deviceId: "d-1", online: true }));
     await flush();
-    expect(section().textContent).toContain("web-01");
+    expect(tree().textContent).toContain("web-01");
     expect(calls.length).toBe(fetchesBefore);
   });
 
@@ -498,24 +605,24 @@ describe("资产树「设备」分区 · 自动收敛", () => {
   });
 });
 
-describe("资产树「设备」分区 · 吊销两次确认", () => {
-  it("两个 warning 都确认后才吊销, 成功后设备立即从分区移除", async () => {
+describe("资产树设备行 · 吊销两次确认", () => {
+  it("两个 warning 都确认后才吊销, 成功后设备立即从资产树移除", async () => {
     const calls = route({ devices: [ONLINE_DEVICE, SECOND_ONLINE] });
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(section().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/revoke" && c.method === "POST"));
-    await flushUntil(() => !(section().textContent ?? "").includes("web-01"));
+    await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(String(mocks.ask.mock.calls[0]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("凭证立即失效");
     expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("从资产中移除且不可恢复");
-    expect(section().textContent).toContain("nas-01");
+    expect(tree().textContent).toContain("nas-01");
   });
 
   it("第一个确认取消: 不再弹第二个, 不发请求", async () => {
@@ -525,12 +632,12 @@ describe("资产树「设备」分区 · 吊销两次确认", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(section().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
-    expect(section().textContent).toContain("web-01");
+    expect(tree().textContent).toContain("web-01");
   });
 
   it("第二个确认取消: 不发请求, 设备保留", async () => {
@@ -540,24 +647,11 @@ describe("资产树「设备」分区 · 吊销两次确认", () => {
     mountTree();
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
-    click(section().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
+    click(tree().querySelector('button[aria-label="吊销 web-01"]') as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 2);
     await flush();
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
-    expect(section().textContent).toContain("web-01");
-  });
-});
-
-describe("资产树「设备」分区 · 刷新", () => {
-  it("分区头部刷新按钮重新拉取设备列表", async () => {
-    const calls = route({ devices: [ONLINE_DEVICE] });
-    seedUser(SUPERADMIN);
-    mountTree();
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-
-    const before = calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
-    click(section().querySelector('button[aria-label="刷新设备列表"]') as HTMLButtonElement);
-    await flushUntil(() => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length === before + 1);
+    expect(tree().textContent).toContain("web-01");
   });
 });
 
