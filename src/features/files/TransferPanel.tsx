@@ -7,7 +7,7 @@ import { cancelTransferTask, clearFinishedTransfers, useTransferStore } from "./
 
 function TransferRow({ task }: { task: TransferTask }) {
   const name = baseName(task.remotePath);
-  const localPath = describeTarget(task.localPath, name);
+  const localPath = task.file ? task.file.name : describeTarget(task.localPath, name);
   const pathText =
     task.direction === "upload"
       ? `${localPath} -> ${task.remotePath}`

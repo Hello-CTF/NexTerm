@@ -51,10 +51,10 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 192 个方法和 190 个唯一命令", () => {
+  it("保留 194 个方法和 192 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(192);
-    expect(new Set(names)).toHaveProperty("size", 190);
+    expect(names).toHaveLength(194);
+    expect(new Set(names)).toHaveProperty("size", 192);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",

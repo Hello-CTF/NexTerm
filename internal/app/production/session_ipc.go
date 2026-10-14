@@ -566,7 +566,13 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	if err := s.registerSSHDiagnostics(dispatcher); err != nil {
 		return err
 	}
-	return registerFSCommands(dispatcher, s.sessions, s.stagedBlobs)
+	if err := registerFSCommands(dispatcher, s.sessions, s.stagedBlobs); err != nil {
+		return err
+	}
+	if !s.desktop {
+		return nil
+	}
+	return registerLocalFolderCommands(dispatcher)
 }
 
 func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {

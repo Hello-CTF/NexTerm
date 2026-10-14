@@ -157,6 +157,16 @@ export async function openWailsFile(
   return selected || null;
 }
 
+export async function openWailsFolder(): Promise<string | null> {
+  const { Dialogs } = await runtime();
+  const selected = await Dialogs.OpenFile({
+    AllowsMultipleSelection: false,
+    CanChooseFiles: false,
+    CanChooseDirectories: true,
+  });
+  return typeof selected === "string" && selected ? selected : null;
+}
+
 export async function saveWailsFile(defaultName: string): Promise<string | null> {
   const { Dialogs } = await runtime();
   const selected = await Dialogs.SaveFile({ Filename: defaultName });

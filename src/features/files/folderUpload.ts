@@ -1,20 +1,24 @@
-import { askChoice } from "../../ui/dialogs";
+import { askChoice, pickLocalFolder } from "../../ui/dialogs";
 import { WEB } from "../../ipc/env";
+import { localFileApi, type LocalFolderListDto } from "../../ipc/commands";
 import { dropStaged, stageFile } from "../../ipc/webFiles";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
 import { formatSize } from "./fileTypes";
-import { packExtractSupported, packUploadAndExtract } from "./folderPackUpload";
-import { dropLocalFiles, dropUploadFiles, enqueueFolderUpload } from "./transferActions";
+import { MAX_PACK_BYTES_DEVICE, packExtractSupported, packUploadAndExtract } from "./folderPackUpload";
+import { dropLocalFiles, dropUploadFiles, enqueueFolderUpload, oversizedContentDrop } from "./transferActions";
 
 export interface FolderFileEntry {
-  file: File;
+  // file is present when the entry came from browser File APIs (drop / webkitdirectory picker);
+  // native-picker entries carry only localPath and read their bytes through localFileApi.
+  file?: File;
   // relativePath is below the folder root (e.g. "sub/a.txt"); the upload target is
   // joinPath(dir, folderName) + relativePath, and folderPackUpload tar entries use it as-is.
   relativePath: string;
   localPath: string;
   size: number;
+  mtimeMs: number;
 }
 
 export interface FolderSelection {
@@ -160,7 +164,13 @@ async function materializeFolder(pending: PendingFolder): Promise<FolderSelectio
     try {
       for (const { file, relativePath } of pending.files) {
         const ref = await stageFile(file);
-        staged.push({ file, relativePath: stripRoot(relativePath), localPath: ref.path, size: file.size });
+        staged.push({
+          file,
+          relativePath: stripRoot(relativePath),
+          localPath: ref.path,
+          size: file.size,
+          mtimeMs: file.lastModified,
+        });
       }
     } catch (e) {
       for (const s of staged) await dropStaged(s.localPath).catch(() => undefined);
@@ -169,15 +179,15 @@ async function materializeFolder(pending: PendingFolder): Promise<FolderSelectio
     }
     return { folderName: pending.folderName, files: staged, emptyDirs };
   }
-  const files: FolderFileEntry[] = [];
-  for (const { file, relativePath } of pending.files) {
-    const path = (file as File & { path?: string }).path;
-    if (!path) {
-      pushToast("info", "当前平台无法读取文件夹内文件的路径，无法上传文件夹");
-      return null;
-    }
-    files.push({ file, relativePath: stripRoot(relativePath), localPath: path, size: file.size });
-  }
+  // Desktop webviews expose no OS paths for picked/dropped files; entries keep their File so
+  // per-file mode uploads content and pack mode reads bytes from it.
+  const files: FolderFileEntry[] = pending.files.map(({ file, relativePath }) => ({
+    file,
+    relativePath: stripRoot(relativePath),
+    localPath: "",
+    size: file.size,
+    mtimeMs: file.lastModified,
+  }));
   return { folderName: pending.folderName, files, emptyDirs };
 }
 
@@ -253,6 +263,24 @@ async function uploadFolderSelection(
     }
   }
 
+  // Content entries (desktop drops / webkit fallback) upload via a single fs_write, which device
+  // sessions cap at MAX_PACK_BYTES_DEVICE; reject before the mode dialog so the user can switch
+  // to the native folder picker, whose path-based upload streams uncapped.
+  const oversized = oversizedContentDrop(
+    args.sessionId,
+    selection.files
+      .filter((f) => f.localPath === "")
+      .map((f) => ({ name: f.relativePath, size: f.size })),
+  );
+  if (oversized) {
+    await releaseStaged();
+    pushToast(
+      "error",
+      `文件夹内的「${oversized.name}」（${formatSize(oversized.size)}）超过设备连接的单次写入上限 ${formatSize(MAX_PACK_BYTES_DEVICE)}，无法拖拽上传，请改用上传按钮选择文件夹按路径上传`,
+    );
+    return;
+  }
+
   if (selection.files.length > 0) {
     const mode = await chooseUploadMode(args.sessionId, selection);
     if (!mode) {
@@ -303,7 +331,42 @@ async function uploadFolderSelection(
   }
 }
 
+// Desktop folder picking goes through the native folder dialog plus the local_folder_list IPC:
+// the webview never exposes OS paths of picked files, so the backend walks the picked folder and
+// per-file upload gets real localPaths end to end. Returns false when the native dialog is
+// unavailable (e.g. mobile shells), falling back to the webkitdirectory picker whose File objects
+// upload by content.
+async function pickNativeFolderUpload(args: FolderFlowArgs): Promise<boolean> {
+  let picked: string | null;
+  try {
+    picked = await pickLocalFolder();
+  } catch {
+    return false;
+  }
+  if (!picked) return true;
+  let listing: LocalFolderListDto;
+  try {
+    listing = await localFileApi.listFolder(picked);
+  } catch (e) {
+    useUi.getState().pushToast("error", `读取本地文件夹失败：${describeError(e)}`);
+    return true;
+  }
+  const selection: FolderSelection = {
+    folderName: listing.name,
+    files: listing.files.map((f) => ({
+      relativePath: f.relativePath,
+      localPath: f.localPath,
+      size: f.size,
+      mtimeMs: f.mtimeMs,
+    })),
+    emptyDirs: listing.emptyDirs,
+  };
+  await uploadFolderSelection({ ...args, selection });
+  return true;
+}
+
 export async function pickFolderUpload(args: FolderFlowArgs): Promise<void> {
+  if (!WEB && (await pickNativeFolderUpload(args))) return;
   const picked = await pickFolderInput();
   if (!picked) return;
   const pending = pendingFolderFromPicker(picked);

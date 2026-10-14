@@ -13,6 +13,9 @@ export interface TransferTask {
   direction: TransferDirection;
   remotePath: string;
   localPath: string;
+  // file carries the upload content when no OS path is available (desktop drops); the task
+  // writes bytes through fs_write instead of a path-based fs_upload.
+  file?: File;
   status: TransferStatus;
   transferred: number;
   total: number;

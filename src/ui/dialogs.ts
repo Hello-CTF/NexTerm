@@ -1,4 +1,4 @@
-import { askWails, messageWails, openWailsFile, saveWailsFile } from "../ipc/wails";
+import { askWails, messageWails, openWailsFile, openWailsFolder, saveWailsFile } from "../ipc/wails";
 import { TRANSPORT, WEB } from "../ipc/env";
 import {
   deliverStaged,
@@ -130,6 +130,10 @@ export async function pickLocalFile(): Promise<string | null> {
     return staged.path;
   }
   return openWailsFile();
+}
+
+export async function pickLocalFolder(): Promise<string | null> {
+  return openWailsFolder();
 }
 
 export async function pickKeyFile(): Promise<string | null> {

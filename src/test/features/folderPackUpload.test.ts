@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   stagedBytes: null as Uint8Array | null,
   failExtract: false,
   listEntries: [] as { name: string; kind: string }[],
+  localReads: {} as Record<string, string>,
   progressHandler: null as
     | null
     | ((e: { taskId: string; transferred: number; total: number; done: boolean }) => void),
@@ -41,6 +42,14 @@ vi.mock("../../ipc/commands", () => ({
     },
     delete: async (_sid: string, path: string, isDir: boolean) => {
       h.calls.push(`delete:${path}:${isDir}`);
+    },
+  },
+  localFileApi: {
+    read: async (path: string) => {
+      h.calls.push(`read:${path}`);
+      const content = h.localReads[path];
+      if (content === undefined) throw new Error(`无读取样本：${path}`);
+      return { path, size: atob(content).length, contentBase64: content };
     },
   },
 }));
@@ -93,6 +102,7 @@ function entry(
     relativePath: rel,
     localPath: "",
     size: data.length,
+    mtimeMs: lastModified,
   };
 }
 
@@ -120,6 +130,7 @@ beforeEach(() => {
   h.stagedBytes = null;
   h.failExtract = false;
   h.listEntries = [];
+  h.localReads = {};
   h.progressHandler = null;
 });
 
@@ -414,7 +425,7 @@ describe("packUploadAndExtract（入参校验）", () => {
         sessionId: "s1",
         dir: "/data",
         folderName: "photos",
-        files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size }],
+        files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
         onProgress: () => {},
       }),
     ).rejects.toThrow("逐文件");
@@ -431,7 +442,7 @@ describe("packUploadAndExtract（入参校验）", () => {
         sessionId: "s1",
         dir: "/data",
         folderName: "photos",
-        files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size }],
+        files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
         onProgress: () => {},
       });
     };
@@ -448,7 +459,7 @@ describe("packUploadAndExtract（入参校验）", () => {
       sessionId: "s1",
       dir: "/data",
       folderName: "photos",
-      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size }],
+      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
       onProgress: () => {},
     });
     expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(true);
@@ -463,7 +474,7 @@ describe("packUploadAndExtract（入参校验）", () => {
       sessionId: "s1",
       dir: "/data",
       folderName: "photos",
-      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size }],
+      files: [{ file: big, relativePath: "big.bin", localPath: "", size: big.size, mtimeMs: MTIME_MS }],
       onProgress: () => {},
     });
     expect(h.calls[0]).toBe("list");
@@ -497,5 +508,51 @@ describe("packUploadAndExtract（桌面端流程）", () => {
       [0, expected.length],
       [expected.length, expected.length],
     ]);
+  });
+});
+
+describe("buildFolderTar（无 File 的桌面原生选择器条目）", () => {
+  function nativeEntry(rel: string, localPath: string, size: number): FolderFileEntry {
+    return { relativePath: rel, localPath, size, mtimeMs: MTIME_MS };
+  }
+
+  it("经 localFileApi.read 读取字节打包，头部 mtime 与大小正确", async () => {
+    h.localReads = { "C:\\pics\\hello.txt": btoa("hello") };
+    const tar = await buildFolderTar([nativeEntry("hello.txt", "C:\\pics\\hello.txt", 5)]);
+    expect(h.calls).toEqual(["read:C:\\pics\\hello.txt"]);
+    expect(tar.length).toBe(512 + 512 + 1024);
+    expect(ascii(tar, 0, 100)).toBe("hello.txt");
+    expect(ascii(tar, 124, 12)).toBe("00000000005");
+    expect(ascii(tar, 136, 12)).toBe(MTIME_S.toString(8).padStart(11, "0"));
+    expect(ascii(tar, 512, 5)).toBe("hello");
+  });
+
+  it("读取到的大小与枚举大小不一致时报错，不产生残缺 tar", async () => {
+    h.localReads = { "/local/pics/a.txt": btoa("abcd") };
+    await expect(buildFolderTar([nativeEntry("a.txt", "/local/pics/a.txt", 3)])).rejects.toThrow(
+      "大小",
+    );
+  });
+
+  it("桌面端打包上传无 File 条目走 fs_write 直写远端", async () => {
+    h.web = false;
+    h.kind = "ssh";
+    h.localReads = { "/local/pics/a.txt": btoa("abc") };
+    const result = await packUploadAndExtract({
+      sessionId: "s1",
+      dir: "/data",
+      folderName: "pics",
+      files: [nativeEntry("a.txt", "/local/pics/a.txt", 3)],
+      onProgress: () => {},
+    });
+    expect(result).toBe("/data/pics");
+    expect(h.calls).toContain("read:/local/pics/a.txt");
+    const write = h.calls.find((c) => c.startsWith("write:"));
+    expect(write).toBeDefined();
+    const b64 = write!.slice(write!.indexOf(":", "write:".length) + 1);
+    const decoded = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    expect(ascii(decoded, 0, 100)).toBe("a.txt");
+    expect(ascii(decoded, 512, 3)).toBe("abc");
+    expect(h.calls.some((c) => c.startsWith("stage:"))).toBe(false);
   });
 });
