@@ -75,16 +75,24 @@ function normalizeRead(result: {
   return result;
 }
 
-export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }) {
+export function TranscriptHistoryPanel({
+  visible = true,
+  workspaceId,
+}: {
+  visible?: boolean;
+  workspaceId?: string;
+}) {
   const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
-  // Open directly on the host of the currently active workspace (device sessions carry their
-  // device/<id> pseudo-asset id); the hosts[0] fallback below stays for host-less contexts.
-  const [assetId, setAssetId] = useState<string | null>(() => {
-    const st = useUi.getState();
-    return st.workspaces.find((w) => w.id === st.activeWorkspaceId)?.assetId ?? null;
+  // Open on the host of the tab's own workspace (device sessions carry their device/<id>
+  // pseudo-asset id); the hosts[0] fallback below stays for host-less contexts.
+  const hostAssetId = useUi((s) => {
+    const id = workspaceId ?? s.activeWorkspaceId;
+    return s.workspaces.find((w) => w.id === id)?.assetId ?? null;
   });
+  const [assetId, setAssetId] = useState<string | null>(hostAssetId);
+  const hostOverriddenRef = useRef(false);
   const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -154,6 +162,16 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     const first = hosts[0];
     if (first) setAssetId(first.assetId);
   }, [hosts, assetId]);
+
+  useEffect(() => {
+    if (!visible || hostOverriddenRef.current || !hostAssetId || hostAssetId === assetId) return;
+    sessionsGenerationRef.current += 1;
+    readerGenerationRef.current += 1;
+    searchGenerationRef.current += 1;
+    setAssetId(hostAssetId);
+    setSelectedId(null);
+    setSessions(null);
+  }, [visible, hostAssetId, assetId]);
 
   const loadSessions = useCallback(async () => {
     if (!assetId) return;
@@ -400,6 +418,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
           onChange={(event) => {
+            hostOverriddenRef.current = true;
             sessionsGenerationRef.current += 1;
             readerGenerationRef.current += 1;
             searchGenerationRef.current += 1;

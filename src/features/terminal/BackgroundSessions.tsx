@@ -38,8 +38,21 @@ function ago(ms: number): string {
   return `${Math.floor(h / 24)} 天前`;
 }
 
-export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
+export function BackgroundSessions({
+  visible = true,
+  workspaceId,
+}: {
+  visible?: boolean;
+  workspaceId?: string;
+}) {
   const pushToast = useUi((s) => s.pushToast);
+  const sessions = useUi((s) => s.sessions);
+  const hostSessionId = useUi((s) => {
+    const id = workspaceId ?? s.activeWorkspaceId;
+    const w = s.workspaces.find((x) => x.id === id);
+    return w?.kind === "session" ? (w.sessionId ?? null) : null;
+  });
+  const [scope, setScope] = useState<string | null>(null);
   const [items, setItems] = useState<LiveTabInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -125,7 +138,26 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
     }
   };
 
-  const list = items ?? [];
+  const hostSessionKnown = hostSessionId !== null && sessions.some((s) => s.id === hostSessionId);
+  const effectiveScope = scope ?? (hostSessionKnown ? hostSessionId : "");
+  const options: [string, string][] = [];
+  const seen = new Set<string>();
+  for (const s of sessions) {
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    options.push([s.id, s.name]);
+  }
+  for (const t of items ?? []) {
+    if (seen.has(t.sessionId)) continue;
+    seen.add(t.sessionId);
+    options.push([t.sessionId, t.sessionName]);
+  }
+  if (effectiveScope && !seen.has(effectiveScope)) {
+    options.push([effectiveScope, effectiveScope.slice(0, 8)]);
+  }
+
+  const all = items ?? [];
+  const list = effectiveScope ? all.filter((t) => t.sessionId === effectiveScope) : all;
   const count = list.length;
 
   return (
@@ -133,6 +165,19 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
       <div className="nx-toolbar">
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
+        <select
+          className="nx-select max-w-[200px]"
+          aria-label="选择会话"
+          value={effectiveScope}
+          onChange={(event) => setScope(event.target.value)}
+        >
+          <option value="">全部</option>
+          {options.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+        </select>
         <span className="nx-hint">
           {items === null ? "加载中…" : runningCopy(count)}
         </span>
@@ -229,7 +274,9 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
             {!error && items !== null && list.length === 0 && (
               <tr>
                 <td colSpan={4} className="nx-table-empty">
-                  没有在后台运行的终端
+                  {effectiveScope && all.length > 0
+                    ? "当前会话没有在后台运行的终端"
+                    : "没有在后台运行的终端"}
                   <div className="mt-1.5 text-[11px] text-neutral-500">
                     关闭运行中的 SSH 终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管
                   </div>

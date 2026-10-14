@@ -82,6 +82,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const [targetHost, setTargetHost] = useState("127.0.0.1");
   const [targetPort, setTargetPort] = useState("3306");
   const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const listenPortId = useId();
   const bindHostId = useId();
 
@@ -322,7 +323,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   };
 
   const sessionName = (id: string) => sessions.find((s) => s.id === id)?.name ?? id.slice(0, 8);
-  const list = forwards.data ?? [];
+  const scoped = Boolean(sessionId) && !showAll;
+  const all = forwards.data ?? [];
+  const list = scoped ? all.filter((f) => f.sessionId === sessionId) : all;
   const localCount = list.filter((f) => f.kind === "local").length;
   const remoteCount = list.filter((f) => f.kind === "remote").length;
   const socksCount = list.length - localCount - remoteCount;
@@ -344,6 +347,16 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               : "转发列表加载中"}
         </span>
         <div className="nx-spacer" />
+        {sessionId && (
+          <button
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            aria-pressed={!showAll}
+            title={showAll ? "当前显示全部会话的转发，点击只看当前会话" : "当前只显示当前会话的转发，点击切换到全部"}
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll ? "全部会话" : "仅当前会话"}
+          </button>
+        )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
           <IconRefresh size={13} />
           刷新
@@ -393,7 +406,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={5} className="nx-table-empty">
-                  还没有任何转发
+                  {scoped && all.length > 0 ? "当前会话还没有转发" : "还没有任何转发"}
                 </td>
               </tr>
             ) : (

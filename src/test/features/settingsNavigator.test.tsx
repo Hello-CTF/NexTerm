@@ -110,6 +110,15 @@ afterEach(() => {
 });
 
 describe("设置分区导航", () => {
+  it("工具栏带「全局」范围标记", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const badge = mounted.container.querySelector(
+      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
+    );
+    expect(badge?.textContent).toBe("全局");
+  });
+
   it("渲染全部分区小标签,目标分区都真实存在", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();

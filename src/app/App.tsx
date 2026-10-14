@@ -897,17 +897,6 @@ function AppShell() {
         };
       });
       if (workspaces.length > 0) items.push({ kind: "separator" });
-      items.push({
-        kind: "item",
-        label: "新建工作区…",
-        icon: <IconPlus size={12} />,
-        hint: "在左侧资产树里双击一台主机",
-        onSelect: () => {
-          setLeftMode("assets");
-          setLeftOpen(true);
-          pushToast("info", "双击左侧资产，就会为这台主机开一个新的工作区");
-        },
-      });
       if (ws) {
         const tabs = ws.panes.flatMap((p) => p.tabs);
         const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
@@ -967,7 +956,7 @@ function AppShell() {
       }
       setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items });
     },
-    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, setLeftMode, setLeftOpen, pushToast, layoutPresets],
+    [workspaces, sessions, ws, setActiveWorkspace, closeWorkspace, layoutPresets],
   );
 
   useEffect(() => {
@@ -1499,6 +1488,7 @@ function AppShell() {
                     key={p.id}
                     pane={p}
                     idPrefix={`${w.id}-${p.id}`}
+                    workspaceId={w.id}
                     active={wsActive && p.id === w.activePaneId}
                     visible={wsActive}
                     split={split}
@@ -1543,7 +1533,7 @@ function AppShell() {
                 onChange={setRightWidth}
               />
             )}
-            <AiSidebar sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
+            <AiSidebar sessionId={ws?.kind === "db" ? undefined : activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
           </div>
         </div>
 
@@ -1659,6 +1649,7 @@ function AppShell() {
 interface PaneGroupProps {
   pane: Pane;
   idPrefix: string;
+  workspaceId: string;
   active: boolean;
   visible: boolean;
   split: boolean;
@@ -1674,6 +1665,7 @@ interface PaneGroupProps {
 function PaneGroup({
   pane,
   idPrefix,
+  workspaceId,
   active,
   visible,
   split,
@@ -1954,6 +1946,7 @@ function PaneGroup({
                 <PaneForTab
                   tab={t}
                   active={t.id === activeTabId && visible}
+                  workspaceId={workspaceId}
                   onClose={() => void requestCloseTab(t.id)}
                 />
               </ErrorBoundary>
@@ -2075,10 +2068,12 @@ function isSessionAlive(status: string): boolean {
 function PaneForTab({
   tab,
   active,
+  workspaceId,
   onClose,
 }: {
   tab: AppTab;
   active: boolean;
+  workspaceId: string;
   onClose: () => void;
 }) {
   switch (tab.kind) {
@@ -2124,9 +2119,9 @@ function PaneForTab({
     case "devices":
       return <LazyDevicesView />;
     case "background":
-      return <BackgroundSessions visible={active} />;
+      return <BackgroundSessions visible={active} workspaceId={workspaceId} />;
     case "history":
-      return <TranscriptHistoryPanel visible={active} />;
+      return <TranscriptHistoryPanel visible={active} workspaceId={workspaceId} />;
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
     default:

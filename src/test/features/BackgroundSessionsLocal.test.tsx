@@ -31,7 +31,7 @@ import {
   type Pane,
   type Workspace,
 } from "../../app/store";
-import { deferred, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { deferred, flush, mount, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
 
 function liveTab(extra: Partial<LiveTabInfo> & { tabId: string }): LiveTabInfo {
@@ -199,6 +199,134 @@ describe("BackgroundSessions lists detached terminals", () => {
     } finally {
       view.unmount();
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("BackgroundSessions 按所属工作区过滤", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ask.mockResolvedValue(true);
+  });
+
+  const s1 = { ...sessionInfo("ssh", "s1"), name: "主机一" };
+  const s2 = { ...sessionInfo("ssh", "s2"), name: "主机二" };
+
+  function seedScope(host: { kind: "session" | "tools"; sessionId?: string }, sessionList: SessionInfo[]) {
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws",
+          kind: host.kind,
+          title: "workspace",
+          sessionId: host.sessionId,
+          panes: [{ id: "p", tabs: [], activeTabId: null }],
+          activePaneId: "p",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws",
+      sessions: sessionList,
+      toasts: [],
+    });
+  }
+
+  function detachedRows() {
+    return [
+      liveTab({ tabId: "t1", sessionId: "s1", sessionName: "主机一", title: "构建" }),
+      liveTab({ tabId: "t2", sessionId: "s2", sessionName: "主机二", title: "训练" }),
+    ];
+  }
+
+  function scopeSelect(view: MountedView): HTMLSelectElement {
+    const select = view.container.querySelector<HTMLSelectElement>('select[aria-label="选择会话"]');
+    if (!select) throw new Error("选择会话下拉未找到");
+    return select;
+  }
+
+  it("默认只列出所属工作区会话的后台终端，选择「全部」后放宽", async () => {
+    mocks.listLive.mockResolvedValue(detachedRows());
+    seedScope({ kind: "session", sessionId: "s1" }, [s1, s2]);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      expect(view.container.textContent).not.toContain("训练");
+      const select = scopeSelect(view);
+      expect(select.value).toBe("s1");
+      expect([...select.options].map((o) => o.textContent)).toEqual(["全部", "主机一", "主机二"]);
+
+      setSelectValue(select, "");
+      await flush();
+      expect(view.container.textContent).toContain("训练");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("工具工作区或所属会话已消失时回退为显示全部", async () => {
+    mocks.listLive.mockResolvedValue(detachedRows());
+    seedScope({ kind: "tools" }, [s1, s2]);
+    const view = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      expect(view.container.textContent).toContain("训练");
+      expect(scopeSelect(view).value).toBe("");
+    } finally {
+      view.unmount();
+    }
+
+    seedScope({ kind: "session", sessionId: "s1" }, [s2]);
+    const view2 = mount(createElement(BackgroundSessions));
+    try {
+      await flush();
+      await waitFor(() => expect(view2.container.textContent).toContain("构建"));
+      expect(view2.container.textContent).toContain("训练");
+      expect(scopeSelect(view2).value).toBe("");
+    } finally {
+      view2.unmount();
+    }
+  });
+
+  it("按 workspaceId 指定的工作区过滤，与当前活动工作区无关", async () => {
+    mocks.listLive.mockResolvedValue(detachedRows());
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-active",
+          kind: "session",
+          title: "active",
+          sessionId: "s2",
+          panes: [{ id: "p1", tabs: [], activeTabId: null }],
+          activePaneId: "p1",
+          splitRatio: 0.5,
+          closable: true,
+        },
+        {
+          id: "ws-host",
+          kind: "session",
+          title: "host",
+          sessionId: "s1",
+          panes: [{ id: "p2", tabs: [], activeTabId: null }],
+          activePaneId: "p2",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-active",
+      sessions: [s1, s2],
+      toasts: [],
+    });
+    const view = mount(createElement(BackgroundSessions, { workspaceId: "ws-host" }));
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      expect(view.container.textContent).not.toContain("训练");
+      expect(scopeSelect(view).value).toBe("s1");
+    } finally {
+      view.unmount();
     }
   });
 });

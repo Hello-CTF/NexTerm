@@ -728,3 +728,81 @@ describe("ForwardPanel 环境状态、轮询与浏览器文案", () => {
     );
   });
 });
+
+describe("ForwardPanel 按当前会话过滤列表，MountPanel 列出全部系统挂载", () => {
+  function forwardRow(id: string, sessionId: string, targetHost: string) {
+    return {
+      id,
+      sessionId,
+      listenHost: "127.0.0.1",
+      listenPort: 13306,
+      targetHost,
+      targetPort: 3306,
+      kind: "local",
+      createdAt: 1,
+    };
+  }
+
+  function mountForwardSessionless(): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(
+      createElement(QueryClientProvider, { client }, createElement(ForwardPanel, {})),
+    );
+  }
+
+  it("转发列表默认只看当前会话，切换后显示全部", async () => {
+    mocks.forwardList.mockResolvedValue([
+      forwardRow("f1", "s", "10.0.0.8"),
+      forwardRow("f2", "other", "10.0.0.9"),
+    ]);
+    mountForward();
+    await flush();
+    expect(mounted!.container.textContent).toContain("10.0.0.8");
+    expect(mounted!.container.textContent).not.toContain("10.0.0.9");
+
+    clickButton(mounted!.container, "仅当前会话");
+    await flush();
+    expect(mounted!.container.textContent).toContain("10.0.0.9");
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some(
+        (b) => b.textContent?.trim() === "全部会话",
+      ),
+    ).toBe(true);
+  });
+
+  it("无会话的转发标签显示全部，且不渲染范围切换按钮", async () => {
+    mocks.forwardList.mockResolvedValue([
+      forwardRow("f1", "s", "10.0.0.8"),
+      forwardRow("f2", "other", "10.0.0.9"),
+    ]);
+    mountForwardSessionless();
+    await flush();
+    expect(mounted!.container.textContent).toContain("10.0.0.8");
+    expect(mounted!.container.textContent).toContain("10.0.0.9");
+    for (const label of ["仅当前会话", "全部会话"]) {
+      expect(
+        [...mounted!.container.querySelectorAll("button")].some(
+          (b) => b.textContent?.trim() === label,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("挂载列表来自系统挂载表（sessionId 为 null），列出全部条目不按会话过滤，也不渲染范围切换按钮", async () => {
+    mocks.mountList.mockResolvedValue([
+      { id: "m1", localPoint: "Z:", remote: "root@h1:/data", sessionId: null, createdAt: 1 },
+      { id: "m2", localPoint: "Y:", remote: "root@h2:/data", sessionId: null, createdAt: 1 },
+    ]);
+    mountMountPanel("s1");
+    await flush();
+    expect(mounted!.container.textContent).toContain("root@h1:/data");
+    expect(mounted!.container.textContent).toContain("root@h2:/data");
+    for (const label of ["仅当前会话", "全部会话"]) {
+      expect(
+        [...mounted!.container.querySelectorAll("button")].some(
+          (b) => b.textContent?.trim() === label,
+        ),
+      ).toBe(false);
+    }
+  });
+});
