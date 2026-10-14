@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   termWrite: vi.fn(),
   toast: vi.fn(),
   listenEvent: vi.fn(),
+  listFolder: vi.fn(),
   packSupported: vi.fn(),
   packUpload: vi.fn(),
 }));
@@ -51,6 +52,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       packDownload: mocks.packDownload,
       extract: mocks.extract,
     },
+    localFileApi: { listFolder: mocks.listFolder },
     terminalApi: { write: mocks.termWrite },
     sessionApi: {},
   };
@@ -60,7 +62,7 @@ vi.mock("../../ipc/events", async (importOriginal) => {
   return {
     ...actual,
     listenEvent: mocks.listenEvent,
-    EVENTS: { fsProgress: "fs://progress" },
+    EVENTS: { fsProgress: "fs://progress", filesDropped: "files://dropped" },
   };
 });
 vi.mock("../../ipc/webFiles", async (importOriginal) => {
@@ -84,6 +86,7 @@ import type { SessionInfo } from "../../ipc/commands";
 import type { FileEntryDto } from "../../ipc/types";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
+import { resetNativeDropDedupeForTest } from "../../features/files/nativeDrop";
 import { useTransferStore } from "../../features/files/transferStore";
 
 const SID = "s1";
@@ -212,6 +215,22 @@ function emitProgress(event: unknown): void {
   });
 }
 
+const nativeDropHandlers: ((e: unknown) => void)[] = [];
+
+function emitNativeDrop(event: unknown): void {
+  act(() => {
+    for (const handler of [...nativeDropHandlers]) handler(event);
+  });
+}
+
+function stubElementFromPoint(el: Element | null): void {
+  Object.defineProperty(document, "elementFromPoint", {
+    value: () => el,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function panelRows(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>("[data-task-key]")];
 }
@@ -248,8 +267,12 @@ beforeEach(() => {
   mocks.mkdir.mockResolvedValue(undefined);
   mocks.packSupported.mockImplementation((kind: string) => kind === "ssh" || kind === "device");
   mocks.packUpload.mockResolvedValue("~/pics");
-  mocks.listenEvent.mockImplementation((_t: string, cb: (e: unknown) => void) => {
-    progressHandlers.push(cb);
+  mocks.listFolder.mockResolvedValue({ name: "pics", files: [], emptyDirs: [] });
+  nativeDropHandlers.length = 0;
+  resetNativeDropDedupeForTest();
+  mocks.listenEvent.mockImplementation((t: string, cb: (e: unknown) => void) => {
+    if (t === "files://dropped") nativeDropHandlers.push(cb);
+    else progressHandlers.push(cb);
     return Promise.resolve(() => {});
   });
   mockHomeEntries([["a.txt", "file"], ["sub", "dir"]]);
@@ -781,5 +804,101 @@ describe("文件夹上传（FileTree）", () => {
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
     expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/a.jpg", "~/pics/a.jpg", false);
     expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false);
+  });
+});
+
+describe("原生拖拽上传（wails native drop）", () => {
+  beforeEach(async () => {
+    remountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+  });
+
+  it("FileBrowser 与 FileTree 的放置面都带 data-file-drop-target", async () => {
+    expect(mounted!.container.querySelector("[data-file-drop-target]")).not.toBeNull();
+    remountTree();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mounted!.container.querySelector("[data-file-drop-target]")).not.toBeNull();
+  });
+
+  it("原生文件拖放按真实路径入队上传到当前目录", async () => {
+    stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
+    emitNativeDrop({ paths: [{ path: "/local/d.txt", dir: false }], x: 5, y: 5 });
+
+    await waitFor(() =>
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/d.txt", false),
+    );
+    expect(useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt")).toBe(true);
+    expect(mocks.listFolder).not.toHaveBeenCalled();
+  });
+
+  it("原生拖放落到目录行时上传进该行目录", async () => {
+    const row = mounted!.container.querySelector("[data-drop-path]")!;
+    expect(row.getAttribute("data-drop-path")).toBe("~/sub");
+    stubElementFromPoint(row);
+    emitNativeDrop({ paths: [{ path: "/local/d.txt", dir: false }], x: 5, y: 5 });
+
+    await waitFor(() =>
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/d.txt", "~/sub/d.txt", false),
+    );
+  });
+
+  it("原生文件夹拖放走 local_folder_list 枚举后逐文件上传", async () => {
+    mocks.listFolder.mockResolvedValue({
+      name: "pics",
+      files: [{ relativePath: "a.jpg", localPath: "/local/pics/a.jpg", size: 5, mtimeMs: 1 }],
+      emptyDirs: [],
+    });
+    mocks.askChoice.mockResolvedValueOnce("perFile");
+    stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
+    emitNativeDrop({ paths: [{ path: "/local/pics", dir: true }], x: 5, y: 5 });
+
+    await waitFor(() =>
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/pics/a.jpg", "~/pics/a.jpg", false),
+    );
+    expect(mocks.listFolder).toHaveBeenCalledWith("/local/pics");
+  });
+
+  it("HTML5 拖放与原生事件同源到达时去重，一次放置只上传一次", async () => {
+    stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
+    const list = mounted!.container.querySelector("[role='tree']")!;
+    dropOn(list, [new File(["x"], "e.txt")]);
+    emitNativeDrop({ paths: [{ path: "/local/e.txt", dir: false }], x: 5, y: 5 });
+
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    expect(mocks.upload).toHaveBeenCalledWith(SID, "/staged/e.txt", "~/e.txt", false);
+  });
+
+  it("放置点在面板放置面之外时忽略事件", async () => {
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    stubElementFromPoint(outside);
+    emitNativeDrop({ paths: [{ path: "/local/f.txt", dir: false }], x: 5, y: 5 });
+
+    await flush();
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(mocks.listFolder).not.toHaveBeenCalled();
+  });
+
+  it("畸形负载被忽略", async () => {
+    stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
+    emitNativeDrop({ taskId: "srv-1" });
+    emitNativeDrop({ paths: [], x: 1, y: 1 });
+
+    await flush();
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(mocks.listFolder).not.toHaveBeenCalled();
+  });
+
+  it("FileTree 原生文件拖放按真实路径入队上传", async () => {
+    remountTree();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    stubElementFromPoint(mounted!.container.querySelector("[data-file-drop-target]"));
+    emitNativeDrop({ paths: [{ path: "/local/g.txt", dir: false }], x: 5, y: 5 });
+
+    await waitFor(() =>
+      expect(mocks.upload).toHaveBeenCalledWith(SID, "/local/g.txt", "~/g.txt", false),
+    );
   });
 });

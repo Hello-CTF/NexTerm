@@ -348,6 +348,32 @@ async function uploadFolderSelection(
   }
 }
 
+// Desktop folder upload from a known local path, shared by the native folder picker and the
+// native OS drop: the backend walks the folder so per-file upload gets real localPaths.
+export async function dropNativeFolderUpload(
+  args: FolderFlowArgs & { folderPath: string },
+): Promise<void> {
+  const { folderPath, ...flow } = args;
+  let listing: LocalFolderListDto;
+  try {
+    listing = await localFileApi.listFolder(folderPath);
+  } catch (e) {
+    useUi.getState().pushToast("error", `读取本地文件夹失败：${describeError(e)}`);
+    return;
+  }
+  const selection: FolderSelection = {
+    folderName: listing.name,
+    files: listing.files.map((f) => ({
+      relativePath: f.relativePath,
+      localPath: f.localPath,
+      size: f.size,
+      mtimeMs: f.mtimeMs,
+    })),
+    emptyDirs: listing.emptyDirs,
+  };
+  await uploadFolderSelection({ ...flow, selection });
+}
+
 // Desktop folder picking goes through the native folder dialog plus the local_folder_list IPC:
 // the webview never exposes OS paths of picked files, so the backend walks the picked folder and
 // per-file upload gets real localPaths end to end. Returns false when the native dialog is
@@ -361,24 +387,7 @@ async function pickNativeFolderUpload(args: FolderFlowArgs): Promise<boolean> {
     return false;
   }
   if (!picked) return true;
-  let listing: LocalFolderListDto;
-  try {
-    listing = await localFileApi.listFolder(picked);
-  } catch (e) {
-    useUi.getState().pushToast("error", `读取本地文件夹失败：${describeError(e)}`);
-    return true;
-  }
-  const selection: FolderSelection = {
-    folderName: listing.name,
-    files: listing.files.map((f) => ({
-      relativePath: f.relativePath,
-      localPath: f.localPath,
-      size: f.size,
-      mtimeMs: f.mtimeMs,
-    })),
-    emptyDirs: listing.emptyDirs,
-  };
-  await uploadFolderSelection({ ...args, selection });
+  await dropNativeFolderUpload({ ...args, folderPath: picked });
   return true;
 }
 

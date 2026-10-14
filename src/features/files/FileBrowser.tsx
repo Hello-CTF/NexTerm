@@ -43,6 +43,7 @@ import { useFileOps } from "./useFileOps";
 import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { useCwdFollow } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
+import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import {
   enqueueDownload,
   enqueueUploads,
@@ -180,6 +181,13 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const refreshDir = (dir: string) =>
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
 
+  useNativeFileDrop(sessionId, {
+    surface: parentRef,
+    fallbackDir: () => path,
+    knownSiblings: (dir) => (dir === path ? entries.data : undefined),
+    onSettled: refreshDir,
+  });
+
   const sessionGone =
     entries.isError && (entries.error as { code?: string } | null)?.code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
@@ -272,6 +280,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const dropUpload = (event: ReactDragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    noteHtml5Drop();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? path;
     void dropFolderUpload({
@@ -778,6 +787,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       <div
         ref={parentRef}
         className="min-h-0 flex-1 overflow-y-auto"
+        data-file-drop-target=""
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
