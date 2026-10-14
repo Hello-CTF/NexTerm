@@ -50,13 +50,23 @@ func setEnvironment(environment []string, key, value string) []string {
 	return append(out, key+"="+value)
 }
 
-func defaultShellCommand(environment []string) []string {
-	shell := environmentValue(environment, "SHELL")
+// defaultShell reports the shell to run and whether it takes login-shell flags: the /bin/sh
+// fallback may be dash, which rejects -l, while an explicit $SHELL keeps the login behavior.
+func defaultShell(environment []string) (shell string, login bool) {
+	shell = environmentValue(environment, "SHELL")
 	if shell == "" {
 		shell = strings.TrimSpace(os.Getenv("SHELL"))
 	}
-	if shell == "" {
-		shell = "/bin/sh"
+	if shell != "" {
+		return shell, true
+	}
+	return "/bin/sh", false
+}
+
+func defaultShellCommand(environment []string) []string {
+	shell, login := defaultShell(environment)
+	if !login {
+		return []string{shell}
 	}
 	return []string{shell, "-l"}
 }
@@ -83,7 +93,8 @@ func execSignalName(state *os.ProcessState) string {
 func resolveLoginPATHImpl() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, defaultShellCommand(nil)[0], "-l", "-c", `printf %s "$PATH"`)
+	command := append(defaultShellCommand(nil), "-c", `printf %s "$PATH"`)
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	// Without a delay Wait would block on an inherited stdout pipe if the login shell backgrounds a child.
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
