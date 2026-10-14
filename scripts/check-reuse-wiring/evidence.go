@@ -310,3 +310,21 @@ func runUploadChecks(root string) []checkResult {
 	c.check("release-upload stub tests pass", result.rc == 0, detail)
 	return c.results
 }
+
+func runNotesChecks(root string) []checkResult {
+	c := &collector{}
+	notesTest := filepath.Join(root, ".github", "scripts", "release-notes.test.mjs")
+	if _, err := os.Stat(notesTest); err != nil {
+		c.check("release-notes tests exist", false, notesTest)
+		return c.results
+	}
+	cmd := exec.Command("node", "--test", notesTest)
+	cmd.Dir = root
+	result := runCmd(cmd)
+	detail := ""
+	if result.rc != 0 {
+		detail = fmt.Sprintf("rc=%d stdout tail=%q stderr tail=%q", result.rc, tail(result.stdout, 400), tail(result.stderr, 400))
+	}
+	c.check("release-notes tests pass", result.rc == 0, detail)
+	return c.results
+}

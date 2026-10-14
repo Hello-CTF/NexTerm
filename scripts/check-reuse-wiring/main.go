@@ -446,7 +446,11 @@ func main() {
 	upload := runUploadChecks(root)
 	uploadElapsed := time.Since(uploadStarted)
 
-	results := append(append(append(append([]checkResult{}, wiring...), resolver...), upload...), evidence...)
+	notesStarted := time.Now()
+	notes := runNotesChecks(root)
+	notesElapsed := time.Since(notesStarted)
+
+	results := append(append(append(append(append([]checkResult{}, wiring...), resolver...), upload...), notes...), evidence...)
 	var failures []string
 	for _, result := range results {
 		if result.ok {
@@ -468,10 +472,11 @@ func main() {
 	}
 	fmt.Printf("\nall %d workflow reuse wiring checks passed\n", len(results)+len(negativeControls)+len(resolverNegativeControls))
 	fmt.Printf("sections: wiring %d checks %.1fs; resolver %d scenarios %.1fs; upload stub %d checks %.1fs; "+
-		"desktop evidence %d checks %.1fs; %d negative controls (wiring-only re-runs) %.1fs; total %.1fs\n",
+		"release notes %d checks %.1fs; desktop evidence %d checks %.1fs; %d negative controls (wiring-only re-runs) %.1fs; total %.1fs\n",
 		len(wiring), wiringElapsed.Seconds(),
 		len(resolver), resolverElapsed.Seconds(),
 		len(upload), uploadElapsed.Seconds(),
+		len(notes), notesElapsed.Seconds(),
 		len(evidence), evidenceElapsed.Seconds(),
 		len(negativeControls)+len(resolverNegativeControls), controlsElapsed.Seconds(),
 		time.Since(started).Seconds())
