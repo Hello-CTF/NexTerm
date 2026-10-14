@@ -6,6 +6,7 @@ import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
 import { formatSize } from "./fileTypes";
+import { MAX_PACK_BYTES_DEVICE } from "./folderPackUpload";
 import { baseName, joinPath, parentOf } from "./pathUtils";
 import { findConflict, uniqueRemoteName, type ConflictPolicy } from "./transferQueue";
 import { enqueueUploadBatch, type UploadItem } from "./transferStore";
@@ -14,6 +15,17 @@ import type { FolderFileEntry } from "./folderUpload";
 interface PolicyAnswer {
   kind: ConflictPolicy;
   applyAll: boolean;
+}
+
+// Content uploads go through a single fs_write, which device sessions cap at MAX_PACK_BYTES_DEVICE;
+// path-based uploads (upload button / native folder picker) stream and stay uncapped.
+export function oversizedContentDrop(
+  sessionId: string,
+  files: { name: string; size: number }[],
+): { name: string; size: number } | null {
+  const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+  if (kind !== "device") return null;
+  return files.find((f) => f.size > MAX_PACK_BYTES_DEVICE) ?? null;
 }
 
 async function askConflictPolicy(
@@ -142,6 +154,14 @@ export async function dropLocalFiles(args: {
     // conflict-policy flow instead of the path-based fs_upload pipeline.
     if (!WEB && args.files.length > 0) {
       const pushToast = useUi.getState().pushToast;
+      const oversized = oversizedContentDrop(args.sessionId, args.files);
+      if (oversized) {
+        pushToast(
+          "error",
+          `「${oversized.name}」（${formatSize(oversized.size)}）超过设备连接的单次写入上限 ${formatSize(MAX_PACK_BYTES_DEVICE)}，无法拖拽上传，请改用上传按钮按路径上传`,
+        );
+        return;
+      }
       try {
         await enqueueUploadWithConflicts({
           sessionId: args.sessionId,

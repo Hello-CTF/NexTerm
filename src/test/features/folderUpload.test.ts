@@ -360,3 +360,64 @@ describe("WEB 拖拽路径不回归", () => {
     expect(h.calls.some((c) => c.startsWith("write:"))).toBe(false);
   });
 });
+
+describe("设备会话拖拽大小守卫", () => {
+  const OVERSIZE = 65 * 1024 * 1024;
+
+  function oversizedFile(rel: string): File {
+    const file = fakeFile(rel, "x");
+    Object.defineProperty(file, "size", { value: OVERSIZE });
+    return file;
+  }
+
+  it("超限松散文件在前端拒绝：toast 指引上传按钮，零 IPC 零任务", async () => {
+    h.kind = "device";
+    const big = oversizedFile("big.bin");
+    const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    expect(h.toasts).toEqual([{ level: "error", text: expect.stringContaining("单次写入上限") }]);
+    expect(h.toasts[0]!.text).toContain("big.bin");
+    expect(h.toasts[0]!.text).toContain("上传按钮");
+    expect(h.calls).toEqual([]);
+    expect(useTransferStore.getState().tasks).toEqual([]);
+  });
+
+  it("文件夹拖拽内含超限文件同样在模式选择前拒绝", async () => {
+    h.kind = "device";
+    const folder = dirEntry("pics", [
+      fileEntry("a.txt", fakeFile("pics/a.txt", "A")),
+      fileEntry("big.bin", oversizedFile("pics/big.bin")),
+    ]);
+    const dt = dropOf([{ webkitGetAsEntry: () => folder, getAsFile: () => null }], []);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    expect(h.toasts).toEqual([{ level: "error", text: expect.stringContaining("单次写入上限") }]);
+    expect(h.toasts[0]!.text).toContain("big.bin");
+    expect(
+      h.calls.some((c) => c.startsWith("list") || c.startsWith("write:") || c.startsWith("upload:") || c.startsWith("mkdir:")),
+    ).toBe(false);
+    expect(useTransferStore.getState().tasks).toEqual([]);
+  });
+
+  it("device 会话原生选择器的大文件不受影响（路径流式上传）", async () => {
+    h.kind = "device";
+    h.listing = {
+      name: "pics",
+      files: [nativeFile("big.bin", "D:\\pics\\big.bin", OVERSIZE)],
+      emptyDirs: [],
+    };
+    await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
+    await waitForSettled();
+    expect(h.calls).toContain("upload:D:\\pics\\big.bin->/data/pics/big.bin");
+    expect(h.toasts.some((t) => t.level === "error")).toBe(false);
+  });
+
+  it("非 device 会话超限文件仍可拖拽内容上传", async () => {
+    h.kind = "ssh";
+    const big = oversizedFile("big.bin");
+    const dt = dropOf([{ webkitGetAsEntry: () => null, getAsFile: () => big }], [big]);
+    await dropFolderUpload({ sessionId: "s1", dir: "/data", dataTransfer: dt, knownSiblings: [] });
+    await waitForSettled();
+    expect(h.calls.some((c) => c.startsWith("write:/data/big.bin:"))).toBe(true);
+    expect(h.toasts.some((t) => t.level === "error")).toBe(false);
+  });
+});
