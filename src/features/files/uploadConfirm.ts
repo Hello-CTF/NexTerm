@@ -1,8 +1,9 @@
 import { ask } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
+import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
-import { findSibling } from "./fileOps";
 import { baseName } from "./pathUtils";
+import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { formatSize } from "./fileTypes";
 
 export type UploadOverwriteCheck = "proceed" | "cancelled";
@@ -14,7 +15,8 @@ export async function checkUploadOverwrite(
   knownSiblings?: FileEntryDto[],
 ): Promise<UploadOverwriteCheck> {
   const siblings = knownSiblings ?? (await fsApi.list(sessionId, dir));
-  const conflict = findSibling(siblings, baseName(remote));
+  const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+  const conflict = findConflict(baseName(remote), siblings, conflictCaseInsensitive(kind));
   if (!conflict) return "proceed";
   const detail = conflict.kind === "dir" ? "目录" : `文件 · ${formatSize(conflict.size)}`;
   const ok = await ask(

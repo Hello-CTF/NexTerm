@@ -11,7 +11,7 @@ import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
 import { useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
-import { setMacPlatform } from "./app/platform";
+import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
@@ -121,7 +121,8 @@ async function bootstrapApp(): Promise<void> {
       mountApi.capability(),
     ]);
     if (typeof os === "string" && os.length > 0) {
-      setMacPlatform(os === "macos");
+      setMacPlatform(os === "macos" || os === "darwin");
+      setWindowsPlatform(os === "windows");
     }
     setMountUnavailableReason(mountReason);
   } catch {
