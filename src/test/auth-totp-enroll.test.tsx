@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -222,6 +222,33 @@ describe("mfa_required 强制绑定门(AuthGate 表单)", () => {
     clickButton(mounted.container, "重试");
     await flushUntil(() => mounted!.container.querySelector("input") !== null);
     expect(mounted.container.textContent).toContain("otpauth://totp/");
+  });
+
+  it("复制链接与密钥走剪贴板链路, 失败时提示手动复制", async () => {
+    useAuth.setState({ gate: "mfa_enroll", user: UNBOUND_USER });
+    mocks.me.mockResolvedValue({ user: UNBOUND_USER, csrf_token: "csrf-1", mfa_required: true });
+    mounted = mount(createElement(AuthGate));
+    await flushUntil(() => mounted!.container.querySelector('input[autocomplete="one-time-code"]') !== null);
+
+    const copyButtons = [...mounted.container.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "复制",
+    );
+    expect(copyButtons.length).toBe(2);
+    clickButton(mounted.container, "复制");
+    await flushUntil(() =>
+      mocks.writeText.mock.calls.some(
+        (c) => c[0] === "otpauth://totp/NexTerm:bob?secret=SECRET&issuer=NexTerm",
+      ),
+    );
+    click(copyButtons[1]!);
+    await flushUntil(() =>
+      mocks.writeText.mock.calls.some((c) => c[0] === "SECRETSECRETSECRETSECRETSECRETSEC"),
+    );
+    expect(mounted.container.textContent).not.toContain("复制失败");
+
+    mocks.writeText.mockRejectedValue(new Error("denied"));
+    click(copyButtons[0]!);
+    await flushUntil(() => mounted!.container.textContent?.includes("复制失败，请手动复制") ?? false);
   });
 });
 

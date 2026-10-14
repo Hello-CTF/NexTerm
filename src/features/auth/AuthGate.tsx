@@ -356,6 +356,15 @@ function MfaEnrollForm() {
     }
   };
 
+  const copySetupValue = async (value: string) => {
+    setError(null);
+    try {
+      await copyText(value);
+    } catch {
+      setError("复制失败，请手动复制");
+    }
+  };
+
   if (recoveryCodes) {
     return (
       <div>
@@ -428,7 +437,7 @@ function MfaEnrollForm() {
           <button
             type="button"
             className="nx-btn nx-btn-outline nx-btn-sm"
-            onClick={() => void navigator.clipboard?.writeText(setup.otpauth_uri).catch(() => undefined)}
+            onClick={() => void copySetupValue(setup.otpauth_uri)}
           >
             <IconCopy size={12} />
             复制
@@ -439,7 +448,7 @@ function MfaEnrollForm() {
           <button
             type="button"
             className="nx-btn nx-btn-outline nx-btn-sm"
-            onClick={() => void navigator.clipboard?.writeText(setup.secret).catch(() => undefined)}
+            onClick={() => void copySetupValue(setup.secret)}
           >
             <IconCopy size={12} />
             复制

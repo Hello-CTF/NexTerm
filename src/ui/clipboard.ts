@@ -50,3 +50,24 @@ export async function copyText(text: string): Promise<void> {
   if (copyViaExecCommand(text)) return;
   throw firstError ?? new Error("剪贴板不可用");
 }
+
+export async function readText(): Promise<string> {
+  let firstError: unknown;
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  if (clipboard && typeof clipboard.readText === "function") {
+    try {
+      return await clipboard.readText();
+    } catch (e) {
+      firstError = e;
+    }
+  }
+  if (!WEB) {
+    try {
+      const { Clipboard } = await runtime();
+      return await Clipboard.Text();
+    } catch (e) {
+      firstError ??= e;
+    }
+  }
+  throw firstError ?? new Error("剪贴板不可用");
+}

@@ -12,7 +12,7 @@ func (t *Transport) OpenPTY(ctx context.Context, options base.PTYOptions) (base.
 }
 
 func (t *Transport) OpenCommandPTY(ctx context.Context, command string, options base.PTYOptions) (base.Channel, error) {
-	args := shellArguments(command)
+	args := shellArguments(t.loginShell, command)
 	return t.openPTY(ctx, args, options)
 }
 

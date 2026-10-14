@@ -7,13 +7,18 @@ import (
 	"strings"
 )
 
-func defaultShell() string {
+// defaultShell reports the shell to run and whether it takes login-shell flags: the /bin/sh
+// fallback may be dash, which rejects -l, while an explicit $SHELL keeps the login behavior.
+func defaultShell() (shell string, login bool) {
 	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
-		return shell
+		return shell, true
 	}
-	return "/bin/sh"
+	return "/bin/sh", false
 }
 
-func shellArguments(command string) []string {
+func shellArguments(login bool, command string) []string {
+	if !login {
+		return []string{"-c", command}
+	}
 	return []string{"-lc", command}
 }

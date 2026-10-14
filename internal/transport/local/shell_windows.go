@@ -4,13 +4,13 @@ package local
 
 import "os/exec"
 
-func defaultShell() string {
+func defaultShell() (shell string, login bool) {
 	if shell, err := exec.LookPath("pwsh.exe"); err == nil {
-		return shell
+		return shell, true
 	}
-	return "powershell.exe"
+	return "powershell.exe", true
 }
 
-func shellArguments(command string) []string {
+func shellArguments(_ bool, command string) []string {
 	return []string{"-NoLogo", "-NoProfile", "-Command", command}
 }
