@@ -125,7 +125,7 @@ export function UpdateCard() {
             {install.phase === "install" ? "正在安装…" : "正在下载…"}
             {install.total > 0
               ? ` ${percent}% · ${formatBytes(install.transferred)} / ${formatBytes(install.total)}`
-              : " 进度未知"}
+              : " 请稍候"}
           </p>
         </div>
       )}

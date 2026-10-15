@@ -222,7 +222,8 @@ describe("UpdateCard installation flow", () => {
         null,
     );
     expect(mounted.container.textContent).toContain("正在安装");
-    expect(mounted.container.textContent).toContain("进度未知");
+    expect(mounted.container.textContent).toContain("请稍候");
+    expect(mounted.container.textContent).not.toContain("进度未知");
 
     pending.resolve({ installed: true, restarted: false, version: "0.3.0", unavailableReason: "" });
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
@@ -339,7 +340,8 @@ describe("UpdateBanner desktop banner", () => {
     });
     await flush();
     expect(mounted.container.textContent).toContain("正在安装");
-    expect(mounted.container.textContent).toContain("进度未知");
+    expect(mounted.container.textContent).toContain("请稍候");
+    expect(mounted.container.textContent).not.toContain("进度未知");
     expect(
       mounted.container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"),
     ).toBeNull();

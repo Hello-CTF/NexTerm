@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 // FLEET149 app shell: desktop also shows the "Device Management" entry (leading to the login onboarding view); entry display only, no HTTP.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     assetSearch: vi.fn(),
     sessionList: vi.fn(),
     vaultStatus: vi.fn(),
+    updateCheck: vi.fn(),
   };
 });
 
@@ -27,10 +28,15 @@ vi.mock("../ipc/commands", () => ({
   },
   vaultApi: { status: mocks.vaultStatus, listCredentials: vi.fn() },
   syncApi: { linkGet: vi.fn().mockResolvedValue({ url: "" }) },
+  appUpdateApi: { check: mocks.updateCheck },
   terminalApi: {},
   dbApi: {},
 }));
 
+vi.mock("../features/settings/useWebAutoSync", () => ({
+  useDesktopAutoSync: () => {},
+  useWebAutoSync: () => {},
+}));
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
 vi.mock("../app/layout", () => ({ layoutBootstrapped: Promise.resolve(), startLayoutSync: () => {} }));
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
@@ -49,9 +55,12 @@ vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSideba
 vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
+vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
+vi.mock("../app/unread", () => ({ startUnreadTracking: () => {} }));
 
 import App from "../app/App";
 import { useUi } from "../app/store";
+import { useUpdateStore } from "../app/useUpdate";
 
 let mounted: MountedView | undefined;
 
@@ -67,13 +76,26 @@ beforeEach(() => {
   mocks.assetSearch.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([]);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
+  mocks.updateCheck.mockResolvedValue({
+    available: false,
+    currentVersion: "0.2.2",
+    version: "",
+    notes: "",
+    prerelease: false,
+    assetName: "",
+    assetSize: 0,
+    canInstall: true,
+    unavailableReason: "",
+  });
   useUi.setState({ toasts: [], sessions: [], leftOpen: true, rightOpen: false, leftMode: "assets" });
+  useUpdateStore.setState({ status: null, checking: false, checkError: null, remindedVersion: null });
 });
 
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("app shell device management navigation", () => {
@@ -81,8 +103,26 @@ describe("app shell device management navigation", () => {
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountApp();
     await flushUntil(() => document.querySelector('button[aria-label="设置"]') !== null);
+    await flush();
 
     expect(document.querySelector('button[aria-label="设备管理"]')).not.toBeNull();
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop update checks", () => {
+  it("checks at startup and after four hours, then stops after unmount", async () => {
+    vi.useFakeTimers();
+    mounted = mountApp();
+    await flush();
+    expect(mocks.updateCheck).toHaveBeenCalledTimes(1);
+
+    await act(() => vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000));
+    expect(mocks.updateCheck).toHaveBeenCalledTimes(2);
+
+    mounted.unmount();
+    mounted = undefined;
+    await act(() => vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000));
+    expect(mocks.updateCheck).toHaveBeenCalledTimes(2);
   });
 });

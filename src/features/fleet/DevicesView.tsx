@@ -7,6 +7,7 @@
 // no separate chart logic is implemented.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { connectDevice, useUi } from "../../app/store";
@@ -311,6 +312,7 @@ function DeviceCard({ device, now, online, isAdmin, onPatch, onRevoked }: Device
 }
 
 export function DevicesView() {
+  const qc = useQueryClient();
   const { pushToast } = useUi();
   const account = useFleetAccount();
   const authStatus = useAuth((s) => s.status);
@@ -393,7 +395,10 @@ export function DevicesView() {
     fleetClient()
       .devices()
       .then((r) => {
-        if (seq === loadSeq.current) setDevices(r.devices);
+        if (seq === loadSeq.current) {
+          setDevices(r.devices);
+          qc.setQueryData(["fleet-devices", userId], r);
+        }
       })
       .catch((e: unknown) => {
         if (seq === loadSeq.current) setError(describeError(e));
@@ -401,7 +406,7 @@ export function DevicesView() {
       .finally(() => {
         if (seq === loadSeq.current) setLoading(false);
       });
-  }, [loadBaseUrls]);
+  }, [loadBaseUrls, qc, userId]);
 
   useEffect(() => {
     if (!userId) return;
@@ -416,10 +421,13 @@ export function DevicesView() {
     fleetClient()
       .devices()
       .then((r) => {
-        if (seq === loadSeq.current) setDevices(r.devices);
+        if (seq === loadSeq.current) {
+          setDevices(r.devices);
+          qc.setQueryData(["fleet-devices", userId], r);
+        }
       })
       .catch(() => {});
-  }, []);
+  }, [qc, userId]);
 
   useEffect(() => {
     if (!userId) return;

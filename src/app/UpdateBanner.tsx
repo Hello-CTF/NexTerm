@@ -43,7 +43,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
           )}
         </div>
         <span className="shrink-0 text-neutral-400">
-          {install.total > 0 ? `${percent}%` : "进度未知"}
+          {install.total > 0 ? `${percent}%` : "请稍候"}
         </span>
       </div>
     );

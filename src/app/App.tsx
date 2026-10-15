@@ -1049,13 +1049,18 @@ function AppShell() {
     startUnreadTracking();
   }, []);
 
-  // After desktop startup, check for updates once silently: no toast; UpdateBanner presents any update.
-  // After the check completes, prompt once per version with dedup gating (see updatePrompt).
+  // Check silently at desktop startup and every four hours: no toast; UpdateBanner presents any update.
+  // After each check completes, prompt once per version with dedup gating (see updatePrompt).
   useEffect(() => {
     if (TRANSPORT !== "desktop") return;
-    void getUpdateState()
-      .check()
-      .then(() => promptUpdateIfNeeded());
+    const check = () => {
+      void getUpdateState()
+        .check()
+        .then(() => promptUpdateIfNeeded());
+    };
+    check();
+    const interval = window.setInterval(check, 4 * 60 * 60 * 1000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {

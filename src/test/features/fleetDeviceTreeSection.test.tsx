@@ -655,6 +655,36 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
   });
 });
 
+describe("DevicesView and AssetTree cache synchronization", () => {
+  it("shows a newly online device in both views immediately after a manual refresh", async () => {
+    const response: { devices: unknown[] } = { devices: [] };
+    const calls = route(response);
+    const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(
+      createElement("div", null, createElement(AssetTree), createElement(DevicesView)),
+    );
+    await flushUntil(() => document.body.textContent?.includes("共 0 台") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("web-asset") ?? false);
+    await flushUntil(() => deviceFetches() >= 2);
+    await flush();
+    expect(tree().textContent ?? "").not.toContain("web-01");
+
+    response.devices = [ONLINE_DEVICE];
+    const before = deviceFetches();
+    const management = document.querySelector<HTMLElement>(".nx-pane");
+    if (!management) throw new Error("DevicesView did not render");
+    const refresh = [...management.querySelectorAll("button")].find((button) => button.textContent?.trim() === "刷新");
+    if (!refresh) throw new Error("Refresh button not found");
+    click(refresh);
+
+    await flushUntil(() => management.textContent?.includes("共 1 台") ?? false);
+    await flushUntil(() => tree().textContent?.includes("web-01") ?? false);
+    expect(management.textContent).toContain("web-01");
+    expect(deviceFetches()).toBe(before + 1);
+  });
+});
+
 describe("DevicesView MetricsPanel reuse regression", () => {
   it("renders trend SVG and sample statistics when expanding metrics in DevicesView", async () => {
     route({ devices: [ONLINE_DEVICE] });

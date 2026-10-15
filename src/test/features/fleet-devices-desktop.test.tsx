@@ -4,7 +4,7 @@
 // online state refreshes only via 30-second polling, no device://status subscription.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => {
     ask: vi.fn(),
     listenEvent: vi.fn(),
     fetch: vi.fn(),
+    assetList: vi.fn(),
+    assetSearch: vi.fn(),
+    groupList: vi.fn(),
+    snippetList: vi.fn(),
   };
 });
 
@@ -29,6 +33,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
+    assetApi: {
+      ...actual.assetApi,
+      list: mocks.assetList,
+      search: mocks.assetSearch,
+      groupList: mocks.groupList,
+      snippetList: mocks.snippetList,
+    },
     syncApi: { ...actual.syncApi, status: mocks.status },
   };
 });
@@ -55,6 +66,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
   listenEvent: mocks.listenEvent,
 }));
 
+import { AssetTree } from "../../features/explorer/AssetTree";
 import { DevicesView } from "../../features/fleet/DevicesView";
 
 const NOW = Date.now();
@@ -163,6 +175,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.listenEvent.mockResolvedValue(() => {});
+  mocks.assetList.mockResolvedValue([]);
+  mocks.assetSearch.mockResolvedValue([]);
+  mocks.groupList.mockResolvedValue([]);
+  mocks.snippetList.mockResolvedValue([]);
   vi.stubGlobal("fetch", mocks.fetch);
 });
 
@@ -186,6 +202,35 @@ describe("Device management - desktop logged in", () => {
     expect(cardOf("db-02")?.textContent).toContain("离线");
     expect(document.body.textContent).toContain("共 2 台");
     expect(mocks.listenEvent).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows a newly online device in the asset tree immediately after a manual refresh through remote proxies", async () => {
+    let devices: unknown[] = [];
+    seedLoggedIn();
+    seedFleet();
+    mocks.devices.mockImplementation(() => Promise.resolve({ devices }));
+    mounted = mountWithClient(
+      createElement("div", null, createElement(AssetTree), createElement(DevicesView)),
+    );
+    await flushUntil(() => document.body.textContent?.includes("共 0 台") ?? false);
+    await flushUntil(() => mocks.devices.mock.calls.length >= 2);
+    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("还没有资产") ?? false);
+    await flush();
+    expect(document.querySelector('[role="tree"]')?.textContent ?? "").not.toContain("web-01");
+
+    devices = [AGENT_DEVICE];
+    const before = mocks.devices.mock.calls.length;
+    const management = document.querySelector<HTMLElement>(".nx-pane");
+    if (!management) throw new Error("DevicesView did not render");
+    const refresh = [...management.querySelectorAll("button")].find((button) => button.textContent?.trim() === "刷新");
+    if (!refresh) throw new Error("Refresh button not found");
+    click(refresh);
+
+    await flushUntil(() => management.textContent?.includes("共 1 台") ?? false);
+    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("web-01") ?? false);
+    expect(management.textContent).toContain("web-01");
+    expect(mocks.devices.mock.calls.length).toBe(before + 1);
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
