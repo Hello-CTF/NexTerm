@@ -2082,6 +2082,8 @@ function AiChatTab({
               <div
                 key={item.id}
                 data-conversation-index={index}
+                data-index={index}
+                ref={virtual.measureRef}
                 className={
                   index === activeMatchIndex ? "rounded-xl ring-2 ring-amber-400/70" : undefined
                 }

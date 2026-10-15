@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 export const VIRTUAL_ITEM_ESTIMATE_PX = 88;
+export const VIRTUAL_ITEM_GAP_PX = 10;
 export const VIRTUAL_OVERSCAN = 6;
 export const VIRTUAL_THRESHOLD = 60;
 
@@ -12,33 +14,39 @@ export interface VirtualRange {
   padBottom: number;
 }
 
-export function virtualRange(
+export interface VirtualWindowItem {
+  index: number;
+  start: number;
+  end: number;
+}
+
+export function windowRange(
   count: number,
-  scrollTop: number,
-  viewportHeight: number,
-  estimate: number = VIRTUAL_ITEM_ESTIMATE_PX,
-  overscan: number = VIRTUAL_OVERSCAN,
+  items: VirtualWindowItem[],
+  totalSize: number,
 ): VirtualRange {
   if (count <= VIRTUAL_THRESHOLD) {
     return { active: false, start: 0, end: count, padTop: 0, padBottom: 0 };
   }
-  const start = Math.max(0, Math.floor(Math.max(0, scrollTop) / estimate) - overscan);
-  const visible = Math.ceil(Math.max(0, viewportHeight) / estimate) + overscan * 2;
-  const end = Math.min(count, start + visible);
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!first || !last) {
+    const end = Math.min(count, VIRTUAL_OVERSCAN * 2);
+    return {
+      active: true,
+      start: 0,
+      end,
+      padTop: 0,
+      padBottom: (count - end) * (VIRTUAL_ITEM_ESTIMATE_PX + VIRTUAL_ITEM_GAP_PX),
+    };
+  }
   return {
     active: true,
-    start,
-    end,
-    padTop: start * estimate,
-    padBottom: (count - end) * estimate,
+    start: first.index,
+    end: last.index + 1,
+    padTop: first.start,
+    padBottom: Math.max(0, totalSize - last.end),
   };
-}
-
-export function virtualOffsetForIndex(
-  index: number,
-  estimate: number = VIRTUAL_ITEM_ESTIMATE_PX,
-): number {
-  return Math.max(0, index) * estimate;
 }
 
 export function centeredScrollTop(
@@ -55,6 +63,7 @@ export function centeredScrollTop(
 
 export interface VirtualWindow {
   scrollRef: (el: HTMLElement | null) => void;
+  measureRef: (el: HTMLElement | null) => void;
   revealIndex: (index: number) => void;
   range: VirtualRange;
 }
@@ -85,74 +94,47 @@ function centerElement(
 
 export function useVirtualWindow(count: number): VirtualWindow {
   const [el, setEl] = useState<HTMLElement | null>(null);
-  const [metrics, setMetrics] = useState({ scrollTop: 0, viewportHeight: 0 });
   const revealTargetRef = useRef<number | null>(null);
-  const frozenWindowRef = useRef<{ start: number; end: number } | null>(null);
 
   const scrollRef = useCallback((node: HTMLElement | null) => {
     setEl(node);
   }, []);
 
-  useEffect(() => {
-    if (!el) return;
-    const measure = () => {
-      setMetrics((prev) =>
-        prev.scrollTop === el.scrollTop && prev.viewportHeight === el.clientHeight
-          ? prev
-          : { scrollTop: el.scrollTop, viewportHeight: el.clientHeight },
-      );
-    };
-    measure();
-    el.addEventListener("scroll", measure, { passive: true });
-    return () => el.removeEventListener("scroll", measure);
-  }, [el]);
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => el,
+    estimateSize: () => VIRTUAL_ITEM_ESTIMATE_PX,
+    overscan: VIRTUAL_OVERSCAN,
+    gap: VIRTUAL_ITEM_GAP_PX,
+  });
 
-  const derivedRange = virtualRange(count, metrics.scrollTop, metrics.viewportHeight);
-  const frozen = frozenWindowRef.current;
-  const range =
-    frozen && derivedRange.active && frozen.start < count
-      ? {
-          active: true as const,
-          start: frozen.start,
-          end: Math.min(frozen.end, count),
-          padTop: frozen.start * VIRTUAL_ITEM_ESTIMATE_PX,
-          padBottom: (count - Math.min(frozen.end, count)) * VIRTUAL_ITEM_ESTIMATE_PX,
-        }
-      : derivedRange;
-  const rangeRef = useRef(range);
-  rangeRef.current = range;
+  const range = windowRange(count, virtualizer.getVirtualItems(), virtualizer.getTotalSize());
 
   const settleReveal = useCallback((node: HTMLElement, target: Element) => {
-    if (frozenWindowRef.current === null) {
-      frozenWindowRef.current = { start: rangeRef.current.start, end: rangeRef.current.end };
-    }
     centerElement(node, target, revealTargetRef);
-    if (revealTargetRef.current === null) {
-      frozenWindowRef.current = null;
-    }
   }, []);
 
   const revealIndex = useCallback(
     (index: number) => {
+      if (count > VIRTUAL_THRESHOLD) {
+        revealTargetRef.current = null;
+        virtualizer.scrollToIndex(index, { align: "center" });
+        return;
+      }
       const node = el;
       if (!node) return;
       revealTargetRef.current = index;
       const mounted = node.querySelector(`[data-conversation-index="${index}"]`);
-      if (mounted) {
-        settleReveal(node, mounted);
-        return;
-      }
-      node.scrollTop = virtualOffsetForIndex(index);
+      if (mounted) settleReveal(node, mounted);
     },
-    [el, settleReveal],
+    [count, el, virtualizer, settleReveal],
   );
 
   useEffect(() => {
     const index = revealTargetRef.current;
     if (index === null || !el) return;
-    if (index >= count) {
+    if (index >= count || count > VIRTUAL_THRESHOLD) {
       revealTargetRef.current = null;
-      frozenWindowRef.current = null;
       return;
     }
     const target = el.querySelector(`[data-conversation-index="${index}"]`);
@@ -161,6 +143,7 @@ export function useVirtualWindow(count: number): VirtualWindow {
 
   return {
     scrollRef,
+    measureRef: virtualizer.measureElement,
     revealIndex,
     range,
   };
