@@ -175,6 +175,7 @@ export interface AiDockTab {
   id: string;
   title: string;
   conversationId?: string;
+  draft?: string;
 }
 
 export interface AiBoard {

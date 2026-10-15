@@ -209,4 +209,37 @@ describe("M134 AI copy", () => {
     expect(selector.container.textContent).toContain("公司 DeepSeek");
     selector.unmount();
   });
+
+  it("keeps the composer draft when switching away and back to a workspace", async () => {
+    const wsA = {
+      id: "ws-a",
+      kind: "session" as const,
+      title: "A",
+      sessionId: "s1",
+      panes: [],
+      activePaneId: "p",
+      splitRatio: 0.5,
+      closable: true,
+    };
+    const wsB = { ...wsA, id: "ws-b", title: "B", sessionId: "s2" };
+    act(() => {
+      useUi.setState({ workspaces: [wsA, wsB], activeWorkspaceId: "ws-a" });
+    });
+    await flush();
+
+    setInputValue(composer(), "帮我看看 nginx 日志");
+    await flush();
+
+    act(() => {
+      useUi.setState({ activeWorkspaceId: "ws-b" });
+    });
+    await flush();
+    expect(composer().value).toBe("");
+
+    act(() => {
+      useUi.setState({ activeWorkspaceId: "ws-a" });
+    });
+    await flush();
+    expect(composer().value).toBe("帮我看看 nginx 日志");
+  });
 });

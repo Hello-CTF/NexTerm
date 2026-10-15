@@ -481,6 +481,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             conversationId={t.conversationId}
             active={t.id === activeTabId}
             tabKey={t.id}
+            draft={t.draft}
+            onDraftChange={(v) => updateAiTab(boardKey, t.id, { draft: v })}
             onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}
             onTitleChange={(title) => handleTitleChange(t.id, title)}
           />
@@ -498,6 +500,8 @@ interface AiChatTabProps {
   conversationId?: string;
   active: boolean;
   tabKey: string;
+  draft?: string;
+  onDraftChange: (v: string) => void;
   onConversationChange: (conversationId: string | undefined, title?: string) => void;
   onTitleChange: (title: string) => void;
 }
@@ -508,6 +512,8 @@ function AiChatTab({
   conversationId: boundConversationId,
   active,
   tabKey,
+  draft,
+  onDraftChange,
   onConversationChange,
   onTitleChange,
 }: AiChatTabProps) {
@@ -533,7 +539,12 @@ function AiChatTab({
   const conv = useSyncExternalStore(subscribe, getSnapshot);
   useEffect(() => () => stream.flush(), [stream]);
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(draft ?? "");
+  const onDraftChangeRef = useRef(onDraftChange);
+  onDraftChangeRef.current = onDraftChange;
+  useEffect(() => {
+    onDraftChangeRef.current(input);
+  }, [input]);
   const [questionInput, setQuestionInput] = useState("");
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<{
