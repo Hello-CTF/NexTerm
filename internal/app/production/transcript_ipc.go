@@ -21,6 +21,7 @@ type transcriptSummaryDTO struct {
 	StartedAt      int64  `json:"startedAt"`
 	EndedAt        *int64 `json:"endedAt"`
 	Bytes          int64  `json:"bytes"`
+	StoredBytes    int64  `json:"storedBytes"`
 	Chunks         int64  `json:"chunks"`
 	Truncated      bool   `json:"truncated"`
 	Active         bool   `json:"active"`
@@ -236,6 +237,7 @@ func (s *terminalCommandService) transcriptSummary(ctx context.Context, row stor
 		StartedAt:      row.StartedAt,
 		EndedAt:        row.EndedAt,
 		Bytes:          row.Bytes,
+		StoredBytes:    row.StoredBytes,
 		Chunks:         row.Chunks,
 		Truncated:      row.Truncated,
 		Active:         active,

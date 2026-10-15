@@ -292,6 +292,7 @@ export interface TranscriptSummary {
   startedAt: number;
   endedAt: number | null;
   bytes: number;
+  storedBytes?: number;
   chunks: number;
   truncated: boolean;
   active: boolean;

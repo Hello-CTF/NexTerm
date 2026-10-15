@@ -78,16 +78,18 @@ function normalizeRead(result: {
 export function TranscriptHistoryPanel({
   visible = true,
   workspaceId,
+  assetId: sourceAssetId,
 }: {
   visible?: boolean;
   workspaceId?: string;
+  assetId?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
-  // Open on the host of the tab's own workspace (device sessions carry their device/<id>
-  // pseudo-asset id); the hosts[0] fallback below stays for host-less contexts.
+  // Prefer the source stored on the tab and use the workspace only as a fallback for older tabs.
   const hostAssetId = useUi((s) => {
+    if (sourceAssetId !== undefined) return sourceAssetId;
     const id = workspaceId ?? s.activeWorkspaceId;
     return s.workspaces.find((w) => w.id === id)?.assetId ?? null;
   });
@@ -498,7 +500,7 @@ export function TranscriptHistoryPanel({
                       </div>
                       <div className="mt-0.5 text-[11px] text-neutral-500">
                         {formatTranscriptDuration(summary.startedAt, summary.endedAt)} ·{" "}
-                        {formatTranscriptBytes(summary.bytes)}
+                        {formatTranscriptBytes(summary.storedBytes || summary.bytes)}
                         {summary.truncated && " · 已截断"}
                         {summary.contentOmitted && " · 仅保留元数据"}
                         {summary.assetDeleted && " · 主机已删除"}
@@ -732,7 +734,7 @@ export function TranscriptHistoryPanel({
             {selected ? (
               <>
                 {formatTranscriptTime(selected.startedAt)} 开始 ·{" "}
-                {formatTranscriptBytes(selected.bytes)} · {selected.chunks} 个分块
+                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} 个分块
                 {selected.truncated && " · 已达到大小上限，后续输出未记录"}
               </>
             ) : (

@@ -87,6 +87,11 @@ describe("transcriptPayload matches Go transcriptObject byte for byte", () => {
     expect(marshalSyncPayload(payload)).toBe(fixtureText("transcriptZeroChunks"));
   });
 
+  it("keeps the local compressed size out of the deterministic sync payload", () => {
+    const payload = transcriptPayload(summary({ id: "t-2", storedBytes: 40 }), []);
+    expect(marshalSyncPayload(payload)).toBe(fixtureText("transcriptZeroChunks"));
+  });
+
   it("omits kind for output chunks and places kind between ts and data for input/resize chunks", () => {
     const payload = transcriptPayload(
       summary({ id: "t1", sessionId: "s1", assetId: "a1", bytes: 26, chunks: 3 }),

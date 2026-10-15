@@ -158,6 +158,19 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
   });
 
+  it("uses assetId directly when the source workspace is gone", async () => {
+    const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
+    mocks.assetList.mockResolvedValue([other, ASSET]);
+    mocks.uiState.workspaces = [{ id: "ws-tools" }];
+    mocks.uiState.activeWorkspaceId = "ws-tools";
+    mounted = mount(
+      createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId: ASSET.id }),
+    );
+    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
+    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
+    expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
+  });
+
   it("follows the owning workspace's host after regaining focus and stops following after a manual host selection", async () => {
     const hostA = { ...ASSET, id: "01J0HOSTAAAAAAAAAAAA0001", name: "host-a", builtin: false };
     const hostB = { ...ASSET, id: "01J0HOSTBBBBBBBBBBBB0001", name: "host-b", builtin: false };
@@ -526,6 +539,13 @@ describe("TranscriptHistoryPanel", () => {
 
     expect(mounted.container.textContent).toContain("2.0 KB");
     expect(mounted.container.textContent).not.toContain("1.0 KB");
+  });
+
+  it("displays compressed storage size when available", async () => {
+    mocks.transcriptList.mockResolvedValue([summary({ bytes: 2048, storedBytes: 512 })]);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("512 B"));
+    expect(mounted.container.textContent).not.toContain("2.0 KB");
   });
 
   it("does not let stale content responses overwrite the newly selected record", async () => {

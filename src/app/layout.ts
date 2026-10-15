@@ -7,6 +7,7 @@ import {
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   dbKindOf,
+  migrateToolTabs,
   nextTabId,
   useUi,
   type AiBoard,
@@ -86,6 +87,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     kind: kind as PaneKind,
     title: typeof raw.title === "string" ? raw.title : "标签",
     sessionId: optStr(raw.sessionId),
+    assetId: optStr(raw.assetId),
     tabId,
     containerId: optStr(raw.containerId),
     connId: optStr(raw.connId),
@@ -120,7 +122,8 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
     ? raw.panes.map(sanitizePane).filter((p): p is Pane => p !== null)
     : [];
   const nonEmpty = parsed.filter((p) => p.tabs.length > 0);
-  let panes = nonEmpty.length > 0 ? nonEmpty : parsed.slice(0, 1);
+  let panes =
+    kind === "tools" ? parsed : nonEmpty.length > 0 ? nonEmpty : parsed.slice(0, 1);
   if (panes.length === 0) panes = [{ id: nextTabId("pane"), tabs: [], activeTabId: null }];
   const activePaneId = panes.some((p) => p.id === raw.activePaneId)
     ? (raw.activePaneId as string)
@@ -179,12 +182,17 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (raw.v !== LAYOUT_VERSION) return null;
   if (!Array.isArray(raw.workspaces)) return null;
   if (!isObj(raw.aiBoards)) return null;
-  const workspaces = raw.workspaces
+  const sanitized = raw.workspaces
     .map(sanitizeWorkspace)
     .filter((w): w is Workspace => w !== null);
+  const activeWasTools = sanitized.some((w) => w.id === raw.activeWorkspaceId && w.kind === "tools");
+  const workspaces = migrateToolTabs(sanitized);
+  const fallbackWorkspaceId = activeWasTools
+    ? (workspaces.find((w) => w.kind === "tools")?.id ?? workspaces[0]?.id ?? null)
+    : (workspaces[0]?.id ?? null);
   const activeWorkspaceId = workspaces.some((w) => w.id === raw.activeWorkspaceId)
     ? (raw.activeWorkspaceId as string)
-    : (workspaces[0]?.id ?? null);
+    : fallbackWorkspaceId;
   return {
     v: LAYOUT_VERSION,
     leftOpen: boolOr(raw.leftOpen, true),

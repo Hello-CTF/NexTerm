@@ -152,7 +152,7 @@ describe("status bar credential vault state", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("deduplicates and activates an existing settings tab in another workspace and scrolls that settings page", async () => {
+  it("migrates an existing settings tab into Tools and scrolls that settings page", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
     useUi.setState({
       workspaces: [
@@ -191,11 +191,13 @@ describe("status bar credential vault state", () => {
 
     const wsA = useUi.getState().workspaces.find((w) => w.id === "ws-a");
     const wsB = useUi.getState().workspaces.find((w) => w.id === "ws-b");
-    expect(wsA?.panes.flatMap((p) => p.tabs).map((t) => t.kind)).toEqual(["settings"]);
-    expect(wsB?.panes.flatMap((p) => p.tabs)).toHaveLength(0);
-    expect(useUi.getState().activeWorkspaceId).toBe("ws-a");
+    expect(wsA?.panes.flatMap((p) => p.tabs)).toHaveLength(0);
+    expect(wsA?.panes[0].activeTabId).toBeNull();
+    expect(wsB?.panes.flatMap((p) => p.tabs).map((t) => t.kind)).toEqual(["settings"]);
+    expect(wsB?.title).toBe("工具");
+    expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
 
-    const card = [...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-a .nx-card")].find(
+    const card = [...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card")].find(
       (c) => c.textContent?.includes("凭据保护"),
     );
     expect(card).toBeTruthy();

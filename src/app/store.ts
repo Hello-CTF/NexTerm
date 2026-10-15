@@ -41,6 +41,19 @@ export type PaneKind =
   | "background"
   | "history";
 
+const TOOL_TAB_KINDS = new Set<PaneKind>([
+  "credentials",
+  "settings",
+  "audit",
+  "devices",
+  "background",
+  "history",
+]);
+
+export function isToolTabKind(kind: PaneKind): boolean {
+  return TOOL_TAB_KINDS.has(kind);
+}
+
 export type LeftMode = "assets" | "files" | "credentials";
 
 export type DbKind = "mysql" | "postgres" | "redis";
@@ -60,6 +73,7 @@ export interface AppTab {
   kind: PaneKind;
   title: string;
   sessionId?: string;
+  assetId?: string;
   tabId?: string;
   containerId?: string;
   connId?: string;
@@ -668,9 +682,22 @@ export const useUi = create<UiState>((set, get) => ({
     }),
 
   addTab: (tab, paneId) => {
+    const source =
+      tab.kind === "background" || tab.kind === "history"
+        ? get().workspaces.find((w) => w.id === get().activeWorkspaceId)
+        : undefined;
+    const scopedTab =
+      source?.kind === "session"
+        ? { ...tab, sessionId: source.sessionId, assetId: source.assetId }
+        : tab;
+    if (isToolTabKind(scopedTab.kind)) {
+      const current = get();
+      const migrated = migrateToolTabs(current.workspaces);
+      if (migrated !== current.workspaces) set({ workspaces: migrated });
+    }
     for (const ws of get().workspaces) {
       for (const p of ws.panes) {
-        const exists = p.tabs.find((t) => sameTab(t, tab));
+        const exists = p.tabs.find((t) => sameTab(t, scopedTab));
         if (!exists) continue;
         set((st) => ({
           activeWorkspaceId: ws.id,
@@ -684,7 +711,7 @@ export const useUi = create<UiState>((set, get) => ({
                       ? {
                           ...q,
                           tabs: q.tabs.map((t) =>
-                            t.id === exists.id ? { ...t, ...tab, id: exists.id } : t,
+                            t.id === exists.id ? { ...t, ...scopedTab, id: exists.id } : t,
                           ),
                           activeTabId: exists.id,
                         }
@@ -698,14 +725,14 @@ export const useUi = create<UiState>((set, get) => ({
       }
     }
 
-    const wsId = resolveWorkspaceId(tab, get());
+    const wsId = resolveWorkspaceId(scopedTab, get());
     const w = get().workspaces.find((x) => x.id === wsId);
     if (!w) return;
     const panes = w.panes.length ? w.panes : [makePane()];
 
     const target = paneId
       ? (panes.find((p) => p.id === paneId) ?? panes[0])
-      : pickPaneForTab(panes, w.activePaneId, tab);
+      : pickPaneForTab(panes, w.activePaneId, scopedTab);
     set((st) => ({
       activeWorkspaceId: wsId,
       workspaces: st.workspaces.map((x) =>
@@ -713,8 +740,10 @@ export const useUi = create<UiState>((set, get) => ({
           ? {
               ...x,
               activePaneId: target.id,
-              panes: x.panes.map((q) =>
-                q.id === target.id ? { ...q, tabs: [...q.tabs, tab], activeTabId: tab.id } : q,
+              panes: panes.map((q) =>
+                q.id === target.id
+                  ? { ...q, tabs: [...q.tabs, scopedTab], activeTabId: scopedTab.id }
+                  : q,
               ),
             }
           : x,
@@ -971,6 +1000,7 @@ function resolveWorkspaceId(
   st: { workspaces: Workspace[]; sessions: SessionInfo[]; activeWorkspaceId: string | null },
 ): string {
   const { ensureWorkspace } = useUi.getState();
+  if (isToolTabKind(tab.kind)) return ensureWorkspace({ kind: "tools", title: "工具" });
   if (tab.sessionId) {
     const hit = st.workspaces.find((w) => w.sessionId === tab.sessionId);
     if (hit) return hit.id;
@@ -1005,9 +1035,154 @@ function makePane(): Pane {
   return { id: nextTabId("pane"), tabs: [], activeTabId: null };
 }
 
+function normalizeWorkspacePanes(w: Workspace): Workspace {
+  const withActiveTabs = w.panes.map((pane) => ({
+    ...pane,
+    activeTabId:
+      pane.activeTabId && pane.tabs.some((tab) => tab.id === pane.activeTabId)
+        ? pane.activeTabId
+        : (pane.tabs[pane.tabs.length - 1]?.id ?? null),
+  }));
+  const nonEmpty = withActiveTabs.filter((pane) => pane.tabs.length > 0);
+  let panes: Pane[] = nonEmpty.length > 0 ? nonEmpty : withActiveTabs.slice(0, 1);
+  if (panes.length === 0) panes = [makePane()];
+  return {
+    ...w,
+    panes,
+    activePaneId: panes.some((pane) => pane.id === w.activePaneId)
+      ? w.activePaneId
+      : panes[0].id,
+  };
+}
+
+export function migrateToolTabs(workspaces: Workspace[]): Workspace[] {
+  const toolsIndex = workspaces.findIndex((w) => w.kind === "tools");
+  const sourceTools = toolsIndex >= 0 ? workspaces[toolsIndex] : undefined;
+  const hasToolTabs = workspaces.some((w) =>
+    w.panes.some((pane) => pane.tabs.some((tab) => isToolTabKind(tab.kind))),
+  );
+  if (!sourceTools && !hasToolTabs) return workspaces;
+
+  const multipleTools = workspaces.some((w, index) => w.kind === "tools" && index !== toolsIndex);
+  const hasExternalToolTabs = workspaces.some(
+    (w) =>
+      w !== sourceTools &&
+      w.panes.some((pane) => pane.tabs.some((tab) => isToolTabKind(tab.kind))),
+  );
+  const kinds = new Set<PaneKind>();
+  let hasDuplicateToolTabs = false;
+  for (const pane of sourceTools?.panes ?? []) {
+    for (const tab of pane.tabs) {
+      if (!isToolTabKind(tab.kind)) continue;
+      if (kinds.has(tab.kind)) hasDuplicateToolTabs = true;
+      kinds.add(tab.kind);
+    }
+  }
+  if (sourceTools && !multipleTools && !hasExternalToolTabs && !hasDuplicateToolTabs) {
+    if (sourceTools.title === "工具") return workspaces;
+    return workspaces.map((w) => (w === sourceTools ? { ...w, title: "工具" } : w));
+  }
+
+  let tools: Workspace;
+  if (sourceTools) {
+    tools = { ...sourceTools, title: "工具" };
+  } else {
+    const pane = makePane();
+    tools = {
+      id: nextTabId("ws-tools"),
+      kind: "tools",
+      title: "工具",
+      panes: [pane],
+      activePaneId: pane.id,
+      splitRatio: 0.5,
+      closable: true,
+    };
+  }
+
+  const selected = new Map<PaneKind, AppTab>();
+  const collect = (w: Workspace) => {
+    for (const pane of w.panes) {
+      for (const tab of pane.tabs) {
+        if (!isToolTabKind(tab.kind)) continue;
+        const candidate =
+          (tab.kind === "background" || tab.kind === "history") && w.kind === "session"
+            ? {
+                ...tab,
+                sessionId: tab.sessionId ?? w.sessionId,
+                assetId: tab.assetId ?? w.assetId,
+              }
+            : tab;
+        const existing = selected.get(tab.kind);
+        if (!existing) {
+          selected.set(tab.kind, candidate);
+          continue;
+        }
+        if (tab.kind !== "background" && tab.kind !== "history") continue;
+        const sessionId = existing.sessionId ?? candidate.sessionId;
+        const assetId = existing.assetId ?? candidate.assetId;
+        if (sessionId !== existing.sessionId || assetId !== existing.assetId) {
+          selected.set(tab.kind, { ...existing, sessionId, assetId });
+        }
+      }
+    }
+  };
+  if (sourceTools) collect(sourceTools);
+  for (const w of workspaces) {
+    if (w !== sourceTools) collect(w);
+  }
+
+  const kept = new Set<AppTab>();
+  const basePanes = (tools.panes.length > 0 ? tools.panes : [makePane()]).map((pane) => ({
+    ...pane,
+    tabs: pane.tabs.filter((tab) => {
+      if (!isToolTabKind(tab.kind)) return true;
+      if (selected.get(tab.kind) !== tab) return false;
+      kept.add(tab);
+      return true;
+    }),
+  }));
+  const additions = [...selected.values()].filter((tab) => !kept.has(tab));
+  for (const w of workspaces) {
+    if (w.kind !== "tools" || w === sourceTools) continue;
+    for (const pane of w.panes) {
+      additions.push(...pane.tabs.filter((tab) => !isToolTabKind(tab.kind)));
+    }
+  }
+  const targetPaneId = basePanes.some((pane) => pane.id === tools.activePaneId)
+    ? tools.activePaneId
+    : basePanes[0].id;
+  const normalizedTools = normalizeWorkspacePanes({
+    ...tools,
+    panes: basePanes.map((pane) =>
+      pane.id === targetPaneId ? { ...pane, tabs: [...pane.tabs, ...additions] } : pane,
+    ),
+  });
+
+  const next: Workspace[] = [];
+  let inserted = false;
+  for (let i = 0; i < workspaces.length; i++) {
+    const w = workspaces[i];
+    if (i === toolsIndex) {
+      next.push(normalizedTools);
+      inserted = true;
+      continue;
+    }
+    if (w.kind === "tools") continue;
+    const panes = w.panes.map((pane) => ({
+      ...pane,
+      tabs: pane.tabs.filter((tab) => !isToolTabKind(tab.kind)),
+    }));
+    const changed = w.panes.some((pane, index) => pane.tabs.length !== panes[index].tabs.length);
+    next.push(changed ? normalizeWorkspacePanes({ ...w, panes }) : w);
+  }
+  if (!inserted) next.push(normalizedTools);
+  return next;
+}
+
 function sameTab(t: AppTab, tab: AppTab): boolean {
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
+  if (isToolTabKind(tab.kind) && t.kind === tab.kind) return true;
   return (
     tab.kind !== "terminal" &&
     t.kind === tab.kind &&
@@ -1606,12 +1781,6 @@ function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
   };
 }
 
-function hasTab(id: string): boolean {
-  return useUi
-    .getState()
-    .workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === id)));
-}
-
 export function openCredentialsSidebar() {
   const st = useUi.getState();
   st.setLeftMode("credentials");
@@ -1619,17 +1788,11 @@ export function openCredentialsSidebar() {
 }
 
 export function openCredentialsTab(credId?: string) {
-  const st = useUi.getState();
-  if (credId === undefined) {
-    if (hasTab("tab-credentials")) st.setActiveTab("tab-credentials");
-    else st.addTab({ id: "tab-credentials", kind: "credentials", title: "凭据", closable: true });
-    return;
-  }
-  st.addTab({
+  useUi.getState().addTab({
     id: "tab-credentials",
     kind: "credentials",
     title: "凭据",
-    credId,
+    ...(credId !== undefined ? { credId } : {}),
     closable: true,
   });
 }
@@ -1688,10 +1851,12 @@ function sidebarsOverlayWorkspace(): boolean {
 async function openConnectedAssetSession(
   info: SessionInfo,
   asset: { id: string; name: string; kind: string },
+  options?: ConnectAssetOptions,
 ): Promise<void> {
   const {
     setSessions,
     sessions,
+    workspaces,
     addTab,
     ensureWorkspace,
     setLeftMode,
@@ -1699,6 +1864,7 @@ async function openConnectedAssetSession(
     bumpConnectFocusRevision,
   } = useUi.getState();
   setSessions([...sessions.filter((s) => s.id !== info.id), info]);
+  if (options?.preserveUserFocus && workspaces.length > 0) return;
   ensureWorkspace({
     kind: "session",
     sessionId: info.id,
@@ -1733,6 +1899,7 @@ export interface ConnectAssetInput {
 
 export interface ConnectAssetOptions {
   silent?: boolean;
+  preserveUserFocus?: boolean;
 }
 
 export type ConnectOutcome =
@@ -1740,14 +1907,28 @@ export type ConnectOutcome =
   | { ok: false; error?: string; canceled?: boolean };
 
 const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
+const connectingAssetCounts = new Map<string, number>();
+
+function inflightAssetKey(assetId: string, options?: ConnectAssetOptions): string {
+  return JSON.stringify([
+    assetId,
+    options?.silent === true,
+    options?.preserveUserFocus === true,
+  ]);
+}
 
 function setAssetConnecting(assetId: string, connecting: boolean): void {
+  const current = connectingAssetCounts.get(assetId) ?? 0;
+  const next = connecting ? current + 1 : Math.max(0, current - 1);
+  if (next === 0) connectingAssetCounts.delete(assetId);
+  else connectingAssetCounts.set(assetId, next);
   useUi.setState((s) => ({
-    connectingAssetIds: connecting
-      ? s.connectingAssetIds.includes(assetId)
-        ? s.connectingAssetIds
-        : [...s.connectingAssetIds, assetId]
-      : s.connectingAssetIds.filter((id) => id !== assetId),
+    connectingAssetIds:
+      next > 0
+        ? s.connectingAssetIds.includes(assetId)
+          ? s.connectingAssetIds
+          : [...s.connectingAssetIds, assetId]
+        : s.connectingAssetIds.filter((id) => id !== assetId),
   }));
 }
 
@@ -1759,14 +1940,15 @@ export async function connectAsset(
   asset: ConnectAssetInput,
   options?: ConnectAssetOptions,
 ): Promise<ConnectOutcome> {
-  const inflight = inflightConnects.get(asset.id);
+  const key = inflightAssetKey(asset.id, options);
+  const inflight = inflightConnects.get(key);
   if (inflight) return inflight;
   const promise = runConnectAsset(asset, options).finally(() => {
-    inflightConnects.delete(asset.id);
+    inflightConnects.delete(key);
     setAssetConnecting(asset.id, false);
-    useUi.getState().setConnectProgress(asset.id, null);
+    if (!isAssetConnecting(asset.id)) useUi.getState().setConnectProgress(asset.id, null);
   });
-  inflightConnects.set(asset.id, promise);
+  inflightConnects.set(key, promise);
   setAssetConnecting(asset.id, true);
   return promise;
 }
@@ -1848,7 +2030,7 @@ async function runConnectAsset(
       pushToast("info", "已取消连接");
       return { ok: false, canceled: true };
     }
-    await openConnectedAssetSession(info, asset);
+    await openConnectedAssetSession(info, asset, options);
     useConnectHistory.getState().record(asset.id);
     return { ok: true };
   } catch (e) {

@@ -97,7 +97,7 @@ func TestTranscriptInsertSyncedConflictBranchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Bytes != 8 || got.Chunks != 2 || !got.SyncOptIn {
+	if got.Bytes != 8 || got.Chunks != 2 || got.StoredBytes <= 0 || !got.SyncOptIn {
 		t.Fatalf("after conflict upsert = %+v", got)
 	}
 }

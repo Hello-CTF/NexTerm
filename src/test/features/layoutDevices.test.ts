@@ -81,8 +81,8 @@ function panelTab(id: string, kind: AppTab["kind"], title: string): AppTab {
 function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length - 1]?.id ?? null): Workspace {
   return {
     id: "ws",
-    kind: "session",
-    title: "workspace",
+    kind: "tools",
+    title: "工具",
     panes: [{ id: "pane", tabs, activeTabId }],
     activePaneId: "pane",
     splitRatio: 0.5,
@@ -150,7 +150,7 @@ describe("device tabs in the layout pane contract", () => {
     expect(parsed).not.toBeNull();
 
     expect(parsed?.workspaces).toHaveLength(1);
-    expect(parsed?.workspaces[0].kind).toBe("session");
+    expect(parsed?.workspaces[0].kind).toBe("tools");
     const pane = parsed?.workspaces[0].panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["devices", "settings"]);
     expect(pane?.activeTabId).toBe("devices");
@@ -190,9 +190,14 @@ describe("device tabs in the layout pane contract", () => {
     const { layout } = await openTab();
     const raw = persistedLayout([
       workspace([panelTab("devices", "devices", "设备管理")], "devices"),
-      workspace([
-        { id: "devterm-missing", kind: "deviceTerminal", title: "Terminal · missing", closable: true } as unknown as AppTab,
-      ]),
+      {
+        ...workspace([
+          { id: "devterm-missing", kind: "deviceTerminal", title: "Terminal · missing", closable: true } as unknown as AppTab,
+        ]),
+        id: "ws-legacy",
+        kind: "session",
+        title: "legacy",
+      },
     ]);
     const parsed = layout.sanitizeLayout(JSON.parse(JSON.stringify(raw)));
     expect(parsed?.workspaces).toHaveLength(2);

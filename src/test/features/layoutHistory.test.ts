@@ -81,8 +81,8 @@ function panelTab(id: string, kind: AppTab["kind"], title: string): AppTab {
 function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length - 1]?.id ?? null): Workspace {
   return {
     id: "ws",
-    kind: "session",
-    title: "workspace",
+    kind: "tools",
+    title: "工具",
     panes: [{ id: "pane", tabs, activeTabId }],
     activePaneId: "pane",
     splitRatio: 0.5,
@@ -93,8 +93,8 @@ function workspace(tabs: AppTab[], activeTabId: string | null = tabs[tabs.length
 function toolTabs(): AppTab[] {
   return [
     panelTab("settings", "settings", "Settings"),
-    panelTab("history", "history", "终端历史"),
-    panelTab("background", "background", "Background sessions"),
+    { ...panelTab("history", "history", "终端历史"), sessionId: "s1", assetId: "asset-1" },
+    { ...panelTab("background", "background", "Background sessions"), sessionId: "s1", assetId: "asset-1" },
     panelTab("audit", "audit", "Audit log"),
   ];
 }
@@ -155,13 +155,139 @@ describe("history tab in the layout pane contract", () => {
     expect(parsed).not.toBeNull();
 
     expect(parsed?.workspaces).toHaveLength(1);
-    expect(parsed?.workspaces[0].kind).toBe("session");
+    expect(parsed?.workspaces[0].kind).toBe("tools");
     const pane = parsed?.workspaces[0].panes[0];
     expect(pane?.tabs.map((t) => t.kind)).toEqual(["settings", "history", "background", "audit"]);
     expect(pane?.activeTabId).toBe("history");
     const history = pane?.tabs.find((t) => t.id === "history");
-    expect(history?.title).toBe("终端历史");
-    expect(history?.closable).toBe(true);
+    expect(history).toMatchObject({
+      title: "终端历史",
+      closable: true,
+      sessionId: "s1",
+      assetId: "asset-1",
+    });
+    expect(pane?.tabs.find((t) => t.id === "background")).toMatchObject({
+      sessionId: "s1",
+      assetId: "asset-1",
+    });
+  });
+
+  it("preserves an empty Tools split when the layout needs no migration", async () => {
+    const { layout } = await openTab();
+    const tools = workspace(toolTabs(), "history");
+    tools.panes.push({ id: "tools-empty", tabs: [], activeTabId: null });
+    tools.activePaneId = "tools-empty";
+
+    const parsed = layout.sanitizeLayout(persistedLayout([tools]));
+    const restored = parsed?.workspaces[0];
+    expect(restored?.panes.map((pane) => pane.id)).toEqual(["pane", "tools-empty"]);
+    expect(restored?.panes[0].activeTabId).toBe("history");
+    expect(restored?.panes[1].tabs).toEqual([]);
+    expect(restored?.activePaneId).toBe("tools-empty");
+  });
+
+  it("migrates legacy global tabs into one Tools workspace and repairs active pointers", async () => {
+    const { layout } = await openTab();
+    const legacy: Workspace[] = [
+      {
+        id: "host",
+        kind: "session",
+        title: "host",
+        sessionId: "s1",
+        assetId: "asset-1",
+        panes: [
+          {
+            id: "host-p1",
+            tabs: [
+              { id: "terminal", kind: "terminal", title: "Terminal", sessionId: "s1", tabId: "kernel-1", closable: true },
+              { id: "settings-a", kind: "settings", title: "Settings", closable: true },
+            ],
+            activeTabId: "settings-a",
+          },
+          {
+            id: "host-p2",
+            tabs: [
+              panelTab("history", "history", "Terminal history"),
+              panelTab("background", "background", "Background sessions"),
+            ],
+            activeTabId: "history",
+          },
+        ],
+        activePaneId: "host-p2",
+        splitRatio: 0.5,
+        closable: true,
+      },
+      {
+        id: "db",
+        kind: "db",
+        title: "database",
+        connId: "c1",
+        panes: [
+          {
+            id: "db-p",
+            tabs: [
+              { id: "db-tab", kind: "db", title: "Database", connId: "c1", dbKind: "mysql", closable: true },
+              panelTab("credentials", "credentials", "Credentials"),
+              panelTab("settings-b", "settings", "Settings"),
+            ],
+            activeTabId: "settings-b",
+          },
+        ],
+        activePaneId: "db-p",
+        splitRatio: 0.5,
+        closable: true,
+      },
+      {
+        id: "tools",
+        kind: "tools",
+        title: "Tools",
+        panes: [
+          {
+            id: "tools-p",
+            tabs: [
+              panelTab("audit", "audit", "Audit log"),
+              panelTab("background", "background", "Background sessions"),
+            ],
+            activeTabId: "audit",
+          },
+        ],
+        activePaneId: "tools-p",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ];
+
+    const parsed = layout.sanitizeLayout(persistedLayout(legacy));
+    expect(parsed).not.toBeNull();
+    const host = parsed?.workspaces.find((w) => w.id === "host");
+    expect(host?.panes).toHaveLength(1);
+    expect(host?.panes[0].tabs.map((t) => t.id)).toEqual(["terminal"]);
+    expect(host?.panes[0].activeTabId).toBe("terminal");
+    expect(host?.activePaneId).toBe("host-p1");
+    const db = parsed?.workspaces.find((w) => w.id === "db");
+    expect(db?.panes[0].tabs.map((t) => t.id)).toEqual(["db-tab"]);
+    expect(db?.panes[0].activeTabId).toBe("db-tab");
+    const tools = parsed?.workspaces.filter((w) => w.kind === "tools");
+    expect(tools).toHaveLength(1);
+    expect(tools?.[0].title).toBe("工具");
+    expect(tools?.[0].panes[0].tabs.map((t) => t.kind)).toEqual([
+      "audit",
+      "background",
+      "settings",
+      "history",
+      "credentials",
+    ]);
+    expect(tools?.[0].panes[0].activeTabId).toBe("audit");
+    expect(tools?.[0].panes[0].tabs.find((t) => t.kind === "background")).toMatchObject({
+      sessionId: "s1",
+      assetId: "asset-1",
+    });
+    expect(tools?.[0].panes[0].tabs.find((t) => t.kind === "history")).toMatchObject({
+      sessionId: "s1",
+      assetId: "asset-1",
+    });
+    expect(parsed?.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).filter((t) => t.kind === "settings")).toHaveLength(1);
+    expect(parsed?.activeWorkspaceId).toBe("host");
   });
 
   it("boot application preserves the history tab and its active position", async () => {

@@ -13,8 +13,8 @@ const mocks = vi.hoisted(() => ({
   connectLocal: vi.fn(),
   dbConnect: vi.fn(),
   aiSidebarProps: [] as { sessionId?: string }[],
-  backgroundProps: [] as { workspaceId?: string }[],
-  historyProps: [] as { workspaceId?: string }[],
+  backgroundProps: [] as { workspaceId?: string; sessionId?: string }[],
+  historyProps: [] as { workspaceId?: string; assetId?: string }[],
 }));
 
 vi.mock("../app/store", async (importOriginal) => {
@@ -65,13 +65,13 @@ vi.mock("../app/useUpdate", () => ({
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
 vi.mock("../features/terminal/BackgroundSessions", () => ({
-  BackgroundSessions: (props: { workspaceId?: string }) => {
+  BackgroundSessions: (props: { workspaceId?: string; sessionId?: string }) => {
     mocks.backgroundProps.push(props);
     return null;
   },
 }));
 vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
-  TranscriptHistoryPanel: (props: { workspaceId?: string }) => {
+  TranscriptHistoryPanel: (props: { workspaceId?: string; assetId?: string }) => {
     mocks.historyProps.push(props);
     return null;
   },
@@ -288,32 +288,53 @@ describe("App workspace scope", () => {
     expect(text).not.toContain("新建工作区");
   });
 
-  it("passes the owning workspace id to background-session and terminal-history tabs instead of the active workspace", async () => {
+  it("passes stored source ids after the source workspace closes", async () => {
     useUi.setState({
-      sessions: [sessionOf("s1"), sessionOf("s2")],
+      sessions: [sessionOf("s2")],
       workspaces: [
-        { ...workspaceOf("s1"), id: "ws-active" },
         {
-          ...workspaceOf("s2"),
-          id: "ws-host",
+          ...workspaceOf(),
+          id: "ws-tools",
+          kind: "tools",
+          title: "工具",
           panes: [
             {
               id: "pane",
               tabs: [
-                { id: "background", kind: "background", title: "Background sessions", closable: true },
-                { id: "history", kind: "history", title: "Terminal history", closable: true },
+                {
+                  id: "background",
+                  kind: "background",
+                  title: "Background sessions",
+                  sessionId: "s2",
+                  assetId: "asset-2",
+                  closable: true,
+                },
+                {
+                  id: "history",
+                  kind: "history",
+                  title: "Terminal history",
+                  sessionId: "s2",
+                  assetId: "asset-2",
+                  closable: true,
+                },
               ],
               activeTabId: "background",
             },
           ],
         },
       ],
-      activeWorkspaceId: "ws-active",
+      activeWorkspaceId: "ws-tools",
     });
     mounted = mountApp();
     await flush();
-    expect(mocks.backgroundProps[mocks.backgroundProps.length - 1]?.workspaceId).toBe("ws-host");
-    expect(mocks.historyProps[mocks.historyProps.length - 1]?.workspaceId).toBe("ws-host");
+    expect(mocks.backgroundProps[mocks.backgroundProps.length - 1]).toMatchObject({
+      workspaceId: "ws-tools",
+      sessionId: "s2",
+    });
+    expect(mocks.historyProps[mocks.historyProps.length - 1]).toMatchObject({
+      workspaceId: "ws-tools",
+      assetId: "asset-2",
+    });
   });
 
   it("does not bind the AI sidebar to a session in a database workspace", async () => {

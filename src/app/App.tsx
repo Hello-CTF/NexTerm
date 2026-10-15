@@ -1101,7 +1101,7 @@ function AppShell() {
         const builtin = list.find((a) => a.builtin && a.kind === "local");
         if (!builtin) return;
         if (useUi.getState().workspaces.length > 0) return;
-        await connectAsset(builtin);
+        await connectAsset(builtin, { preserveUserFocus: true });
       } catch {
       }
     })();
@@ -2081,9 +2081,21 @@ function PaneForTab({
     case "devices":
       return <LazyDevicesView />;
     case "background":
-      return <BackgroundSessions visible={active} workspaceId={workspaceId} />;
+      return (
+        <BackgroundSessions
+          visible={active}
+          workspaceId={workspaceId}
+          sessionId={tab.sessionId}
+        />
+      );
     case "history":
-      return <TranscriptHistoryPanel visible={active} workspaceId={workspaceId} />;
+      return (
+        <TranscriptHistoryPanel
+          visible={active}
+          workspaceId={workspaceId}
+          assetId={tab.assetId}
+        />
+      );
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
     default:

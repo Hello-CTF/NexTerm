@@ -329,6 +329,20 @@ describe("BackgroundSessions filters by owning workspace", () => {
       view.unmount();
     }
   });
+
+  it("uses sessionId directly when the source workspace is gone", async () => {
+    mocks.listLive.mockResolvedValue(detachedRows());
+    seedScope({ kind: "tools" }, [s1, s2]);
+    const view = mount(createElement(BackgroundSessions, { workspaceId: "ws", sessionId: "s1" }));
+    try {
+      await flush();
+      await waitFor(() => expect(view.container.textContent).toContain("构建"));
+      expect(view.container.textContent).not.toContain("训练");
+      expect(scopeSelect(view).value).toBe("s1");
+    } finally {
+      view.unmount();
+    }
+  });
 });
 
 describe("closing a local terminal ends its process", () => {

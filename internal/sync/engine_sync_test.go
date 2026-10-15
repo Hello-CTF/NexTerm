@@ -200,6 +200,9 @@ func TestEngineTranscriptSelectiveSync(t *testing.T) {
 	if rows[0].SyncOptIn != true {
 		t.Fatal("synced transcript not marked opted-in on B")
 	}
+	if rows[0].StoredBytes <= 0 {
+		t.Fatalf("synced transcript did not persist its compressed size: %+v", rows[0])
+	}
 	chunks, err := deviceB.db.TranscriptChunks(ctx, optedIn, 0, 1<<20)
 	if err != nil || len(chunks) != 1 || string(chunks[0].Data) != "visible output" {
 		t.Fatalf("deviceB chunks=%+v err=%v", chunks, err)

@@ -9,6 +9,7 @@ type TranscriptRow struct {
 	StartedAt      int64  `gorm:"column:started_at;not null;index:idx_transcript_asset_started,priority:2,sort:desc" json:"startedAt"`
 	EndedAt        *int64 `gorm:"column:ended_at" json:"endedAt"`
 	Bytes          int64  `gorm:"column:bytes;not null;default:0" json:"bytes"`
+	StoredBytes    int64  `gorm:"column:stored_bytes;not null;default:0" json:"storedBytes"`
 	Chunks         int64  `gorm:"column:chunks;not null;default:0" json:"chunks"`
 	Truncated      bool   `gorm:"column:truncated;not null;default:0" json:"truncated"`
 	SyncOptIn      bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`

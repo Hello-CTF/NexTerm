@@ -743,3 +743,154 @@ func TestTranscriptSyncedContentPreservesKind(t *testing.T) {
 		t.Fatalf("replaced content lost kinds: %+v", chunks)
 	}
 }
+
+func TestTranscriptStorageUsesSolidCompressedBlocks(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	payload := bytes.Repeat([]byte("terminal-output-你好\r\n"), 32)
+	original := make([]TranscriptChunkRow, 0, 600)
+	var rawBytes int64
+	for index := 0; index < 600; index++ {
+		kind := TranscriptChunkKindOutput
+		data := payload
+		if index%101 == 0 {
+			kind = TranscriptChunkKindResize
+			data = []byte(`{"cols":120,"rows":40}`)
+		} else if index%97 == 0 {
+			kind = TranscriptChunkKindInput
+			data = []byte("secret-input\r")
+		}
+		tabID := "tab-a"
+		if index%2 == 1 {
+			tabID = "tab-b"
+		}
+		original = append(original, TranscriptChunkRow{
+			Seq: int64(index), TabID: tabID, TS: int64(1001 + index), Kind: kind, Data: data,
+		})
+		rawBytes += int64(len(data))
+	}
+	appendTranscriptChunks(t, db, id, original...)
+
+	row, err := db.TranscriptGet(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Bytes != rawBytes || row.Chunks != int64(len(original)) {
+		t.Fatalf("logical counters changed by compression: %+v", row)
+	}
+	if row.StoredBytes <= 0 || row.StoredBytes >= row.Bytes {
+		t.Fatalf("compressed storage must be smaller: raw=%d stored=%d", row.Bytes, row.StoredBytes)
+	}
+
+	stored := []TranscriptChunkRow{}
+	if err := db.db.WithContext(ctx).Where("transcript_id = ?", id).Order("seq").Find(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 3 {
+		t.Fatalf("600 events must form three solid blocks, got %d rows", len(stored))
+	}
+	var storedBytes int64
+	for _, block := range stored {
+		storedBytes += int64(len(block.Data))
+		if block.Kind != transcriptStoredBlockKind {
+			t.Fatalf("stored row kind = %d, want compressed block marker", block.Kind)
+		}
+		if len(block.Data) < 4 || !bytes.Equal(block.Data[:4], []byte{0x28, 0xb5, 0x2f, 0xfd}) {
+			t.Fatalf("stored block is not a zstd frame: %x", block.Data[:4])
+		}
+	}
+	if storedBytes != row.StoredBytes {
+		t.Fatalf("stored byte counter = %d, actual compressed payload = %d", row.StoredBytes, storedBytes)
+	}
+
+	decoded, err := db.TranscriptChunks(ctx, id, 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != len(original) {
+		t.Fatalf("decoded %d events, want %d", len(decoded), len(original))
+	}
+	for index := range original {
+		if decoded[index].Seq != original[index].Seq || decoded[index].TabID != original[index].TabID ||
+			decoded[index].TS != original[index].TS || decoded[index].Kind != original[index].Kind ||
+			!bytes.Equal(decoded[index].Data, original[index].Data) {
+			t.Fatalf("event %d changed during compression round trip: got=%+v want=%+v", index, decoded[index], original[index])
+		}
+	}
+
+	page, err := db.TranscriptChunks(ctx, id, 100, 1)
+	if err != nil || len(page) != 1 || page[0].Seq != 100 {
+		t.Fatalf("read inside a compressed block: chunks=%+v err=%v", page, err)
+	}
+	remainder, err := db.TranscriptChunks(ctx, id, 101, 1<<20)
+	if err != nil || len(remainder) != 499 || remainder[0].Seq != 101 || remainder[len(remainder)-1].Seq != 599 {
+		t.Fatalf("resume after an in-block page failed: count=%d err=%v", len(remainder), err)
+	}
+}
+
+func TestTranscriptRejectsLegacyRawChunks(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	legacy := TranscriptChunkRow{TranscriptID: id, Seq: 0, TabID: "tab", TS: 1001, Kind: TranscriptChunkKindOutput, Data: []byte("legacy output")}
+	if err := db.db.WithContext(ctx).Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TranscriptChunks(ctx, id, 0, 1024); err == nil {
+		t.Fatal("legacy raw chunks must not be read as compressed blocks")
+	} else {
+		requireCode(t, err, ipc.CodeUnsupported)
+	}
+	if _, err := db.TranscriptSearch(ctx, id, []byte("legacy"), 0, 0); err == nil {
+		t.Fatal("legacy raw chunks must not be searched as compressed blocks")
+	} else {
+		requireCode(t, err, ipc.CodeUnsupported)
+	}
+}
+
+func TestTranscriptSearchAcrossCompressedBlockBoundaries(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	chunks := make([]TranscriptChunkRow, 513)
+	for index := range chunks {
+		chunks[index] = TranscriptChunkRow{Seq: int64(index), TabID: "tab", TS: int64(1001 + index), Data: []byte("filler\r\n")}
+	}
+	chunks[255].Data = []byte("hel")
+	chunks[256].Data = []byte("lo visible\r\n")
+	nihao := []byte("你好")
+	chunks[511].Data = append([]byte("say "), nihao[0])
+	chunks[512].Data = append([]byte{nihao[1], nihao[2]}, []byte("好\r\n")...)
+	appendTranscriptChunks(t, db, id, chunks...)
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("hello"), 0, 0)
+	if err != nil || len(matches) != 1 || matches[0].Seq != 255 {
+		t.Fatalf("ASCII match across compressed blocks: matches=%+v err=%v", matches, err)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("你好"), 0, 0)
+	if err != nil || len(matches) != 1 || matches[0].Seq != 512 {
+		t.Fatalf("UTF-8 match across compressed blocks: matches=%+v err=%v", matches, err)
+	}
+}
+
+func TestTranscriptSearchPaginatesStoredBlocks(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	for index := 0; index < 600; index++ {
+		kind := TranscriptChunkKindInput
+		data := []byte("not output")
+		if index == 599 {
+			kind = TranscriptChunkKindOutput
+			data = []byte("needle after many blocks")
+		}
+		appendTranscriptChunks(t, db, id, TranscriptChunkRow{
+			Seq: int64(index), TabID: "tab", TS: int64(1001 + index), Kind: kind, Data: data,
+		})
+	}
+	matches, err := db.TranscriptSearch(ctx, id, []byte("needle"), 0, 0)
+	if err != nil || len(matches) != 1 || matches[0].Seq != 599 {
+		t.Fatalf("search must continue across stored-block pages: matches=%+v err=%v", matches, err)
+	}
+}

@@ -14,6 +14,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/klauspost/compress v1.19.2
 	github.com/masterzen/winrm v0.0.0-20261004123143-57b335310d59
 	github.com/meguminnnnnnnnn/go-openai v0.1.6
 	github.com/moby/moby/api v1.56.1

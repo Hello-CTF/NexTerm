@@ -35,6 +35,7 @@ func newTranscriptRow(db *gorm.DB, opts ...gen.DOOption) transcriptRow {
 	_transcriptRow.StartedAt = field.NewInt64(tableName, "started_at")
 	_transcriptRow.EndedAt = field.NewInt64(tableName, "ended_at")
 	_transcriptRow.Bytes = field.NewInt64(tableName, "bytes")
+	_transcriptRow.StoredBytes = field.NewInt64(tableName, "stored_bytes")
 	_transcriptRow.Chunks = field.NewInt64(tableName, "chunks")
 	_transcriptRow.Truncated = field.NewBool(tableName, "truncated")
 	_transcriptRow.SyncOptIn = field.NewBool(tableName, "sync_opt_in")
@@ -58,6 +59,7 @@ type transcriptRow struct {
 	StartedAt      field.Int64
 	EndedAt        field.Int64
 	Bytes          field.Int64
+	StoredBytes    field.Int64
 	Chunks         field.Int64
 	Truncated      field.Bool
 	SyncOptIn      field.Bool
@@ -87,6 +89,7 @@ func (t *transcriptRow) updateTableName(table string) *transcriptRow {
 	t.StartedAt = field.NewInt64(table, "started_at")
 	t.EndedAt = field.NewInt64(table, "ended_at")
 	t.Bytes = field.NewInt64(table, "bytes")
+	t.StoredBytes = field.NewInt64(table, "stored_bytes")
 	t.Chunks = field.NewInt64(table, "chunks")
 	t.Truncated = field.NewBool(table, "truncated")
 	t.SyncOptIn = field.NewBool(table, "sync_opt_in")
@@ -120,7 +123,7 @@ func (t *transcriptRow) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (t *transcriptRow) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 13)
+	t.fieldMap = make(map[string]field.Expr, 14)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["session_id"] = t.SessionID
 	t.fieldMap["asset_id"] = t.AssetID
@@ -129,6 +132,7 @@ func (t *transcriptRow) fillFieldMap() {
 	t.fieldMap["started_at"] = t.StartedAt
 	t.fieldMap["ended_at"] = t.EndedAt
 	t.fieldMap["bytes"] = t.Bytes
+	t.fieldMap["stored_bytes"] = t.StoredBytes
 	t.fieldMap["chunks"] = t.Chunks
 	t.fieldMap["truncated"] = t.Truncated
 	t.fieldMap["sync_opt_in"] = t.SyncOptIn

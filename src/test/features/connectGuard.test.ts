@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   vaultUnlock: vi.fn(),
   promptText: vi.fn(),
   toast: vi.fn(),
+  setConnectProgress: vi.fn(),
 }));
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
@@ -62,7 +63,9 @@ beforeEach(() => {
     workspaces: [],
     activeWorkspaceId: null,
     connectingAssetIds: [],
+    connectFocusRevision: 0,
     pushToast: mocks.toast,
+    setConnectProgress: mocks.setConnectProgress,
   });
   mocks.sessionConnect.mockResolvedValue(SESSION);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
@@ -321,5 +324,85 @@ describe("connectAsset unlocks the credential vault before connecting", () => {
     expect(outcome).toEqual({ ok: true });
     expect(mocks.promptText).not.toHaveBeenCalled();
     expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-9");
+  });
+});
+
+describe("connectAsset focus guard", () => {
+  it("only registers the session when the user opens a workspace during a guarded connection", async () => {
+    const gate = deferred<SessionInfo>();
+    mocks.sessionConnect.mockReturnValueOnce(gate.promise);
+    const pending = connectAsset(SSH_ASSET, { preserveUserFocus: true });
+    await flush();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "Settings", closable: true });
+    const toolsId = useUi.getState().activeWorkspaceId;
+    expect(useUi.getState().workspaces.find((w) => w.id === toolsId)?.kind).toBe("tools");
+
+    gate.resolve(SESSION);
+    expect(await pending).toEqual({ ok: true });
+    const state = useUi.getState();
+    expect(state.sessions).toEqual([SESSION]);
+    expect(state.workspaces.some((w) => w.sessionId === SESSION.id)).toBe(false);
+    expect(state.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).some((t) => t.kind === "terminal")).toBe(false);
+    expect(state.activeWorkspaceId).toBe(toolsId);
+    expect(state.connectFocusRevision).toBe(0);
+  });
+
+  it("keeps the default connection and terminal focus when a guarded connection is undisturbed", async () => {
+    expect(await connectAsset(SSH_ASSET, { preserveUserFocus: true })).toEqual({ ok: true });
+
+    const state = useUi.getState();
+    const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
+    const terminal = workspace?.panes[0].tabs.find((t) => t.kind === "terminal");
+    expect(terminal?.title).toBe("终端 1");
+    expect(workspace?.panes[0].activeTabId).toBe(terminal?.id);
+    expect(state.activeWorkspaceId).toBe(workspace?.id);
+    expect(state.connectFocusRevision).toBe(1);
+  });
+
+  it("preserves the normal focus behavior for an unguarded manual connection", async () => {
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "Settings", closable: true });
+
+    expect(await connectAsset(SSH_ASSET)).toEqual({ ok: true });
+
+    const state = useUi.getState();
+    const workspace = state.workspaces.find((w) => w.sessionId === SESSION.id);
+    expect(workspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
+    expect(state.activeWorkspaceId).toBe(workspace?.id);
+    expect(state.connectFocusRevision).toBe(1);
+  });
+
+  it("separates mixed-options in-flight completions and keeps the asset connecting until all finish", async () => {
+    const automaticGate = deferred<SessionInfo>();
+    const manualGate = deferred<SessionInfo>();
+    const manualSession: SessionInfo = { ...SESSION, id: "s2", name: "web-02" };
+    mocks.sessionConnect
+      .mockReturnValueOnce(automaticGate.promise)
+      .mockReturnValueOnce(manualGate.promise);
+
+    const automatic = connectAsset(SSH_ASSET, { preserveUserFocus: true });
+    const automaticDuplicate = connectAsset(SSH_ASSET, { preserveUserFocus: true });
+    const manual = connectAsset(SSH_ASSET);
+    await flush();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
+
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: "Settings", closable: true });
+    const toolsId = useUi.getState().activeWorkspaceId;
+    automaticGate.resolve(SESSION);
+    expect(await Promise.all([automatic, automaticDuplicate])).toEqual([{ ok: true }, { ok: true }]);
+    expect(mocks.setConnectProgress).not.toHaveBeenCalled();
+    expect(useUi.getState().connectingAssetIds).toContain("asset-1");
+    expect(useUi.getState().activeWorkspaceId).toBe(toolsId);
+    expect(useUi.getState().workspaces.some((w) => w.sessionId === SESSION.id)).toBe(false);
+
+    manualGate.resolve(manualSession);
+    expect(await manual).toEqual({ ok: true });
+    expect(mocks.setConnectProgress).toHaveBeenCalledExactlyOnceWith("asset-1", null);
+    const state = useUi.getState();
+    const manualWorkspace = state.workspaces.find((w) => w.sessionId === manualSession.id);
+    expect(state.connectingAssetIds).not.toContain("asset-1");
+    expect(state.activeWorkspaceId).toBe(manualWorkspace?.id);
+    expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(true);
   });
 });

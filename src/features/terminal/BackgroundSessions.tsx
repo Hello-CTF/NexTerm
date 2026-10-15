@@ -41,13 +41,16 @@ function ago(ms: number): string {
 export function BackgroundSessions({
   visible = true,
   workspaceId,
+  sessionId,
 }: {
   visible?: boolean;
   workspaceId?: string;
+  sessionId?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
   const hostSessionId = useUi((s) => {
+    if (sessionId !== undefined) return sessionId;
     const id = workspaceId ?? s.activeWorkspaceId;
     const w = s.workspaces.find((x) => x.id === id);
     return w?.kind === "session" ? (w.sessionId ?? null) : null;
@@ -138,7 +141,9 @@ export function BackgroundSessions({
     }
   };
 
-  const hostSessionKnown = hostSessionId !== null && sessions.some((s) => s.id === hostSessionId);
+  const hostSessionKnown =
+    hostSessionId !== null &&
+    (sessionId !== undefined || sessions.some((s) => s.id === hostSessionId));
   const effectiveScope = scope ?? (hostSessionKnown ? hostSessionId : "");
   const options: [string, string][] = [];
   const seen = new Set<string>();

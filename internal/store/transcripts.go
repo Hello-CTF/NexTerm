@@ -64,6 +64,7 @@ func (s *Store) TranscriptStart(ctx context.Context, row TranscriptRow) error {
 	}
 	row.EndedAt = nil
 	row.Bytes = 0
+	row.StoredBytes = 0
 	row.Chunks = 0
 	row.Truncated = false
 	row.SyncOptIn = false
@@ -82,25 +83,35 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	if _, err := s.TranscriptGet(ctx, transcriptID); err != nil {
 		return err
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	blocks, err := encodeTranscriptChunks(chunks)
+	if err != nil {
+		return err
+	}
+	var totalBytes, totalStoredBytes int64
+	for _, chunk := range chunks {
+		totalBytes += int64(len(chunk.Data))
+	}
+	for _, block := range blocks {
+		totalStoredBytes += int64(len(block.Data))
+	}
+	totalChunks := int64(len(chunks))
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
-		var totalBytes, totalChunks int64
-		for _, chunk := range chunks {
+		for _, chunk := range blocks {
 			chunk.TranscriptID = transcriptID
 			chunk.OwnerID = ipc.OwnerID(ctx)
 			if err := queries.TranscriptChunkRow.WithContext(ctx).Create(&chunk); err != nil {
 				return err
 			}
-			totalBytes += int64(len(chunk.Data))
-			totalChunks++
 		}
 		transcript := queries.TranscriptRow
 		if _, err := transcript.WithContext(ctx).
 			Where(transcript.ID.Eq(transcriptID)).
 			Where(ownerConditions(ctx, transcript.TableName())...).
 			UpdateColumns(map[string]any{
-				"bytes":  gorm.Expr("bytes + ?", totalBytes),
-				"chunks": gorm.Expr("chunks + ?", totalChunks),
+				"bytes":        gorm.Expr("bytes + ?", totalBytes),
+				"stored_bytes": gorm.Expr("stored_bytes + ?", totalStoredBytes),
+				"chunks":       gorm.Expr("chunks + ?", totalChunks),
 			}); err != nil {
 			return err
 		}
@@ -217,24 +228,39 @@ func (s *Store) TranscriptChunks(ctx context.Context, transcriptID string, after
 		maxBytes = 1 << 20
 	}
 	chunk := query.Use(s.db).TranscriptChunkRow
-	rows := []TranscriptChunkRow{}
-	err := chunk.WithContext(ctx).
+	rows, err := chunk.WithContext(ctx).
 		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Seq.Gte(afterSeq)).
 		Where(ownerConditions(ctx, chunk.TableName())...).
 		Order(chunk.Seq).
-		Limit(4096).
-		Scan(&rows)
+		Rows()
 	if err != nil {
 		return nil, dbError(err)
 	}
+	defer rows.Close()
 	result := []TranscriptChunkRow{}
 	budget := maxBytes
-	for _, row := range rows {
-		result = append(result, row)
-		budget -= len(row.Data)
-		if budget <= 0 {
-			break
+	for rows.Next() {
+		var stored TranscriptChunkRow
+		if err := s.db.ScanRows(rows, &stored); err != nil {
+			return nil, dbError(err)
 		}
+		chunks, err := decodeTranscriptBlock(stored)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range chunks {
+			if row.Seq < afterSeq {
+				continue
+			}
+			result = append(result, row)
+			budget -= len(row.Data)
+			if budget <= 0 || len(result) >= 4096 {
+				return result, nil
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbError(err)
 	}
 	return result, nil
 }
@@ -253,24 +279,42 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, text 
 		maxScanBytes = 8 << 20
 	}
 	chunk := query.Use(s.db).TranscriptChunkRow
-	rows := []TranscriptChunkRow{}
-	err := chunk.WithContext(ctx).
-		Where(chunk.TranscriptID.Eq(transcriptID), chunk.Kind.Eq(TranscriptChunkKindOutput)).
+	rows, err := chunk.WithContext(ctx).
+		Where(chunk.TranscriptID.Eq(transcriptID)).
 		Where(ownerConditions(ctx, chunk.TableName())...).
 		Order(chunk.Seq).
-		Limit(8192).
-		Scan(&rows)
+		Rows()
 	if err != nil {
 		return nil, dbError(err)
 	}
+	defer rows.Close()
 	matcher := newVisibleMatcher(text, maxMatches)
 	scanned := 0
-	for _, row := range rows {
-		if matcher.full() || scanned >= maxScanBytes {
-			break
+	outputChunks := 0
+scanBlocks:
+	for rows.Next() {
+		var stored TranscriptChunkRow
+		if err := s.db.ScanRows(rows, &stored); err != nil {
+			return nil, dbError(err)
 		}
-		scanned += len(row.Data)
-		matcher.consume(row.Seq, row.TS, row.Data)
+		chunks, err := decodeTranscriptBlock(stored)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range chunks {
+			if row.Kind != TranscriptChunkKindOutput {
+				continue
+			}
+			if matcher.full() || scanned >= maxScanBytes || outputChunks >= 8192 {
+				break scanBlocks
+			}
+			scanned += len(row.Data)
+			outputChunks++
+			matcher.consume(row.Seq, row.TS, row.Data)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbError(err)
 	}
 	return matcher.matches, nil
 }
@@ -332,13 +376,21 @@ func (s *Store) TranscriptListOptedIn(ctx context.Context) ([]TranscriptRow, err
 }
 
 func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID string, bytes, chunks int64, truncated bool, content []TranscriptChunkRow) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	blocks, err := encodeTranscriptChunks(content)
+	if err != nil {
+		return err
+	}
+	var storedBytes int64
+	for _, block := range blocks {
+		storedBytes += int64(len(block.Data))
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
 		transcript := queries.TranscriptRow
 		info, err := transcript.WithContext(ctx).
 			Where(transcript.ID.Eq(transcriptID), transcript.ContentOmitted.Is(true)).
 			Where(ownerConditions(ctx, transcript.TableName())...).
-			UpdateColumns(map[string]any{"bytes": bytes, "chunks": chunks, "truncated": truncated, "content_omitted": false})
+			UpdateColumns(map[string]any{"bytes": bytes, "stored_bytes": storedBytes, "chunks": chunks, "truncated": truncated, "content_omitted": false})
 		if err != nil {
 			return err
 		}
@@ -352,7 +404,7 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 			Delete(); err != nil {
 			return err
 		}
-		for _, row := range content {
+		for _, row := range blocks {
 			row.TranscriptID = transcriptID
 			row.OwnerID = ipc.OwnerID(ctx)
 			if err := chunk.WithContext(ctx).Create(&row); err != nil {
@@ -421,12 +473,22 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 	if row.EndedAt == nil {
 		return badParam(fmt.Errorf("synced transcript must be ended"))
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	blocks, err := encodeTranscriptChunks(chunks)
+	if err != nil {
+		return err
+	}
+	if !row.ContentOmitted {
+		row.StoredBytes = 0
+		for _, block := range blocks {
+			row.StoredBytes += int64(len(block.Data))
+		}
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row.SyncOptIn = true
 		row.OwnerID = ipc.OwnerID(ctx)
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "chunks", "truncated", "content_omitted"}),
+			DoUpdates: clause.AssignmentColumns([]string{"ended_at", "bytes", "stored_bytes", "chunks", "truncated", "content_omitted"}),
 			Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: s.dialect.conflictTargetColumn("transcript", "owner_id"), Value: ipc.OwnerID(ctx)}}},
 		}).Create(&row).Error; err != nil {
 			return err
@@ -435,7 +497,7 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 		if _, err := chunk.WithContext(ctx).Where(chunk.TranscriptID.Eq(row.ID)).Delete(); err != nil {
 			return err
 		}
-		for _, item := range chunks {
+		for _, item := range blocks {
 			item.TranscriptID = row.ID
 			item.OwnerID = ipc.OwnerID(ctx)
 			if err := chunk.WithContext(ctx).Create(&item); err != nil {
