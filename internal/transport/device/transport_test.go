@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -64,7 +65,11 @@ func newPurposeRig(t *testing.T) *purposeRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := supervisor.StateDigest(stateDir, strconv.Itoa(os.Geteuid()))
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := supervisor.StateDigest(stateDir, currentUser.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +96,7 @@ func newPurposeRig(t *testing.T) *purposeRig {
 	rig.dial = func(ctx context.Context, purpose string) (net.Conn, error) {
 		switch purpose {
 		case deviceproto.PurposeTerminal:
-			return (&net.Dialer{}).DialContext(ctx, "unix", endpoint)
+			return dialSupervisorEndpoint(ctx, endpoint)
 		case deviceproto.PurposeFile:
 			clientConn, serverConn := net.Pipe()
 			go func() { _ = fileServer.ServeConn(rig.serveCtx, serverConn) }()
@@ -188,8 +193,13 @@ func TestTransportKindGenerationAndLifecycle(t *testing.T) {
 
 func TestTransportExecSplitStreamsAndExitCode(t *testing.T) {
 	rig := newPurposeRig(t)
-	transport := New("dev-1", rig.digest, rig.dial, 1)
-	result, err := transport.Exec(context.Background(), `printf out; printf err >&2; exit 42`, base.ExecOptions{})
+	platform, command := "", `printf out; printf err >&2; exit 42`
+	if runtime.GOOS == "windows" {
+		platform = "windows"
+		command = `[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 42`
+	}
+	transport := New("dev-1", rig.digest, rig.dial, 1, platform)
+	result, err := transport.Exec(context.Background(), command, base.ExecOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,13 +250,19 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 	provider := transport.Provider()
 	ctx := context.Background()
 	tabID := ids.New()
+	command := []string{"/bin/sh"}
+	input := "echo device-provider-marker\n"
+	if runtime.GOOS == "windows" {
+		command = []string{"powershell.exe", "-NoLogo", "-NoProfile"}
+		input = "Write-Host device-provider-marker\r\n"
+	}
 	attachment, err := provider.Create(ctx, base.DurableCreateOptions{
-		ID: tabID, Command: []string{"/bin/sh"}, Cols: 80, Rows: 24,
+		ID: tabID, Command: command, Cols: 80, Rows: 24,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attachment.Write([]byte("echo device-provider-marker\n")); err != nil {
+	if _, err := attachment.Write([]byte(input)); err != nil {
 		t.Fatal(err)
 	}
 	readUntilMarker(t, attachment, "device-provider-marker")

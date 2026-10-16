@@ -4,11 +4,30 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
+
+func requireBundleFileMode(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := info.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		if mode != 0o444 && mode != 0o666 {
+			t.Fatalf("bundle file mode=%v, want 0444 or 0666 on Windows", mode)
+		}
+		return
+	}
+	if mode != 0o600 {
+		t.Fatalf("bundle file mode=%v, want 0600", mode)
+	}
+}
 
 func TestBundleContainerRejectsInvalidHeader(t *testing.T) {
 	encoded, err := encodeBundleContainer([]byte(`{"protocol":1,"groups":[],"assets":[],"creds":[]}`), "correct horse")
@@ -140,13 +159,7 @@ func TestBundleFileEncryptedWriteReadRoundTrip(t *testing.T) {
 		t.Fatalf("write result=%+v", result)
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("bundle file mode=%v, want 0600", info.Mode().Perm())
-	}
+	requireBundleFileMode(t, path)
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -189,13 +202,7 @@ func TestBundleFileEmptyPasswordWriteReadsWithoutPrompt(t *testing.T) {
 	if read != `{"protocol":1}` {
 		t.Fatalf("read mismatch: %q", read)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("bundle file mode=%v, want 0600", info.Mode().Perm())
-	}
+	requireBundleFileMode(t, path)
 }
 
 func TestBundleFileOverwriteTightensPermissions(t *testing.T) {
@@ -208,13 +215,7 @@ func TestBundleFileOverwriteTightensPermissions(t *testing.T) {
 	if _, err := desktop.service.WriteBundleFileWithOptions(context.Background(), path, `{"protocol":1}`, BundleWriteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("plaintext overwrite mode=%v, want 0600", info.Mode().Perm())
-	}
+	requireBundleFileMode(t, path)
 
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
@@ -222,13 +223,7 @@ func TestBundleFileOverwriteTightensPermissions(t *testing.T) {
 	if _, err := desktop.service.WriteBundleFileWithOptions(context.Background(), path, `{"protocol":1}`, BundleWriteOptions{Password: "导出口令"}); err != nil {
 		t.Fatal(err)
 	}
-	info, err = os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("encrypted overwrite mode=%v, want 0600", info.Mode().Perm())
-	}
+	requireBundleFileMode(t, path)
 }
 
 func TestBundleFileRejectsLegacyJSON(t *testing.T) {

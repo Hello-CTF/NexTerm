@@ -109,9 +109,17 @@ func startWindowsProcess(cmd *exec.Cmd, options windowsStartOptions) (*Process, 
 		_ = tree.Close()
 		return nil, err
 	}
+	currentProcess := windows.CurrentProcess()
+	var waitProcess windows.Handle
+	if err := windows.DuplicateHandle(currentProcess, tree.process, currentProcess, &waitProcess, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		_ = tree.Kill()
+		_ = tree.Close()
+		return nil, err
+	}
 	pid := int(processInfo.ProcessId)
 	return newProcess(tree, func() error {
-		status, err := windows.WaitForSingleObject(tree.process, windows.INFINITE)
+		defer func() { _ = windows.CloseHandle(waitProcess) }()
+		status, err := windows.WaitForSingleObject(waitProcess, windows.INFINITE)
 		if err != nil {
 			return err
 		}
@@ -119,7 +127,7 @@ func startWindowsProcess(cmd *exec.Cmd, options windowsStartOptions) (*Process, 
 			return fmt.Errorf("wait for process %d: status %d", pid, status)
 		}
 		var code uint32
-		if err := windows.GetExitCodeProcess(tree.process, &code); err != nil {
+		if err := windows.GetExitCodeProcess(waitProcess, &code); err != nil {
 			return err
 		}
 		if code != 0 {

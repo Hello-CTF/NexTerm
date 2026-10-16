@@ -605,7 +605,8 @@ func TestSSHRootsErrorClassificationAndFallback(t *testing.T) {
 		{name: "permission", output: `{"windows":true,"supported":false,"status":"error","kind":"permission","message":"access denied","roots":[]}`, code: 0, want: fs.ErrPermission},
 		{name: "no media", output: `{"windows":true,"supported":false,"status":"error","kind":"no_media","message":"device is not ready","roots":[]}`, code: 0, want: base.ErrNoMedia},
 		{name: "drive relative", output: windowsRootsOutput("", [2]string{"D", "D:relative"}), code: 0, want: nil},
-		{name: "PowerShell unavailable on Windows SFTP", output: "not recognized", home: "/C:/Users/alice", code: 127, want: base.ErrUnsupported},
+		{name: "PowerShell unavailable on Windows drive SFTP", output: "not recognized", home: "C:/Users/alice", code: 127, want: base.ErrUnsupported},
+		{name: "PowerShell unavailable on Windows UNC SFTP", output: "not recognized", home: `\\server\share`, code: 127, want: base.ErrUnsupported},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			executor := &targetExecutor{result: targetResult(test.output, test.code)}
@@ -630,22 +631,39 @@ func TestSSHRootsErrorClassificationAndFallback(t *testing.T) {
 		}
 	})
 
+	t.Run("SFTP-only absolute paths stay POSIX", func(t *testing.T) {
+		for _, home := range []string{"/home/alice", "/C:/Users/alice", "//server/share"} {
+			t.Run(home, func(t *testing.T) {
+				executor := &targetExecutor{result: targetResult("not recognized", 127)}
+				filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: home}}
+				roots, err := filesystem.Roots(context.Background())
+				if err != nil || roots.PathStyle != base.PathStylePOSIX || roots.HomePath != home || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
+					t.Fatalf("SFTP-only roots = %+v, %v", roots, err)
+				}
+			})
+		}
+	})
+
 	t.Run("PowerShell on Unix reports the target", func(t *testing.T) {
-		executor := &targetExecutor{}
-		executor.handle = func(command string) (base.ExecResult, error) {
-			if strings.HasPrefix(command, "powershell.exe ") {
-				return targetResult("not found", 127), nil
-			}
-			return targetResult(`{"windows":false,"supported":false,"status":"ok","roots":[]}`, 0), nil
-		}
-		filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
-		roots, err := filesystem.Roots(context.Background())
-		if err != nil || roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
-			t.Fatalf("Unix pwsh roots = %+v, %v", roots, err)
-		}
-		commands := executor.commandList()
-		if len(commands) != 2 || !strings.HasPrefix(commands[1], "pwsh ") {
-			t.Fatalf("probe commands = %v", commands)
+		for _, home := range []string{"/home/alice", "/C:/Users/alice", "//server/share"} {
+			t.Run(home, func(t *testing.T) {
+				executor := &targetExecutor{}
+				executor.handle = func(command string) (base.ExecResult, error) {
+					if strings.HasPrefix(command, "powershell.exe ") {
+						return targetResult("not found", 127), nil
+					}
+					return targetResult(`{"windows":false,"supported":false,"status":"ok","roots":[]}`, 0), nil
+				}
+				filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: home}}
+				roots, err := filesystem.Roots(context.Background())
+				if err != nil || roots.PathStyle != base.PathStylePOSIX || roots.HomePath != home || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
+					t.Fatalf("Unix pwsh roots = %+v, %v", roots, err)
+				}
+				commands := executor.commandList()
+				if len(commands) != 2 || !strings.HasPrefix(commands[1], "pwsh ") {
+					t.Fatalf("probe commands = %v", commands)
+				}
+			})
 		}
 	})
 
@@ -851,9 +869,6 @@ func TestSSHWindowsSFTPFileOperationsAndUNC(t *testing.T) {
 }
 
 func TestSSHWindowsArchiveOperationsAreUnsupported(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the virtual Windows SFTP namespace fixture uses POSIX filename semantics")
-	}
 	for _, testCase := range []struct {
 		name        string
 		drivePrefix string
@@ -886,35 +901,29 @@ func TestSSHPOSIXArchiveOperationsDelegate(t *testing.T) {
 	executor := &targetExecutor{}
 	filesystem := newSFTPFileSystem(client, executor)
 	filesystem.target = &sftpEnvironment{pathStyle: base.PathStylePOSIX}
+	packErr := errors.New("stop after pack delegation")
 	executor.handle = func(command string) (base.ExecResult, error) {
-		const packPrefix = "umask 077 && tar -czf '"
-		if strings.HasPrefix(command, packPrefix) {
-			rest := strings.TrimPrefix(command, packPrefix)
-			end := strings.Index(rest, "'")
-			if end < 0 {
-				return base.ExecResult{}, errors.New("unquoted archive path")
-			}
-			if err := filesystem.FS.WriteFile(context.Background(), rest[:end], []byte("archive"), false); err != nil {
-				return base.ExecResult{}, err
-			}
+		if strings.HasPrefix(command, "umask 077 && tar -czf '") {
+			return base.ExecResult{}, packErr
 		}
 		return targetResult("", 0), nil
 	}
 	destination := filepath.Join(t.TempDir(), "out.tar.gz")
-	if _, err := filesystem.PackDownload(context.Background(), "some dir", destination, sshfs.TransferOptions{}); err != nil {
-		t.Fatal(err)
+	if _, err := filesystem.PackDownload(context.Background(), "/srv/some dir", destination, sshfs.TransferOptions{}); !errors.Is(err, packErr) {
+		t.Fatalf("POSIX PackDownload error = %v, want delegated error", err)
 	}
-	data, err := os.ReadFile(destination)
-	if err != nil || string(data) != "archive" {
-		t.Fatalf("POSIX PackDownload = %q, %v", data, err)
-	}
-	target, err := filesystem.Extract(context.Background(), "folder/a.tar")
-	if err != nil || target != "folder/a" {
+	target, err := filesystem.Extract(context.Background(), "/srv/folder/a.tar")
+	if err != nil || target != "/srv/folder/a" {
 		t.Fatalf("POSIX Extract = %q, %v", target, err)
 	}
 	commands := executor.commandList()
-	if len(commands) != 2 || !strings.Contains(commands[0], "tar -czf") || !strings.Contains(commands[1], "tar -xf") {
+	if len(commands) != 2 || !strings.Contains(commands[0], "tar -czf '/tmp/nexterm-pack-") || !strings.Contains(commands[0], "-C '/srv' -- 'some dir'") || !strings.Contains(commands[1], "tar -xf '/srv/folder/a.tar' -C '/srv/folder/a'") {
 		t.Fatalf("POSIX archive commands = %v", commands)
+	}
+	for _, remotePath := range []string{"/tmp/nexterm-pack-test.tar.gz", "/C:/Users/alice", "//server/share/a.tar"} {
+		if got := filesystem.sftpPath(remotePath); got != remotePath {
+			t.Fatalf("POSIX SFTP path %q became %q", remotePath, got)
+		}
 	}
 }
 

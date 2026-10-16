@@ -293,7 +293,7 @@ func (f *sftpFileSystem) posixEnvironment(ctx context.Context) (*sftpEnvironment
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if windowsDriveAbsolute(home) || windowsUNCPath(home) || !strings.HasPrefix(home, "/") {
+	if !strings.HasPrefix(home, "/") {
 		return nil, fmt.Errorf("%w: SFTP home %q is not a POSIX absolute path", base.ErrUnsupported, home)
 	}
 	return &sftpEnvironment{pathStyle: base.PathStylePOSIX, homePath: home}, nil
@@ -331,11 +331,11 @@ func (f *sftpFileSystem) sftpOnlyEnvironment(ctx context.Context) (*sftpEnvironm
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if windowsDriveAbsolute(home) || windowsUNCPath(home) {
-		return nil, fmt.Errorf("%w: Windows target roots require PowerShell", base.ErrUnsupported)
-	}
 	if strings.HasPrefix(home, "/") {
 		return &sftpEnvironment{pathStyle: base.PathStylePOSIX, homePath: home}, nil
+	}
+	if windowsDriveAbsolute(home) || windowsUNCPath(home) {
+		return nil, fmt.Errorf("%w: Windows target roots require PowerShell", base.ErrUnsupported)
 	}
 	return nil, fmt.Errorf("%w: target filesystem path style is unknown", base.ErrUnsupported)
 }

@@ -32,6 +32,8 @@ type windowsConPty struct {
 	stateMu     sync.Mutex
 	closing     bool
 	opMu        sync.RWMutex
+	consoleOnce sync.Once
+	consoleDone chan struct{}
 }
 
 func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
@@ -48,12 +50,17 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
 		_ = conpty.Close()
 		return nil, err
 	}
-	return &windowsTerminal{conpty: conpty, process: process}, nil
+	terminal := &windowsTerminal{conpty: conpty, process: process}
+	go func() {
+		_ = terminal.process.Wait(context.Background())
+		terminal.conpty.closeConsole()
+	}()
+	return terminal, nil
 }
 
 func newWindowsConPty(cols, rows uint32) (*windowsConPty, error) {
 	security := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), InheritHandle: 1}
-	c := &windowsConPty{}
+	c := &windowsConPty{consoleDone: make(chan struct{})}
 	if err := windows.CreatePipe(&c.inputRead, &c.inputWrite, security, 0); err != nil {
 		return nil, err
 	}
@@ -163,6 +170,15 @@ func (c *windowsConPty) isClosing() bool {
 	return c.closing
 }
 
+func (c *windowsConPty) closeConsole() {
+	c.consoleOnce.Do(func() {
+		go func() {
+			windows.ClosePseudoConsole(c.hpc)
+			close(c.consoleDone)
+		}()
+	})
+}
+
 func (c *windowsConPty) Close() error {
 	c.stateMu.Lock()
 	c.closing = true
@@ -174,14 +190,10 @@ func (c *windowsConPty) Close() error {
 	slaveErr := c.closeSlave()
 	masterErr := errors.Join(windows.CloseHandle(c.inputWrite), windows.CloseHandle(c.outputRead))
 	c.attributes.Delete()
-	closed := make(chan struct{})
-	go func() {
-		windows.ClosePseudoConsole(c.hpc)
-		close(closed)
-	}()
+	c.closeConsole()
 	var consoleErr error
 	select {
-	case <-closed:
+	case <-c.consoleDone:
 	case <-time.After(5 * time.Second):
 		consoleErr = fmt.Errorf("close ConPTY: %w", context.DeadlineExceeded)
 	}

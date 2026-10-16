@@ -378,6 +378,9 @@ func TestRecordingStatusLifecycle(t *testing.T) {
 	if got := tab.RecordingStatus(); got.State != RecordingRunning || got.Generation != 2 || got.Bytes != 0 || got.SafeError != "" {
 		t.Fatalf("restarted status = %+v", got)
 	}
+	if recorded, err := tab.StopRecording(); recorded != 0 || err != nil {
+		t.Fatalf("restart stop = (%d, %v), want (0, nil)", recorded, err)
+	}
 }
 
 func TestRecordingFailureEventOnceAndObserverCanStop(t *testing.T) {
@@ -389,6 +392,9 @@ func TestRecordingFailureEventOnceAndObserverCanStop(t *testing.T) {
 	}
 	writeErr := errors.New("injected write failure")
 	writer := &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
+	if err := tab.rec.file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	tab.rec.file = writer
 	failures := 0
 	reentrant := make(chan error, 1)
@@ -437,6 +443,9 @@ func TestRecordingEventGenerations(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeErr := errors.New("generation one failed")
+	if err := tab.rec.file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	tab.rec.file = &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
 	if err := o.Chunk(context.Background(), []byte("one")); err != nil {
 		t.Fatal(err)

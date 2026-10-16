@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -271,7 +273,31 @@ func TestResumeRejectsOversizedTargets(t *testing.T) {
 	}
 }
 
+func TestPackDownloadDelegatesPOSIXCommand(t *testing.T) {
+	packErr := errors.New("stop after pack command")
+	executor := &fakeExecutor{execErr: packErr, skipArchiveWrite: true}
+	filesystem, _ := newTestFS(t, executor)
+	executor.filesystem = filesystem
+	if _, err := filesystem.PackDownload(context.Background(), "/srv/some dir", filepath.Join(t.TempDir(), "out.tar.gz"), TransferOptions{}); !errors.Is(err, packErr) {
+		t.Fatalf("pack command error = %v, want delegated error", err)
+	}
+	if len(executor.commands) != 1 || !strings.Contains(executor.commands[0], "tar -czf '/tmp/nexterm-pack-") || !strings.Contains(executor.commands[0], "-C '/srv' -- 'some dir'") {
+		t.Fatalf("POSIX pack command = %v", executor.commands)
+	}
+	if !strings.HasPrefix(executor.temporary, "/tmp/nexterm-pack-") || !strings.HasSuffix(executor.temporary, ".tar.gz") {
+		t.Fatalf("POSIX temporary archive = %q", executor.temporary)
+	}
+}
+
+func requirePOSIXArchiveNamespace(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("archive round-trip fixture requires a POSIX /tmp namespace; Windows runs command delegation coverage")
+	}
+}
+
 func TestPackDownloadAndExtract(t *testing.T) {
+	requirePOSIXArchiveNamespace(t)
 	executor := &fakeExecutor{}
 	filesystem, _ := newTestFS(t, executor)
 	executor.filesystem = filesystem
@@ -303,6 +329,7 @@ func TestPackDownloadAndExtract(t *testing.T) {
 }
 
 func TestPackDownloadExpandsHomeBeforePacking(t *testing.T) {
+	requirePOSIXArchiveNamespace(t)
 	executor := &fakeExecutor{}
 	filesystem, _ := newTestFS(t, executor)
 	executor.filesystem = filesystem
@@ -310,7 +337,7 @@ func TestPackDownloadExpandsHomeBeforePacking(t *testing.T) {
 	if _, err := filesystem.PackDownload(context.Background(), "~/some dir", local, TransferOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(executor.commands) != 1 || strings.Contains(executor.commands[0], "~") {
+	if len(executor.commands) != 1 || strings.Contains(executor.commands[0], "'~/") {
 		t.Fatalf("pack command kept an unexpanded home path = %v", executor.commands)
 	}
 	if exists, err := filesystem.Exists(context.Background(), executor.temporary); err != nil || exists {
@@ -319,6 +346,7 @@ func TestPackDownloadExpandsHomeBeforePacking(t *testing.T) {
 }
 
 func TestPackDownloadCleansPartialArchiveFailures(t *testing.T) {
+	requirePOSIXArchiveNamespace(t)
 	for _, test := range []struct {
 		name     string
 		execErr  error
@@ -395,12 +423,13 @@ func assertFinalProgress(t *testing.T, progress []Progress, total int64) {
 }
 
 type fakeExecutor struct {
-	mu         sync.Mutex
-	commands   []string
-	filesystem *FS
-	temporary  string
-	execErr    error
-	exitCode   int
+	mu               sync.Mutex
+	commands         []string
+	filesystem       *FS
+	temporary        string
+	execErr          error
+	exitCode         int
+	skipArchiveWrite bool
 }
 
 func (e *fakeExecutor) Exec(ctx context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
@@ -415,8 +444,10 @@ func (e *fakeExecutor) Exec(ctx context.Context, command string, _ base.ExecOpti
 			return base.ExecResult{}, fmt.Errorf("unquoted pack output")
 		}
 		e.temporary = rest[:end]
-		if err := e.filesystem.WriteFile(ctx, e.temporary, []byte("archive"), false); err != nil {
-			return base.ExecResult{}, err
+		if !e.skipArchiveWrite {
+			if err := e.filesystem.WriteFile(ctx, e.temporary, []byte("archive"), false); err != nil {
+				return base.ExecResult{}, err
+			}
 		}
 	}
 	if e.execErr != nil {

@@ -88,6 +88,7 @@ func TestSpoolCrashRecovery(t *testing.T) {
 	if _, err := s.Write(sequence(20)); err != nil {
 		t.Fatal(err)
 	}
+	closeSpoolHandles(t, s)
 	reopened, err := openSpool(dir, "s2", 4, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +112,7 @@ func TestSpoolCrashRecovery(t *testing.T) {
 	if _, err := s2.Write(sequence(44)[40:]); err != nil {
 		t.Fatal(err)
 	}
+	closeSpoolHandles(t, s2)
 	reopened2, err := openSpool(dir, "s3", 4, 8)
 	if err != nil {
 		t.Fatal(err)

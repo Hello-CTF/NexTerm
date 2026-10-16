@@ -71,6 +71,9 @@ func TestFaultIndexWritesConcurrentSwap(t *testing.T) {
 		restore()
 	}
 	<-done
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestSpoolRepairFailureRepeatedOpens(t *testing.T) {

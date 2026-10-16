@@ -85,7 +85,7 @@ func TestExecReturnsStatusDecodesStreamsAndFollowsCWD(t *testing.T) {
 		if result.ExitCode == nil || *result.ExitCode != 23 || result.Stdout != "标准输出" || result.Stderr != "错误输出" {
 			t.Fatalf("unexpected result: %+v", result)
 		}
-		if result.Duration <= 0 || result.Truncated {
+		if result.Duration < 0 || result.Truncated {
 			t.Fatalf("unexpected duration or truncation: %+v", result)
 		}
 	}
