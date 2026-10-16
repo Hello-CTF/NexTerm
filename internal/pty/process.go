@@ -21,7 +21,7 @@ type Process struct {
 	waitErr    error
 	cleanupErr error
 	mu         sync.Mutex
-	terminated bool
+	cleaned    bool
 }
 
 func StartProcess(cmd *exec.Cmd) (*Process, error) {
@@ -38,14 +38,9 @@ func (p *Process) wait(wait func() error) {
 	err := wait()
 	p.mu.Lock()
 	p.waitErr = exitError(err)
-	killErr := p.tree.Kill()
-	if errors.Is(killErr, os.ErrProcessDone) {
-		killErr = nil
-	}
-	p.cleanupErr = errors.Join(killErr, p.tree.Close())
-	p.terminated = true
-	close(p.done)
 	p.mu.Unlock()
+	_ = p.Kill()
+	close(p.done)
 }
 
 func (p *Process) Wait(ctx context.Context) error {
@@ -63,14 +58,16 @@ func (p *Process) Wait(ctx context.Context) error {
 func (p *Process) Kill() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.terminated {
-		return nil
+	if p.cleaned {
+		return p.cleanupErr
 	}
-	err := p.tree.Kill()
-	if errors.Is(err, os.ErrProcessDone) {
-		return nil
+	killErr := p.tree.Kill()
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
 	}
-	return err
+	p.cleanupErr = errors.Join(killErr, p.tree.Close())
+	p.cleaned = p.cleanupErr == nil
+	return p.cleanupErr
 }
 
 func (p *Process) CleanupError() error {

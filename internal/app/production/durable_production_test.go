@@ -36,8 +36,7 @@ func TestProductionLocalAttachIsVolatileAndEndsOnDetach(t *testing.T) {
 	connected := connectLocalTerminalTest(t, production)
 	channelID := "local-volatile-channel"
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	if tabID == "" {
 		t.Fatal("volatile attach returned an empty tab id")
 	}
@@ -61,6 +60,13 @@ func dispatchDurableTest(t *testing.T, production *Production, command, args, ch
 	return production.Dispatcher.Dispatch(t.Context(), ipc.Request{
 		Command: command, Args: json.RawMessage(args), Channel: ipc.ChannelRef{ID: channelID}, ClientID: clientID,
 	}, production.Environment(clientID))
+}
+
+func requireAttachedTabID(t *testing.T, response ipc.Response) string {
+	t.Helper()
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, response, &attached)
+	return attached.TabID
 }
 
 func writeDurableTestCommand(t *testing.T, production *Production, tabID, marker, clientID string) {

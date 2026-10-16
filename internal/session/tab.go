@@ -45,10 +45,12 @@ type Tab struct {
 	ID        string
 	SessionID string
 
-	session   *Session
-	terminal  TerminalState
-	durable   base.DurableAttachment
-	ephemeral bool
+	session    *Session
+	terminal   TerminalState
+	durable    base.DurableAttachment
+	ephemeral  bool
+	retainable bool
+	shell      Shell
 
 	mu           sync.Mutex
 	cols         uint32
@@ -61,25 +63,30 @@ type Tab struct {
 	eventVersion uint64
 	encoding     string
 	subscribers  map[string]subscriber
+	retained     bool
+	retainedBy   string
 	controller   string
 	controlled   bool
 	// guestLease/guestLeaseUntil record the preview guest control lease holder and expiry:
 	// after the controller is removed by orphan cleanup on disconnect, the lease is kept until expiry (disconnect grace) and lazily cleared.
-	guestLease      string
-	guestLeaseUntil time.Time
-	hidden          bool
-	exited          bool
-	closed          bool
-	destroying      bool
-	title           string
-	cancelPump      context.CancelFunc
-	cwdTracker      *shellintegr.Tracker
-	cwd             string
-	commandTrack    *shellintegr.CommandTracker
-	commandState    shellintegr.CommandState
-	pendingCmd      *pendingCommand
-	durableFed      int64
-	streamEpoch     string
+	guestLease       string
+	guestLeaseUntil  time.Time
+	hidden           bool
+	exited           bool
+	closed           bool
+	destroying       bool
+	title            string
+	cancelPump       context.CancelFunc
+	cwdTracker       *shellintegr.Tracker
+	cwd              string
+	commandTrack     *shellintegr.CommandTracker
+	commandState     shellintegr.CommandState
+	pendingCmd       *pendingCommand
+	durableFed       int64
+	durableIdentity  base.DurableIdentity
+	metadataRevision uint64
+	renameAttempts   map[string]*durableRenameAttempt
+	streamEpoch      string
 
 	catchUpRemaining int64
 
@@ -90,7 +97,8 @@ type Tab struct {
 	writeMu      sync.Mutex
 	visibilityMu sync.Mutex
 	lifecycleMu  sync.Mutex
-	closeOnce    sync.Once
+	closeMu      sync.Mutex
+	closeRetry   bool
 }
 
 func (t *Tab) Info() TabInfo {
@@ -107,21 +115,28 @@ func (t *Tab) infoLocked() TabInfo {
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
-		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
-		Title: t.title,
+		Exited: t.exited, Retainable: t.retainable || !t.ephemeral, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
+		Title: t.title, Shell: t.shell,
 	}
 }
 
 func (t *Tab) controlEventLocked() ControlEvent {
+	queue := recordingControlOrderForTab(t)
+	queue.mu.Lock()
+	queue.orderHeld.Store(true)
 	info := t.infoLocked()
 	t.eventVersion++
 	t.persistVersionFloorLocked()
-	return ControlEvent{
+	event := ControlEvent{
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
 		Title: t.title,
 	}
+	queue.pending[event.Version] = recordingControlEvent{event: event, closed: t.closed}
+	queue.orderHeld.Store(false)
+	queue.mu.Unlock()
+	return event
 }
 
 func (t *Tab) exitEventLocked(exitCode *int) ExitEvent {
@@ -202,6 +217,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	startupCommand := session.asset.StartupCommand
 	session.mu.Unlock()
 	m.mu.Unlock()
+	if options.Retainable && (kind != KindLocal || !options.Ephemeral || options.Durable != nil) {
+		return TabInfo{}, ErrInvalidOptions
+	}
 	var provider base.DurableProvider
 	if options.Durable != nil {
 		var err error
@@ -238,7 +256,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable != nil {
 		var opened base.DurableAttachment
 		if options.Durable.Recover {
-			opened, err = provider.Attach(ctx, tabID)
+			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity)
 		} else {
 			opened, err = provider.Create(ctx, base.DurableCreateOptions{
 				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: options.Durable.Env,
@@ -285,6 +303,16 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 	}
 
+	var durableIdentity base.DurableIdentity
+	var metadataRevision uint64
+	if options.Durable != nil {
+		metadataRevision = options.Durable.MetadataRevision
+		if options.Durable.Identity != nil {
+			durableIdentity = *options.Durable.Identity
+		} else {
+			durableIdentity, _ = durableAttachmentIdentity(durableAttachment)
+		}
+	}
 	terminal, err = m.terminals.NewTerminal(TerminalConfig{
 		TabID: tabID, SessionID: session.ID, Cols: cols, Rows: rows, Encoding: encoding,
 	})
@@ -293,12 +321,24 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	}
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
+	shell := ShellUnknown
+	if kind == KindLocal && options.Durable == nil {
+		if local, ok := transport.Transport.(interface{ Shell() string }); ok {
+			classified := Shell(local.Shell())
+			switch classified {
+			case ShellPowerShell, ShellCmd, ShellPOSIX:
+				shell = classified
+			}
+		}
+	}
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal,
-		ephemeral: options.Ephemeral, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
+		ephemeral: options.Ephemeral, retainable: options.Retainable, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
-		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+		shell: shell,
+		ctx:   tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
+		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
 		streamEpoch: ids.New(),
 	}
 	if options.Durable != nil {
@@ -320,7 +360,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				tab.gridRevision = gridRevision
 			}
 		}
-		if title := m.durableTabTitle(tabID); title != "" {
+		if options.Durable.CanonicalMetadata {
+			tab.title = options.Durable.Title
+		} else if title := m.durableTabTitle(tabID); title != "" {
 			tab.title = title
 		}
 	}
@@ -474,8 +516,19 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 	if err != nil {
 		return TabInfo{}, err
 	}
+	tab.lifecycleMu.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			tab.lifecycleMu.Unlock()
+		}
+	}()
 	tab.session.mu.Lock()
 	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx))
+	transport := tab.session.transport
+	generation := tab.session.generation
+	kind := tab.session.asset.Kind
+	status := tab.session.status
 	tab.session.mu.Unlock()
 	if !allowed {
 		return TabInfo{}, ErrForbidden
@@ -485,10 +538,30 @@ func (m *Manager) RenameTab(ctx context.Context, tabID, title string) (TabInfo, 
 		tab.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
 	}
+	durable := tab.durable != nil
+	tab.mu.Unlock()
+	if durable && status != StatusConnected {
+		return TabInfo{}, ErrDisconnected
+	}
+	if durable {
+		provider, err := m.durableProviderFor(ctx, tab.session, transport, kind, generation)
+		if err != nil {
+			return TabInfo{}, err
+		}
+		supported, err := durableMetadataSupported(ctx, provider)
+		if err != nil {
+			return TabInfo{}, err
+		}
+		if supported {
+			unlocked = true
+			tab.lifecycleMu.Unlock()
+			return m.renameCanonicalTab(ctx, tab, provider, title)
+		}
+	}
+	tab.mu.Lock()
 	tab.title = title
 	event := tab.controlEventLocked()
 	info := tab.infoLocked()
-	durable := tab.durable != nil
 	tab.mu.Unlock()
 	if durable {
 		m.persistDurableTabTitle(tabID, title)
@@ -744,6 +817,7 @@ func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
+	generation := tab.generation
 	tabID := tab.ID
 	tab.mu.Unlock()
 	return tabID, func() {
@@ -758,7 +832,7 @@ func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 			m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
 		}
 		if attached && empty && ephemeral {
-			_ = m.CloseTab(tabID)
+			_ = m.reapEphemeralTab(tab, generation)
 		}
 	}
 }
@@ -770,7 +844,7 @@ func (m *Manager) DetachClient(tabID, client string) error {
 	}
 	return m.detachMatching(tab, func(subscriberClient string) bool {
 		return subscriberClient == clientID(client)
-	})
+	}, false, "")
 }
 
 func (m *Manager) DetachAll(tabID string) error {
@@ -778,16 +852,65 @@ func (m *Manager) DetachAll(tabID string) error {
 	if err != nil {
 		return err
 	}
-	return m.detachMatching(tab, func(string) bool { return true })
+	return m.detachMatching(tab, func(string) bool { return true }, false, "")
 }
 
-func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
+func (m *Manager) BackgroundTab(ctx context.Context, tabID, client string) error {
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return err
+	}
+	tab.session.mu.Lock()
+	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx))
+	tab.session.mu.Unlock()
+	if !allowed {
+		return ErrForbidden
+	}
+	client = clientID(client)
+	return m.detachMatching(tab, func(subscriberClient string) bool {
+		return subscriberClient == client
+	}, true, client)
+}
+
+func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background bool, backgroundClient string) error {
 	m.mu.Lock()
-	if m.tabs[tab.ID] != tab {
+	if m.tabs[tab.ID] != tab || background && m.closed {
 		m.mu.Unlock()
 		return ErrTabClosed
 	}
 	tab.mu.Lock()
+	if background && tab.ephemeral {
+		if !tab.retainable {
+			tab.mu.Unlock()
+			m.mu.Unlock()
+			return ErrUnsupported
+		}
+		if tab.closed || tab.destroying || tab.exited || tab.channel == nil {
+			tab.mu.Unlock()
+			m.mu.Unlock()
+			return ErrTabClosed
+		}
+	}
+	if background && tab.retainable {
+		matched := 0
+		for _, subscriber := range tab.subscribers {
+			if match(subscriber.client) {
+				matched++
+			}
+		}
+		if matched == 0 {
+			if tab.retained && tab.retainedBy == backgroundClient {
+				tab.mu.Unlock()
+				m.mu.Unlock()
+				return nil
+			}
+			tab.mu.Unlock()
+			m.mu.Unlock()
+			return ErrDisconnected
+		}
+		tab.retained = true
+		tab.retainedBy = backgroundClient
+	}
 	detached := make([]subscriber, 0)
 	throttleRecovered := false
 	var throttleVersion uint64
@@ -808,6 +931,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
+	generation := tab.generation
 	tab.mu.Unlock()
 	m.mu.Unlock()
 	for _, subscriber := range detached {
@@ -820,9 +944,54 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	if throttleRecovered {
 		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: throttleChannel, Recovered: true, Version: throttleVersion})
 	}
-	if len(detached) > 0 && empty && ephemeral {
-		return m.CloseTab(tab.ID)
+	if !background && len(detached) > 0 && empty && ephemeral {
+		return m.reapEphemeralTab(tab, generation)
 	}
+	return nil
+}
+
+var ephemeralReapAfterCurrent = func() {}
+
+func (m *Manager) reapEphemeralTab(tab *Tab, generation uint64) error {
+	tab.lifecycleMu.Lock()
+	defer tab.lifecycleMu.Unlock()
+
+	m.mu.Lock()
+	session := tab.session
+	session.mu.Lock()
+	tab.mu.Lock()
+	current := m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab && !session.closed &&
+		tab.generation == generation && session.generation == generation && tab.ephemeral && !tab.retained &&
+		!tab.closed && (!tab.destroying || tab.closeRetry) && len(tab.subscribers) == 0
+	if current {
+		tab.destroying = true
+	}
+	tab.mu.Unlock()
+	session.mu.Unlock()
+	m.mu.Unlock()
+	ephemeralReapAfterCurrent()
+	if !current {
+		return nil
+	}
+	if err := m.closeTabResources(tab); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	session.mu.Lock()
+	tab.mu.Lock()
+	if m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
+		delete(m.tabs, tab.ID)
+		delete(session.tabs, tab.ID)
+		delete(m.throttleVersions, tab.ID)
+		delete(m.throttleChannels, tab.ID)
+		if len(session.tabs) == 0 {
+			session.idleSince = time.Now()
+		}
+	}
+	tab.mu.Unlock()
+	session.mu.Unlock()
+	m.mu.Unlock()
 	return nil
 }
 
@@ -1085,6 +1254,9 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		m.deleteDurableTabTitle(id)
 	} else {
 		m.mu.Unlock()
+		if err := m.closeTabResources(tab); err != nil {
+			return err
+		}
 	}
 
 	m.mu.Lock()
@@ -1101,53 +1273,74 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Unlock()
 	}
 	m.mu.Unlock()
-	m.closeTabResources(tab)
+	_ = m.closeTabResources(tab)
 	return nil
 }
 
-func (m *Manager) closeTabResources(tab *Tab) {
-	tab.closeOnce.Do(func() {
-		tab.mu.Lock()
-		tab.closed = true
-		tab.exited = true
-		tab.setGenerationLocked(tab.generation + 1)
-		if tab.cancelPump != nil {
-			tab.cancelPump()
-		}
-		channel := tab.channel
-		tab.channel = nil
-		subscribers := tab.subscribers
-		tab.subscribers = make(map[string]subscriber)
-		tab.controller = ""
-		if tab.grid != nil {
-			tab.grid.Close()
-			close(tab.retire)
-		}
+func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
+	tab.closeMu.Lock()
+	defer tab.closeMu.Unlock()
+	tab.mu.Lock()
+	if tab.closed {
 		tab.mu.Unlock()
-		tab.responses.close()
-		tab.cancel()
+		if len(afterClose) > 0 && afterClose[0] != nil {
+			afterClose[0]()
+		}
+		return nil
+	}
+	tab.destroying = true
+	channel := tab.channel
+	tab.mu.Unlock()
+	if channel != nil {
+		if err := channel.Close(); err != nil {
+			tab.mu.Lock()
+			tab.closeRetry = true
+			tab.mu.Unlock()
+			return err
+		}
+	}
 
-		m.mu.Lock()
-		for channelID := range subscribers {
-			delete(m.channelTabs, channelID)
-		}
-		m.mu.Unlock()
-		for _, subscriber := range subscribers {
-			subscriber.co.teardown(subscriber.producer)
-			_ = subscriber.producer.Close()
-		}
-		if channel != nil {
-			_ = channel.Close()
-		}
-		<-tab.feedGate
-		m.flushPendingCommand(tab)
-		tab.terminal.Close()
-		tab.feedGate <- struct{}{}
-		tab.mu.Lock()
-		event := tab.controlEventLocked()
-		tab.mu.Unlock()
-		m.emit(context.Background(), TopicTerminalControl, event)
-	})
+	tab.mu.Lock()
+	tab.closeRetry = false
+	tab.closed = true
+	tab.exited = true
+	tab.setGenerationLocked(tab.generation + 1)
+	if tab.cancelPump != nil {
+		tab.cancelPump()
+	}
+	tab.channel = nil
+	subscribers := tab.subscribers
+	tab.subscribers = make(map[string]subscriber)
+	tab.controller = ""
+	if tab.grid != nil {
+		tab.grid.Close()
+		close(tab.retire)
+	}
+	tab.mu.Unlock()
+	if len(afterClose) > 0 && afterClose[0] != nil {
+		afterClose[0]()
+	}
+	tab.responses.close()
+	tab.cancel()
+
+	m.mu.Lock()
+	for channelID := range subscribers {
+		delete(m.channelTabs, channelID)
+	}
+	m.mu.Unlock()
+	for _, subscriber := range subscribers {
+		subscriber.co.teardown(subscriber.producer)
+		_ = subscriber.producer.Close()
+	}
+	<-tab.feedGate
+	m.flushPendingCommand(tab)
+	tab.terminal.Close()
+	tab.feedGate <- struct{}{}
+	tab.mu.Lock()
+	event := tab.controlEventLocked()
+	tab.mu.Unlock()
+	m.emit(context.Background(), TopicTerminalControl, event)
+	return nil
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {
@@ -1323,4 +1516,121 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	if shouldReconnect {
 		_ = m.StartReconnect(tab.session.ID)
 	}
+}
+
+func (m *Manager) OpenTabFor(ctx context.Context, options OpenTabOptions) (TabInfo, error) {
+	if _, err := m.SessionFor(ctx, options.SessionID); err != nil {
+		return TabInfo{}, err
+	}
+	return m.OpenTab(ctx, options)
+}
+
+func (m *Manager) CreateTabFor(ctx context.Context, options CreateTabOptions) (TabInfo, error) {
+	if _, err := m.SessionFor(ctx, options.SessionID); err != nil {
+		return TabInfo{}, err
+	}
+	return m.CreateTab(ctx, options)
+}
+
+func (m *Manager) AttachTabFor(ctx context.Context, tabID string, options AttachOptions) (TabInfo, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return TabInfo{}, err
+	}
+	return m.AttachTab(ctx, tabID, options)
+}
+
+func (m *Manager) RenameTabFor(ctx context.Context, tabID, title string) (TabInfo, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return TabInfo{}, err
+	}
+	return m.RenameTab(ctx, tabID, title)
+}
+
+func (m *Manager) DetachChannelFor(ctx context.Context, channelID string) error {
+	m.mu.Lock()
+	tabID := m.channelTabs[channelID]
+	m.mu.Unlock()
+	if tabID == "" {
+		if userIDFromContext(ctx) != "" {
+			return ErrTabNotFound
+		}
+		if !m.requestOpenAccess(ctx) {
+			return ErrForbidden
+		}
+		return m.DetachChannel(channelID)
+	}
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.DetachChannel(channelID)
+}
+
+func (m *Manager) DetachClientFor(ctx context.Context, tabID, client string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.DetachClient(tabID, client)
+}
+
+func (m *Manager) DetachAllFor(ctx context.Context, tabID string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.DetachAll(tabID)
+}
+
+func (m *Manager) ClaimFor(ctx context.Context, tabID, client string) (string, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return "", err
+	}
+	return m.Claim(tabID, client)
+}
+
+func (m *Manager) ReleaseFor(ctx context.Context, tabID, client string) (bool, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return false, err
+	}
+	return m.Release(tabID, client)
+}
+
+func (m *Manager) WriteFor(ctx context.Context, tabID, client string, data []byte) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.Write(ctx, tabID, client, data)
+}
+
+func (m *Manager) ResizeFor(ctx context.Context, tabID, client string, cols, rows uint32) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.Resize(ctx, tabID, client, cols, rows)
+}
+
+func (m *Manager) ExecLineFor(ctx context.Context, tabID, client, command string) (base.ExecResult, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return base.ExecResult{}, err
+	}
+	return m.ExecLine(ctx, tabID, client, command)
+}
+
+func (m *Manager) CloseTabFor(ctx context.Context, id string) error {
+	if _, err := m.TabFor(ctx, id); err != nil {
+		return err
+	}
+	return m.CloseTab(id)
+}
+
+func (m *Manager) GridSnapshotFor(ctx context.Context, tabID string) (terminalgrid.Snapshot, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return terminalgrid.Snapshot{}, err
+	}
+	return m.GridSnapshot(tabID)
+}
+
+func (m *Manager) FlushResizeFor(ctx context.Context, tabID, client string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.FlushResize(ctx, tabID, client)
 }

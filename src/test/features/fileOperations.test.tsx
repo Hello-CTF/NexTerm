@@ -79,6 +79,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     sessionApi: {},
   };
 });
+vi.mock("../../features/ai/runOwnership", () => ({
+  aiTabBusyIds: new Set<string>(),
+  aiTabRunControls: new Map<string, () => Promise<boolean>>(),
+  confirmAiRunCancellation: vi.fn(),
+  runningAiTabs: vi.fn(() => []),
+  clearAiTabRuns: vi.fn(),
+}));
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
   return {
@@ -106,10 +113,17 @@ vi.mock("@tanstack/react-virtual", () => ({
 interface FakeEditorState {
   doc: { toString: () => string; length: number };
   extensions: unknown[];
+  selection: { from: number; to: number };
+  undoDepth: number;
 }
 interface FakeEditorView {
   state: FakeEditorState;
-  dispatch: (change: { changes: { from: number; to: number; insert: string } }) => void;
+  effects: unknown[];
+  destroyed: boolean;
+  dispatch: (change: {
+    changes?: { from: number; to: number; insert: string };
+    effects?: unknown;
+  }) => void;
 }
 const editors = vi.hoisted(() => ({ views: [] as FakeEditorView[] }));
 
@@ -123,11 +137,22 @@ vi.mock("@codemirror/state", () => {
       return this.text.length;
     }
   }
+  class Compartment {
+    of(extension: unknown) {
+      return { compartment: this, extension };
+    }
+    reconfigure(extension: unknown) {
+      return { compartment: this, extension };
+    }
+  }
   return {
+    Compartment,
     EditorState: {
       create: ({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
         doc: new Doc(doc),
         extensions,
+        selection: { from: 0, to: 0 },
+        undoDepth: 0,
       }),
     },
     Prec: { highest: (extension: unknown) => extension },
@@ -139,6 +164,8 @@ vi.mock("@codemirror/view", () => {
       of: (listener: unknown) => ({ codeMirrorListener: listener }),
     };
     state: FakeEditorState;
+    effects: unknown[] = [];
+    destroyed = false;
     private readonly listeners: Array<(update: unknown) => void> = [];
     constructor(config: { state: FakeEditorState }) {
       this.state = config.state;
@@ -156,13 +183,30 @@ vi.mock("@codemirror/view", () => {
       visit(this.state.extensions);
       editors.views.push(this);
     }
-    dispatch({ changes }: { changes: { from: number; to: number; insert: string } }) {
+    dispatch({
+      changes,
+      effects,
+    }: {
+      changes?: { from: number; to: number; insert: string };
+      effects?: unknown;
+    }) {
+      if (effects !== undefined) {
+        this.effects.push(effects);
+        return;
+      }
+      if (!changes) return;
       const current = this.state.doc.toString() as string;
       const next = `${current.slice(0, changes.from)}${changes.insert}${current.slice(changes.to)}`;
-      this.state = { ...this.state, doc: { toString: () => next, length: next.length } };
+      this.state = {
+        ...this.state,
+        doc: { toString: () => next, length: next.length },
+        undoDepth: this.state.undoDepth + 1,
+      };
       this.listeners.forEach((listener) => listener({ docChanged: true, state: this.state }));
     }
-    destroy() {}
+    destroy() {
+      this.destroyed = true;
+    }
   }
   return { EditorView, keymap: { of: (bindings: unknown) => bindings } };
 });
@@ -183,13 +227,21 @@ vi.mock("@codemirror/legacy-modes/mode/javascript", () => ({ javascript: {} }));
 vi.mock("@codemirror/legacy-modes/mode/python", () => ({ python: {} }));
 vi.mock("../../ui/editorTheme", () => ({ nxHighlight: [] }));
 
-import type { AppTab } from "../../app/store";
-import { useUi } from "../../app/store";
+import type { AppTab, Workspace } from "../../app/store";
+import { openFileTab, openLogTab, useUi } from "../../app/store";
 import { dialogLevelForKind } from "../../app/App";
 import { registerDialogHandlers } from "../../ui/dialogs";
 import { DialogHost } from "../../ui/DialogHost";
 import type { FileEntryDto } from "../../ipc/types";
-import { isDirtyFileEditor, setFileEditorDirty } from "../../features/files/editorGuards";
+import {
+  acknowledgeFileEditorLocation,
+  beginFileEditorRename,
+  beginFileEditorSave,
+  endFileEditorOperation,
+  finishFileEditorRename,
+  isDirtyFileEditor,
+  setFileEditorDirty,
+} from "../../features/files/editorGuards";
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
@@ -200,6 +252,7 @@ import {
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { FileEditor } from "../../features/files/FileEditor";
+import { LogViewer } from "../../features/files/LogViewer";
 
 const SID = "s1";
 
@@ -263,9 +316,69 @@ function editorTab(path: string): AppTab {
   return { id: `file-${SID}-${path}`, kind: "files", title: "a.txt", sessionId: SID, path, closable: true };
 }
 
+function StoreFileEditor({ tabId }: { tabId: string }) {
+  const tab = useUi((state) => {
+    for (const workspace of state.workspaces) {
+      for (const pane of workspace.panes) {
+        const hit = pane.tabs.find((candidate) => candidate.id === tabId);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  });
+  if (!tab?.sessionId || !tab.path) return null;
+  return createElement(FileEditor, { sessionId: tab.sessionId, path: tab.path });
+}
+
 function mountBrowser(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })));
+}
+
+function mountBrowserWithEditor(tabId: string): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(
+        "div",
+        null,
+        createElement(FileBrowser, { sessionId: SID }),
+        createElement(StoreFileEditor, { tabId }),
+      ),
+    ),
+  );
+}
+
+function StoreLogViewer({ tabId }: { tabId: string }) {
+  const tab = useUi((state) => {
+    for (const workspace of state.workspaces) {
+      for (const pane of workspace.panes) {
+        const hit = pane.tabs.find((candidate) => candidate.id === tabId);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  });
+  if (!tab?.sessionId || !tab.path) return null;
+  return createElement(LogViewer, { sessionId: tab.sessionId, path: tab.path });
+}
+
+function mountBrowserWithLog(tabId: string): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(
+        "div",
+        null,
+        createElement(FileBrowser, { sessionId: SID }),
+        createElement(StoreLogViewer, { tabId }),
+      ),
+    ),
+  );
 }
 
 function mountTree(): MountedView {
@@ -465,7 +578,7 @@ describe("rename (FileBrowser)", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/link", "~/link2");
   });
 
-  it("warns when a dirty editor has the file open and does not clear its dirty state", async () => {
+  it("migrates a dirty open editor without changing its identity or dirty state", async () => {
     const tab = editorTab("~/a.txt");
     act(() => {
       useUi.setState({
@@ -485,13 +598,39 @@ describe("rename (FileBrowser)", () => {
     });
     setFileEditorDirty(SID, "~/a.txt", true);
     await triggerRename("c.txt");
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("未保存"),
-      expect.objectContaining({ kind: "warning" }),
-    );
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
-    expect(isDirtyFileEditor(tab)).toBe(true);
-    setFileEditorDirty(SID, "~/a.txt", false);
+    const migrated = useUi.getState().workspaces[0]?.panes[0]?.tabs[0] ?? tab;
+    expect(migrated).toMatchObject({ id: tab.id, path: "~/c.txt", title: "c.txt" });
+    expect(isDirtyFileEditor(migrated)).toBe(true);
+    expect(isDirtyFileEditor(tab)).toBe(false);
+    setFileEditorDirty(SID, "~/c.txt", false);
+  });
+
+  it("migrates a clean open editor instead of rejecting the rename", async () => {
+    const tab = editorTab("~/a.txt");
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            id: "ws",
+            kind: "session",
+            title: "w",
+            panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
+            activePaneId: "p",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws",
+      });
+    });
+    await triggerRename("c.txt");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]).toMatchObject({
+      id: tab.id,
+      path: "~/c.txt",
+      title: "c.txt",
+    });
   });
 
   it("presents backend rejection verbatim and allows retrying with the same input", async () => {
@@ -534,6 +673,784 @@ describe("rename (FileBrowser)", () => {
     await flush();
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+});
+
+describe("R2 rename editor locator migration", () => {
+  beforeEach(() => {
+    editors.views = [];
+    mocks.read.mockResolvedValue({
+      path: "~/a.txt",
+      size: 8,
+      contentBase64: btoa("original"),
+    });
+  });
+
+  afterEach(() => {
+    mocks.askChoice.mockReset();
+    acknowledgeFileEditorLocation(SID, "~/a.txt");
+    acknowledgeFileEditorLocation(SID, "/a");
+    setFileEditorDirty(SID, "~/a.txt", false);
+    setFileEditorDirty(SID, "~/c.txt", false);
+    setFileEditorDirty(SID, "/a/file.txt", false);
+  });
+
+  function seedWorkspaces(workspaces: Workspace[], activeWorkspaceId = workspaces[0]?.id): void {
+    act(() => {
+      useUi.setState({ workspaces, activeWorkspaceId: activeWorkspaceId ?? null });
+    });
+  }
+
+  function seedEditor(tab: AppTab): void {
+    seedWorkspaces([
+      {
+        id: "ws",
+        kind: "session",
+        title: "w",
+        sessionId: SID,
+        panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
+        activePaneId: "p",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ]);
+  }
+
+  function storedTab(id: string): AppTab {
+    for (const workspace of useUi.getState().workspaces) {
+      for (const pane of workspace.panes) {
+        const tab = pane.tabs.find((candidate) => candidate.id === id);
+        if (tab) return tab;
+      }
+    }
+    throw new Error(`Tab not found: ${id}`);
+  }
+
+  async function triggerRename(name: string, path = "~/a.txt"): Promise<void> {
+    mocks.promptText.mockResolvedValue(name);
+    openRowMenu(mounted!.container, path);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+  }
+
+  function saveButton(): HTMLButtonElement {
+    return mounted!.container.querySelector<HTMLButtonElement>('button[title^="保存（"]')!;
+  }
+
+  it("blocks saving during rename, then keeps the same document and saves only to the new locator", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "stable-editor" };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "changed!" } });
+    });
+    view.state.selection = { from: 2, to: 5 };
+    const undoDepth = view.state.undoDepth;
+    const pending = deferred<void>();
+    mocks.rename.mockReturnValueOnce(pending.promise);
+
+    await triggerRename("c.py");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.py");
+    click(saveButton());
+    await flush();
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    pending.resolve();
+    await waitFor(() => {
+      const migrated = useUi.getState().workspaces[0]?.panes[0]?.tabs[0];
+      expect(migrated).toMatchObject({ id: tab.id, path: "~/c.py", title: "c.py" });
+    });
+    expect(editors.views).toHaveLength(1);
+    expect(view.destroyed).toBe(false);
+    expect(view.state.doc.toString()).toBe("changed!");
+    expect(view.state.selection).toEqual({ from: 2, to: 5 });
+    expect(view.state.undoDepth).toBe(undoDepth);
+    expect(view.effects).toHaveLength(1);
+    expect(mocks.read).toHaveBeenCalledTimes(1);
+    expect(isDirtyFileEditor({ ...tab, path: "~/c.py", title: "c.py" })).toBe(true);
+
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.py", expect.any(String), true);
+    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+  });
+
+  it("migrates a clean editor without rereading, then saves later edits to the new locator", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "clean-editor" };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+
+    await triggerRename("c.txt");
+    await waitFor(() => expect(storedTab(tab.id).path).toBe("~/c.txt"));
+    expect(editors.views).toHaveLength(1);
+    expect(view.destroyed).toBe(false);
+    expect(mocks.read).toHaveBeenCalledTimes(1);
+    expect(isDirtyFileEditor(storedTab(tab.id))).toBe(false);
+
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "after" } });
+    });
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String), true);
+  });
+
+  it("rejects rename while a save is in flight and allows it after that save settles", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "saving-editor" };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "changed" } });
+    });
+    const pending = deferred<void>();
+    mocks.write.mockReturnValueOnce(pending.promise);
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true));
+
+    await triggerRename("c.txt");
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("正在保存"));
+
+    pending.resolve();
+    await flush();
+    await triggerRename("c.txt");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
+    expect(storedTab(tab.id).path).toBe("~/c.txt");
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects rename while the initial read is in flight instead of racing the locator", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "loading-editor" };
+    seedEditor(tab);
+    const pending = deferred<{ path: string; offset: number; size: number; contentBase64: string; truncated: boolean }>();
+    mocks.readRange.mockReturnValueOnce(pending.promise);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("c.txt");
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("读取"));
+
+    pending.resolve({ path: "~/a.txt", offset: 0, size: 8, contentBase64: "", truncated: false });
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    await triggerRename("c.txt");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
+    expect(storedTab(tab.id).path).toBe("~/c.txt");
+  });
+
+  it("activates and rejects an already-open target editor instead of merging drafts", async () => {
+    const source = { ...editorTab("~/a.txt"), id: "source" };
+    const target = { ...editorTab("~/b.txt"), id: "target", title: "b.txt" };
+    seedWorkspaces([
+      {
+        id: "ws",
+        kind: "session",
+        title: "w",
+        sessionId: SID,
+        panes: [
+          { id: "p1", tabs: [source], activeTabId: source.id },
+          { id: "p2", tabs: [target], activeTabId: target.id },
+        ],
+        activePaneId: "p1",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ]);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("b.txt");
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(storedTab(source.id).path).toBe("~/a.txt");
+    expect(storedTab(target.id).path).toBe("~/b.txt");
+    expect(useUi.getState().workspaces[0]).toMatchObject({ activePaneId: "p2" });
+    expect(useUi.getState().workspaces[0]?.panes[1]?.activeTabId).toBe(target.id);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("目标"));
+  });
+
+  it("keeps source locators and dirty state when overwrite confirmation is canceled", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "overwrite-source" };
+    seedEditor(tab);
+    setFileEditorDirty(SID, "~/a.txt", true);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await triggerRename("b.txt");
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(storedTab(tab.id).path).toBe("~/a.txt");
+    expect(isDirtyFileEditor(storedTab(tab.id))).toBe(true);
+    setFileEditorDirty(SID, "~/a.txt", false);
+  });
+
+  it("atomically migrates matching editors across panes and workspaces with directory boundaries", async () => {
+    const first = { ...editorTab("/a/one.txt"), id: "first", title: "one.txt" };
+    const second = { ...editorTab("/a/nested/two.py"), id: "second", title: "two.py" };
+    const neighbor = { ...editorTab("/abc/no.txt"), id: "neighbor", title: "no.txt" };
+    const log: AppTab = {
+      id: "log-first",
+      kind: "log",
+      title: "one.txt",
+      sessionId: SID,
+      path: "/a/one.txt",
+      closable: true,
+    };
+    const otherSession = { ...editorTab("/a/other.txt"), id: "other-session", sessionId: "s2" };
+    seedWorkspaces(
+      [
+        {
+          id: "ws1",
+          kind: "session",
+          title: "w1",
+          sessionId: SID,
+          panes: [
+            { id: "p1", tabs: [first], activeTabId: first.id },
+            { id: "p2", tabs: [second], activeTabId: second.id },
+          ],
+          activePaneId: "p2",
+          splitRatio: 0.5,
+          closable: true,
+        },
+        {
+          id: "ws2",
+          kind: "session",
+          title: "w2",
+          sessionId: SID,
+          panes: [{ id: "p3", tabs: [neighbor, log], activeTabId: log.id }],
+          activePaneId: "p3",
+          splitRatio: 0.5,
+          closable: true,
+        },
+        {
+          id: "ws3",
+          kind: "session",
+          title: "w3",
+          sessionId: "s2",
+          panes: [{ id: "p4", tabs: [otherSession], activeTabId: otherSession.id }],
+          activePaneId: "p4",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      "ws2",
+    );
+    setFileEditorDirty(SID, "/a/one.txt", true);
+    setFileEditorDirty(SID, "/a/nested/two.py", true);
+    mocks.list.mockImplementation((_s: string, path: string) =>
+      Promise.resolve(
+        path === "~"
+          ? [entry("a", "dir", { path: "/a" }), entry("abc", "dir", { path: "/abc" })]
+          : [],
+      ),
+    );
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "/a")).toBeTruthy());
+    let workspaceUpdates = 0;
+    const unsubscribe = useUi.subscribe((state, previous) => {
+      if (state.workspaces !== previous.workspaces) workspaceUpdates += 1;
+    });
+
+    const pending = deferred<void>();
+    mocks.rename.mockReturnValueOnce(pending.promise);
+    await triggerRename("renamed", "/a");
+    act(() => useUi.getState().setActiveWorkspace("ws1"));
+    pending.resolve();
+    await flush();
+    unsubscribe();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "/a", "/renamed");
+    expect(workspaceUpdates).toBe(1);
+    expect(storedTab(first.id)).toMatchObject({ path: "/renamed/one.txt", title: "one.txt" });
+    expect(storedTab(second.id)).toMatchObject({ path: "/renamed/nested/two.py", title: "two.py" });
+    expect(storedTab(neighbor.id).path).toBe("/abc/no.txt");
+    expect(storedTab(log.id)).toMatchObject({ path: "/renamed/one.txt", title: "one.txt" });
+    expect(storedTab(otherSession.id).path).toBe("/a/other.txt");
+    expect(isDirtyFileEditor(storedTab(first.id))).toBe(true);
+    expect(isDirtyFileEditor(storedTab(second.id))).toBe(true);
+    expect(useUi.getState().activeWorkspaceId).toBe("ws1");
+    expect(useUi.getState().workspaces[0]?.activePaneId).toBe("p2");
+    expect(useUi.getState().workspaces[1]?.panes[0]?.activeTabId).toBe(log.id);
+    setFileEditorDirty(SID, "/renamed/one.txt", false);
+    setFileEditorDirty(SID, "/renamed/nested/two.py", false);
+  });
+
+  it("migrates only a symlink's own locator and never follows its target", async () => {
+    const link = { ...editorTab("~/link"), id: "link-editor", title: "link" };
+    const target = { ...editorTab("~/a.txt"), id: "target-editor" };
+    seedWorkspaces([
+      {
+        id: "ws",
+        kind: "session",
+        title: "w",
+        sessionId: SID,
+        panes: [{ id: "p", tabs: [link, target], activeTabId: link.id }],
+        activePaneId: "p",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ]);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/link")).toBeTruthy());
+
+    await triggerRename("link2", "~/link");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/link", "~/link2");
+    expect(storedTab(link.id)).toMatchObject({ path: "~/link2", title: "link2" });
+    expect(storedTab(target.id).path).toBe("~/a.txt");
+  });
+
+  it("commits locator migration when the remote rename settles after unmount", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "unmounted-editor" };
+    seedEditor(tab);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    const pending = deferred<void>();
+    mocks.rename.mockReturnValueOnce(pending.promise);
+    await triggerRename("c.txt");
+    mounted.unmount();
+    mounted = undefined;
+
+    pending.resolve();
+    await flush();
+    expect(storedTab(tab.id)).toMatchObject({ path: "~/c.txt", title: "c.txt" });
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+
+  it("keeps the original locator and document after a definite remote rejection", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "rejected-editor" };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "changed" } });
+    });
+    mocks.rename.mockRejectedValueOnce({ code: "forbidden", message: "permission denied" });
+
+    await triggerRename("c.txt");
+    expect(storedTab(tab.id)).toMatchObject({ id: tab.id, path: "~/a.txt" });
+    expect(view.state.doc.toString()).toBe("changed");
+    expect(isDirtyFileEditor(storedTab(tab.id))).toBe(true);
+    expect(mocks.rename).toHaveBeenCalledTimes(1);
+
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+  });
+
+  it("keeps the original locator and blocks old-path saves when the rename outcome is unknown", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "unknown-editor" };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "changed" } });
+    });
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+
+    await triggerRename("c.txt");
+    expect(storedTab(tab.id).path).toBe("~/a.txt");
+    expect(view.state.doc.toString()).toBe("changed");
+    expect(isDirtyFileEditor(storedTab(tab.id))).toBe(true);
+    mocks.askChoice.mockResolvedValueOnce(null);
+    click(saveButton());
+    await flush();
+
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.rename).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("结果未知"));
+    expect(mocks.askChoice).toHaveBeenCalledWith(
+      expect.stringContaining("确认旧路径和新路径"),
+      expect.objectContaining({ title: "确认文件位置" }),
+    );
+    expect(mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { key: string }) => choice.key)).toEqual([
+      "not-renamed",
+      "renamed",
+    ]);
+    expect(storedTab(tab.id).path).toBe("~/a.txt");
+    expect(view.state.doc.toString()).toBe("changed");
+    acknowledgeFileEditorLocation(SID, "~/a.txt");
+    setFileEditorDirty(SID, "~/a.txt", false);
+  });
+
+  async function mountDirtyEditor(id: string, path = "~/a.txt") {
+    const tab = { ...editorTab(path), id };
+    seedEditor(tab);
+    mounted = mountBrowserWithEditor(tab.id);
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "changed" } });
+    });
+    return { tab, view };
+  }
+
+  for (const [label, error] of [
+    ["timeout", { code: "timeout", message: "deadline exceeded" }],
+    ["EOF", new Error("EOF")],
+    ["HTTP fetch", new TypeError("fetch failed")],
+    ["response read", { code: "internal", message: "读取响应失败" }],
+    ["SFTP stream loss", { code: "sftp", message: "SFTP rename: unexpected EOF" }],
+  ] as const) {
+    it(`keeps ${label} unknown and never writes the old locator before reconciliation`, async () => {
+      const { tab, view } = await mountDirtyEditor(`unknown-${label}`);
+      mocks.rename.mockRejectedValueOnce(error);
+      await triggerRename("c.txt");
+      mocks.askChoice.mockResolvedValueOnce(null);
+      click(saveButton());
+      await flush();
+
+      expect(storedTab(tab.id)).toMatchObject({ path: "~/a.txt" });
+      expect(view.state.doc.toString()).toBe("changed");
+      expect(mocks.write).not.toHaveBeenCalled();
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("结果未知"));
+      expect(mocks.askChoice).toHaveBeenCalled();
+      acknowledgeFileEditorLocation(SID, "~/a.txt");
+      setFileEditorDirty(SID, "~/a.txt", false);
+    });
+  }
+
+  it("migrates atomically after confirming a rename applied by the server despite a lost response", async () => {
+    const { tab, view } = await mountDirtyEditor("response-lost-applied");
+    mocks.rename.mockRejectedValueOnce({ code: "internal", message: "读取响应失败" });
+    await triggerRename("c.txt");
+    expect(storedTab(tab.id).path).toBe("~/a.txt");
+
+    mocks.askChoice.mockResolvedValueOnce("renamed");
+    click(saveButton());
+    await waitFor(() => expect(storedTab(tab.id).path).toBe("~/c.txt"));
+    expect(view.state.doc.toString()).toBe("changed");
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.rename).toHaveBeenCalledTimes(1);
+
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String), true);
+    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+    setFileEditorDirty(SID, "~/c.txt", false);
+  });
+
+  it("clears the whole directory unknown record after confirming the rename did not happen", async () => {
+    mocks.list.mockResolvedValue([entry("a", "dir", { path: "/a" })]);
+    const { tab } = await mountDirtyEditor("response-lost-directory", "/a/file.txt");
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+    await triggerRename("b", "/a");
+    expect(storedTab(tab.id).path).toBe("/a/file.txt");
+
+    mocks.askChoice.mockResolvedValueOnce("not-renamed");
+    click(saveButton());
+    await flush();
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(storedTab(tab.id).path).toBe("/a/file.txt");
+
+    click(saveButton());
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/a/file.txt", expect.any(String), true));
+    await triggerRename("c", "/a");
+    expect(mocks.rename).toHaveBeenCalledTimes(2);
+    expect(mocks.rename).toHaveBeenLastCalledWith(SID, "/a", "/c");
+  });
+
+  it("rechecks an opened target before migrating an unknown rename", async () => {
+    const { tab } = await mountDirtyEditor("unknown-target-race");
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+    await triggerRename("c.txt");
+    const source = storedTab(tab.id);
+    const target = { ...editorTab("~/c.txt"), id: "unknown-target-opened", title: "c.txt" };
+    seedWorkspaces([
+      {
+        id: "ws",
+        kind: "session",
+        title: "w",
+        sessionId: SID,
+        panes: [
+          { id: "p1", tabs: [source], activeTabId: source.id },
+          { id: "p2", tabs: [target], activeTabId: target.id },
+        ],
+        activePaneId: "p1",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ]);
+    setFileEditorDirty(SID, "~/c.txt", true);
+    mocks.askChoice.mockResolvedValueOnce("renamed").mockResolvedValueOnce(null);
+
+    click(saveButton());
+    await flush();
+
+    expect(storedTab(source.id).path).toBe("~/a.txt");
+    expect(storedTab(target.id).path).toBe("~/c.txt");
+    expect(isDirtyFileEditor(storedTab(source.id))).toBe(true);
+    expect(isDirtyFileEditor(storedTab(target.id))).toBe(true);
+    expect(useUi.getState().workspaces[0]?.activePaneId).toBe("p2");
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    const confirmations = mocks.askChoice.mock.calls.length;
+    click(saveButton());
+    await flush();
+    expect(mocks.askChoice.mock.calls.length).toBe(confirmations + 1);
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("offers location confirmation without an editor and refreshes after not-renamed", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+    mocks.askChoice.mockResolvedValueOnce(null);
+
+    await triggerRename("c.txt");
+    expect(mocks.askChoice).toHaveBeenCalledTimes(1);
+
+    mocks.askChoice.mockResolvedValueOnce("not-renamed");
+    await triggerRename("c.txt");
+    expect(mocks.askChoice).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
+
+    await triggerRename("c.txt");
+    expect(mocks.rename).toHaveBeenCalledTimes(2);
+  });
+
+  it("confirms renamed and invalidates caches after the initiating panel unmounts", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "unknown-clean-unmounted" };
+    seedEditor(tab);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    mounted = mount(
+      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+    );
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    const pending = deferred<void>();
+    mocks.rename.mockReturnValueOnce(pending.promise);
+    mocks.askChoice.mockResolvedValueOnce("renamed");
+    await triggerRename("c.txt");
+    mounted.unmount();
+    mounted = undefined;
+
+    pending.reject({ code: "disconnected", message: "connection lost" });
+    await flush();
+
+    expect(mocks.askChoice).toHaveBeenCalledOnce();
+    expect(storedTab(tab.id).path).toBe("~/c.txt");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["fs", SID] });
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+
+  it("reconciles the original unknown operation from its target path for a clean editor", async () => {
+    const tab = { ...editorTab("~/a.txt"), id: "unknown-target-entry-clean" };
+    seedEditor(tab);
+    let visible = [entry("a.txt", "file")];
+    mocks.list.mockImplementation(() => Promise.resolve(visible));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    mounted = mount(
+      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+    );
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+    mocks.askChoice.mockResolvedValueOnce(null);
+    await triggerRename("c.txt");
+    expect(beginFileEditorSave(SID, "~/a.txt")).toBe("unknown");
+
+    visible = [entry("c.txt", "file")];
+    click(mounted.container.querySelector<HTMLButtonElement>('button[title="刷新"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/c.txt")).toBeTruthy());
+    invalidate.mockClear();
+    mocks.askChoice.mockResolvedValueOnce("renamed");
+
+    await triggerRename("d.txt", "~/c.txt");
+
+    expect(mocks.askChoice).toHaveBeenCalledTimes(2);
+    expect(storedTab(tab.id)).toMatchObject({ path: "~/c.txt", title: "c.txt" });
+    expect(mocks.rename).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["fs", SID] });
+  });
+
+  it("reconciles not-renamed from the target path without an editor and invalidates caches", async () => {
+    let visible = [entry("a.txt", "file")];
+    mocks.list.mockImplementation(() => Promise.resolve(visible));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    mounted = mount(
+      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+    );
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
+    mocks.askChoice.mockResolvedValueOnce(null);
+    await triggerRename("c.txt");
+
+    visible = [entry("c.txt", "file")];
+    click(mounted.container.querySelector<HTMLButtonElement>('button[title="刷新"]')!);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/c.txt")).toBeTruthy());
+    invalidate.mockClear();
+    mocks.askChoice.mockResolvedValueOnce("not-renamed");
+
+    await triggerRename("d.txt", "~/c.txt");
+
+    expect(mocks.askChoice).toHaveBeenCalledTimes(2);
+    expect(mocks.rename).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["fs", SID] });
+    const save = beginFileEditorSave(SID, "~/a.txt");
+    expect(typeof save).toBe("number");
+    if (typeof save === "number") endFileEditorOperation(save);
+  });
+
+  it("keeps a real WinRM case-folded target in overwrite preflight", async () => {
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    mocks.list.mockResolvedValue([entry("a.txt", "file"), entry("A.TXT", "file")]);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await triggerRename("A.TXT");
+
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已存在"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.rename).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await triggerRename("A.TXT");
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/A.TXT");
+  });
+
+  it("allows a WinRM case-only rename while its source editor is open", async () => {
+    const source = { ...editorTab("~/a.txt"), id: "windows-case-source" };
+    seedEditor(source);
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("A.TXT");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/A.TXT");
+    expect(storedTab(source.id)).toMatchObject({ id: source.id, path: "~/A.TXT", title: "A.TXT" });
+  });
+
+  it("does not treat the source entry as an overwrite conflict for a WinRM case-only rename", async () => {
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("A.TXT");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/A.TXT");
+  });
+
+  it("rejects an open WinRM target that differs only by case", async () => {
+    const target = { ...editorTab("~/B.TXT"), id: "windows-target", title: "B.TXT" };
+    seedEditor(target);
+    useUi.setState({
+      sessions: [
+        { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("b.txt");
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(storedTab(target.id).path).toBe("~/B.TXT");
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("目标"));
+  });
+
+  it("does not open source, target or log locators while their rename is pending", async () => {
+    seedWorkspaces([
+      {
+        id: "ws",
+        kind: "session",
+        title: "w",
+        sessionId: SID,
+        panes: [{ id: "p", tabs: [], activeTabId: null }],
+        activePaneId: "p",
+        splitRatio: 0.5,
+        closable: true,
+      },
+    ]);
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    const pending = deferred<void>();
+    mocks.rename.mockReturnValueOnce(pending.promise);
+    await triggerRename("c.txt");
+
+    try {
+      act(() => {
+        openFileTab(SID, "~/a.txt");
+        openFileTab(SID, "~/c.txt");
+        openLogTab(SID, "~/a.txt");
+        openLogTab(SID, "~/c.txt");
+      });
+      expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toHaveLength(0);
+      expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("重命名进行中"));
+    } finally {
+      pending.resolve();
+      await flush();
+    }
+  });
+
+  it("closes an editor instead of leaving an empty tab when its load guard is rejected", async () => {
+    const onClose = vi.fn();
+    const rename = beginFileEditorRename(SID, "~/a.txt", "~/c.txt", "file");
+    if (typeof rename === "string") throw new Error(`rename blocked: ${rename}`);
+    try {
+      mounted = mount(
+        createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+          createElement(FileEditor, { sessionId: SID, path: "~/c.txt", onClose }),
+        ),
+      );
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(mocks.read).not.toHaveBeenCalled();
+    } finally {
+      finishFileEditorRename(rename, false);
+    }
+  });
+
+  it("reloads LogViewer from the migrated locator after rename", async () => {
+    const log: AppTab = {
+      id: "log-editor",
+      kind: "log",
+      title: "a.txt",
+      sessionId: SID,
+      path: "~/a.txt",
+      closable: true,
+    };
+    seedEditor(log);
+    mocks.readRange.mockResolvedValue({
+      path: "~/a.txt",
+      offset: 0,
+      size: 8,
+      contentBase64: btoa("original"),
+      truncated: false,
+    });
+    mounted = mountBrowserWithLog(log.id);
+    await waitFor(() => expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/a.txt", 0, expect.any(Number)));
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    await triggerRename("c.txt");
+    await waitFor(() => expect(storedTab(log.id).path).toBe("~/c.txt"));
+    await waitFor(() => expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/c.txt", 0, expect.any(Number)));
   });
 });
 
@@ -949,18 +1866,21 @@ describe("operations under React StrictMode (review P1 regression)", () => {
   });
 });
 
-describe("warns for dirty editors of descendants when renaming a directory (review P2-3 regression)", () => {
+describe("rename open-editor directory boundaries", () => {
   beforeEach(async () => {
-    mocks.list.mockImplementation((_s: string, p: string) => {
-      if (p === "~/sub") return Promise.resolve([entry("a.txt", "file", { path: "~/sub/a.txt" })]);
-      return Promise.resolve(p === "~" ? [entry("sub", "dir"), entry("a.txt", "file")] : []);
-    });
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      Promise.resolve(
+        p === "~"
+          ? [entry("a", "dir", { path: "/a" }), entry("abc", "dir", { path: "/abc" })]
+          : [],
+      ),
+    );
     mounted = mountTree();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+    await waitFor(() => expect(rowByPath(mounted!.container, "/a")).toBeTruthy());
   });
 
-  it("unsaved files inside the directory trigger the old-path warning", async () => {
-    const tab = editorTab("~/sub/a.txt");
+  function seedOpenEditor(path: string): AppTab {
+    const tab = editorTab(path);
     act(() => {
       useUi.setState({
         workspaces: [
@@ -977,19 +1897,44 @@ describe("warns for dirty editors of descendants when renaming a directory (revi
         activeWorkspaceId: "ws",
       });
     });
-    setFileEditorDirty(SID, "~/sub/a.txt", true);
-    mocks.promptText.mockResolvedValue("sub2");
-    openRowMenu(mounted!.container, "~/sub");
+    return tab;
+  }
+
+  async function triggerDirectoryRename(): Promise<void> {
+    mocks.promptText.mockResolvedValue("renamed");
+    openRowMenu(mounted!.container, "/a");
     clickMenuItem(mounted!.container, "重命名");
     await flush();
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("未保存"),
-      expect.objectContaining({ kind: "warning" }),
-    );
-    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("目录"), expect.anything());
-    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/sub", "~/sub2");
-    expect(isDirtyFileEditor(tab)).toBe(true);
-    setFileEditorDirty(SID, "~/sub/a.txt", false);
+  }
+
+  it("migrates a dirty directory descendant and preserves its dirty state", async () => {
+    const tab = seedOpenEditor("/a/file.txt");
+    setFileEditorDirty(SID, "/a/file.txt", true);
+    await triggerDirectoryRename();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "/a", "/renamed");
+    const migrated = useUi.getState().workspaces[0]?.panes[0]?.tabs[0] ?? tab;
+    expect(migrated).toMatchObject({ id: tab.id, path: "/renamed/file.txt", title: "file.txt" });
+    expect(isDirtyFileEditor(migrated)).toBe(true);
+    expect(isDirtyFileEditor(tab)).toBe(false);
+    setFileEditorDirty(SID, "/renamed/file.txt", false);
+  });
+
+  it("migrates a clean directory descendant", async () => {
+    const tab = seedOpenEditor("/a/file.txt");
+    await triggerDirectoryRename();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "/a", "/renamed");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]).toMatchObject({
+      id: tab.id,
+      path: "/renamed/file.txt",
+      title: "file.txt",
+    });
+  });
+
+  it("does not treat /abc as a descendant of /a", async () => {
+    seedOpenEditor("/abc/file.txt");
+    await triggerDirectoryRename();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "/a", "/renamed");
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
   });
 });
 

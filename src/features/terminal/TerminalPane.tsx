@@ -21,7 +21,8 @@ import { terminalApi, fsApi, assetApi, syncApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, reconnectDeadHost, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
+import { takePendingDirectory, sessionStatusText, connectProgressText, applyRemoteTabTitle, reconnectSessionAndWait, reconnectDeadHost, isSessionReconnectPending, useUi, type Workspace } from "../../app/store";
+import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
@@ -206,6 +207,11 @@ export function TerminalPane({
   const [broadcastPickerOpen, setBroadcastPickerOpen] = useState(false);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
+  const resumePropRef = useRef(resumeTabId);
+  if (resumePropRef.current !== resumeTabId) {
+    resumePropRef.current = resumeTabId;
+    if (resumeTabId !== kernelTabId) resumeRef.current = resumeTabId;
+  }
   const resumeAttemptedRef = useRef(false);
   const observerHintAt = useRef(0);
   const writeErrorAt = useRef(0);
@@ -234,6 +240,7 @@ export function TerminalPane({
     sessionAssetId ? s.connectProgress[sessionAssetId] : undefined,
   );
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
+  const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
   );
@@ -533,6 +540,10 @@ export function TerminalPane({
     }
   }, [kernelTabId, applyControl]);
   useEffect(() => {
+    if (!kernelTabId) return;
+    void useUi.getState().resyncRecording(kernelTabId);
+  }, [kernelTabId]);
+  useEffect(() => {
     if (controlSupported && control?.exited) {
       useUi.getState().updateTab(storeTabId, { exited: true });
     }
@@ -562,6 +573,7 @@ export function TerminalPane({
         return;
       }
       applyControl(p);
+      void useUi.getState().resyncRecording(p.tabId);
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
@@ -596,6 +608,7 @@ export function TerminalPane({
         throttleVersions.current = new EventVersionGate();
         setThrottle(null);
         void refreshControl();
+        if (kernelTabIdRef.current) void useUi.getState().resyncRecording(kernelTabIdRef.current);
       }),
     [refreshControl],
   );
@@ -781,6 +794,31 @@ export function TerminalPane({
     }
   };
 
+  const startRecording = async () => {
+    if (!kernelTabId) return;
+    const name = `${title}-${Date.now()}.log`.replace(/[\\/:*?"<>|]/g, "_");
+    const path = await pickSavePath(name);
+    if (!path) return;
+    try {
+      await terminalApi.recordStart(kernelTabId, path);
+    } catch (e) {
+      pushToast("error", `开始录制失败：${describeError(e)}`);
+    } finally {
+      await useUi.getState().resyncRecording(kernelTabId);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!kernelTabId) return;
+    try {
+      await terminalApi.recordStop(kernelTabId);
+    } catch (e) {
+      pushToast("error", `停止录制失败：${describeError(e)}`);
+    } finally {
+      await useUi.getState().resyncRecording(kernelTabId);
+    }
+  };
+
   const saveLogToFile = async () => {
     if (!kernelTabId) return;
     const name = `${title}-${Date.now()}.log`.replace(/[\\/:*?"<>|]/g, "_");
@@ -953,6 +991,16 @@ export function TerminalPane({
         ] satisfies MenuItem[])
       : []),
     { kind: "separator" },
+    { kind: "group", label: "录制" },
+    {
+      kind: "item",
+      label: recording?.state === "running" ? "停止录制" : recording?.state === "failed" ? "重新开始录制…" : "开始录制…",
+      icon: <IconSave size={13} />,
+      hint: recording?.state === "running" ? "停止并保存当前录制" : "录制后续终端输出",
+      disabled: !kernelTabId,
+      onSelect: () => void (recording?.state === "running" ? stopRecording() : startRecording()),
+    },
+    { kind: "separator" },
     {
       kind: "item",
       label: "字符编码",
@@ -1039,6 +1087,14 @@ export function TerminalPane({
         label: "清屏",
         disabled: !kernelTabId,
         onSelect: () => handleRef.current?.clear(),
+      },
+      {
+        kind: "item",
+        label: recording?.state === "running" ? "停止录制" : recording?.state === "failed" ? "重新开始录制…" : "开始录制…",
+        icon: <IconSave size={13} />,
+        hint: recording?.state === "running" ? "停止并保存当前录制" : "录制后续终端输出",
+        disabled: !kernelTabId,
+        onSelect: () => void (recording?.state === "running" ? stopRecording() : startRecording()),
       },
       {
         kind: "item",
@@ -1150,6 +1206,17 @@ export function TerminalPane({
             输出已恢复
           </span>
         )}
+        {recording?.state === "running" && (
+          <span className="nx-badge nx-badge-red" title={recording.path || "正在录制"}>
+            <span className="nx-dot nx-dot-pulse" />
+            录制中
+          </span>
+        )}
+        {recording?.state === "failed" && (
+          <span className="nx-badge nx-badge-red" title={recording.safeError || "录制失败"}>
+            录制失败
+          </span>
+        )}
         <Cwd cwd={cwd} />
         {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
         {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
@@ -1225,6 +1292,31 @@ export function TerminalPane({
         </button>
       </div>
 
+      {recording?.state === "failed" && (
+        <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-red-900/50 bg-red-950/30 px-2.5 py-1.5 text-xs text-red-200">
+          <span>录制失败：{recording.safeError || "未知错误"}</span>
+          {recording.path && <span className="font-mono break-all">路径：{recording.path}</span>}
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            title="复制录制错误"
+            onClick={() => void copyText(recording.safeError || "未知错误").catch(() => undefined)}
+          >
+            复制错误
+          </button>
+          {recording.path && (
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              title="复制录制路径"
+              onClick={() => void copyText(recording.path || "").catch(() => undefined)}
+            >
+              复制路径
+            </button>
+          )}
+        </div>
+      )}
+
       {workspaceId && (
         <BroadcastStrip
           workspaceId={workspaceId}
@@ -1297,6 +1389,10 @@ export function TerminalPane({
                   viewers: info.viewers,
                   exited: info.exited,
                 });
+                useUi.getState().updateTab(storeTabId, {
+                  shell: info.shell ?? "unknown",
+                  retainable: info.retainable === true,
+                });
                 if (info.encoding) setEncoding(info.encoding);
                 if (info.title) applyBackendTabTitle(storeTabId, info.title);
               }}
@@ -1310,11 +1406,39 @@ export function TerminalPane({
                 if (isStoreTabDead(storeTabId)) {
                   useUi.getState().updateTab(storeTabId, { dead: false });
                 }
-                const pending = takePendingCommand(storeTabId);
+                const pending = takePendingDirectory(storeTabId);
                 if (pending) {
-                  void terminalApi
-                    .write(id, new TextEncoder().encode(`${pending}\n`))
-                    .catch(() => undefined);
+                  const tab = useUi
+                    .getState()
+                    .workspaces.flatMap((workspace) => workspace.panes)
+                    .flatMap((pane) => pane.tabs)
+                    .find((candidate) => candidate.id === storeTabId);
+                  const { command, failure } = directoryCommandFor(pending, tab?.shell ?? "unknown");
+                  if (command) {
+                    void terminalApi
+                      .write(id, new TextEncoder().encode(`${command}\n`))
+                      .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+                  } else {
+                    const reason =
+                      failure === "control"
+                        ? "目录包含控制字符"
+                        : failure === "unsupported"
+                          ? "当前终端 Shell 暂不支持自动切换目录"
+                          : "无法确认当前终端 Shell";
+                    void copyText(pending)
+                      .then(() => {
+                        pushToast(
+                          failure === "control" ? "error" : "info",
+                          `${reason}，未发送命令；路径已复制，请手动切换`,
+                        );
+                      })
+                      .catch((e) => {
+                        pushToast(
+                          "error",
+                          `${reason}，未发送命令；复制路径失败：${describeError(e)}。路径：${pending}`,
+                        );
+                      });
+                  }
                 }
                 void refreshControl(id);
               }}

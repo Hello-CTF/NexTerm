@@ -62,6 +62,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: vi.fn() }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
+import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
 
 function textOf(view: MountedView): string {
@@ -103,6 +104,7 @@ describe("AiSidebar tab context menu", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
     mocks.channels.length = 0;
     mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
     mocks.cancel.mockResolvedValue(undefined);
@@ -246,7 +248,7 @@ describe("AiSidebar tab context menu", () => {
     ]);
   });
 
-  it("asks for confirmation before bulk-closing a busy tab, then stops and closes it", async () => {
+  it("waits for the terminal event before closing a busy tab in bulk", async () => {
     await flush();
     await send(view!, "Long-running task");
     expect(useUi.getState().aiBusy).toBe(true);
@@ -255,11 +257,15 @@ describe("AiSidebar tab context menu", () => {
 
     openTabMenu(view!, 1);
     click(menuItem(view!, "关闭左侧全部标签"));
-    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    await flushUntil(() => mocks.cancel.mock.calls.length > 0);
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("关闭将停止它"),
       expect.objectContaining({ kind: "warning" }),
     );
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(2);
+    expect(useUi.getState().aiBusy).toBe(true);
+
+    act(() => mocks.channels[0].onEvent({ type: "canceled", message: "已停止本轮" }));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 1);
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
     expect(useUi.getState().aiBusy).toBe(false);
@@ -279,5 +285,31 @@ describe("AiSidebar tab context menu", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(2);
     expect(useUi.getState().aiBusy).toBe(true);
     expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+
+  it("stops a bulk close at the first unconfirmed cancellation and keeps every remaining tab", async () => {
+    await flush();
+    let sequence = 0;
+    mocks.chat.mockImplementation(() => {
+      sequence += 1;
+      return Promise.resolve({ jobId: `job-${sequence}`, conversationId: `conv-${sequence}` });
+    });
+    await send(view!, "First task");
+    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await flush();
+    await send(view!, "Second task");
+    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await flush();
+    mocks.cancel.mockRejectedValueOnce(new Error("offline"));
+
+    openTabMenu(view!, 2);
+    click(menuItem(view!, "关闭左侧全部标签"));
+    await flushUntil(() => mocks.toast.mock.calls.some(([, text]) => String(text).includes("停止未确认")));
+
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(3);
+    expect(mocks.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.cancel).toHaveBeenCalledWith("job-1");
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().aiBusy).toBe(true);
   });
 });

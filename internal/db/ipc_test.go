@@ -4,11 +4,17 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestIPCRegistrationAndWireShapes(t *testing.T) {
@@ -95,4 +101,297 @@ func TestIPCRedisScanIsTuple(t *testing.T) {
 	if !response.OK || string(response.Data) != `[3,["a"]]` {
 		t.Fatalf("response=%+v data=%s", response, response.Data)
 	}
+}
+
+func callDBHTTP(t *testing.T, client *http.Client, url, token, command string, args any) (int, []byte, ipc.Response) {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{"cmd": command, "args": args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(encoded)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ipc.Response
+	if response.StatusCode == http.StatusOK {
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("decode %s response: %v; body=%s", command, err, body)
+		}
+	}
+	return response.StatusCode, body, decoded
+}
+
+func connectDBHTTP(t *testing.T, client *http.Client, url, token, kind string) string {
+	t.Helper()
+	database := "app"
+	if kind == "redis" {
+		database = "0"
+	}
+	_, body, response := callDBHTTP(t, client, url, token, "db_connect", map[string]any{
+		"args": map[string]any{"inline": map[string]any{"kind": kind, "host": "db.internal", "database": database}},
+	})
+	if !response.OK {
+		t.Fatalf("%s connect failed: body=%s error=%+v", kind, body, response.Error)
+	}
+	var result ConnectResult
+	if err := json.Unmarshal(response.Data, &result); err != nil || result.ConnID == "" {
+		t.Fatalf("%s connect data=%s err=%v", kind, response.Data, err)
+	}
+	return result.ConnID
+}
+
+func requireDBHTTPSuccess(t *testing.T, client *http.Client, url, token, command string, args any) []byte {
+	t.Helper()
+	status, body, response := callDBHTTP(t, client, url, token, command, args)
+	if status != http.StatusOK || !response.OK {
+		t.Fatalf("%s status=%d body=%s error=%+v", command, status, body, response.Error)
+	}
+	return body
+}
+
+func TestDBConnectionOwnershipOverHTTP(t *testing.T) {
+	const (
+		tableMarker    = "owner_table_marker"
+		dataMarker     = "owner_data_marker"
+		columnMarker   = "owner_column_marker"
+		redisMarker    = "owner_redis_marker"
+		pgTableMarker  = "postgres_table_marker"
+		pgDataMarker   = "postgres_data_marker"
+		pgColumnMarker = "postgres_column_marker"
+		pgIndexMarker  = "postgres_index_marker"
+	)
+	state := &fakeSQLState{query: func(_ context.Context, statement string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(statement, "information_schema.schemata"):
+			return newFakeRows([]string{"schema_name"}, nil, [][]driver.Value{{"app"}}), nil
+		case strings.Contains(statement, "information_schema.tables"):
+			return newFakeRows([]string{"table_name"}, nil, [][]driver.Value{{tableMarker}}), nil
+		case strings.Contains(statement, "information_schema.columns"):
+			return newFakeRows([]string{"column_name", "data_type", "is_nullable", "column_key", "column_default", "extra"}, nil, [][]driver.Value{{columnMarker, "text", "NO", "", nil, ""}}), nil
+		case strings.Contains(statement, "information_schema.statistics"):
+			return newFakeRows([]string{"index_name", "non_unique", "seq_in_index", "column_name"}, nil, [][]driver.Value{{"owner_index", 0, 1, columnMarker}}), nil
+		default:
+			return newFakeRows([]string{"value"}, nil, [][]driver.Value{{dataMarker}}), nil
+		}
+	}}
+	pgState := &fakeSQLState{query: func(_ context.Context, statement string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(statement, "information_schema.schemata"):
+			return newFakeRows([]string{"schema_name"}, nil, [][]driver.Value{{"public"}}), nil
+		case strings.Contains(statement, "information_schema.tables"):
+			return newFakeRows([]string{"table_name"}, nil, [][]driver.Value{{pgTableMarker}}), nil
+		case strings.Contains(statement, "information_schema.columns"):
+			return newFakeRows([]string{"column_name", "data_type", "is_nullable", "column_default", "is_identity"}, nil, [][]driver.Value{{pgColumnMarker, "text", "NO", nil, ""}}), nil
+		case strings.Contains(statement, "pg_constraint"):
+			return newFakeRows([]string{"attname"}, nil, [][]driver.Value{{pgColumnMarker}}), nil
+		case strings.Contains(statement, "pg_index"):
+			return newFakeRows([]string{"relname", "indisunique", "ord", "attname"}, nil, [][]driver.Value{{pgIndexMarker, true, 1, pgColumnMarker}}), nil
+		default:
+			return newFakeRows([]string{"value"}, nil, [][]driver.Value{{pgDataMarker}}), nil
+		}
+	}}
+	redis := &fakeRedis{
+		keyType: "string", stringValue: redisMarker, ttl: -2,
+		scanKeys: []string{"owner_redis_key"},
+		doFunc:   func(...any) (any, error) { return int64(1), nil },
+	}
+	service := NewService(nil)
+	service.openMySQL = func(_ context.Context, config MySQLConfig) (*mysqlConnection, error) {
+		return &mysqlConnection{db: newFakeSQLDB(t, state), database: config.Database}, nil
+	}
+	service.openPostgres = func(context.Context, PostgresConfig) (*postgresConnection, error) {
+		return &postgresConnection{db: newFakeSQLDB(t, pgState)}, nil
+	}
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		return &redisConnection{client: redis, console: redis}, nil
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := service.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	rpc := ipc.NewRPCHandler(dispatcher, ipc.Environment{})
+
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	accounts := account.New(storage.GORM())
+	newUser := func(username string) *account.User {
+		t.Helper()
+		user, err := accounts.CreateUser(context.Background(), username, username, "password-"+username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return user
+	}
+	newSession := func(user *account.User) string {
+		t.Helper()
+		token, _, err := accounts.IssueSession(context.Background(), user.ID, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	aliceUser := newUser("alice")
+	bobUser := newUser("bob")
+	aliceToken := newSession(aliceUser)
+	alicePeerToken := newSession(aliceUser)
+	bobToken := newSession(bobUser)
+
+	accountServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		identity, err := accounts.ValidateSession(r.Context(), token)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		rpc.ServeHTTP(w, r.WithContext(ipc.WithUserID(r.Context(), identity.UserID)))
+	}))
+	t.Cleanup(accountServer.Close)
+	openServer := httptest.NewServer(rpc)
+	t.Cleanup(openServer.Close)
+
+	alice := accountServer.Client()
+	alicePeer := &http.Client{}
+	bob := &http.Client{}
+	mysqlID := connectDBHTTP(t, alice, accountServer.URL, aliceToken, "mysql")
+	postgresID := connectDBHTTP(t, alice, accountServer.URL, aliceToken, "postgres")
+	redisID := connectDBHTTP(t, alice, accountServer.URL, aliceToken, "redis")
+
+	ownerCalls := []struct {
+		command string
+		args    any
+	}{
+		{command: "db_schemas", args: map[string]any{"connId": mysqlID}},
+		{command: "db_tables", args: map[string]any{"connId": mysqlID, "schema": "app"}},
+		{command: "db_columns", args: map[string]any{"connId": mysqlID, "schema": "app", "table": tableMarker}},
+		{command: "db_query", args: map[string]any{"connId": mysqlID, "sql": "SELECT owner_data"}},
+		{command: "redis_scan", args: map[string]any{"connId": redisID}},
+		{command: "redis_inspect", args: map[string]any{"connId": redisID, "key": "owner"}},
+		{command: "redis_command", args: map[string]any{"connId": redisID, "args": []string{"SET", "owner", "updated"}}},
+		{command: "redis_set_ttl", args: map[string]any{"connId": redisID, "key": "owner", "seconds": 30}},
+	}
+	for _, call := range ownerCalls {
+		t.Run("same-account-peer/"+call.command, func(t *testing.T) {
+			body := requireDBHTTPSuccess(t, alicePeer, accountServer.URL, alicePeerToken, call.command, call.args)
+			if call.command == "db_tables" && !strings.Contains(string(body), tableMarker) {
+				t.Fatalf("table data missing: %s", body)
+			}
+			if call.command == "db_query" && !strings.Contains(string(body), dataMarker) {
+				t.Fatalf("query data missing: %s", body)
+			}
+		})
+	}
+
+	postgresCalls := []struct {
+		command string
+		args    any
+	}{
+		{command: "db_schemas", args: map[string]any{"connId": postgresID}},
+		{command: "db_tables", args: map[string]any{"connId": postgresID, "schema": "public"}},
+		{command: "db_columns", args: map[string]any{"connId": postgresID, "schema": "public", "table": pgTableMarker}},
+		{command: "db_query", args: map[string]any{"connId": postgresID, "sql": "SELECT postgres_data"}},
+	}
+	for _, call := range postgresCalls {
+		t.Run("postgres-same-account-peer/"+call.command, func(t *testing.T) {
+			body := requireDBHTTPSuccess(t, alicePeer, accountServer.URL, alicePeerToken, call.command, call.args)
+			switch call.command {
+			case "db_tables":
+				if !strings.Contains(string(body), pgTableMarker) {
+					t.Fatalf("PostgreSQL table missing: %s", body)
+				}
+			case "db_columns":
+				if !strings.Contains(string(body), pgColumnMarker) || !strings.Contains(string(body), pgIndexMarker) {
+					t.Fatalf("PostgreSQL describe missing: %s", body)
+				}
+			case "db_query":
+				if !strings.Contains(string(body), pgDataMarker) {
+					t.Fatalf("PostgreSQL query data missing: %s", body)
+				}
+			}
+		})
+	}
+
+	redisCallsBeforeForeign := len(redis.doCalls)
+	for _, call := range ownerCalls {
+		t.Run("foreign/"+call.command, func(t *testing.T) {
+			status, body, response := callDBHTTP(t, bob, accountServer.URL, bobToken, call.command, call.args)
+			if status != http.StatusOK || response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+				t.Fatalf("foreign access was not rejected: status=%d body=%s", status, body)
+			}
+			for _, marker := range []string{tableMarker, dataMarker, columnMarker, redisMarker} {
+				if strings.Contains(string(body), marker) {
+					t.Fatalf("foreign response leaked %s: %s", marker, body)
+				}
+			}
+		})
+	}
+	for _, call := range postgresCalls {
+		t.Run("postgres-foreign/"+call.command, func(t *testing.T) {
+			status, body, response := callDBHTTP(t, bob, accountServer.URL, bobToken, call.command, call.args)
+			if status != http.StatusOK || response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+				t.Fatalf("foreign PostgreSQL access was not rejected: status=%d body=%s", status, body)
+			}
+			for _, marker := range []string{pgTableMarker, pgDataMarker, pgColumnMarker, pgIndexMarker} {
+				if strings.Contains(string(body), marker) {
+					t.Fatalf("foreign PostgreSQL response leaked %s: %s", marker, body)
+				}
+			}
+		})
+	}
+	for _, connID := range []string{mysqlID, postgresID, redisID} {
+		status, body, response := callDBHTTP(t, bob, accountServer.URL, bobToken, "db_disconnect", map[string]any{"connId": connID})
+		if status != http.StatusOK || response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("foreign disconnect %s was not rejected: status=%d body=%s", connID, status, body)
+		}
+	}
+	if len(redis.doCalls) != redisCallsBeforeForeign {
+		t.Fatalf("foreign Redis operations changed state: before=%d after=%d calls=%v", redisCallsBeforeForeign, len(redis.doCalls), redis.doCalls)
+	}
+	requireDBHTTPSuccess(t, alice, accountServer.URL, aliceToken, "db_query", map[string]any{"connId": mysqlID, "sql": "SELECT owner_data"})
+	requireDBHTTPSuccess(t, alice, accountServer.URL, aliceToken, "db_query", map[string]any{"connId": postgresID, "sql": "SELECT postgres_data"})
+	requireDBHTTPSuccess(t, alice, accountServer.URL, aliceToken, "redis_inspect", map[string]any{"connId": redisID, "key": "owner"})
+
+	t.Run("unknown-request-context", func(t *testing.T) {
+		_, err := service.Tables(context.Background(), mysqlID, "app")
+		var ipcErr *ipc.Error
+		if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeForbidden {
+			t.Fatalf("unknown context error=%#v, want forbidden", err)
+		}
+	})
+	t.Run("open-can-read-owned", func(t *testing.T) {
+		requireDBHTTPSuccess(t, openServer.Client(), openServer.URL, "", "db_tables", map[string]any{"connId": mysqlID, "schema": "app"})
+	})
+	openMySQLID := connectDBHTTP(t, openServer.Client(), openServer.URL, "", "mysql")
+	t.Run("open-ownerless", func(t *testing.T) {
+		requireDBHTTPSuccess(t, openServer.Client(), openServer.URL, "", "db_tables", map[string]any{"connId": openMySQLID, "schema": "app"})
+		if _, err := service.Tables(context.Background(), openMySQLID, "app"); err != nil {
+			t.Fatalf("ownerless direct access failed: %v", err)
+		}
+	})
+	t.Run("account-cannot-read-ownerless", func(t *testing.T) {
+		status, body, response := callDBHTTP(t, alice, accountServer.URL, aliceToken, "db_tables", map[string]any{"connId": openMySQLID, "schema": "app"})
+		if status != http.StatusOK || response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("ownerless connection was exposed to account: status=%d body=%s", status, body)
+		}
+		if strings.Contains(string(body), tableMarker) {
+			t.Fatalf("ownerless table leaked to account: %s", body)
+		}
+	})
 }

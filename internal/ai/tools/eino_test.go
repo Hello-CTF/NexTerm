@@ -44,10 +44,14 @@ func TestExecutionToolsFollowScopeCapabilities(t *testing.T) {
 	}
 	mixed := NewRegistry(Dependencies{Terminal: &fakeTerminal{}, TabSession: func(string) string { return "other" }})
 	names = toolNames(&Execution{JobID: "j", Registry: mixed, Scope: Scope{SessionID: "s", TabID: "t"}})
-	for _, unavailable := range []string{"read_screen", "send_keys", "wait_for"} {
-		if names[unavailable] {
-			t.Errorf("%s exposed in mixed scope: %v", unavailable, names)
+	for _, available := range []string{"read_screen", "send_keys", "wait_for"} {
+		if !names[available] {
+			t.Errorf("%s missing before request-aware execution check: %v", available, names)
 		}
+	}
+	result := mixed.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "read_screen"}, nil)
+	if result.OK || !strings.Contains(result.Text, ErrCrossScope.Error()) {
+		t.Fatalf("mixed scope execution = %+v", result)
 	}
 }
 

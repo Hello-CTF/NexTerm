@@ -383,13 +383,14 @@ func sortedSetKeys(m map[string]string) []string {
 }
 
 type inputs struct {
-	ci           map[string]interface{}
-	release      map[string]interface{}
-	resolverText string
-	packText     string
-	uploadText   string
-	evidenceText string
-	root         string
+	ci              map[string]interface{}
+	release         map[string]interface{}
+	resolverText    string
+	packText        string
+	uploadText      string
+	evidenceText    string
+	windowsRealText string
+	root            string
 }
 
 func main() {
@@ -419,15 +420,20 @@ func main() {
 	if err != nil {
 		fatalf("%v", err)
 	}
+	windowsRealText, err := os.ReadFile(filepath.Join(root, ".github", "scripts", "windows-real-tests.ps1"))
+	if err != nil {
+		fatalf("%v", err)
+	}
 
 	in := inputs{
-		ci:           parseYAML(ciRaw),
-		release:      parseYAML(releaseRaw),
-		resolverText: string(resolverText),
-		packText:     string(packText),
-		uploadText:   string(uploadText),
-		evidenceText: string(evidenceText),
-		root:         root,
+		ci:              parseYAML(ciRaw),
+		release:         parseYAML(releaseRaw),
+		resolverText:    string(resolverText),
+		packText:        string(packText),
+		uploadText:      string(uploadText),
+		evidenceText:    string(evidenceText),
+		windowsRealText: string(windowsRealText),
+		root:            root,
 	}
 
 	wiringStarted := time.Now()
@@ -470,7 +476,7 @@ func main() {
 		fmt.Printf("\n%d check(s) failed\n", len(failures))
 		os.Exit(1)
 	}
-	fmt.Printf("\nall %d workflow reuse wiring checks passed\n", len(results)+len(negativeControls)+len(resolverNegativeControls))
+	fmt.Printf("\nall %d workflow reuse wiring checks passed\n", len(results)+len(negativeControls)+len(resolverNegativeControls)+len(windowsNegativeControls))
 	fmt.Printf("sections: wiring %d checks %.1fs; resolver %d scenarios %.1fs; upload stub %d checks %.1fs; "+
 		"release notes %d checks %.1fs; desktop evidence %d checks %.1fs; %d negative controls (wiring-only re-runs) %.1fs; total %.1fs\n",
 		len(wiring), wiringElapsed.Seconds(),
@@ -478,6 +484,6 @@ func main() {
 		len(upload), uploadElapsed.Seconds(),
 		len(notes), notesElapsed.Seconds(),
 		len(evidence), evidenceElapsed.Seconds(),
-		len(negativeControls)+len(resolverNegativeControls), controlsElapsed.Seconds(),
+		len(negativeControls)+len(resolverNegativeControls)+len(windowsNegativeControls), controlsElapsed.Seconds(),
 		time.Since(started).Seconds())
 }

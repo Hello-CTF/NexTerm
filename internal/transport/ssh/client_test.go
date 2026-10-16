@@ -4,10 +4,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -15,8 +20,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf16"
 
+	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -428,6 +436,538 @@ func TestSSHWaitDrainsFullRawQueues(t *testing.T) {
 	if result.ExitCode == nil || *result.ExitCode != 0 {
 		t.Fatalf("full queue exit = %+v", result.ExitCode)
 	}
+}
+
+func TestSSHPOSIXRootsComeFromTargetSFTP(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	filesystem, err := client.FileSystem(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := filesystem.(base.RootsProvider)
+	if !ok {
+		t.Fatal("SSH filesystem does not provide roots")
+	}
+	roots, err := provider.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStylePOSIX || !roots.Supported || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" || roots.HomePath == "" {
+		t.Fatalf("POSIX roots = %+v", roots)
+	}
+}
+
+type targetExecutor struct {
+	mu       sync.Mutex
+	commands []string
+	result   base.ExecResult
+	err      error
+	handle   func(string) (base.ExecResult, error)
+}
+
+func (e *targetExecutor) Exec(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
+	e.mu.Lock()
+	e.commands = append(e.commands, command)
+	e.mu.Unlock()
+	if e.handle != nil {
+		return e.handle(command)
+	}
+	return e.result, e.err
+}
+
+func (e *targetExecutor) commandList() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.commands...)
+}
+
+type targetRealPath struct {
+	home  string
+	err   error
+	calls []string
+}
+
+func (r *targetRealPath) RealPath(path string) (string, error) {
+	r.calls = append(r.calls, path)
+	return r.home, r.err
+}
+
+func targetResult(output string, code int) base.ExecResult {
+	return base.ExecResult{Stdout: output, ExitCode: &code}
+}
+
+func windowsRootsOutput(home string, roots ...[2]string) string {
+	items := make([]string, 0, len(roots))
+	for _, root := range roots {
+		items = append(items, fmt.Sprintf(`{"n":%q,"r":%q}`, root[0], root[1]))
+	}
+	return fmt.Sprintf(`{"windows":true,"supported":true,"status":"ok","home":%q,"roots":[%s]}`, home, strings.Join(items, ","))
+}
+
+func decodePowerShellCommand(t *testing.T, command string) string {
+	t.Helper()
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		t.Fatal("empty PowerShell command")
+	}
+	data, err := base64.StdEncoding.DecodeString(fields[len(fields)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data)%2 != 0 {
+		t.Fatalf("odd UTF-16 payload length %d", len(data))
+	}
+	units := make([]uint16, len(data)/2)
+	for index := range units {
+		units[index] = binary.LittleEndian.Uint16(data[index*2:])
+	}
+	return string(utf16.Decode(units))
+}
+
+func TestSSHWindowsRootsAndSFTPPathStyles(t *testing.T) {
+	for _, prefix := range []string{"", "/"} {
+		t.Run(fmt.Sprintf("prefix %q", prefix), func(t *testing.T) {
+			executor := &targetExecutor{}
+			executor.handle = func(string) (base.ExecResult, error) {
+				return targetResult(windowsRootsOutput(`C:\Users\alice`, [2]string{"D", `D:\`}, [2]string{"C", `C:\`}), 0), nil
+			}
+			resolver := &targetRealPath{home: prefix + "C:/Users/alice"}
+			filesystem := &sftpFileSystem{executor: executor, realPath: resolver}
+			roots, err := filesystem.Roots(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if roots.PathStyle != base.PathStyleWindows || !roots.Supported || roots.HomePath != `C:\Users\alice` || len(roots.Roots) != 2 || roots.Roots[0].Path != `C:\` || roots.Roots[1].Path != `D:\` {
+				t.Fatalf("Windows roots = %+v", roots)
+			}
+			if got := filesystem.sftpPath(`D:\work\file.txt`); got != prefix+"D:/work/file.txt" {
+				t.Fatalf("drive path = %q", got)
+			}
+			if got := filesystem.sftpPath(`/D:/work`); got != prefix+"D:/work" {
+				t.Fatalf("SFTP drive input = %q", got)
+			}
+			for _, input := range []string{"D:", "D:relative", "relative", "~/file"} {
+				if got := filesystem.sftpPath(input); got != input {
+					t.Fatalf("non-absolute path %q became %q", input, got)
+				}
+			}
+			for _, input := range []string{`\\server\share\dir`, "//server/share/dir"} {
+				if got := filesystem.sftpPath(input); got != `\\server/share/dir` {
+					t.Fatalf("UNC path %q = %q", input, got)
+				}
+			}
+			commands := executor.commandList()
+			if len(commands) != 1 || !strings.HasPrefix(commands[0], "powershell.exe ") {
+				t.Fatalf("probe commands = %v", commands)
+			}
+			script := decodePowerShellCommand(t, commands[0])
+			if !strings.Contains(script, "Get-PSDrive -PSProvider FileSystem") || !strings.Contains(script, "OSVersion.Platform") || !strings.Contains(script, "OutputEncoding=[Text.Encoding]::UTF8") {
+				t.Fatalf("probe script = %s", script)
+			}
+		})
+	}
+}
+
+func TestSSHWindowsRootsRefreshAndUnsupportedPaths(t *testing.T) {
+	executor := &targetExecutor{}
+	executor.handle = func(string) (base.ExecResult, error) {
+		roots := [][2]string{{"C", `C:\`}}
+		if len(executor.commandList()) > 1 {
+			roots = append(roots, [2]string{"D", `D:\`})
+		}
+		return targetResult(windowsRootsOutput(`C:\Users\alice`, roots...), 0), nil
+	}
+	resolver := &targetRealPath{home: "C:/Users/alice"}
+	filesystem := &sftpFileSystem{executor: executor, realPath: resolver}
+	first, err := filesystem.Roots(context.Background())
+	if err != nil || len(first.Roots) != 1 {
+		t.Fatalf("first roots = %+v, %v", first, err)
+	}
+	second, err := filesystem.Roots(context.Background())
+	if err != nil || len(second.Roots) != 2 || second.Roots[1].Path != `D:\` {
+		t.Fatalf("refreshed roots = %+v, %v", second, err)
+	}
+	if len(resolver.calls) != 1 || len(executor.commandList()) != 2 {
+		t.Fatalf("refresh probing = realpath %v, commands %v", resolver.calls, executor.commandList())
+	}
+}
+
+func TestSSHRootsErrorClassificationAndFallback(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+		home   string
+		code   int
+		want   error
+	}{
+		{name: "unsupported", output: `{"windows":true,"supported":false,"status":"ok","roots":[]}`, code: 0, want: base.ErrUnsupported},
+		{name: "permission", output: `{"windows":true,"supported":false,"status":"error","kind":"permission","message":"access denied","roots":[]}`, code: 0, want: fs.ErrPermission},
+		{name: "no media", output: `{"windows":true,"supported":false,"status":"error","kind":"no_media","message":"device is not ready","roots":[]}`, code: 0, want: base.ErrNoMedia},
+		{name: "drive relative", output: windowsRootsOutput("", [2]string{"D", "D:relative"}), code: 0, want: nil},
+		{name: "PowerShell unavailable on Windows SFTP", output: "not recognized", home: "/C:/Users/alice", code: 127, want: base.ErrUnsupported},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &targetExecutor{result: targetResult(test.output, test.code)}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: test.home}}
+			roots, err := filesystem.Roots(context.Background())
+			if test.want == nil {
+				if err == nil {
+					t.Fatalf("invalid roots succeeded: %+v", roots)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatalf("roots = %+v, %v; want %v", roots, err, test.want)
+			}
+		})
+	}
+
+	t.Run("empty roots do not fabricate C", func(t *testing.T) {
+		executor := &targetExecutor{result: targetResult(windowsRootsOutput(""), 0)}
+		filesystem := &sftpFileSystem{executor: executor}
+		roots, err := filesystem.Roots(context.Background())
+		if err != nil || !roots.Supported || len(roots.Roots) != 0 {
+			t.Fatalf("empty roots = %+v, %v", roots, err)
+		}
+	})
+
+	t.Run("PowerShell on Unix reports the target", func(t *testing.T) {
+		executor := &targetExecutor{}
+		executor.handle = func(command string) (base.ExecResult, error) {
+			if strings.HasPrefix(command, "powershell.exe ") {
+				return targetResult("not found", 127), nil
+			}
+			return targetResult(`{"windows":false,"supported":false,"status":"ok","roots":[]}`, 0), nil
+		}
+		filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+		roots, err := filesystem.Roots(context.Background())
+		if err != nil || roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
+			t.Fatalf("Unix pwsh roots = %+v, %v", roots, err)
+		}
+		commands := executor.commandList()
+		if len(commands) != 2 || !strings.HasPrefix(commands[1], "pwsh ") {
+			t.Fatalf("probe commands = %v", commands)
+		}
+	})
+
+	t.Run("exec startup failures are preserved", func(t *testing.T) {
+		probeErr := errors.New("start SSH exec: ssh: command failed")
+		executor := &targetExecutor{err: probeErr}
+		filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+		if _, err := filesystem.Roots(context.Background()); !errors.Is(err, probeErr) {
+			t.Fatalf("startup error = %v, want original error", err)
+		}
+		if len(executor.commandList()) != 1 {
+			t.Fatalf("startup failure triggered fallback commands = %v", executor.commandList())
+		}
+	})
+
+	t.Run("transport failures are not unsupported", func(t *testing.T) {
+		executor := &targetExecutor{err: errors.New("connection lost")}
+		filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+		if _, err := filesystem.Roots(context.Background()); err == nil || errors.Is(err, base.ErrUnsupported) || !strings.Contains(err.Error(), "connection lost") {
+			t.Fatalf("transport error = %v", err)
+		}
+	})
+}
+
+func TestSSHWindowsRootsProbeFailuresAreNotUnavailable(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		code    int
+		stderr  string
+		want    error
+		message string
+	}{
+		{name: "access denied", code: 1, stderr: "Access denied", want: fs.ErrPermission, message: "Access denied"},
+		{name: "access denied with 127", code: 127, stderr: "Access denied", want: fs.ErrPermission, message: "Access denied"},
+		{name: "script error", code: 1, stderr: "syntax error near unexpected token", message: "syntax error near unexpected token"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			code := testCase.code
+			executor := &targetExecutor{result: base.ExecResult{Stderr: testCase.stderr, ExitCode: &code}}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+			_, err := filesystem.Roots(context.Background())
+			if err == nil || !strings.Contains(err.Error(), testCase.message) || errors.Is(err, base.ErrUnsupported) {
+				t.Fatalf("probe error = %v", err)
+			}
+			if testCase.want != nil && !errors.Is(err, testCase.want) {
+				t.Fatalf("probe error = %v, want %v", err, testCase.want)
+			}
+			if len(executor.commandList()) != 1 {
+				t.Fatalf("probe failure triggered fallback commands = %v", executor.commandList())
+			}
+		})
+	}
+
+	for _, code := range []int{127, 9009} {
+		t.Run(fmt.Sprintf("command not found %d", code), func(t *testing.T) {
+			executor := &targetExecutor{}
+			executor.handle = func(command string) (base.ExecResult, error) {
+				if strings.HasPrefix(command, "powershell.exe ") {
+					failureCode := code
+					return base.ExecResult{Stderr: "powershell.exe is not recognized", ExitCode: &failureCode}, nil
+				}
+				return targetResult(`{"windows":false,"supported":false,"status":"ok","roots":[]}`, 0), nil
+			}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+			roots, err := filesystem.Roots(context.Background())
+			if err != nil || roots.PathStyle != base.PathStylePOSIX {
+				t.Fatalf("command-not-found fallback = %+v, %v", roots, err)
+			}
+			if len(executor.commandList()) != 2 {
+				t.Fatalf("command-not-found commands = %v", executor.commandList())
+			}
+		})
+	}
+
+	t.Run("typed exec unsupported falls back", func(t *testing.T) {
+		executor := &targetExecutor{}
+		executor.handle = func(command string) (base.ExecResult, error) {
+			if strings.HasPrefix(command, "powershell.exe ") {
+				return base.ExecResult{}, base.ErrUnsupported
+			}
+			return targetResult(`{"windows":false,"supported":false,"status":"ok","roots":[]}`, 0), nil
+		}
+		filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/home/alice"}}
+		roots, err := filesystem.Roots(context.Background())
+		if err != nil || roots.PathStyle != base.PathStylePOSIX {
+			t.Fatalf("typed unsupported fallback = %+v, %v", roots, err)
+		}
+		if len(executor.commandList()) != 2 {
+			t.Fatalf("typed unsupported commands = %v", executor.commandList())
+		}
+	})
+}
+
+func TestSSHSFTPErrorClassification(t *testing.T) {
+	if err := normalizeSFTPError(errors.New("SFTP list D:/: The device is not ready")); !errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("no-media error = %v", err)
+	}
+	if err := normalizeSFTPError(errors.New("SFTP list D:/private: Access is denied")); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("permission error = %v", err)
+	}
+	notExist := fmt.Errorf("SFTP stat: %w", fs.ErrNotExist)
+	if err := normalizeSFTPError(notExist); !errors.Is(err, fs.ErrNotExist) || errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("not-exist error = %v", err)
+	}
+	posixMissing := fmt.Errorf("SFTP list /tmp/no media: %w", fs.ErrNotExist)
+	if err := normalizeSFTPError(posixMissing); !errors.Is(err, fs.ErrNotExist) || errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("POSIX special filename error = %v", err)
+	}
+	windowsMissing := fmt.Errorf("SFTP list D:/access denied: %w", fs.ErrNotExist)
+	if err := normalizeSFTPError(windowsMissing); !errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("Windows special filename error = %v", err)
+	}
+	windowsPermission := fmt.Errorf("SFTP list D:/no media: %w", fs.ErrPermission)
+	if err := normalizeSFTPError(windowsPermission); !errors.Is(err, fs.ErrPermission) || errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("structured permission error = %v", err)
+	}
+}
+
+func TestSSHWindowsSFTPFileOperationsAndUNC(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the virtual Windows SFTP namespace fixture uses POSIX filename semantics")
+	}
+	client, root := newPathTestSFTPClient(t)
+	filesystem := newSFTPFileSystem(client, nil)
+	filesystem.target = &sftpEnvironment{pathStyle: base.PathStyleWindows, mapWindowsPaths: true}
+	ctx := context.Background()
+	if err := os.Mkdir(filepath.Join(root, "C:"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Mkdir(ctx, `C:\dir`); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, `C:\dir\file.txt`, []byte("hello"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, `C:\dir\file.txt`, []byte("hello world"), true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := filesystem.ReadFile(ctx, `C:\dir\file.txt.nexterm-bak`, 100)
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("Windows backup = %q, %v", data, err)
+	}
+	entries, err := filesystem.List(ctx, `C:\dir`)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("Windows list = %+v, %v", entries, err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Path, `C:\dir\`) {
+			t.Fatalf("non-round-trip entry path = %q", entry.Path)
+		}
+		if _, err := filesystem.Size(ctx, entry.Path); err != nil {
+			t.Fatalf("Size(%q): %v", entry.Path, err)
+		}
+	}
+	ranged, size, err := filesystem.ReadRange(ctx, `C:\dir\file.txt`, 1, 3)
+	if err != nil || string(ranged) != "ell" || size != 11 {
+		t.Fatalf("Windows range = %q/%d, %v", ranged, size, err)
+	}
+
+	localDir := t.TempDir()
+	source := filepath.Join(localDir, "source.bin")
+	if err := os.WriteFile(source, []byte("transfer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := filesystem.Upload(ctx, source, `C:\dir\upload.bin`, sshfs.TransferOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(localDir, "destination.bin")
+	if _, err := filesystem.Download(ctx, `C:\dir\upload.bin`, destination, sshfs.TransferOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(destination)
+	if err != nil || string(data) != "transfer" {
+		t.Fatalf("Windows transfer = %q, %v", data, err)
+	}
+	if _, err := filesystem.Upload(ctx, filepath.Join(localDir, "no media - missing"), `C:\dir\missing`, sshfs.TransferOptions{}); !errors.Is(err, fs.ErrNotExist) || errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("client-local upload error was classified as target media failure: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, `\\server`, "share"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Mkdir(ctx, "//server/share/dir"); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(ctx, "//server/share/dir/O'Brien.txt", []byte("UNC"), false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = filesystem.List(ctx, "//server/share/dir")
+	if err != nil || len(entries) != 1 || entries[0].Path != "//server/share/dir/O'Brien.txt" {
+		t.Fatalf("UNC list = %+v, %v", entries, err)
+	}
+	data, err = filesystem.ReadFile(ctx, entries[0].Path, 10)
+	if err != nil || string(data) != "UNC" {
+		t.Fatalf("UNC round trip = %q, %v", data, err)
+	}
+	if err := filesystem.Delete(ctx, "//server/share/dir", true); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := filesystem.Exists(ctx, "//server/share/dir"); err != nil || exists {
+		t.Fatalf("UNC delete = %v, %v", exists, err)
+	}
+}
+
+func TestSSHWindowsArchiveOperationsAreUnsupported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the virtual Windows SFTP namespace fixture uses POSIX filename semantics")
+	}
+	for _, testCase := range []struct {
+		name        string
+		drivePrefix string
+		remotePath  string
+	}{
+		{name: "drive without slash", remotePath: `D:\folder\a.tar`},
+		{name: "drive with slash", drivePrefix: "/", remotePath: `D:\folder\a.tar`},
+		{name: "UNC", drivePrefix: "/", remotePath: "//server/share/a.tar"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client, _ := newPathTestSFTPClient(t)
+			executor := &targetExecutor{result: targetResult("", 0)}
+			filesystem := newSFTPFileSystem(client, executor)
+			filesystem.target = &sftpEnvironment{pathStyle: base.PathStyleWindows, drivePrefix: testCase.drivePrefix, mapWindowsPaths: true}
+			if _, err := filesystem.PackDownload(context.Background(), testCase.remotePath, filepath.Join(t.TempDir(), "out.tar.gz"), sshfs.TransferOptions{}); !errors.Is(err, base.ErrUnsupported) {
+				t.Fatalf("PackDownload error = %v, want unsupported", err)
+			}
+			if _, err := filesystem.Extract(context.Background(), testCase.remotePath); !errors.Is(err, base.ErrUnsupported) {
+				t.Fatalf("Extract error = %v, want unsupported", err)
+			}
+			if commands := executor.commandList(); len(commands) != 0 {
+				t.Fatalf("Windows archive commands escaped path validation: %v", commands)
+			}
+		})
+	}
+}
+
+func TestSSHPOSIXArchiveOperationsDelegate(t *testing.T) {
+	client, _ := newPathTestSFTPClient(t)
+	executor := &targetExecutor{}
+	filesystem := newSFTPFileSystem(client, executor)
+	filesystem.target = &sftpEnvironment{pathStyle: base.PathStylePOSIX}
+	executor.handle = func(command string) (base.ExecResult, error) {
+		const packPrefix = "umask 077 && tar -czf '"
+		if strings.HasPrefix(command, packPrefix) {
+			rest := strings.TrimPrefix(command, packPrefix)
+			end := strings.Index(rest, "'")
+			if end < 0 {
+				return base.ExecResult{}, errors.New("unquoted archive path")
+			}
+			if err := filesystem.FS.WriteFile(context.Background(), rest[:end], []byte("archive"), false); err != nil {
+				return base.ExecResult{}, err
+			}
+		}
+		return targetResult("", 0), nil
+	}
+	destination := filepath.Join(t.TempDir(), "out.tar.gz")
+	if _, err := filesystem.PackDownload(context.Background(), "some dir", destination, sshfs.TransferOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "archive" {
+		t.Fatalf("POSIX PackDownload = %q, %v", data, err)
+	}
+	target, err := filesystem.Extract(context.Background(), "folder/a.tar")
+	if err != nil || target != "folder/a" {
+		t.Fatalf("POSIX Extract = %q, %v", target, err)
+	}
+	commands := executor.commandList()
+	if len(commands) != 2 || !strings.Contains(commands[0], "tar -czf") || !strings.Contains(commands[1], "tar -xf") {
+		t.Fatalf("POSIX archive commands = %v", commands)
+	}
+}
+
+func TestSSHEmptyRootsRebuildsDriveMapping(t *testing.T) {
+	executor := &targetExecutor{}
+	executor.handle = func(string) (base.ExecResult, error) {
+		if len(executor.commandList()) == 1 {
+			return targetResult(windowsRootsOutput(`C:\Users\alice`), 0), nil
+		}
+		return targetResult(windowsRootsOutput(`C:\Users\alice`, [2]string{"D", `D:\`}), 0), nil
+	}
+	filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "/C:/Users/alice"}}
+	first, err := filesystem.Roots(context.Background())
+	if err != nil || len(first.Roots) != 0 {
+		t.Fatalf("empty roots = %+v, %v", first, err)
+	}
+	second, err := filesystem.Roots(context.Background())
+	if err != nil || len(second.Roots) != 1 || second.Roots[0].Path != `D:\` {
+		t.Fatalf("roots after drive insertion = %+v, %v", second, err)
+	}
+	if got := filesystem.sftpPath(`D:\work`); got != "/D:/work" {
+		t.Fatalf("path after drive insertion = %q, want /D:/work", got)
+	}
+}
+
+func newPathTestSFTPClient(t *testing.T) (*sftp.Client, string) {
+	t.Helper()
+	root := t.TempDir()
+	clientSide, serverSide := net.Pipe()
+	server, err := sftp.NewServer(serverSide, sftp.WithServerWorkingDirectory(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve() }()
+	client, err := sftp.NewClientPipe(clientSide, clientSide)
+	if err != nil {
+		clientSide.Close()
+		serverSide.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+		clientSide.Close()
+		serverSide.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(2 * time.Second):
+			t.Error("SFTP path test server did not stop")
+		}
+	})
+	return client, root
 }
 
 func testClientConfig(t *testing.T, server *testSSHServer, auth AuthConfig) Config {

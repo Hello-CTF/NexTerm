@@ -18,6 +18,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/subagent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -200,7 +201,11 @@ func hitlTerminalError(terminal *hitl.Event) error {
 func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 	if current.eino == nil {
 		if err := r.initializeEino(current); err != nil {
-			return "", 0, usage.Usage{}, err
+			if current.eino == nil {
+				return "", 0, usage.Usage{}, err
+			}
+			_, turns, total := current.eino.summary()
+			return "", turns, total, err
 		}
 	}
 	runtime := current.eino
@@ -242,8 +247,11 @@ func (r *Runner) initializeEino(current *job) error {
 		contextWindow = 262144
 	}
 	runtime := &einoRuntime{contextWindow: contextWindow}
+	current.eino = runtime
 	compaction := newCompactionHandler(chatModel, contextWindow, func() {
 		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
+	}, func(message *schema.Message, latency time.Duration) error {
+		return r.emitUsageChannel(current, message, latency, "summary")
 	})
 	messages := historyMessages(rows, current.id)
 	messages, err = compaction.compactHistory(current.ctx, messages)
@@ -334,7 +342,6 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	runtime.runner = adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: chatAgent, EnableStreaming: true, CheckPointStore: r.checkpoints})
-	current.eino = runtime
 	return nil
 }
 
@@ -560,9 +567,23 @@ func emitAssistantText(current *job, message *schema.Message) error {
 }
 
 func (r *Runner) emitUsage(current *job, message *schema.Message, latency time.Duration) error {
+	channel := "main"
+	if current.args.Source == "subagent" {
+		channel = "tool-subagent"
+	}
+	return r.emitUsageChannel(current, message, latency, channel)
+}
+
+func (r *Runner) emitUsageChannel(current *job, message *schema.Message, latency time.Duration, channel string) error {
 	runtime := current.eino
 	if message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
 		return nil
+	}
+	if channel == "" {
+		channel = "main"
+		if current.args.Source == "subagent" {
+			channel = "tool-subagent"
+		}
 	}
 	value := message.ResponseMeta.Usage
 	window := runtime.contextWindow
@@ -591,8 +612,28 @@ func (r *Runner) emitUsage(current *job, message *schema.Message, latency time.D
 	runtime.addUsage(currentUsage)
 	modelName, _ := message.Extra["model"].(string)
 	runID, _ := message.Extra["run_id"].(string)
-	callID, _ := message.Extra["call_id"].(string)
-	return current.emit(current.ctx, Event{Type: "usage", Model: modelName, RunID: runID, CallID: callID, PromptTokens: currentUsage.PromptTokens, CompletionTokens: currentUsage.CompletionTokens, CachedTokens: currentUsage.CachedTokens, CacheCreationTokens: currentUsage.CacheCreationTokens, LatencyMS: currentUsage.LatencyMS, ContextWindow: window})
+	callID := usageCallID(message, channel, current.args.Source)
+	return current.emit(current.ctx, Event{Type: "usage", Model: modelName, RunID: runID, CallID: callID, Channel: channel, PromptTokens: currentUsage.PromptTokens, CompletionTokens: currentUsage.CompletionTokens, CachedTokens: currentUsage.CachedTokens, CacheCreationTokens: currentUsage.CacheCreationTokens, LatencyMS: currentUsage.LatencyMS, ContextWindow: window})
+}
+
+const agentCallIDExtra = "nexterm_agent_call_id"
+
+func usageCallID(message *schema.Message, channel, source string) string {
+	if channel == "" {
+		channel = "main"
+		if source == "subagent" {
+			channel = "tool-subagent"
+		}
+	}
+	callID, _ := message.Extra[agentCallIDExtra].(string)
+	if callID == "" {
+		callID = channel + ":" + ids.New()
+	}
+	if message.Extra == nil {
+		message.Extra = map[string]any{}
+	}
+	message.Extra[agentCallIDExtra] = callID
+	return callID
 }
 
 func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"gorm.io/gorm"
 )
 
 type httpFixture struct {
@@ -376,6 +377,61 @@ func TestFleetHTTPRoleIsolation(t *testing.T) {
 	call = fixture.call(t, http.MethodGet, "/fleet/devices/"+deviceID+"/metrics", nil, aliceSession, "")
 	if call.status != http.StatusForbidden {
 		t.Fatalf("revoked device metrics status=%d body=%v", call.status, call.body)
+	}
+}
+
+func TestFleetHTTPDeviceMetricsResponse(t *testing.T) {
+	fixture := newHTTPFixture(t, false)
+	alice := fixture.createUser(t, "alice")
+	aliceSession := fixture.session(t, alice)
+
+	call := fixture.call(t, http.MethodPost, "/device/enroll-codes", map[string]any{}, aliceSession, aliceSession.csrf)
+	code, _ := call.body["code"].(string)
+	call = fixture.call(t, http.MethodPost, "/device/enroll", map[string]any{"code": code, "name": "agent-host"}, nil, "")
+	if call.status != http.StatusOK {
+		t.Fatalf("enroll status=%d body=%v", call.status, call.body)
+	}
+	deviceID, _ := call.body["device_id"].(string)
+	if err := fixture.service.RecordMetrics(context.Background(), deviceID, MetricsSample{TS: time.Now().Add(-time.Minute).UnixMilli(), CPUPct: 42.5}); err != nil {
+		t.Fatal(err)
+	}
+
+	call = fixture.call(t, http.MethodGet, "/fleet/devices/"+deviceID+"/metrics", nil, aliceSession, "")
+	if call.status != http.StatusOK {
+		t.Fatalf("metrics status=%d body=%v", call.status, call.body)
+	}
+	if call.body["sampleCount"] != float64(1) || call.body["windowStart"] == nil || call.body["windowEnd"] == nil {
+		t.Fatalf("metrics metadata=%v", call.body)
+	}
+	latest, ok := call.body["latest"].(map[string]any)
+	if !ok || latest["cpu_pct"] != 42.5 || call.body["seriesError"] != nil {
+		t.Fatalf("latest=%v seriesError=%v", call.body["latest"], call.body["seriesError"])
+	}
+
+	queries := 0
+	if err := fixture.service.db.Callback().Query().After("gorm:query").Register("test:fail_http_metrics_window", func(db *gorm.DB) {
+		if strings.Contains(db.Statement.SQL.String(), "device_metrics") {
+			queries++
+			if queries == 1 {
+				sqlDB, err := db.DB()
+				if err == nil {
+					_ = sqlDB.Close()
+				}
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	call = fixture.call(t, http.MethodGet, "/fleet/devices/"+deviceID+"/metrics", nil, aliceSession, "")
+	if call.status != http.StatusOK || queries != 1 {
+		t.Fatalf("partial status=%d queries=%d body=%v", call.status, queries, call.body)
+	}
+	latest, ok = call.body["latest"].(map[string]any)
+	if !ok || latest["cpu_pct"] != 42.5 || call.body["seriesError"] == nil {
+		t.Fatalf("partial body=%v", call.body)
+	}
+	if samples, ok := call.body["samples"].([]any); !ok || len(samples) != 0 {
+		t.Fatalf("partial samples=%v", call.body["samples"])
 	}
 }
 

@@ -225,13 +225,13 @@ func TestFullServerProcessKeepsProductionGrid(t *testing.T) {
 		t.Fatal("session_connect_local returned no session")
 	}
 	response = requestFullRPC(t, client, address, "terminal_attach", map[string]any{"sessionId": connected.ID, "cols": 80, "rows": 24})
-	var tabID string
-	decodeRPCData(t, response, &tabID)
-	if tabID == "" {
+	var attached struct{ TabID string }
+	decodeRPCData(t, response, &attached)
+	if attached.TabID == "" {
 		t.Fatal("terminal_attach returned no tab")
 	}
-	requestFullRPC(t, client, address, "terminal_resize", map[string]any{"tabId": tabID, "cols": 100, "rows": 30})
-	response = requestFullRPC(t, client, address, "terminal_resize_flush", map[string]any{"tabId": tabID})
+	requestFullRPC(t, client, address, "terminal_resize", map[string]any{"tabId": attached.TabID, "cols": 100, "rows": 30})
+	response = requestFullRPC(t, client, address, "terminal_resize_flush", map[string]any{"tabId": attached.TabID})
 	var flushed any
 	decodeRPCData(t, response, &flushed)
 	if flushed != nil {
@@ -244,7 +244,7 @@ func TestFullServerProcessKeepsProductionGrid(t *testing.T) {
 		Rows  int    `json:"rows"`
 	}
 	decodeRPCData(t, response, &tabs)
-	if len(tabs) != 1 || tabs[0].TabID != tabID || tabs[0].Cols != 100 || tabs[0].Rows != 30 {
+	if len(tabs) != 1 || tabs[0].TabID != attached.TabID || tabs[0].Cols != 100 || tabs[0].Rows != 30 {
 		t.Fatalf("terminal_list = %+v", tabs)
 	}
 }

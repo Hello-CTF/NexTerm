@@ -559,13 +559,148 @@ func TestPeerUIDMatchesCurrentUser(t *testing.T) {
 	}
 }
 
+func TestIPCRenameSharesCanonicalTitleAcrossClients(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	ctx := context.Background()
+	id := ids.New()
+	info, err := testClient(t, server).Create(ctx, CreateOptions{
+		ID:      id,
+		Command: []string{"/bin/sh", "-c", "sleep 30"},
+		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Kill(context.Background(), id) })
+
+	connA := dialServer(t, server.SocketPath())
+	defer func() { _ = connA.Close() }()
+	handshakeConn(t, connA, supervisor.StateDir())
+	payload, err := marshalFrame(frameType(24), struct {
+		ID                       string `json:"id"`
+		Incarnation              string `json:"incarnation"`
+		RequestID                string `json:"request_id"`
+		ExpectedMetadataRevision uint64 `json:"expected_metadata_revision"`
+		Title                    string `json:"title"`
+	}{ID: id, Incarnation: info.Incarnation, RequestID: ids.New(), Title: "shared-builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(connA, frameType(24), payload); err != nil {
+		t.Fatal(err)
+	}
+	kind, response := readErrorFrame(t, connA)
+	if kind != frameType(25) {
+		t.Fatalf("rename response frame = %d, payload = %s", kind, response)
+	}
+	var renamed struct {
+		Title            string `json:"title"`
+		MetadataRevision uint64 `json:"metadata_revision"`
+	}
+	if err := unmarshalFrame(response, &renamed); err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Title != "shared-builder" || renamed.MetadataRevision != 1 {
+		t.Fatalf("rename result = %+v", renamed)
+	}
+
+	connC := dialServer(t, server.SocketPath())
+	defer func() { _ = connC.Close() }()
+	handshakeConn(t, connC, supervisor.StateDir())
+	if err := writeFrame(connC, frameList, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	kind, response = readErrorFrame(t, connC)
+	if kind != frameListed {
+		t.Fatalf("list response frame = %d, payload = %s", kind, response)
+	}
+	var infos []struct {
+		ID               string `json:"id"`
+		Title            string `json:"title"`
+		MetadataRevision uint64 `json:"metadata_revision"`
+	}
+	if err := unmarshalFrame(response, &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Title != "shared-builder" || infos[0].MetadataRevision != 1 {
+		t.Fatalf("C sees infos = %+v", infos)
+	}
+}
+
+func TestIPCMetadataFeatureLeavesLegacyPeerUsable(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	ctx := context.Background()
+	id := ids.New()
+	info, err := testClient(t, server).Create(ctx, CreateOptions{
+		ID:      id,
+		Command: []string{"/bin/sh", "-c", "sleep 30"},
+		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Kill(context.Background(), id) })
+
+	conn := dialServer(t, server.SocketPath())
+	digest, err := stateDigestFor(supervisor.StateDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(conn, frameHello, hello); err != nil {
+		t.Fatal(err)
+	}
+	kind, _, err := readFrame(conn)
+	if err != nil || kind != frameHelloAck {
+		t.Fatalf("legacy handshake = %d, %v", kind, err)
+	}
+	rename, err := marshalFrame(frameRename, RenameRequest{ID: id, Incarnation: info.Incarnation, RequestID: ids.New(), Title: "not-applied"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(conn, frameRename, rename); err != nil {
+		t.Fatal(err)
+	}
+	kind, payload := readErrorFrame(t, conn)
+	if kind != frameError {
+		t.Fatalf("legacy rename response = %d, want protocol error", kind)
+	}
+	var msg errorMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Code != codeProtocol {
+		t.Fatalf("legacy rename code = %q, want %q", msg.Code, codeProtocol)
+	}
+
+	if err := writeFrame(conn, frameList, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	kind, payload = readErrorFrame(t, conn)
+	if kind != frameListed {
+		t.Fatalf("legacy List after rejected rename = %d, %s", kind, payload)
+	}
+	var infos []Info
+	if err := unmarshalFrame(payload, &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Title != "" || infos[0].MetadataRevision != 0 {
+		t.Fatalf("legacy rename changed session metadata = %+v", infos)
+	}
+}
+
 func handshakeConn(t *testing.T, conn net.Conn, stateDir string) {
 	t.Helper()
 	digest, err := stateDigestFor(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
+	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec, featureMetadata}})
 	if err != nil {
 		t.Fatal(err)
 	}

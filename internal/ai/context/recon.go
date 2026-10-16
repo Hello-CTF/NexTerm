@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -19,9 +20,14 @@ var reconCommands = []string{
 }
 
 func (b *Builder) cachedRecon(ctx context.Context, sessionID string) string {
+	transport, err := b.deps.Transport(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	key := reconCacheKey{sessionID: sessionID, ownerScope: ipc.OwnerID(ctx)}
 	now := b.deps.Now()
 	b.mu.Lock()
-	entry := b.recon[sessionID]
+	entry := b.recon[key]
 	if entry != nil && now.Before(entry.expires) {
 		text := entry.text
 		b.mu.Unlock()
@@ -41,18 +47,18 @@ func (b *Builder) cachedRecon(ctx context.Context, sessionID string) string {
 		return text
 	}
 	entry = &reconEntry{ready: make(chan struct{})}
-	b.recon[sessionID] = entry
+	b.recon[key] = entry
 	b.mu.Unlock()
 
-	text := ""
-	transport, err := b.deps.Transport(ctx, sessionID)
-	if err == nil {
-		text = Recon(ctx, transport)
-	}
+	text, succeeded := reconResult(ctx, transport)
 
 	b.mu.Lock()
-	entry.text = text
-	entry.expires = b.deps.Now().Add(b.deps.ReconTTL)
+	if succeeded && text != "" {
+		entry.text = text
+		entry.expires = b.deps.Now().Add(b.deps.ReconTTL)
+	} else {
+		delete(b.recon, key)
+	}
 	close(entry.ready)
 	entry.ready = nil
 	b.mu.Unlock()
@@ -60,9 +66,16 @@ func (b *Builder) cachedRecon(ctx context.Context, sessionID string) string {
 }
 
 func Recon(ctx context.Context, transport base.Transport) string {
+	text, _ := reconResult(ctx, transport)
+	return text
+}
+
+func reconResult(ctx context.Context, transport base.Transport) (string, bool) {
+	succeeded := true
 	var output strings.Builder
 	for _, command := range reconCommands {
 		if ctx.Err() != nil {
+			succeeded = false
 			break
 		}
 		commandContext, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -70,6 +83,7 @@ func Recon(ctx context.Context, transport base.Transport) string {
 		cancel()
 		fmt.Fprintf(&output, "$ %s\n", command)
 		if err != nil {
+			succeeded = false
 			fmt.Fprintf(&output, "<recon command failed: %v>\n", err)
 			continue
 		}
@@ -90,5 +104,5 @@ func Recon(ctx context.Context, transport base.Transport) string {
 			output.WriteString("(previous command output exceeded the budget and was truncated)\n")
 		}
 	}
-	return output.String()
+	return output.String(), succeeded && ctx.Err() == nil
 }

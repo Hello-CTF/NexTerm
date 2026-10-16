@@ -50,13 +50,13 @@ func TestReconnectVersionSuppressesBlockedOldExitAndControl(t *testing.T) {
 	if err := manager.Reconnect(context.Background(), session.ID); err != nil {
 		t.Fatal(err)
 	}
+	close(emitter.release)
+	oldExit := <-emitter.exits
+	oldControl := <-emitter.controls
 	reconnected := <-emitter.controls
 	if reconnected.Version != 4 || reconnected.Exited {
 		t.Fatalf("reconnect control = %+v, want version 4 exited=false", reconnected)
 	}
-	close(emitter.release)
-	oldExit := <-emitter.exits
-	oldControl := <-emitter.controls
 	if oldExit.Version != 2 || oldControl.Version != 3 || !oldControl.Exited {
 		t.Fatalf("old exit/control = %+v / %+v", oldExit, oldControl)
 	}
@@ -71,5 +71,67 @@ func TestReconnectVersionSuppressesBlockedOldExitAndControl(t *testing.T) {
 	}
 	if len(emitter.exits) != 0 || len(emitter.controls) != 0 {
 		t.Fatal("unexpected duplicate exit/control event")
+	}
+}
+
+func TestReconnectAbortDiscardsPendingControlEvents(t *testing.T) {
+	manager, connector, _, session := openTestSession(t, KindWinRM)
+	events := make(chan ControlEvent, 16)
+	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
+		if event.Topic == TopicTerminalControl {
+			events <- event.Payload.(ControlEvent)
+		}
+		return nil
+	})
+	good := openTestTab(t, manager, session, "client-good", "good-1")
+	bad := openTestTab(t, manager, session, "client-bad", "bad-1")
+	drainControlEvents(events)
+	bad.grid.Close()
+	session.mu.Lock()
+	session.status = StatusReconnecting
+	session.reconnecting = true
+	session.reconnectDone = make(chan struct{})
+	generation := session.generation + 1
+	session.generation = generation
+	session.mu.Unlock()
+	transport := newTransportHandle(connector.transport(0))
+	for attempt := 0; attempt < 16; attempt++ {
+		good.mu.Lock()
+		before := good.eventVersion
+		good.mu.Unlock()
+		opened := map[*Tab]*replacementChannel{
+			good: {channel: newChannelHandle(newFakeChannel(0))},
+			bad:  {channel: newChannelHandle(newFakeChannel(0))},
+		}
+		_, err := manager.commitReconnect(session, transport, opened, nil, generation)
+		if err == nil {
+			t.Fatal("failed reattach was accepted")
+		}
+		good.mu.Lock()
+		changed := good.eventVersion > before
+		good.mu.Unlock()
+		if changed {
+			break
+		}
+		if attempt == 15 {
+			t.Fatal("did not reach successful-then-failed reattach ordering")
+		}
+	}
+	good.mu.Lock()
+	next := good.controlEventLocked()
+	good.mu.Unlock()
+	manager.emit(context.Background(), TopicTerminalControl, next)
+	select {
+	case event := <-events:
+		if event.Version != next.Version {
+			t.Fatalf("emitted version = %d, want next control version %d", event.Version, next.Version)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("next control event was not emitted after abort")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("aborted control event leaked: %+v", event)
+	default:
 	}
 }

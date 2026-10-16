@@ -5,12 +5,15 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 
 func TestMySQLQueryRowsAffected(t *testing.T) {
@@ -106,6 +109,61 @@ func TestMySQLQueryServerErrorStaysInDTO(t *testing.T) {
 	result, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), "SELECT broken", 0, time.Second)
 	if err != nil || result.Error == nil || *result.Error != "ERROR 1064 syntax" {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestMySQLQueryTransportErrorsAreDisconnected(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+		err       error
+	}{
+		{name: "bad connection", statement: "UPDATE items SET enabled = 0", err: driver.ErrBadConn},
+		{name: "driver invalid connection", statement: "SELECT 1", err: mysqlDriver.ErrInvalidConn},
+		{name: "connection reset", statement: "UPDATE items SET enabled = 0", err: &net.OpError{Op: "write", Net: "tcp", Err: errors.New("connection reset by peer")}},
+		{name: "EOF", statement: "SELECT 1", err: io.EOF},
+		{name: "unexpected EOF", statement: "UPDATE items SET enabled = 0", err: io.ErrUnexpectedEOF},
+		{name: "short write", statement: "UPDATE items SET enabled = 0", err: io.ErrShortWrite},
+		{name: "closed network connection", statement: "SELECT 1", err: net.ErrClosed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &fakeSQLState{
+				query: func(context.Context, string) (driver.Rows, error) { return nil, test.err },
+				exec:  func(context.Context, string) (driver.Result, error) { return nil, test.err },
+			}
+			result, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), test.statement, 0, time.Second)
+			var ipcErr *ipc.Error
+			if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeDisconnected {
+				t.Fatalf("result=%+v err=%#v", result, err)
+			}
+			if result.Error != nil || !errors.Is(err, test.err) {
+				t.Fatalf("result=%+v err=%#v", result, err)
+			}
+		})
+	}
+}
+
+func TestMySQLDriverServerErrorsStayInDTO(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+		err       *mysqlDriver.MySQLError
+	}{
+		{name: "syntax", statement: "SELECT broken", err: &mysqlDriver.MySQLError{Number: 1064, Message: `syntax error near "EOF"`}},
+		{name: "relation", statement: "SELECT * FROM missing", err: &mysqlDriver.MySQLError{Number: 1146, Message: "Table 'network error.missing' doesn't exist"}},
+		{name: "column", statement: "SELECT missing", err: &mysqlDriver.MySQLError{Number: 1054, Message: "Unknown column 'driver: bad connection'"}},
+		{name: "constraint", statement: "INSERT INTO items VALUES (1)", err: &mysqlDriver.MySQLError{Number: 1062, Message: "Duplicate entry '1' for key 'PRIMARY'"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &fakeSQLState{
+				query: func(context.Context, string) (driver.Rows, error) { return nil, test.err },
+				exec:  func(context.Context, string) (driver.Result, error) { return nil, test.err },
+			}
+			result, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), test.statement, 0, time.Second)
+			if err != nil || result.Error == nil || *result.Error != test.err.Error() {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
 	}
 }
 

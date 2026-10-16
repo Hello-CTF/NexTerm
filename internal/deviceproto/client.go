@@ -138,6 +138,38 @@ func (c *Client) unary(ctx context.Context, kind FrameType, message any) error {
 	return ex.expectOK()
 }
 
+// Roots uses the negotiated file purpose; only the legacy protocol rejection
+// becomes unsupported, leaving bridge and agent enumeration failures intact.
+func (c *Client) Roots(ctx context.Context) (base.FileSystemRoots, error) {
+	ex, err := c.begin(ctx, FrameRoots, struct{}{})
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	defer ex.finish()
+	kind, payload, err := ReadFrame(ex.conn)
+	if err != nil {
+		return base.FileSystemRoots{}, ex.err(err)
+	}
+	if kind == FrameError {
+		var msg ErrorMsg
+		if err := UnmarshalPayload(payload, &msg); err != nil {
+			return base.FileSystemRoots{}, err
+		}
+		if msg.Code == CodeProtocol {
+			return base.FileSystemRoots{}, fmt.Errorf("%w: %s", base.ErrUnsupported, msg.Message)
+		}
+		return base.FileSystemRoots{}, CodedError(msg.Code, msg.Message)
+	}
+	if kind != FrameRootsReply {
+		return base.FileSystemRoots{}, ex.unexpected(kind)
+	}
+	var roots base.FileSystemRoots
+	if err := UnmarshalPayload(payload, &roots); err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	return roots, nil
+}
+
 func (c *Client) List(ctx context.Context, path string) ([]base.FileEntry, error) {
 	ex, err := c.begin(ctx, FrameList, PathMsg{Path: path})
 	if err != nil {

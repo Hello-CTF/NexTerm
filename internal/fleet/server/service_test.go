@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +27,7 @@ type serviceFixture struct {
 	now      int64
 }
 
-func newServiceFixture(t *testing.T) *serviceFixture {
+func newServiceFixture(t testing.TB) *serviceFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -39,7 +44,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	return fixture
 }
 
-func (f *serviceFixture) createUser(t *testing.T, username string) *account.User {
+func (f *serviceFixture) createUser(t testing.TB, username string) *account.User {
 	t.Helper()
 	user, err := f.accounts.CreateUser(context.Background(), username, "", "password-"+username)
 	if err != nil {
@@ -65,7 +70,7 @@ func (f *serviceFixture) identity(user *account.User) *account.Identity {
 	return &account.Identity{UserID: user.ID, Role: user.Role, State: user.State}
 }
 
-func (f *serviceFixture) enrollAgent(t *testing.T, owner *account.User, name string) *EnrollResult {
+func (f *serviceFixture) enrollAgent(t testing.TB, owner *account.User, name string) *EnrollResult {
 	t.Helper()
 	code, _, err := f.service.IssueEnrollCode(context.Background(), f.identity(owner), "", 0)
 	if err != nil {
@@ -594,16 +599,27 @@ func TestFleetMetricsRecordQuery(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	result := fixture.enrollAgent(t, alice, "agent-host")
 
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Samples == nil || len(metrics.Samples) != 0 || metrics.Latest != nil || metrics.SampleCount != 0 {
+		t.Fatalf("empty metrics=%+v", metrics)
+	}
+
 	sample := MetricsSample{CPUPct: 42.5, MemUsed: 100, MemTotal: 200, DiskUsed: 300, DiskTotal: 400, UptimeS: 5000}
 	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
 		t.Fatal(err)
 	}
-	samples, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, 0)
+	metrics, err = fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) != 1 || samples[0].CPUPct != 42.5 || samples[0].MemTotal != 200 || samples[0].TS == 0 {
-		t.Fatalf("samples=%+v", samples)
+	if len(metrics.Samples) != 1 || metrics.Samples[0].CPUPct != 42.5 || metrics.Samples[0].MemTotal != 200 || metrics.Samples[0].TS == 0 {
+		t.Fatalf("samples=%+v", metrics.Samples)
+	}
+	if metrics.Latest == nil || *metrics.Latest != *metrics.Samples[0] || metrics.SampleCount != 1 || metrics.Downsampled {
+		t.Fatalf("single metrics=%+v", metrics)
 	}
 	if _, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(bob), result.DeviceID, 0); err == nil {
 		t.Fatal("non-owner metrics read must fail")
@@ -612,6 +628,320 @@ func TestFleetMetricsRecordQuery(t *testing.T) {
 		t.Fatal("record on missing device must fail")
 	} else {
 		requireIPCCode(t, err, ipc.CodeNotFound)
+	}
+}
+
+func TestFleetMetricsQueryKeepsLatestAndStableOrder(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	base := fixture.now - time.Hour.Milliseconds()
+	rowCount := maxMetricsSamples + 2
+	rows := make([]*store.DeviceMetrics, 0, rowCount)
+	for i := rowCount - 1; i >= 0; i-- {
+		cpu := float64(i)
+		rows = append(rows, &store.DeviceMetrics{
+			ID: fmt.Sprintf("metric-%06d", i), DeviceID: result.DeviceID,
+			TS: base + int64(i/2), CPUPct: &cpu,
+		})
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.SampleCount != int64(rowCount) || !metrics.Downsampled || len(metrics.Samples) == 0 || len(metrics.Samples) > maxMetricsSamples {
+		t.Fatalf("metrics count=%d returned=%d downsampled=%v", metrics.SampleCount, len(metrics.Samples), metrics.Downsampled)
+	}
+	if metrics.Latest == nil || metrics.Latest.CPUPct != float64(rowCount-1) {
+		t.Fatalf("latest=%+v", metrics.Latest)
+	}
+	for i, sample := range metrics.Samples {
+		ordinal := int(sample.CPUPct)
+		wantTS := base + int64(ordinal/2)
+		if ordinal < 0 || ordinal >= rowCount || sample.TS != wantTS {
+			t.Fatalf("sample[%d]=(ts=%d,cpu=%v) is not an original row", i, sample.TS, sample.CPUPct)
+		}
+		if i > 0 {
+			previous := metrics.Samples[i-1]
+			if previous.TS > sample.TS || (previous.TS == sample.TS && previous.CPUPct > sample.CPUPct) {
+				t.Fatalf("samples are not in stable (ts,id) order at %d", i)
+			}
+		}
+	}
+	if metrics.Samples[0].CPUPct != 0 || metrics.Samples[len(metrics.Samples)-1].CPUPct != float64(rowCount-1) {
+		t.Fatalf("window endpoints are missing: first=%+v last=%+v", metrics.Samples[0], metrics.Samples[len(metrics.Samples)-1])
+	}
+}
+
+func deviceMetricRowForTest(deviceID, id string, sample MetricsSample) *store.DeviceMetrics {
+	return &store.DeviceMetrics{
+		ID: id, DeviceID: deviceID, TS: sample.TS,
+		CPUPct: &sample.CPUPct, MemUsed: &sample.MemUsed, MemTotal: &sample.MemTotal,
+		DiskUsed: &sample.DiskUsed, DiskTotal: &sample.DiskTotal, UptimeS: &sample.UptimeS,
+	}
+}
+
+func TestFleetMetricsQueryKeepsAllSamplesAtLimit(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	base := fixture.now - time.Hour.Milliseconds()
+	rows := make([]*store.DeviceMetrics, 0, maxMetricsSamples)
+	for i := maxMetricsSamples - 1; i >= 0; i-- {
+		sample := MetricsSample{TS: base + int64(i/2), CPUPct: float64(i), UptimeS: int64(i)}
+		rows = append(rows, deviceMetricRowForTest(result.DeviceID, fmt.Sprintf("metric-%06d", i), sample))
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.SampleCount != maxMetricsSamples || metrics.Downsampled || len(metrics.Samples) != maxMetricsSamples {
+		t.Fatalf("metrics count=%d returned=%d downsampled=%v", metrics.SampleCount, len(metrics.Samples), metrics.Downsampled)
+	}
+	if metrics.Latest == nil || metrics.Latest.CPUPct != maxMetricsSamples-1 || metrics.Samples[0].CPUPct != 0 || metrics.Samples[len(metrics.Samples)-1].CPUPct != maxMetricsSamples-1 {
+		t.Fatalf("latest/endpoints=%+v %+v %+v", metrics.Latest, metrics.Samples[0], metrics.Samples[len(metrics.Samples)-1])
+	}
+}
+
+func TestFleetMetricsQueryKeepsCompleteWindow(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	const rowCount = 17280
+	base := fixture.now - 24*time.Hour.Milliseconds()
+	raw := make(map[int64]MetricsSample, rowCount)
+	rows := make([]*store.DeviceMetrics, 0, rowCount)
+	for i := rowCount - 1; i >= 0; i-- {
+		ts := base + int64(i)*5000
+		if i > 0 && i%1000 == 0 {
+			ts = base + int64(i-1)*5000
+		}
+		sample := MetricsSample{TS: ts, CPUPct: 10, MemUsed: 50, MemTotal: 100, DiskUsed: 25, DiskTotal: 100, UptimeS: int64(i)}
+		switch i {
+		case 100:
+			sample.CPUPct = -5
+		case 200:
+			sample.CPUPct = 99.5
+		case 300:
+			sample.MemUsed = 90
+		case 400:
+			sample.MemUsed = 5
+		case 500:
+			sample.DiskUsed = 95
+		case 600:
+			sample.DiskUsed = 5
+		case 17000:
+			sample.CPUPct = 98.5
+		}
+		raw[sample.UptimeS] = sample
+		rows = append(rows, deviceMetricRowForTest(result.DeviceID, fmt.Sprintf("metric-%06d", i), sample))
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := metrics.Samples
+	if metrics.SampleCount != rowCount || !metrics.Downsampled || len(samples) == 0 || len(samples) >= rowCount || len(samples) > maxMetricsSamples {
+		t.Fatalf("sample count=%d returned=%d downsampled=%v", metrics.SampleCount, len(samples), metrics.Downsampled)
+	}
+	if metrics.WindowStart != base || metrics.WindowEnd != fixture.now || metrics.SampleIntervalMS != 5000 {
+		t.Fatalf("window=%d-%d interval=%d", metrics.WindowStart, metrics.WindowEnd, metrics.SampleIntervalMS)
+	}
+	if metrics.Latest == nil || metrics.Latest.UptimeS != rowCount-1 {
+		t.Fatalf("latest=%+v", metrics.Latest)
+	}
+	if samples[0].TS != base {
+		t.Fatalf("first ts=%d, want window start %d", samples[0].TS, base)
+	}
+	lastTS := base + (rowCount-1)*5000
+	if samples[len(samples)-1].TS != lastTS {
+		t.Fatalf("last ts=%d, want window end sample %d", samples[len(samples)-1].TS, lastTS)
+	}
+	for i, sample := range samples {
+		expected, ok := raw[sample.UptimeS]
+		if !ok || *sample != expected {
+			t.Fatalf("sample[%d]=%+v is not an original row", i, sample)
+		}
+		if i > 0 {
+			previous := samples[i-1]
+			if previous.TS > sample.TS || (previous.TS == sample.TS && previous.UptimeS > sample.UptimeS) {
+				t.Fatalf("samples are not in stable (ts,id) order at %d", i)
+			}
+		}
+	}
+	for _, spike := range []int64{100, 200, 300, 400, 500, 600, 17000} {
+		found := false
+		for _, sample := range samples {
+			if sample.UptimeS == spike {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("original spike %d is missing", spike)
+		}
+	}
+}
+
+func TestFleetMetricsQueryIgnoresInvalidRatios(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	const rowCount = maxMetricsSamples + 1
+	ts := fixture.now - time.Minute.Milliseconds()
+	rows := make([]*store.DeviceMetrics, 0, rowCount)
+	for i := rowCount - 1; i >= 0; i-- {
+		sample := MetricsSample{TS: ts, CPUPct: 10, MemUsed: 50, MemTotal: 100, DiskUsed: 50, DiskTotal: 100, UptimeS: int64(i)}
+		if i == 2500 {
+			sample.MemUsed = 1000
+			sample.MemTotal = 0
+			sample.DiskUsed = 1000
+			sample.DiskTotal = -1
+		}
+		rows = append(rows, deviceMetricRowForTest(result.DeviceID, fmt.Sprintf("metric-%06d", i), sample))
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.SampleCount != rowCount || !metrics.Downsampled {
+		t.Fatalf("metrics=%+v", metrics)
+	}
+	for _, sample := range metrics.Samples {
+		if sample.UptimeS == 2500 {
+			t.Fatalf("invalid zero/negative denominators became ratio extrema: %+v", sample)
+		}
+	}
+}
+
+func TestFleetMetricsQueryExcludesFutureSamples(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	for _, sample := range []MetricsSample{
+		{TS: fixture.now - time.Hour.Milliseconds(), CPUPct: 1},
+		{TS: fixture.now - 5*time.Minute.Milliseconds(), CPUPct: 2},
+		{TS: fixture.now + time.Hour.Milliseconds(), CPUPct: 99},
+	} {
+		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, fixture.now-2*time.Hour.Milliseconds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.Samples) != 2 || metrics.Samples[0].CPUPct != 1 || metrics.Samples[1].CPUPct != 2 || metrics.Latest == nil || metrics.Latest.CPUPct != 2 {
+		t.Fatalf("future sample entered the frozen window: %+v", metrics)
+	}
+
+	metrics, err = fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, fixture.now-time.Minute.Milliseconds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.Samples) != 0 || metrics.SampleCount != 0 || metrics.Latest == nil || metrics.Latest.CPUPct != 2 || metrics.SeriesError != "" {
+		t.Fatalf("latest outside the trend window was not preserved independently: %+v", metrics)
+	}
+}
+
+func TestFleetMetricsQuerySeriesErrorKeepsLatest(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	const rowCount = 1500
+	base := fixture.now - time.Hour.Milliseconds()
+	rows := make([]*store.DeviceMetrics, 0, rowCount)
+	for i := rowCount - 1; i >= 0; i-- {
+		sample := MetricsSample{TS: base + int64(i), CPUPct: 42.5, UptimeS: int64(i)}
+		rows = append(rows, deviceMetricRowForTest(result.DeviceID, fmt.Sprintf("metric-%06d", i), sample))
+	}
+	deviceMetrics := query.Use(fixture.db).DeviceMetrics
+	if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	queries := 0
+	if err := fixture.db.Callback().Query().After("gorm:query").Register("test:cancel_metrics_window", func(db *gorm.DB) {
+		if strings.Contains(db.Statement.SQL.String(), "device_metrics") {
+			queries++
+			if queries == 1 {
+				sqlDB, err := db.DB()
+				if err == nil {
+					_ = sqlDB.Close()
+				}
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(ctx, fixture.identity(alice), result.DeviceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 1 {
+		t.Fatalf("device metrics queries=%d, want latest, one trend batch, then failure", queries)
+	}
+	if metrics.Latest == nil || metrics.Latest.CPUPct != 42.5 || metrics.SeriesError == "" {
+		t.Fatalf("partial metrics=%+v", metrics)
+	}
+	if metrics.Samples == nil || len(metrics.Samples) != 0 || metrics.SampleCount != 0 || metrics.Downsampled {
+		t.Fatalf("failed trend must not claim complete samples: %+v", metrics)
+	}
+	if metrics.WindowStart != fixture.now-24*time.Hour.Milliseconds() || metrics.WindowEnd != fixture.now {
+		t.Fatalf("window=%d-%d", metrics.WindowStart, metrics.WindowEnd)
+	}
+}
+
+func TestFleetMetricsQuerySeriesErrorWithoutLatest(t *testing.T) {
+	fixture := newServiceFixture(t)
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+	queries := 0
+	if err := fixture.db.Callback().Query().After("gorm:query").Register("test:fail_empty_metrics_window", func(db *gorm.DB) {
+		if strings.Contains(db.Statement.SQL.String(), "device_metrics") {
+			queries++
+			if queries == 1 {
+				sqlDB, err := db.DB()
+				if err == nil {
+					_ = sqlDB.Close()
+				}
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 1 || metrics.Latest != nil || metrics.SeriesError == "" {
+		t.Fatalf("empty failed metrics=%+v queries=%d", metrics, queries)
+	}
+	if metrics.Samples == nil || len(metrics.Samples) != 0 || metrics.SampleCount != 0 || metrics.Downsampled {
+		t.Fatalf("empty failure must not claim complete samples: %+v", metrics)
 	}
 }
 
@@ -769,15 +1099,38 @@ func TestFleetMetricsQueryClamp(t *testing.T) {
 	fixture := newServiceFixture(t)
 	alice := fixture.createUser(t, "alice")
 	result := fixture.enrollAgent(t, alice, "agent-host")
-	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, MetricsSample{TS: fixture.now - time.Hour.Milliseconds(), CPUPct: 1}); err != nil {
-		t.Fatal(err)
+	since := fixture.now - time.Hour.Milliseconds()
+	for _, sample := range []MetricsSample{
+		{TS: fixture.now - 49*time.Hour.Milliseconds(), CPUPct: 1},
+		{TS: fixture.now - 47*time.Hour.Milliseconds(), CPUPct: 2},
+		{TS: since, CPUPct: 3},
+		{TS: fixture.now - 30*time.Minute.Milliseconds(), CPUPct: 4},
+	} {
+		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+			t.Fatal(err)
+		}
 	}
-	samples, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, fixture.now-7*24*time.Hour.Milliseconds())
+
+	metrics, err := fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, since)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) != 1 {
-		t.Fatalf("since must clamp to raw retention, got %d samples", len(samples))
+	if len(metrics.Samples) != 2 || metrics.Samples[0].CPUPct != 3 || metrics.Samples[1].CPUPct != 4 || metrics.SampleCount != 2 {
+		t.Fatalf("since must be inclusive and exclude older samples: %+v", metrics)
+	}
+	if metrics.WindowStart != since || metrics.WindowEnd != fixture.now {
+		t.Fatalf("window=%d-%d", metrics.WindowStart, metrics.WindowEnd)
+	}
+
+	metrics, err = fixture.service.DeviceMetrics(context.Background(), fixture.identity(alice), result.DeviceID, fixture.now-7*24*time.Hour.Milliseconds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.Samples) != 3 || metrics.Samples[0].CPUPct != 2 || metrics.Samples[1].CPUPct != 3 || metrics.Samples[2].CPUPct != 4 || metrics.SampleCount != 3 {
+		t.Fatalf("since must clamp to raw retention: %+v", metrics)
+	}
+	if metrics.WindowStart != fixture.now-rawMetricsRetention.Milliseconds() {
+		t.Fatalf("retention window start=%d", metrics.WindowStart)
 	}
 }
 
@@ -833,4 +1186,212 @@ func TestFleetSetCurrentURL(t *testing.T) {
 	if err := fixture.service.SetCurrentURL(context.Background(), "missing-device", "https://x.example.com", ""); err == nil {
 		t.Fatal("missing device must fail")
 	}
+}
+
+func metricsBenchmarkPercentile(values []float64, percentile int) float64 {
+	index := (percentile*len(values) + 99) / 100
+	if index < 1 {
+		index = 1
+	}
+	return values[index-1]
+}
+
+func BenchmarkDeviceMetricsWindow(b *testing.B) {
+	type Scenario struct {
+		name            string
+		window          time.Duration
+		rows            int
+		irregular       bool
+		returnedSamples int
+		responseBytes   int
+	}
+	type Result struct {
+		Scenario        string    `json:"scenario"`
+		Dialect         string    `json:"dialect"`
+		GoVersion       string    `json:"goVersion"`
+		GOOS            string    `json:"goos"`
+		GOARCH          string    `json:"goarch"`
+		WindowHours     int64     `json:"windowHours"`
+		Rows            int       `json:"rows"`
+		Warmups         int       `json:"warmups"`
+		Samples         int       `json:"samples"`
+		DurationsMS     []float64 `json:"durationsMs"`
+		AllocationsMiB  []float64 `json:"allocationsMiB"`
+		DurationP50MS   float64   `json:"durationP50Ms"`
+		DurationP95MS   float64   `json:"durationP95Ms"`
+		AllocP50MiB     float64   `json:"allocP50MiB"`
+		AllocP95MiB     float64   `json:"allocP95MiB"`
+		ResponseBytes   int       `json:"responseBytes"`
+		ReturnedSamples int       `json:"returnedSamples"`
+		MaxIntervalMS   int64     `json:"maxIntervalMs"`
+		Measurement     string    `json:"measurement"`
+		AllocationNote  string    `json:"allocationNote"`
+		Command         string    `json:"command"`
+		GeneratedAt     string    `json:"generatedAt"`
+	}
+	scenarios := []Scenario{
+		{name: "1hz-24h", window: 24 * time.Hour, rows: 86400, returnedSamples: 1991, responseBytes: 224382},
+		{name: "1hz-48h", window: 48 * time.Hour, rows: 172800, returnedSamples: 1991, responseBytes: 225349},
+		{name: "irregular-24h", window: 24 * time.Hour, rows: 86400, irregular: true, returnedSamples: 1991, responseBytes: 224381},
+	}
+	output := os.Getenv("NEXTERM_METRICS_BENCHMARK_OUTPUT")
+	if output == "" {
+		output = ".tmp/fleet-metrics-window-benchmark.json"
+	}
+	command := fmt.Sprintf("NEXTERM_METRICS_BENCHMARK_OUTPUT=%s go test -mod=readonly ./internal/fleet/server -run '^$' -bench '^BenchmarkDeviceMetricsWindow$' -benchtime=1x -count=1", output)
+	results := make([]Result, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		scenario := scenario
+		b.Run(scenario.name, func(b *testing.B) {
+			now := time.Now().UnixMilli()
+			windowStart := now - scenario.window.Milliseconds()
+			fixture := newServiceFixture(b)
+			fixture.now = now
+			owner := fixture.createUser(b, "benchmark-owner")
+			device := fixture.enrollAgent(b, owner, "benchmark-device")
+			rows := make([]*store.DeviceMetrics, 0, scenario.rows)
+			previousTS := windowStart
+			totalOffset := int64(scenario.rows-1) * 1000
+			if scenario.irregular {
+				totalOffset = 0
+				for i := 1; i < scenario.rows; i++ {
+					step := int64(1000)
+					if i%5000 == 0 {
+						step += 10000
+					} else if i%1000 == 0 {
+						step -= 500
+					}
+					totalOffset += step
+				}
+			}
+			offset := int64(0)
+			maxInterval := int64(1000)
+			duplicates := 0
+			for i := 0; i < scenario.rows; i++ {
+				ts := windowStart + int64(i)*1000
+				if scenario.irregular {
+					ts = windowStart + offset*scenario.window.Milliseconds()/totalOffset
+					if i > 0 {
+						step := int64(1000)
+						if i%5000 == 0 {
+							step += 10000
+						} else if i%1000 == 0 {
+							step -= 500
+						}
+						offset += step
+						if i%1000 == 0 {
+							ts = previousTS
+							duplicates++
+						}
+					}
+				}
+				sample := MetricsSample{TS: ts, CPUPct: float64(i % 100), MemUsed: 50, MemTotal: 100, DiskUsed: 25, DiskTotal: 100, UptimeS: int64(i)}
+				rows = append(rows, deviceMetricRowForTest(device.DeviceID, fmt.Sprintf("metric-%06d", i), sample))
+				if i > 0 && ts-previousTS > maxInterval {
+					maxInterval = ts - previousTS
+				}
+				previousTS = ts
+			}
+			if last := rows[len(rows)-1]; last.TS != now {
+				if now-previousTS > maxInterval {
+					maxInterval = now - previousTS
+				}
+				last.TS = now
+				previousTS = now
+			}
+			if previousTS != now {
+				b.Fatalf("last fixture ts=%d, want %d", previousTS, now)
+			}
+			if scenario.irregular && (duplicates == 0 || maxInterval < 10000) {
+				b.Fatalf("invalid irregular fixture: duplicates=%d maxInterval=%d", duplicates, maxInterval)
+			}
+			deviceMetrics := query.Use(fixture.db).DeviceMetrics
+			if err := deviceMetrics.WithContext(context.Background()).CreateInBatches(rows, 500); err != nil {
+				b.Fatal(err)
+			}
+
+			ctx := context.Background()
+			var result *DeviceMetricsResult
+			var err error
+			for i := 0; i < 5; i++ {
+				result, err = fixture.service.DeviceMetrics(ctx, fixture.identity(owner), device.DeviceID, windowStart)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			durations := make([]float64, 0, 30)
+			allocations := make([]float64, 0, 30)
+			responseBytes := 0
+			for i := 0; i < 30; i++ {
+				runtime.GC()
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				started := time.Now()
+				result, err = fixture.service.DeviceMetrics(ctx, fixture.identity(owner), device.DeviceID, windowStart)
+				elapsed := time.Since(started)
+				runtime.ReadMemStats(&after)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if result.SampleCount != int64(scenario.rows) || result.SeriesError != "" || len(result.Samples) != scenario.returnedSamples {
+					b.Fatalf("incomplete benchmark result: count=%d returned=%d want=%d seriesError=%q", result.SampleCount, len(result.Samples), scenario.returnedSamples, result.SeriesError)
+				}
+				durations = append(durations, float64(elapsed)/float64(time.Millisecond))
+				allocations = append(allocations, float64(after.TotalAlloc-before.TotalAlloc)/(1024*1024))
+				encoded, err := json.Marshal(result)
+				if err != nil {
+					b.Fatal(err)
+				}
+				responseBytes = len(encoded)
+				if responseBytes != scenario.responseBytes {
+					b.Fatalf("response bytes=%d, want unchanged contract size %d", responseBytes, scenario.responseBytes)
+				}
+			}
+			sortedDurations := append([]float64(nil), durations...)
+			sort.Float64s(sortedDurations)
+			sortedAllocations := append([]float64(nil), allocations...)
+			sort.Float64s(sortedAllocations)
+			resultRecord := Result{
+				Scenario: scenario.name, Dialect: "sqlite", GoVersion: runtime.Version(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+				WindowHours: scenario.window.Milliseconds() / time.Hour.Milliseconds(), Rows: scenario.rows, Warmups: 5, Samples: 30,
+				DurationsMS: durations, AllocationsMiB: allocations,
+				DurationP50MS: metricsBenchmarkPercentile(sortedDurations, 50), DurationP95MS: metricsBenchmarkPercentile(sortedDurations, 95),
+				AllocP50MiB: metricsBenchmarkPercentile(sortedAllocations, 50), AllocP95MiB: metricsBenchmarkPercentile(sortedAllocations, 95),
+				ResponseBytes: responseBytes, ReturnedSamples: len(result.Samples), MaxIntervalMS: maxInterval,
+				Measurement:    "DeviceMetrics wall time excluding JSON serialization",
+				AllocationNote: "TotalAlloc delta per call, excluding JSON serialization", Command: command, GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+			results = append(results, resultRecord)
+			b.ReportMetric(resultRecord.DurationP50MS, "duration_p50_ms")
+			b.ReportMetric(resultRecord.DurationP95MS, "duration_p95_ms")
+			b.ReportMetric(resultRecord.AllocP95MiB, "alloc_p95_MiB")
+			b.ReportMetric(float64(resultRecord.ResponseBytes), "response_bytes")
+			if resultRecord.ResponseBytes > 1024*1024 {
+				b.Errorf("response P95 contract: bytes=%d, want <= %d", resultRecord.ResponseBytes, 1024*1024)
+			}
+			if scenario.window == 24*time.Hour {
+				if resultRecord.DurationP95MS > 500 {
+					b.Errorf("24h duration P95=%.3fms, want <= 500ms", resultRecord.DurationP95MS)
+				}
+				if resultRecord.AllocP95MiB > 16 {
+					b.Errorf("24h allocation P95=%.3fMiB, want <= 16MiB", resultRecord.AllocP95MiB)
+				}
+			}
+		})
+	}
+	encoded, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		b.Fatal(err)
+	}
+	outputPath := output
+	if !filepath.IsAbs(outputPath) {
+		outputPath = filepath.Join("..", "..", "..", outputPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(outputPath, append(encoded, '\n'), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	b.Logf("benchmark results written to %s", outputPath)
 }

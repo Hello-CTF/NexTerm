@@ -154,6 +154,201 @@ func TestEventBrokerSubscribeResyncWhenGapExceedsBufferOrQueue(t *testing.T) {
 	}
 }
 
+func TestEventBrokerBufferResizeRetainsNewestEvents(t *testing.T) {
+	broker := NewEventBroker()
+	broker.QueueSize = 8
+	broker.BufferSize = 4
+	for i := 1; i <= 4; i++ {
+		emitSeq(t, broker, ipc.TopicSessionStatus, i)
+	}
+	broker.BufferSize = 2
+	emitSeq(t, broker, ipc.TopicSessionStatus, 5)
+	shrunk, unsubscribeShrunk, err := broker.subscribe(3, true, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribeShrunk()
+	replayed := drainReplay(t, shrunk, 2)
+	for i, envelope := range replayed {
+		if envelope.ID != uint64(4+i) {
+			t.Fatalf("shrunk buffer replay %d ID = %d, want %d", i, envelope.ID, 4+i)
+		}
+	}
+
+	broker.BufferSize = 4
+	emitSeq(t, broker, ipc.TopicSessionStatus, 6)
+	grown, unsubscribeGrown, err := broker.subscribe(3, true, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribeGrown()
+	replayed = drainReplay(t, grown, 3)
+	for i, envelope := range replayed {
+		if envelope.ID != uint64(4+i) {
+			t.Fatalf("grown buffer replay %d ID = %d, want %d", i, envelope.ID, 4+i)
+		}
+	}
+}
+
+type eventSubscribeResult struct {
+	subscriber  *eventSubscription
+	unsubscribe func()
+	err         error
+}
+
+func TestEventBrokerReplayCompletesBeforeConcurrentLive(t *testing.T) {
+	broker := NewEventBroker()
+	broker.QueueSize = 4
+	emitSeq(t, broker, ipc.TopicSessionStatus, 1)
+	replayFiltering := make(chan struct{})
+	releaseReplay := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(releaseReplay)
+		}
+	}()
+	subscribeResult := make(chan eventSubscribeResult, 1)
+	go func() {
+		subscriber, unsubscribe, err := broker.subscribe(0, true, false, func(event ipc.Event) bool {
+			if event.Payload.(map[string]int)["seq"] == 1 {
+				close(replayFiltering)
+				<-releaseReplay
+			}
+			return true
+		})
+		subscribeResult <- eventSubscribeResult{subscriber: subscriber, unsubscribe: unsubscribe, err: err}
+	}()
+	select {
+	case <-replayFiltering:
+	case <-time.After(5 * time.Second):
+		t.Fatal("subscribe did not reach the replay filter")
+	}
+	liveResult := make(chan error, 1)
+	go func() {
+		liveResult <- broker.Emit(context.Background(), ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": 2}})
+	}()
+	var liveErr error
+	liveFinished := false
+	select {
+	case liveErr = <-liveResult:
+		liveFinished = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseReplay)
+	released = true
+	result := <-subscribeResult
+	if !liveFinished {
+		liveErr = <-liveResult
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	defer result.unsubscribe()
+	if liveErr != nil {
+		t.Fatal(liveErr)
+	}
+	received := drainReplay(t, result.subscriber, 2)
+	if received[0].ID != 1 || received[1].ID != 2 {
+		t.Fatalf("replay/live IDs = [%d %d], want [1 2]", received[0].ID, received[1].ID)
+	}
+	select {
+	case data := <-result.subscriber.queue:
+		t.Fatalf("duplicate replay/live event: %s", data)
+	default:
+	}
+}
+
+func TestEventBrokerConcurrentSubscribeDeliversBoundaryEventExactlyOnce(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		broker := NewEventBroker()
+		broker.QueueSize = 4
+		emitSeq(t, broker, ipc.TopicSessionStatus, 1)
+		start := make(chan struct{})
+		subscribeResult := make(chan eventSubscribeResult, 1)
+		go func() {
+			<-start
+			subscriber, unsubscribe, err := broker.subscribe(1, true, false, nil)
+			subscribeResult <- eventSubscribeResult{subscriber: subscriber, unsubscribe: unsubscribe, err: err}
+		}()
+		liveResult := make(chan error, 1)
+		go func() {
+			<-start
+			liveResult <- broker.Emit(context.Background(), ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]int{"seq": 2}})
+		}()
+		close(start)
+		result := <-subscribeResult
+		liveErr := <-liveResult
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if liveErr != nil {
+			result.unsubscribe()
+			t.Fatal(liveErr)
+		}
+		received := drainReplay(t, result.subscriber, 1)
+		if received[0].ID != 2 {
+			result.unsubscribe()
+			t.Fatalf("iteration %d received ID %d, want 2", i, received[0].ID)
+		}
+		select {
+		case data := <-result.subscriber.queue:
+			result.unsubscribe()
+			t.Fatalf("iteration %d delivered the boundary event twice: %s", i, data)
+		default:
+		}
+		result.unsubscribe()
+	}
+}
+
+func TestEventBrokerSubscribeCloseDuringReplayFilter(t *testing.T) {
+	broker := NewEventBroker()
+	emitSeq(t, broker, ipc.TopicSessionStatus, 1)
+	replayFiltering := make(chan struct{})
+	releaseReplay := make(chan struct{})
+	subscribeResult := make(chan eventSubscribeResult, 1)
+	go func() {
+		subscriber, unsubscribe, err := broker.subscribe(0, true, false, func(ipc.Event) bool {
+			close(replayFiltering)
+			<-releaseReplay
+			return true
+		})
+		subscribeResult <- eventSubscribeResult{subscriber: subscriber, unsubscribe: unsubscribe, err: err}
+	}()
+	select {
+	case <-replayFiltering:
+	case <-time.After(5 * time.Second):
+		close(releaseReplay)
+		t.Fatal("subscribe did not reach the replay filter")
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- broker.Close() }()
+	select {
+	case err := <-closeResult:
+		if err != nil {
+			close(releaseReplay)
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		close(releaseReplay)
+		t.Fatal("Close waited for the replay filter")
+	}
+	close(releaseReplay)
+	result := <-subscribeResult
+	if result.err != ErrEventBrokerClosed {
+		if result.unsubscribe != nil {
+			result.unsubscribe()
+		}
+		t.Fatalf("subscribe error after Close = %v, want ErrEventBrokerClosed", result.err)
+	}
+	if result.subscriber != nil || result.unsubscribe != nil {
+		t.Fatal("closed subscribe returned a live subscription")
+	}
+	if count := broker.SubscriberCount(); count != 0 {
+		t.Fatalf("subscriber count after Close = %d, want 0", count)
+	}
+}
+
 func TestWebSocketEventsReconnectReplaysMissedOneShotEvents(t *testing.T) {
 	server, httpServer := newTestHTTP(t, testConfig(t, false))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

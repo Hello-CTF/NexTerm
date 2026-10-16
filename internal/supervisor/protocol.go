@@ -41,11 +41,16 @@ const (
 	frameFatal
 	frameKillSession
 	frameExecOutput
+	frameRename
+	frameRenamed
 )
 
-// featureExec is advertised in the hello handshake by peers that support
-// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
-const featureExec = "exec"
+const (
+	// featureExec is advertised in the hello handshake by peers that support
+	// non-PTY exec sessions (createMsg.Pty == false and frameExecOutput).
+	featureExec     = "exec"
+	featureMetadata = "metadata"
+)
 
 // Exec output stream discriminators, the first byte of a frameExecOutput
 // payload.
@@ -104,8 +109,11 @@ type inputAckMsg struct {
 }
 
 type errorMsg struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code             string `json:"code"`
+	Message          string `json:"message"`
+	ID               string `json:"id,omitempty"`
+	Title            string `json:"title,omitempty"`
+	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
 }
 
 type exitMsg struct {
@@ -114,17 +122,19 @@ type exitMsg struct {
 }
 
 const (
-	codeInternal        = "internal"
-	codeNotFound        = "not_found"
-	codeAlreadyExists   = "already_exists"
-	codeIdentity        = "identity"
-	codeExited          = "exited"
-	codeInvalidInput    = "invalid_input"
-	codeUnavailable     = "unavailable"
-	codeClosed          = "closed"
-	codeProtocol        = "protocol"
-	codeVersionMismatch = "version_mismatch"
-	codeStateMismatch   = "state_mismatch"
+	codeInternal         = "internal"
+	codeNotFound         = "not_found"
+	codeAlreadyExists    = "already_exists"
+	codeIdentity         = "identity"
+	codeIdentityChanged  = "identity_changed"
+	codeMetadataConflict = "metadata_conflict"
+	codeExited           = "exited"
+	codeInvalidInput     = "invalid_input"
+	codeUnavailable      = "unavailable"
+	codeClosed           = "closed"
+	codeProtocol         = "protocol"
+	codeVersionMismatch  = "version_mismatch"
+	codeStateMismatch    = "state_mismatch"
 )
 
 func errorCode(err error) string {
@@ -135,6 +145,8 @@ func errorCode(err error) string {
 		return codeAlreadyExists
 	case errors.Is(err, ErrIdentity):
 		return codeIdentity
+	case errors.Is(err, ErrMetadataConflict):
+		return codeMetadataConflict
 	case errors.Is(err, ErrExited):
 		return codeExited
 	case errors.Is(err, ErrInvalidInput):
@@ -162,6 +174,17 @@ func (e *wireError) Unwrap() error {
 	return e.error
 }
 
+func errorMessage(err error) errorMsg {
+	msg := errorMsg{Code: errorCode(err), Message: err.Error()}
+	var conflict *MetadataConflictError
+	if errors.As(err, &conflict) {
+		msg.ID = conflict.Current.ID
+		msg.Title = conflict.Current.Title
+		msg.MetadataRevision = conflict.Current.MetadataRevision
+	}
+	return msg
+}
+
 func codedError(code, message string) error {
 	sentinel := errorSentinel(code)
 	if message == "" {
@@ -170,14 +193,26 @@ func codedError(code, message string) error {
 	return &wireError{fmt.Errorf("%w: %s", sentinel, message)}
 }
 
+func decodedError(msg errorMsg) error {
+	if msg.Code == codeMetadataConflict {
+		return &wireError{&MetadataConflictError{
+			Current: Info{ID: msg.ID, Title: msg.Title, MetadataRevision: msg.MetadataRevision},
+			message: msg.Message,
+		}}
+	}
+	return codedError(msg.Code, msg.Message)
+}
+
 func errorSentinel(code string) error {
 	switch code {
 	case codeNotFound:
 		return ErrNotFound
 	case codeAlreadyExists:
 		return ErrAlreadyExists
-	case codeIdentity:
+	case codeIdentity, codeIdentityChanged:
 		return ErrIdentity
+	case codeMetadataConflict:
+		return ErrMetadataConflict
 	case codeExited:
 		return ErrExited
 	case codeInvalidInput:

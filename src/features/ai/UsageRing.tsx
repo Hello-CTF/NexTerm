@@ -6,6 +6,8 @@ export interface AiUsage {
   completionTokens: number;
   cachedTokens: number;
   contextWindow: number;
+  summaryPromptTokens?: number;
+  summaryCompletionTokens?: number;
 }
 
 export interface UsageRingProps {
@@ -131,8 +133,13 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
   const detailsAvailable = runs !== undefined || loadSummary !== undefined;
 
   const prompt = usage?.promptTokens ?? 0;
+  const completion = usage?.completionTokens ?? 0;
   const cached = usage?.cachedTokens ?? 0;
   const window = usage?.contextWindow ?? 0;
+  const summaryPrompt = usage?.summaryPromptTokens ?? 0;
+  const summaryCompletion = usage?.summaryCompletionTokens ?? 0;
+  const hasMainTokens = prompt > 0 || completion > 0;
+  const hasSummary = summaryPrompt > 0 || summaryCompletion > 0;
   const hasData = usage != null && window > 0;
 
   const used = usedPercent(prompt, window);
@@ -245,21 +252,35 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
       {!detailsOpen ? (
         <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden w-max group-hover:block group-focus-within:block">
         <span className="block rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-300 shadow-xl">
-          {hasData ? (
+          {hasData || hasMainTokens || hasSummary ? (
             <>
-              <span className="block font-medium text-neutral-100">
-                上下文占用 {used.toFixed(0)}%
-              </span>
-              <span className="block font-mono text-[10.5px] text-neutral-400">
-                {formatTokens(prompt)} / {formatTokens(window)} tokens
-              </span>
-              <span
-                className={`block ${
-                  hit > 0 ? "text-green-400" : "text-neutral-500"
-                }`}
-              >
-                缓存命中 {hit.toFixed(0)}%
-              </span>
+              {hasData ? (
+                <>
+                  <span className="block font-medium text-neutral-100">
+                    上下文占用 {used.toFixed(0)}%
+                  </span>
+                  <span className="block font-mono text-[10.5px] text-neutral-400">
+                    {formatTokens(prompt)} / {formatTokens(window)} tokens
+                  </span>
+                  <span
+                    className={`block ${
+                      hit > 0 ? "text-green-400" : "text-neutral-500"
+                    }`}
+                  >
+                    缓存命中 {hit.toFixed(0)}%
+                  </span>
+                </>
+              ) : null}
+              {hasMainTokens ? (
+                <span className="block">
+                  主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+                </span>
+              ) : null}
+              {hasSummary ? (
+                <span className="block">
+                  摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+                </span>
+              ) : null}
             </>
           ) : (
             <span className="block text-neutral-500">尚未产生用量</span>
@@ -269,18 +290,20 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
       ) : null}
 
       {detailsAvailable && detailsOpen ? (
-        <UsageDetails runs={runs} summaryRows={summaryRows} summaryFailed={summaryFailed} onRetrySummary={loadSummaryRows} />
+        <UsageDetails usage={usage} runs={runs} summaryRows={summaryRows} summaryFailed={summaryFailed} onRetrySummary={loadSummaryRows} />
       ) : null}
     </span>
   );
 }
 
 function UsageDetails({
+  usage,
   runs,
   summaryRows,
   summaryFailed,
   onRetrySummary,
 }: {
+  usage?: AiUsage | null;
   runs?: AiRunDto[];
   summaryRows: AiUsageSummaryRow[] | null;
   summaryFailed: boolean;
@@ -288,9 +311,25 @@ function UsageDetails({
 }) {
   const errorStats = runs ? runErrorStats(runs) : null;
   const scenes = summaryRows ? aggregateUsageRows(summaryRows) : null;
+  const prompt = usage?.promptTokens ?? 0;
+  const completion = usage?.completionTokens ?? 0;
+  const summaryPrompt = usage?.summaryPromptTokens ?? 0;
+  const summaryCompletion = usage?.summaryCompletionTokens ?? 0;
+  const hasMainTokens = prompt > 0 || completion > 0;
+  const hasSummary = summaryPrompt > 0 || summaryCompletion > 0;
   return (
     <span className="absolute top-full right-0 z-20 mt-1.5 block w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
       <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
+      {hasMainTokens ? (
+        <span className="block text-neutral-300">
+          主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+        </span>
+      ) : null}
+      {hasSummary ? (
+        <span className="block text-neutral-300">
+          摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+        </span>
+      ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
           本会话 {errorStats.runs} 轮 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）

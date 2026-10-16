@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -820,51 +822,266 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample Met
 	return nil
 }
 
-func (s *Service) DeviceMetrics(ctx context.Context, identity *account.Identity, deviceID string, since int64) ([]*MetricsSample, error) {
+type DeviceMetricsResult struct {
+	Samples          []*MetricsSample `json:"samples"`
+	Latest           *MetricsSample   `json:"latest,omitempty"`
+	WindowStart      int64            `json:"windowStart,omitempty"`
+	WindowEnd        int64            `json:"windowEnd,omitempty"`
+	SampleCount      int64            `json:"sampleCount,omitempty"`
+	Downsampled      bool             `json:"downsampled,omitempty"`
+	SeriesError      string           `json:"seriesError,omitempty"`
+	SampleIntervalMS int64            `json:"sampleIntervalMs,omitempty"`
+}
+
+type metricsPoint struct {
+	ID          string `gorm:"column:id"`
+	CPUPresent  bool   `gorm:"column:cpu_present"`
+	MemPresent  bool   `gorm:"column:mem_present"`
+	DiskPresent bool   `gorm:"column:disk_present"`
+	MetricsSample
+}
+
+type metricsExtrema struct {
+	min, max           metricsPoint
+	minValue, maxValue float64
+}
+
+type metricsBucket struct {
+	first, last    metricsPoint
+	cpu, mem, disk metricsExtrema
+}
+
+func (e *metricsExtrema) add(point metricsPoint, value float64) {
+	if e.min.ID == "" || value < e.minValue {
+		e.min, e.minValue = point, value
+	}
+	if e.max.ID == "" || value > e.maxValue {
+		e.max, e.maxValue = point, value
+	}
+}
+
+func metricPointFromRow(row *store.DeviceMetrics) metricsPoint {
+	point := metricsPoint{ID: row.ID, MetricsSample: MetricsSample{TS: row.TS}}
+	if row.CPUPct != nil {
+		point.CPUPct = *row.CPUPct
+	}
+	if row.MemUsed != nil {
+		point.MemUsed = *row.MemUsed
+	}
+	if row.MemTotal != nil {
+		point.MemTotal = *row.MemTotal
+	}
+	if row.DiskUsed != nil {
+		point.DiskUsed = *row.DiskUsed
+	}
+	if row.DiskTotal != nil {
+		point.DiskTotal = *row.DiskTotal
+	}
+	if row.UptimeS != nil {
+		point.UptimeS = *row.UptimeS
+	}
+	return point
+}
+
+func (s *Service) DeviceMetrics(ctx context.Context, identity *account.Identity, deviceID string, since int64) (*DeviceMetricsResult, error) {
 	if _, err := s.canAccess(ctx, identity, deviceID); err != nil {
 		return nil, err
 	}
-	now := s.now()
-	oldest := now - rawMetricsRetention.Milliseconds()
+	windowEnd := s.now()
+	oldest := windowEnd - rawMetricsRetention.Milliseconds()
 	if since <= 0 {
-		since = now - 24*time.Hour.Milliseconds()
+		since = windowEnd - 24*time.Hour.Milliseconds()
 	}
 	if since < oldest {
 		since = oldest
 	}
+	result := &DeviceMetricsResult{Samples: []*MetricsSample{}, WindowStart: since, WindowEnd: windowEnd}
 	deviceMetrics := query.Use(s.db).DeviceMetrics
-	rows, err := deviceMetrics.WithContext(ctx).
-		Where(deviceMetrics.DeviceID.Eq(deviceID), deviceMetrics.TS.Gte(since)).
-		Order(deviceMetrics.TS).
-		Limit(maxMetricsSamples).
-		Find()
-	if err != nil {
+	latestRow, err := deviceMetrics.WithContext(ctx).
+		Where(deviceMetrics.DeviceID.Eq(deviceID), deviceMetrics.TS.Gte(oldest), deviceMetrics.TS.Lte(windowEnd)).
+		Order(deviceMetrics.TS.Desc(), deviceMetrics.ID.Desc()).
+		First()
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, dbError(err)
 	}
-	samples := []*MetricsSample{}
-	for _, row := range rows {
-		sample := &MetricsSample{TS: row.TS}
-		if row.CPUPct != nil {
-			sample.CPUPct = *row.CPUPct
-		}
-		if row.MemUsed != nil {
-			sample.MemUsed = *row.MemUsed
-		}
-		if row.MemTotal != nil {
-			sample.MemTotal = *row.MemTotal
-		}
-		if row.DiskUsed != nil {
-			sample.DiskUsed = *row.DiskUsed
-		}
-		if row.DiskTotal != nil {
-			sample.DiskTotal = *row.DiskTotal
-		}
-		if row.UptimeS != nil {
-			sample.UptimeS = *row.UptimeS
-		}
-		samples = append(samples, sample)
+	var latest *metricsPoint
+	if err == nil {
+		point := metricPointFromRow(latestRow)
+		latest = &point
+		result.Latest = &point.MetricsSample
 	}
-	return samples, nil
+	samples, sampleCount, sampleInterval, err := s.readMetricsWindow(ctx, deviceID, since, windowEnd, latest)
+	if err != nil {
+		result.SeriesError = dbError(err).Error()
+		return result, nil
+	}
+	result.Samples = samples
+	result.SampleCount = sampleCount
+	result.SampleIntervalMS = sampleInterval
+	result.Downsampled = sampleCount > int64(len(samples))
+	return result, nil
+}
+
+func (s *Service) readMetricsWindow(ctx context.Context, deviceID string, windowStart, windowEnd int64, latest *metricsPoint) ([]*MetricsSample, int64, int64, error) {
+	const (
+		batchSize         = maxMetricsSamples
+		bucketCount       = 500
+		recentIntervalCap = 20
+	)
+	if windowStart > windowEnd {
+		return []*MetricsSample{}, 0, 0, nil
+	}
+	deviceMetrics := query.Use(s.db).DeviceMetrics
+	buckets := make([]metricsBucket, bucketCount)
+	all := make([]metricsPoint, 0, maxMetricsSamples)
+	var recentIntervals [recentIntervalCap]int64
+	var sampleCount int64
+	var intervalCount, intervalPos int
+	var previousTS int64
+	var hasPrevious bool
+	span := windowEnd - windowStart
+	cursorTS := windowStart
+	cursorID := ""
+	hasCursor := false
+	for {
+		query := deviceMetrics.WithContext(ctx).
+			Where(deviceMetrics.DeviceID.Eq(deviceID), deviceMetrics.TS.Gte(windowStart), deviceMetrics.TS.Lte(windowEnd))
+		if hasCursor {
+			query = query.Where(deviceMetrics.TS.Gte(cursorTS), field.Or(
+				deviceMetrics.TS.Gt(cursorTS),
+				field.And(deviceMetrics.TS.Eq(cursorTS), deviceMetrics.ID.Gt(cursorID)),
+			))
+		}
+		rows, err := query.
+			Select(
+				deviceMetrics.ID,
+				deviceMetrics.TS,
+				field.NewUnsafeFieldRaw("COALESCE(cpu_pct,0) AS cpu_pct"),
+				field.NewUnsafeFieldRaw("COALESCE(mem_used,0) AS mem_used"),
+				field.NewUnsafeFieldRaw("COALESCE(mem_total,0) AS mem_total"),
+				field.NewUnsafeFieldRaw("COALESCE(disk_used,0) AS disk_used"),
+				field.NewUnsafeFieldRaw("COALESCE(disk_total,0) AS disk_total"),
+				field.NewUnsafeFieldRaw("COALESCE(uptime_s,0) AS uptime_s"),
+				field.NewUnsafeFieldRaw("cpu_pct IS NOT NULL AS cpu_present"),
+				field.NewUnsafeFieldRaw("(mem_used IS NOT NULL AND mem_total IS NOT NULL) AS mem_present"),
+				field.NewUnsafeFieldRaw("(disk_used IS NOT NULL AND disk_total IS NOT NULL) AS disk_present"),
+			).
+			Order(deviceMetrics.TS, deviceMetrics.ID).
+			Limit(batchSize).
+			Rows()
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		batchRows := 0
+		lastRow := metricsPoint{}
+		row := metricsPoint{}
+		for rows.Next() {
+			row = metricsPoint{}
+			if err := rows.Scan(&row.ID, &row.TS, &row.CPUPct, &row.MemUsed, &row.MemTotal, &row.DiskUsed, &row.DiskTotal, &row.UptimeS, &row.CPUPresent, &row.MemPresent, &row.DiskPresent); err != nil {
+				_ = rows.Close()
+				return nil, 0, 0, err
+			}
+			lastRow = row
+			batchRows++
+			sampleCount++
+			if sampleCount <= maxMetricsSamples {
+				all = append(all, row)
+			} else if sampleCount == maxMetricsSamples+1 {
+				all = nil
+			}
+			bucketIndex := 0
+			if span > 0 {
+				bucketIndex = int((row.TS - windowStart) * bucketCount / (span + 1))
+			}
+			bucket := &buckets[bucketIndex]
+			if bucket.first.ID == "" {
+				bucket.first = row
+			}
+			bucket.last = row
+			if row.CPUPresent {
+				bucket.cpu.add(row, row.CPUPct)
+			}
+			if row.MemPresent && row.MemTotal > 0 {
+				bucket.mem.add(row, float64(row.MemUsed)/float64(row.MemTotal))
+			}
+			if row.DiskPresent && row.DiskTotal > 0 {
+				bucket.disk.add(row, float64(row.DiskUsed)/float64(row.DiskTotal))
+			}
+			if hasPrevious && row.TS > previousTS {
+				recentIntervals[intervalPos] = row.TS - previousTS
+				intervalPos = (intervalPos + 1) % recentIntervalCap
+				if intervalCount < recentIntervalCap {
+					intervalCount++
+				}
+			}
+			previousTS = row.TS
+			hasPrevious = true
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, 0, 0, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, 0, 0, err
+		}
+		if batchRows < batchSize {
+			break
+		}
+		cursorTS, cursorID, hasCursor = lastRow.TS, lastRow.ID, true
+	}
+
+	points := all
+	if sampleCount > maxMetricsSamples {
+		type pointKey struct {
+			ts int64
+			id string
+		}
+		selected := map[pointKey]metricsPoint{}
+		add := func(point metricsPoint) {
+			if point.ID != "" {
+				selected[pointKey{ts: point.TS, id: point.ID}] = point
+			}
+		}
+		for i := range buckets {
+			bucket := &buckets[i]
+			add(bucket.first)
+			add(bucket.last)
+			add(bucket.cpu.min)
+			add(bucket.cpu.max)
+			add(bucket.mem.min)
+			add(bucket.mem.max)
+			add(bucket.disk.min)
+			add(bucket.disk.max)
+		}
+		if latest != nil && latest.TS >= windowStart && latest.TS <= windowEnd {
+			add(*latest)
+		}
+		points = make([]metricsPoint, 0, len(selected))
+		for _, point := range selected {
+			points = append(points, point)
+		}
+	}
+	sort.Slice(points, func(i, j int) bool {
+		if points[i].TS == points[j].TS {
+			return points[i].ID < points[j].ID
+		}
+		return points[i].TS < points[j].TS
+	})
+	samples := make([]*MetricsSample, 0, len(points))
+	for i := range points {
+		samples = append(samples, &points[i].MetricsSample)
+	}
+	if intervalCount == 0 {
+		return samples, sampleCount, 0, nil
+	}
+	intervals := make([]int64, intervalCount)
+	copy(intervals, recentIntervals[:intervalCount])
+	sort.Slice(intervals, func(i, j int) bool { return intervals[i] < intervals[j] })
+	sampleInterval := intervals[intervalCount/2]
+	if intervalCount%2 == 0 {
+		sampleInterval = (intervals[intervalCount/2-1] + intervals[intervalCount/2]) / 2
+	}
+	return samples, sampleCount, sampleInterval, nil
 }
 
 // RollupMetrics aggregates metrics past the raw retention period (48h) into hourly buckets (kept 30d),

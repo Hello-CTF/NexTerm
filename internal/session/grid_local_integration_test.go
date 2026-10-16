@@ -16,8 +16,9 @@ import (
 
 func TestRealLocalPTYGridRuntimeResizeAndHubClients(t *testing.T) {
 	events := make(chan ControlEvent, 16)
+	writes := &lockedWriteLog{}
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		return &writeLogTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), log: writes}, nil
 	})
 	manager := NewManager(Config{
 		Connector: connector,
@@ -53,7 +54,9 @@ func TestRealLocalPTYGridRuntimeResizeAndHubClients(t *testing.T) {
 	if gridEvent.Cols != 100 || gridEvent.Rows != 30 || gridEvent.Subscribers != 2 || gridEvent.Viewers != 2 {
 		t.Fatalf("real local grid event = %+v", gridEvent)
 	}
-	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("stty size; printf 'nexterm-grid-done\\n'\r")); err != nil {
+	shellReady := realLocalShellReadiness(t, tab, writes, 0)
+	shellReady()
+	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("stty size; printf 'nexterm-%s\\n' 'grid-done'\r")); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool {

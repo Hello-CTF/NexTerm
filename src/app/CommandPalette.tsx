@@ -174,9 +174,33 @@ export function CommandPalette({
         label: "打开端口转发",
         hint: "本地 / SOCKS5",
         icon: IconNetwork,
+        run: () => {
+          const current = useUi.getState();
+          const workspace =
+            current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
+            current.workspaces[current.workspaces.length - 1];
+          const sessionId = workspace?.kind === "session" ? workspace.sessionId : undefined;
+          if (!sessionId) {
+            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            return;
+          }
+          current.addTab({
+            id: nextTabId(`forward-${sessionId}`),
+            kind: "forward",
+            title: "端口转发",
+            sessionId,
+            closable: true,
+          });
+        },
+      },
+      {
+        id: "forward-overview",
+        label: "查看全部端口转发",
+        hint: "所有会话",
+        icon: IconNetwork,
         run: () =>
           addTab({
-            id: nextTabId("forward-cmd"),
+            id: "forward-overview",
             kind: "forward",
             title: "端口转发",
             closable: true,
@@ -194,7 +218,23 @@ export function CommandPalette({
         label: "打开后台会话",
         hint: "转入后台的终端进程",
         icon: IconActivity,
-        run: () => addTab({ id: "background", kind: "background", title: "后台会话", closable: true }),
+        run: () => {
+          const current = useUi.getState();
+          const workspace =
+            current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
+            current.workspaces[current.workspaces.length - 1];
+          if (workspace?.kind !== "session" || !workspace.sessionId) {
+            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            return;
+          }
+          current.addTab({
+            id: `background-${workspace.id}`,
+            kind: "background",
+            title: "后台会话",
+            sessionId: workspace.sessionId,
+            closable: true,
+          });
+        },
       },
       {
         id: "history",

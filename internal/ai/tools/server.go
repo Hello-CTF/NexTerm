@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -328,13 +329,44 @@ func (s *fileSearch) searchContent(ctx context.Context, name string) error {
 	return nil
 }
 
-func (r *Registry) resolveTab(jobID string, scope Scope, requested string) (string, error) {
+func (s *sessionTerminal) TabSession(ctx context.Context, tabID string) (string, error) {
+	tab, err := s.manager.TabFor(sessionRequestContext(ctx), tabID)
+	if err != nil {
+		return "", err
+	}
+	return tab.SessionID, nil
+}
+
+func (r *Registry) tabSession(ctx context.Context, tabID string) (string, error) {
+	if terminal, ok := r.deps.Terminal.(TabSessionTerminal); ok {
+		return terminal.TabSession(ctx, tabID)
+	}
+	if r.deps.TabSession == nil {
+		return "", nil
+	}
+	if _, authenticated := ipc.UserIDFromContext(ctx); authenticated && r.deps.Terminal != nil {
+		if _, err := r.deps.Terminal.Snapshot(ctx, tabID); err != nil {
+			return "", err
+		}
+	}
+	return r.deps.TabSession(tabID), nil
+}
+
+func (r *Registry) resolveTab(ctx context.Context, jobID string, scope Scope, requested string) (string, error) {
+	_, requestScoped := r.deps.Terminal.(TabSessionTerminal)
+	hasResolver := requestScoped || r.deps.TabSession != nil
 	if requested != "" && requested != scope.TabID {
 		if !r.state(jobID).createdTab(requested) {
 			return "", ErrCrossScope
 		}
-		if r.deps.TabSession != nil && scope.SessionID != "" && r.deps.TabSession(requested) != scope.SessionID {
-			return "", ErrCrossScope
+		if hasResolver && scope.SessionID != "" {
+			sessionID, err := r.tabSession(ctx, requested)
+			if err != nil {
+				return "", err
+			}
+			if sessionID != scope.SessionID {
+				return "", ErrCrossScope
+			}
 		}
 		if r.deps.Terminal == nil {
 			return "", errors.New("终端服务未配置")
@@ -344,8 +376,14 @@ func (r *Registry) resolveTab(jobID string, scope Scope, requested string) (stri
 	if scope.TabID == "" {
 		return "", errors.New("当前 AI 作用域没有 tabId")
 	}
-	if r.deps.TabSession != nil && scope.SessionID != "" && r.deps.TabSession(scope.TabID) != scope.SessionID {
-		return "", ErrCrossScope
+	if hasResolver && scope.SessionID != "" {
+		sessionID, err := r.tabSession(ctx, scope.TabID)
+		if err != nil {
+			return "", err
+		}
+		if sessionID != scope.SessionID {
+			return "", ErrCrossScope
+		}
 	}
 	if r.deps.Terminal == nil {
 		return "", errors.New("终端服务未配置")
@@ -377,7 +415,7 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if args.MaxBytes < 1 || args.MaxBytes > MaxOutputBytes {
 		return Fail(invalid("max_bytes 必须在 1-%d 字节之间", MaxOutputBytes))
 	}
-	tabID, err := r.resolveTab(jobID, scope, args.TabID)
+	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -449,7 +487,7 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, raw 
 	if args.WaitMS < 0 || args.WaitMS > maxSendKeysWaitMS {
 		return Fail(invalid("wait_ms 必须在 0-%d 毫秒之间", maxSendKeysWaitMS))
 	}
-	tabID, err := r.resolveTab(jobID, scope, args.TabID)
+	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -528,7 +566,7 @@ func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
-	tabID, err := r.resolveTab(jobID, scope, args.TabID)
+	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -672,7 +710,7 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
 	}
-	tabID, err := r.resolveTab(jobID, scope, "")
+	tabID, err := r.resolveTab(ctx, jobID, scope, "")
 	if err != nil {
 		return Fail(err)
 	}

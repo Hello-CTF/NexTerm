@@ -29,7 +29,7 @@ import {
 import type { SessionInfo } from "../../ipc/commands";
 
 function terminal(id = "terminal", sessionId = "s"): AppTab {
-  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true };
+  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true, retainable: true };
 }
 function execTerminal(id = "exec"): AppTab {
   return { ...terminal(id), containerId: "container-1" };
@@ -182,7 +182,7 @@ describe("terminal close preference dispatch", () => {
     expect(toastText()).toContain("已转入后台");
   });
 
-  it("keeps the existing confirmation branch for types that cannot detach regardless of preference", async () => {
+  it("uses saved kill directly even for a type that cannot detach", async () => {
     const tab = execTerminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     setTerminalCloseAction("kill");
@@ -190,9 +190,36 @@ describe("terminal close preference dispatch", () => {
     await requestCloseTab(tab.id);
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-exec", "kill");
+  });
+
+  it("keeps the unsupported warning and cancel path for the detach preference", async () => {
+    const tab = execTerminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    setTerminalCloseAction("detach");
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask.mock.calls[0][0]).toContain("不支持转入后台");
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-exec", "kill");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toEqual([tab]);
+  });
+
+  it("does not infer background capability from the SSH kind before attach metadata arrives", async () => {
+    const tab = { ...terminal(), retainable: undefined };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    setTerminalCloseAction("detach");
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining()).toEqual([tab]);
   });
 });
 
@@ -274,6 +301,32 @@ describe("consolidated batch close dialog", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("keeps a separate blocked-type warning after an ask-kill batch choice", async () => {
+    seed([{ id: "p", tabs: [terminal("t1"), execTerminal("e1")], activeTabId: "t1" }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
+
+    await requestCloseTabs(["t1", "e1"]);
+
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
+    expect(mocks.ask.mock.calls[0][0]).toContain("1 个终端");
+    expect(mocks.ask.mock.calls[1][0]).toContain("容器 exec");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
+  });
+
+  it("keeps every running terminal without blocked-type prompts when a mixed batch choice is cancelled", async () => {
+    const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
+    seed([{ id: "p", tabs: [terminal("t1"), execTerminal("e1"), files], activeTabId: "t1" }]);
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
+
+    await requestCloseTabs(["t1", "e1", "f1"]);
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "e1"]);
   });
 
   it("ends all processes directly without dialogs for a kill-preference batch close", async () => {

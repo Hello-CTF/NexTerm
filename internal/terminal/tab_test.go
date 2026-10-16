@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,11 +153,11 @@ func TestRecordingLifecycle(t *testing.T) {
 	if tab.RecordingBytes() != 6 {
 		t.Fatalf("recorded = %d", tab.RecordingBytes())
 	}
-	if n := tab.StopRecording(); n != 6 {
-		t.Fatalf("stop = %d", n)
+	if n, err := tab.StopRecording(); n != 6 || err != nil {
+		t.Fatalf("stop = (%d, %v)", n, err)
 	}
-	if tab.StopRecording() != 0 {
-		t.Fatal("second stop should return 0")
+	if n, err := tab.StopRecording(); n != 0 || err != nil {
+		t.Fatalf("second stop = (%d, %v), want (0, nil)", n, err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -174,13 +176,391 @@ func TestRecordingLifecycle(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("g")); err != nil {
 		t.Fatal(err)
 	}
-	if n := tab.StopRecording(); n != 1 {
-		t.Fatalf("stop = %d", n)
+	if n, err := tab.StopRecording(); n != 1 || err != nil {
+		t.Fatalf("stop = (%d, %v)", n, err)
 	}
 	data, _ = os.ReadFile(path)
 	if !bytes.Equal(data, []byte("OLDabcdefg")) {
 		t.Fatalf("file = %q", data)
 	}
+}
+
+func TestRecordingFailureRemainsQueryable(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	path := filepath.Join(t.TempDir(), "failure.log")
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := tab.rec.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Chunk(context.Background(), []byte("after-close")); err != nil {
+		t.Fatal(err)
+	}
+	recorded, stopErr := tab.StopRecording()
+	if recorded != 0 || !errors.Is(stopErr, os.ErrClosed) {
+		t.Fatalf("stop = (%d, %v), want closed file error", recorded, stopErr)
+	}
+	recorded, stopErr = tab.StopRecording()
+	if recorded != 0 || !errors.Is(stopErr, os.ErrClosed) {
+		t.Fatalf("repeated stop = (%d, %v), want retained closed file error", recorded, stopErr)
+	}
+}
+
+func TestRecordingShortWriteStopsRecordingWithoutStoppingOutput(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	writer := &fakeRecordingWriteCloser{results: []recordingWriteResult{{n: 2}}}
+	tab.rec = &recording{file: writer}
+	sink := &memSink{}
+	o.Attach("sink", sink)
+	if err := o.Chunk(context.Background(), []byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Chunk(context.Background(), []byte("ef")); err != nil {
+		t.Fatal(err)
+	}
+	recorded, stopErr := tab.StopRecording()
+	if recorded != 2 || !errors.Is(stopErr, io.ErrShortWrite) {
+		t.Fatalf("stop = (%d, %v), want (2, io.ErrShortWrite)", recorded, stopErr)
+	}
+	recorded, stopErr = tab.StopRecording()
+	if recorded != 2 || !errors.Is(stopErr, io.ErrShortWrite) {
+		t.Fatalf("repeated stop = (%d, %v), want retained short write", recorded, stopErr)
+	}
+	if writes, closes := writer.counts(); writes != 1 || closes != 1 {
+		t.Fatalf("write/close calls = %d/%d, want 1/1", writes, closes)
+	}
+	if got := sink.Bytes(); !bytes.Equal(got, []byte("abcdef")) {
+		t.Fatalf("terminal output = %q, want %q", got, "abcdef")
+	}
+}
+
+func TestRecordingWriteFailureKeepsActualBytesAndFirstError(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	writeErr := errors.New("write failed")
+	closeErr := errors.New("close failed")
+	writer := &fakeRecordingWriteCloser{
+		results:  []recordingWriteResult{{n: 3}, {n: 2, err: writeErr}, {n: 7}},
+		closeErr: closeErr,
+	}
+	tab.rec = &recording{file: writer}
+	for _, chunk := range [][]byte{[]byte("abc"), []byte("defgh"), []byte("ignored")} {
+		if err := o.Chunk(context.Background(), chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorded, stopErr := tab.StopRecording()
+	if recorded != 5 || !errors.Is(stopErr, writeErr) {
+		t.Fatalf("stop = (%d, %v), want (5, write failure)", recorded, stopErr)
+	}
+	if errors.Is(stopErr, closeErr) {
+		t.Fatalf("close error replaced first write error: %v", stopErr)
+	}
+	if writes, closes := writer.counts(); writes != 2 || closes != 1 {
+		t.Fatalf("write/close calls = %d/%d, want 2/1", writes, closes)
+	}
+	if got := tab.Dump(0); !bytes.Equal(got, []byte("abcdefghignored")) {
+		t.Fatalf("terminal dump = %q", got)
+	}
+}
+
+func TestRecordingCloseFailureIsIdempotentAndStopsWrites(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	closeErr := errors.New("close failed")
+	writer := &fakeRecordingWriteCloser{closeErr: closeErr}
+	tab.rec = &recording{file: writer}
+	if err := o.Chunk(context.Background(), []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	recorded, stopErr := tab.StopRecording()
+	if recorded != 3 || !errors.Is(stopErr, closeErr) {
+		t.Fatalf("stop = (%d, %v), want (3, close failure)", recorded, stopErr)
+	}
+	if err := o.Chunk(context.Background(), []byte("after")); err != nil {
+		t.Fatal(err)
+	}
+	recorded, stopErr = tab.StopRecording()
+	if recorded != 3 || !errors.Is(stopErr, closeErr) {
+		t.Fatalf("repeated stop = (%d, %v), want retained close failure", recorded, stopErr)
+	}
+	if writes, closes := writer.counts(); writes != 1 || closes != 1 {
+		t.Fatalf("write/close calls = %d/%d, want 1/1", writes, closes)
+	}
+	if got := tab.RecordingBytes(); got != 3 {
+		t.Fatalf("queryable recorded bytes = %d, want 3", got)
+	}
+}
+
+func TestRecordingStartAfterFailureClearsOldGeneration(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	writeErr := errors.New("old generation failed")
+	oldWriter := &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
+	tab.rec = &recording{file: oldWriter}
+	if err := o.Chunk(context.Background(), []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "new-generation.log")
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.RecordingBytes(); got != 0 {
+		t.Fatalf("new generation bytes = %d, want 0", got)
+	}
+	if err := o.Chunk(context.Background(), []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	recorded, stopErr := tab.StopRecording()
+	if recorded != 3 || stopErr != nil {
+		t.Fatalf("new generation stop = (%d, %v), want (3, nil)", recorded, stopErr)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, []byte("new")) {
+		t.Fatalf("new generation file = %q, err = %v", data, err)
+	}
+	if writes, closes := oldWriter.counts(); writes != 1 || closes != 1 {
+		t.Fatalf("old generation write/close calls = %d/%d, want 1/1", writes, closes)
+	}
+}
+
+func TestRecordingStartDoesNotHidePreviousCloseFailure(t *testing.T) {
+	tab := newTestTab(t)
+	closeErr := errors.New("previous close failed")
+	oldWriter := &fakeRecordingWriteCloser{closeErr: closeErr}
+	tab.rec = &recording{file: oldWriter}
+	path := filepath.Join(t.TempDir(), "replacement.log")
+	if err := tab.StartRecording(path); !errors.Is(err, closeErr) {
+		t.Fatalf("start error = %v, want previous close failure", err)
+	}
+	if tab.rec.file != oldWriter {
+		t.Fatal("failed start replaced the previous recording")
+	}
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatalf("explicit restart after visible failure: %v", err)
+	}
+	if recorded, err := tab.StopRecording(); recorded != 0 || err != nil {
+		t.Fatalf("replacement stop = (%d, %v), want (0, nil)", recorded, err)
+	}
+	if _, closes := oldWriter.counts(); closes != 1 {
+		t.Fatalf("old writer close calls = %d, want 1", closes)
+	}
+}
+
+func TestRecordingStatusLifecycle(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	if got := tab.RecordingStatus(); got.State != RecordingNeverStarted || got.Generation != 0 {
+		t.Fatalf("initial status = %+v", got)
+	}
+	path := filepath.Join(t.TempDir(), "status.log")
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.RecordingStatus(); got.State != RecordingRunning || got.Generation != 1 || got.Path != path || got.Bytes != 0 {
+		t.Fatalf("running status = %+v", got)
+	}
+	if err := o.Chunk(context.Background(), []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if recorded, err := tab.StopRecording(); recorded != 3 || err != nil {
+		t.Fatalf("stop = (%d, %v)", recorded, err)
+	}
+	if got := tab.RecordingStatus(); got.State != RecordingStopped || got.Generation != 1 || got.Path != path || got.Bytes != 3 || got.SafeError != "" {
+		t.Fatalf("stopped status = %+v", got)
+	}
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := tab.RecordingStatus(); got.State != RecordingRunning || got.Generation != 2 || got.Bytes != 0 || got.SafeError != "" {
+		t.Fatalf("restarted status = %+v", got)
+	}
+}
+
+func TestRecordingFailureEventOnceAndObserverCanStop(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	path := filepath.Join(t.TempDir(), "event.log")
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	writeErr := errors.New("injected write failure")
+	writer := &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
+	tab.rec.file = writer
+	failures := 0
+	reentrant := make(chan error, 1)
+	tab.SetRecordingHandler(func(status RecordingStatus) {
+		if status.State != RecordingFailed {
+			return
+		}
+		failures++
+		_, err := tab.StopRecording()
+		reentrant <- err
+	})
+	if err := o.Chunk(context.Background(), []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-reentrant:
+		if !errors.Is(err, writeErr) {
+			t.Fatalf("reentrant stop error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("recording observer deadlocked reentering StopRecording")
+	}
+	if err := o.Chunk(context.Background(), []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tab.StopRecording(); !errors.Is(err, writeErr) {
+		t.Fatalf("stop error = %v", err)
+	}
+	if failures != 1 {
+		t.Fatalf("failure notifications = %d, want 1", failures)
+	}
+	if got := tab.RecordingStatus(); got.State != RecordingFailed || got.SafeError != writeErr.Error() || got.Path != path {
+		t.Fatalf("failed status = %+v", got)
+	}
+}
+
+func TestRecordingEventGenerations(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	var events []RecordingStatus
+	tab.SetRecordingHandler(func(status RecordingStatus) {
+		events = append(events, status)
+	})
+	path := filepath.Join(t.TempDir(), "generations.log")
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	writeErr := errors.New("generation one failed")
+	tab.rec.file = &fakeRecordingWriteCloser{results: []recordingWriteResult{{err: writeErr}}}
+	if err := o.Chunk(context.Background(), []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tab.StopRecording(); !errors.Is(err, writeErr) {
+		t.Fatal(err)
+	}
+	if err := tab.StartRecording(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tab.StopRecording(); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		state      RecordingState
+		generation uint64
+	}{
+		{RecordingRunning, 1},
+		{RecordingFailed, 1},
+		{RecordingRunning, 2},
+		{RecordingStopped, 2},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %+v", events)
+	}
+	for i, expected := range want {
+		if events[i].State != expected.state || events[i].Generation != expected.generation {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], expected)
+		}
+	}
+}
+
+func TestRecordingConcurrentWriteStopStart(t *testing.T) {
+	tab := newTestTab(t)
+	o := newTestOutput(t, tab)
+	path := filepath.Join(t.TempDir(), "concurrent.log")
+	var eventsMu sync.Mutex
+	var events []RecordingStatus
+	tab.SetRecordingHandler(func(status RecordingStatus) {
+		eventsMu.Lock()
+		events = append(events, status)
+		eventsMu.Unlock()
+	})
+	const iterations = 20
+	for i := 0; i < iterations; i++ {
+		if err := tab.StartRecording(path); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		errs := make(chan error, 3)
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			errs <- o.Chunk(context.Background(), []byte("chunk"))
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := tab.StopRecording()
+			errs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			errs <- tab.StartRecording(path)
+		}()
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := tab.StopRecording(); err != nil {
+		t.Fatal(err)
+	}
+	status := tab.RecordingStatus()
+	if status.State != RecordingStopped || status.Generation != 2*iterations {
+		t.Fatalf("final status = %+v", status)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	for _, event := range events {
+		if event.Generation > status.Generation {
+			t.Fatalf("event from future generation: %+v, final %+v", event, status)
+		}
+	}
+}
+
+type recordingWriteResult struct {
+	n   int
+	err error
+}
+
+type fakeRecordingWriteCloser struct {
+	mu         sync.Mutex
+	results    []recordingWriteResult
+	closeErr   error
+	writeCalls int
+	closeCalls int
+}
+
+func (f *fakeRecordingWriteCloser) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	index := f.writeCalls
+	f.writeCalls++
+	if index >= len(f.results) {
+		return len(p), nil
+	}
+	result := f.results[index]
+	return result.n, result.err
+}
+
+func (f *fakeRecordingWriteCloser) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeCalls++
+	return f.closeErr
+}
+
+func (f *fakeRecordingWriteCloser) counts() (writes, closes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writeCalls, f.closeCalls
 }
 
 func TestDumpAndExportLog(t *testing.T) {

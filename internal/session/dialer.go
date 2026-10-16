@@ -18,6 +18,9 @@ func (m *Manager) Transport(ctx context.Context, sessionID string) (base.Transpo
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	if !sessionOwnerAllowed(session, userIDFromContext(ctx)) {
+		return nil, ErrForbidden
+	}
 	if session.closed || session.status != StatusConnected || session.transport == nil {
 		return nil, ErrDisconnected
 	}

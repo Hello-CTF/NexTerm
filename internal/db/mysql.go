@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -179,9 +181,26 @@ func querySQL(ctx context.Context, database *sql.DB, statement string, limit uin
 	if errors.Is(queryContext.Err(), context.Canceled) {
 		return result, internalError("SQL 执行已取消", queryContext.Err())
 	}
+	if isSQLTransportError(err) {
+		return result, ipc.WrapError(ipc.CodeDisconnected, fmt.Sprintf("SQL 执行时数据库连接已断开: %v", err), err)
+	}
 	message := err.Error()
 	result.Error = &message
 	return result, nil
+}
+
+func isSQLTransportError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	return errors.Is(err, driver.ErrBadConn) ||
+		errors.Is(err, mysqlDriver.ErrInvalidConn) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrShortWrite) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.As(err, &netErr)
 }
 
 func readSQLRows(ctx context.Context, database *sql.DB, statement string, limit uint64, result *QueryResult, jsonValue func(any, string) any) error {

@@ -79,7 +79,12 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
+import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
+
+beforeEach(() => {
+  clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
+});
 
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
 

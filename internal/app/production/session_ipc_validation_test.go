@@ -1,10 +1,13 @@
 package production
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestProductionBytesValidationMessage(t *testing.T) {
@@ -22,13 +25,22 @@ func TestProductionBytesValidationMessage(t *testing.T) {
 }
 
 func TestDockerImageValidationMessages(t *testing.T) {
-	service := &terminalCommandService{}
+	transport := &dockerShellTransport{kind: "ssh"}
+	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+		return transport, nil
+	})})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "s1", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &terminalCommandService{sessions: manager}
 	dispatcher := ipc.NewDispatcher()
 	if err := service.registerDocker(dispatcher); err != nil {
 		t.Fatal(err)
 	}
 	for _, command := range []string{"docker_image_pull", "docker_image_remove"} {
-		response := dispatchStoreTest(dispatcher, command, `{"sessionId":"s1","image":" "}`)
+		response := dispatchStoreTest(dispatcher, command, `{"sessionId":"`+connected.ID+`","image":" "}`)
 		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 			t.Fatalf("%s = %+v, want bad_param", command, response)
 		}

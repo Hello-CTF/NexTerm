@@ -24,8 +24,10 @@ const mocks = vi.hoisted(() => ({
   transcriptSyncOptIn: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
+  updateTab: vi.fn(),
   uiState: {
     pushToast: null as unknown,
+    updateTab: null as unknown,
     workspaces: [] as { id: string; assetId?: string }[],
     activeWorkspaceId: null as string | null,
   },
@@ -47,6 +49,7 @@ vi.mock("../../ipc/commands", () => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 vi.mock("../../app/store", () => {
   mocks.uiState.pushToast = mocks.toast;
+  mocks.uiState.updateTab = mocks.updateTab;
   const useUi = (selector: (state: typeof mocks.uiState) => unknown) => selector(mocks.uiState);
   useUi.getState = () => mocks.uiState;
   return { useUi };
@@ -133,32 +136,18 @@ afterEach(() => {
 });
 
 describe("TranscriptHistoryPanel", () => {
-  it("selects the active workspace's host by default instead of the first host in the list", async () => {
+  it("does not infer an ordinary open's filter from the active or owning workspace", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);
     mocks.uiState.workspaces = [{ id: "ws-1", assetId: ASSET.id }];
     mocks.uiState.activeWorkspaceId = "ws-1";
-    mounted = mount(createElement(TranscriptHistoryPanel));
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1" }));
     await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
-    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
-    expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
+    expect(mocks.transcriptList).toHaveBeenCalledWith(other.id);
+    expect(mocks.transcriptList).not.toHaveBeenCalledWith(ASSET.id);
   });
 
-  it("seeds restored tabs from their owning workspace instead of the workspace active at mount", async () => {
-    const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
-    mocks.assetList.mockResolvedValue([other, ASSET]);
-    mocks.uiState.workspaces = [
-      { id: "ws-1", assetId: other.id },
-      { id: "ws-2", assetId: ASSET.id },
-    ];
-    mocks.uiState.activeWorkspaceId = "ws-1";
-    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-2" }));
-    await flushUntil(() => mocks.transcriptList.mock.calls.length > 0);
-    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
-    expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
-  });
-
-  it("uses assetId directly when the source workspace is gone", async () => {
+  it("uses an explicit assetId even when its source workspace is gone", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);
     mocks.uiState.workspaces = [{ id: "ws-tools" }];
@@ -171,39 +160,42 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(other.id);
   });
 
-  it("follows the owning workspace's host after regaining focus and stops following after a manual host selection", async () => {
+  it("persists a manual filter for ordinary opens and applies a later explicit assetId", async () => {
     const hostA = { ...ASSET, id: "01J0HOSTAAAAAAAAAAAA0001", name: "host-a", builtin: false };
     const hostB = { ...ASSET, id: "01J0HOSTBBBBBBBBBBBB0001", name: "host-b", builtin: false };
     mocks.assetList.mockResolvedValue([hostA, hostB, ASSET]);
     mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostA.id }];
     mocks.uiState.activeWorkspaceId = "ws-1";
-    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", visible: false }));
+    mounted = mount(
+      createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId: hostA.id, visible: false }),
+    );
     const hostSelect = () =>
       mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
     await flushUntil(() => hostSelect().options.length === 3);
     expect(mocks.transcriptList).toHaveBeenLastCalledWith(hostA.id);
 
-    const rerender = (visible: boolean) =>
+    const rerender = (visible: boolean, assetId?: string) =>
       act(() => {
         mounted!.root.render(
-          createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", visible }),
+          createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId, visible }),
         );
       });
 
-    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostB.id }];
-    rerender(true);
+    setSelectValue(hostSelect(), hostB.id);
     await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === hostB.id));
-    expect(hostSelect().value).toBe(hostB.id);
+    expect(mocks.updateTab).toHaveBeenCalledWith("history", { assetId: hostB.id });
+    const hostACalls = mocks.transcriptList.mock.calls.filter((call) => call[0] === hostA.id).length;
 
-    setSelectValue(hostSelect(), hostA.id);
-    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === hostA.id));
-    const hostBCalls = mocks.transcriptList.mock.calls.filter((call) => call[0] === hostB.id).length;
-    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostB.id }];
-    rerender(false);
-    rerender(true);
+    mocks.uiState.workspaces = [{ id: "ws-1", assetId: hostA.id }];
+    rerender(false, hostB.id);
+    rerender(true, hostB.id);
     await flush();
-    expect(mocks.transcriptList.mock.calls.filter((call) => call[0] === hostB.id)).toHaveLength(hostBCalls);
-    expect(hostSelect().value).toBe(hostA.id);
+    expect(hostSelect().value).toBe(hostB.id);
+    expect(mocks.transcriptList.mock.calls.filter((call) => call[0] === hostA.id)).toHaveLength(hostACalls);
+
+    rerender(true, ASSET.id);
+    await flushUntil(() => mocks.transcriptList.mock.calls.some((call) => call[0] === ASSET.id));
+    expect(hostSelect().value).toBe(ASSET.id);
   });
 
   it("shows empty state when the host has no transcripts", async () => {

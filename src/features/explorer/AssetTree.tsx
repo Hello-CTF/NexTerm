@@ -1,12 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { browserFilesAvailable } from "../../ipc/webFiles";
 import { connectAsset, connectQuickTarget, useUi } from "../../app/store";
 import { copyAssetDeepLink } from "../../app/deepLink";
-import { useCoarsePointer } from "../../app/platform";
+import { isMobile, useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { copyText } from "../../ui/clipboard";
@@ -135,6 +136,11 @@ function AssetTreeSkeleton() {
   );
 }
 
+type AssetTreeItem =
+  | { key: string; kind: "asset"; asset: Asset }
+  | { key: string; kind: "devices" }
+  | { key: string; kind: "group"; group: AssetGroup; assets: Asset[] };
+
 export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
@@ -150,6 +156,10 @@ export function AssetTree() {
   const [importing, setImporting] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
   const [treeMenu, setTreeMenu] = useState<{ x: number; y: number } | null>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const assetRowElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const focusedAssetIdRef = useRef<string | null>(null);
+  const [restoreFocusId, setRestoreFocusId] = useState<string | null>(null);
   const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
 
   const assets = useQuery({
@@ -186,7 +196,10 @@ export function AssetTree() {
     else void assets.refetch();
   };
   const isHidden = (id: string) => hiddenIds.includes(id);
-  const visible = filtered.filter((a) => showHidden || !isHidden(a.id));
+  const visible = useMemo(
+    () => filtered.filter((a) => showHidden || !hiddenIds.includes(a.id)),
+    [filtered, hiddenIds, showHidden],
+  );
 
   const byGroup = useMemo(() => {
     const map = new Map<string | null, Asset[]>();
@@ -200,10 +213,67 @@ export function AssetTree() {
 
   // The device section is anchored after "current device/local terminal" (the builtin local asset) and before other assets/groups;
   // devices are excluded from asset search, so the section is not rendered while searching. Falls back to rendering first when the builtin asset is missing.
-  const ungrouped = byGroup.get(null) ?? [];
-  const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
-  const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
-  const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
+  const treeItems = useMemo(() => {
+    const items: AssetTreeItem[] = [];
+    const ungrouped = byGroup.get(null) ?? [];
+    const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
+    const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
+    const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
+    for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset });
+    if (!query.trim()) items.push({ key: "devices", kind: "devices" });
+    for (const asset of restAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset });
+    for (const group of groups.data ?? []) {
+      items.push({ key: `group:${group.id}`, kind: "group", group, assets: byGroup.get(group.id) ?? [] });
+    }
+    return items;
+  }, [byGroup, groups.data, query]);
+  const treeWindowCount = treeItems.reduce(
+    (count, item) => count + (item.kind === "group" ? item.assets.length + 1 : 1),
+    0,
+  );
+  const treeVirtualized = treeWindowCount > 40;
+  const treeVirtualizer = useVirtualizer({
+    count: treeItems.length,
+    getScrollElement: () => treeRef.current,
+    estimateSize: (index) => {
+      const item = treeItems[index];
+      if (item.kind === "group") return 32 + item.assets.length * 30;
+      return item.kind === "devices" ? 160 : 30;
+    },
+    overscan: 6,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      if (!query.trim()) return indexes;
+      const matched = new Set(indexes);
+      treeItems.forEach((item, index) => {
+        if (item.kind === "asset" || (item.kind === "group" && item.assets.length > 0)) matched.add(index);
+      });
+      return [...matched].sort((a, b) => a - b);
+    },
+    enabled: treeVirtualized,
+    getItemKey: (index) => treeItems[index]?.key ?? index,
+    initialRect: { width: leftWidth, height: 600 },
+  });
+
+  useEffect(() => {
+    if (!restoreFocusId || query.trim()) return;
+    const index = treeItems.findIndex((item) =>
+      item.kind === "asset"
+        ? item.asset.id === restoreFocusId
+        : item.kind === "group" && item.assets.some((asset) => asset.id === restoreFocusId),
+    );
+    if (index < 0) {
+      setRestoreFocusId(null);
+      return;
+    }
+    const row = assetRowElementsRef.current.get(restoreFocusId);
+    if (row?.isConnected) {
+      row.focus({ preventScroll: true });
+      setRestoreFocusId(null);
+      return;
+    }
+    if (treeVirtualized) treeVirtualizer.scrollToIndex(index, { align: "auto" });
+  });
 
   const onClone = async (a: Asset) => {
     try {
@@ -380,6 +450,65 @@ export function AssetTree() {
     ];
   };
 
+  const registerAssetRow = (asset: Asset, node: HTMLDivElement | null) => {
+    if (node) assetRowElementsRef.current.set(asset.id, node);
+    else assetRowElementsRef.current.delete(asset.id);
+  };
+  const onAssetFocus = (asset: Asset) => {
+    focusedAssetIdRef.current = asset.id;
+  };
+  const renderAssetRow = (asset: Asset, level: number) => (
+    <AssetRow
+      asset={asset}
+      level={level}
+      rowRef={(node) => registerAssetRow(asset, node)}
+      onFocus={() => onAssetFocus(asset)}
+      hidden={isHidden(asset.id)}
+      onDelete={() => void onDelete(asset)}
+      onEdit={() => setEditingAsset(asset)}
+      onMore={(x, y, full) => setRowMenu({ x, y, asset, full })}
+      error={assetError?.id === asset.id ? assetError.message : null}
+      onRetry={() => void runDeleteAsset(asset)}
+      onDismissError={() => setAssetError(null)}
+    />
+  );
+
+  const renderTreeItem = (item: AssetTreeItem) => {
+    if (item.kind === "asset") return renderAssetRow(item.asset, 1);
+    if (item.kind === "devices") return <DeviceTreeSection />;
+    const group = item.group;
+    return (
+      <GroupNode
+        group={group}
+        assets={item.assets}
+        virtualizeAssets={treeVirtualized && item.assets.length > 40}
+        searching={Boolean(query.trim())}
+        restoreFocusId={restoreFocusId}
+        getTreeScrollElement={() => treeRef.current}
+        registerAssetRow={registerAssetRow}
+        onAssetFocus={onAssetFocus}
+        hiddenIds={hiddenIds}
+        onDelete={(asset) => void onDelete(asset)}
+        onEdit={(asset) => setEditingAsset(asset)}
+        onMore={(asset, x, y, full) => setRowMenu({ x, y, asset, full })}
+        onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
+        onCreateIn={() => {
+          setPresetGroup(group.id);
+          setEditing("asset");
+        }}
+        busy={groupBusyId === group.id}
+        error={groupError?.id === group.id ? groupError.message : null}
+        onRename={() => setRenamingGroup(group)}
+        onDeleteGroup={() => void deleteGroup(group)}
+        onRetry={() => void runDeleteGroup(group)}
+        onDismissError={() => setGroupError(null)}
+        assetError={assetError}
+        onRetryAssetDelete={(asset) => void runDeleteAsset(asset)}
+        onDismissAssetError={() => setAssetError(null)}
+      />
+    );
+  };
+
   if (!leftOpen) return null;
 
   return (
@@ -439,12 +568,19 @@ export function AssetTree() {
             placeholder="搜索资产 / 主机 / 用户"
             aria-label="搜索资产 / 主机 / 用户"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (query.trim() && !next.trim() && focusedAssetIdRef.current) {
+                setRestoreFocusId(focusedAssetIdRef.current);
+              }
+              setQuery(next);
+            }}
           />
         </div>
       </div>
 
       <div
+        ref={treeRef}
         role="tree"
         aria-label="资产"
         className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
@@ -477,60 +613,23 @@ export function AssetTree() {
           </div>
         ) : (
           <>
-            {headAssets.map((a) => (
-              <AssetRow
-                key={a.id}
-                asset={a}
-                level={1}
-                hidden={isHidden(a.id)}
-                onDelete={() => void onDelete(a)}
-                onEdit={() => setEditingAsset(a)}
-                onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
-                error={assetError?.id === a.id ? assetError.message : null}
-                onRetry={() => void runDeleteAsset(a)}
-                onDismissError={() => setAssetError(null)}
-              />
-            ))}
-            {!query.trim() && <DeviceTreeSection />}
-            {restAssets.map((a) => (
-              <AssetRow
-                key={a.id}
-                asset={a}
-                level={1}
-                hidden={isHidden(a.id)}
-                onDelete={() => void onDelete(a)}
-                onEdit={() => setEditingAsset(a)}
-                onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
-                error={assetError?.id === a.id ? assetError.message : null}
-                onRetry={() => void runDeleteAsset(a)}
-                onDismissError={() => setAssetError(null)}
-              />
-            ))}
-            {(groups.data ?? []).map((g: AssetGroup) => (
-              <GroupNode
-                key={g.id}
-                group={g}
-                assets={byGroup.get(g.id) ?? []}
-                hiddenIds={hiddenIds}
-                onDelete={(a) => void onDelete(a)}
-                onEdit={(a) => setEditingAsset(a)}
-                onMore={(a, x, y, full) => setRowMenu({ x, y, asset: a, full })}
-                onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
-                onCreateIn={() => {
-                  setPresetGroup(g.id);
-                  setEditing("asset");
-                }}
-                busy={groupBusyId === g.id}
-                error={groupError?.id === g.id ? groupError.message : null}
-                onRename={() => setRenamingGroup(g)}
-                onDeleteGroup={() => void deleteGroup(g)}
-                onRetry={() => void runDeleteGroup(g)}
-                onDismissError={() => setGroupError(null)}
-                assetError={assetError}
-                onRetryAssetDelete={(a) => void runDeleteAsset(a)}
-                onDismissAssetError={() => setAssetError(null)}
-              />
-            ))}
+            {treeVirtualized ? (
+              <div className="relative" style={{ height: treeVirtualizer.getTotalSize() }}>
+                {treeVirtualizer.getVirtualItems().map((virtualItem) => (
+                  <div
+                    key={virtualItem.key}
+                    ref={treeVirtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    className="absolute left-0 right-0 top-0 flow-root"
+                    style={{ transform: `translateY(${virtualItem.start}px)` }}
+                  >
+                    {renderTreeItem(treeItems[virtualItem.index])}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              treeItems.map((item) => <Fragment key={item.key}>{renderTreeItem(item)}</Fragment>)
+            )}
             {visible.length === 0 && (
               <div className="nx-hint px-2 py-8 text-center">
                 {query
@@ -635,6 +734,8 @@ export function AssetTree() {
 function AssetRow({
   asset,
   level,
+  rowRef,
+  onFocus,
   hidden,
   onDelete,
   onEdit,
@@ -645,6 +746,8 @@ function AssetRow({
 }: {
   asset: Asset;
   level: number;
+  rowRef?: (node: HTMLDivElement | null) => void;
+  onFocus?: () => void;
   hidden?: boolean;
   onDelete: () => void;
   onEdit: () => void;
@@ -670,10 +773,12 @@ function AssetRow({
   return (
     <>
     <div
+      ref={rowRef}
       role="treeitem"
       aria-level={level}
       tabIndex={0}
       className={`nx-row nx-row-oneline nx-row-reserve-actions ${hidden ? "opacity-55" : ""}`}
+      onFocusCapture={onFocus}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
@@ -696,7 +801,7 @@ function AssetRow({
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
-      <span className="nx-row-name min-w-0 flex-auto truncate">{label}</span>
+      <span className="nx-row-name nx-asset-row-name min-w-0 flex-auto">{label}</span>
       {hidden ? (
         <span className="nx-badge">已隐藏</span>
       ) : (
@@ -800,6 +905,12 @@ function AssetRow({
 function GroupNode({
   group,
   assets,
+  virtualizeAssets,
+  searching,
+  restoreFocusId,
+  getTreeScrollElement,
+  registerAssetRow,
+  onAssetFocus,
   hiddenIds,
   onDelete,
   onEdit,
@@ -818,6 +929,12 @@ function GroupNode({
 }: {
   group: AssetGroup;
   assets: Asset[];
+  virtualizeAssets: boolean;
+  searching: boolean;
+  restoreFocusId: string | null;
+  getTreeScrollElement: () => HTMLDivElement | null;
+  registerAssetRow: (asset: Asset, node: HTMLDivElement | null) => void;
+  onAssetFocus: (asset: Asset) => void;
   hiddenIds: string[];
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
@@ -840,8 +957,61 @@ function GroupNode({
   const [over, setOver] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const coarse = useCoarsePointer();
+  const assetsRef = useRef<HTMLDivElement>(null);
+  const focusedGroupAssetIdRef = useRef<string | null>(null);
+  const [assetsScrollMargin, setAssetsScrollMargin] = useState(0);
+  const assetVirtualizer = useVirtualizer({
+    count: assets.length,
+    getScrollElement: getTreeScrollElement,
+    estimateSize: () => 30,
+    overscan: 6,
+    rangeExtractor: (range) => searching ? assets.map((_, index) => index) : defaultRangeExtractor(range),
+    enabled: virtualizeAssets && open,
+    getItemKey: (index) => assets[index]?.id ?? index,
+    scrollMargin: assetsScrollMargin,
+    initialRect: { width: 360, height: 600 },
+  });
+  useLayoutEffect(() => {
+    if (!virtualizeAssets || !open) return;
+    const list = assetsRef.current;
+    const scroller = getTreeScrollElement();
+    if (!list || !scroller) return;
+    const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    setAssetsScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
+  });
+  useEffect(() => {
+    if (!restoreFocusId || !virtualizeAssets || !open) return;
+    const index = assets.findIndex((asset) => asset.id === restoreFocusId);
+    if (index >= 0) assetVirtualizer.scrollToIndex(index, { align: "auto" });
+  });
+  useEffect(() => {
+    if (!open || !virtualizeAssets) return;
+    const focusedId = focusedGroupAssetIdRef.current;
+    if (!focusedId) return;
+    const index = assets.findIndex((asset) => asset.id === focusedId);
+    if (index >= 0) assetVirtualizer.scrollToIndex(index, { align: "auto" });
+  }, [open, assets, assetVirtualizer, virtualizeAssets]);
   const isAssetDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes(DRAG_ASSET);
+  const renderGroupAsset = (a: Asset) => (
+    <AssetRow
+      key={a.id}
+      asset={a}
+      level={2}
+      rowRef={(node) => registerAssetRow(a, node)}
+      onFocus={() => {
+        focusedGroupAssetIdRef.current = a.id;
+        onAssetFocus(a);
+      }}
+      hidden={hiddenIds.includes(a.id)}
+      onDelete={() => onDelete(a)}
+      onEdit={() => onEdit(a)}
+      onMore={(x, y, full) => onMore(a, x, y, full)}
+      error={assetError?.id === a.id ? assetError.message : null}
+      onRetry={() => onRetryAssetDelete(a)}
+      onDismissError={onDismissAssetError}
+    />
+  );
   return (
     <div
       role="treeitem"
@@ -979,27 +1149,33 @@ function GroupNode({
           </button>
         </div>
       )}
-      {open && (
-        <div role="group" className="ml-3.5">
-          {assets.map((a) => (
-            <AssetRow
-              key={a.id}
-              asset={a}
-              level={2}
-              hidden={hiddenIds.includes(a.id)}
-              onDelete={() => onDelete(a)}
-              onEdit={() => onEdit(a)}
-              onMore={(x, y, full) => onMore(a, x, y, full)}
-              error={assetError?.id === a.id ? assetError.message : null}
-              onRetry={() => onRetryAssetDelete(a)}
-              onDismissError={onDismissAssetError}
-            />
+      {open && (virtualizeAssets ? (
+        <div
+          ref={assetsRef}
+          role="group"
+          className="relative ml-3.5"
+          style={{ height: assetVirtualizer.getTotalSize() }}
+        >
+          {assetVirtualizer.getVirtualItems().map((virtualItem) => (
+            <div
+              key={virtualItem.key}
+              ref={assetVirtualizer.measureElement}
+              data-index={virtualItem.index}
+              className="absolute left-0 right-0 top-0 flow-root"
+              style={{ transform: `translateY(${virtualItem.start - assetsScrollMargin}px)` }}
+            >
+              {renderGroupAsset(assets[virtualItem.index])}
+            </div>
           ))}
+        </div>
+      ) : (
+        <div role="group" className="ml-3.5">
+          {assets.map(renderGroupAsset)}
           {assets.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-neutral-500">（空分组 · 可拖资产进来）</div>
           )}
         </div>
-      )}
+      ))}
       <ContextMenu
         state={
           menu
@@ -1176,7 +1352,7 @@ export function AssetEditor({
   initial?: Asset;
   presetGroupId?: string | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (asset?: Asset) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [groupKind, setGroupKind] = useState<
@@ -1361,12 +1537,9 @@ export function AssetEditor({
 
   const webFiles = browserFilesAvailable();
   const [keyOrigin, setKeyOrigin] = useState<"ref" | "vault">(
-    boundIsRefKey || initial?.keyPath
-      ? "ref"
-      : boundIsVaultKey || webFiles
-        ? "vault"
-        : "ref",
+    boundIsRefKey || initial?.keyPath ? "ref" : "vault",
   );
+  const keyOriginTouchedRef = useRef(false);
   const [vaultMode, setVaultMode] = useState<"new" | "existing">(
     boundIsVaultKey && !boundIsRefKey ? "existing" : "new",
   );
@@ -1377,7 +1550,9 @@ export function AssetEditor({
   const [vaultCredId, setVaultCredId] = useState(boundIsVaultKey ? (initial?.credId ?? "") : "");
 
   useEffect(() => {
-    if (!keyPath && boundIsRefKey && boundCred?.refPath) setKeyPath(boundCred.refPath);
+    if (keyOriginTouchedRef.current || !boundIsRefKey) return;
+    setKeyOrigin("ref");
+    if (!keyPath && boundCred?.refPath) setKeyPath(boundCred.refPath);
   }, [boundIsRefKey, boundCred?.refPath]);
 
   const isDb = groupKind === "mysql" || groupKind === "postgres" || groupKind === "redis";
@@ -1422,6 +1597,7 @@ export function AssetEditor({
     }
   };
   const changeKeyOrigin = (next: "ref" | "vault") => {
+    keyOriginTouchedRef.current = true;
     inlinePicker.invalidate();
     if (next === "ref" && inlineKeyContent !== null) {
       setKeyPath("");
@@ -1578,12 +1754,10 @@ export function AssetEditor({
         credId,
         options,
       };
-      if (initial) {
-        await assetApi.update({ id: initial.id, ...fields });
-      } else {
-        await assetApi.create(fields);
-      }
-      onSaved();
+      const saved = initial
+        ? await assetApi.update({ id: initial.id, ...fields })
+        : await assetApi.create(fields);
+      onSaved(saved);
     } catch (e) {
       setSaveError(describeError(e));
     } finally {
@@ -1725,11 +1899,13 @@ export function AssetEditor({
                   else setPort(22);
                 }}
               >
-                {Object.entries(KIND_LABEL).map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
+                {Object.entries(KIND_LABEL)
+                  .filter(([k]) => k !== "local" || !isMobile() || initial?.builtin === true)
+                  .map(([k, label]) => (
+                    <option key={k} value={k}>
+                      {label}
+                    </option>
+                  ))}
               </select>
               {initial?.builtin && (
                 <div className="nx-hint mt-1">
@@ -1996,17 +2172,17 @@ export function AssetEditor({
                   <div className="nx-segment mb-2">
                     <button
                       type="button"
-                      className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
-                      onClick={() => changeKeyOrigin("ref")}
-                    >
-                      引用文件路径
-                    </button>
-                    <button
-                      type="button"
                       className={`nx-segment-item ${keyOrigin === "vault" ? "is-active" : ""}`}
                       onClick={() => changeKeyOrigin("vault")}
                     >
                       存入凭据库
+                    </button>
+                    <button
+                      type="button"
+                      className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
+                      onClick={() => changeKeyOrigin("ref")}
+                    >
+                      引用文件路径
                     </button>
                   </div>
 

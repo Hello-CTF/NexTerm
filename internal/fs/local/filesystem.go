@@ -26,6 +26,22 @@ func New() *FileSystem {
 	return &FileSystem{}
 }
 
+func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
+	if err := ctx.Err(); err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	result, err := platformRoots()
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if homePath, err := filepath.Abs(home); err == nil {
+			result.HomePath = homePath
+		}
+	}
+	return result, nil
+}
+
 func (f *FileSystem) LocalPath(path string) string {
 	return real(path)
 }
@@ -50,9 +66,16 @@ func (f *FileSystem) List(ctx context.Context, path string) ([]base.FileEntry, e
 		return nil, err
 	}
 	root := real(path)
+	if root != "" {
+		absoluteRoot, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", root, err)
+		}
+		root = absoluteRoot
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, fmt.Errorf("list %s: %w", root, err)
+		return nil, normalizeFilesystemError(fmt.Errorf("list %s: %w", root, err))
 	}
 	result := make([]base.FileEntry, 0, len(entries))
 	for _, entry := range entries {

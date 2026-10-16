@@ -380,15 +380,22 @@ describe("AiSidebar conversation stream UX", () => {
     expect(settled?.textContent).toContain("第一段推理第二段");
   });
 
-  it("stop records a canceled outcome and a late done cannot overwrite it", async () => {
+  it("stop records a canceled outcome only after the terminal event and a late done cannot overwrite it", async () => {
     await send("Long task");
     emit({ type: "delta", text: "已流出的部分" });
     act(runFrames);
     click(view!.container.querySelector('button[title^="停止当前任务"]')!);
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
-    expect(textOf(view!)).toContain("已停止本轮");
+    expect(textOf(view!)).toContain("正在停止");
+    expect(textOf(view!)).not.toContain("已停止本轮");
     expect(textOf(view!)).toContain("已流出的部分");
+    expect(useUi.getState().aiBusy).toBe(true);
+
+    emit({ type: "canceled", message: "已停止本轮" });
+    await flush();
+    expect(textOf(view!)).toContain("已停止本轮");
+    expect(useUi.getState().aiBusy).toBe(false);
 
     emit({ type: "done", answer: "迟到的完整答案" });
     await flush();

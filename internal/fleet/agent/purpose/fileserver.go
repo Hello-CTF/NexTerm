@@ -51,6 +51,12 @@ func (s *FileServer) ServeConn(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 	switch kind {
+	case deviceproto.FrameRoots:
+		roots, err := s.files.Roots(ctx)
+		if err != nil {
+			return deviceproto.WriteError(conn, err)
+		}
+		return deviceproto.WriteMessage(conn, deviceproto.FrameRootsReply, roots)
 	case deviceproto.FrameList:
 		return s.serveList(ctx, conn, payload)
 	case deviceproto.FrameReadFile:

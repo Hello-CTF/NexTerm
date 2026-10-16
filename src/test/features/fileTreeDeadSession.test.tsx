@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   pickSavePath: vi.fn(),
   finishSave: vi.fn(),
   discardStaged: vi.fn(),
+  roots: vi.fn(),
   list: vi.fn(),
   write: vi.fn(),
   rename: vi.fn(),
@@ -23,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   packDownload: vi.fn(),
   extract: vi.fn(),
   termWrite: vi.fn(),
+  copy: vi.fn(),
+  lineExec: vi.fn(),
   connect: vi.fn(),
   connectLocal: vi.fn(),
   connectDevice: vi.fn(),
@@ -48,6 +51,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     fsApi: {
+      roots: mocks.roots,
       list: mocks.list,
       write: mocks.write,
       rename: mocks.rename,
@@ -64,6 +68,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       connect: mocks.connect,
       connectLocal: mocks.connectLocal,
       connectDevice: mocks.connectDevice,
+      lineExec: mocks.lineExec,
     },
     terminalApi: { write: mocks.termWrite },
     assetApi: { ...(actual.assetApi ?? {}), knownHostAccept: mocks.knownHostAccept },
@@ -79,14 +84,30 @@ vi.mock("../../ipc/events", async (importOriginal) => {
   };
 });
 
+vi.mock("../../ui/clipboard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/clipboard")>();
+  return { ...actual, copyText: mocks.copy };
+});
+
 import { FileTree } from "../../features/files/FileTree";
+import { resetCwdFollowForTest } from "../../features/files/cwdFollow";
 import { useUi, type AppTab } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
 
 const SID = "s1";
 const GONE_HINT = "会话已在服务端删除，请重新连接这台主机";
 
-const NOT_FOUND = { code: "not_found", message: "会话不存在或已关闭，请刷新后重试" };
+const NOT_FOUND = {
+  code: "not_found",
+  message: "会话不存在或已关闭，请刷新后重试",
+  detail: { resource: "session" },
+};
+const PATH_NOT_FOUND = {
+  code: "not_found",
+  message: "目录不存在",
+  detail: { resource: "path" },
+};
+const LEGACY_NOT_FOUND = { code: "not_found", message: "旧服务返回的资源不存在" };
 
 const CHANGED_HOST_KEY = {
   code: "host_key_pending",
@@ -229,7 +250,17 @@ function toastTexts(): string {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+  window.localStorage.clear();
+  resetCwdFollowForTest();
+  mocks.roots.mockResolvedValue({
+    pathStyle: "unknown",
+    roots: [],
+    homePath: null,
+    supported: false,
+  });
   mocks.list.mockRejectedValue(NOT_FOUND);
+  mocks.lineExec.mockResolvedValue(undefined);
+  mocks.copy.mockResolvedValue(undefined);
   mocks.connect.mockResolvedValue(NEW_SESSION);
   mocks.connectLocal.mockResolvedValue(NEW_LOCAL_SESSION);
   mocks.knownHostAccept.mockResolvedValue(undefined);
@@ -288,6 +319,8 @@ describe("FileTree deleted session", () => {
     const st = useUi.getState();
     expect(st.workspaces).toHaveLength(1);
     expect(st.sessions.filter((s) => s.id === "s2")).toHaveLength(1);
+    expect(st.sessions.some((s) => s.id === SID)).toBe(false);
+    expect(st.sessions).toHaveLength(1);
     expect(toastTexts()).toContain("已重新连接");
     expect(toolbarButton("上传到当前目录")?.disabled).toBe(false);
   });
@@ -433,5 +466,381 @@ describe("FileTree transient file errors", () => {
     expect(mocks.connectLocal).not.toHaveBeenCalled();
     await flush();
     expect(button("重试")).toBeUndefined();
+  });
+});
+
+const WINDOWS_ROOTS = {
+  pathStyle: "windows" as const,
+  roots: [
+    { path: "C:/", label: "C:" },
+    { path: "D:/", label: "D:" },
+  ],
+  homePath: "C:/Users/test",
+  supported: true,
+};
+
+function windowsEntry(path: string, kind = "dir"): FileEntryDto {
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  return { ...entry(name, kind), path };
+}
+
+function treeItem(path: string): HTMLElement | undefined {
+  return [...(mounted?.container.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(
+    (row) => row.getAttribute("title") === path,
+  );
+}
+
+function pressEnter(element: HTMLInputElement): void {
+  act(() => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+}
+
+function openBlankMenu(): void {
+  const tree = mounted?.container.querySelector('[role="tree"]');
+  if (!tree) throw new Error("tree not found");
+  act(() => {
+    tree.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  });
+}
+
+function menuLabels(): string[] {
+  return [...(mounted?.container.querySelectorAll('[role="menuitem"]') ?? [])].map(
+    (item) => item.textContent ?? "",
+  );
+}
+
+describe("FileTree Windows roots and navigation", () => {
+  it("keeps the computer container virtual and excludes file and terminal operations", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockResolvedValue([]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("C:/")).toBeDefined());
+    expect(treeItem("D:/")).toBeDefined();
+
+    mocks.list.mockClear();
+    for (const label of ["新建文件", "新建目录", "上传到当前目录"]) {
+      expect(toolbarButton(label)?.disabled, label).toBe(true);
+    }
+    openBlankMenu();
+    const labels = menuLabels();
+    expect(labels.some((label) => label.includes("刷新"))).toBe(true);
+    for (const forbidden of ["上传", "新建", "删除", "终端打开"]) {
+      expect(labels.some((label) => label.includes(forbidden)), forbidden).toBe(false);
+    }
+    await flush();
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+
+  it("expands drives independently and isolates a missing path to its own drive", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockImplementation((_sid: string, path: string) => {
+      if (path === "C:/") return Promise.resolve([windowsEntry("C:/Windows")]);
+      if (path === "D:/") return Promise.reject(PATH_NOT_FOUND);
+      return Promise.resolve([]);
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+
+    click(treeItem("C:/")!);
+    await waitFor(() => expect(treeItem("C:/Windows")).toBeDefined());
+    click(treeItem("D:/")!);
+    await waitFor(() => expect(mounted!.container.textContent).toContain("目录不存在"));
+
+    expect(treeItem("C:/Windows")).toBeDefined();
+    expect(treeItem("D:/")).toBeDefined();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
+    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(button("重试")).toBeDefined();
+
+    mocks.list.mockImplementation((_sid: string, path: string) => {
+      if (path === "C:/") return Promise.resolve([windowsEntry("C:/Windows")]);
+      if (path === "D:/") return Promise.resolve([windowsEntry("D:/Project")]);
+      return Promise.resolve([]);
+    });
+    clickButton(mounted.container, "重试");
+    await waitFor(() => expect(treeItem("D:/Project")).toBeDefined());
+    expect(treeItem("C:/Windows")).toBeDefined();
+  });
+
+  it("normalizes a bare drive and rejects drive-relative input with an absolute-path hint", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockResolvedValue([]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+
+    click(toolbarButton("输入路径跳转")!);
+    let input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
+    expect(input).not.toBeNull();
+    setInputValue(input!, "D:");
+    pressEnter(input!);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/"));
+
+    click(toolbarButton("上级目录 此电脑")!);
+    click(toolbarButton("输入路径跳转")!);
+    input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
+    setInputValue(input!, "D:relative");
+    pressEnter(input!);
+    await waitFor(() => expect(toastTexts()).toContain("需要绝对路径"));
+    expect(mocks.list).not.toHaveBeenCalledWith(SID, "D:relative");
+  });
+
+  it("does not auto-reconnect a legacy unclassified not_found and keeps retry and manual recovery", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.list.mockRejectedValue(LEGACY_NOT_FOUND);
+    mounted = mountTree();
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("旧服务返回的资源不存在"));
+    await flush();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).not.toContain("会话已在服务端删除");
+    expect(button("重试")).toBeDefined();
+    expect(button("重新连接这台主机")).toBeDefined();
+    expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
+  });
+
+  it("treats a path not_found as a local error without reconnect or global disabling", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.list.mockRejectedValue(PATH_NOT_FOUND);
+    mounted = mountTree();
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("目录不存在"));
+    await flush();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(button("重试")).toBeDefined();
+    expect(button("重新连接这台主机")).toBeUndefined();
+    expect(toolbarButton("刷新文件列表")?.disabled).toBe(false);
+  });
+
+  it("follows a Windows terminal cwd out of the computer container", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    useUi.getState().updateTab("t1", { tabId: "k1" });
+    mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockResolvedValue([]);
+    let control: ((payload: unknown) => void) | undefined;
+    mocks.listenEvent.mockImplementation((topic: string, handler: (payload: unknown) => void) => {
+      if (topic === "terminal://control") control = handler;
+      return Promise.resolve(() => {});
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+
+    act(() => {
+      control?.({ tabId: "k1", version: 1, cwd: "D:/Project" });
+    });
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "D:/Project"));
+    await waitFor(() =>
+      expect(mounted!.container.querySelector('.nx-path-crumb[title="D:/Project"]')).not.toBeNull(),
+    );
+  });
+
+  it("keeps a UNC share as the parent boundary before returning to the computer", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots.mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockResolvedValue([]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+
+    click(toolbarButton("输入路径跳转")!);
+    const input = mounted.container.querySelector<HTMLInputElement>(".nx-pathbar input");
+    setInputValue(input!, String.raw`\\server\share\dir`);
+    pressEnter(input!);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share/dir"));
+
+    click(toolbarButton("上级目录 //server/share")!);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "//server/share"));
+    click(toolbarButton("上级目录 此电脑")!);
+    await waitFor(() => expect(treeItem("D:/")).toBeDefined());
+    expect(mocks.list).not.toHaveBeenCalledWith(SID, "//server");
+  });
+
+  it.each([
+    {
+      dir: "D:/Project [x]/child's dir",
+      command: "Set-Location -LiteralPath 'D:/Project [x]/child''s dir'",
+    },
+    {
+      dir: "//server/share/Project [x]/child's dir",
+      command: "Set-Location -LiteralPath '//server/share/Project [x]/child''s dir'",
+    },
+  ])("uses ExecLine with a literal PowerShell path for the current WinRM terminal: $dir", async ({ dir, command }) => {
+    seedWorkspace({ assetId: "asset-1", assetKind: "winrm", title: "windows" });
+    useUi.getState().updateTab("t1", { tabId: "k1" });
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+
+    act(() => {
+      treeItem(dir)!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("在当前终端打开"),
+    );
+    click(item!);
+    await flush();
+
+    expect(mocks.lineExec).toHaveBeenCalledWith("k1", command);
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe("FileTree roots errors", () => {
+  it("keeps a manual recovery action visible when the roots query loses the session", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots.mockRejectedValue(NOT_FOUND);
+    mocks.list.mockResolvedValue([]);
+    mocks.connect.mockRejectedValue(new Error("dial tcp: connection refused"));
+    mounted = mountTree();
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
+    expect(button("重新连接这台主机")).toBeDefined();
+  });
+
+  it("loads Windows roots after the initial roots request fails and manual retry succeeds", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.roots
+      .mockRejectedValueOnce({ code: "sftp", message: "根信息暂时不可用" })
+      .mockResolvedValue(WINDOWS_ROOTS);
+    mocks.list.mockResolvedValue([]);
+    mounted = mountTree();
+
+    await waitFor(() => expect(mounted!.container.textContent).toContain("根信息暂时不可用"));
+    clickButton(mounted.container, "重试");
+
+    await waitFor(() => expect(treeItem("C:/")).toBeDefined());
+    expect(treeItem("D:/")).toBeDefined();
+    expect(mocks.roots).toHaveBeenCalledTimes(2);
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).not.toContain("根信息暂时不可用");
+  });
+});
+
+describe("FileTree new WinRM terminal navigation", () => {
+  it("uses ExecLine after the new line tab attaches instead of pending terminal input", async () => {
+    seedWorkspace({ assetId: "asset-1", assetKind: "winrm", title: "windows" });
+    useUi.getState().updateTab("t1", { tabId: "k1" });
+    mocks.list.mockResolvedValue([windowsEntry("D:/Project")]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem("D:/Project")).toBeDefined());
+
+    act(() => {
+      treeItem("D:/Project")!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    await waitFor(() => expect(menuLabels().some((label) => label.includes("在新终端打开"))).toBe(true));
+    const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("在新终端打开"),
+    );
+    click(item!);
+
+    await waitFor(() =>
+      expect(
+        useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal"),
+      ).toHaveLength(2),
+    );
+    const newTab = useUi
+      .getState()
+      .workspaces[0]?.panes[0]?.tabs.find((tab) => tab.kind === "terminal" && tab.id !== "t1");
+    expect(newTab?.pendingDirectory).toBeUndefined();
+    act(() => {
+      useUi.getState().updateTab(newTab!.id, { tabId: "k2" });
+    });
+
+    await waitFor(() =>
+      expect(mocks.lineExec).toHaveBeenCalledWith("k2", "Set-Location -LiteralPath 'D:/Project'"),
+    );
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe("FileTree shell-aware terminal navigation", () => {
+  beforeEach(() => mocks.termWrite.mockResolvedValue(undefined));
+
+  async function openCurrentAt(path: string): Promise<void> {
+    act(() => {
+      treeItem(path)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => expect(menuLabels().some((label) => label.includes("在当前终端打开"))).toBe(true));
+    const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("在当前终端打开"),
+    );
+    click(item!);
+    await flush();
+  }
+
+  it.each([
+    { shell: "powershell" as const, dir: "D:/Project [x]/child's dir", command: "Set-Location -LiteralPath 'D:/Project [x]/child''s dir'\n" },
+    { shell: "posix" as const, dir: "/tmp/child's [x]", command: String.raw`cd '/tmp/child'\''s [x]'` + "\n" },
+  ])("uses the existing terminal's $shell command", async ({ shell, dir, command }) => {
+    seedWorkspace({ assetId: "asset-1" });
+    useUi.getState().updateTab("t1", { tabId: "k1", shell });
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await openCurrentAt(dir);
+    expect(mocks.termWrite).toHaveBeenCalledTimes(1);
+    expect(new TextDecoder().decode(mocks.termWrite.mock.calls[0][1])).toBe(command);
+    expect(mocks.lineExec).not.toHaveBeenCalled();
+  });
+
+  it.each(["cmd", "unknown"] as const)("does not inject into a %s terminal", async (shell) => {
+    const dir = shell === "cmd" ? "//server/share/Project [x]" : "D:/Project [x]";
+    seedWorkspace({ assetId: "asset-1" });
+    useUi.getState().updateTab("t1", { tabId: "k1", shell });
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await openCurrentAt(dir);
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+    expect(mocks.copy).toHaveBeenCalledWith(dir);
+    await waitFor(() => expect(toastTexts()).toContain("路径已复制"));
+  });
+
+  it("surfaces a copy failure without injecting into the terminal", async () => {
+    const dir = "D:/Project [x]";
+    seedWorkspace({ assetId: "asset-1" });
+    useUi.getState().updateTab("t1", { tabId: "k1", shell: "cmd" });
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mocks.copy.mockRejectedValueOnce(new Error("clipboard denied"));
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    await openCurrentAt(dir);
+
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+    expect(mocks.copy).toHaveBeenCalledWith(dir);
+    await waitFor(() => {
+      expect(toastTexts()).toContain("复制路径失败");
+      expect(toastTexts()).toContain("clipboard denied");
+    });
+  });
+
+  it("stores a new terminal's directory as runtime pending state instead of a precomputed command", async () => {
+    const dir = "D:/Project [x]/child's dir";
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mounted = mountTree();
+    await waitFor(() => expect(treeItem(dir)).toBeDefined());
+    act(() => {
+      treeItem(dir)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("在新终端打开"),
+    );
+    click(item!);
+    await waitFor(() =>
+      expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.filter((tab) => tab.kind === "terminal")).toHaveLength(2),
+    );
+    const newTab = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.kind === "terminal" && tab.id !== "t1");
+    expect(newTab?.pendingDirectory).toBe(dir);
+    expect(mocks.termWrite).not.toHaveBeenCalled();
   });
 });

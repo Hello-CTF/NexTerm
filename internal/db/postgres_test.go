@@ -5,13 +5,16 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestInlineConnectPostgresAndDispatch(t *testing.T) {
@@ -49,7 +52,7 @@ func TestInlineConnectPostgresAndDispatch(t *testing.T) {
 	if len(state.queries) != 1 || !strings.Contains(state.queries[0], "information_schema.schemata") {
 		t.Fatalf("queries=%v", state.queries)
 	}
-	if _, err := service.mysqlOf(result.ConnID); err == nil {
+	if _, err := service.mysqlOf(context.Background(), result.ConnID); err == nil {
 		t.Fatal("mysqlOf accepted a postgres connection")
 	} else {
 		var ipcErr *ipc.Error
@@ -60,11 +63,11 @@ func TestInlineConnectPostgresAndDispatch(t *testing.T) {
 	if _, err := service.redisOf(result.ConnID); err == nil {
 		t.Fatal("redisOf accepted a postgres connection")
 	}
-	connection, err := service.postgresOf(result.ConnID)
+	connection, err := service.postgresOf(context.Background(), result.ConnID)
 	if err != nil || connection.db != database {
 		t.Fatalf("postgresOf=%+v err=%v", connection, err)
 	}
-	if err := service.Disconnect(result.ConnID); err != nil {
+	if err := service.Disconnect(context.Background(), result.ConnID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
 }
@@ -171,6 +174,60 @@ func TestPostgresQueryServerErrorStaysInDTO(t *testing.T) {
 	result, err := queryPostgres(context.Background(), newFakeSQLDB(t, state), "SELECT broken", 0, time.Second)
 	if err != nil || result.Error == nil || *result.Error != `ERROR: syntax error at or near "broken"` {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestPostgresQueryTransportErrorsAreDisconnected(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+		err       error
+	}{
+		{name: "bad connection", statement: "UPDATE items SET enabled = 0", err: driver.ErrBadConn},
+		{name: "connection reset", statement: "UPDATE items SET enabled = 0", err: &net.OpError{Op: "write", Net: "tcp", Err: errors.New("connection reset by peer")}},
+		{name: "EOF", statement: "SELECT 1", err: io.EOF},
+		{name: "unexpected EOF", statement: "UPDATE items SET enabled = 0", err: io.ErrUnexpectedEOF},
+		{name: "short write", statement: "UPDATE items SET enabled = 0", err: io.ErrShortWrite},
+		{name: "closed network connection", statement: "SELECT 1", err: net.ErrClosed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &fakeSQLState{
+				query: func(context.Context, string) (driver.Rows, error) { return nil, test.err },
+				exec:  func(context.Context, string) (driver.Result, error) { return nil, test.err },
+			}
+			result, err := queryPostgres(context.Background(), newFakeSQLDB(t, state), test.statement, 0, time.Second)
+			var ipcErr *ipc.Error
+			if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeDisconnected {
+				t.Fatalf("result=%+v err=%#v", result, err)
+			}
+			if result.Error != nil || !errors.Is(err, test.err) {
+				t.Fatalf("result=%+v err=%#v", result, err)
+			}
+		})
+	}
+}
+
+func TestPostgresDriverServerErrorsStayInDTO(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+		err       *pgconn.PgError
+	}{
+		{name: "syntax", statement: "SELECT broken", err: &pgconn.PgError{Severity: "ERROR", Code: "42601", Message: `syntax error at or near "EOF"`}},
+		{name: "relation", statement: "SELECT * FROM missing", err: &pgconn.PgError{Severity: "ERROR", Code: "42P01", Message: `relation "network error" does not exist`}},
+		{name: "column", statement: "SELECT missing", err: &pgconn.PgError{Severity: "ERROR", Code: "42703", Message: `column "driver: bad connection" does not exist`}},
+		{name: "constraint", statement: "INSERT INTO items VALUES (1)", err: &pgconn.PgError{Severity: "ERROR", Code: "23505", Message: "duplicate key value violates unique constraint"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &fakeSQLState{
+				query: func(context.Context, string) (driver.Rows, error) { return nil, test.err },
+				exec:  func(context.Context, string) (driver.Result, error) { return nil, test.err },
+			}
+			result, err := queryPostgres(context.Background(), newFakeSQLDB(t, state), test.statement, 0, time.Second)
+			if err != nil || result.Error == nil || *result.Error != test.err.Error() {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
 	}
 }
 

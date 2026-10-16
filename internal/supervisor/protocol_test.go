@@ -76,18 +76,22 @@ func TestExecOutputPayloadRoundTrip(t *testing.T) {
 
 func TestErrorCodeMapping(t *testing.T) {
 	pairs := map[string]error{
-		codeNotFound:      ErrNotFound,
-		codeAlreadyExists: ErrAlreadyExists,
-		codeIdentity:      ErrIdentity,
-		codeExited:        ErrExited,
-		codeInvalidInput:  ErrInvalidInput,
-		codeUnavailable:   ErrUnavailable,
-		codeClosed:        ErrClosed,
-		codeProtocol:      ErrProtocol,
+		codeNotFound:         ErrNotFound,
+		codeAlreadyExists:    ErrAlreadyExists,
+		codeIdentity:         ErrIdentity,
+		codeIdentityChanged:  ErrIdentity,
+		codeMetadataConflict: ErrMetadataConflict,
+		codeExited:           ErrExited,
+		codeInvalidInput:     ErrInvalidInput,
+		codeUnavailable:      ErrUnavailable,
+		codeClosed:           ErrClosed,
+		codeProtocol:         ErrProtocol,
 	}
 	for code, sentinel := range pairs {
-		if got := errorCode(sentinel); got != code {
-			t.Fatalf("errorCode(%v) = %q, want %q", sentinel, got, code)
+		if code != codeIdentityChanged {
+			if got := errorCode(sentinel); got != code {
+				t.Fatalf("errorCode(%v) = %q, want %q", sentinel, got, code)
+			}
 		}
 		if !errors.Is(codedError(code, "detail"), sentinel) {
 			t.Fatalf("codedError(%q) does not map to %v", code, sentinel)
@@ -95,5 +99,21 @@ func TestErrorCodeMapping(t *testing.T) {
 	}
 	if got := errorCode(codedError(codeVersionMismatch, "v2")); got != codeProtocol {
 		t.Fatalf("version mismatch maps to %q, want %q", got, codeProtocol)
+	}
+}
+
+func TestMetadataConflictErrorWireRoundTrip(t *testing.T) {
+	original := &MetadataConflictError{Current: Info{ID: "session", Title: "current", MetadataRevision: 7}}
+	msg := errorMessage(original)
+	if msg.Code != codeMetadataConflict || msg.Title != "current" || msg.MetadataRevision != 7 {
+		t.Fatalf("conflict message = %+v", msg)
+	}
+	err := decodedError(msg)
+	var conflict *MetadataConflictError
+	if !errors.As(err, &conflict) || !errors.Is(err, ErrMetadataConflict) {
+		t.Fatalf("decoded conflict = %v", err)
+	}
+	if conflict.Current.Title != "current" || conflict.Current.MetadataRevision != 7 {
+		t.Fatalf("decoded current metadata = %+v", conflict.Current)
 	}
 }

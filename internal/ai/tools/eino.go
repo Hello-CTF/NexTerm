@@ -454,15 +454,10 @@ func (e *Execution) enabled(name string) bool {
 	case "exec_commands", "read_file", "write_file", "list_dir", "search_files", "edit_file":
 		return deps.Transport != nil && e.Scope.SessionID != ""
 	case "read_screen", "send_keys", "wait_for":
-		if deps.Terminal == nil || e.Scope.TabID == "" {
-			return false
-		}
-		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
+		return deps.Terminal != nil && e.Scope.TabID != ""
 	case "terminal_rename":
-		if _, ok := deps.Terminal.(RenameTerminal); !ok || e.Scope.TabID == "" {
-			return false
-		}
-		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
+		_, ok := deps.Terminal.(RenameTerminal)
+		return ok && e.Scope.TabID != ""
 	case "terminal_create":
 		if e.Scope.SessionID == "" {
 			return false
@@ -690,7 +685,7 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			if err := json.Unmarshal(call.Args, &input); err != nil {
 				return Fail(err), nil
 			}
-			tabID, err := e.Registry.resolveTab(e.JobID, e.Scope, input.TabID)
+			tabID, err := e.Registry.resolveTab(ctx, e.JobID, e.Scope, input.TabID)
 			if err != nil {
 				return Fail(err), nil
 			}
@@ -750,7 +745,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if err := json.Unmarshal(call.Args, &input); err != nil {
 			return Fail(err), nil
 		}
-		tabID, err := e.Registry.resolveTab(e.JobID, e.Scope, input.TabID)
+		tabID, err := e.Registry.resolveTab(ctx, e.JobID, e.Scope, input.TabID)
 		if err != nil {
 			return Fail(err), nil
 		}

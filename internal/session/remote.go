@@ -330,8 +330,8 @@ func (m *Manager) reapRemote(id string, activity time.Time) error {
 	}
 	session.tabs = make(map[string]*Tab)
 	delete(m.sessions, id)
-	if m.byAsset[session.asset.ID] == session.ID {
-		delete(m.byAsset, session.asset.ID)
+	if m.byAsset[session.assetOwnerKey()] == session.ID {
+		delete(m.byAsset, session.assetOwnerKey())
 	}
 	disconnectedEvent := session.statusEventLocked(StatusDisconnected, nil)
 	session.mu.Unlock()

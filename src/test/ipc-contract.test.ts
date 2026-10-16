@@ -51,10 +51,11 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade static contract", () => {
-  it("keeps 194 methods and 192 unique commands", () => {
+  it("keeps 196 methods and 194 unique commands", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(194);
-    expect(new Set(names)).toHaveProperty("size", 192);
+    expect(names).toHaveLength(196);
+    expect(new Set(names)).toHaveProperty("size", 194);
+    expect(names).toContain("fs_roots");
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",

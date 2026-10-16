@@ -43,6 +43,75 @@ func TestListenFrameValues(t *testing.T) {
 	}
 }
 
+func TestRootsFrameValues(t *testing.T) {
+	if FrameRoots != 32 || FrameRootsReply != 33 {
+		t.Fatalf("roots frames = %d/%d; want 32/33", FrameRoots, FrameRootsReply)
+	}
+}
+
+func TestClientRootsRoundTrip(t *testing.T) {
+	want := base.FileSystemRoots{
+		PathStyle: base.PathStyleWindows,
+		Roots: []base.FileRoot{
+			{Path: `C:\`, Label: "C:"},
+			{Path: `D:\`, Label: "D:"},
+		},
+		HomePath:  `C:\Users\agent`,
+		Supported: true,
+	}
+	client := pipeClient(t, func(conn net.Conn) {
+		kind, _, err := ReadFrame(conn)
+		if err != nil || kind != FrameRoots {
+			return
+		}
+		_ = WriteMessage(conn, FrameRootsReply, want)
+	})
+	got, err := client.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PathStyle != want.PathStyle || got.HomePath != want.HomePath || got.Supported != want.Supported || len(got.Roots) != len(want.Roots) {
+		t.Fatalf("Roots = %+v; want %+v", got, want)
+	}
+	for index := range want.Roots {
+		if got.Roots[index] != want.Roots[index] {
+			t.Fatalf("root %d = %+v; want %+v", index, got.Roots[index], want.Roots[index])
+		}
+	}
+}
+
+func TestClientRootsErrors(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		code            string
+		wantUnsupported bool
+	}{
+		{name: "legacy agent", code: CodeProtocol, wantUnsupported: true},
+		{name: "explicit unsupported", code: CodeUnsupported, wantUnsupported: true},
+		{name: "enumeration failure", code: CodeInternal},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := pipeClient(t, func(conn net.Conn) {
+				kind, _, err := ReadFrame(conn)
+				if err != nil || kind != FrameRoots {
+					return
+				}
+				_ = WriteMessage(conn, FrameError, ErrorMsg{Code: testCase.code, Message: "roots failure"})
+			})
+			roots, err := client.Roots(context.Background())
+			if err == nil {
+				t.Fatal("Roots must surface the agent error")
+			}
+			if errors.Is(err, base.ErrUnsupported) != testCase.wantUnsupported {
+				t.Fatalf("Roots error = %v; unsupported = %v, want %v", err, errors.Is(err, base.ErrUnsupported), testCase.wantUnsupported)
+			}
+			if testCase.wantUnsupported && (roots.Supported || len(roots.Roots) != 0) {
+				t.Fatalf("unsupported Roots = %+v; want no fabricated roots", roots)
+			}
+		})
+	}
+}
+
 func TestListenMessageRoundTrips(t *testing.T) {
 	var buffer bytes.Buffer
 	if err := WriteMessage(&buffer, FrameListen, ListenMsg{Network: "tcp", Address: "0.0.0.0:2222"}); err != nil {
@@ -136,6 +205,7 @@ func TestErrorCodeRoundTrip(t *testing.T) {
 		{ErrInvalid, CodeInvalid, ErrInvalid},
 		{ErrProtocol, CodeProtocol, ErrProtocol},
 		{base.ErrUnsupported, CodeUnsupported, base.ErrUnsupported},
+		{fmt.Errorf("list: %w", base.ErrNoMedia), CodeNoMedia, base.ErrNoMedia},
 		{errors.New("boom"), CodeInternal, nil},
 	}
 	for _, tc := range cases {

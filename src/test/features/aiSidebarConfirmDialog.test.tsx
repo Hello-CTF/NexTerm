@@ -69,8 +69,13 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
+import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { useUi } from "../../app/store";
 import { resetAllKeybindings } from "../../app/keybindings";
+
+beforeEach(() => {
+  clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
+});
 
 let mounted: MountedView | undefined;
 
@@ -494,6 +499,8 @@ describe("AiSidebar permission request dialogs", () => {
     clickButton(mounted!.container, "去设置拦截规则");
     expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
 
+    act(() => mocks.channels[0].onEvent({ type: "done", answer: "Done" }));
+    await flush();
     mounted?.unmount();
     mocks.channels.length = 0;
     await show();

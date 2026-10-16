@@ -15,6 +15,38 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
 
+type productionDockerProvider struct {
+	sessions *session.Manager
+	pool     *docker.GenerationalProvider
+}
+
+func (p *productionDockerProvider) authorize(ctx context.Context, sessionID string) error {
+	_, err := p.sessions.SessionFor(productionSessionRequestContext(ctx), sessionID)
+	return err
+}
+
+func (p *productionDockerProvider) SDK(ctx context.Context, sessionID string) (docker.Backend, error) {
+	if err := p.authorize(ctx, sessionID); err != nil {
+		return nil, err
+	}
+	return p.pool.SDK(ctx, sessionID)
+}
+
+func (p *productionDockerProvider) Command(ctx context.Context, sessionID string) (docker.Backend, error) {
+	if err := p.authorize(ctx, sessionID); err != nil {
+		return nil, err
+	}
+	return p.pool.Command(ctx, sessionID)
+}
+
+func (p *productionDockerProvider) CloseSession(sessionID string) error {
+	return p.pool.CloseSession(sessionID)
+}
+
+func (p *productionDockerProvider) Close() error {
+	return p.pool.Close()
+}
+
 func newProductionDockerService(sessions *session.Manager, database *store.Store) *docker.Service {
 	generations := docker.GenerationSourceFunc(func(sessionID string) (uint64, error) {
 		connected, err := sessions.Session(sessionID)
@@ -23,9 +55,10 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 		}
 		return connected.Info().Generation, nil
 	})
-	provider := docker.NewGenerationalProvider(generations,
+	pool := docker.NewGenerationalProvider(generations,
 		func(ctx context.Context, sessionID string, _ uint64) (docker.Backend, error) {
-			connected, err := sessions.Session(sessionID)
+			ctx = productionSessionRequestContext(ctx)
+			connected, err := sessions.SessionFor(ctx, sessionID)
 			if err != nil {
 				return nil, err
 			}
@@ -39,7 +72,7 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 			if connected.Asset().Kind == session.KindDevice {
 				return nil, fmt.Errorf("%w: device Docker SDK", base.ErrUnsupported)
 			}
-			transport, err := sessions.Transport(ctx, sessionID)
+			transport, err := sessions.TransportFor(ctx, sessionID)
 			if err != nil {
 				return nil, err
 			}
@@ -54,11 +87,12 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 			return docker.NewMobyBackend(client), nil
 		},
 		func(ctx context.Context, sessionID string, _ uint64) (docker.Backend, error) {
-			connected, err := sessions.Session(sessionID)
+			ctx = productionSessionRequestContext(ctx)
+			connected, err := sessions.SessionFor(ctx, sessionID)
 			if err != nil {
 				return nil, err
 			}
-			transport, err := sessions.Transport(ctx, sessionID)
+			transport, err := sessions.TransportFor(ctx, sessionID)
 			if err != nil {
 				return nil, err
 			}
@@ -78,6 +112,7 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 			return docker.NewCommandBackend(runner, opener, shell), nil
 		},
 	)
+	provider := &productionDockerProvider{sessions: sessions, pool: pool}
 	return docker.NewService(provider, docker.WithAuditor(docker.AuditorFunc(func(ctx context.Context, event docker.AuditEvent) error {
 		var sessionID, assetID *string
 		if event.SessionID != "" {

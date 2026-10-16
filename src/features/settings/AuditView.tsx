@@ -5,7 +5,6 @@ import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
-import { GlobalScopeBadge } from "../../ui/GlobalScopeBadge";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 import { CommandLogView } from "./CommandLogView";
 
@@ -214,7 +213,6 @@ export function AuditView() {
       <div className="nx-toolbar flex-wrap">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
-        <GlobalScopeBadge />
         <div className="nx-segment">
           <button className="nx-segment-item is-active" disabled>
             审计

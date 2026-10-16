@@ -438,12 +438,12 @@ func (s *Service) serveDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	samples, err := s.DeviceMetrics(r.Context(), identityFrom(r), r.PathValue("id"), since)
+	result, err := s.DeviceMetrics(r.Context(), identityFrom(r), r.PathValue("id"), since)
 	if err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
-	writeFleetJSON(w, http.StatusOK, map[string][]*MetricsSample{"samples": samples})
+	writeFleetJSON(w, http.StatusOK, result)
 }
 
 func (s *Service) serveBaseURLsGet(w http.ResponseWriter, r *http.Request) {

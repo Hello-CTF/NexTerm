@@ -14,11 +14,15 @@ import {
 } from "./features/reactTestUtils";
 import type { SshImportPreviewDto } from "../ipc/types";
 
-const mocks = vi.hoisted(() => ({
-  preview: vi.fn(),
-  apply: vi.fn(),
-  toast: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
+  return {
+    preview: vi.fn(),
+    apply: vi.fn(),
+    sessionConnect: vi.fn(),
+    toast: vi.fn(),
+  };
+});
 const gateMocks = vi.hoisted(() => ({
   ensureVaultInit: vi.fn(),
 }));
@@ -26,6 +30,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
   return {
     ...actual,
+    sessionApi: { connect: mocks.sessionConnect },
     sshImportApi: { preview: mocks.preview, apply: mocks.apply },
   };
 });
@@ -223,6 +228,7 @@ describe("SSH import dialog", () => {
       "success",
       expect.stringContaining("导入完成"),
     );
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
   });
 
   it("allows conflicts to switch to overwrite and passes them to apply", async () => {

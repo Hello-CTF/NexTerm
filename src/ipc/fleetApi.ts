@@ -51,6 +51,17 @@ export interface FleetMetricsSample {
   uptime_s: number;
 }
 
+export interface FleetMetricsResponse {
+  samples: FleetMetricsSample[];
+  latest?: FleetMetricsSample;
+  windowStart?: number;
+  windowEnd?: number;
+  sampleCount?: number;
+  downsampled?: boolean;
+  seriesError?: string;
+  sampleIntervalMs?: number;
+}
+
 export interface FleetBaseURLEntry {
   url: string;
   insecure?: boolean;
@@ -82,7 +93,7 @@ export const fleetApi = {
     ),
 
   metrics: (id: string, sinceMs?: number) =>
-    request<{ samples: FleetMetricsSample[] }>(
+    request<FleetMetricsResponse>(
       "GET",
       `/fleet/devices/${encodeURIComponent(id)}/metrics${sinceMs ? `?since_ms=${sinceMs}` : ""}`,
     ),

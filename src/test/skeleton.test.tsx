@@ -328,7 +328,7 @@ describe("BackgroundSessions skeleton", () => {
   it("shows skeleton rows without an empty state while pending and replaces them when data arrives", async () => {
     const d = deferred<LiveTabInfo[]>();
     mocks.listLive.mockReturnValue(d.promise);
-    mounted = mount(createElement(BackgroundSessions, { visible: true }));
+    mounted = mount(createElement(BackgroundSessions, { visible: true, sessionId: "s1" }));
 
     await flushUntil(
       () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0,
@@ -344,7 +344,7 @@ describe("BackgroundSessions skeleton", () => {
 
   it("shows the empty state instead of skeleton rows after a genuinely empty result arrives", async () => {
     mocks.listLive.mockResolvedValue([]);
-    mounted = mount(createElement(BackgroundSessions, { visible: true }));
+    mounted = mount(createElement(BackgroundSessions, { visible: true, sessionId: "s1" }));
     await flushUntil(
       () => mounted!.container.textContent?.includes("没有在后台运行的终端") ?? false,
     );
@@ -355,7 +355,7 @@ describe("BackgroundSessions skeleton", () => {
     for (const width of [320, 390]) {
       setViewportWidth(width);
       mocks.listLive.mockReturnValue(new Promise<LiveTabInfo[]>(() => {}));
-      mounted = mount(createElement(BackgroundSessions, { visible: true }));
+      mounted = mount(createElement(BackgroundSessions, { visible: true, sessionId: "s1" }));
       await flushUntil(
         () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0,
       );

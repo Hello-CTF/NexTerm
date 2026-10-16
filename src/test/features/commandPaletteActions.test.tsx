@@ -47,7 +47,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { CommandPalette } from "../../app/CommandPalette";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
-import { useUi } from "../../app/store";
+import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
 
 function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
@@ -132,6 +132,29 @@ function searchInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector<HTMLInputElement>('[role="combobox"]');
   if (!input) throw new Error("Palette combobox not found");
   return input;
+}
+
+const realAddTab = useUi.getState().addTab;
+
+function workspaceOf(id: string, kind: Workspace["kind"], sessionId?: string): Workspace {
+  const paneId = `${id}-pane`;
+  return {
+    id,
+    kind,
+    title: id,
+    sessionId,
+    connId: kind === "db" ? "db-conn" : undefined,
+    panes: [{ id: paneId, tabs: [], activeTabId: null }],
+    activePaneId: paneId,
+    splitRatio: 0.5,
+    closable: true,
+  };
+}
+
+function allTabs(): AppTab[] {
+  return useUi.getState().workspaces.flatMap((workspace) =>
+    workspace.panes.flatMap((pane) => pane.tabs),
+  );
 }
 
 let mounted: MountedView | undefined;
@@ -306,5 +329,100 @@ describe("command palette asset secondary actions", () => {
     await flush();
     expect(useAssetVisibility.getState().hiddenIds).not.toContain("a1");
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已取消隐藏"));
+  });
+});
+
+describe("command palette workspace actions", () => {
+  it("opens port forwarding for the explicit current host", async () => {
+    const first = workspaceOf("ws-a", "session", "s1");
+    const second = workspaceOf("ws-b", "session", "s2");
+    useUi.setState({
+      workspaces: [first, second],
+      activeWorkspaceId: second.id,
+      addTab: realAddTab,
+    });
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "打开端口转发"));
+    await flush();
+
+    expect(allTabs().filter((tab) => tab.kind === "forward")).toEqual([
+      expect.objectContaining({ sessionId: "s2" }),
+    ]);
+    expect(first.panes[0].tabs).toEqual([]);
+  });
+
+  it("keeps an explicit unscoped overview of all forwards", async () => {
+    useUi.setState({ workspaces: [], activeWorkspaceId: null, addTab: realAddTab });
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "查看全部端口转发"));
+    await flush();
+
+    const forwards = allTabs().filter((tab) => tab.kind === "forward");
+    expect(forwards).toHaveLength(1);
+    expect(forwards[0]).toMatchObject({ id: "forward-overview", kind: "forward" });
+    expect(forwards[0]).not.toHaveProperty("sessionId");
+  });
+
+  it("opens background sessions with the current owning session", async () => {
+    const first = workspaceOf("ws-a", "session", "s1");
+    const second = workspaceOf("ws-b", "session", "s2");
+    second.assetId = "asset-2";
+    useUi.setState({
+      workspaces: [first, second],
+      activeWorkspaceId: second.id,
+      addTab: realAddTab,
+    });
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "打开后台会话"));
+    await flush();
+
+    expect(allTabs().filter((tab) => tab.kind === "background")).toEqual([
+      expect.objectContaining({
+        id: "background-ws-b",
+        sessionId: "s2",
+        assetId: "asset-2",
+      }),
+    ]);
+    expect(useUi.getState().workspaces.some((workspace) => workspace.kind === "tools")).toBe(false);
+  });
+
+  it.each([{ kind: "tools" as const }, { kind: "db" as const }])(
+    "host actions do not use an implicit session in a $kind workspace",
+    async ({ kind }) => {
+      const workspace = workspaceOf(`ws-${kind}`, kind);
+      useUi.setState({
+        workspaces: [workspace],
+        activeWorkspaceId: workspace.id,
+        addTab: realAddTab,
+      });
+      await mountPalette({ onClose: vi.fn() });
+
+      click(optionByText(mounted!.container, "打开端口转发"));
+      await flush();
+      mounted?.unmount();
+      mounted = undefined;
+      await mountPalette({ onClose: vi.fn() });
+      click(optionByText(mounted!.container, "打开后台会话"));
+      await flush();
+
+      expect(allTabs().filter((tab) => tab.kind === "forward" || tab.kind === "background")).toEqual([]);
+      expect(mocks.toast).toHaveBeenCalledWith("info", "先连接一台主机（双击左侧资产）");
+    },
+  );
+
+  it("opens ordinary history without an asset filter override", async () => {
+    await mountPalette({ onClose: vi.fn() });
+
+    click(optionByText(mounted!.container, "打开终端历史"));
+
+    expect(mocks.addTab).toHaveBeenCalledWith({
+      id: "history",
+      kind: "history",
+      title: "终端历史",
+      closable: true,
+    });
   });
 });

@@ -77,6 +77,18 @@ type fsEntryDTO struct {
 	SymlinkTarget *string `json:"symlinkTarget"`
 }
 
+type fsRootDTO struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+}
+
+type fsRootsDTO struct {
+	PathStyle string      `json:"pathStyle"`
+	Roots     []fsRootDTO `json:"roots"`
+	HomePath  *string     `json:"homePath"`
+	Supported bool        `json:"supported"`
+}
+
 type fsReadDTO struct {
 	Path          string `json:"path"`
 	Size          int    `json:"size"`
@@ -105,7 +117,7 @@ type sshExtractor interface {
 
 func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver) error {
 	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
-		transport, err := sessions.Transport(ctx, sessionID)
+		transport, err := sessions.TransportFor(productionSessionRequestContext(ctx), sessionID)
 		if err != nil {
 			return nil, "", err
 		}
@@ -120,6 +132,37 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 		return remote, transport.Kind(), nil
 	}
 	registrations := []func() error{
+		func() error {
+			return ipc.Register(dispatcher, "fs_roots", func(ctx context.Context, _ *ipc.Call, input fsRequest) (fsRootsDTO, error) {
+				result := fsRootsDTO{PathStyle: string(base.PathStyleUnknown), Roots: make([]fsRootDTO, 0)}
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				if err != nil {
+					return fsRootsDTO{}, fsIPCError(kind, err)
+				}
+				provider, ok := filesystem.(base.RootsProvider)
+				if !ok {
+					return result, nil
+				}
+				roots, err := provider.Roots(ctx)
+				if errors.Is(err, base.ErrUnsupported) {
+					return result, nil
+				}
+				if err != nil {
+					return fsRootsDTO{}, fsIPCError(kind, err)
+				}
+				result.PathStyle = string(roots.PathStyle)
+				if result.PathStyle == "" {
+					result.PathStyle = string(base.PathStyleUnknown)
+				}
+				result.HomePath = nullableProductionString(roots.HomePath)
+				result.Supported = roots.Supported
+				result.Roots = make([]fsRootDTO, len(roots.Roots))
+				for index, root := range roots.Roots {
+					result.Roots[index] = fsRootDTO{Path: root.Path, Label: root.Label}
+				}
+				return result, nil
+			})
+		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_list", func(ctx context.Context, _ *ipc.Call, input fsRequest) ([]fsEntryDTO, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
@@ -318,10 +361,22 @@ func fsIPCError(transportKind string, err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, base.ErrNoMedia) {
+		return ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{"resource": "path", "reason": "no_media"})
+	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
+		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err).WithDetail(map[string]any{"resource": "path"})
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return ipc.WrapError(ipc.CodeForbidden, err.Error(), err).WithDetail(map[string]any{"resource": "path", "reason": "permission_denied"})
 	}
 	classified := terminalIPCError(err)
+	if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, session.ErrSessionClosed) || errors.Is(err, session.ErrDisconnected) || errors.Is(err, base.ErrDisconnected) {
+		var appErr *ipc.Error
+		if errors.As(classified, &appErr) {
+			return appErr.WithDetail(map[string]any{"resource": "session"})
+		}
+	}
 	var appErr *ipc.Error
 	if !errors.As(classified, &appErr) || appErr.Code != ipc.CodeInternal {
 		return classified

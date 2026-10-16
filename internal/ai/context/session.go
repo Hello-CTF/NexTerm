@@ -6,14 +6,24 @@ import (
 	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
+
+func sessionRequestContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
+	}
+	return session.WithOpenAccess(ctx)
+}
 
 func WithSession(deps Dependencies, manager *session.Manager, storage *store.Store, database tools.Database) Dependencies {
 	terminal := tools.SessionTerminal(manager)
 	deps.Session = func(ctx context.Context, sessionID string) (SessionBrief, error) {
-		current, err := manager.Session(sessionID)
+		ctx = sessionRequestContext(ctx)
+		current, err := manager.SessionFor(ctx, sessionID)
 		if err != nil {
 			return SessionBrief{}, err
 		}
@@ -50,7 +60,7 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		return manager.TailLines(tabID, count)
+		return manager.TailLinesFor(sessionRequestContext(ctx), tabID, count)
 	}
 	deps.TabSession = func(tabID string) string {
 		tab, err := manager.Tab(tabID)
@@ -59,7 +69,9 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		}
 		return tab.SessionID
 	}
-	deps.Transport = manager.Transport
+	deps.Transport = func(ctx context.Context, sessionID string) (base.Transport, error) {
+		return manager.TransportFor(sessionRequestContext(ctx), sessionID)
+	}
 	if database != nil {
 		deps.Tables = func(ctx context.Context, connID string) ([]TableBrief, error) {
 			tables, err := database.Tables(ctx, connID, "")

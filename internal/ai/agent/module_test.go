@@ -222,3 +222,63 @@ func TestModuleComposesAfterOwnerModules(t *testing.T) {
 		}
 	}
 }
+
+func TestJobCancelWithoutIdentityRequiresExplicitOpenAccess(t *testing.T) {
+	tests := []struct {
+		name       string
+		serverMode bool
+		open       bool
+		allowed    bool
+	}{
+		{name: "server unknown identity", serverMode: true},
+		{name: "server explicit open", serverMode: true, open: true, allowed: true},
+		{name: "desktop", allowed: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			storage, err := store.OpenInMemory(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer storage.Close()
+			chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}}
+			runner := NewRunner(Config{
+				Model: func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+				Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, ServerMode: test.serverMode,
+			})
+			defer runner.Close()
+			dispatcher := ipc.NewDispatcher()
+			if err := runner.RegisterCommands(dispatcher); err != nil {
+				t.Fatal(err)
+			}
+			stream := &SliceStream{}
+			started, err := runner.Start(context.Background(), ChatArgs{Message: "go"}, StaticStream(stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if test.open {
+				ctx = WithOpenAccess(ctx)
+			}
+			response := dispatcher.Dispatch(ctx, ipc.Request{Command: "ai_cancel", Args: json.RawMessage(`{"jobId":"` + started.JobID + `"}`)}, ipc.Environment{})
+			if response.OK != test.allowed {
+				t.Fatalf("cancel response = %+v, allowed=%v", response, test.allowed)
+			}
+			if !test.allowed {
+				if response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+					t.Fatalf("unknown identity error = %+v", response.Error)
+				}
+				if current := runner.lookupJob(started.JobID); current == nil || current.ctx.Err() != nil {
+					t.Fatal("unknown identity changed job state")
+				}
+				if err := runner.Cancel(started.JobID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			waitClosed(t, stream)
+		})
+	}
+}

@@ -453,6 +453,12 @@ var negativeControls = []negativeControl{
 			step["run"] = strings.Replace(stepRun(step), `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`, "", 1)
 			return packText
 		}},
+	{"PR Windows real fixture condition removal is caught",
+		"PR Windows desktop runs real Go and loopback fixtures",
+		func(ci, release map[string]interface{}, packText string) string {
+			delete(findStep(asMap(jobsOf(ci)["native"]), "Run real Windows Go and loopback tests"), "if")
+			return packText
+		}},
 }
 
 type resolverNegativeControl struct {
@@ -466,6 +472,30 @@ var resolverNegativeControls = []resolverNegativeControl{
 		"release downloads are a subset of resolver required artifacts",
 		func(resolverText string) string {
 			return strings.Replace(resolverText, " native-linux-amd64-agent", "", 1)
+		}},
+}
+
+type windowsNegativeControl struct {
+	label    string
+	expected string
+	mutate   func(windowsRealText string) string
+}
+
+var windowsNegativeControls = []windowsNegativeControl{
+	{"Windows targeted-test SKIP guard removal is caught",
+		"real Windows targeted tests reject SKIP",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "if ($skips.Count -ne 0)", "if ($false)", 1)
+		}},
+	{"Windows local second-volume fixture removal is caught",
+		"real Windows fixtures cover local, WinRM and OpenSSH second-volume paths",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "Invoke-TargetedGoTest -Package './internal/fs/local' -Test 'TestRealWindowsSecondVolume'", "", 1)
+		}},
+	{"WinRM cwd and path subtest filter removal is caught",
+		"real WinRM loopback runs the complete cwd and quoted-path subtest set",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, " -RunExpression '^TestRealWindowsServer$/^(cwd_persistence|filesystem|relative_read_write_and_backup_after_cwd_change)$'", "", 1)
 		}},
 }
 
@@ -493,18 +523,24 @@ func runNegativeControls(ciRaw, releaseRaw []byte, in inputs) []string {
 		release := parseYAML(releaseRaw)
 		mutatedPack := control.mutate(ci, release, in.packText)
 		report(control.label, control.expected, runWiringChecks(inputs{
-			ci:           ci,
-			release:      release,
-			resolverText: in.resolverText,
-			packText:     mutatedPack,
-			uploadText:   in.uploadText,
-			evidenceText: in.evidenceText,
-			root:         in.root,
+			ci:              ci,
+			release:         release,
+			resolverText:    in.resolverText,
+			packText:        mutatedPack,
+			uploadText:      in.uploadText,
+			evidenceText:    in.evidenceText,
+			windowsRealText: in.windowsRealText,
+			root:            in.root,
 		}))
 	}
 	for _, control := range resolverNegativeControls {
 		mutated := in
 		mutated.resolverText = control.mutate(in.resolverText)
+		report(control.label, control.expected, runWiringChecks(mutated))
+	}
+	for _, control := range windowsNegativeControls {
+		mutated := in
+		mutated.windowsRealText = control.mutate(in.windowsRealText)
 		report(control.label, control.expected, runWiringChecks(mutated))
 	}
 	return missed

@@ -283,6 +283,15 @@ describe("SettingsView responsive structure", () => {
     expect(localStorage.getItem("nexterm.terminal.v1")).toBe('{"osc52":true}');
     useUi.setState({ terminalOsc52: false });
   });
+
+  it("explains the host-lifetime limit of local background terminals", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const terminal = document.getElementById("settings-terminal");
+    expect(terminal?.textContent).toContain("支持后台的交互终端");
+    expect(terminal?.textContent).toContain("本机后台终端仅在宿主应用运行期间保留");
+    expect(terminal?.textContent).toContain("不是 durable SSH");
+  });
 });
 
 describe("AuditView responsive behavior and exit-code semantics", () => {

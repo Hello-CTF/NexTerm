@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/docker"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -268,5 +269,57 @@ func TestDockerDeviceExecUnsupported(t *testing.T) {
 	}
 	if transport.dialed {
 		t.Fatal("device transport DialContext called: SDK backend must stay unsupported for device sessions")
+	}
+}
+
+func TestProductionDockerProviderRejectsForeignContextBeforeBackend(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		call func(*docker.Service, context.Context, string) error
+	}{
+		{name: "query", call: func(service *docker.Service, ctx context.Context, sessionID string) error {
+			_, err := service.PS(ctx, sessionID)
+			return err
+		}},
+		{name: "mutation", call: func(service *docker.Service, ctx context.Context, sessionID string) error {
+			return service.Action(ctx, docker.ActionRequest{
+				SessionID: sessionID, Source: "user",
+				Options: docker.ActionOptions{Container: "web", Action: docker.ActionRestart},
+			})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &dockerShellTransport{kind: "ssh"}
+			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return transport, nil
+			})
+			manager := session.NewManager(session.Config{Connector: connector})
+			database, err := store.OpenInMemory(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := newProductionDockerService(manager, database)
+			t.Cleanup(func() {
+				_ = service.Close()
+				_ = manager.Close()
+				_ = database.Close()
+			})
+			owner := ipc.WithUserID(t.Context(), "owner")
+			connected, err := manager.Connect(owner, session.Asset{ID: "owner-asset", Kind: session.KindSSH})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.call(service, owner, connected.ID); err != nil {
+				t.Fatalf("same-account Docker call = %v", err)
+			}
+			transport.commands = nil
+			foreign := ipc.WithUserID(t.Context(), "foreign")
+			if err := test.call(service, foreign, connected.ID); !errors.Is(err, session.ErrForbidden) {
+				t.Errorf("foreign Docker call error = %v, want ErrForbidden", err)
+			}
+			if len(transport.commands) != 0 {
+				t.Fatalf("foreign Docker call reached command backend: %q", transport.commands)
+			}
+		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -135,16 +136,23 @@ VALUES(?,?,'box','agent',1)`, row.deviceID, row.ownerID); err != nil {
 		{"own device", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-1", Online: true}}, true},
 		{"other device", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "dev-2", Online: true}}, false},
 		{"unknown device", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: ipc.DeviceStatusEvent{DeviceID: "missing", Online: true}}, false},
-		{"other topic", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, true},
+		{"ownerless session status", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, false},
 		{"foreign payload", ipc.Event{Event: ipc.TopicDeviceStatus, Payload: map[string]any{"deviceId": "dev-1"}}, false},
 		{"own notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-1", Text: "构建完成"}}, true},
 		{"other user notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{OwnerID: "u-2", Text: "构建完成"}}, false},
 		{"ownerless notification", ipc.Event{Event: ipc.TopicAINotification, Payload: ipc.AINotificationEvent{Text: "构建完成"}}, false},
 		{"foreign notification payload", ipc.Event{Event: ipc.TopicAINotification, Payload: map[string]any{"ownerId": "u-1"}}, false},
+		{"own layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-1"}, true},
+		{"other user layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}, OwnerID: "u-2"}, false},
+		{"ownerless layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: 1}}, false},
+		{"malformed layout", ipc.Event{Event: ipc.TopicLayoutChanged, Payload: map[string]any{"revision": 1}, OwnerID: "u-1"}, false},
 		{"own sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-1"}}, true},
 		{"other user sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: "u-2"}}, false},
-		{"unscoped sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}}, true},
+		{"unscoped sync status", ipc.Event{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}}, false},
 		{"legacy sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: struct{}{}}, true},
+		{"malformed sync status payload", ipc.Event{Event: ipc.TopicSyncStatus, Payload: map[string]any{}}, false},
+		{"legacy sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: struct{}{}}, true},
+		{"malformed sync round complete", ipc.Event{Event: ipc.Topic("sync://round-complete"), Payload: map[string]any{}}, false},
 	}
 	for _, tc := range cases {
 		if got := filter(tc.event); got != tc.want {
@@ -175,7 +183,7 @@ func TestEventFilterConnectProgressScopedToAssetOwner(t *testing.T) {
 		{"other asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-2", Stage: "dial", Host: "bastion.internal", Port: 22}}, false},
 		{"unknown asset", ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "missing", Stage: "dial"}}, false},
 		{"foreign payload", ipc.Event{Event: ipc.TopicConnectProgress, Payload: map[string]any{"assetId": "asset-1"}}, false},
-		{"other topic", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, true},
+		{"ownerless session status", ipc.Event{Event: ipc.TopicSessionStatus, Payload: map[string]any{"sessionId": "s-1"}}, false},
 	}
 	for _, tc := range cases {
 		if got := filter(tc.event); got != tc.want {
@@ -185,5 +193,53 @@ func TestEventFilterConnectProgressScopedToAssetOwner(t *testing.T) {
 	if adminFilter := server.eventFilter(&account.Identity{UserID: "u-admin", Role: account.RoleSuperadmin}); adminFilter == nil ||
 		adminFilter(ipc.Event{Event: ipc.TopicConnectProgress, Payload: ipc.ConnectProgressEvent{AssetID: "asset-1", Stage: "dial"}}) {
 		t.Fatal("superadmin must be scoped to owned assets")
+	}
+}
+
+func TestEventFilterSessionAndTerminalOwnerMetadata(t *testing.T) {
+	server := &Server{}
+	actors := []*account.Identity{
+		{UserID: "u-1", Role: account.RoleUser},
+		{UserID: "u-2", Role: account.RoleUser},
+		{UserID: "admin", Role: account.RoleSuperadmin},
+	}
+	sensitive := []struct {
+		topic   ipc.Topic
+		payload any
+	}{
+		{ipc.TopicSessionStatus, session.StatusEvent{SessionID: "s-1"}},
+		{ipc.TopicTerminalExit, session.ExitEvent{TabID: "t-1"}},
+		{ipc.TopicTerminalThrottled, session.ThrottleEvent{TabID: "t-1"}},
+		{ipc.TopicTerminalControl, session.ControlEvent{TabID: "t-1"}},
+	}
+	for _, actor := range actors {
+		filter := server.eventFilter(actor)
+		for _, eventType := range sensitive {
+			for _, ownerID := range []string{"", "u-1", "u-2", "admin"} {
+				event := ipc.Event{Event: eventType.topic, Payload: eventType.payload, OwnerID: ownerID}
+				want := ownerID != "" && ownerID == actor.UserID
+				if got := filter(event); got != want {
+					t.Fatalf("actor %s topic %s owner %q: filter = %v, want %v", actor.UserID, eventType.topic, ownerID, got, want)
+				}
+			}
+			for _, malformed := range []any{nil, map[string]any{"id": "forged"}} {
+				event := ipc.Event{Event: eventType.topic, Payload: malformed, OwnerID: actor.UserID}
+				if filter(event) {
+					t.Fatalf("actor %s topic %s accepted malformed %T payload", actor.UserID, eventType.topic, malformed)
+				}
+			}
+		}
+	}
+}
+
+func TestEventFilterPublicAllowlistAndUnknownTopic(t *testing.T) {
+	filter := (&Server{}).eventFilter(&account.Identity{UserID: "u-1", Role: account.RoleUser})
+	for _, topic := range []ipc.Topic{ipc.TopicAppError, ipc.TopicUpdateProgress} {
+		if !filter(ipc.Event{Event: topic, Payload: struct{}{}}) {
+			t.Fatalf("public topic %s was rejected", topic)
+		}
+	}
+	if filter(ipc.Event{Event: ipc.Topic("unknown://sensitive"), Payload: struct{}{}, OwnerID: "u-1"}) {
+		t.Fatal("unknown topic was delivered by the default branch")
 	}
 }

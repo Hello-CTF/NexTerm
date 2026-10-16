@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,8 @@ const (
 	maxDimension          = 1024
 	defaultCommandTimeout = 5 * time.Second
 )
+
+var ErrMetadataConflict = errors.New("supervisor session metadata changed")
 
 type Config struct {
 	StateDir       string
@@ -39,15 +42,41 @@ func (o CreateOptions) usePTY() bool {
 }
 
 type Info struct {
-	ID          string     `json:"id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	Incarnation string     `json:"incarnation"`
-	Cols        uint32     `json:"cols"`
-	Rows        uint32     `json:"rows"`
-	Dead        bool       `json:"dead"`
-	ExitCode    *int       `json:"exit_code,omitempty"`
-	Signal      string     `json:"signal,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	ID               string     `json:"id"`
+	CreatedAt        time.Time  `json:"created_at"`
+	Incarnation      string     `json:"incarnation"`
+	Title            string     `json:"title,omitempty"`
+	MetadataRevision uint64     `json:"metadata_revision,omitempty"`
+	Cols             uint32     `json:"cols"`
+	Rows             uint32     `json:"rows"`
+	Dead             bool       `json:"dead"`
+	ExitCode         *int       `json:"exit_code,omitempty"`
+	Signal           string     `json:"signal,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+}
+
+type RenameRequest struct {
+	ID                       string `json:"id"`
+	Incarnation              string `json:"incarnation"`
+	RequestID                string `json:"request_id"`
+	ExpectedMetadataRevision uint64 `json:"expected_metadata_revision"`
+	Title                    string `json:"title"`
+}
+
+type MetadataConflictError struct {
+	Current Info
+	message string
+}
+
+func (e *MetadataConflictError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
+	return fmt.Sprintf("%s: %s", ErrMetadataConflict, e.Current.ID)
+}
+
+func (e *MetadataConflictError) Unwrap() error {
+	return ErrMetadataConflict
 }
 
 type Identity struct {

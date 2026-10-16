@@ -75,8 +75,8 @@ vi.mock("../../features/terminal/XtermView", async () => {
   const { useEffect } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      harness.props = props;
       useEffect(() => {
-        harness.props = props;
         (props.onHandle as ((handle: unknown) => void) | undefined)?.({
           copyBlock: () => "",
           scrollToBlock: () => {},
@@ -292,6 +292,60 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-1"));
     expect(storeTab()?.tabId).toBe("kernel-1");
     expect(toastTexts()).toContain("已重新连接");
+  });
+
+  it("follows a second backend tab id across a layout identity change without creating a third id", async () => {
+    seedTab();
+    mounted = mountPane();
+    await flush();
+    expect(harness.props?.resumeTabId).toBe("kernel-1");
+
+    act(() => {
+      useUi.getState().updateTab("t1", { tabId: "kernel-2" });
+      mounted!.root.render(
+        createElement(TerminalPane, {
+          sessionId: "s1",
+          title: "web-01",
+          storeTabId: "t1",
+          resumeTabId: "kernel-2",
+        }),
+      );
+    });
+
+    await waitFor(() => expect(harness.props?.resumeTabId).toBe("kernel-2"));
+    expect(storeTab()?.tabId).toBe("kernel-2");
+  });
+
+  it("does not resume again when its own attached id is written back to the layout", async () => {
+    seedTab({ tabId: undefined }, { assetId: "local", assetKind: "local" });
+    mounted = mount(
+      createElement(TerminalPane, {
+        sessionId: "s1",
+        title: "local",
+        storeTabId: "t1",
+        resumeTabId: undefined,
+      }),
+    );
+    await flush();
+    mocks.listSessions.mockResolvedValue(useUi.getState().sessions);
+
+    act(() => {
+      (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
+    });
+    await waitFor(() => expect(storeTab()?.tabId).toBe("kernel-1"));
+    act(() => {
+      mounted!.root.render(
+        createElement(TerminalPane, {
+          sessionId: "s1",
+          title: "local",
+          storeTabId: "t1",
+          resumeTabId: "kernel-1",
+        }),
+      );
+    });
+
+    await flush();
+    expect(harness.props?.resumeTabId).toBeUndefined();
   });
 
   it("reconnects a dead device terminal through the fleet device path", async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, connectQuickTarget, saveQuickConnectAsset, useUi } from "./store";
+import { connectAsset, connectQuickTarget, saveQuickConnectAsset, useUi, type ConnectAssetInput, type WorkspaceProblem } from "./store";
+import { WorkspaceProblems } from "../features/problems/WorkspaceProblems";
 import { assetApi, type Asset } from "../ipc/commands";
 import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
@@ -9,7 +10,10 @@ import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { orderQuickConnectAssets, useConnectHistory } from "../features/explorer/connectHistory";
 import { useAssetReachability } from "../features/explorer/assetReachability";
 import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
-import { IconLoader, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
+import { AssetEditor } from "../features/explorer/AssetTree";
+import { SshImportDialog } from "../features/explorer/SshImportDialog";
+import { isMobile } from "./platform";
+import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
   parseQuickConnectTarget,
@@ -43,6 +47,11 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     retry: () => void;
   } | null>(null);
   const [pendingQuick, setPendingQuick] = useState<"temporary" | "save" | null>(null);
+  const [problemWorkspaceId, setProblemWorkspaceId] = useState<string | null>(
+    () => useUi.getState().activeWorkspaceId,
+  );
+  const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const quickPendingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -55,14 +64,20 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
 
   const assets = assetsQuery.data ?? [];
+  const workspaceProblems = useUi((state) =>
+    problemWorkspaceId ? state.workspaceRuntime[problemWorkspaceId]?.problems : undefined,
+  );
+  const mobile = isMobile();
   const visible = useMemo(
     () =>
       orderQuickConnectAssets(
-        assets.filter((a) => showHidden || !hiddenIds.includes(a.id)),
+        assets.filter(
+          (a) => (!mobile || a.kind !== "local") && (showHidden || !hiddenIds.includes(a.id)),
+        ),
         historyEntries,
         query,
       ),
-    [assets, hiddenIds, showHidden, historyEntries, query],
+    [assets, hiddenIds, showHidden, historyEntries, query, mobile],
   );
 
   const probeTargets = useMemo(
@@ -87,17 +102,29 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     setCursor(0);
   }, [quickTarget]);
+  const firstConnect =
+    assetsQuery.isSuccess && !query.trim() && !assets.some((asset) => asset.kind !== "local");
   const rows = useMemo<QuickConnectRow[]>(() => {
     const list: QuickConnectRow[] = [];
-    if (quickTarget) {
-      const label = formatQuickConnectTarget(quickTarget);
-      // The server assembly disabled session_connect_quick (prevent pivoting through the server); web mode only offers "save as asset".
-      if (!WEB) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
-      list.push({ kind: "quick", mode: "save", target: quickTarget, label });
+    if (!firstConnect) {
+      if (quickTarget) {
+        const label = formatQuickConnectTarget(quickTarget);
+        // The server assembly disabled session_connect_quick (prevent pivoting through the server); web mode only offers "save as asset".
+        if (!WEB) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
+        list.push({ kind: "quick", mode: "save", target: quickTarget, label });
+      }
+      for (const asset of visible) list.push({ kind: "asset", asset });
     }
-    for (const asset of visible) list.push({ kind: "asset", asset });
     return list;
-  }, [quickTarget, visible]);
+  }, [quickTarget, visible, firstConnect]);
+  const localAsset =
+    assets.find(
+      (asset) =>
+        asset.kind === "local" &&
+        !mobile &&
+        (showHidden || !hiddenIds.includes(asset.id)),
+    ) ?? null;
+  const showConnectionActions = assetsQuery.isSuccess && rows.length === 0;
 
   const activeIndex = rows.length > 0 ? Math.min(cursor, rows.length - 1) : 0;
   const activeOptionId = rows[activeIndex] ? `${listId}-option-${activeIndex}` : undefined;
@@ -124,8 +151,13 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const connect = async (asset: Asset) => {
+  const connect = async (asset: ConnectAssetInput) => {
+    if (mobile && asset.kind === "local") {
+      useUi.getState().pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
+      return;
+    }
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
+    setProblemWorkspaceId(useUi.getState().activeWorkspaceId);
     setConnectError(null);
     refocusInput();
     const outcome = await connectAsset(asset, { silent: true });
@@ -142,9 +174,20 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     });
   };
 
+  const onAssetSaved = (asset?: Asset) => {
+    setCreating(false);
+    void queryClient.invalidateQueries({ queryKey: ["assets"] });
+    void queryClient.invalidateQueries({ queryKey: ["groups"] });
+    void queryClient.invalidateQueries({ queryKey: ["credentials"] });
+    if (!asset) return;
+    setQuery("");
+    void connect(asset);
+  };
+
   const runQuick = async (row: QuickConnectRow & { kind: "quick" }) => {
     if (quickPendingRef.current) return;
     quickPendingRef.current = true;
+    setProblemWorkspaceId(useUi.getState().activeWorkspaceId);
     setConnectError(null);
     refocusInput();
     setPendingQuick(row.mode);
@@ -169,6 +212,30 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
       quickPendingRef.current = false;
       if (!closedRef.current) setPendingQuick(null);
     }
+  };
+
+  const reconnectProblem = (problem: WorkspaceProblem) => {
+    const connection = problem.connection;
+    if (!connection) return;
+    if (connection.kind === "asset") {
+      if (!assets.some((asset) => asset.id === connection.asset.id) || !problemTargetAvailable(problem)) {
+        return;
+      }
+      void connect(connection.asset);
+    } else {
+      void runQuick({
+        kind: "quick",
+        mode: connection.mode,
+        target: connection.target,
+        label: connection.label,
+      });
+    }
+  };
+
+  const problemTargetAvailable = (problem: WorkspaceProblem): boolean => {
+    const connection = problem.connection;
+    if (connection?.kind !== "asset") return true;
+    return assets.some((asset) => asset.id === connection.asset.id);
   };
 
   const activate = (row: QuickConnectRow) => {
@@ -211,6 +278,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
   };
 
   return (
+    <>
     <div className="nx-overlay items-start justify-center pt-24" onClick={closeOverlay}>
       <div
         ref={modalRef}
@@ -314,9 +382,40 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
               </button>
             );
           })}
-          {rows.length === 0 && (
-            <div className="nx-command-empty px-4 py-8 text-center text-xs" role="status">
-              {assets.length === 0 ? "还没有资产，先在左侧资产树新建一个" : "没有匹配的资产"}
+          {showConnectionActions && (
+            <div className="nx-command-empty px-4 py-8 text-center text-xs">
+              <div role="status">
+                {firstConnect
+                  ? "还没有远程资产，选择一种方式开始"
+                  : query.trim()
+                    ? "没有匹配的资产"
+                    : "还没有可连接的资产"}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="group" aria-label="连接操作">
+                <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setCreating(true)}>
+                  <IconPlus size={13} />
+                  新建连接
+                </button>
+                <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setImporting(true)}>
+                  <IconDownload size={13} />
+                  导入 SSH 配置
+                </button>
+                {localAsset && (
+                  <button
+                    type="button"
+                    className="nx-btn nx-btn-outline nx-btn-sm"
+                    disabled={connectingIds.includes(localAsset.id)}
+                    onClick={() => void connect(localAsset)}
+                  >
+                    {connectingIds.includes(localAsset.id) ? (
+                      <IconLoader size={13} className="animate-spin" />
+                    ) : (
+                      <IconTerminal size={13} />
+                    )}
+                    {connectingIds.includes(localAsset.id) ? "连接中…" : "打开本机终端"}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -333,6 +432,13 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
               重试
             </button>
           </div>
+        )}
+        {problemWorkspaceId && workspaceProblems && workspaceProblems.length > 0 && (
+          <WorkspaceProblems
+            workspaceId={problemWorkspaceId}
+            onReconnect={reconnectProblem}
+            targetAvailable={problemTargetAvailable}
+          />
         )}
         {!connectError && batchError && (
           <div className="nx-command-error" role="alert">
@@ -382,5 +488,14 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+    {creating && (
+      <AssetEditor
+        kind="asset"
+        onClose={() => setCreating(false)}
+        onSaved={onAssetSaved}
+      />
+    )}
+    {importing && <SshImportDialog onClose={() => setImporting(false)} />}
+    </>
   );
 }

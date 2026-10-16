@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/db"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -236,4 +239,97 @@ func TestTerminalRenameCrossScopeRejected(t *testing.T) {
 	if result := registry.Execute(context.Background(), "j", Scope{SessionID: "s", TabID: "t"}, Call{ID: "r", Name: "terminal_rename", Args: json.RawMessage(`{}`)}, nil); result.OK {
 		t.Fatal("missing title must fail validation")
 	}
+}
+
+func TestSessionDependenciesEnforceAccountOwnership(t *testing.T) {
+	manager := session.NewManager(session.Config{
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return &fakeTransport{files: newFakeFS()}, nil
+		}),
+		IdleTimeout: -1,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	owner := ipc.WithUserID(context.Background(), "owner")
+	other := ipc.WithUserID(context.Background(), "other")
+	connected, err := manager.Connect(owner, session.Asset{ID: "owner-ssh", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.RegisterRemoteSession(owner, session.RemoteSessionOptions{OwnerID: "owner", AssetID: "owner-asset", Title: "owner-tab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := WithSession(Dependencies{}, manager)
+	if _, err := deps.Transport(owner, connected.ID); err != nil {
+		t.Fatalf("owner transport = %v", err)
+	}
+	if _, err := deps.Transport(other, connected.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Errorf("cross-account transport = %v, want ErrForbidden", err)
+	}
+	if _, err := deps.Terminal.Snapshot(owner, tab.ID); err != nil {
+		t.Fatalf("owner snapshot = %v", err)
+	}
+	if _, err := deps.Terminal.Snapshot(other, tab.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Errorf("cross-account snapshot = %v, want ErrForbidden", err)
+	}
+	commands := deps.Terminal.(CommandStateTerminal)
+	if _, err := commands.CommandState(other, tab.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Errorf("cross-account command state = %v, want ErrForbidden", err)
+	}
+	renames := deps.Terminal.(RenameTerminal)
+	if err := renames.Rename(other, tab.ID, "foreign"); !errors.Is(err, session.ErrForbidden) {
+		t.Errorf("cross-account rename = %v, want ErrForbidden", err)
+	}
+	if err := renames.Rename(owner, tab.ID, "owner-renamed"); err != nil {
+		t.Fatalf("owner rename = %v", err)
+	}
+	assets := deps.Terminal.(SessionAssetTerminal)
+	if assetID, err := assets.SessionAssetID(other, connected.ID); !errors.Is(err, session.ErrForbidden) {
+		t.Errorf("cross-account asset %q = %v, want ErrForbidden", assetID, err)
+	}
+
+	legacyTabSession := deps.TabSession
+	var legacyCalls atomic.Int64
+	deps.TabSession = func(tabID string) string {
+		legacyCalls.Add(1)
+		return legacyTabSession(tabID)
+	}
+	registry := NewRegistry(deps)
+	scope := Scope{SessionID: tab.SessionID, TabID: tab.ID}
+	if err := manager.FeedRemote(owner, tab.ID, []byte("owner-only-marker")); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("read screen rejects before legacy tab lookup", func(t *testing.T) {
+		legacyCalls.Store(0)
+		ownerResult := registry.Execute(owner, "owner", scope, Call{ID: "owner-read", Name: "read_screen"}, nil)
+		if !ownerResult.OK || !strings.Contains(ownerResult.Text, "owner-only-marker") {
+			t.Fatalf("owner read_screen = %+v", ownerResult)
+		}
+		otherResult := registry.Execute(other, "other", scope, Call{ID: "other-read", Name: "read_screen"}, nil)
+		if otherResult.OK || !strings.Contains(otherResult.Text, session.ErrForbidden.Error()) || strings.Contains(otherResult.Text, "owner-only-marker") {
+			t.Fatalf("cross-account read_screen = %+v", otherResult)
+		}
+		openResult := registry.Execute(context.Background(), "open", scope, Call{ID: "open-read", Name: "read_screen"}, nil)
+		if !openResult.OK || !strings.Contains(openResult.Text, "owner-only-marker") {
+			t.Fatalf("trusted open read_screen = %+v", openResult)
+		}
+		if calls := legacyCalls.Load(); calls != 0 {
+			t.Fatalf("request-aware tab resolution fell back to unscoped TabSession %d times", calls)
+		}
+	})
+	t.Run("grant identity rejects before legacy tab lookup", func(t *testing.T) {
+		legacyCalls.Store(0)
+		if assetID := ResolveGrantDeviceID(owner, registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
+			t.Fatalf("owner grant device = %q", assetID)
+		}
+		if assetID := ResolveGrantDeviceID(other, registry, Scope{TabID: tab.ID}); assetID != "" {
+			t.Fatalf("cross-account grant device = %q", assetID)
+		}
+		if assetID := ResolveGrantDeviceID(context.Background(), registry, Scope{TabID: tab.ID}); assetID != "owner-asset" {
+			t.Fatalf("trusted open grant device = %q", assetID)
+		}
+		if calls := legacyCalls.Load(); calls != 0 {
+			t.Fatalf("request-aware grant resolution fell back to unscoped TabSession %d times", calls)
+		}
+	})
 }

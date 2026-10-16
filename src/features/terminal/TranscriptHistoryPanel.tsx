@@ -77,7 +77,6 @@ function normalizeRead(result: {
 
 export function TranscriptHistoryPanel({
   visible = true,
-  workspaceId,
   assetId: sourceAssetId,
 }: {
   visible?: boolean;
@@ -87,14 +86,8 @@ export function TranscriptHistoryPanel({
   const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
-  // Prefer the source stored on the tab and use the workspace only as a fallback for older tabs.
-  const hostAssetId = useUi((s) => {
-    if (sourceAssetId !== undefined) return sourceAssetId;
-    const id = workspaceId ?? s.activeWorkspaceId;
-    return s.workspaces.find((w) => w.id === id)?.assetId ?? null;
-  });
-  const [assetId, setAssetId] = useState<string | null>(hostAssetId);
-  const hostOverriddenRef = useRef(false);
+  const [assetId, setAssetId] = useState<string | null>(sourceAssetId ?? null);
+  const appliedSourceAssetIdRef = useRef(sourceAssetId);
   const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -166,14 +159,15 @@ export function TranscriptHistoryPanel({
   }, [hosts, assetId]);
 
   useEffect(() => {
-    if (!visible || hostOverriddenRef.current || !hostAssetId || hostAssetId === assetId) return;
+    if (sourceAssetId === undefined || sourceAssetId === appliedSourceAssetIdRef.current) return;
+    appliedSourceAssetIdRef.current = sourceAssetId;
     sessionsGenerationRef.current += 1;
     readerGenerationRef.current += 1;
     searchGenerationRef.current += 1;
-    setAssetId(hostAssetId);
+    setAssetId(sourceAssetId);
     setSelectedId(null);
     setSessions(null);
-  }, [visible, hostAssetId, assetId]);
+  }, [sourceAssetId]);
 
   const loadSessions = useCallback(async () => {
     if (!assetId) return;
@@ -427,13 +421,15 @@ export function TranscriptHistoryPanel({
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
           onChange={(event) => {
-            hostOverriddenRef.current = true;
+            const nextAssetId = event.target.value || null;
+            appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
             sessionsGenerationRef.current += 1;
             readerGenerationRef.current += 1;
             searchGenerationRef.current += 1;
-            setAssetId(event.target.value || null);
+            setAssetId(nextAssetId);
             setSelectedId(null);
             setSessions(null);
+            useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
           }}
         >
           {hostOptions.length === 0 && <option value="">无可用主机</option>}

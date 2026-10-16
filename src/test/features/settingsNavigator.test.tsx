@@ -110,13 +110,13 @@ afterEach(() => {
 });
 
 describe("Settings section navigation", () => {
-  it("shows the global scope badge in the toolbar", async () => {
+  it("does not label the tool's UI ownership as global", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    const badge = mounted.container.querySelector(
-      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
-    );
-    expect(badge?.textContent).toBe("全局");
+    expect(mounted.container.querySelector(".nx-toolbar")?.textContent).toContain("设置");
+    expect(
+      mounted.container.querySelector('.nx-toolbar span[title="全局面板：内容不随工作区切换"]'),
+    ).toBeNull();
   });
 
   it("renders every section chip with a real target section", async () => {

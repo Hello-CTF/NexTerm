@@ -163,6 +163,41 @@ describe("conversation aggregation: chunking and ordering", () => {
     s.pushEvent(1, { type: "todos", items: [{ content: "Task", status: "in_progress" }] });
     expect(s.getState().todos).toHaveLength(1);
   });
+
+  it("keeps main usage snapshots separate from deduplicated summary totals", () => {
+    const { s } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "usage", channel: "main", callId: "main:agent-1", promptTokens: 100, completionTokens: 20, cachedTokens: 10, contextWindow: 1000 });
+    const firstSummary = { type: "usage", channel: "summary", callId: "summary:agent-1", promptTokens: 30, completionTokens: 5, cachedTokens: 3, contextWindow: 1000 };
+    s.pushEvent(1, firstSummary);
+    s.pushEvent(1, { type: "usage", channel: "summary", callId: "summary:agent-2", promptTokens: 40, completionTokens: 7, cachedTokens: 4, contextWindow: 1000 });
+    s.pushEvent(1, firstSummary);
+    s.pushEvent(1, { type: "usage", channel: "tool-subagent", callId: "tool-subagent:agent-1", promptTokens: 999, completionTokens: 99, cachedTokens: 99, contextWindow: 9999 });
+    expect(s.getState().usage).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 20,
+      cachedTokens: 10,
+      contextWindow: 1000,
+      summaryPromptTokens: 70,
+      summaryCompletionTokens: 12,
+    });
+  });
+
+  it("keeps unchanneled provider calls with a shared ID and different sequences", () => {
+    const { s } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "usage", channel: "main", callId: "main:agent-1", promptTokens: 100, completionTokens: 20, cachedTokens: 10, contextWindow: 1000 });
+    s.pushEvent(1, { type: "usage", callId: "summary:provider-shared", promptTokens: 30, completionTokens: 5, cachedTokens: 3, contextWindow: 1000, seq: 1 });
+    s.pushEvent(1, { type: "usage", callId: "summary:provider-shared", promptTokens: 40, completionTokens: 7, cachedTokens: 4, contextWindow: 1000, seq: 2 });
+    expect(s.getState().usage).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 20,
+      cachedTokens: 10,
+      contextWindow: 1000,
+      summaryPromptTokens: 70,
+      summaryCompletionTokens: 12,
+    });
+  });
 });
 
 describe("conversation aggregation: reconnect, replay and stale events", () => {

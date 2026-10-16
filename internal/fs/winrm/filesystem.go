@@ -15,6 +15,8 @@ import (
 
 const BackupSuffix = ".nexterm-bak"
 
+const rootsScript = "$ErrorActionPreference='Stop'; try { $windows=[Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT; $supported=$false; $items=@(); $home=''; if ($windows) { $home=[Environment]::GetFolderPath('UserProfile'); $provider=Get-PSProvider -PSProvider FileSystem -ErrorAction SilentlyContinue; if ($null -ne $provider) { $supported=$true; $items=@(Get-PSDrive -PSProvider FileSystem | ForEach-Object { [PSCustomObject]@{n=$_.Name;r=$_.Root} }) } }; $result=[PSCustomObject]@{windows=$windows;supported=$supported;status='ok';kind='';message='';home=$home;roots=$items} } catch { $exception=$_.Exception; while ($null -ne $exception.InnerException) { $exception=$exception.InnerException }; $kind='io'; $message=$exception.Message; if ($exception -is [System.UnauthorizedAccessException] -or $message -match '(?i)access.*denied|permission denied') { $kind='permission' } elseif ($message -match '(?i)device is not ready|no media|device not connected') { $kind='no_media' } elseif ($exception -is [System.IO.DriveNotFoundException] -or $message -match '(?i)does not exist|cannot find drive') { $kind='not_found' }; $result=[PSCustomObject]@{windows=($windows -eq $true);supported=$false;status='error';kind=$kind;message=$message;home='';roots=@()} }; ConvertTo-Json -InputObject $result -Compress -Depth 4"
+
 type Executor interface {
 	Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error)
 }
@@ -31,6 +33,7 @@ func (f *FileSystem) execute(ctx context.Context, script string) (string, error)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	script = "try { " + script + "\n} catch { $__nextermException=$_.Exception; while ($null -ne $__nextermException.InnerException) { $__nextermException=$__nextermException.InnerException }; $__nextermCode=$__nextermException.HResult -band 0xFFFF; $__nextermKind='io'; if ($__nextermException -is [System.UnauthorizedAccessException] -or $__nextermCode -eq 5) { $__nextermKind='permission' } elseif ($__nextermCode -eq 21 -or $__nextermCode -eq 1112 -or $__nextermCode -eq 1167) { $__nextermKind='no_media' } elseif ($__nextermException -is [System.IO.DriveNotFoundException] -or $__nextermCode -eq 2 -or $__nextermCode -eq 3 -or $__nextermCode -eq 15 -or $__nextermCode -eq 20) { $__nextermKind='not_found' }; [Console]::Error.WriteLine('<<NEXTERM_FS_ERROR>>'+$__nextermKind+':'+$__nextermException.Message); exit 1 }"
 	result, err := f.executor.Exec(ctx, script, base.ExecOptions{
 		Limits: base.OutputLimits{Stdout: -1, Stderr: -1},
 	})
@@ -41,18 +44,131 @@ func (f *FileSystem) execute(ctx context.Context, script string) (string, error)
 		return "", base.ErrExitStatusMissing
 	}
 	if *result.ExitCode != 0 {
+		kind := ""
 		message := strings.TrimSpace(result.Stderr)
+		if index := strings.LastIndex(message, "<<NEXTERM_FS_ERROR>>"); index >= 0 {
+			if structuredKind, structuredMessage, ok := strings.Cut(message[index+len("<<NEXTERM_FS_ERROR>>"):], ":"); ok {
+				kind = structuredKind
+				message = strings.TrimSpace(structuredMessage)
+			}
+		}
 		if message == "" {
 			message = fmt.Sprintf("WinRM file operation exited with status %d", *result.ExitCode)
 		}
-		// PowerShell reports missing paths only as text ("... because it does not exist."); map it to the
-		// sentinel so fs-layer callers (and the fsIPCError not_found mapping) can classify it correctly.
-		if strings.Contains(message, "does not exist") {
-			return "", fmt.Errorf("WinRM file operation: %s: %w", message, fs.ErrNotExist)
-		}
-		return "", fmt.Errorf("WinRM file operation: %s", message)
+		return "", classifyWinRMError(kind, message)
 	}
 	return strings.TrimSpace(result.Stdout), nil
+}
+
+type rootsDocument struct {
+	Windows   bool         `json:"windows"`
+	Supported bool         `json:"supported"`
+	Status    string       `json:"status"`
+	Kind      string       `json:"kind"`
+	Message   string       `json:"message"`
+	Home      string       `json:"home"`
+	Roots     []listedRoot `json:"roots"`
+}
+
+type listedRoot struct {
+	Name string `json:"n"`
+	Root string `json:"r"`
+}
+
+func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
+	output, err := f.execute(ctx, rootsScript)
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	var document rootsDocument
+	if err := json.Unmarshal([]byte(output), &document); err != nil {
+		return base.FileSystemRoots{}, fmt.Errorf("parse WinRM roots JSON: %w", err)
+	}
+	if document.Status == "error" {
+		return base.FileSystemRoots{}, classifyWinRMError(document.Kind, document.Message)
+	}
+	if document.Status != "ok" {
+		return base.FileSystemRoots{}, fmt.Errorf("unexpected WinRM roots status %q", document.Status)
+	}
+	if !document.Windows || !document.Supported {
+		return base.FileSystemRoots{}, fmt.Errorf("%w: Windows FileSystem roots are unavailable", base.ErrUnsupported)
+	}
+	if document.Home != "" && !windowsAbsolutePath(document.Home) {
+		return base.FileSystemRoots{}, fmt.Errorf("WinRM home path is not absolute: %q", document.Home)
+	}
+	result := base.FileSystemRoots{
+		PathStyle: base.PathStyleWindows,
+		Roots:     make([]base.FileRoot, 0, len(document.Roots)),
+		HomePath:  document.Home,
+		Supported: true,
+	}
+	for _, root := range document.Roots {
+		if !windowsAbsolutePath(root.Root) {
+			return base.FileSystemRoots{}, fmt.Errorf("WinRM root is not an absolute FileSystem path: %q", root.Root)
+		}
+		label := root.Name
+		if len(label) == 1 {
+			label += ":"
+		}
+		if label == "" {
+			label = root.Root
+		}
+		result.Roots = append(result.Roots, base.FileRoot{Path: root.Root, Label: label})
+	}
+	sort.Slice(result.Roots, func(i, j int) bool {
+		return strings.ToUpper(result.Roots[i].Path) < strings.ToUpper(result.Roots[j].Path)
+	})
+	return result, nil
+}
+
+func windowsAbsolutePath(value string) bool {
+	if len(value) >= 3 && isDriveLetter(value[0]) && value[1] == ':' && windowsPathSeparator(value[2]) {
+		return true
+	}
+	if len(value) < 4 || !windowsPathSeparator(value[0]) || !windowsPathSeparator(value[1]) {
+		return false
+	}
+	parts := strings.FieldsFunc(value[2:], func(r rune) bool { return r == '/' || r == '\\' })
+	return len(parts) >= 2
+}
+
+func isDriveLetter(value byte) bool {
+	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+}
+
+func windowsPathSeparator(value byte) bool {
+	return value == '/' || value == '\\'
+}
+
+func classifyWinRMError(kind, message string) error {
+	if message == "" {
+		message = "WinRM file operation failed"
+	}
+	lower := strings.ToLower(message)
+	if kind == "" {
+		switch {
+		case strings.Contains(lower, "device is not ready"), strings.Contains(lower, "no media"), strings.Contains(lower, "device not connected"):
+			kind = "no_media"
+		case strings.Contains(lower, "access") && strings.Contains(lower, "denied"), strings.Contains(lower, "permission denied"), strings.Contains(lower, "unauthorizedaccessexception"):
+			kind = "permission"
+		case strings.Contains(lower, "does not exist"), strings.Contains(lower, "cannot find drive"), strings.Contains(lower, "cannot find path"):
+			kind = "not_found"
+		}
+	}
+	var cause error
+	switch kind {
+	case "no_media":
+		cause = base.ErrNoMedia
+	case "permission":
+		cause = fs.ErrPermission
+	case "not_found":
+		cause = fs.ErrNotExist
+	case "unsupported":
+		cause = base.ErrUnsupported
+	default:
+		return fmt.Errorf("WinRM file operation: %s", message)
+	}
+	return fmt.Errorf("WinRM file operation: %s: %w", message, cause)
 }
 
 type listedEntry struct {
@@ -185,4 +301,7 @@ func (f *FileSystem) Size(ctx context.Context, path string) (int64, error) {
 	return size, nil
 }
 
-var _ base.FileSystem = (*FileSystem)(nil)
+var (
+	_ base.FileSystem    = (*FileSystem)(nil)
+	_ base.RootsProvider = (*FileSystem)(nil)
+)

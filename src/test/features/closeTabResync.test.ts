@@ -93,6 +93,17 @@ describe("session list resynchronization after closeTab", () => {
     });
     expect(useUi.getState().sessions[0]?.tabs).toEqual(["bt1"]);
   });
+
+  it("refreshes sessions after a failed close while preserving the tab and its error", async () => {
+    seedWorkspaceWithTerminal();
+    mocks.closeTab.mockRejectedValueOnce(new Error("boom"));
+    const ok = await useUi.getState().closeTab("t1", "detach");
+    expect(ok).toBe(false);
+    await vi.waitFor(() => {
+      expect(mocks.sessionList).toHaveBeenCalled();
+    });
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.closeError).toBe("boom");
+  });
 });
 
 describe("terminalApi.closeTab call-site static guard", () => {

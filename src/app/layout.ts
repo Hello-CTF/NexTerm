@@ -7,6 +7,7 @@ import {
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   dbKindOf,
+  isToolTabKind,
   migrateToolTabs,
   nextTabId,
   useUi,
@@ -18,6 +19,7 @@ import {
   type PaneKind,
   type Workspace,
   type WorkspaceKind,
+  type WorkspaceRuntime,
 } from "./store";
 
 const LAYOUT_CHANGED = "layout://changed";
@@ -177,6 +179,188 @@ function sanitizeAiBoards(
   return out;
 }
 
+interface BackgroundCandidate {
+  tab: AppTab;
+  target: Workspace;
+  sourceWorkspaceId: string;
+}
+
+function resolveBackgroundTarget(tab: AppTab, workspaces: Workspace[]): Workspace | null {
+  const hosts = workspaces.filter((w) => w.kind === "session");
+  if (tab.sessionId) {
+    const matches = hosts.filter((w) => w.sessionId === tab.sessionId);
+    if (matches.length !== 1) return null;
+    const target = matches[0];
+    if (tab.assetId && target.assetId !== tab.assetId) {
+      const assetMatches = hosts.filter((w) => w.assetId === tab.assetId);
+      if (target.assetId && target.assetId !== tab.assetId) return null;
+      if (
+        assetMatches.length > 1 ||
+        (assetMatches.length === 1 && assetMatches[0] !== target)
+      ) {
+        return null;
+      }
+    }
+    return target;
+  }
+  if (!tab.assetId) return null;
+  const matches = hosts.filter((w) => w.assetId === tab.assetId);
+  return matches.length === 1 && matches[0].sessionId ? matches[0] : null;
+}
+
+function normalizeChangedWorkspace(w: Workspace): Workspace {
+  const withActiveTabs = w.panes.map((pane) => ({
+    ...pane,
+    activeTabId:
+      pane.activeTabId && pane.tabs.some((tab) => tab.id === pane.activeTabId)
+        ? pane.activeTabId
+        : (pane.tabs[pane.tabs.length - 1]?.id ?? null),
+  }));
+  const nonEmpty = withActiveTabs.filter((pane) => pane.tabs.length > 0);
+  let panes: Pane[] = nonEmpty.length > 0 ? nonEmpty : withActiveTabs.slice(0, 1);
+  if (panes.length === 0) panes = [{ id: nextTabId("pane"), tabs: [], activeTabId: null }];
+  return {
+    ...w,
+    panes,
+    activePaneId: panes.some((pane) => pane.id === w.activePaneId)
+      ? w.activePaneId
+      : panes[0].id,
+  };
+}
+
+function backgroundNoticeKey(tab: AppTab): string {
+  return JSON.stringify([tab.id, tab.sessionId ?? null, tab.assetId ?? null]);
+}
+
+function normalizeBackgroundTabs(workspaces: Workspace[]): {
+  workspaces: Workspace[];
+  targets: Map<AppTab, Workspace>;
+  dropped: string[];
+} {
+  const candidates: BackgroundCandidate[] = [];
+  const targets = new Map<AppTab, Workspace>();
+  const dropped: string[] = [];
+  for (const w of workspaces) {
+    for (const pane of w.panes) {
+      for (const tab of pane.tabs) {
+        if (tab.kind !== "background") continue;
+        const target = resolveBackgroundTarget(tab, workspaces);
+        if (!target) {
+          const key = backgroundNoticeKey(tab);
+          if (!dropped.includes(key)) dropped.push(key);
+          continue;
+        }
+        candidates.push({ tab, target, sourceWorkspaceId: w.id });
+        targets.set(tab, target);
+      }
+    }
+  }
+  if (candidates.length === 0 && dropped.length === 0) return { workspaces, targets, dropped };
+
+  const selected = new Map<string, BackgroundCandidate>();
+  for (const candidate of candidates) {
+    const current = selected.get(candidate.target.id);
+    if (
+      !current ||
+      (current.sourceWorkspaceId !== candidate.target.id &&
+        candidate.sourceWorkspaceId === candidate.target.id)
+    ) {
+      selected.set(candidate.target.id, candidate);
+    }
+  }
+  const replacements = new Map<AppTab, { targetId: string; tab: AppTab }>();
+  for (const candidate of selected.values()) {
+    replacements.set(candidate.tab, {
+      targetId: candidate.target.id,
+      tab: {
+        ...candidate.tab,
+        id: `background-${candidate.target.id}`,
+        sessionId: candidate.target.sessionId,
+        ...(candidate.target.assetId ? { assetId: candidate.target.assetId } : {}),
+      },
+    });
+  }
+
+  const placed = new Set<AppTab>();
+  const next = workspaces.map((w) => {
+    let workspaceChanged = false;
+    const panes = w.panes.map((pane) => {
+      let changed = false;
+      let activeTabId = pane.activeTabId;
+      const tabs: AppTab[] = [];
+      for (const tab of pane.tabs) {
+        if (tab.kind !== "background") {
+          tabs.push(tab);
+          continue;
+        }
+        changed = true;
+        workspaceChanged = true;
+        const replacement = replacements.get(tab);
+        if (!replacement || replacement.targetId !== w.id) continue;
+        tabs.push(replacement.tab);
+        placed.add(tab);
+        if (activeTabId === tab.id) activeTabId = replacement.tab.id;
+      }
+      return changed ? { ...pane, tabs, activeTabId } : pane;
+    });
+    return workspaceChanged ? normalizeChangedWorkspace({ ...w, panes }) : w;
+  });
+
+  for (const candidate of selected.values()) {
+    if (placed.has(candidate.tab)) continue;
+    const replacement = replacements.get(candidate.tab)?.tab;
+    const index = next.findIndex((w) => w.id === candidate.target.id);
+    if (!replacement || index < 0) continue;
+    const w = next[index];
+    const paneId = w.panes.some((pane) => pane.id === w.activePaneId)
+      ? w.activePaneId
+      : w.panes[0].id;
+    const panes = w.panes.map((pane) =>
+      pane.id === paneId ? { ...pane, tabs: [...pane.tabs, replacement] } : pane,
+    );
+    next[index] = normalizeChangedWorkspace({ ...w, panes });
+  }
+  return { workspaces: next, targets, dropped };
+}
+
+interface TabLocation {
+  workspace: Workspace;
+  pane: Pane;
+  tab: AppTab;
+}
+
+function findLayoutTab(
+  workspaces: Workspace[],
+  predicate: (tab: AppTab) => boolean,
+  workspaceId?: string,
+): TabLocation | null {
+  for (const workspace of workspaces) {
+    if (workspaceId !== undefined && workspace.id !== workspaceId) continue;
+    for (const pane of workspace.panes) {
+      const tab = pane.tabs.find(predicate);
+      if (tab) return { workspace, pane, tab };
+    }
+  }
+  return null;
+}
+
+function activateLayoutTab(workspaces: Workspace[], location: TabLocation): Workspace[] {
+  return workspaces.map((w) =>
+    w.id !== location.workspace.id
+      ? w
+      : {
+          ...w,
+          activePaneId: location.pane.id,
+          panes: w.panes.map((pane) =>
+            pane.id === location.pane.id ? { ...pane, activeTabId: location.tab.id } : pane,
+          ),
+        },
+  );
+}
+
+const layoutMigrationNotices = new WeakMap<PersistedLayout, { droppedBackgrounds: string[] }>();
+const notifiedInvalidBackgrounds = new Set<string>();
+
 export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   if (!isObj(raw)) return null;
   if (raw.v !== LAYOUT_VERSION) return null;
@@ -185,15 +369,49 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
   const sanitized = raw.workspaces
     .map(sanitizeWorkspace)
     .filter((w): w is Workspace => w !== null);
-  const activeWasTools = sanitized.some((w) => w.id === raw.activeWorkspaceId && w.kind === "tools");
-  const workspaces = migrateToolTabs(sanitized);
-  const fallbackWorkspaceId = activeWasTools
-    ? (workspaces.find((w) => w.kind === "tools")?.id ?? workspaces[0]?.id ?? null)
-    : (workspaces[0]?.id ?? null);
-  const activeWorkspaceId = workspaces.some((w) => w.id === raw.activeWorkspaceId)
-    ? (raw.activeWorkspaceId as string)
-    : fallbackWorkspaceId;
-  return {
+  const activeWorkspace = sanitized.find((w) => w.id === raw.activeWorkspaceId);
+  const activePane = activeWorkspace?.panes.find((pane) => pane.id === activeWorkspace.activePaneId);
+  const activeTabs = activePane?.tabs.filter((tab) => tab.id === activePane.activeTabId) ?? [];
+  const activeTab = activeTabs.length === 1 ? activeTabs[0] : undefined;
+  const backgrounds = normalizeBackgroundTabs(sanitized);
+  let workspaces = migrateToolTabs(backgrounds.workspaces, raw.aiBoards);
+
+  let activeWorkspaceId: string | null = null;
+  if (activeTab?.kind === "background") {
+    const target = backgrounds.targets.get(activeTab);
+    const location = target
+      ? findLayoutTab(workspaces, (tab) => tab.id === `background-${target.id}`, target.id)
+      : null;
+    if (location) {
+      activeWorkspaceId = location.workspace.id;
+      workspaces = activateLayoutTab(workspaces, location);
+    }
+  } else if (activeTab && isToolTabKind(activeTab.kind)) {
+    const location = findLayoutTab(workspaces, (tab) => tab.kind === activeTab.kind);
+    if (location) {
+      activeWorkspaceId = location.workspace.id;
+      workspaces = activateLayoutTab(workspaces, location);
+    }
+  } else if (activeTab) {
+    const original = findLayoutTab(workspaces, (tab) => tab.id === activeTab.id, activeWorkspace?.id);
+    if (!original) {
+      const moved = findLayoutTab(workspaces, (tab) => tab.id === activeTab.id);
+      if (moved) {
+        activeWorkspaceId = moved.workspace.id;
+        workspaces = activateLayoutTab(workspaces, moved);
+      }
+    }
+  }
+  if (activeWorkspaceId === null) {
+    const fallbackWorkspaceId = activeWorkspace?.kind === "tools"
+      ? (workspaces.find((w) => w.kind === "tools")?.id ?? workspaces[0]?.id ?? null)
+      : (workspaces[0]?.id ?? null);
+    activeWorkspaceId = workspaces.some((w) => w.id === raw.activeWorkspaceId)
+      ? (raw.activeWorkspaceId as string)
+      : fallbackWorkspaceId;
+  }
+
+  const result: PersistedLayout = {
     v: LAYOUT_VERSION,
     leftOpen: boolOr(raw.leftOpen, true),
     leftMode:
@@ -210,6 +428,8 @@ export function sanitizeLayout(raw: unknown): PersistedLayout | null {
     activeWorkspaceId,
     aiBoards: sanitizeAiBoards(raw.aiBoards, workspaces),
   };
+  layoutMigrationNotices.set(result, { droppedBackgrounds: backgrounds.dropped });
+  return result;
 }
 
 interface LayoutSource {
@@ -243,6 +463,7 @@ export const layoutBootstrapped: Promise<void> = new Promise((r) => {
   resolveBootstrap = r;
 });
 
+let accountEpoch = 0;
 let revision = 0;
 let lastSynced = "";
 let applyingRemote = false;
@@ -388,24 +609,113 @@ export function mergeExitedTabs(next: PersistedLayout, current: Workspace[]): Wo
   return changed ? workspaces : next.workspaces;
 }
 
+function mergeTerminalRuntimeTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
+  const currentById = new Map<string, AppTab>();
+  for (const w of current) {
+    for (const p of w.panes) {
+      for (const t of p.tabs) {
+        if (t.kind === "terminal" && t.tabId) currentById.set(t.id, t);
+      }
+    }
+  }
+  if (currentById.size === 0) return next.workspaces;
+  let changed = false;
+  const workspaces = next.workspaces.map((w) => ({
+    ...w,
+    panes: w.panes.map((p) => ({
+      ...p,
+      tabs: p.tabs.map((t) => {
+        const existing = t.kind === "terminal" && t.tabId ? currentById.get(t.id) : undefined;
+        if (!existing || existing.tabId !== t.tabId) return t;
+        changed = true;
+        return {
+          ...t,
+          shell: existing.shell,
+          pendingDirectory: existing.pendingDirectory,
+          dead: existing.dead,
+          retainable: existing.retainable,
+          unread: existing.unread,
+          closeError: existing.closeError,
+        };
+      }),
+    })),
+  }));
+  return changed ? workspaces : next.workspaces;
+}
+
+function mergeSqlDraftWorkspaces(
+  next: PersistedLayout,
+  current: Workspace[],
+  runtime: Record<string, WorkspaceRuntime>,
+): { workspaces: Workspace[]; workspaceRuntime: Record<string, WorkspaceRuntime> } {
+  const mergedIds = new Set(next.workspaces.map((w) => w.id));
+  const preserved = current.filter(
+    (w) => !mergedIds.has(w.id) && Boolean(runtime[w.id]?.sqlDraft?.text.trim()),
+  );
+  const workspaces = preserved.length > 0 ? [...next.workspaces, ...preserved] : next.workspaces;
+  const workspaceIds = new Set(workspaces.map((w) => w.id));
+  const workspaceRuntime = Object.fromEntries(
+    Object.entries(runtime).filter(
+      ([id]) => workspaceIds.has(id) || Boolean(runtime[id]?.sqlDraft?.text.trim()),
+    ),
+  ) as Record<string, WorkspaceRuntime>;
+  return { workspaces, workspaceRuntime };
+}
+
+function preserveAiDrafts(
+  next: Record<string, AiBoard>,
+  current: Record<string, AiBoard>,
+): Record<string, AiBoard> {
+  const out: Record<string, AiBoard> = {};
+  for (const [key, board] of Object.entries(next)) {
+    const currentBoard = current[key];
+    out[key] = {
+      ...board,
+      tabs: board.tabs.map((tab) => {
+        const currentTab = currentBoard?.tabs.find((candidate) => candidate.id === tab.id);
+        if (!currentTab || currentTab.conversationId !== tab.conversationId || currentTab.draft === undefined) {
+          return tab;
+        }
+        return { ...tab, draft: currentTab.draft };
+      }),
+    };
+  }
+  return out;
+}
+
 function applyToStore(l: PersistedLayout) {
   applyingRemote = true;
   clearSaveTimer();
   try {
-    const current = useUi.getState().workspaces;
+    const state = useUi.getState();
+    const current = state.workspaces;
     const withDead = mergeDeadTabs(l, current);
     const withExited = mergeExitedTabs({ ...l, workspaces: withDead }, current);
-    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withExited }, current);
+    const withTabRuntime = mergeTerminalRuntimeTabs({ ...l, workspaces: withExited }, current);
+    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withTabRuntime }, current);
+    const withRuntime = mergeSqlDraftWorkspaces(
+      { ...l, workspaces: merged },
+      current,
+      state.workspaceRuntime,
+    );
     useUi.setState({
       leftOpen: l.leftOpen,
       leftMode: l.leftMode,
       rightOpen: l.rightOpen,
       leftWidth: l.leftWidth,
       rightWidth: l.rightWidth,
-      workspaces: merged,
+      workspaces: withRuntime.workspaces,
       activeWorkspaceId: l.activeWorkspaceId,
-      aiBoards: l.aiBoards,
+      aiBoards: preserveAiDrafts(l.aiBoards, state.aiBoards),
+      workspaceRuntime: withRuntime.workspaceRuntime,
     });
+    const droppedBackgrounds = layoutMigrationNotices.get(l)?.droppedBackgrounds ?? [];
+    const newDrops = droppedBackgrounds.filter((key) => !notifiedInvalidBackgrounds.has(key));
+    if (newDrops.length > 0) {
+      for (const key of newDrops) notifiedInvalidBackgrounds.add(key);
+      useUi.getState().pushToast("info", "请从目标主机重新打开后台会话");
+    }
+    if (droppedBackgrounds.length === 0) notifiedInvalidBackgrounds.clear();
   } finally {
     applyingRemote = false;
   }
@@ -416,45 +726,52 @@ async function pullLatest(
   apply = true,
 ): Promise<PersistedLayout | null> {
   if (fetchInFlight) return null;
+  const epoch = accountEpoch;
   fetchInFlight = true;
   let result: PersistedLayout | null = null;
   let failed = false;
   try {
     const dto = await layoutApi.get();
-    revision = dto.revision;
-    const parsed = sanitizeLayout(dto.data);
-    if (parsed) {
-      result = parsed;
-      if (apply) {
-        const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
-        lastSynced = JSON.stringify(parsed);
-        applyToStore(parsed);
-        if (reason === "conflict") {
-          useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
+    if (epoch === accountEpoch) {
+      revision = dto.revision;
+      const parsed = sanitizeLayout(dto.data);
+      if (parsed) {
+        result = parsed;
+        if (apply) {
+          const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
+          lastSynced = JSON.stringify(parsed);
+          applyToStore(parsed);
+          if (reason === "conflict") {
+            useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
+          }
+          if (removed.length > 0) void notifyBackgroundedTerminals(removed);
         }
-        if (removed.length > 0) void notifyBackgroundedTerminals(removed);
       }
     }
   } catch (e) {
     failed = true;
-    console.warn("[NexTerm] Failed to fetch server layout", e);
+    if (epoch === accountEpoch) console.warn("[NexTerm] Failed to fetch server layout", e);
   } finally {
     fetchInFlight = false;
   }
-  if (failed) return result;
-  if (pendingRemoteRev !== null && pendingRemoteRev > revision) {
-    pendingRemoteRev = null;
+  const nextRev = pendingRemoteRev;
+  pendingRemoteRev = null;
+  if (epoch !== accountEpoch) {
+    return nextRev === null ? null : pullLatest("remote", apply);
+  }
+  if (nextRev !== null && (failed || nextRev > revision)) {
     return pullLatest("remote", apply);
   }
-  pendingRemoteRev = null;
   return result;
 }
 
-async function putLayout(json: string, allowTakeover = true): Promise<void> {
+async function putLayout(json: string, allowTakeover = true, epoch = accountEpoch): Promise<void> {
   try {
     const res = await layoutApi.put(json, revision);
+    if (epoch !== accountEpoch) return;
     if (res.conflict) {
       const server = await pullLatest("conflict", false);
+      if (epoch !== accountEpoch) return;
       if (server !== null && JSON.stringify(server) === json) {
         lastSynced = json;
         retryCount = 0;
@@ -462,10 +779,12 @@ async function putLayout(json: string, allowTakeover = true): Promise<void> {
         return;
       }
       if (allowTakeover) {
-        await putLayout(json, false);
+        await putLayout(json, false, epoch);
+        if (epoch !== accountEpoch) return;
         return;
       }
       await pullLatest("conflict", true);
+      if (epoch !== accountEpoch) return;
       return;
     }
     revision = res.revision;
@@ -473,6 +792,7 @@ async function putLayout(json: string, allowTakeover = true): Promise<void> {
     retryCount = 0;
     saveErrorNotified = false;
   } catch (e) {
+    if (epoch !== accountEpoch) return;
     if (!saveErrorNotified) {
       saveErrorNotified = true;
       useUi.getState().pushToast("error", `布局同步失败：${describeError(e)}`);
@@ -561,7 +881,21 @@ export async function notifyBackgroundedTerminals(
   }
 }
 
+export function advanceLayoutAccount(): void {
+  accountEpoch += 1;
+  revision = 0;
+  lastSynced = "";
+  dirty = false;
+  remoteEventDuringWrite = false;
+  pendingRemoteRev = null;
+  retryCount = 0;
+  saveErrorNotified = false;
+  clearSaveTimer();
+  clearRetryTimer();
+}
+
 export function resetLayoutSyncForTest(): void {
+  accountEpoch = 0;
   revision = 0;
   lastSynced = "";
   applyingRemote = false;
@@ -572,6 +906,7 @@ export function resetLayoutSyncForTest(): void {
   dirty = false;
   remoteEventDuringWrite = false;
   pendingRemoteRev = null;
+  notifiedInvalidBackgrounds.clear();
   clearSaveTimer();
   clearRetryTimer();
 }

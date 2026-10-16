@@ -69,9 +69,21 @@ vi.mock("@codemirror/state", () => {
       return this.text.length;
     }
   }
+  class Compartment {
+    of(extension: unknown) {
+      return { compartment: this, extension };
+    }
+    reconfigure(extension: unknown) {
+      return { compartment: this, extension };
+    }
+  }
   return {
+    Compartment,
     EditorState: {
-      create: ({ doc }: { doc: string }) => ({ doc: new Doc(doc), extensions: [] as unknown[] }),
+      create: ({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
+        doc: new Doc(doc),
+        extensions,
+      }),
     },
     Prec: { highest: (extension: unknown) => extension },
   };
@@ -79,7 +91,8 @@ vi.mock("@codemirror/state", () => {
 vi.mock("@codemirror/view", () => {
   class EditorView {
     static updateListener = { of: () => ({}) };
-    constructor() {}
+    constructor(_config: unknown) {}
+    dispatch(_change: unknown) {}
     destroy() {}
   }
   return { EditorView, keymap: { of: (bindings: unknown) => bindings } };
@@ -195,7 +208,7 @@ describe("PromptModal multiline placeholder copy", () => {
 describe("FileEditor shortcut labels", () => {
   it("shows ⌘ in save and undo shortcuts when the platform modifier is ⌘", async () => {
     platformState.mod = "⌘";
-    mounted = mount(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
+    mounted = mountWithClient(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
     await waitFor(() =>
       expect(mounted!.container.querySelector(".nx-kbd")?.textContent).toBe("⌘ S"),
     );
@@ -205,7 +218,7 @@ describe("FileEditor shortcut labels", () => {
   });
 
   it("shows Ctrl S on non-mac platforms", async () => {
-    mounted = mount(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
+    mounted = mountWithClient(createElement(FileEditor, { sessionId: SID, path: "/a.txt" }));
     await waitFor(() =>
       expect(mounted!.container.querySelector(".nx-kbd")?.textContent).toBe("Ctrl S"),
     );

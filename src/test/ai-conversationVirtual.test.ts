@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   VIRTUAL_ITEM_ESTIMATE_PX,
+  VIRTUAL_ITEM_GAP_PX,
   VIRTUAL_OVERSCAN,
   VIRTUAL_THRESHOLD,
   centeredScrollTop,
-  virtualOffsetForIndex,
-  virtualRange,
+  windowRange,
 } from "../features/ai/conversationVirtual";
 
-describe("virtualRange", () => {
+describe("windowRange", () => {
   it("renders every item below the threshold without spacers", () => {
-    const range = virtualRange(VIRTUAL_THRESHOLD, 0, 400);
-    expect(range).toEqual({
+    expect(windowRange(VIRTUAL_THRESHOLD, [], 0)).toEqual({
       active: false,
       start: 0,
       end: VIRTUAL_THRESHOLD,
@@ -20,39 +19,44 @@ describe("virtualRange", () => {
     });
   });
 
-  it("windows long conversations around the scroll position", () => {
-    const scrollTop = 100 * VIRTUAL_ITEM_ESTIMATE_PX;
-    const range = virtualRange(1000, scrollTop, 400);
-    const visible = Math.ceil(400 / VIRTUAL_ITEM_ESTIMATE_PX) + VIRTUAL_OVERSCAN * 2;
-    expect(range.active).toBe(true);
-    expect(range.start).toBe(100 - VIRTUAL_OVERSCAN);
-    expect(range.end).toBe(100 - VIRTUAL_OVERSCAN + visible);
-    expect(range.padTop).toBe((100 - VIRTUAL_OVERSCAN) * VIRTUAL_ITEM_ESTIMATE_PX);
-    expect(range.padBottom).toBe(
-      (1000 - (100 - VIRTUAL_OVERSCAN + visible)) * VIRTUAL_ITEM_ESTIMATE_PX,
-    );
+  it("derives spacers from the measured offsets of the rendered window", () => {
+    const items = [
+      { index: 40, start: 5000, end: 5300 },
+      { index: 41, start: 5310, end: 5340 },
+      { index: 42, start: 5350, end: 5450 },
+    ];
+    expect(windowRange(200, items, 40000)).toEqual({
+      active: true,
+      start: 40,
+      end: 43,
+      padTop: 5000,
+      padBottom: 40000 - 5450,
+    });
   });
 
-  it("clamps the window at both ends", () => {
-    const top = virtualRange(500, 0, 300);
-    expect(top.start).toBe(0);
+  it("covers both list ends without negative or leftover padding", () => {
+    const top = windowRange(200, [{ index: 0, start: 0, end: 88 }], 20000);
     expect(top.padTop).toBe(0);
-    const bottom = virtualRange(500, 500 * VIRTUAL_ITEM_ESTIMATE_PX, 300);
-    expect(bottom.end).toBe(500);
+    const bottom = windowRange(200, [{ index: 199, start: 19900, end: 20000 }], 20000);
+    expect(bottom.end).toBe(200);
     expect(bottom.padBottom).toBe(0);
   });
 
-  it("tolerates zero and negative metrics", () => {
-    const range = virtualRange(100, -50, 0);
-    expect(range.start).toBe(0);
-    expect(range.end).toBe(VIRTUAL_OVERSCAN * 2);
+  it("clamps padBottom when the window overshoots the total size", () => {
+    const items = [{ index: 99, start: 9000, end: 12000 }];
+    expect(windowRange(100, items, 11000).padBottom).toBe(0);
   });
-});
 
-describe("virtualOffsetForIndex", () => {
-  it("maps an item index to its estimated scroll offset", () => {
-    expect(virtualOffsetForIndex(10)).toBe(10 * VIRTUAL_ITEM_ESTIMATE_PX);
-    expect(virtualOffsetForIndex(-3)).toBe(0);
+  it("falls back to an estimated head window until the virtualizer reports items", () => {
+    const count = VIRTUAL_THRESHOLD + 50;
+    const end = Math.min(count, VIRTUAL_OVERSCAN * 2);
+    expect(windowRange(count, [], 0)).toEqual({
+      active: true,
+      start: 0,
+      end,
+      padTop: 0,
+      padBottom: (count - end) * (VIRTUAL_ITEM_ESTIMATE_PX + VIRTUAL_ITEM_GAP_PX),
+    });
   });
 });
 

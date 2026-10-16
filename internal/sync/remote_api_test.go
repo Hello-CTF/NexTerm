@@ -396,13 +396,18 @@ func (f *remoteAPIFixture) serveFleetDevices(w http.ResponseWriter, _ *http.Requ
 }
 
 func (f *remoteAPIFixture) serveFleetMetrics(w http.ResponseWriter, r *http.Request) {
-	samples := []map[string]any{
-		{"ts": 10, "cpu_pct": 12.5, "mem_used": 1, "mem_total": 2, "disk_used": 3, "disk_total": 4, "uptime_s": 5},
+	sample := map[string]any{"ts": 10, "cpu_pct": 12.5, "mem_used": 1, "mem_total": 2, "disk_used": 3, "disk_total": 4, "uptime_s": 5}
+	response := map[string]any{
+		"samples": []map[string]any{sample}, "latest": sample,
+		"windowStart": 1, "windowEnd": 20, "sampleCount": 100, "downsampled": true, "sampleIntervalMs": 5000,
 	}
 	if r.URL.Query().Get("since_ms") != "" {
-		samples = samples[:0]
+		response["samples"] = []map[string]any{}
+		response["sampleCount"] = 0
+		response["downsampled"] = false
+		response["seriesError"] = "trend timeout"
 	}
-	writeSyncJSON(w, http.StatusOK, map[string]any{"samples": samples})
+	writeSyncJSON(w, http.StatusOK, response)
 }
 
 func (f *remoteAPIFixture) serveFleetRevoke(w http.ResponseWriter, r *http.Request) {
@@ -572,19 +577,23 @@ func TestRemoteAPIMetricsSinceQuery(t *testing.T) {
 	fixture.createUser(t, "alice", "alice-pw-123")
 	client := fixture.loginClient(t, "alice", "alice-pw-123")
 
-	samples, err := client.DeviceMetrics(context.Background(), "d-1", 0)
+	metrics, err := client.DeviceMetrics(context.Background(), "d-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples.Samples) != 1 || samples.Samples[0].CPUPct != 12.5 {
-		t.Fatalf("samples = %+v", samples)
+	if len(metrics.Samples) != 1 || metrics.Samples[0].CPUPct != 12.5 {
+		t.Fatalf("samples = %+v", metrics.Samples)
 	}
-	empty, err := client.DeviceMetrics(context.Background(), "d-1", 60000)
+	if metrics.Latest == nil || metrics.Latest.CPUPct != 12.5 || metrics.WindowStart != 1 || metrics.WindowEnd != 20 ||
+		metrics.SampleCount != 100 || !metrics.Downsampled || metrics.SampleIntervalMS != 5000 || metrics.SeriesError != "" {
+		t.Fatalf("metrics metadata = %+v", metrics)
+	}
+	partial, err := client.DeviceMetrics(context.Background(), "d-1", 60000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(empty.Samples) != 0 {
-		t.Fatalf("since_ms query was not forwarded: %+v", empty)
+	if len(partial.Samples) != 0 || partial.Latest == nil || partial.SeriesError != "trend timeout" {
+		t.Fatalf("since_ms query or partial metadata was not forwarded: %+v", partial)
 	}
 }
 

@@ -55,6 +55,8 @@ func agentIPCError(err error) error {
 	switch {
 	case errors.Is(err, ErrJobNotFound):
 		return ipc.WrapError(ipc.CodeNotFound, ErrJobNotFound.Error(), err)
+	case errors.Is(err, ErrJobForbidden):
+		return ipc.WrapError(ipc.CodeForbidden, ErrJobForbidden.Error(), err)
 	case errors.Is(err, ErrConfirmationStale):
 		return ipc.WrapError(ipc.CodeBadParam, ErrConfirmationStale.Error(), err)
 	case errors.Is(err, ErrInvalidConfirmation):
@@ -98,18 +100,18 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_cancel", func(_ context.Context, _ *ipc.Call, args struct {
+			return ipc.Register(dispatcher, "ai_cancel", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID string `json:"jobId"`
 			}) (any, error) {
-				return nil, agentIPCError(r.Cancel(args.JobID))
+				return nil, agentIPCError(r.CancelContext(ctx, args.JobID))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_steer", func(_ context.Context, _ *ipc.Call, args struct {
+			return ipc.Register(dispatcher, "ai_steer", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID   string `json:"jobId"`
 				Message string `json:"message"`
 			}) (any, error) {
-				return nil, agentIPCError(r.Steer(args.JobID, args.Message))
+				return nil, agentIPCError(r.SteerContext(ctx, args.JobID, args.Message))
 			})
 		},
 		func() error {
@@ -129,12 +131,12 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_confirm", func(ctx context.Context, call *ipc.Call, args Confirmation) (any, error) {
-				return nil, agentIPCError(r.ConfirmStream(ctx, args, channelStreamFactory(call)))
+				return nil, agentIPCError(r.ConfirmStreamContext(ctx, args, channelStreamFactory(call)))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_answer", func(ctx context.Context, call *ipc.Call, args Answer) (any, error) {
-				return nil, agentIPCError(r.AnswerStream(ctx, args, channelStreamFactory(call)))
+				return nil, agentIPCError(r.AnswerStreamContext(ctx, args, channelStreamFactory(call)))
 			})
 		},
 		func() error {

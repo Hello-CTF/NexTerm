@@ -5,12 +5,13 @@ vi.mock("../../ipc/commands", () => ({
   sessionApi: { list: vi.fn() },
   assetApi: {},
   dbApi: {},
-  terminalApi: {},
+  terminalApi: { recordingStatus: vi.fn() },
   vaultApi: {},
 }));
 
-import { sessionApi, type SessionInfo } from "../../ipc/commands";
+import { sessionApi, terminalApi, type SessionInfo } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { deferred } from "./reactTestUtils";
 
 function session(id: string, status: SessionInfo["status"]): SessionInfo {
   return { id, assetId: null, name: id, kind: "ssh", status, tabs: [], createdAt: 1 };
@@ -19,8 +20,9 @@ function session(id: string, status: SessionInfo["status"]): SessionInfo {
 describe("resyncSessions", () => {
   beforeEach(() => {
     vi.mocked(sessionApi.list).mockReset();
+    vi.mocked(terminalApi.recordingStatus).mockReset();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    useUi.setState({ sessions: [], toasts: [], sessionResyncFailed: false });
+    useUi.setState({ sessions: [], toasts: [], sessionResyncFailed: false, recordings: {} });
   });
 
   it("replaces local sessions with the authoritative server list", async () => {
@@ -79,5 +81,69 @@ describe("resyncSessions", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].id).not.toBe(firstId);
     expect(toasts[0].text).toContain("刷新会话列表失败");
+  });
+});
+
+describe("recording resync", () => {
+  beforeEach(() => {
+    vi.mocked(terminalApi.recordingStatus).mockReset();
+    useUi.setState({ recordings: {} });
+  });
+
+  it("keeps the newest recording generation", () => {
+    useUi.getState().setRecordingStatus({
+      tabId: "tab-1",
+      state: "failed",
+      bytes: 8,
+      path: "/tmp/new.log",
+      safeError: "disk full",
+      generation: 2,
+    });
+    useUi.getState().setRecordingStatus({
+      tabId: "tab-1",
+      state: "running",
+      bytes: 2,
+      path: "/tmp/old.log",
+      generation: 1,
+    });
+
+    expect(useUi.getState().recordings["tab-1"]?.generation).toBe(2);
+    expect(useUi.getState().recordings["tab-1"]?.state).toBe("failed");
+  });
+
+  it("drops a stale status response after a newer resync completes", async () => {
+    const stale = deferred<{ tabId: string; state: "running"; bytes: number; generation: number }>();
+    vi.mocked(terminalApi.recordingStatus)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce({
+        tabId: "tab-1",
+        state: "failed",
+        bytes: 8,
+        path: "/tmp/failed.log",
+        safeError: "disk full",
+        generation: 1,
+      });
+    const first = useUi.getState().resyncRecording("tab-1");
+    await useUi.getState().resyncRecording("tab-1");
+
+    stale.resolve({ tabId: "tab-1", state: "running", bytes: 2, generation: 1 });
+    await first;
+
+    expect(useUi.getState().recordings["tab-1"]?.state).toBe("failed");
+    expect(useUi.getState().recordings["tab-1"]?.safeError).toBe("disk full");
+  });
+
+  it("clears recording state when sessions reset", () => {
+    useUi.getState().setRecordingStatus({
+      tabId: "tab-1",
+      state: "failed",
+      bytes: 8,
+      safeError: "disk full",
+      generation: 1,
+    });
+
+    useUi.getState().resetSessions();
+
+    expect(useUi.getState().recordings).toEqual({});
   });
 });

@@ -47,6 +47,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 });
 
 import { QuickConnect } from "../../app/QuickConnect";
+import { SshImportDialog } from "../../features/explorer/SshImportDialog";
 import { useUi } from "../../app/store";
 import { useAssetReachability } from "../../features/explorer/assetReachability";
 import type { Asset } from "../../ipc/commands";
@@ -150,5 +151,34 @@ describe("QuickConnect web mode (server assembly)", () => {
     );
     expect(mocks.quickConnectDefaultUser).not.toHaveBeenCalled();
     expect(mocks.sessionConnectQuick).not.toHaveBeenCalled();
+  });
+
+  it("offers create and import actions when no assets are available", async () => {
+    mocks.list.mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = mount(
+      createElement(QueryClientProvider, { client }, createElement(QuickConnect, { onClose: vi.fn() })),
+    );
+    mountedViews.push(view);
+    await waitFor(() => expect(view.container.textContent).toContain("新建连接"));
+    expect(view.container.textContent).toContain("导入 SSH 配置");
+  });
+
+  it("describes default SSH import paths as server files and hides unsupported Termius import", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = mount(
+      createElement(QueryClientProvider, { client }, createElement(SshImportDialog, { onClose: vi.fn() })),
+    );
+    mountedViews.push(view);
+
+    expect(view.container.textContent).toContain("服务器 SSH 配置文件路径");
+    expect(view.container.textContent).toContain("不会读取浏览器所在电脑的文件");
+    expect(view.container.textContent).not.toContain("Termius");
+    click(
+      [...view.container.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "~/.ssh 目录",
+      ) as HTMLButtonElement,
+    );
+    expect(view.container.textContent).toContain("将扫描服务器上的 ~/.ssh 目录");
   });
 });

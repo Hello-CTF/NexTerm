@@ -22,11 +22,24 @@ import (
 
 var (
 	ErrJobNotFound         = errors.New("AI 任务不存在或已结束")
+	ErrJobForbidden        = errors.New("无权操作该 AI 任务")
 	ErrConfirmationStale   = errors.New("确认已过期、重复或不属于当前工具调用")
 	ErrInvalidConfirmation = errors.New("确认必须包含 callId、nonce 和有效 decision")
 	ErrSteerQueueFull      = errors.New("AI 补充指令队列已满，请稍后再试")
 	errRunPaused           = errors.New("AI 任务等待用户交互")
 )
+
+type openAccessContextKey struct{}
+
+// WithOpenAccess marks an already-admitted open or trusted internal caller.
+func WithOpenAccess(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAccessContextKey{}, true)
+}
+
+func openAccessFromContext(ctx context.Context) bool {
+	open, _ := ctx.Value(openAccessContextKey{}).(bool)
+	return open
+}
 
 type ModelFactory func(context.Context) (model.BaseChatModel, uint64, error)
 
@@ -174,6 +187,7 @@ func (s *cancelSync) waitRecorded() {
 
 type job struct {
 	id          string
+	ownerID     string
 	args        ChatArgs
 	ctx         context.Context
 	cancel      context.CancelFunc

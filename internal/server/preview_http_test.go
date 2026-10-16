@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -45,10 +46,11 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	config := testConfig(t, false)
+	config.Events = NewEventBroker()
+	manager := session.NewManager(session.Config{Connector: connector, Emitter: session.AdaptEmitter(config.Events)})
 	t.Cleanup(func() { _ = manager.Close() })
 
-	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
 	config.Accounts = accounts
 	config.Previews = previews
@@ -135,6 +137,9 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 	linkID, _ := call.body["id"].(string)
 	if token == "" || linkID == "" {
 		t.Fatalf("create body missing token/id: %v", call.body)
+	}
+	if guest := f.call(t, http.MethodPost, "/rpc?token="+token, map[string]any{"cmd": "app_info", "args": map[string]any{}}, nil, "", nil); guest.status != http.StatusUnauthorized {
+		t.Fatalf("preview token RPC status = %d, want 401", guest.status)
 	}
 	if call.body["session_id"] != tabID {
 		t.Fatalf("create body = %v", call.body)
@@ -878,4 +883,404 @@ func TestSharePreviewExpiredInputFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-exp-1", "denied-exp-1", 10*time.Second)
+}
+
+func TestAccountChannelOwnerCheckedBeforeUpgrade(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	tabID, channelID := f.openTabWithChannel(t, ownerID)
+	channelURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/channel/" + channelID
+
+	for index, test := range []struct {
+		name    string
+		session *accountTestSession
+	}{
+		{name: "owner", session: owner},
+		{name: "same-account-second-client", session: peer},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			allowedChannelID := channelID + "-" + string(rune('a'+index))
+			if _, err := f.manager.AttachTab(ipc.WithUserID(context.Background(), ownerID), tabID, session.AttachOptions{
+				ChannelID: allowedChannelID, ClientID: "boundary-" + string(rune('a'+index)), ReplayBytes: 4096,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			conn, status := dialAccountWebSocket(t, "ws"+strings.TrimPrefix(f.http.URL, "http")+"/ws/channel/"+allowedChannelID, test.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("handshake status = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+				t.Fatal("owner channel returned an empty first frame")
+			}
+		})
+	}
+
+	t.Run("superadmin-own-channel", func(t *testing.T) {
+		adminID, _ := admin.user["id"].(string)
+		_, adminChannelID := f.openTabWithChannel(t, adminID)
+		conn, status := dialAccountWebSocket(t, "ws"+strings.TrimPrefix(f.http.URL, "http")+"/ws/channel/"+adminChannelID, admin)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("handshake status = %d, want 101", status)
+		}
+		defer conn.CloseNow()
+		if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+			t.Fatal("superadmin channel returned an empty first frame")
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		session *accountTestSession
+		want    int
+	}{
+		{name: "anonymous-known-channel", want: http.StatusUnauthorized},
+		{name: "other-account-known-channel", session: other, want: http.StatusForbidden},
+		{name: "superadmin-known-channel", session: admin, want: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, channelURL, test.session)
+			if conn != nil {
+				_ = conn.CloseNow()
+			}
+			if status != test.want {
+				t.Fatalf("handshake status = %d, want %d", status, test.want)
+			}
+		})
+	}
+
+	_, token := createPreviewViaAPI(t, f, owner, tabID)
+	guest := dialPreviewViewer(t, f.http.URL, token)
+	defer guest.CloseNow()
+	if ready := readPreviewJSON(t, guest, 3*time.Second); ready["type"] != "ready" || ready["session_id"] != tabID {
+		t.Fatalf("legal anonymous preview grant = %v", ready)
+	}
+}
+
+func TestAccountEventOwnerLiveAndReplay(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	tabID := f.openTab(t, ownerID)
+	actors := []struct {
+		name    string
+		session *accountTestSession
+		allow   bool
+	}{
+		{name: "owner", session: owner, allow: true},
+		{name: "same-account-second-client", session: peer, allow: true},
+		{name: "other-account", session: other},
+		{name: "superadmin", session: admin},
+	}
+	eventsURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/events"
+	connections := make(map[string]*websocket.Conn)
+	for _, actor := range actors {
+		conn, status := dialAccountWebSocket(t, eventsURL, actor.session)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("%s events handshake = %d, want 101", actor.name, status)
+		}
+		connections[actor.name] = conn
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == len(actors) })
+
+	const liveTitle = "s1b2-live-owner-title"
+	if _, err := f.manager.RenameTab(context.Background(), tabID, liveTitle); err != nil {
+		t.Fatal(err)
+	}
+	const liveBarrier = "s1b2-live-barrier"
+	if err := f.server.Events().Emit(context.Background(), ipc.Event{Event: ipc.TopicAppError, Payload: ipc.AppErrorEvent{Code: "test", Message: liveBarrier}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range actors {
+		t.Run("live-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], liveBarrier, 2*time.Second)
+			if !found {
+				t.Fatalf("live barrier was not delivered; frames = %q", frames)
+			}
+			foundTitle := false
+			for _, frame := range frames {
+				foundTitle = foundTitle || strings.Contains(string(frame), liveTitle)
+				if strings.Contains(string(frame), "ownerId") || strings.Contains(string(frame), "ownerID") {
+					t.Fatalf("owner metadata leaked on wire: %s", frame)
+				}
+			}
+			if foundTitle != actor.allow {
+				t.Fatalf("live visibility = %v, want %v; frames = %q", foundTitle, actor.allow, frames)
+			}
+		})
+	}
+	const malformedMarker = "s1b2-malformed-sensitive"
+	const unknownMarker = "s1b2-unknown-sensitive"
+	const progressMarker = "s1b2-fs-progress"
+	const publicMarker = "s1b2-public-app-error"
+	if err := f.server.Events().Emit(ipc.WithUserID(context.Background(), ownerID), ipc.Event{
+		Event: ipc.TopicFSProgress, Payload: fslocal.Progress{TaskID: progressMarker},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []ipc.Event{
+		{Event: ipc.TopicTerminalControl, Payload: map[string]any{"tabId": malformedMarker}, OwnerID: ownerID},
+		{Event: ipc.Topic("unknown://sensitive"), Payload: map[string]any{"marker": unknownMarker}, OwnerID: ownerID},
+		{Event: ipc.TopicAppError, Payload: ipc.AppErrorEvent{Code: "test", Message: publicMarker}},
+	} {
+		if err := f.server.Events().Emit(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, actor := range actors {
+		t.Run("allowlist-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], publicMarker, 2*time.Second)
+			if !found {
+				t.Fatalf("public event was not delivered; frames = %q", frames)
+			}
+			foundProgress := false
+			for _, frame := range frames {
+				foundProgress = foundProgress || strings.Contains(string(frame), progressMarker)
+				if strings.Contains(string(frame), malformedMarker) || strings.Contains(string(frame), unknownMarker) {
+					t.Fatalf("malformed or unknown event delivered to %s: %s", actor.name, frame)
+				}
+			}
+			if foundProgress != actor.allow {
+				t.Fatalf("file progress visibility = %v, want %v; frames = %q", foundProgress, actor.allow, frames)
+			}
+		})
+	}
+	for _, conn := range connections {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 0 })
+
+	const ownerlessMarker = "s1b2-ownerless-sensitive"
+	if err := f.server.Events().Emit(context.Background(), ipc.Event{Event: ipc.TopicTerminalControl, Payload: session.ControlEvent{TabID: ownerlessMarker}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.manager.CloseTab(tabID); err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range actors {
+		t.Run("deleted-replay-"+actor.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, eventsURL+"?since=0", actor.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("replay handshake = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			frames, found := readWebSocketUntil(conn, publicMarker, 2*time.Second)
+			if !found {
+				t.Fatalf("public replay was not delivered; frames = %q", frames)
+			}
+			foundTitle := false
+			foundProgress := false
+			for _, frame := range frames {
+				foundTitle = foundTitle || strings.Contains(string(frame), liveTitle)
+				foundProgress = foundProgress || strings.Contains(string(frame), progressMarker)
+				if strings.Contains(string(frame), malformedMarker) || strings.Contains(string(frame), unknownMarker) {
+					t.Fatalf("malformed or unknown replay delivered to %s: %s", actor.name, frame)
+				}
+			}
+			if foundTitle != actor.allow {
+				t.Fatalf("replay visibility before deletion = %v, want %v; frames = %q", foundTitle, actor.allow, frames)
+			}
+			if foundProgress != actor.allow {
+				t.Fatalf("file progress replay visibility = %v, want %v; frames = %q", foundProgress, actor.allow, frames)
+			}
+			frames, found = readWebSocketUntil(conn, tabID, 2*time.Second)
+			if found != actor.allow {
+				t.Fatalf("deleted replay visibility = %v, want %v; frames = %q", found, actor.allow, frames)
+			}
+			for _, frame := range frames {
+				if strings.Contains(string(frame), ownerlessMarker) {
+					t.Fatalf("ownerless sensitive event delivered to %s: %s", actor.name, frame)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenEventAndChannelAccessRemainAvailable(t *testing.T) {
+	f := newPreviewFixture(t, func(config *Config) { config.Options.Auth = AuthOff })
+	tabID, channelID := f.openTabWithChannel(t, "")
+	baseURL := "ws" + strings.TrimPrefix(f.http.URL, "http")
+	conn, status := dialAccountWebSocket(t, baseURL+"/ws/channel/"+channelID, nil)
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("open channel handshake = %d, want 101", status)
+	}
+	if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+		t.Fatal("open channel returned an empty first frame")
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+
+	events, status := dialAccountWebSocket(t, baseURL+"/ws/events", nil)
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("open events handshake = %d, want 101", status)
+	}
+	defer events.CloseNow()
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 1 })
+	const title = "s1b2-open-ownerless"
+	if _, err := f.manager.RenameTab(context.Background(), tabID, title); err != nil {
+		t.Fatal(err)
+	}
+	if frames, found := readWebSocketUntil(events, title, 2*time.Second); !found {
+		t.Fatalf("open deployment filtered ownerless event: %q", frames)
+	}
+}
+
+func TestAccountLayoutAndSyncEventContracts(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	actors := []struct {
+		name    string
+		session *accountTestSession
+		allow   bool
+	}{
+		{name: "owner", session: owner, allow: true},
+		{name: "same-account-second-client", session: peer, allow: true},
+		{name: "other-account", session: other},
+		{name: "superadmin", session: admin},
+	}
+	eventsURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/events"
+	connections := make(map[string]*websocket.Conn)
+	for _, actor := range actors {
+		conn, status := dialAccountWebSocket(t, eventsURL, actor.session)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("%s events handshake = %d, want 101", actor.name, status)
+		}
+		connections[actor.name] = conn
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == len(actors) })
+
+	const layoutRevision = 918273
+	const malformedLayout = "s1b2-malformed-layout"
+	const malformedSync = "s1b2-malformed-sync"
+	const malformedRound = "s1b2-malformed-round"
+	for _, event := range []ipc.Event{
+		{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: layoutRevision}, OwnerID: ownerID},
+		{Event: ipc.TopicLayoutChanged, Payload: map[string]any{"marker": malformedLayout}, OwnerID: ownerID},
+		{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: ownerID}},
+		{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}},
+		{Event: ipc.TopicSyncStatus, Payload: map[string]any{"marker": malformedSync}},
+		{Event: ipc.Topic("sync://round-complete"), Payload: map[string]any{"marker": malformedRound}},
+		{Event: ipc.TopicSyncStatus, Payload: struct{}{}},
+		{Event: ipc.Topic("sync://round-complete"), Payload: struct{}{}},
+	} {
+		if err := f.server.Events().Emit(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertFrames := func(t *testing.T, actorName string, allow bool, frames [][]byte) {
+		t.Helper()
+		layoutVisible := false
+		syncStatuses := 0
+		roundCompletes := 0
+		for _, frame := range frames {
+			text := string(frame)
+			if strings.Contains(text, malformedLayout) || strings.Contains(text, malformedSync) || strings.Contains(text, malformedRound) {
+				t.Fatalf("%s received malformed event: %s", actorName, frame)
+			}
+			if strings.Contains(text, `"event":"layout://changed"`) && strings.Contains(text, `"revision":918273`) {
+				layoutVisible = true
+			}
+			if strings.Contains(text, `"event":"sync://status"`) {
+				syncStatuses++
+			}
+			if strings.Contains(text, `"event":"sync://round-complete"`) {
+				roundCompletes++
+			}
+		}
+		if layoutVisible != allow {
+			t.Fatalf("%s layout visibility = %v, want %v; frames = %q", actorName, layoutVisible, allow, frames)
+		}
+		wantSyncStatuses := 1
+		if allow {
+			wantSyncStatuses = 2
+		}
+		if syncStatuses != wantSyncStatuses {
+			t.Fatalf("%s sync status count = %d, want %d; frames = %q", actorName, syncStatuses, wantSyncStatuses, frames)
+		}
+		if roundCompletes != 1 {
+			t.Fatalf("%s round-complete count = %d, want 1; frames = %q", actorName, roundCompletes, frames)
+		}
+	}
+	for _, actor := range actors {
+		t.Run("live-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], `"event":"sync://round-complete"`, 2*time.Second)
+			if !found {
+				t.Fatalf("round-complete was not delivered; frames = %q", frames)
+			}
+			assertFrames(t, actor.name, actor.allow, frames)
+		})
+	}
+	for _, conn := range connections {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 0 })
+
+	for _, actor := range actors {
+		t.Run("replay-"+actor.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, eventsURL+"?since=0", actor.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("replay handshake = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			frames, found := readWebSocketUntil(conn, `"event":"sync://round-complete"`, 2*time.Second)
+			if !found {
+				t.Fatalf("round-complete replay was not delivered; frames = %q", frames)
+			}
+			assertFrames(t, actor.name, actor.allow, frames)
+		})
+	}
+}
+
+func dialAccountWebSocket(t *testing.T, url string, session *accountTestSession) (*websocket.Conn, int) {
+	t.Helper()
+	options := &websocket.DialOptions{}
+	if session != nil {
+		options.HTTPHeader = http.Header{"Cookie": []string{sessionCookieName + "=" + session.cookie.Value}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, response, err := websocket.Dial(ctx, url, options)
+	if err != nil {
+		if response == nil {
+			t.Fatalf("websocket dial: %v", err)
+		}
+		response.Body.Close()
+		return nil, response.StatusCode
+	}
+	return conn, http.StatusSwitchingProtocols
+}
+
+func readWebSocketUntil(conn *websocket.Conn, marker string, timeout time.Duration) ([][]byte, bool) {
+	deadline := time.Now().Add(timeout)
+	var frames [][]byte
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return frames, false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		_, data, err := conn.Read(ctx)
+		cancel()
+		if err != nil {
+			return frames, false
+		}
+		frames = append(frames, data)
+		if strings.Contains(string(data), marker) {
+			return frames, true
+		}
+	}
 }

@@ -492,6 +492,42 @@ func runWiringChecks(in inputs) []checkResult {
 			cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
 		"")
 	nativeSteps := asList(nativeJob["steps"])
+	prWindowsDesktopCondition := "github.event_name=='pull_request'&&matrix.os=='windows'&&matrix.kind=='desktop'"
+	powershellRuntimes := findStep(nativeJob, "Verify Windows PowerShell runtimes")
+	realWindowsTests := findStep(nativeJob, "Run real Windows Go and loopback tests")
+	check("PR Windows desktop runs real Go and loopback fixtures with both PowerShell runtimes",
+		normalizedStepIf(powershellRuntimes) == prWindowsDesktopCondition && normalizedStepIf(realWindowsTests) == prWindowsDesktopCondition &&
+			str(powershellRuntimes["shell"]) == "powershell" && str(realWindowsTests["shell"]) == "powershell" &&
+			strings.Contains(stepRun(powershellRuntimes), "powershell.exe") && strings.Contains(stepRun(powershellRuntimes), "pwsh.exe") &&
+			strings.Count(stepRun(realWindowsTests), "& ./.github/scripts/windows-real-tests.ps1") == 1,
+		fmt.Sprintf("runtime_if=%q fixture_if=%q", str(powershellRuntimes["if"]), str(realWindowsTests["if"])))
+	check("real Windows targeted tests reject SKIP and require a top-level PASS",
+		strings.Count(in.windowsRealText, "go.exe test -mod=readonly -count=1 ./...") == 1 &&
+			strings.Contains(in.windowsRealText, "Select-String -Path $log -Pattern '--- SKIP:'") &&
+			strings.Contains(in.windowsRealText, "if ($skips.Count -ne 0)") &&
+			strings.Contains(in.windowsRealText, "throw \"$Test reported SKIP; a real fixture run is required\"") &&
+			strings.Contains(in.windowsRealText, "if (-not (Select-String -Path $log -Pattern $passPattern -Quiet))") &&
+			strings.Contains(in.windowsRealText, "throw \"$Test did not report a top-level PASS\""),
+		"the full Go suite must run and every targeted real fixture must fail on SKIP or a missing PASS")
+	var missingWindowsFixtureCalls []string
+	for _, call := range []string{
+		"Invoke-TargetedGoTest -Package './internal/fs/local' -Test 'TestRealWindowsSecondVolume'",
+		"Invoke-TargetedGoTest -Package './internal/transport/winrm' -Test 'TestRealWindowsSecondVolume'",
+		"Invoke-TargetedGoTest -Package './internal/transport/ssh' -Test 'TestWindowsOpenSSHSecondVolume'",
+	} {
+		if strings.Count(in.windowsRealText, call) != 1 {
+			missingWindowsFixtureCalls = append(missingWindowsFixtureCalls, call)
+		}
+	}
+	check("real Windows fixtures cover local, WinRM and OpenSSH second-volume paths",
+		len(missingWindowsFixtureCalls) == 0, fmt.Sprintf("missing_or_duplicate=%v", missingWindowsFixtureCalls))
+	winRMPathCall := "Invoke-TargetedGoTest -Package './internal/transport/winrm' -Test 'TestRealWindowsServer' -RunExpression '^TestRealWindowsServer$/^(cwd_persistence|filesystem|relative_read_write_and_backup_after_cwd_change)$' -RequiredSubtests @('cwd_persistence', 'filesystem', 'relative_read_write_and_backup_after_cwd_change')"
+	check("real WinRM loopback runs the complete cwd and quoted-path subtest set",
+		strings.Count(in.windowsRealText, winRMPathCall) == 1 &&
+			strings.Count(in.windowsRealText, "-Test 'TestRealWindowsServer'") == 1 &&
+			strings.Contains(in.windowsRealText, "$subtestPassPattern = '^    --- PASS: '") &&
+			strings.Contains(in.windowsRealText, "throw \"$Test/$subtest did not report PASS\""),
+		"the loopback run must include cwd persistence, filesystem quoting and relative path tests with per-subtest PASS assertions")
 	uploadStep := findStep(nativeJob, "Upload native runtime")
 	var uploadPaths []string
 	for _, line := range strings.Split(str(asMap(uploadStep["with"])["path"]), "\n") {

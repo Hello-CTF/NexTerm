@@ -97,12 +97,12 @@ func TestAgentSyncRecordsMetricsAndState(t *testing.T) {
 		t.Fatalf("metrics_interval_ms = %v, want %d", response.body["metrics_interval_ms"], DefaultMetricsIntervalMS)
 	}
 
-	samples, err := f.service.DeviceMetrics(context.Background(), &account.Identity{UserID: owner.ID, Role: account.RoleSuperadmin}, deviceID, 0)
+	metrics, err := f.service.DeviceMetrics(context.Background(), &account.Identity{UserID: owner.ID, Role: account.RoleSuperadmin}, deviceID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) != 1 || samples[0].CPUPct != 12.5 || samples[0].UptimeS != 42 {
-		t.Fatalf("samples = %+v", samples)
+	if len(metrics.Samples) != 1 || metrics.Samples[0].CPUPct != 12.5 || metrics.Samples[0].UptimeS != 42 || metrics.Latest == nil || metrics.Latest.CPUPct != 12.5 {
+		t.Fatalf("metrics = %+v", metrics)
 	}
 
 	devices, err := f.service.ListDevices(context.Background(), &account.Identity{UserID: owner.ID, Role: account.RoleSuperadmin})

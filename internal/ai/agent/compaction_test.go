@@ -23,6 +23,7 @@ var compactionCanaries = []string{"canary-cmd-0 systemctl restart nginx", "canar
 type compactionModel struct {
 	mu         sync.Mutex
 	generate   func(context.Context, []*schema.Message) (*schema.Message, error)
+	stream     func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error)
 	inputs     [][]*schema.Message
 	generateIn [][]*schema.Message
 }
@@ -34,10 +35,13 @@ func (m *compactionModel) Generate(ctx context.Context, messages []*schema.Messa
 	return m.generate(ctx, messages)
 }
 
-func (m *compactionModel) Stream(ctx context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (m *compactionModel) Stream(ctx context.Context, messages []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	m.mu.Lock()
 	m.inputs = append(m.inputs, messages)
 	m.mu.Unlock()
+	if m.stream != nil {
+		return m.stream(ctx, messages, options...)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -841,5 +845,179 @@ func TestSummarizeAllProjectsToolResultsBeforeSegmentation(t *testing.T) {
 	}
 	if message.Content != content {
 		t.Fatalf("compaction mutated the original tool message: %s", message.Content)
+	}
+}
+
+func compactionUsageMessage(content string, prompt, completion int, callID string) *schema.Message {
+	message := assistantWithUsage(content, prompt, completion)
+	message.ResponseMeta.Usage.PromptTokenDetails.CachedTokens = prompt / 10
+	message.Extra = map[string]any{
+		provider.MessageExtraCallID:        callID,
+		provider.MessageExtraCacheCreation: uint64(completion / 2),
+	}
+	return message
+}
+
+func TestRunAggregatesSummaryAndMergeUsage(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		mergeErr   bool
+		unknownErr bool
+	}{
+		{name: "success"},
+		{name: "partial merge failure", mergeErr: true},
+		{name: "unknown failure", unknownErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var summaryCalls, mergeCalls, knownSummaryCalls int
+			var summaryPrompt, summaryCompletion, summaryCached, summaryCacheCreation int
+			chat := &compactionModel{}
+			chat.generate = func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
+				summaryCalls++
+				time.Sleep(5 * time.Millisecond)
+				if test.unknownErr {
+					return nil, errors.New("summary usage unavailable")
+				}
+				merging := len(messages) == 2 && strings.HasPrefix(messages[1].Content, summaryMergeInstruction())
+				content := strings.Repeat("s", 1600)
+				prompt, completion := 100+summaryCalls, 10+summaryCalls
+				if merging {
+					mergeCalls++
+					content = "合并摘要"
+					prompt, completion = 300+mergeCalls, 30+mergeCalls
+				}
+				callID := fmt.Sprintf("provider-summary-%d", summaryCalls)
+				if summaryCalls == 1 {
+					callID = ""
+				}
+				response := compactionUsageMessage(content, prompt, completion, callID)
+				knownSummaryCalls++
+				summaryPrompt += prompt
+				summaryCompletion += completion
+				summaryCached += prompt / 10
+				summaryCacheCreation += completion / 2
+				if merging && test.mergeErr {
+					return response, errors.New("merge failed after usage")
+				}
+				return response, nil
+			}
+			chat.stream = func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+				return schema.StreamReaderFromArray([]*schema.Message{compactionUsageMessage("完成", 40, 7, "provider-main")}), nil
+			}
+			runner, storage := sceneRunner(t, chat, func(config *Config) {
+				config.Model = func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 2000, nil }
+			})
+			conversationID := seedLongHistory(t, storage)
+			stream := &SliceStream{}
+			response, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversationID, Message: "继续", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := waitClosed(t, stream)
+			if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+				t.Fatalf("terminal counts done=%d failed=%d events=%+v", done, failed, events)
+			}
+			if !test.unknownErr && mergeCalls == 0 {
+				t.Fatal("merge summary path was not exercised")
+			}
+
+			row, err := storage.RunGet(context.Background(), response.JobID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPrompt := int64(40 + summaryPrompt)
+			wantCompletion := int64(7 + summaryCompletion)
+			wantCacheCreation := int64(3 + summaryCacheCreation)
+			if row.TokensIn != wantPrompt || row.TokensOut != wantCompletion || row.CacheCreationTokens != wantCacheCreation {
+				t.Fatalf("run usage = %+v, want tokens %d/%d cache %d; summary calls=%d merge calls=%d", row, wantPrompt, wantCompletion, wantCacheCreation, summaryCalls, mergeCalls)
+			}
+
+			seenCallIDs := map[string]bool{}
+			var summaryEvents, mainEvents int
+			var eventPrompt, eventCompletion, eventCached int64
+			var summaryLatency bool
+			for _, event := range events {
+				if event.Type == "done" && (event.TokensIn != uint64(wantPrompt) || event.TokensOut != uint64(wantCompletion)) {
+					t.Fatalf("done duplicated or dropped usage: %+v", event)
+				}
+				if event.Type != "usage" {
+					continue
+				}
+				if event.CallID == "" || seenCallIDs[event.CallID] {
+					t.Fatalf("usage call ID is empty or duplicated: %+v", event)
+				}
+				seenCallIDs[event.CallID] = true
+				eventPrompt += int64(event.PromptTokens)
+				eventCompletion += int64(event.CompletionTokens)
+				eventCached += int64(event.CachedTokens)
+				encoded, err := json.Marshal(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload struct{ Channel string }
+				if err := json.Unmarshal(encoded, &payload); err != nil {
+					t.Fatal(err)
+				}
+				switch payload.Channel {
+				case "summary":
+					summaryEvents++
+					summaryLatency = summaryLatency || event.LatencyMS > 0
+				case "main":
+					mainEvents++
+				default:
+					t.Fatalf("usage event has unknown channel: %+v", event)
+				}
+			}
+			if summaryEvents != knownSummaryCalls || mainEvents != 1 {
+				t.Fatalf("usage events summary=%d want %d, main=%d; all events=%+v", summaryEvents, knownSummaryCalls, mainEvents, events)
+			}
+			if knownSummaryCalls > 0 && !summaryLatency {
+				t.Fatal("summary usage did not retain Generate latency")
+			}
+			if eventPrompt != wantPrompt || eventCompletion != wantCompletion || eventCached != int64(4+summaryCached) {
+				t.Fatalf("event usage = %d/%d cached %d, want %d/%d cached %d", eventPrompt, eventCompletion, eventCached, wantPrompt, wantCompletion, 4+summaryCached)
+			}
+		})
+	}
+}
+
+func TestInitializeFailureKeepsSummaryUsage(t *testing.T) {
+	var summaryCalls, prompt, completion, cacheCreation int
+	chat := &compactionModel{}
+	chat.generate = func(context.Context, []*schema.Message) (*schema.Message, error) {
+		summaryCalls++
+		time.Sleep(5 * time.Millisecond)
+		callPrompt, callCompletion := 100+summaryCalls, 10+summaryCalls
+		prompt += callPrompt
+		completion += callCompletion
+		cacheCreation += callCompletion / 2
+		return compactionUsageMessage("摘要", callPrompt, callCompletion, "summary-init-failure"), nil
+	}
+	chat.stream = func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		return nil, errors.New("main model must not be called")
+	}
+	runner, storage := sceneRunner(t, chat, func(config *Config) {
+		config.Model = func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 2000, nil }
+		config.Subagents = &tools.SubagentConfig{}
+	})
+	conversationID := seedLongHistory(t, storage)
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversationID, Message: "继续", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("terminal counts done=%d failed=%d events=%+v", done, failed, events)
+	}
+	if summaryCalls == 0 {
+		t.Fatal("initialization failure happened before summary usage was exercised")
+	}
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.TokensIn != int64(prompt) || row.TokensOut != int64(completion) || row.CacheCreationTokens != int64(cacheCreation) || row.LatencyMS <= 0 {
+		t.Fatalf("initialization failure dropped summary usage: row=%+v, want %d/%d cache %d with latency", row, prompt, completion, cacheCreation)
 	}
 }

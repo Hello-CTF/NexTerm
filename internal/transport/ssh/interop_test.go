@@ -155,6 +155,99 @@ func TestOpenSSHInterop(t *testing.T) {
 	}
 }
 
+func TestWindowsOpenSSHSecondVolume(t *testing.T) {
+	if os.Getenv("NEXTERM_SSH_WINDOWS_INTEROP") != "1" {
+		t.Skip("opt-in Windows OpenSSH second-volume test skipped: set NEXTERM_SSH_WINDOWS_INTEROP=1 and the SSH and Windows fixture settings")
+	}
+	host, portText, err := net.SplitHostPort(os.Getenv("NEXTERM_SSH_TEST_HOST"))
+	if err != nil {
+		t.Fatalf("NEXTERM_SSH_TEST_HOST must be host:port: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := os.Getenv("NEXTERM_SSH_TEST_HOST_KEY")
+	if fingerprint == "" {
+		t.Fatal("NEXTERM_SSH_TEST_HOST_KEY is required; tests never disable host-key verification")
+	}
+	secondRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_SECOND_ROOT"))
+	workRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_WORK_ROOT"))
+	if secondRoot == "" || workRoot == "" {
+		t.Fatal("Windows OpenSSH test requires NEXTERM_WINDOWS_TEST_SECOND_ROOT and NEXTERM_WINDOWS_TEST_WORK_ROOT")
+	}
+	auth := AuthConfig{}
+	if password := os.Getenv("NEXTERM_SSH_TEST_PASSWORD"); password != "" {
+		auth.Method = AuthPassword
+		auth.Password = password
+	} else if keyPath := os.Getenv("NEXTERM_SSH_TEST_KEY"); keyPath != "" {
+		auth.Method = AuthKey
+		auth.KeyPath = keyPath
+		auth.Passphrase = os.Getenv("NEXTERM_SSH_TEST_PASSPHRASE")
+	} else {
+		t.Fatal("set NEXTERM_SSH_TEST_PASSWORD or NEXTERM_SSH_TEST_KEY")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, err := Connect(ctx, Config{
+		Host:            host,
+		Port:            port,
+		User:            os.Getenv("NEXTERM_SSH_TEST_USER"),
+		Auth:            auth,
+		HostKeys:        NewMemoryHostKeyStore(),
+		HostKeyApproval: &HostKeyApproval{Fingerprint: fingerprint},
+		ConnectTimeout:  10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	filesystem, err := client.FileSystem(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := filesystem.(base.RootsProvider)
+	if !ok {
+		t.Fatal("Windows OpenSSH filesystem does not provide roots")
+	}
+	roots, err := provider.Roots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStyleWindows || !roots.Supported {
+		t.Fatalf("Windows OpenSSH roots environment = %+v", roots)
+	}
+	seenSystem, seenSecond := false, false
+	for _, root := range roots.Roots {
+		seenSystem = seenSystem || strings.EqualFold(root.Path, `C:\`)
+		seenSecond = seenSecond || strings.EqualFold(root.Path, secondRoot)
+	}
+	if !seenSystem || !seenSecond {
+		t.Fatalf("Windows OpenSSH roots do not contain C: and %s: %+v", secondRoot, roots.Roots)
+	}
+	root := strings.TrimRight(workRoot, `\/`) + `\openssh`
+	if err := filesystem.Mkdir(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cleanupCancel()
+		_ = filesystem.Delete(cleanupCtx, root, true)
+	})
+	remoteFile := root + `\volume.txt`
+	if err := filesystem.WriteFile(ctx, remoteFile, []byte("openssh-second-volume"), false); err != nil {
+		t.Fatal(err)
+	}
+	content, err := filesystem.ReadFile(ctx, remoteFile, 100)
+	if err != nil || string(content) != "openssh-second-volume" {
+		t.Fatalf("Windows OpenSSH second-volume ReadFile = %q, %v", content, err)
+	}
+	entries, err := filesystem.List(ctx, root)
+	if err != nil || len(entries) != 1 || !strings.EqualFold(entries[0].Path, remoteFile) {
+		t.Fatalf("Windows OpenSSH second-volume List = %+v, %v", entries, err)
+	}
+}
+
 func assertSafeTarGz(t *testing.T, archivePath string) {
 	t.Helper()
 	file, err := os.Open(archivePath)

@@ -30,6 +30,7 @@ type FileSystem interface {
 	Chmod(ctx context.Context, path string, mode fs.FileMode) error
 	Upload(ctx context.Context, localPath, remotePath string) (int64, error)
 	Rename(ctx context.Context, from, to string) error
+	Delete(ctx context.Context, path string, directory bool) error
 	ChecksumSHA256(ctx context.Context, path string) (string, error)
 }
 
@@ -65,12 +66,16 @@ func (d *Daemon) Provider() *supervisor.RemoteProvider {
 // Resolver resolves the durable provider for an SSH session transport,
 // starting or connecting to the target's supervisor daemon on demand.
 type Resolver struct {
-	// Executable is the local supervisor-capable binary uploaded to targets
-	// without a compatible one. Empty disables uploads.
+	// Executable is the local application binary used to locate a sibling
+	// target helper, then as the legacy supervisor-capable upload fallback.
 	Executable string
+	// HelperExecutable explicitly selects an offline standalone helper import.
+	HelperExecutable string
+	// DisableAutoInstall keeps installed and running helpers usable but forbids uploads.
+	DisableAutoInstall bool
 	// StartTimeout bounds daemon spawn plus readiness probing.
 	StartTimeout time.Duration
-	// UploadTimeout bounds the SFTP upload of Executable.
+	// UploadTimeout bounds the SFTP upload of the selected helper.
 	UploadTimeout time.Duration
 
 	hostFor func(ctx context.Context, client *transportssh.Client) (Host, error)
@@ -90,8 +95,8 @@ func (r *Resolver) ResolveDurable(ctx context.Context, transport base.Transport)
 }
 
 // EnsureDaemon connects to the target's supervisor daemon, starting it with
-// an existing compatible binary when needed and uploading Executable as a
-// last resort.
+// an existing compatible binary when needed and uploading the selected helper
+// as a last resort.
 func (r *Resolver) EnsureDaemon(ctx context.Context, client *transportssh.Client) (*Daemon, error) {
 	host, err := r.host(ctx, client)
 	if err != nil {

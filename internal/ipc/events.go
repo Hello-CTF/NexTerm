@@ -65,8 +65,20 @@ type DeviceStatusEvent struct {
 }
 
 type Event struct {
-	Event   Topic `json:"event"`
-	Payload any   `json:"payload"`
+	Event   Topic  `json:"event"`
+	Payload any    `json:"payload"`
+	OwnerID string `json:"-"`
+}
+
+type eventOwnerContextKey struct{}
+
+func WithEventOwner(ctx context.Context, ownerID string) context.Context {
+	return context.WithValue(ctx, eventOwnerContextKey{}, ownerID)
+}
+
+func EventOwnerID(ctx context.Context) string {
+	ownerID, _ := ctx.Value(eventOwnerContextKey{}).(string)
+	return ownerID
 }
 
 type Emitter interface {
@@ -83,5 +95,6 @@ func Emit[T any](ctx context.Context, emitter Emitter, topic Topic, payload T) e
 	if emitter == nil {
 		return ErrEventsUnavailable
 	}
-	return emitter.Emit(ctx, Event{Event: topic, Payload: payload})
+	event := Event{Event: topic, Payload: payload, OwnerID: EventOwnerID(ctx)}
+	return emitter.Emit(ctx, event)
 }

@@ -43,7 +43,7 @@ func (m *Manager) reconnectPreflight(id string) error {
 	if session.status == StatusConnecting {
 		return ErrDisconnected
 	}
-	if other := m.sessions[m.byAsset[session.asset.ID]]; other != nil && other != session {
+	if other := m.sessions[m.byAsset[session.assetOwnerKey()]]; other != nil && other != session {
 		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
 	}
 	return nil
@@ -83,7 +83,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		m.mu.Unlock()
 		return ErrDisconnected
 	}
-	if other := m.sessions[m.byAsset[session.asset.ID]]; other != nil && other != session {
+	if other := m.sessions[m.byAsset[session.assetOwnerKey()]]; other != nil && other != session {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return fmt.Errorf("%w: %s", ErrAssetSessionConflict, session.asset.ID)
@@ -100,7 +100,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	session.reconnectDone = make(chan struct{})
 	session.reconnectErr = nil
 	channels := session.detachChannelsLocked()
-	m.byAsset[session.asset.ID] = session.ID
+	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
 	reconnectingEvent := session.statusEventLocked(StatusReconnecting, nil)
 	session.mu.Unlock()
@@ -322,6 +322,14 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	controls := make([]ControlEvent, 0, len(opened)+len(gone))
 	exits := make([]ExitEvent, 0, len(gone))
 	resizes := make([]reconnectResize, 0, len(opened))
+	committed := false
+	defer func() {
+		if !committed {
+			for _, event := range controls {
+				m.discardControlEvent(event)
+			}
+		}
+	}()
 	var retired []base.DurableAttachment
 	var goneOffsets []string
 	for tab, replacement := range opened {
@@ -439,6 +447,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 	}
 	m.emit(context.Background(), TopicSessionStatus, connectedEvent)
+	committed = true
 	return true, nil
 }
 
@@ -462,8 +471,8 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	}
 	session.status = status
 	session.finishReconnectLocked(reconnectErr)
-	if m.byAsset[session.asset.ID] == session.ID {
-		delete(m.byAsset, session.asset.ID)
+	if m.byAsset[session.assetOwnerKey()] == session.ID {
+		delete(m.byAsset, session.assetOwnerKey())
 	}
 	finishedEvent := session.statusEventLocked(status, reconnectErr)
 	session.mu.Unlock()

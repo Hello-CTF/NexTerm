@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -28,11 +30,12 @@ func TestPostgres16DockerIntegration(t *testing.T) {
 			"-c ssl_ca_file=/tls/ca.crt -c hba_file=/tls/pg_hba.conf",
 	)
 	config := PostgresConfig{Username: "postgres", Password: password, Database: "nexterm_test"}
-	waitForPostgres(t, container, config)
 	tlsConfig, err := makeTLSConfig(container.host, tlsFiles.options)
 	if err != nil {
 		t.Fatalf("TLS config: %v", err)
 	}
+	config.TLSConfig = tlsConfig
+	waitForPostgres(t, container, config)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	_, err = connectPostgres(ctx, PostgresConfig{Host: container.host, Port: container.port, Username: "postgres", Password: password, Database: "nexterm_test"})
@@ -82,12 +85,12 @@ func TestPostgres16DockerIntegration(t *testing.T) {
 		t.Fatalf("INSERT rowsAffected=%d", insert.RowsAffected)
 	}
 	result = mustPostgresQuery(t, service, connID, "SELECT id, big, decv, txt, bin, nul, flag, ratio, weird, created, payload FROM p16_types", 0, 5*time.Second)
-	want := []any{int64(1), "9007199254740993", "12345678901234567890.012300", "hello", "AP8B", nil, true, 1.25, "NaN", "2026-10-02T00:00:00Z", `{"a":1}`}
+	want := []any{int64(1), "9007199254740993", "12345678901234567890.012300", "hello", "AP8B", nil, true, 1.25, "NaN", "2026-10-02 00:00:00Z", `{"a": 1}`}
 	if !reflect.DeepEqual(result.Rows[0], want) {
 		t.Fatalf("types got  %#v\nwant %#v", result.Rows[0], want)
 	}
 
-	result = mustPostgresQuery(t, service, connID, "SELECT id, txt FROM p16_types WHERE 0", 0, 5*time.Second)
+	result = mustPostgresQuery(t, service, connID, "SELECT id, txt FROM p16_types WHERE false", 0, 5*time.Second)
 	if !reflect.DeepEqual(result.Columns, []string{"id", "txt"}) || len(result.Rows) != 0 {
 		t.Fatalf("empty result metadata: %+v", result)
 	}
@@ -148,10 +151,10 @@ func TestPostgres16DockerIntegration(t *testing.T) {
 	if withService < 2 {
 		t.Fatalf("backends=%d, want the service connection plus the probe", withService)
 	}
-	if err := service.Disconnect(connID); err != nil {
+	if err := service.Disconnect(context.Background(), connID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
-	if _, err := service.postgresOf(connID); err == nil {
+	if _, err := service.postgresOf(context.Background(), connID); err == nil {
 		t.Fatal("PostgreSQL connection handle survived disconnect")
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -165,8 +168,73 @@ func TestPostgres16DockerIntegration(t *testing.T) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	if err := service.Disconnect(connID); err != nil {
+	if err := service.Disconnect(context.Background(), connID); err != nil {
 		t.Fatalf("idempotent disconnect: %v", err)
+	}
+	assertPostgresTransportDisconnect(t, container, config, tlsConfig)
+}
+
+func assertPostgresTransportDisconnect(t *testing.T, container dockerTestContainer, config PostgresConfig, tlsConfig *tls.Config) {
+	t.Helper()
+	config.Host = container.host
+	config.Port = container.port
+	config.TLSConfig = tlsConfig
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	connection, err := connectPostgres(ctx, config)
+	cancel()
+	if err != nil {
+		t.Fatalf("disconnect probe connect: %v", err)
+	}
+	defer connection.Close()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	var targetID int64
+	err = connection.db.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&targetID)
+	cancel()
+	if err != nil {
+		t.Fatalf("backend PID: %v", err)
+	}
+
+	statement := "UPDATE p16_types SET txt = (SELECT 'unknown' FROM pg_sleep(30)) WHERE id = 1"
+	done := make(chan error, 1)
+	go func() {
+		_, err := queryPostgres(context.Background(), connection.db, statement, 0, 40*time.Second)
+		done <- err
+	}()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	probe, err := connectPostgres(ctx, config)
+	cancel()
+	if err != nil {
+		t.Fatalf("statement probe connect: %v", err)
+	}
+	defer probe.Close()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var active string
+		err = probe.db.QueryRowContext(ctx, "SELECT query FROM pg_stat_activity WHERE pid = $1 AND state = 'active'", targetID).Scan(&active)
+		if err == nil && strings.Contains(active, "pg_sleep(30)") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sleeping statement did not start: %v", err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	output, killErr := exec.CommandContext(killCtx, "docker", "kill", "--signal", "KILL", container.name).CombinedOutput()
+	killCancel()
+	if killErr != nil {
+		t.Fatalf("kill PostgreSQL container: %v: %s", killErr, output)
+	}
+	select {
+	case err := <-done:
+		var ipcErr *ipc.Error
+		if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeDisconnected {
+			t.Fatalf("transport disconnect error=%#v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("query did not observe the transport disconnect")
 	}
 }
 

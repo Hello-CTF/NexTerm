@@ -385,6 +385,11 @@ func TestTranscriptHostsIncludeDeletedAssets(t *testing.T) {
 	if err := db.TranscriptEnd(ctx, orphan, 2500, false); err != nil {
 		t.Fatal(err)
 	}
+	deviceAssetID := "device/01JDEVICE00000000000000001"
+	device := startTranscript(t, db, deviceAssetID, 1500)
+	if err := db.TranscriptEnd(ctx, device, 1800, false); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.AssetDelete(ctx, deleted.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -393,8 +398,8 @@ func TestTranscriptHostsIncludeDeletedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hosts) != 3 {
-		t.Fatalf("expected 3 transcript hosts, got %+v", hosts)
+	if len(hosts) != 4 {
+		t.Fatalf("expected 4 transcript hosts, got %+v", hosts)
 	}
 	byID := make(map[string]TranscriptHostRow, len(hosts))
 	for _, host := range hosts {
@@ -408,6 +413,9 @@ func TestTranscriptHostsIncludeDeletedAssets(t *testing.T) {
 	}
 	if host := byID["01J0NEXTERMMISSINGHOST000001"]; !host.AssetDeleted || host.AssetName != "web-01" {
 		t.Fatalf("hard-missing host must be listed from the snapshot: %+v", host)
+	}
+	if host, ok := byID[deviceAssetID]; !ok || host.AssetDeleted || host.Transcripts != 1 {
+		t.Fatalf("device pseudo asset must not be marked deleted: %+v", host)
 	}
 	if hosts[0].AssetID != live.ID {
 		t.Fatalf("hosts must be ordered by last activity: %+v", hosts)

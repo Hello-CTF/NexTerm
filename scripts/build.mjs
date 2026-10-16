@@ -32,6 +32,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  *     --os=darwin --arch=arm64 --require-evidence
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs agent --release --os=linux --arch=amd64
+ *   node scripts/build.mjs helper --release --repro-check --os=linux --arch=arm64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
  *     --file=target/release-assets/NexTerm-server_<version>_linux_amd64.tar.gz --require-evidence
  `;
@@ -127,11 +128,11 @@ function assertTarget(kind, goos, goarch) {
     "windows/arm64": ["desktop", "agent"],
     "darwin/amd64": ["desktop", "server", "agent"],
     "darwin/arm64": ["desktop", "server", "agent"],
-    "linux/amd64": ["desktop", "server", "agent"],
-    "linux/arm64": ["desktop", "server", "agent"],
+    "linux/amd64": ["desktop", "server", "agent", "helper"],
+    "linux/arm64": ["desktop", "server", "agent", "helper"],
   };
   if (!allowed[`${goos}/${goarch}`]?.includes(kind)) {
-    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64, server is Linux amd64+arm64 and agent is Windows/macOS/Linux amd64+arm64`);
+    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64, server is Linux amd64+arm64, agent is Windows/macOS/Linux amd64+arm64, and helper is Linux amd64+arm64`);
   }
 }
 
@@ -292,6 +293,27 @@ function defaultBinaryPath(kind, goos, goarch) {
   return path.join(ROOT, "target/go-build", `nexterm-${kind}-${goos}-${goarch}${suffix}`);
 }
 
+let cachedHelperProtocolMetadata;
+
+function helperProtocolMetadata() {
+  if (cachedHelperProtocolMetadata) return cachedHelperProtocolMetadata;
+  const raw = output("go", ["run", "-mod=readonly", "./cmd/nexterm-helper", "--metadata"], {
+    env: buildEnvironment(HOST_OS, HOST_ARCH, "helper"),
+  });
+  let metadata;
+  try {
+    metadata = JSON.parse(raw);
+  } catch (error) {
+    die(`helper metadata is not valid JSON: ${error.message}`);
+  }
+  if (!Number.isInteger(metadata.protocol) || metadata.protocol <= 0) die(`helper metadata has invalid protocol ${metadata.protocol}`);
+  if (!Array.isArray(metadata.features) || metadata.features.some((feature) => typeof feature !== "string" || feature === "")) {
+    die("helper metadata features must be non-empty strings");
+  }
+  cachedHelperProtocolMetadata = { protocol: metadata.protocol, features: [...metadata.features].sort() };
+  return cachedHelperProtocolMetadata;
+}
+
 function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped }) {
   const manifest = createBinaryManifest({
     file,
@@ -306,6 +328,7 @@ function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
+  if (kind === "helper") Object.assign(manifest, helperProtocolMetadata());
   const destination = path.resolve(ROOT, option("binary-manifest", `${file}.manifest.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -491,6 +514,7 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
     result.push(assertion("binary-architecture", inspected.architecture === goarch, `expected ${goos}/${goarch}; actual ${inspected.format}/${inspected.architecture}`));
     if (kind === "desktop" && goos === "windows") result.push(assertion("windows-icon-resource", inspected.resourceRva > 0, inspected.resourceRva > 0 ? `PE resource directory RVA 0x${inspected.resourceRva.toString(16)}` : "PE resource directory is empty; the .syso icon resource was not linked"));
     if ((kind === "server" || kind === "agent") && goos === "linux") result.push(assertion("static-linux-server", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
+    if (kind === "helper" && goos === "linux") result.push(assertion("static-linux-helper", inspected.static === true, "ELF PT_DYNAMIC must be absent"));
   } catch (error) {
     result.push(assertion("binary-format", false, String(error)));
   }
@@ -614,7 +638,7 @@ function sha256(file) {
 function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped = true, requireEmbedded = false, requireEvidence = false }) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) die(`artifact does not exist: ${file}`);
   const bytes = fs.statSync(file).size;
-  const rawBinary = kind === "desktop" || kind === "server" || kind === "agent";
+  const rawBinary = kind === "desktop" || kind === "server" || kind === "agent" || kind === "helper";
   const inspected = rawBinary
       ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
       : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
@@ -644,6 +668,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     assertions: inspected.assertions,
     status: assertionsFailed ? "failed" : "passed",
   };
+  if (kind === "helper") Object.assign(report, helperProtocolMetadata());
   const destination = path.resolve(ROOT, option("output", `${file}.artifact.json`));
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
@@ -810,6 +835,7 @@ switch (command) {
   case "desktop":
   case "server":
   case "agent":
+  case "helper":
     buildBinary(command);
     break;
   case "report":
@@ -844,5 +870,5 @@ switch (command) {
     console.log(HELP_TEXT);
     break;
   default:
-    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, report, or help`);
+    die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, agent, helper, report, or help`);
 }

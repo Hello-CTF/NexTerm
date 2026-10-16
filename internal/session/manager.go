@@ -12,22 +12,34 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const defaultSlowConsumerGrace = 30 * time.Second
 
+type channelOwnerRegistration struct {
+	ownerID    string
+	generation uint64
+}
+
 type Manager struct {
-	mu               sync.Mutex
-	sessions         map[string]*Session
-	byAsset          map[string]string
-	tabs             map[string]*Tab
-	channelTabs      map[string]string
-	throttleVersions map[string]uint64
-	throttleChannels map[string]map[string]bool
-	slowKicks        map[string]*time.Timer
-	closed           bool
-	started          bool
+	mu                     sync.Mutex
+	sessions               map[string]*Session
+	byAsset                map[assetOwnerKey]string
+	tabs                   map[string]*Tab
+	channelTabs            map[string]string
+	channelOwners          map[string]channelOwnerRegistration
+	channelOwnerGeneration uint64
+	sessionOwners          map[string]string
+	tabOwners              map[string]string
+	controlOwners          map[*recordingControlQueue]string
+	throttleVersions       map[string]uint64
+	throttleChannels       map[string]map[string]bool
+	slowKicks              map[string]*time.Timer
+	closed                 bool
+	started                bool
+	openAccess             bool
 
 	connector   Connector
 	terminals   TerminalFactory
@@ -52,20 +64,26 @@ type Manager struct {
 	defaultReplay     int
 	slowConsumerGrace time.Duration
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	closeOnce sync.Once
-	closeDone chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	closeMu       sync.Mutex
+	closeComplete bool
+	closeErr      error
+	closeDone     chan struct{}
 }
 
 func NewManager(config Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
 		sessions:         make(map[string]*Session),
-		byAsset:          make(map[string]string),
+		byAsset:          make(map[assetOwnerKey]string),
 		tabs:             make(map[string]*Tab),
 		channelTabs:      make(map[string]string),
+		channelOwners:    make(map[string]channelOwnerRegistration),
+		sessionOwners:    make(map[string]string),
+		tabOwners:        make(map[string]string),
+		controlOwners:    make(map[*recordingControlQueue]string),
 		throttleVersions: make(map[string]uint64),
 		throttleChannels: make(map[string]map[string]bool),
 		slowKicks:        make(map[string]*time.Timer),
@@ -81,6 +99,7 @@ func NewManager(config Config) *Manager {
 		reconnectMax:     config.ReconnectMax,
 		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
 		defaultReplay:    config.DefaultReplay,
+		openAccess:       config.OpenAccess,
 		ctx:              ctx,
 		cancel:           cancel,
 		closeDone:        make(chan struct{}),
@@ -109,7 +128,6 @@ func NewManager(config Config) *Manager {
 	}
 	if config.Hub == nil {
 		manager.bus = hub.New(hub.Options{
-			OnChannelClose: func(channelID string) { _ = manager.DetachChannel(channelID) },
 			OnBackpressure: manager.onBackpressure,
 			OnDrain:        manager.onDrain,
 		})
@@ -149,6 +167,73 @@ func (m *Manager) Bind(channelID string) (*hub.Receiver, error) {
 	return m.bus.Bind(channelID)
 }
 
+func (m *Manager) CheckChannelOwner(channelID, ownerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	registration, err := m.channelOwnerLocked(channelID)
+	if errors.Is(err, ErrTabNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if registration.ownerID != ownerID {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (m *Manager) RegisterChannelOwner(channelID, ownerID string) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	registration, err := m.channelOwnerLocked(channelID)
+	if err == nil && registration.ownerID != ownerID {
+		return 0, ErrForbidden
+	}
+	if err != nil && !errors.Is(err, ErrTabNotFound) {
+		return 0, err
+	}
+	m.channelOwnerGeneration++
+	generation := m.channelOwnerGeneration
+	m.channelOwners[channelID] = channelOwnerRegistration{ownerID: ownerID, generation: generation}
+	return generation, nil
+}
+
+func (m *Manager) UnregisterChannelOwner(channelID string, generation uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if registration, ok := m.channelOwners[channelID]; ok && registration.generation == generation {
+		delete(m.channelOwners, channelID)
+	}
+}
+
+func (m *Manager) ChannelOwner(channelID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	registration, err := m.channelOwnerLocked(channelID)
+	return registration.ownerID, err
+}
+
+func (m *Manager) ChannelOwnerGeneration(channelID string) (string, uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	registration, err := m.channelOwnerLocked(channelID)
+	return registration.ownerID, registration.generation, err
+}
+
+func (m *Manager) channelOwnerLocked(channelID string) (channelOwnerRegistration, error) {
+	if tab := m.tabs[m.channelTabs[channelID]]; tab != nil && tab.session != nil {
+		tab.session.mu.Lock()
+		ownerID := tab.session.userID
+		tab.session.mu.Unlock()
+		return channelOwnerRegistration{ownerID: ownerID}, nil
+	}
+	if registration, ok := m.channelOwners[channelID]; ok {
+		return registration, nil
+	}
+	return channelOwnerRegistration{}, ErrTabNotFound
+}
+
 func (m *Manager) Start(context.Context) error {
 	m.mu.Lock()
 	if m.closed {
@@ -170,6 +255,17 @@ func (m *Manager) Shutdown(context.Context) error {
 	return m.Close()
 }
 
+func (m *Manager) requestOpenAccess(ctx context.Context) bool {
+	return m.openAccess || openAccessFromContext(ctx)
+}
+
+func (m *Manager) ConnectFor(ctx context.Context, asset Asset) (*Session, error) {
+	if userIDFromContext(ctx) == "" && !m.requestOpenAccess(ctx) {
+		return nil, ErrForbidden
+	}
+	return m.Connect(ctx, asset)
+}
+
 func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	if asset.ID == "" {
 		return nil, errors.New("asset id is empty")
@@ -181,22 +277,22 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		return nil, fmt.Errorf("%w: connector", ErrUnsupported)
 	}
 
+	requester := userIDFromContext(ctx)
+	assetKey := assetOwnerKey{assetID: asset.ID, ownerScope: requester}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return nil, ErrSessionClosed
 	}
-	if existing := m.sessions[m.byAsset[asset.ID]]; existing != nil {
-		requester := userIDFromContext(ctx)
+	if existing := m.sessions[m.byAsset[assetKey]]; existing != nil {
 		existing.mu.Lock()
-		owner := existing.userID
+		allowed := sessionRequestAllowed(existing, requester, true)
 		status := existing.status
 		done := existing.connectDone
 		existing.mu.Unlock()
 		m.mu.Unlock()
-		// Hitting an existing session skips connector authorization, so it must be intercepted by owner: device pseudo-asset IDs are
-		// deterministic, and without this gate a cross-user requester could attach to someone else's session with zero authorization (behavior unchanged when both sides are empty).
-		if owner != "" && requester != "" && owner != requester {
+		// Reusing an existing session skips connector authorization, so every asset kind requires the same account owner.
+		if !allowed {
 			return nil, ErrForbidden
 		}
 		if status != StatusConnecting {
@@ -224,7 +320,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		ID:          newID(),
 		CreatedAt:   time.Now(),
 		asset:       asset,
-		userID:      userIDFromContext(ctx),
+		userID:      requester,
 		status:      StatusConnecting,
 		generation:  generation,
 		ctx:         sessionCtx,
@@ -234,7 +330,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		connectDone: make(chan struct{}),
 	}
 	m.sessions[session.ID] = session
-	m.byAsset[asset.ID] = session.ID
+	m.byAsset[assetKey] = session.ID
 	session.mu.Lock()
 	connectingEvent := session.statusEventLocked(StatusConnecting, nil)
 	session.mu.Unlock()
@@ -275,7 +371,9 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		session.closed = true
 		session.finishConnectLocked(connectErr)
 		delete(m.sessions, session.ID)
-		delete(m.byAsset, asset.ID)
+		if m.byAsset[assetKey] == session.ID {
+			delete(m.byAsset, assetKey)
+		}
 		failedEvent := session.statusEventLocked(StatusFailed, connectErr)
 		session.mu.Unlock()
 		m.mu.Unlock()
@@ -317,29 +415,93 @@ func (s *Session) finishReconnectLocked(err error) {
 }
 
 func (m *Manager) Session(id string) (*Session, error) {
+	return m.session(id, "", true)
+}
+
+func (m *Manager) SessionFor(ctx context.Context, id string) (*Session, error) {
+	requester := userIDFromContext(ctx)
+	if requester == "" && !m.requestOpenAccess(ctx) {
+		return nil, ErrForbidden
+	}
+	return m.session(id, requester, m.requestOpenAccess(ctx))
+}
+
+func (m *Manager) session(id, requester string, openAccess bool) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := m.sessions[id]
 	if session == nil {
 		return nil, ErrSessionNotFound
 	}
+	if requester != "" || !openAccess {
+		session.mu.Lock()
+		allowed := sessionRequestAllowed(session, requester, openAccess)
+		session.mu.Unlock()
+		if !allowed {
+			return nil, ErrForbidden
+		}
+	}
 	return session, nil
 }
 
 func (m *Manager) Tab(id string) (*Tab, error) {
+	return m.tab(id, "", true)
+}
+
+func (m *Manager) TabFor(ctx context.Context, id string) (*Tab, error) {
+	requester := userIDFromContext(ctx)
+	if requester == "" && !m.requestOpenAccess(ctx) {
+		return nil, ErrForbidden
+	}
+	return m.tab(id, requester, m.requestOpenAccess(ctx))
+}
+
+func (m *Manager) tab(id, requester string, openAccess bool) (*Tab, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tab := m.tabs[id]
 	if tab == nil {
 		return nil, ErrTabNotFound
 	}
+	if requester != "" || !openAccess {
+		session := tab.session
+		if session == nil {
+			return nil, ErrForbidden
+		}
+		session.mu.Lock()
+		allowed := sessionRequestAllowed(session, requester, openAccess)
+		session.mu.Unlock()
+		if !allowed {
+			return nil, ErrForbidden
+		}
+	}
 	return tab, nil
 }
 
 func (m *Manager) ListSessions() []SessionInfo {
+	infos, _ := m.listSessions("", true)
+	return infos
+}
+
+func (m *Manager) ListSessionsFor(ctx context.Context) ([]SessionInfo, error) {
+	return m.listSessions(userIDFromContext(ctx), m.requestOpenAccess(ctx))
+}
+
+func (m *Manager) listSessions(requester string, openAccess bool) ([]SessionInfo, error) {
+	if requester == "" && !openAccess {
+		return nil, ErrForbidden
+	}
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
 	for _, session := range m.sessions {
+		if requester != "" {
+			session.mu.Lock()
+			allowed := sessionRequestAllowed(session, requester, openAccess)
+			session.mu.Unlock()
+			if !allowed {
+				continue
+			}
+		}
 		sessions = append(sessions, session)
 	}
 	m.mu.Unlock()
@@ -348,13 +510,37 @@ func (m *Manager) ListSessions() []SessionInfo {
 		infos = append(infos, session.Info())
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
-	return infos
+	return infos, nil
 }
 
 func (m *Manager) ListTabs() []TabInfo {
+	infos, _ := m.listTabs("", true)
+	return infos
+}
+
+func (m *Manager) ListTabsFor(ctx context.Context) ([]TabInfo, error) {
+	return m.listTabs(userIDFromContext(ctx), m.requestOpenAccess(ctx))
+}
+
+func (m *Manager) listTabs(requester string, openAccess bool) ([]TabInfo, error) {
+	if requester == "" && !openAccess {
+		return nil, ErrForbidden
+	}
 	m.mu.Lock()
 	tabs := make([]*Tab, 0, len(m.tabs))
 	for _, tab := range m.tabs {
+		if requester != "" {
+			session := tab.session
+			if session == nil {
+				continue
+			}
+			session.mu.Lock()
+			allowed := sessionRequestAllowed(session, requester, openAccess)
+			session.mu.Unlock()
+			if !allowed {
+				continue
+			}
+		}
 		tabs = append(tabs, tab)
 	}
 	m.mu.Unlock()
@@ -363,7 +549,42 @@ func (m *Manager) ListTabs() []TabInfo {
 		infos = append(infos, tab.Info())
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
-	return infos
+	return infos, nil
+}
+
+func (m *Manager) DisconnectFor(ctx context.Context, id string) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
+	return m.Disconnect(id)
+}
+
+func (m *Manager) StartReconnectFor(ctx context.Context, id string) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
+	return m.StartReconnect(id)
+}
+
+func (m *Manager) ReconnectFor(ctx context.Context, id string) error {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return err
+	}
+	return m.Reconnect(ctx, id)
+}
+
+func (m *Manager) TransportFor(ctx context.Context, id string) (base.Transport, error) {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return nil, err
+	}
+	return m.Transport(ctx, id)
+}
+
+func (m *Manager) CurrentDialerFor(ctx context.Context, id string) (base.Dialer, error) {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return nil, err
+	}
+	return m.CurrentDialer(ctx, id)
 }
 
 func (m *Manager) Disconnect(id string) error {
@@ -404,8 +625,8 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	session.finishConnectLocked(ErrDisconnected)
 	session.finishReconnectLocked(ErrDisconnected)
 	channels := session.detachChannelsLocked()
-	if m.byAsset[session.asset.ID] == session.ID {
-		delete(m.byAsset, session.asset.ID)
+	if m.byAsset[session.assetOwnerKey()] == session.ID {
+		delete(m.byAsset, session.assetOwnerKey())
 	}
 	disconnectedEvent := session.statusEventLocked(StatusDisconnected, nil)
 	session.mu.Unlock()
@@ -455,46 +676,85 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		return nil
 	}
 	session.mu.Lock()
-	if len(expectedIdle) > 0 && (session.status != StatusConnected || len(session.tabs) != 0 || !session.idleSince.Equal(expectedIdle[0])) {
+	retry := session.reapRetry
+	if len(expectedIdle) > 0 && !retry && (session.status != StatusConnected || len(session.tabs) != 0 || !session.idleSince.Equal(expectedIdle[0])) {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return nil
 	}
-	if session.closed && session.status == StatusDisconnected {
+	if session.closed && session.status == StatusDisconnected && !retry {
 		session.mu.Unlock()
 		m.mu.Unlock()
 		return nil
 	}
-	session.closed = true
-	session.status = StatusDisconnected
-	session.generation++
 	cancel := session.cancel
+	if !retry {
+		session.closed = true
+		session.status = StatusDisconnected
+		session.generation++
+		session.finishConnectLocked(ErrSessionClosed)
+		session.finishReconnectLocked(ErrSessionClosed)
+	}
 	transport := session.transport
-	session.transport = nil
-	session.finishConnectLocked(ErrSessionClosed)
-	session.finishReconnectLocked(ErrSessionClosed)
 	tabs := make([]*Tab, 0, len(session.tabs))
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
-		delete(m.tabs, tab.ID)
-		delete(m.throttleVersions, tab.ID)
-		delete(m.throttleChannels, tab.ID)
 	}
-	session.tabs = make(map[string]*Tab)
-	delete(m.sessions, id)
-	if m.byAsset[session.asset.ID] == session.ID {
-		delete(m.byAsset, session.asset.ID)
-	}
-	disconnectedEvent := session.statusEventLocked(StatusDisconnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
 
-	cancel()
-	for _, tab := range tabs {
-		m.closeTabResources(tab)
+	if !retry {
+		cancel()
 	}
 	if transport != nil {
-		_ = transport.Close()
+		if err := transport.Close(); err != nil {
+			session.mu.Lock()
+			session.reapRetry = true
+			session.mu.Unlock()
+			return err
+		}
+	}
+	remaining := len(tabs)
+	completed := false
+	var disconnectedEvent StatusEvent
+	finish := func(tab *Tab) {
+		m.mu.Lock()
+		session.mu.Lock()
+		if tab != nil {
+			if m.tabs[tab.ID] == tab {
+				delete(m.tabs, tab.ID)
+				delete(m.throttleVersions, tab.ID)
+				delete(m.throttleChannels, tab.ID)
+			}
+			delete(session.tabs, tab.ID)
+			remaining--
+		}
+		if remaining == 0 && !completed && m.sessions[id] == session {
+			session.transport = nil
+			session.reapRetry = false
+			delete(m.sessions, id)
+			if m.byAsset[session.assetOwnerKey()] == session.ID {
+				delete(m.byAsset, session.assetOwnerKey())
+			}
+			disconnectedEvent = session.statusEventLocked(StatusDisconnected, nil)
+			completed = true
+		}
+		session.mu.Unlock()
+		m.mu.Unlock()
+	}
+	for _, tab := range tabs {
+		if err := m.closeTabResources(tab, func() { finish(tab) }); err != nil {
+			session.mu.Lock()
+			session.reapRetry = true
+			session.mu.Unlock()
+			return err
+		}
+	}
+	if len(tabs) == 0 {
+		finish(nil)
+	}
+	if !completed {
+		return ErrStaleGeneration
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(id)
@@ -568,29 +828,40 @@ func (m *Manager) idleLoop() {
 }
 
 func (m *Manager) Close() error {
-	m.closeOnce.Do(func() {
-		m.mu.Lock()
-		m.closed = true
-		for channelID, timer := range m.slowKicks {
-			timer.Stop()
-			delete(m.slowKicks, channelID)
+	m.closeMu.Lock()
+	defer m.closeMu.Unlock()
+	if m.closeComplete {
+		return m.closeErr
+	}
+	m.mu.Lock()
+	m.closed = true
+	for channelID, timer := range m.slowKicks {
+		timer.Stop()
+		delete(m.slowKicks, channelID)
+	}
+	sessions := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		sessions = append(sessions, id)
+	}
+	m.mu.Unlock()
+	m.cancel()
+	errs := make([]error, 0)
+	for _, id := range sessions {
+		if err := m.reap(id); err != nil {
+			errs = append(errs, err)
 		}
-		sessions := make([]string, 0, len(m.sessions))
-		for id := range m.sessions {
-			sessions = append(sessions, id)
-		}
-		m.mu.Unlock()
-		m.cancel()
-		for _, id := range sessions {
-			_ = m.reap(id)
-		}
-		m.wg.Wait()
-		if m.ownsBus {
-			_ = m.bus.Close()
-		}
-		close(m.closeDone)
-	})
-	<-m.closeDone
+	}
+	if len(errs) > 0 {
+		m.closeErr = errors.Join(errs...)
+		return m.closeErr
+	}
+	m.wg.Wait()
+	if m.ownsBus {
+		_ = m.bus.Close()
+	}
+	m.closeErr = nil
+	m.closeComplete = true
+	close(m.closeDone)
 	return nil
 }
 
@@ -685,13 +956,74 @@ func (m *Manager) clearThrottleChannelLocked(tabID, channelID string) (bool, uin
 }
 
 func (m *Manager) emit(ctx context.Context, topic string, payload any) {
-	if m.emitter == nil {
-		return
-	}
+	force := ctx != nil && ctx.Value(recordingControlMarker{}) == true
 	if ctx == nil || ctx.Err() != nil {
 		ctx = context.Background()
 	}
+	if topic == TopicTerminalControl {
+		if event, ok := payload.(ControlEvent); ok {
+			m.queueRecordingControl(ctx, event, force)
+			return
+		}
+	}
+	ownerID, resourceID, closed := m.eventOwner(topic, payload)
+	if ownerID != "" {
+		ctx = ipc.WithEventOwner(ctx, ownerID)
+	}
+	if m.emitter == nil {
+		return
+	}
 	_ = m.emitter.EmitSessionEvent(ctx, Event{Topic: topic, Payload: payload})
+	if !closed || resourceID == "" {
+		return
+	}
+	m.mu.Lock()
+	switch topic {
+	case TopicSessionStatus:
+		delete(m.sessionOwners, resourceID)
+	case TopicTerminalControl:
+		delete(m.tabOwners, resourceID)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) eventOwner(topic string, payload any) (ownerID, resourceID string, closed bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if topic == TopicSessionStatus {
+		event, ok := payload.(StatusEvent)
+		if !ok {
+			return "", "", false
+		}
+		if session := m.sessions[event.SessionID]; session != nil {
+			session.mu.Lock()
+			ownerID = session.userID
+			session.mu.Unlock()
+			m.sessionOwners[event.SessionID] = ownerID
+			return ownerID, event.SessionID, false
+		}
+		return m.sessionOwners[event.SessionID], event.SessionID, true
+	}
+
+	var tabID string
+	switch event := payload.(type) {
+	case ControlEvent:
+		tabID = event.TabID
+	case ExitEvent:
+		tabID = event.TabID
+	case ThrottleEvent:
+		tabID = event.TabID
+	default:
+		return "", "", false
+	}
+	if tab := m.tabs[tabID]; tab != nil && tab.session != nil {
+		tab.session.mu.Lock()
+		ownerID = tab.session.userID
+		tab.session.mu.Unlock()
+		m.tabOwners[tabID] = ownerID
+		return ownerID, tabID, false
+	}
+	return m.tabOwners[tabID], tabID, true
 }
 
 func newID() string {

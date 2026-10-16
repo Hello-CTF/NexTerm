@@ -325,6 +325,22 @@ jobs:
           key: gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-
+      - name: Verify Windows PowerShell runtimes
+        if: github.event_name == 'pull_request' && matrix.os == 'windows' && matrix.kind == 'desktop'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("powershell.exe " + $PSVersionTable.PSVersion.ToString())'
+          if ($LASTEXITCODE -ne 0) { throw "powershell.exe version check failed" }
+          & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("pwsh.exe " + $PSVersionTable.PSVersion.ToString())'
+          if ($LASTEXITCODE -ne 0) { throw "pwsh.exe version check failed" }
+      - name: Run real Windows Go and loopback tests
+        if: github.event_name == 'pull_request' && matrix.os == 'windows' && matrix.kind == 'desktop'
+        shell: powershell
+        timeout-minutes: 45
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./.github/scripts/windows-real-tests.ps1
       - name: Install and verify the Windows release tools
         if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
         shell: bash

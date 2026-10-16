@@ -34,10 +34,26 @@ type compactionHandler struct {
 	window         uint64
 	summaryTimeout time.Duration
 	onCompact      func()
+	onUsage        func(*schema.Message, time.Duration) error
 }
 
-func newCompactionHandler(chatModel model.BaseChatModel, window uint64, onCompact func()) *compactionHandler {
-	return &compactionHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, model: chatModel, window: window, summaryTimeout: defaultSummaryTimeout, onCompact: onCompact}
+func newCompactionHandler(chatModel model.BaseChatModel, window uint64, onCompact func(), onUsage ...func(*schema.Message, time.Duration) error) *compactionHandler {
+	handler := &compactionHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, model: chatModel, window: window, summaryTimeout: defaultSummaryTimeout, onCompact: onCompact}
+	if len(onUsage) > 0 {
+		handler.onUsage = onUsage[0]
+	}
+	return handler
+}
+
+func (h *compactionHandler) generate(ctx context.Context, input []*schema.Message) (*schema.Message, error) {
+	started := time.Now()
+	response, err := h.model.Generate(ctx, input)
+	if h.onUsage != nil && response != nil {
+		if usageErr := h.onUsage(response, time.Since(started)); err == nil {
+			err = usageErr
+		}
+	}
+	return response, err
 }
 
 func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
@@ -115,7 +131,7 @@ func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*sch
 		input = append(input, schema.SystemMessage(summarySystemInstruction()))
 		input = append(input, chunk...)
 		input = append(input, schema.UserMessage(historySummaryInstruction()))
-		response, err := h.model.Generate(ctx, input)
+		response, err := h.generate(ctx, input)
 		if err != nil {
 			return "", err
 		}
@@ -134,7 +150,7 @@ func (h *compactionHandler) mergeSummaries(ctx context.Context, texts []string) 
 		groups := packSummaryGroups(texts, h.summaryChunkBytes()-len(summaryMergeInstruction())-128)
 		merged := make([]string, 0, len(groups))
 		for _, group := range groups {
-			response, err := h.model.Generate(ctx, []*schema.Message{
+			response, err := h.generate(ctx, []*schema.Message{
 				schema.SystemMessage(summarySystemInstruction()),
 				schema.UserMessage(summaryMergeInstruction() + "\n\n" + strings.Join(group, "\n\n")),
 			})

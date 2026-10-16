@@ -64,7 +64,14 @@ type RemoteMetricsSample struct {
 }
 
 type RemoteMetricsSamples struct {
-	Samples []RemoteMetricsSample `json:"samples"`
+	Samples          []RemoteMetricsSample `json:"samples"`
+	Latest           *RemoteMetricsSample  `json:"latest,omitempty"`
+	WindowStart      int64                 `json:"windowStart,omitempty"`
+	WindowEnd        int64                 `json:"windowEnd,omitempty"`
+	SampleCount      int64                 `json:"sampleCount,omitempty"`
+	Downsampled      bool                  `json:"downsampled,omitempty"`
+	SeriesError      string                `json:"seriesError,omitempty"`
+	SampleIntervalMS int64                 `json:"sampleIntervalMs,omitempty"`
 }
 
 type RemoteBaseURLEntry struct {

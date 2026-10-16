@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppTab, Pane, Workspace } from "../../app/store";
 import {
+  acknowledgeFileEditorLocation,
+  beginFileEditorLoad,
+  beginFileEditorRename,
+  beginFileEditorSave,
   dirtyFileEditors,
+  endFileEditorOperation,
+  finishFileEditorRename,
+  isDirtyFileEditor,
+  migratedFileEditorPath,
   setFileEditorDirty,
   shouldClearEditorDirty,
   shouldHandleEditorSave,
@@ -79,5 +87,96 @@ describe("dirty editor registry", () => {
     const b = tab("b", "/b.txt");
     setFileEditorDirty("session", "/a.txt", true);
     expect(dirtyFileEditors([a, b, tab("browser"), tab("term", undefined, true)])).toEqual([a]);
+  });
+
+  it("treats slash and backslash spellings as the same dirty locator", () => {
+    setFileEditorDirty("session", "C:\\work\\a.txt", true);
+    expect(isDirtyFileEditor(tab("windows", "C:/work/a.txt"))).toBe(true);
+    setFileEditorDirty("session", "C:/work/a.txt", false);
+  });
+});
+
+describe("file editor locator migration", () => {
+  it("matches only exact files and directory boundaries, including Windows separators", () => {
+    expect(migratedFileEditorPath("/a/file.txt", "/a", "/b", "dir")).toBe("/b/file.txt");
+    expect(migratedFileEditorPath("/a/nested/file.txt", "/a", "/b", "dir")).toBe(
+      "/b/nested/file.txt",
+    );
+    expect(migratedFileEditorPath("/abc/file.txt", "/a", "/b", "dir")).toBeNull();
+    expect(migratedFileEditorPath("C:\\a\\nested\\file.txt", "C:\\a", "C:/b", "dir")).toBe(
+      "C:/b/nested/file.txt",
+    );
+    expect(migratedFileEditorPath("C:\\abc\\file.txt", "C:\\a", "C:/b", "dir")).toBeNull();
+    expect(migratedFileEditorPath("C:\\a\\file.txt", "C:\\a", "C:/A", "dir")).toBe(
+      "C:/A/file.txt",
+    );
+    expect(migratedFileEditorPath("C:\\A\\file.txt", "C:\\a", "C:/b", "dir")).toBeNull();
+    expect(migratedFileEditorPath("~/a.txt", "~/link", "~/link2", "symlink")).toBeNull();
+    expect(migratedFileEditorPath("~/link", "~/link", "~/link2", "symlink")).toBe("~/link2");
+  });
+});
+
+describe("file editor operation guards", () => {
+  it("serializes saves and renames in both directions", () => {
+    const save = beginFileEditorSave("session", "/a.txt");
+    if (typeof save === "string") throw new Error(`save blocked: ${save}`);
+    expect(beginFileEditorRename("session", "/a.txt", "/b.txt", "file")).toBe("busy");
+    endFileEditorOperation(save);
+
+    const rename = beginFileEditorRename("session", "/a.txt", "/b.txt", "file");
+    if (typeof rename === "string") throw new Error(`rename blocked: ${rename}`);
+    expect(beginFileEditorSave("session", "/a.txt")).toBe("rename");
+    expect(beginFileEditorSave("session", "/b.txt")).toBe("rename");
+    finishFileEditorRename(rename, false);
+
+    const nextSave = beginFileEditorSave("session", "/b.txt");
+    if (typeof nextSave === "string") throw new Error(`next save blocked: ${nextSave}`);
+    endFileEditorOperation(nextSave);
+  });
+
+  it("blocks old-path saves for an unknown outcome until explicit confirmation", () => {
+    const rename = beginFileEditorRename("session", "/a.txt", "/b.txt", "file");
+    if (typeof rename === "string") throw new Error(`rename blocked: ${rename}`);
+    finishFileEditorRename(rename, true);
+    expect(beginFileEditorSave("session", "/a.txt")).toBe("unknown");
+
+    const targetSave = beginFileEditorSave("session", "/b.txt");
+    if (typeof targetSave === "string") throw new Error(`target save blocked: ${targetSave}`);
+    endFileEditorOperation(targetSave);
+    acknowledgeFileEditorLocation("session", "/a.txt");
+    const oldSave = beginFileEditorSave("session", "/a.txt");
+    if (typeof oldSave === "string") throw new Error(`confirmed save blocked: ${oldSave}`);
+    endFileEditorOperation(oldSave);
+  });
+
+  it("folds Windows locator case for dirty keys, loads, saves and migration but preserves display case", () => {
+    setFileEditorDirty("session", "C:\\Work\\Draft.TXT", true, true);
+    expect(isDirtyFileEditor(tab("windows-dirty", "c:/work/draft.txt"), true)).toBe(true);
+    expect(
+      migratedFileEditorPath("C:\\Work\\Draft.TXT", "c:/work/draft.txt", "D:/Next/Final.TxT", "file", true),
+    ).toBe("D:/Next/Final.TxT");
+
+    const save = beginFileEditorSave("session", "C:\\Work\\Draft.TXT", true);
+    if (typeof save === "string") throw new Error(`Windows save blocked: ${save}`);
+    expect(beginFileEditorLoad("session", "c:/work/draft.txt", true)).toBeNull();
+    expect(beginFileEditorRename("session", "c:/work/draft.txt", "C:/Work/other.txt", "file", true)).toBe(
+      "busy",
+    );
+    endFileEditorOperation(save);
+    setFileEditorDirty("session", "c:/work/draft.txt", false, true);
+    expect(isDirtyFileEditor(tab("windows-dirty", "C:/Work/Draft.TXT"), true)).toBe(false);
+  });
+
+  it("keeps POSIX locator case distinct", () => {
+    setFileEditorDirty("session", "/tmp/Draft.TXT", true);
+    expect(isDirtyFileEditor(tab("posix-dirty", "/tmp/draft.txt"))).toBe(false);
+    expect(migratedFileEditorPath("/tmp/Draft.TXT", "/tmp/draft.txt", "/tmp/final.txt", "file")).toBeNull();
+    const save = beginFileEditorSave("session", "/tmp/Draft.TXT");
+    if (typeof save === "string") throw new Error(`POSIX save blocked: ${save}`);
+    const other = beginFileEditorLoad("session", "/tmp/draft.txt");
+    expect(other).not.toBeNull();
+    if (other !== null) endFileEditorOperation(other);
+    endFileEditorOperation(save);
+    setFileEditorDirty("session", "/tmp/Draft.TXT", false);
   });
 });

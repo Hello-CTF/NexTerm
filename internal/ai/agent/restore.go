@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
@@ -104,11 +105,14 @@ func (r *Runner) recoveredUsage(ctx context.Context, runID string) usage.Usage {
 	}
 	var total usage.Usage
 	var latencyTotal uint64
+	seenCallIDs := map[string]bool{}
 	for _, row := range events {
 		if row.Type != "usage" {
 			continue
 		}
 		var payload struct {
+			CallID              string `json:"callId"`
+			Channel             string `json:"channel"`
 			PromptTokens        uint64 `json:"promptTokens"`
 			CompletionTokens    uint64 `json:"completionTokens"`
 			CacheCreationTokens uint64 `json:"cacheCreationTokens"`
@@ -117,11 +121,26 @@ func (r *Runner) recoveredUsage(ctx context.Context, runID string) usage.Usage {
 		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 			continue
 		}
+		if agentOwnedUsageCallID(payload.Channel, payload.CallID) {
+			if seenCallIDs[payload.CallID] {
+				continue
+			}
+			seenCallIDs[payload.CallID] = true
+		}
 		total.Accumulate(usage.Usage{PromptTokens: payload.PromptTokens, CompletionTokens: payload.CompletionTokens, CacheCreationTokens: payload.CacheCreationTokens})
 		latencyTotal = usage.SaturatingAdd(latencyTotal, payload.LatencyMS)
 	}
 	total.LatencyMS = usage.SaturatingInt64(latencyTotal)
 	return total
+}
+
+func agentOwnedUsageCallID(channel, callID string) bool {
+	switch channel {
+	case "main", "summary", "tool-subagent":
+		return strings.HasPrefix(callID, channel+":")
+	default:
+		return false
+	}
 }
 
 func (r *Runner) watchRestoredRun(row store.RunRow) {
@@ -202,6 +221,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	current := &job{
 		id:          jobID,
+		ownerID:     row.OwnerID,
 		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scopeFromConversation(conversation.ScopeJSON), Source: row.Source, ModelProfileID: row.ProfileID},
 		ctx:         jobContext,
 		cancel:      cancel,
@@ -238,6 +258,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	r.jobs[jobID] = current
 	r.wg.Add(1)
 	r.mu.Unlock()
+	recovered := r.recoveredUsage(context.Background(), jobID)
 	if err := r.initializeEino(current); err != nil {
 		r.mu.Lock()
 		if r.jobs[jobID] == current {
@@ -251,7 +272,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		r.wg.Done()
 		return nil, err
 	}
-	current.eino.addUsage(r.recoveredUsage(context.Background(), jobID))
+	current.eino.addUsage(recovered)
 	go r.watchHITL(current)
 	return current, nil
 }

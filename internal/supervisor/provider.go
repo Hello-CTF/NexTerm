@@ -35,8 +35,48 @@ func translateError(err error) error {
 	}
 }
 
+func translateMetadataError(err error) error {
+	var conflict *MetadataConflictError
+	if errors.As(err, &conflict) {
+		return &base.DurableMetadataConflictError{
+			CurrentTitle:            conflict.Current.Title,
+			CurrentMetadataRevision: conflict.Current.MetadataRevision,
+		}
+	}
+	if errors.Is(err, ErrUnsupported) {
+		return base.ErrUnsupported
+	}
+	return translateError(err)
+}
+
+func checkedIdentity(identity base.DurableIdentity) (*Identity, error) {
+	if identity.Incarnation == "" {
+		return nil, durable.ErrInvalidInput
+	}
+	return &Identity{CreatedAt: identity.CreatedAt, Incarnation: identity.Incarnation}, nil
+}
+
+func renameResult(info Info) base.DurableRenameResult {
+	return base.DurableRenameResult{Title: info.Title, MetadataRevision: info.MetadataRevision}
+}
+
+func renameRequest(options base.DurableRenameOptions) RenameRequest {
+	return RenameRequest{
+		ID:                       options.ID,
+		Incarnation:              options.Incarnation,
+		RequestID:                options.RequestID,
+		ExpectedMetadataRevision: options.ExpectedMetadataRevision,
+		Title:                    options.Title,
+	}
+}
+
 type Provider struct {
 	supervisor *Supervisor
+}
+
+var embeddedProviderAttach = func(ctx context.Context, supervisor *Supervisor, session *Session) (*Attachment, error) {
+	identity := session.Identity()
+	return supervisor.attachFrom(ctx, session.ID(), 0, &identity)
 }
 
 func NewProvider(supervisor *Supervisor) *Provider {
@@ -58,7 +98,7 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 	if session == nil {
 		return nil, translateError(err)
 	}
-	attachment, err := session.attach(0)
+	attachment, err := embeddedProviderAttach(ctx, p.supervisor, session)
 	if err != nil {
 		identity := session.Identity()
 		_ = p.supervisor.kill(context.Background(), session.ID(), &identity)
@@ -68,7 +108,7 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 }
 
 func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.Attach(ctx, id)
+	attachment, err := p.supervisor.attachFrom(ctx, id, 0, nil)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
@@ -76,11 +116,50 @@ func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachmen
 }
 
 func (p *Provider) AttachFrom(ctx context.Context, id string, offset uint64) (base.DurableAttachment, error) {
-	attachment, err := p.supervisor.AttachFrom(ctx, id, offset)
+	attachment, err := p.supervisor.attachFrom(ctx, id, offset, nil)
 	if attachment == nil {
 		return nil, translateError(err)
 	}
 	return &channelAttachment{Attachment: attachment}, nil
+}
+
+func (p *Provider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *Provider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return nil, err
+	}
+	attachment, err := p.supervisor.attachFrom(ctx, id, offset, expected)
+	if attachment == nil {
+		return nil, translateError(err)
+	}
+	return &channelAttachment{Attachment: attachment}, nil
+}
+
+func (p *Provider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return err
+	}
+	return translateError(p.supervisor.kill(ctx, id, expected))
+}
+
+func (p *Provider) DurableMetadataSupported(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (p *Provider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	info, err := p.supervisor.Rename(ctx, renameRequest(options))
+	if err != nil {
+		return base.DurableRenameResult{}, translateMetadataError(err)
+	}
+	return renameResult(info), nil
 }
 
 func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
@@ -95,6 +174,40 @@ func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+func (p *Provider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
+	infos, err := p.supervisor.listCanonical(ctx)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return durableDescriptors(infos), nil
+}
+
+func durableDescriptors(infos []Info) []base.DurableDescriptor {
+	descriptors := make([]base.DurableDescriptor, len(infos))
+	for index, info := range infos {
+		descriptors[index] = base.DurableDescriptor{
+			ID:               info.ID,
+			Incarnation:      info.Incarnation,
+			CreatedAt:        info.CreatedAt,
+			Title:            info.Title,
+			MetadataRevision: info.MetadataRevision,
+			Cols:             info.Cols,
+			Rows:             info.Rows,
+			Dead:             info.Dead,
+			Signal:           info.Signal,
+		}
+		if info.ExitCode != nil {
+			exitCode := *info.ExitCode
+			descriptors[index].ExitCode = &exitCode
+		}
+		if info.FinishedAt != nil {
+			finishedAt := *info.FinishedAt
+			descriptors[index].FinishedAt = &finishedAt
+		}
+	}
+	return descriptors
+}
+
 type channelAttachment struct {
 	*Attachment
 }
@@ -102,6 +215,7 @@ type channelAttachment struct {
 func (a *channelAttachment) Stderr() io.Reader  { return nil }
 func (a *channelAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *channelAttachment) Generation() uint64 { return 0 }
+func (a *channelAttachment) Info() Info         { return a.session.canonicalInfo() }
 
 func (a *channelAttachment) Read(p []byte) (int, error) {
 	count, err := a.Attachment.Read(p)
@@ -227,6 +341,43 @@ func (p *RemoteProvider) AttachFrom(ctx context.Context, id string, offset uint6
 	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
+func (p *RemoteProvider) AttachWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) (base.DurableAttachment, error) {
+	return p.AttachFromWithIdentity(ctx, id, identity, 0)
+}
+
+func (p *RemoteProvider) AttachFromWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, offset uint64) (base.DurableAttachment, error) {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := p.client.AttachFrom(ctx, id, expected, offset)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &streamAttachment{Stream: stream, provider: p}, nil
+}
+
+func (p *RemoteProvider) KillWithIdentity(ctx context.Context, id string, identity base.DurableIdentity) error {
+	expected, err := checkedIdentity(identity)
+	if err != nil {
+		return err
+	}
+	return translateError(p.client.Kill(ctx, id, expected))
+}
+
+func (p *RemoteProvider) DurableMetadataSupported(ctx context.Context) (bool, error) {
+	supported, err := p.client.MetadataSupported(ctx)
+	return supported, translateError(err)
+}
+
+func (p *RemoteProvider) RenameDurable(ctx context.Context, options base.DurableRenameOptions) (base.DurableRenameResult, error) {
+	info, err := p.client.Rename(ctx, renameRequest(options))
+	if err != nil {
+		return base.DurableRenameResult{}, translateMetadataError(err)
+	}
+	return renameResult(info), nil
+}
+
 func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
 	infos, err := p.client.List(ctx)
 	if err != nil {
@@ -237,6 +388,14 @@ func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
 		ids[index] = info.ID
 	}
 	return ids, nil
+}
+
+func (p *RemoteProvider) ListDurableDescriptors(ctx context.Context) ([]base.DurableDescriptor, error) {
+	infos, err := p.client.List(ctx)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return durableDescriptors(infos), nil
 }
 
 type streamAttachment struct {
@@ -304,8 +463,16 @@ func (a *streamAttachment) DurableGrid() (cols, rows uint32, ok bool) {
 }
 
 var (
-	_ base.DurableProvider   = (*Provider)(nil)
-	_ base.DurableAttachment = (*channelAttachment)(nil)
-	_ base.DurableProvider   = (*RemoteProvider)(nil)
-	_ base.DurableAttachment = (*streamAttachment)(nil)
+	_ base.DurableProvider         = (*Provider)(nil)
+	_ base.DurableDescriptorLister = (*Provider)(nil)
+	_ base.DurableMetadataProvider = (*Provider)(nil)
+	_ base.DurableIdentityAttacher = (*Provider)(nil)
+	_ base.DurableIdentityKiller   = (*Provider)(nil)
+	_ base.DurableAttachment       = (*channelAttachment)(nil)
+	_ base.DurableProvider         = (*RemoteProvider)(nil)
+	_ base.DurableDescriptorLister = (*RemoteProvider)(nil)
+	_ base.DurableMetadataProvider = (*RemoteProvider)(nil)
+	_ base.DurableIdentityAttacher = (*RemoteProvider)(nil)
+	_ base.DurableIdentityKiller   = (*RemoteProvider)(nil)
+	_ base.DurableAttachment       = (*streamAttachment)(nil)
 )

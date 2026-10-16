@@ -17,7 +17,10 @@ const mocks = vi.hoisted(() => {
   // Quick connect (ad-hoc connection) is a desktop capability; web-mode hiding behavior is covered in quickConnectWeb.test.tsx.
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
+    mobile: false,
     list: vi.fn(),
+    groupList: vi.fn(),
+    listCredentials: vi.fn(),
     probeBatch: vi.fn(),
     sessionConnect: vi.fn(),
     sessionConnectQuick: vi.fn(),
@@ -30,6 +33,7 @@ const mocks = vi.hoisted(() => {
     ask: vi.fn(),
     promptText: vi.fn(),
     toast: vi.fn(),
+    writeText: vi.fn(),
   };
 });
 
@@ -39,6 +43,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     assetApi: {
       list: mocks.list,
+      groupList: mocks.groupList,
       probeBatch: mocks.probeBatch,
       create: mocks.assetCreate,
       knownHostAccept: mocks.knownHostAccept,
@@ -49,7 +54,12 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       quickConnectDefaultUser: mocks.quickConnectDefaultUser,
     },
     dbApi: {},
-    vaultApi: { status: mocks.vaultStatus, setCredential: mocks.setCredential, deleteCredential: mocks.deleteCredential },
+    vaultApi: {
+      status: mocks.vaultStatus,
+      listCredentials: mocks.listCredentials,
+      setCredential: mocks.setCredential,
+      deleteCredential: mocks.deleteCredential,
+    },
     terminalApi: {},
   };
 });
@@ -57,6 +67,11 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   return { ...actual, ask: mocks.ask, promptText: mocks.promptText };
+});
+
+vi.mock("../../app/platform", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/platform")>();
+  return { ...actual, isMobile: () => mocks.mobile };
 });
 
 import { QuickConnect } from "../../app/QuickConnect";
@@ -182,6 +197,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   localStorage.clear();
+  mocks.mobile = false;
+  mocks.groupList.mockResolvedValue([]);
+  mocks.listCredentials.mockResolvedValue([]);
   useAssetVisibility.setState({ hiddenIds: [], showHidden: false });
   useConnectHistory.setState({ entries: {} });
   useAssetReachability.setState({ entries: {}, batchError: null });
@@ -190,7 +208,13 @@ beforeEach(() => {
     workspaces: [],
     activeWorkspaceId: null,
     connectingAssetIds: [],
+    workspaceRuntime: {},
     pushToast: mocks.toast,
+  });
+  mocks.writeText.mockResolvedValue(undefined);
+  Object.defineProperty(window.navigator, "clipboard", {
+    value: { writeText: mocks.writeText },
+    configurable: true,
   });
   mocks.list.mockResolvedValue([{ ...WEB }, { ...DB }, { ...LOCAL }]);
   mocks.probeBatch.mockResolvedValue({ results: [] });
@@ -215,7 +239,7 @@ afterEach(() => {
   for (const view of mountedViews.splice(0)) view.unmount();
   mounted = undefined;
   useAssetReachability.setState({ entries: {}, batchError: null });
-  useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [] });
+  useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [], workspaceRuntime: {} });
 });
 
 describe("QuickConnect rendering and recency/frequency ordering", () => {
@@ -767,5 +791,314 @@ describe("QuickConnect ad-hoc connections", () => {
 
     gate.resolve(QUICK_SESSION);
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+});
+
+describe("QuickConnect first connection and returning paths", () => {
+  function actionButton(container: ParentNode, text: string): HTMLButtonElement {
+    const button = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === text,
+    );
+    if (!button) throw new Error(`Button not found: ${text}`);
+    return button;
+  }
+
+  it("offers create, import, and the existing local terminal when there are no remote assets", async () => {
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    const view = mountOverlay({ onClose: vi.fn() });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    expect(actionButton(view.container, "导入 SSH 配置")).toBeTruthy();
+    expect(actionButton(view.container, "打开本机终端")).toBeTruthy();
+  });
+
+  it("keeps returning users on direct asset search without first-connection actions", async () => {
+    const view = await mountSettled({ onClose: vi.fn() });
+    expect(options(view.container).length).toBeGreaterThan(0);
+    expect(view.container.textContent).not.toContain("新建连接");
+    expect(view.container.textContent).not.toContain("导入 SSH 配置");
+    expect(view.container.textContent).not.toContain("打开本机终端");
+  });
+
+  it("offers create, import, and local terminal in-place when an existing-asset search has no results", async () => {
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "missing asset");
+    await flush();
+    expect(view.container.textContent).toContain("没有匹配的资产");
+    expect(actionButton(view.container, "新建连接")).toBeTruthy();
+    expect(actionButton(view.container, "导入 SSH 配置")).toBeTruthy();
+    expect(actionButton(view.container, "打开本机终端")).toBeTruthy();
+  });
+
+  it("connects a newly saved asset through the existing host-key confirmation flow", async () => {
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    mocks.sessionConnect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "host key confirmation required",
+        detail: { host: "example.com", port: 2222, keyType: "ssh-ed25519", fingerprint: "SHA256:abc" },
+      })
+      .mockResolvedValueOnce({ ...SESSION, id: "s-new", assetId: "a-new", name: "example.com:2222" });
+    const onClose = vi.fn();
+    const view = mountOverlay({ onClose });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    click(actionButton(view.container, "新建连接"));
+
+    const dialogs = view.container.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const editor = dialogs[dialogs.length - 1] as HTMLElement;
+    await waitFor(() => expect(editor.textContent).toContain("新建资产"));
+    const inputs = editor.querySelectorAll<HTMLInputElement>("input.nx-input");
+    setInputValue(inputs[0]!, "example.com:2222");
+    setInputValue(inputs[1]!, "example.com");
+    click(actionButton(editor, "保存"));
+
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "example.com",
+      2222,
+      "ssh-ed25519",
+      "SHA256:abc",
+    );
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("a-new");
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("returns focus to the create action after canceling the asset editor", async () => {
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    const view = mountOverlay({ onClose: vi.fn() });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    const create = actionButton(view.container, "新建连接");
+    create.focus();
+    click(create);
+    const dialogs = view.container.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const editor = dialogs[dialogs.length - 1] as HTMLElement;
+    await waitFor(() => expect(editor.textContent).toContain("新建资产"));
+
+    click(actionButton(editor, "取消"));
+    await waitFor(() => expect(document.activeElement).toBe(create));
+    expect(searchInput(view.container)).toBeTruthy();
+  });
+
+  it("uses the existing asset connection flow for the local terminal action", async () => {
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    const onClose = vi.fn();
+    const view = mountOverlay({ onClose });
+    await waitFor(() => expect(actionButton(view.container, "打开本机终端")).toBeTruthy());
+    click(actionButton(view.container, "打开本机终端"));
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledWith("a-local"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("does not offer local terminal or desktop-only Termius import on mobile", async () => {
+    mocks.mobile = true;
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    const view = mountOverlay({ onClose: vi.fn() });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    expect(view.container.textContent).not.toContain("Current device");
+    expect(view.container.textContent).not.toContain("打开本机终端");
+
+    click(actionButton(view.container, "导入 SSH 配置"));
+    await waitFor(() => expect(view.container.textContent).toContain("OpenSSH 配置"));
+    expect(view.container.textContent).not.toContain("Termius");
+  });
+
+  it("hides the local type when creating an asset on mobile", async () => {
+    mocks.mobile = true;
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    const view = mountOverlay({ onClose: vi.fn() });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    click(actionButton(view.container, "新建连接"));
+    const dialogs = view.container.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const editor = dialogs[dialogs.length - 1] as HTMLElement;
+    await waitFor(() => expect(editor.textContent).toContain("新建资产"));
+
+    const type = editor.querySelector<HTMLSelectElement>("select.nx-select")!;
+    expect([...type.options].map((option) => option.value)).not.toContain("local");
+    expect([...type.options].map((option) => option.value)).toContain("ssh");
+  });
+
+  it("does not connect a local asset returned by mobile creation or fall back to another asset", async () => {
+    mocks.mobile = true;
+    mocks.list.mockResolvedValue([{ ...LOCAL }]);
+    mocks.assetCreate.mockResolvedValue(
+      assetOf({ id: "a-new-local", name: "unexpected local", kind: "local", host: null, port: null }),
+    );
+    const onClose = vi.fn();
+    const view = mountOverlay({ onClose });
+    await waitFor(() => expect(actionButton(view.container, "新建连接")).toBeTruthy());
+    click(actionButton(view.container, "新建连接"));
+    const dialogs = view.container.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const editor = dialogs[dialogs.length - 1] as HTMLElement;
+    await waitFor(() => expect(editor.textContent).toContain("新建资产"));
+    const inputs = editor.querySelectorAll<HTMLInputElement>("input.nx-input");
+    setInputValue(inputs[0]!, "unexpected local");
+    setInputValue(inputs[1]!, "example.com");
+    click(actionButton(editor, "保存"));
+
+    await waitFor(() => expect(mocks.assetCreate).toHaveBeenCalled());
+    await flush();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "info",
+      "移动端不支持本地终端，请双击资产连接远程主机",
+    );
+  });
+});
+
+describe("QuickConnect workspace problems", () => {
+  function prepareProblemWorkspace(): void {
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-connect",
+          kind: "session",
+          title: "current workspace",
+          sessionId: "session-current",
+          panes: [{ id: "p", tabs: [], activeTabId: null }],
+          activePaneId: "p",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-connect",
+      workspaceRuntime: {},
+    });
+  }
+
+  function problems() {
+    return useUi.getState().getWorkspaceRuntime("ws-connect")?.problems ?? [];
+  }
+
+  function problemSection(container: HTMLElement): HTMLElement {
+    const section = container.querySelector<HTMLElement>('section[aria-label="本次问题"]');
+    if (!section) throw new Error("problem section not found");
+    return section;
+  }
+
+  it("keeps the original target for copy and reconnect instead of the newly searched asset", async () => {
+    prepareProblemWorkspace();
+    mocks.sessionConnect.mockRejectedValueOnce({
+      code: "io",
+      message: "connection refused; password=fixture-password; token=fixture-token; .env ORDINARY=fixture-env",
+    });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    setInputValue(searchInput(view.container), "web-01");
+    await flush();
+    click(options(view.container)[0] as HTMLButtonElement);
+    await waitFor(() => expect(problems()).toHaveLength(1));
+
+    expect(problems()[0]).toMatchObject({
+      id: expect.any(Number),
+      createdAt: expect.any(Number),
+      source: "connect",
+      target: { assetId: "a-web", title: "web-01" },
+    });
+    expect(problems()[0].detail).not.toContain("fixture-password");
+    expect(problems()[0].detail).not.toContain("fixture-token");
+    expect(problems()[0].detail).not.toContain("fixture-env");
+    const copy = [...problemSection(view.container).querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "复制",
+    );
+    click(copy!);
+    await waitFor(() => expect(mocks.writeText).toHaveBeenCalledTimes(1));
+    const copied = mocks.writeText.mock.calls[0][0] as string;
+    expect(copied).toContain("web-01");
+    expect(copied).not.toContain("fixture-password");
+    expect(copied).not.toContain("fixture-token");
+    expect(copied).not.toContain("fixture-env");
+
+    setInputValue(searchInput(view.container), "web-02");
+    await flush();
+    const reconnect = [...problemSection(view.container).querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "重新连接",
+    );
+    expect(reconnect).toBeTruthy();
+    click(reconnect!);
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("a-web");
+  });
+
+  it("offers only copy and details after the original asset disappears", async () => {
+    prepareProblemWorkspace();
+    mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "connection refused" });
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "web-01");
+    await flush();
+    click(options(view.container)[0] as HTMLButtonElement);
+    await waitFor(() => expect(problems()).toHaveLength(1));
+    view.unmount();
+    mountedViews.splice(0);
+    mocks.list.mockResolvedValue([{ ...WEB2 }, { ...LOCAL }]);
+
+    const reopened = await mountSettled({ onClose: vi.fn() });
+    const section = problemSection(reopened.container);
+    expect(section.textContent).toContain("web-01");
+    expect(section.textContent).toContain("复制");
+    expect(section.textContent).toContain("查看详情");
+    expect(
+      [...section.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "重新连接",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a deferred connection failure after reset", async () => {
+    prepareProblemWorkspace();
+    const gate = deferred<typeof SESSION>();
+    mocks.sessionConnect.mockReturnValueOnce(gate.promise);
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "web-01");
+    await flush();
+    click(options(view.container)[0] as HTMLButtonElement);
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useUi.getState().resetSessions();
+    });
+    gate.reject(new Error("late connection failure"));
+    await flush();
+
+    expect(problems()).toEqual([]);
+  });
+
+  it("rejects a deferred connection failure from the old account runtime", async () => {
+    prepareProblemWorkspace();
+    const gate = deferred<typeof SESSION>();
+    mocks.sessionConnect.mockReturnValueOnce(gate.promise);
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "web-01");
+    await flush();
+    click(options(view.container)[0] as HTMLButtonElement);
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(1));
+    const oldGeneration = useUi.getState().getWorkspaceRuntime("ws-connect")!.generation;
+
+    act(() => {
+      useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
+    });
+    const nextGeneration = useUi.getState().getWorkspaceRuntime("ws-connect")!.generation;
+    gate.reject(new Error("late connection failure"));
+    await flush();
+
+    expect(nextGeneration).not.toBe(oldGeneration);
+    expect(problems()).toEqual([]);
+    expect(useUi.getState().getWorkspaceRuntime("ws-connect")).toStrictEqual({ generation: nextGeneration });
+  });
+
+  it("does not create a problem card when authentication is canceled", async () => {
+    prepareProblemWorkspace();
+    mocks.promptText.mockResolvedValue(null);
+    const view = await mountSettled({ onClose: vi.fn() });
+    setInputValue(searchInput(view.container), "deploy@example.com");
+    await flush();
+
+    pressKey(searchInput(view.container), "Enter");
+    await flush();
+
+    expect(mocks.sessionConnectQuick).not.toHaveBeenCalled();
+    expect(problems()).toEqual([]);
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
   });
 });

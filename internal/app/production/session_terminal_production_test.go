@@ -5,6 +5,8 @@ package production
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -17,6 +19,10 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 )
 
 func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
@@ -27,8 +33,7 @@ func TestProductionLocalTerminalMultiClientAttachAndControl(t *testing.T) {
 	channelA := "local-multi-a"
 	channelB := "local-multi-b"
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelA, "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	streamA := factory.at(channelA, 0)
 	writeDurableTestCommand(t, production, tabID, "multi-ready", "client-a")
 	waitForProductionOutput(t, streamA, "multi-ready")
@@ -104,8 +109,7 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
 	connected := connectLocalTerminalTest(t, production)
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "staged-record", "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	stream := factory.at("staged-record", 0)
 
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_record_start", `{"tabId":"`+tabID+`","path":"staged-id/rec.log"}`, "", "client-a"))
@@ -139,6 +143,91 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 		t.Fatalf("unknown staged ref = %+v, want not_found", unknown)
 	}
 }
+
+func TestProductionTerminalRecordStopIPCContract(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		bytes   uint64
+		stopErr error
+	}{
+		{name: "success returns number", bytes: 17},
+		{name: "failure returns IPC error", bytes: 9, stopErr: errors.New("recording disk full")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recordingTerminal := &recordingIPCStopTerminal{bytes: test.bytes, err: test.stopErr}
+			manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
+				return recordingTerminal, nil
+			})})
+			t.Cleanup(func() { _ = manager.Close() })
+			tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := newTerminalCommandService(nil, manager, nil, nil, nil, nil, nil, nil, false)
+			dispatcher := ipc.NewDispatcher()
+			if err := service.registerSession(dispatcher); err != nil {
+				t.Fatal(err)
+			}
+			response := dispatchStoreTest(dispatcher, "terminal_record_stop", `{"tabId":"`+tab.ID+`"}`)
+			if test.stopErr == nil {
+				var recorded uint64
+				requireStoreTestResponse(t, response, &recorded)
+				if recorded != test.bytes {
+					t.Fatalf("recorded = %d, want %d", recorded, test.bytes)
+				}
+				return
+			}
+			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeInternal {
+				t.Fatalf("failed stop = %+v, want internal IPC error", response)
+			}
+			if !errors.Is(response.Error, test.stopErr) {
+				t.Fatalf("stop error = %v, want cause %v", response.Error, test.stopErr)
+			}
+		})
+	}
+}
+
+func TestProductionTerminalRecordStatusIPCContract(t *testing.T) {
+	recordingTerminal := &recordingIPCStopTerminal{}
+	manager := session.NewManager(session.Config{Terminals: session.TerminalFactoryFunc(func(session.TerminalConfig) (session.TerminalState, error) {
+		return recordingTerminal, nil
+	})})
+	t.Cleanup(func() { _ = manager.Close() })
+	tab, err := manager.RegisterRemoteSession(t.Context(), session.RemoteSessionOptions{OwnerID: "recording-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := terminal.RecordingStatus{
+		TabID: tab.ID, State: terminal.RecordingFailed, Bytes: 29,
+		Path: "/tmp/failed.log", SafeError: "disk full", Generation: 3,
+	}
+	recordingTerminal.status = want
+	service := newTerminalCommandService(nil, manager, nil, nil, nil, nil, nil, nil, false)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.registerSession(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	response := dispatchStoreTest(dispatcher, "terminal_record_status", `{"tabId":"`+tab.ID+`"}`)
+	var got terminal.RecordingStatus
+	requireStoreTestResponse(t, response, &got)
+	if got != want {
+		t.Fatalf("status = %+v, want %+v", got, want)
+	}
+}
+
+type recordingIPCStopTerminal struct {
+	bytes  uint64
+	err    error
+	status terminal.RecordingStatus
+}
+
+func (t *recordingIPCStopTerminal) StopRecording() (uint64, error)            { return t.bytes, t.err }
+func (t *recordingIPCStopTerminal) RecordingStatus() terminal.RecordingStatus { return t.status }
+func (t *recordingIPCStopTerminal) Feed([]byte)                               {}
+func (t *recordingIPCStopTerminal) Dump(int) []byte                           { return nil }
+func (t *recordingIPCStopTerminal) Resize(int, int) error                     { return nil }
+func (t *recordingIPCStopTerminal) SetResponseHandler(func([]byte))           {}
+func (t *recordingIPCStopTerminal) Close()                                    {}
 
 func TestProductionDockerExecDetachReattach(t *testing.T) {
 	factory := &bridgeTestFactory{}
@@ -188,6 +277,9 @@ func TestProductionDockerExecDetachReattach(t *testing.T) {
 	if attached.TabID != streamID || attached.SessionID != connected.ID || attached.Exited {
 		t.Fatalf("reattached docker tab = %+v", attached)
 	}
+	if attached.Shell != string(session.ShellUnknown) {
+		t.Fatalf("reattached docker shell = %q, want unknown", attached.Shell)
+	}
 	waitForProductionOutput(t, factory.at(reattachChannel, 0), "docker-background-output")
 
 	writeDurableTestInput(t, production, streamID, "docker-takeover-input", "client-a")
@@ -207,11 +299,9 @@ func TestProductionTerminalWriteIsolatesTabsForBroadcast(t *testing.T) {
 	channelA := "broadcast-tab-a"
 	channelB := "broadcast-tab-b"
 	attachA := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelA, "client-a")
-	var tabA string
-	requireStoreTestResponse(t, attachA, &tabA)
+	tabA := requireAttachedTabID(t, attachA)
 	attachB := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelB, "client-a")
-	var tabB string
-	requireStoreTestResponse(t, attachB, &tabB)
+	tabB := requireAttachedTabID(t, attachB)
 	if tabA == tabB {
 		t.Fatalf("two attaches returned the same tab %s", tabA)
 	}
@@ -373,4 +463,258 @@ func connectLocalTerminalTest(t *testing.T, production *Production) sessionInfoD
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
 	return connected
+}
+
+type productionAuthorizationFixture struct {
+	production   *Production
+	manager      *session.Manager
+	owner        context.Context
+	peer         context.Context
+	other        context.Context
+	admin        context.Context
+	ownerSession *session.Session
+	otherSession *session.Session
+	ownerTab     session.TabInfo
+	otherTab     session.TabInfo
+}
+
+type productionAuthorizationActor struct {
+	name     string
+	ctx      context.Context
+	clientID string
+	allowed  bool
+}
+
+func newProductionAuthorizationFixture(t *testing.T, open bool) *productionAuthorizationFixture {
+	t.Helper()
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: open})
+	factory := &bridgeTestFactory{}
+	production, err := NewProductionWithServices(Config{
+		Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
+	}, ProductionServices{
+		Sessions: manager, stagedBlobs: &fakeStagedBlobResolver{dir: t.TempDir()}, desktop: open,
+	})
+	if err != nil {
+		_ = manager.Close()
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		_ = production.Shutdown(context.Background())
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+
+	fixture := &productionAuthorizationFixture{
+		production: production,
+		manager:    manager,
+		owner:      ipc.WithUserID(t.Context(), "owner-a"),
+		peer:       ipc.WithUserID(t.Context(), "owner-a"),
+		other:      ipc.WithUserID(t.Context(), "owner-b"),
+		admin:      ipc.WithRole(ipc.WithUserID(t.Context(), "admin"), "superadmin"),
+	}
+	ownerConnect, otherConnect := fixture.owner, fixture.other
+	if open {
+		ownerConnect, otherConnect = t.Context(), t.Context()
+	}
+	fixture.ownerSession = fixture.connect(t, ownerConnect, "session-a", "owner-a")
+	fixture.otherSession = fixture.connect(t, otherConnect, "session-b", "owner-b")
+	fixture.ownerTab = fixture.openTab(t, ownerConnect, fixture.ownerSession.ID, "owner-client", "owner-channel")
+	fixture.otherTab = fixture.openTab(t, otherConnect, fixture.otherSession.ID, "other-client", "other-channel")
+	return fixture
+}
+
+func (f *productionAuthorizationFixture) connect(t *testing.T, ctx context.Context, id, name string) *session.Session {
+	t.Helper()
+	connected, err := f.manager.Connect(ctx, session.Asset{ID: id, Name: name, Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connected
+}
+
+func (f *productionAuthorizationFixture) openTab(t *testing.T, ctx context.Context, sessionID, clientID, channelID string) session.TabInfo {
+	t.Helper()
+	tab, err := f.manager.OpenTab(ctx, session.OpenTabOptions{
+		SessionID: sessionID, ClientID: clientID, ChannelID: channelID, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tab
+}
+
+func (f *productionAuthorizationFixture) actor(name string) productionAuthorizationActor {
+	switch name {
+	case "owner":
+		return productionAuthorizationActor{name: name, ctx: f.owner, clientID: "owner-client", allowed: true}
+	case "same-account-second-client":
+		return productionAuthorizationActor{name: name, ctx: f.peer, clientID: "peer-client", allowed: true}
+	case "other-account":
+		return productionAuthorizationActor{name: name, ctx: f.other, clientID: "owner-client"}
+	case "superadmin":
+		return productionAuthorizationActor{name: name, ctx: f.admin, clientID: "owner-client"}
+	case "open":
+		return productionAuthorizationActor{name: name, ctx: context.Background(), clientID: "owner-client", allowed: true}
+	default:
+		panic("unknown authorization actor " + name)
+	}
+}
+
+func (f *productionAuthorizationFixture) dispatch(actor productionAuthorizationActor, command, args, channelID string) ipc.Response {
+	return f.production.Dispatcher.Dispatch(actor.ctx, ipc.Request{
+		Command: command, Args: json.RawMessage(args), Channel: ipc.ChannelRef{ID: channelID}, ClientID: actor.clientID,
+	}, f.production.Environment(actor.clientID))
+}
+
+func requireProductionAuthorization(t *testing.T, response ipc.Response, allowed bool) {
+	t.Helper()
+	if allowed {
+		if !response.OK {
+			t.Fatalf("authorized request failed: %+v", response.Error)
+		}
+		return
+	}
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+		t.Fatalf("cross-account request = %+v, want forbidden", response)
+	}
+}
+
+var productionAuthorizationActorNames = []string{"owner", "same-account-second-client", "other-account", "superadmin", "open"}
+
+func TestProductionSessionAndTerminalListsAreOwnerScoped(t *testing.T) {
+	for _, actorName := range productionAuthorizationActorNames {
+		t.Run(actorName, func(t *testing.T) {
+			fixture := newProductionAuthorizationFixture(t, actorName == "open")
+			actor := fixture.actor(actorName)
+			sessionResponse := fixture.dispatch(actor, "session_list", `null`, "")
+			var sessions []sessionInfoDTO
+			requireStoreTestResponse(t, sessionResponse, &sessions)
+			terminalResponse := fixture.dispatch(actor, "terminal_list", `null`, "")
+			var tabs []liveTabDTO
+			requireStoreTestResponse(t, terminalResponse, &tabs)
+
+			wantSessions := map[string]bool{}
+			wantTabs := map[string]bool{}
+			switch actorName {
+			case "owner", "same-account-second-client":
+				wantSessions[fixture.ownerSession.ID] = true
+				wantTabs[fixture.ownerTab.ID] = true
+			case "other-account":
+				wantSessions[fixture.otherSession.ID] = true
+				wantTabs[fixture.otherTab.ID] = true
+			case "open":
+				wantSessions[fixture.ownerSession.ID] = true
+				wantSessions[fixture.otherSession.ID] = true
+				wantTabs[fixture.ownerTab.ID] = true
+				wantTabs[fixture.otherTab.ID] = true
+			}
+			if len(sessions) != len(wantSessions) || len(tabs) != len(wantTabs) {
+				t.Fatalf("visible resources: sessions=%+v tabs=%+v, want sessions=%v tabs=%v", sessions, tabs, wantSessions, wantTabs)
+			}
+			for _, info := range sessions {
+				if !wantSessions[info.ID] {
+					t.Fatalf("unauthorized session %s visible: %+v", info.ID, sessions)
+				}
+			}
+			for _, info := range tabs {
+				if !wantTabs[info.TabID] {
+					t.Fatalf("unauthorized tab %s visible: %+v", info.TabID, tabs)
+				}
+			}
+		})
+	}
+}
+
+func TestProductionTerminalRequestsEnforceAccountOwnership(t *testing.T) {
+	operations := []struct {
+		name       string
+		controller bool
+		invoke     func(*productionAuthorizationFixture, productionAuthorizationActor) []ipc.Response
+	}{
+		{name: "read", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			args := `{"tabId":"` + f.ownerTab.ID + `","n":10,"maxBytes":1024}`
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_snapshot", args, ""),
+				f.dispatch(actor, "terminal_screen_text", args, ""),
+				f.dispatch(actor, "terminal_tail", args, ""),
+				f.dispatch(actor, "terminal_dump", args, ""),
+			}
+		}},
+		{name: "attach-and-create", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_attach", `{"sessionId":"`+f.ownerSession.ID+`","cols":80,"rows":24}`, "attach-session-"+actor.name),
+				f.dispatch(actor, "terminal_attach_tab", `{"tabId":"`+f.ownerTab.ID+`","replayBytes":1024}`, "attach-tab-"+actor.name),
+				f.dispatch(actor, "terminal_create_tab", `{"sessionId":"`+f.ownerSession.ID+`","title":"created","cols":80,"rows":24}`, ""),
+			}
+		}},
+		{name: "write", controller: true, invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "terminal_write", `{"args":{"tabId":"`+f.ownerTab.ID+`","data":[120],"clientId":"`+actor.clientID+`"}}`, "")}
+		}},
+		{name: "claim-and-release", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			clientID := actor.name + "-controller"
+			args := `{"tabId":"` + f.ownerTab.ID + `","clientId":"` + clientID + `"}`
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_claim", args, ""),
+				f.dispatch(actor, "terminal_release", args, ""),
+			}
+		}},
+		{name: "resize-and-flush", controller: true, invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_resize", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`","cols":100,"rows":30}`, ""),
+				f.dispatch(actor, "terminal_resize_flush", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, ""),
+			}
+		}},
+		{name: "rename", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "terminal_rename_tab", `{"tabId":"`+f.ownerTab.ID+`","title":"renamed"}`, "")}
+		}},
+		{name: "detach", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "terminal_detach", `{"tabId":"`+f.ownerTab.ID+`","channelId":"owner-channel"}`, "")}
+		}},
+		{name: "record", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_record_start", `{"tabId":"`+f.ownerTab.ID+`","path":"staged-id/record.log"}`, ""),
+				f.dispatch(actor, "terminal_record_stop", `{"tabId":"`+f.ownerTab.ID+`"}`, ""),
+				f.dispatch(actor, "terminal_record_status", `{"tabId":"`+f.ownerTab.ID+`"}`, ""),
+				f.dispatch(actor, "terminal_export_log", `{"tabId":"`+f.ownerTab.ID+`","path":"staged-id/export.log","maxBytes":1024}`, ""),
+			}
+		}},
+		{name: "visibility-and-encoding", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{
+				f.dispatch(actor, "terminal_set_visible", `{"tabId":"`+f.ownerTab.ID+`","visible":true}`, ""),
+				f.dispatch(actor, "terminal_switch_encoding", `{"tabId":"`+f.ownerTab.ID+`","encoding":"utf8"}`, ""),
+			}
+		}},
+		{name: "close", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "terminal_close_tab", `{"tabId":"`+f.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")}
+		}},
+		{name: "cwd", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "session_cwd", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
+		}},
+		{name: "reconnect", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "session_reconnect", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
+		}},
+		{name: "disconnect", invoke: func(f *productionAuthorizationFixture, actor productionAuthorizationActor) []ipc.Response {
+			return []ipc.Response{f.dispatch(actor, "session_disconnect", `{"sessionId":"`+f.ownerSession.ID+`"}`, "")}
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, actorName := range productionAuthorizationActorNames {
+				t.Run(actorName, func(t *testing.T) {
+					fixture := newProductionAuthorizationFixture(t, actorName == "open")
+					actor := fixture.actor(actorName)
+					if operation.controller && actorName == "same-account-second-client" {
+						claim := fixture.dispatch(actor, "terminal_claim", `{"tabId":"`+fixture.ownerTab.ID+`","clientId":"`+actor.clientID+`"}`, "")
+						requireProductionAuthorization(t, claim, true)
+					}
+					for _, response := range operation.invoke(fixture, actor) {
+						requireProductionAuthorization(t, response, actor.allowed)
+					}
+				})
+			}
+		})
+	}
 }

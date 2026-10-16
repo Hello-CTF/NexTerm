@@ -62,8 +62,7 @@ func TestProductionSSHStartupCommandEnvAndEncodingEndToEnd(t *testing.T) {
 	requireStoreTestResponse(t, connectedResponse, &connected)
 
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "startup-e2e-channel", "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	if tabID == "" {
 		t.Fatal("terminal_attach returned no tab")
 	}

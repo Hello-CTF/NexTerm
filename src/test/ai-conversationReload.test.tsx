@@ -57,8 +57,13 @@ vi.mock("../ipc/events", async (importOriginal) => ({
 }));
 
 import { AiSidebar, aiCreatedTerminalOf } from "../features/ai/AiSidebar";
+import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../features/ai/runOwnership";
 import { replayableJobIds } from "../features/ai/runRestore";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../app/store";
+
+beforeEach(() => {
+  clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
+});
 
 function message(id: string, role: string, content: unknown) {
   return { id, conversationId: "conv-1", role, content, tokensIn: null, tokensOut: null, createdAt: 1 };

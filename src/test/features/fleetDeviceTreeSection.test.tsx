@@ -182,7 +182,16 @@ interface RecordedCall {
   method: string;
 }
 
-function route(devices: unknown, metrics: unknown = { samples: METRICS_SAMPLES }): RecordedCall[] {
+function route(
+  devices: unknown,
+  metrics: unknown = {
+    samples: METRICS_SAMPLES,
+    latest: METRICS_SAMPLES[METRICS_SAMPLES.length - 1],
+    windowStart: NOW - 86400_000,
+    windowEnd: NOW,
+    sampleCount: METRICS_SAMPLES.length,
+  },
+): RecordedCall[] {
   const calls: RecordedCall[] = [];
   mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
     const u = String(url);
@@ -699,6 +708,7 @@ describe("DevicesView MetricsPanel reuse regression", () => {
 
     expect(card?.querySelector("polyline")).not.toBeNull();
     expect(card?.textContent).toContain("12.5%");
-    expect(card?.textContent).toContain("近 24 小时共 2 个采样点");
+    expect(card?.textContent).toContain("趋势窗口");
+    expect(card?.textContent).toContain("共 2 个采样点");
   });
 });

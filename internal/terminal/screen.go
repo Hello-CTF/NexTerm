@@ -10,20 +10,35 @@ import (
 
 const ScrollbackLines = 100_000
 
+const lineHistoryInitialSize = 256
+
 type lineHistory struct {
 	lines []string
+	limit int
 	head  int
 	size  int
 }
 
-func newLineHistory(capacity int) *lineHistory {
-	if capacity <= 0 {
-		capacity = 1
+func newLineHistory(limit int) *lineHistory {
+	if limit <= 0 {
+		limit = 1
 	}
-	return &lineHistory{lines: make([]string, capacity)}
+	return &lineHistory{
+		lines: make([]string, min(limit, lineHistoryInitialSize)),
+		limit: limit,
+	}
 }
 
 func (h *lineHistory) push(line string) {
+	if h.size == len(h.lines) && len(h.lines) < h.limit {
+		capacity := min(len(h.lines)*2, h.limit)
+		lines := make([]string, capacity)
+		first := min(h.size, len(h.lines)-h.head)
+		copy(lines, h.lines[h.head:h.head+first])
+		copy(lines[first:], h.lines[:h.size-first])
+		h.lines = lines
+		h.head = 0
+	}
 	capacity := len(h.lines)
 	if h.size < capacity {
 		h.lines[(h.head+h.size)%capacity] = line
@@ -36,7 +51,10 @@ func (h *lineHistory) push(line string) {
 
 func (h *lineHistory) len() int { return h.size }
 
-func (h *lineHistory) clear() { h.head, h.size = 0, 0 }
+func (h *lineHistory) clear() {
+	clear(h.lines)
+	h.head, h.size = 0, 0
+}
 
 func (h *lineHistory) last(n int) []string {
 	if n <= 0 || h.size == 0 {

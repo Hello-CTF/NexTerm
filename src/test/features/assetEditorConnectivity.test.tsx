@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -242,6 +242,7 @@ describe("AssetEditor SSH connectivity", () => {
     await flush();
     setSelectValue(findSelect("密码"), "key");
     await flush();
+    clickButton(mounted!.container, "引用文件路径");
     expandAdvanced();
     setInputValue(findInput("选择或输入私钥路径"), "/home/u/.ssh/id_ed25519");
     setInputValue(findInput("id_ed25519-cert.pub"), "/home/u/.ssh/id_ed25519-cert.pub");

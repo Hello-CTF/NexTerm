@@ -1,5 +1,5 @@
 import type { AiHitlSnapshotDto, AiRunDto, AiRunEventDto } from "../../ipc/types";
-import { safeTokenCount } from "./conversation";
+import { hasAgentOwnedUsageID, safeTokenCount, usageChannelOf, usageSnapshotOf } from "./conversation";
 import type { AiUsage } from "./UsageRing";
 
 export interface ResumableRun {
@@ -54,21 +54,108 @@ export async function latestRunUsage(
   const ordered = runs
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  let main: AiUsage | null = null;
+  let summaryPromptTokens = 0;
+  let summaryCompletionTokens = 0;
+  let hasSummary = false;
   for (const run of ordered) {
     const { events, failed } = await loadEvents(run.id);
     if (failed) continue;
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index];
+    let runMain: AiUsage | null = null;
+    const seen = new Set<string>();
+    for (const event of events) {
       if (event.type !== "usage") continue;
-      return {
-        promptTokens: safeTokenCount(event.promptTokens),
-        completionTokens: safeTokenCount(event.completionTokens),
-        cachedTokens: safeTokenCount(event.cachedTokens),
-        contextWindow: safeTokenCount(event.contextWindow),
-      };
+      const channel = usageChannelOf(event);
+      if (channel === "tool-subagent") continue;
+      const callID = typeof event.callId === "string" ? event.callId : "";
+      const eventKey = hasAgentOwnedUsageID(event) ? `${channel}:${callID}` : "";
+      if (eventKey && seen.has(eventKey)) continue;
+      if (eventKey) seen.add(eventKey);
+      if (channel === "summary") {
+        hasSummary = true;
+        summaryPromptTokens = safeTokenCount(summaryPromptTokens + safeTokenCount(event.promptTokens));
+        summaryCompletionTokens = safeTokenCount(summaryCompletionTokens + safeTokenCount(event.completionTokens));
+        continue;
+      }
+      runMain = usageSnapshotOf(event);
     }
+    if (main === null && runMain !== null) main = runMain;
   }
-  return null;
+  if (main === null && !hasSummary) return null;
+  const result = main ?? { promptTokens: 0, completionTokens: 0, cachedTokens: 0, contextWindow: 0 };
+  if (hasSummary) {
+    result.summaryPromptTokens = summaryPromptTokens;
+    result.summaryCompletionTokens = summaryCompletionTokens;
+  }
+  return result;
+}
+
+const TERMINAL_RUN_STATUSES = new Set(["completed", "canceled", "failed", "expired", "superseded"]);
+
+export function isRunTerminal(run: AiRunDto): boolean {
+  return run.finishedAt != null || TERMINAL_RUN_STATUSES.has(run.status);
+}
+
+export interface ConversationRunCancellationApi {
+  runs(conversationId: string): Promise<AiRunDto[]>;
+  cancel(jobId: string): Promise<void>;
+}
+
+export type ConversationRunsStopped = "confirmed" | "unconfirmed";
+
+export async function confirmConversationRunsStopped(
+  conversationId: string,
+  api: ConversationRunCancellationApi,
+): Promise<ConversationRunsStopped> {
+  const deadline = Date.now() + 5000;
+  const operation = (async (): Promise<ConversationRunsStopped> => {
+    let jobIds: string[];
+    try {
+      const runs = await api.runs(conversationId);
+      const unfinished = runs.filter((run) => !isRunTerminal(run));
+      if (unfinished.length === 0) return "confirmed";
+      jobIds = unfinished.map((run) => run.id);
+    } catch {
+      return "unconfirmed";
+    }
+
+    let cancelRejected = false;
+    for (const jobId of jobIds) {
+      try {
+        await api.cancel(jobId);
+      } catch {
+        cancelRejected = true;
+        break;
+      }
+    }
+    for (;;) {
+      let runs: AiRunDto[];
+      try {
+        runs = await api.runs(conversationId);
+      } catch {
+        return "unconfirmed";
+      }
+      const byId = new Map(runs.map((run) => [run.id, run]));
+      const stopped = jobIds.every((jobId) => {
+        const run = byId.get(jobId);
+        return run !== undefined && isRunTerminal(run);
+      });
+      if (stopped) return "confirmed";
+      if (cancelRejected) return "unconfirmed";
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return "unconfirmed";
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(100, remaining)));
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ConversationRunsStopped>((resolve) => {
+    timer = setTimeout(() => resolve("unconfirmed"), 5000);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {

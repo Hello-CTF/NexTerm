@@ -180,7 +180,7 @@ func TestRedis74DockerIntegration(t *testing.T) {
 	if withService < 2 {
 		t.Fatalf("CLIENT LIST lines=%d, want the service connections plus the probe", withService)
 	}
-	if err := service.Disconnect(connID); err != nil {
+	if err := service.Disconnect(context.Background(), connID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
 	if _, err := service.RedisCommand(context.Background(), connID, []string{"PING"}); err == nil {

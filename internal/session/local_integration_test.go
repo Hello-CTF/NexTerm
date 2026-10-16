@@ -15,8 +15,9 @@ import (
 )
 
 func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
+	writes := &lockedWriteLog{}
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		return &writeLogTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), log: writes}, nil
 	})
 	manager := NewManager(Config{Connector: connector})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -25,7 +26,15 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("printf 'nexterm-local-ok\\n'\r")); err != nil {
+	defer func() {
+		if t.Failed() {
+			t.Logf("real local PTY dump: %q", tab.terminal.Dump(1<<20))
+			t.Logf("real local PTY input: %q", writes.String())
+		}
+	}()
+	shellReady := realLocalShellReadiness(t, tab, writes, 0)
+	shellReady()
+	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("printf 'nexterm-%s\\n' 'local-ok'\r")); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return bytes.Contains(tab.terminal.Dump(1<<20), []byte("nexterm-local-ok")) })
@@ -54,7 +63,8 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 	if err := manager.DetachClient(tab.ID, "client-a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("printf 'nexterm-after-detach\\n'\r")); err != nil {
+	shellReady()
+	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("printf 'nexterm-%s\\n' 'after-detach'\r")); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return bytes.Contains(tab.terminal.Dump(1<<20), []byte("nexterm-after-detach")) })
@@ -67,8 +77,9 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 }
 
 func TestRealLocalPTYOpenResizeDetachReopenAndClose(t *testing.T) {
+	writes := &lockedWriteLog{}
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		return &writeLogTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), log: writes}, nil
 	})
 	manager := NewManager(Config{Connector: connector})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -78,7 +89,10 @@ func TestRealLocalPTYOpenResizeDetachReopenAndClose(t *testing.T) {
 	}
 	for index := 0; index < 32; index++ {
 		channelID := fmt.Sprintf("resize-race-%d", index)
+		responses := bytes.Count(writes.Bytes(), []byte("\x1b["))
 		tab := openTestTab(t, manager, session, "client-a", channelID)
+		shellReady := realLocalShellReadiness(t, tab, writes, responses)
+		shellReady()
 		command := fmt.Sprintf("printf 'nexterm-open-%02d%%s\\n' '-output'\r", index)
 		if err := manager.Write(context.Background(), tab.ID, "client-a", []byte(command)); err != nil {
 			t.Fatal(err)

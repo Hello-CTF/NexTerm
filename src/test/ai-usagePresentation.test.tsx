@@ -206,4 +206,26 @@ describe("UsageRing details", () => {
     expect(text).toContain("（全部会话）");
     view.unmount();
   });
+
+  it("shows main and summary token breakdown without inventing prices", () => {
+    const view = mount(
+      createElement(UsageRing, {
+        usage: {
+          promptTokens: 120,
+          completionTokens: 25,
+          cachedTokens: 40,
+          contextWindow: 2000,
+          summaryPromptTokens: 120,
+          summaryCompletionTokens: 21,
+        },
+      }),
+    );
+    const text = view.container.textContent ?? "";
+    expect(text).toContain("主调用 输入 120 · 输出 25 tokens");
+    expect(text).toContain("摘要 输入 120 · 输出 21 tokens");
+    expect(text).not.toContain("价格");
+    expect(text).not.toContain("¥");
+    expect(text).not.toContain("$");
+    view.unmount();
+  });
 });

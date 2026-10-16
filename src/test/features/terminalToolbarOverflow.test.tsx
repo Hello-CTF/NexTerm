@@ -196,6 +196,7 @@ describe("terminal toolbar overflow", () => {
       "广播到当前分屏",
       "广播到全部终端",
       "选择广播目标…",
+      "开始录制…",
       "字符编码",
     ]);
     await waitFor(() =>

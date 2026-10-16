@@ -73,7 +73,12 @@ vi.mock("../../ipc/env", async (importOriginal) => {
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: vi.fn() }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
+import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
+
+beforeEach(() => {
+  clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
+});
 
 function png(name: string): File {
   return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });

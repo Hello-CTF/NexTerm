@@ -17,10 +17,17 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/cloudwego/eino/components/model"
 )
 
 var productionMemoryScope = memory.Scope{Tenant: "local", Subject: "default"}
+
+type cronAgentRunner struct{ *agent.Runner }
+
+func (r cronAgentRunner) Start(ctx context.Context, args agent.ChatArgs, factory agent.StreamFactory) (agent.StartResponse, error) {
+	return r.Runner.Start(session.WithOpenAccess(ctx), args, factory)
+}
 
 func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
@@ -103,7 +110,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		MemoryScope: productionMemoryScope,
 		ServerMode:  !services.desktop,
 	})
-	if err := runner.RecoverRuns(ctx); err != nil {
+	if err := runner.RecoverRuns(session.WithOpenAccess(ctx)); err != nil {
 		return err
 	}
 
@@ -125,7 +132,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	services.Agent = runner
 	services.Takeover = takeoverManager
 
-	cronExecutor.Runner = services.Agent
+	cronExecutor.Runner = cronAgentRunner{Runner: services.Agent}
 	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles}
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)

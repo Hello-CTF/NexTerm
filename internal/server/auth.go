@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 )
@@ -27,7 +28,12 @@ func (s *Server) mfaEnrollmentLockedFor(r *http.Request, identity *account.Ident
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	if !s.authRequired {
-		return next
+		if s.options.Auth != AuthOff && s.options.Auth != AuthLoopback {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(agent.WithOpenAccess(r.Context())))
+		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

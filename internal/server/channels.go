@@ -25,6 +25,10 @@ type ChannelBinder interface {
 	BindChannel(string) (ChannelReceiver, error)
 }
 
+type channelOwnerResolver interface {
+	ChannelOwner(string) (string, error)
+}
+
 type ChannelBinderFunc func(string) (ChannelReceiver, error)
 
 func (f ChannelBinderFunc) BindChannel(id string) (ChannelReceiver, error) {

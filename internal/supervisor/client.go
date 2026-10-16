@@ -157,7 +157,7 @@ func (c *Client) Exec(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 			if err := unmarshalFrame(payload, &msg); err != nil {
 				return stdout, stderr, -1, "", err
 			}
-			return stdout, stderr, -1, "", codedError(msg.Code, msg.Message)
+			return stdout, stderr, -1, "", decodedError(msg)
 		default:
 			return stdout, stderr, -1, "", protocolMismatch(kind)
 		}
@@ -182,6 +182,38 @@ func (c *Client) List(ctx context.Context) ([]Info, error) {
 		return nil, err
 	}
 	return infos, nil
+}
+
+func (c *Client) MetadataSupported(ctx context.Context) (bool, error) {
+	conn, err := c.dialConn(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = conn.Close() }()
+	return slices.Contains(conn.features, featureMetadata), nil
+}
+
+func (c *Client) Rename(ctx context.Context, request RenameRequest) (Info, error) {
+	conn, err := c.dialConn(ctx)
+	if err != nil {
+		return Info{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	if !slices.Contains(conn.features, featureMetadata) {
+		return Info{}, fmt.Errorf("%w: supervisor does not support session metadata", ErrUnsupported)
+	}
+	kind, payload, err := conn.request(ctx, frameRename, request)
+	if err != nil {
+		return Info{}, err
+	}
+	if kind != frameRenamed {
+		return Info{}, protocolMismatch(kind)
+	}
+	var info Info
+	if err := unmarshalFrame(payload, &info); err != nil {
+		return Info{}, err
+	}
+	return info, nil
 }
 
 func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stream, error) {
@@ -282,7 +314,7 @@ func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 		}
 	}
 	conn := &clientConn{conn: netConn}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec}})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, Features: []string{featureExec, featureMetadata}})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -357,7 +389,7 @@ func (c *clientConn) requestRaw(ctx context.Context, kind frameType, payload []b
 			if err := unmarshalFrame(response.payload, &msg); err != nil {
 				return 0, nil, err
 			}
-			return 0, nil, codedError(msg.Code, msg.Message)
+			return 0, nil, decodedError(msg)
 		}
 		return response.kind, response.payload, nil
 	case <-ctx.Done():
@@ -610,7 +642,7 @@ func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte)
 			if err := unmarshalFrame(response.payload, &msg); err != nil {
 				return 0, nil, err
 			}
-			return 0, nil, codedError(msg.Code, msg.Message)
+			return 0, nil, decodedError(msg)
 		}
 		return response.kind, response.payload, nil
 	case <-ctx.Done():
@@ -704,7 +736,7 @@ func (s *Stream) readLoop() {
 				s.fail(err)
 				return
 			}
-			s.fail(codedError(msg.Code, msg.Message))
+			s.fail(decodedError(msg))
 			return
 		case frameError:
 			var msg errorMsg
@@ -716,7 +748,7 @@ func (s *Stream) readLoop() {
 			pending := s.pending
 			s.mu.Unlock()
 			if !pending {
-				s.fail(codedError(msg.Code, msg.Message))
+				s.fail(decodedError(msg))
 				return
 			}
 			select {

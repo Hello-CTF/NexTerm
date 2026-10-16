@@ -47,7 +47,7 @@ import {
   RESIZE_END_EVENT,
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
-import { layoutBootstrapped, startLayoutSync } from "./layout";
+import { advanceLayoutAccount, layoutBootstrapped, onRemoteChange, startLayoutSync } from "./layout";
 import { startUnreadTracking } from "./unread";
 import { useEdgeGestures } from "./edgeGestures";
 import {
@@ -523,6 +523,7 @@ function AppShell() {
     setLeftWidth,
     rightWidth,
     setRightWidth,
+    aiAccountEpoch,
     toasts,
     dismissToast,
     pushToast,
@@ -663,7 +664,7 @@ function AppShell() {
       const current = p.tabs.find((t) => t.id === p.activeTabId) ?? p.tabs[p.tabs.length - 1];
       return current?.kind === "terminal";
     }) ?? false);
-  const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
+  const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
   const connectedList = sessions.filter((s) => s.status === "connected");
   const connectedSessions = connectedList.length;
   const idleSessions = connectedList.filter(
@@ -702,26 +703,26 @@ function AppShell() {
   }, [ws?.sessionId, needSession]);
 
   const openMount = useCallback(() => {
-    const unavailable = mountUnavailableReason() !== null;
-    if (!unavailable && !activeSessionId) return needSession();
+    if (!activeSessionId) return needSession();
     useUi.getState().addTab({
-      id: nextTabId(`mount-${activeSessionId ?? "none"}`),
+      id: nextTabId(`mount-${activeSessionId}`),
       kind: "mount",
       title: "磁盘挂载",
-      sessionId: activeSessionId ?? undefined,
+      sessionId: activeSessionId,
       closable: true,
     });
   }, [activeSessionId, needSession]);
 
   const openForward = useCallback(() => {
+    if (!activeSessionId) return needSession();
     useUi.getState().addTab({
-      id: nextTabId(`forward-${activeSessionId ?? "none"}`),
+      id: nextTabId(`forward-${activeSessionId}`),
       kind: "forward",
       title: "端口转发",
-      sessionId: activeSessionId ?? undefined,
+      sessionId: activeSessionId,
       closable: true,
     });
-  }, [activeSessionId]);
+  }, [activeSessionId, needSession]);
 
   const openDocker = useCallback(() => {
     if (!activeSessionId) return needSession();
@@ -797,10 +798,15 @@ function AppShell() {
   }, [vaultProtectionSeq]);
 
   const openBackground = useCallback(() => {
-    useUi
-      .getState()
-      .addTab({ id: "background", kind: "background", title: "后台会话", closable: true });
-  }, []);
+    if (ws?.kind !== "session" || !ws.sessionId) return needSession();
+    useUi.getState().addTab({
+      id: `background-${ws.id}`,
+      kind: "background",
+      title: "后台会话",
+      sessionId: ws.sessionId,
+      closable: true,
+    });
+  }, [ws?.id, ws?.kind, ws?.sessionId, needSession]);
 
   const openHistory = useCallback(() => {
     useUi
@@ -1070,7 +1076,7 @@ function AppShell() {
   // With auth=on, when login/register/init brings the gate to ready, account-level requests issued while mounted behind the gate
   // all hit 401; resetQueries cancels in-flight old fetches and refetches (invalidateQueries joins the old fetch when data is empty,
   // and the 401 still lands). The reverse direction (logout/session expiry back to login) resets the same key set and clears the session
-  // list and vault state, so the previous session's data cannot leak into the next account. Toasts are not all cleared on ready:
+  // list, SQL runtime, and vault state, so the previous session's data cannot leak into the next account. Toasts are not all cleared on ready:
   // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
   useEffect(() => {
     if (!WEB) return;
@@ -1079,13 +1085,20 @@ function AppShell() {
     void import("../features/auth/store").then((m) => {
       if (cancelled) return;
       unsubscribe = m.useAuth.subscribe((s, prev) => {
+        const accountChanged = s.user?.id !== prev.user?.id;
+        if (accountChanged) {
+          useUi.getState().resetAiAccount();
+          advanceLayoutAccount();
+          if (s.gate === "ready") onRemoteChange(null);
+        }
         if (s.gate === prev.gate) return;
         if (s.gate === "ready" && prev.gate !== "loading") {
+          onRemoteChange(null);
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
           void useUi.getState().resyncSessions({ silent: true });
         } else if (prev.gate === "ready" && s.gate === "login") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          useUi.getState().resetSessions();
+          useUi.getState().resetSessions({ clearWorkspaceRuntime: true });
         }
       });
     });
@@ -1252,9 +1265,6 @@ function AppShell() {
       >
         跳到主内容
       </a>
-      <TakeoverBanner />
-      <UpdateBanner onOpenSettings={openSettings} />
-      <DekUnlockBanner />
       <DeviceSessionBoundary />
 
       <div className="flex min-h-0 flex-1">
@@ -1410,6 +1420,10 @@ function AppShell() {
             )}
           </header>
 
+          <TakeoverBanner />
+          <UpdateBanner onOpenSettings={openSettings} />
+          <DekUnlockBanner />
+
         <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
           {overlaySidebars && (leftDockOpen || rightDockOpen) && (
             <button
@@ -1500,7 +1514,7 @@ function AppShell() {
                 onChange={setRightWidth}
               />
             )}
-            <AiSidebar sessionId={ws?.kind === "db" ? undefined : activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
+            <AiSidebar key={aiAccountEpoch} sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
           </div>
         </div>
 
@@ -1657,14 +1671,27 @@ function PaneGroup({
   const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
 
   const renameTab = async (id: string, title: string) => {
-    const next = await promptText("重命名标签：", title);
-    if (next === null || !next.trim()) return;
-    const trimmed = sanitizeRemoteTabTitle(next);
-    if (!trimmed) return;
-    updateTab(id, { title: trimmed, renamedByUser: true });
-    // Kernel-backed tabs also persist the title backend-side so other attached clients converge (best-effort).
-    const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
-    if (tabId) void terminalApi.renameTab(tabId, trimmed).catch(() => undefined);
+    let draft = title;
+    let failure = "";
+    for (;;) {
+      const next = await promptText(failure || "重命名标签：", draft);
+      if (next === null || !next.trim()) return;
+      const trimmed = sanitizeRemoteTabTitle(next);
+      if (!trimmed) return;
+      const tabId = pane.tabs.find((t) => t.id === id)?.tabId;
+      if (!tabId) {
+        updateTab(id, { title: trimmed, renamedByUser: true });
+        return;
+      }
+      try {
+        const info = await terminalApi.renameTab(tabId, trimmed);
+        updateTab(id, { title: info.title || trimmed, renamedByUser: true });
+        return;
+      } catch (error) {
+        draft = trimmed;
+        failure = `重命名失败：${describeError(error)}`;
+      }
+    }
   };
 
   const openTabMenu = (t: (typeof pane.tabs)[number], x: number, y: number) => {
@@ -2043,6 +2070,7 @@ function PaneForTab({
   workspaceId: string;
   onClose: () => void;
 }) {
+  const workspaceRuntimeEpoch = useUi((state) => state.workspaceRuntimeEpoch);
   switch (tab.kind) {
     case "terminal":
       return tab.sessionId ? (
@@ -2075,7 +2103,12 @@ function PaneForTab({
       return tab.sessionId ? <DockerPanel sessionId={tab.sessionId} visible={active} /> : <EmptyState />;
     case "db":
       return tab.connId ? (
-        <DbPanel connId={tab.connId} kind={tab.dbKind ?? "mysql"} />
+        <DbPanel
+          key={workspaceRuntimeEpoch}
+          connId={tab.connId}
+          kind={tab.dbKind ?? "mysql"}
+          workspaceId={workspaceId}
+        />
       ) : (
         <EmptyState />
       );
