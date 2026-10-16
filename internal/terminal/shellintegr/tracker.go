@@ -115,5 +115,11 @@ func parseOSC7(payload []byte) (string, bool) {
 	if err != nil || u.Scheme != "file" || u.Path == "" {
 		return "", false
 	}
-	return u.Path, true
+	path := u.Path
+	if len(path) >= 4 && path[0] == '/' && path[2] == ':' &&
+		(path[1] >= 'A' && path[1] <= 'Z' || path[1] >= 'a' && path[1] <= 'z') &&
+		(path[3] == '/' || path[3] == '\\') {
+		path = path[1:]
+	}
+	return path, true
 }

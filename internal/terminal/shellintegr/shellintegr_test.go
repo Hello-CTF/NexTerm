@@ -54,7 +54,7 @@ func TestWrapBash(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"source $HOME/.bashrc", "PROMPT_COMMAND", "]7;file://"} {
+	for _, want := range []string{"source $HOME/.bashrc", "PROMPT_COMMAND", "cygpath --mixed", "]7;file://"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("bash wrapper missing %q:\n%s", want, content)
 		}

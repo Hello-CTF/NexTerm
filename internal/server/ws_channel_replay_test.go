@@ -11,22 +11,65 @@ import (
 	"github.com/coder/websocket"
 )
 
-func realHubChannelServer(t *testing.T, webSocket WebSocketConfig) (*hub.Hub, *HubAdapter, string) {
+type observedChannelReceiver struct {
+	ChannelReceiver
+	next chan<- Frame
+}
+
+func (r *observedChannelReceiver) Next(ctx context.Context) (Frame, error) {
+	frame, err := r.ChannelReceiver.Next(ctx)
+	if err == nil {
+		select {
+		case r.next <- frame:
+		default:
+		}
+	}
+	return frame, err
+}
+
+func realHubChannelServer(t *testing.T, webSocket WebSocketConfig, next chan<- Frame) (*Server, *hub.Hub, *HubAdapter, string) {
 	t.Helper()
 	shared := hub.New(hub.Options{QueueBytes: 64 << 20})
 	t.Cleanup(func() { _ = shared.Close() })
 	adapter := NewHubAdapter(shared)
 	config := testConfig(t, false)
-	config.Channels = adapter
+	config.Channels = ChannelBinderFunc(func(id string) (ChannelReceiver, error) {
+		receiver, err := adapter.BindChannel(id)
+		if err != nil {
+			return nil, err
+		}
+		return &observedChannelReceiver{ChannelReceiver: receiver, next: next}, nil
+	})
 	config.ChannelStats = adapter.Stats
 	config.Environment.Streams = adapter.StreamFactory()
 	config.WebSocket = webSocket
-	_, httpServer := newTestHTTP(t, config)
-	return shared, adapter, strings.Replace(httpServer.URL, "http", "ws", 1)
+	server, httpServer := newTestHTTP(t, config)
+	return server, shared, adapter, strings.Replace(httpServer.URL, "http", "ws", 1)
+}
+
+func awaitNextSequence(t *testing.T, frames <-chan Frame, want uint64) {
+	t.Helper()
+	select {
+	case frame := <-frames:
+		if frame.Sequence != want {
+			t.Fatalf("next frame sequence = %d, want %d", frame.Sequence, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("frame %d was not checked out", want)
+	}
+}
+
+func requireHubQueue(t *testing.T, shared *hub.Hub, frames, queuedBytes int) {
+	t.Helper()
+	stats := shared.Stats()
+	if stats.QueuedFrames != frames || stats.QueuedBytes != queuedBytes {
+		t.Fatalf("hub queue = %d frames %d bytes, want %d frames %d bytes", stats.QueuedFrames, stats.QueuedBytes, frames, queuedBytes)
+	}
 }
 
 func TestRealHubWriteTimeoutReplaysInFlightFrameOnReconnect(t *testing.T) {
-	shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{WriteTimeout: 2 * time.Second})
+	nextSeen := make(chan Frame, 8)
+	server, shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{KeepAlive: -1, WriteTimeout: 2 * time.Second}, nextSeen)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	const channelID = "write-timeout-replay"
@@ -38,13 +81,6 @@ func TestRealHubWriteTimeoutReplaysInFlightFrameOnReconnect(t *testing.T) {
 	if err := producer.SendBinary(ctx, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	huge := bytes.Repeat([]byte{0xab}, 16<<20)
-	if err := producer.SendBinary(ctx, huge); err != nil {
-		t.Fatal(err)
-	}
-	if err := producer.SendBinary(ctx, []byte("after")); err != nil {
-		t.Fatal(err)
-	}
 
 	stuck, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
 	if err != nil {
@@ -53,7 +89,20 @@ func TestRealHubWriteTimeoutReplaysInFlightFrameOnReconnect(t *testing.T) {
 	if _, data, err := stuck.Read(ctx); err != nil || string(data) != "first" {
 		t.Fatalf("first frame = %q, %v", data, err)
 	}
+	awaitNextSequence(t, nextSeen, 1)
+	waitFor(t, func() bool { return shared.Stats().QueuedFrames == 0 })
+	server.webSocket.WriteTimeout = time.Nanosecond
+	huge := bytes.Repeat([]byte{0xab}, 16<<20)
+	if err := producer.SendBinary(ctx, huge); err != nil {
+		t.Fatal(err)
+	}
+	if err := producer.SendBinary(ctx, []byte("after")); err != nil {
+		t.Fatal(err)
+	}
+	awaitNextSequence(t, nextSeen, 2)
 	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 0 })
+	requireHubQueue(t, shared, 2, len(huge)+len("after"))
+	server.webSocket.WriteTimeout = 2 * time.Second
 	_ = stuck.CloseNow()
 
 	reconnected, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
@@ -79,9 +128,10 @@ func TestRealHubWriteTimeoutReplaysInFlightFrameOnReconnect(t *testing.T) {
 }
 
 func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
-	shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{
-		KeepAlive: 50 * time.Millisecond, PingTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second,
-	})
+	nextSeen := make(chan Frame, 8)
+	_, shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{
+		KeepAlive: 50 * time.Millisecond, PingTimeout: 2 * time.Second, WriteTimeout: 5 * time.Second,
+	}, nextSeen)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	const channelID = "pong-failure-replay"
@@ -90,6 +140,31 @@ func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer producer.Close()
+
+	pingSeen := make(chan struct{}, 1)
+	stuck, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, &websocket.DialOptions{
+		OnPingReceived: func(context.Context, []byte) bool {
+			select {
+			case pingSeen <- struct{}{}:
+			default:
+			}
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _, _ = stuck.Read(ctx)
+	}()
+	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 1 })
+	select {
+	case <-pingSeen:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	huge := bytes.Repeat([]byte{0xcd}, 16<<20)
 	if err := producer.SendBinary(ctx, huge); err != nil {
 		t.Fatal(err)
@@ -97,14 +172,15 @@ func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
 	if err := producer.SendBinary(ctx, []byte("after")); err != nil {
 		t.Fatal(err)
 	}
-
-	stuck, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 1 })
+	awaitNextSequence(t, nextSeen, 1)
 	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 0 })
+	requireHubQueue(t, shared, 2, len(huge)+len("after"))
 	_ = stuck.CloseNow()
+	select {
+	case <-readDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stuck client read did not stop")
+	}
 
 	reconnected, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
 	if err != nil {
@@ -129,7 +205,8 @@ func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
 }
 
 func TestRealHubDrainingChannelSurvivesUntilInFlightAck(t *testing.T) {
-	shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{WriteTimeout: 2 * time.Second})
+	nextSeen := make(chan Frame, 8)
+	server, shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{KeepAlive: -1, WriteTimeout: 2 * time.Second}, nextSeen)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	const channelID = "draining-inflight"
@@ -140,6 +217,17 @@ func TestRealHubDrainingChannelSurvivesUntilInFlightAck(t *testing.T) {
 	if err := producer.SendBinary(ctx, []byte("terminal")); err != nil {
 		t.Fatal(err)
 	}
+
+	stuck, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, data, err := stuck.Read(ctx); err != nil || string(data) != "terminal" {
+		t.Fatalf("terminal frame = %q, %v", data, err)
+	}
+	awaitNextSequence(t, nextSeen, 1)
+	waitFor(t, func() bool { return shared.Stats().QueuedFrames == 0 })
+	server.webSocket.WriteTimeout = time.Nanosecond
 	huge := bytes.Repeat([]byte{0xef}, 16<<20)
 	if err := producer.SendBinary(ctx, huge); err != nil {
 		t.Fatal(err)
@@ -147,17 +235,14 @@ func TestRealHubDrainingChannelSurvivesUntilInFlightAck(t *testing.T) {
 	if err := producer.CloseGracefully(); err != nil {
 		t.Fatal(err)
 	}
-
-	stuck, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 1 })
+	awaitNextSequence(t, nextSeen, 2)
 	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 0 })
 	stats := adapter.Stats()
 	if stats.PendingChannels != 1 {
 		t.Fatalf("draining channel disappeared with an in-flight frame: %+v", stats)
 	}
+	requireHubQueue(t, shared, 1, len(huge))
+	server.webSocket.WriteTimeout = 2 * time.Second
 	_ = stuck.CloseNow()
 
 	reconnected, _, err := websocket.Dial(ctx, baseURL+"/ws/channel/"+channelID, nil)

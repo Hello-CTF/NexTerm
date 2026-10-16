@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +30,8 @@ type previewFixture struct {
 	previews *sharing.Service
 }
 
-// newPreviewFixture assembles a full server with read-only previews: a real session Manager (local sh)
-// providing output channels via a hub adapter, and a real sharing.Service.
+// newPreviewFixture assembles a full server with read-only previews: a real session Manager using a platform
+// local shell, output channels via a hub adapter, and a real sharing.Service.
 func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
@@ -43,8 +44,12 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	shell := "/bin/sh"
+	if runtime.GOOS == "windows" {
+		shell = "powershell.exe"
+	}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
-		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		return local.NewWithConfig(local.Config{Shell: shell}), nil
 	})
 	config := testConfig(t, false)
 	config.Events = NewEventBroker()
@@ -70,7 +75,7 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	}
 }
 
-// openTab opens a real terminal tab (local sh) with the given owner, returning the tab ID.
+// openTab opens a real terminal tab with the platform local shell, returning the tab ID.
 func (f *previewFixture) openTab(t *testing.T, ownerID string) string {
 	t.Helper()
 	tabID, _ := f.openTabWithChannel(t, ownerID)
@@ -367,11 +372,11 @@ func TestSharePreviewTerminalEndToEnd(t *testing.T) {
 	_ = lines
 
 	// Viewer upstream input: dropped at the protocol layer, never reaching the terminal.
-	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
+	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("echo nope-42\r")); err != nil {
 		t.Fatal(err)
 	}
 	// The owner's normal output should keep arriving at the viewer.
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\r")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -576,7 +581,7 @@ func TestSharePreviewWriteInputReachesTerminal(t *testing.T) {
 		t.Fatalf("second frame = %v, want snapshot", snapshot)
 	}
 
-	writePreviewInput(t, conn, "echo guest-rw-42\n")
+	writePreviewInput(t, conn, "echo guest-rw-42\r")
 	control := awaitPreviewControl(t, conn, 10*time.Second)
 	if control["state"] != "guest" {
 		t.Fatalf("control frame = %v, want guest", control)
@@ -604,14 +609,14 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	readPreviewJSON(t, conn, 10*time.Second)
 	readPreviewJSON(t, conn, 10*time.Second)
 
-	writePreviewInput(t, conn, "echo denied-ow-1\n")
+	writePreviewInput(t, conn, "echo denied-ow-1\r")
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "owner" {
 		t.Fatalf("control frame = %v, want owner", control)
 	}
 	if controller := previewTabController(t, f, tabID); controller != "owner" {
 		t.Fatalf("controller = %q, want owner", controller)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "owner-flow-1", "denied-ow-1", 10*time.Second)
@@ -638,7 +643,7 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.WriteGuest(context.Background(), tabID, "preview-"+linkA, []byte("a\n"), time.Hour); err != nil {
+	if err := f.manager.WriteGuest(context.Background(), tabID, "preview-"+linkA, []byte("a\r"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.manager.DetachChannel("spec-a"); err != nil {
@@ -651,14 +656,14 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	conn := dialPreviewViewer(t, f.http.URL, tokenB)
 	readPreviewJSON(t, conn, 10*time.Second)
 	readPreviewJSON(t, conn, 10*time.Second)
-	writePreviewInput(t, conn, "echo denied-b-1\n")
+	writePreviewInput(t, conn, "echo denied-b-1\r")
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "busy" {
 		t.Fatalf("control frame = %v, want busy", control)
 	}
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-2\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-2\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "owner-flow-2", "denied-b-1", 10*time.Second)
@@ -686,14 +691,14 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	if _, err := f.db.ExecContext(context.Background(), "UPDATE share_preview_link SET permission = 'read'"); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo denied-ro-1\n")
+	writePreviewInput(t, conn, "echo denied-ro-1\r")
 	expectPreviewErrorFrame(t, conn, "read_only", "预览当前为只读", 10*time.Second)
 
 	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-ro-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-ro-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-ro-1", "denied-ro-1", 10*time.Second)
@@ -732,7 +737,7 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	readPreviewJSON(t, connB, 10*time.Second)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		writePreviewInput(t, connB, "true\n")
+		writePreviewInput(t, connB, "true\r")
 		readCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		kind, data, err := connB.Read(readCtx)
 		cancel()
@@ -808,7 +813,7 @@ func TestSharePreviewTextFrameDropped(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"input","data":"nope"}`)); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo text-ok-1\n")
+	writePreviewInput(t, conn, "echo text-ok-1\r")
 	// Any response to a text frame would arrive before the control frame of the binary input (the read loop processes in order,
 	// queue is FIFO); awaitPreviewControl fails on error frames, pinning the silent-discard semantics.
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "guest" {
@@ -839,14 +844,14 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	if call := f.call(t, http.MethodPost, "/share/previews/"+linkID+"/revoke", nil, alice, alice.csrf, nil); call.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
 	}
-	writePreviewInput(t, conn, "echo denied-rev-1\n")
+	writePreviewInput(t, conn, "echo denied-rev-1\r")
 	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已吊销", 10*time.Second)
 
 	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-rev-1", "denied-rev-1", 10*time.Second)
@@ -873,13 +878,13 @@ func TestSharePreviewExpiredInputFrame(t *testing.T) {
 	if _, err := f.db.ExecContext(context.Background(), "UPDATE share_preview_link SET expires_at = ?", time.Now().UnixMilli()-1000); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo denied-exp-1\n")
+	writePreviewInput(t, conn, "echo denied-exp-1\r")
 	expectPreviewErrorFrame(t, conn, "expired", "分享链接已过期", 10*time.Second)
 
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-exp-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-exp-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-exp-1", "denied-exp-1", 10*time.Second)

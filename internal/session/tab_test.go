@@ -189,7 +189,7 @@ func TestCloseTabFailureRetainsPartialTabForRetry(t *testing.T) {
 func TestCloseTabRetriesRealLocalChannelFailures(t *testing.T) {
 	injected := errors.New("injected real channel close failure")
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		return &retryCloseTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), failures: 2, err: injected}, nil
+		return &retryCloseTransport{Transport: local.NewWithConfig(local.Config{}), failures: 2, err: injected}, nil
 	})
 	manager := NewManager(Config{Connector: connector})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -223,7 +223,7 @@ func TestDisconnectRetriesRealLocalCleanupFailures(t *testing.T) {
 	injected := errors.New("injected real local cleanup failure")
 	var transport *retryCloseTransport
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		transport = &retryCloseTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), hold: true, err: injected}
+		transport = &retryCloseTransport{Transport: local.NewWithConfig(local.Config{}), hold: true, err: injected}
 		return transport, nil
 	})
 	manager := NewManager(Config{Connector: connector})
@@ -265,7 +265,7 @@ func TestManagerCloseReturnsCleanupErrorAndAllowsRetry(t *testing.T) {
 	injected := errors.New("injected manager close failure")
 	var transport *retryCloseTransport
 	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
-		transport = &retryCloseTransport{Transport: local.NewWithConfig(local.Config{Shell: "/bin/sh"}), hold: true, err: injected}
+		transport = &retryCloseTransport{Transport: local.NewWithConfig(local.Config{}), hold: true, err: injected}
 		return transport, nil
 	})
 	manager := NewManager(Config{Connector: connector})

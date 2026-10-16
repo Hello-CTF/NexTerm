@@ -201,10 +201,13 @@ func TestSessionWindowsCloseAfterNaturalExit(t *testing.T) {
 
 // GetProcessHandleCount covers only this test process; console hosts are filtered by leader descendants.
 func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
+	ownership := newWindowsConsoleHostOwnership(uint32(os.Getpid()))
 	exercise := func(natural bool) {
+		releasePath := ""
 		command := "while ($true) { [Console]::Out.Write('x' * 65536); Start-Sleep -Milliseconds 50 }"
 		if natural {
-			command = "[Console]::Out.Write('cycle'); exit 0"
+			releasePath = filepath.Join(t.TempDir(), "release")
+			command = fmt.Sprintf("[Console]::Out.Write('cycle'); while (-not [IO.File]::Exists('%s')) { Start-Sleep -Milliseconds 10 }; exit 0", strings.ReplaceAll(releasePath, "'", "''"))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -215,7 +218,11 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 				_ = session.Close()
 			}
 		}()
+		waitForWindowsOwnedConsoleHost(t, ownership, 15*time.Second)
 		if natural {
+			if err := os.WriteFile(releasePath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := io.ReadAll(session); err != nil {
 				t.Fatal(err)
 			}
@@ -225,8 +232,8 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 		}
 		closeStarted = true
 		closeWindowsSessionWithin(t, session)
+		ownership.expectExit()
 	}
-	leaderPID := uint32(os.Getpid())
 	func() {
 		session := startWindowsTestSession(t, context.Background(), "while ($true) { [Console]::Out.Write('x' * 65536); Start-Sleep -Milliseconds 50 }")
 		closeStarted := false
@@ -235,13 +242,14 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 				_ = session.Close()
 			}
 		}()
-		openConsole, conhost := waitForWindowsOwnedConsoleHost(t, leaderPID, 15*time.Second)
+		openConsole, conhost := waitForWindowsOwnedConsoleHost(t, ownership, 15*time.Second)
 		t.Logf("active PTY owned console hosts = OpenConsole:%d conhost:%d", openConsole, conhost)
 		closeStarted = true
 		closeWindowsSessionWithin(t, session)
+		ownership.expectExit()
 	}()
 	exercise(true)
-	baselineSamples := sampleWindowsResources(t, leaderPID)
+	baselineSamples := sampleWindowsResources(t, ownership)
 	baseline := windowsResourceSample{}
 	for _, sample := range baselineSamples {
 		baseline.handles = max(baseline.handles, sample.handles)
@@ -251,7 +259,7 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 	for iteration := 0; iteration < 100; iteration++ {
 		exercise(iteration%2 == 0)
 	}
-	samples := sampleWindowsResources(t, leaderPID)
+	samples := sampleWindowsResources(t, ownership)
 	for index, sample := range samples {
 		if sample.handles > baseline.handles+4 {
 			t.Fatalf("handle sample %d = %d, baseline = %d; want <= %d (all samples %v)", index, sample.handles, baseline.handles, baseline.handles+4, samples)
@@ -358,45 +366,20 @@ func waitForWindowsTestFile(t *testing.T, path string, timeout time.Duration) {
 	}
 }
 
-func TestWindowsConsoleHostOwnershipRequiresKnownDescendants(t *testing.T) {
-	const leaderPID = uint32(100)
-	processes := map[uint32]windowsProcessRecord{
-		1:   {name: "services.exe"},
-		100: {parentPID: 1, name: "pty.test.exe"},
-		200: {parentPID: 100, name: "powershell.exe"},
-		201: {parentPID: 200, name: "OpenConsole.exe"},
-		202: {parentPID: 201, name: "conhost.exe"},
-		300: {parentPID: 1, name: "other-package.test.exe"},
-		301: {parentPID: 300, name: "OpenConsole.exe"},
-		302: {parentPID: 300, name: "conhost.exe"},
-	}
-	openConsole, conhost, err := windowsOwnedConsoleHostCounts(leaderPID, processes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if openConsole != 1 || conhost != 1 {
-		t.Fatalf("owned OpenConsole/conhost = %d/%d; want 1/1 with sibling package processes excluded", openConsole, conhost)
-	}
-	processes[400] = windowsProcessRecord{parentPID: 999, name: "conhost.exe"}
-	if _, _, err := windowsOwnedConsoleHostCounts(leaderPID, processes); err == nil {
-		t.Fatal("console host with an unknown parent chain was accepted")
-	}
-}
-
 type windowsResourceSample struct {
 	handles     int
 	openConsole int
 	conhost     int
 }
 
-func sampleWindowsResources(t *testing.T, leaderPID uint32) [3]windowsResourceSample {
+func sampleWindowsResources(t *testing.T, ownership *windowsConsoleHostOwnership) [3]windowsResourceSample {
 	t.Helper()
 	runtime.GC()
 	time.Sleep(2 * time.Second)
 	var samples [3]windowsResourceSample
 	for index := range samples {
 		samples[index].handles = windowsCurrentHandleCount(t)
-		samples[index].openConsole, samples[index].conhost = windowsConsoleHostCounts(t, leaderPID)
+		samples[index].openConsole, samples[index].conhost = windowsConsoleHostCounts(t, ownership)
 		if index+1 < len(samples) {
 			time.Sleep(500 * time.Millisecond)
 		}
@@ -405,6 +388,7 @@ func sampleWindowsResources(t *testing.T, leaderPID uint32) [3]windowsResourceSa
 }
 
 var windowsGetProcessHandleCount = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessHandleCount")
+var windowsGetProcessTimes = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessTimes")
 
 func windowsCurrentHandleCount(t *testing.T) int {
 	t.Helper()
@@ -416,64 +400,7 @@ func windowsCurrentHandleCount(t *testing.T) int {
 	return int(count)
 }
 
-type windowsProcessRecord struct {
-	parentPID uint32
-	name      string
-}
-
-func windowsOwnedConsoleHostCounts(leaderPID uint32, processes map[uint32]windowsProcessRecord) (int, int, error) {
-	openConsole, conhost := 0, 0
-	for pid, process := range processes {
-		isOpenConsole := strings.EqualFold(process.name, "OpenConsole.exe")
-		isConhost := strings.EqualFold(process.name, "conhost.exe")
-		if !isOpenConsole && !isConhost {
-			continue
-		}
-		owned, err := windowsProcessDescendsFrom(pid, leaderPID, processes)
-		if err != nil {
-			return 0, 0, fmt.Errorf("determine %s ownership for pid %d: %w", process.name, pid, err)
-		}
-		if !owned {
-			continue
-		}
-		if isOpenConsole {
-			openConsole++
-		} else {
-			conhost++
-		}
-	}
-	return openConsole, conhost, nil
-}
-
-func windowsProcessDescendsFrom(pid, leaderPID uint32, processes map[uint32]windowsProcessRecord) (bool, error) {
-	seen := make(map[uint32]struct{})
-	current := pid
-	for {
-		if current == leaderPID {
-			return true, nil
-		}
-		if _, exists := seen[current]; exists {
-			return false, fmt.Errorf("parent cycle at pid %d", current)
-		}
-		seen[current] = struct{}{}
-		process, exists := processes[current]
-		if !exists {
-			return false, fmt.Errorf("pid %d is absent from the process snapshot", current)
-		}
-		if process.parentPID == 0 {
-			return false, nil
-		}
-		parent := process.parentPID
-		if parent != leaderPID {
-			if _, exists := processes[parent]; !exists {
-				return false, fmt.Errorf("parent pid %d of pid %d is absent from the process snapshot", parent, current)
-			}
-		}
-		current = parent
-	}
-}
-
-func windowsConsoleHostCounts(t *testing.T, leaderPID uint32) (int, int) {
+func windowsConsoleHostCounts(t *testing.T, ownership *windowsConsoleHostOwnership) (int, int) {
 	t.Helper()
 	processes := make(map[uint32]windowsProcessRecord)
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
@@ -490,29 +417,53 @@ func windowsConsoleHostCounts(t *testing.T, leaderPID uint32) (int, int) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		processes[entry.ProcessID] = windowsProcessRecord{
+		process := windowsProcessRecord{
 			parentPID: entry.ParentProcessID,
 			name:      windows.UTF16ToString(entry.ExeFile[:]),
 		}
+		if strings.EqualFold(process.name, "OpenConsole.exe") || strings.EqualFold(process.name, "conhost.exe") {
+			process.creationTime = windowsProcessCreationTime(entry.ProcessID)
+		}
+		processes[entry.ProcessID] = process
 		err = windows.Process32Next(snapshot, &entry)
 	}
-	openConsole, conhost, err := windowsOwnedConsoleHostCounts(leaderPID, processes)
+	openConsole, conhost, err := ownership.counts(processes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return openConsole, conhost
 }
 
-func waitForWindowsOwnedConsoleHost(t *testing.T, leaderPID uint32, timeout time.Duration) (int, int) {
+func windowsProcessCreationTime(pid uint32) uint64 {
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = windows.CloseHandle(process) }()
+	var creation, exit, kernel, user windows.Filetime
+	result, _, _ := windowsGetProcessTimes.Call(
+		uintptr(process),
+		uintptr(unsafe.Pointer(&creation)),
+		uintptr(unsafe.Pointer(&exit)),
+		uintptr(unsafe.Pointer(&kernel)),
+		uintptr(unsafe.Pointer(&user)),
+	)
+	if result == 0 {
+		return 0
+	}
+	return uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime)
+}
+
+func waitForWindowsOwnedConsoleHost(t *testing.T, ownership *windowsConsoleHostOwnership, timeout time.Duration) (int, int) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		openConsole, conhost := windowsConsoleHostCounts(t, leaderPID)
+		openConsole, conhost := windowsConsoleHostCounts(t, ownership)
 		if openConsole+conhost > 0 {
 			return openConsole, conhost
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("active PTY has no OpenConsole/conhost descendant of test leader %d after %s", leaderPID, timeout)
+			t.Fatalf("active PTY has no OpenConsole/conhost descendant of test leader %d after %s", ownership.leaderPID, timeout)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

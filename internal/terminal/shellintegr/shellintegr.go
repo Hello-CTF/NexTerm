@@ -107,7 +107,12 @@ const bashWrapper = `# nexterm shell integration
 [[ -r $HOME/.bashrc ]] && source $HOME/.bashrc
 __nexterm_host=${HOSTNAME:-$(hostname)}
 __nexterm_osc7() {
-    local out=${PWD//\%/%25}
+    local out=$PWD
+    if [[ $OSTYPE == msys || $OSTYPE == cygwin ]]; then
+        out=$(cygpath --mixed "$PWD")
+        [[ $out == /* ]] || out=/$out
+    fi
+    out=${out//\%/%25}
     out=${out//\#/%23}
     out=${out//\?/%3F}
     out=${out// /%20}

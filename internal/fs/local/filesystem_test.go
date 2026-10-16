@@ -89,14 +89,14 @@ func TestListReturnsAbsoluteRoundTripPaths(t *testing.T) {
 	if err := os.WriteFile(file, []byte("round trip"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	workingDirectory, err := os.Getwd()
+	t.Chdir(filepath.Dir(root))
+	relativeRoot := filepath.Base(root)
+	absoluteRoot, err := filepath.Abs(relativeRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relativeRoot, err := filepath.Rel(workingDirectory, root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	absoluteDir := filepath.Join(absoluteRoot, filepath.Base(dir))
+	absoluteFile := filepath.Join(absoluteDir, filepath.Base(file))
 	entries, err := filesystem.List(ctx, relativeRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -104,15 +104,15 @@ func TestListReturnsAbsoluteRoundTripPaths(t *testing.T) {
 	if len(entries) != 1 || entries[0].Name != filepath.Base(dir) {
 		t.Fatalf("List(root) = %+v", entries)
 	}
-	if !filepath.IsAbs(entries[0].Path) || entries[0].Path != dir {
-		t.Fatalf("directory entry path = %q, want absolute %q", entries[0].Path, dir)
+	if !filepath.IsAbs(entries[0].Path) || entries[0].Path != absoluteDir {
+		t.Fatalf("directory entry path = %q, want absolute %q", entries[0].Path, absoluteDir)
 	}
 	entries, err = filesystem.List(ctx, entries[0].Path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || !filepath.IsAbs(entries[0].Path) || entries[0].Path != file {
-		t.Fatalf("List(entry.path) = %+v, want absolute %q", entries, file)
+	if len(entries) != 1 || !filepath.IsAbs(entries[0].Path) || entries[0].Path != absoluteFile {
+		t.Fatalf("List(entry.path) = %+v, want absolute %q", entries, absoluteFile)
 	}
 	content, err := filesystem.ReadFile(ctx, entries[0].Path, 100)
 	if err != nil || string(content) != "round trip" {

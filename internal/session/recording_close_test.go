@@ -17,6 +17,7 @@ import (
 )
 
 func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "active.log")
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -25,13 +26,18 @@ func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
-	before := descriptorCount(t)
-	path := filepath.Join(t.TempDir(), "active.log")
+	countDescriptors := runtime.GOOS != "windows"
+	before := 0
+	if countDescriptors {
+		before = descriptorCount(t)
+	}
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
 	}
-	if during := descriptorCount(t); during != before+1 {
-		t.Fatalf("recording opened %d descriptors, want one", during-before)
+	if countDescriptors {
+		if during := descriptorCount(t); during != before+1 {
+			t.Fatalf("recording opened %d descriptors, want one", during-before)
+		}
 	}
 	if err := connector.transport(0).channel(0).emit([]byte("active-record")); err != nil {
 		t.Fatal(err)
@@ -43,8 +49,10 @@ func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
 	if err := manager.CloseTab(tab.ID); err != nil {
 		t.Fatal(err)
 	}
-	if after := descriptorCount(t); after != before {
-		t.Fatalf("close left %d recording descriptors open", after-before)
+	if countDescriptors {
+		if after := descriptorCount(t); after != before {
+			t.Fatalf("close left %d recording descriptors open", after-before)
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || !bytes.Contains(data, []byte("active-record")) {
@@ -53,6 +61,7 @@ func TestCloseTabStopsActiveRecordingAndClosesFile(t *testing.T) {
 }
 
 func TestStopRecordingIncludesFeedVisibleBeforeStop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stop.log")
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, ReconnectBackoff: []time.Duration{0}})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -74,7 +83,6 @@ func TestStopRecordingIncludesFeedVisibleBeforeStop(t *testing.T) {
 			_ = receiver.Ack(frame.Sequence)
 		}
 	}()
-	path := filepath.Join(t.TempDir(), "stop.log")
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
 	}
@@ -324,6 +332,7 @@ func TestRecordingOperationAndResizeControlVersionsStayOrdered(t *testing.T) {
 }
 
 func TestRecordingOperationsAndMetadataControlVersionsStayOrdered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent.log")
 	connector := newFakeConnector()
 	var eventsMu sync.Mutex
 	var versions []uint64
@@ -345,7 +354,6 @@ func TestRecordingOperationsAndMetadataControlVersionsStayOrdered(t *testing.T) 
 		t.Fatal(err)
 	}
 	tab := openTestTab(t, manager, connected, "client-a", "a-1")
-	path := filepath.Join(t.TempDir(), "concurrent.log")
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
 	}

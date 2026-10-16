@@ -302,6 +302,7 @@ func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
 	if got := session.Info().Status; got != StatusConnected {
 		t.Fatalf("stale idle candidate disconnected active tab: %s", got)
 	}
+	waitFor(t, func() bool { return time.Now().After(oldIdle) })
 	if err := manager.CloseTab(tab.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -99,6 +99,7 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 }
 
 func TestRecordingLifecycleEmitsControlInvalidations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.log")
 	connector := newFakeConnector()
 	events := make(chan Event, 8)
 	manager := NewManager(Config{
@@ -127,7 +128,6 @@ func TestRecordingLifecycleEmitsControlInvalidations(t *testing.T) {
 		}
 	}
 
-	path := filepath.Join(t.TempDir(), "events.log")
 	if err := manager.StartRecording(tab.ID, path); err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +223,7 @@ type requestTerminalFixture struct {
 
 func newRequestTerminalFixture(t *testing.T, kind string) *requestTerminalFixture {
 	t.Helper()
+	recordingPath := filepath.Join(t.TempDir(), "recording.log")
 	connector := newFakeConnector()
 	manager := NewManager(Config{Connector: connector, ReconnectBackoff: []time.Duration{0}})
 	t.Cleanup(func() { _ = manager.Close() })
@@ -242,7 +243,7 @@ func newRequestTerminalFixture(t *testing.T, kind string) *requestTerminalFixtur
 	}
 	return &requestTerminalFixture{
 		manager: manager, connector: connector, session: connected, tab: tab,
-		recordingPath: filepath.Join(t.TempDir(), "recording.log"),
+		recordingPath: recordingPath,
 	}
 }
 

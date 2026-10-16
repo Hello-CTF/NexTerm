@@ -10,11 +10,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestApplyPostgresDefaults(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://nexterm@127.0.0.1:5432/nexterm?sslmode=disable")
+func parsePostgresConfig(t *testing.T, dsn string) *pgx.ConnConfig {
+	t.Helper()
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGPASSFILE", filepath.Join(t.TempDir(), "missing.pgpass"))
+	t.Setenv("PGSERVICE", "")
+	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return config
+}
+
+func TestApplyPostgresDefaults(t *testing.T) {
+	config := parsePostgresConfig(t, "postgres://nexterm@127.0.0.1:5432/nexterm?sslmode=disable")
 	if err := applyPostgresDefaults(config, "secret"); err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +42,7 @@ func TestApplyPostgresDefaults(t *testing.T) {
 }
 
 func TestApplyPostgresDefaultsKeepsExplicitValues(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://nexterm@127.0.0.1:5432/nexterm?sslmode=disable&statement_timeout=90000")
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := parsePostgresConfig(t, "postgres://nexterm@127.0.0.1:5432/nexterm?sslmode=disable&statement_timeout=90000")
 	if err := applyPostgresDefaults(config, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +55,7 @@ func TestApplyPostgresDefaultsKeepsExplicitValues(t *testing.T) {
 }
 
 func TestApplyPostgresDefaultsRejectsDoublePassword(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://nexterm:inline@127.0.0.1:5432/nexterm")
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := parsePostgresConfig(t, "postgres://nexterm:inline@127.0.0.1:5432/nexterm")
 	if err := applyPostgresDefaults(config, "file-secret"); err == nil {
 		t.Fatal("DSN password + password file combination was accepted")
 	}
