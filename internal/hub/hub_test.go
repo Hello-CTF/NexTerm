@@ -44,7 +44,7 @@ func TestPendingFramesSurviveBindAndKeepMixedOrder(t *testing.T) {
 
 func TestRebindInvalidatesOnlyOldReceiver(t *testing.T) {
 	var closed atomic.Int32
-	h := New(Options{OnChannelClose: func(string) { closed.Add(1) }})
+	h := New(Options{OnChannelClose: func(string, uint64, func()) { closed.Add(1) }})
 	oldReceiver, err := h.Bind("terminal")
 	if err != nil {
 		t.Fatal(err)

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/go-ntlmssp"
 	gowinrm "github.com/masterzen/winrm"
 	"github.com/masterzen/winrm/soap"
 )
@@ -56,7 +55,10 @@ func newLibraryRunner(config Config) (*libraryRunner, error) {
 	}
 	var roundTripper http.RoundTripper = httpTransport
 	if config.Auth == AuthNTLM {
-		roundTripper = &ntlmssp.Negotiator{RoundTripper: httpTransport}
+		httpTransport.MaxConnsPerHost = 1
+		httpTransport.MaxIdleConnsPerHost = 1
+		httpTransport.IdleConnTimeout = 0
+		roundTripper = newNTLMSealingTransport(httpTransport)
 	}
 	scheme := "http"
 	if config.UseTLS {

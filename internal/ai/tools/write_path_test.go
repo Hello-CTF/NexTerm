@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 
 func TestNormalizeWritePathArgs(t *testing.T) {
 	t.Parallel()
-	clean := json.RawMessage(`{"path":"/a/b","content":"x"}`)
+	clean, _ := json.Marshal(map[string]string{"path": filepath.Clean("/a/b"), "content": "x"})
 	got, err := normalizeWritePathArgs(clean)
 	if err != nil || string(got) != string(clean) {
 		t.Fatalf("clean args changed: %s err=%v", got, err)
@@ -27,8 +29,8 @@ func TestNormalizeWritePathArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var path string
-	if err := json.Unmarshal(fields["path"], &path); err != nil || path != "/a/c" {
-		t.Fatalf("normalized path = %q err=%v", path, err)
+	if want := filepath.Clean("/a/c"); json.Unmarshal(fields["path"], &path) != nil || path != want {
+		t.Fatalf("normalized path = %q, want %q", path, want)
 	}
 	if len(fields) != 5 {
 		t.Fatalf("fields dropped: %s", got)
@@ -42,15 +44,53 @@ func TestNormalizeWritePathArgs(t *testing.T) {
 	}
 }
 
+func TestNormalizeWritePathArgsPreservesUnixBackslash(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix path semantics")
+	}
+	args, _ := json.Marshal(map[string]string{"path": `/tmp/a\b`, "content": "x"})
+	got, err := normalizeWritePathArgs(args)
+	if err != nil || string(got) != string(args) {
+		t.Fatalf("Unix backslash path changed: got %s, want %s, err=%v", got, args, err)
+	}
+}
+
+func TestNormalizeWritePathArgsPreservesWindowsUNC(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	args, _ := json.Marshal(map[string]string{"path": `\\server\share\dir\file.txt`, "content": "x"})
+	got, err := normalizeWritePathArgs(args)
+	if err != nil || string(got) != string(args) {
+		t.Fatalf("UNC path changed: got %s, want %s, err=%v", got, args, err)
+	}
+}
+
+func TestNormalizeWritePathArgsRejectsWindowsDriveRelativeParent(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	args, _ := json.Marshal(map[string]string{"path": `C:..\escape`, "content": "x"})
+	if _, err := normalizeWritePathArgs(args); err == nil {
+		t.Fatal("drive-relative parent escape accepted")
+	}
+}
+
 func TestWritePathNormalizedBeforeExecution(t *testing.T) {
 	h := newChatGrantHarness(guard.Config{Mode: guard.Silent}, "asset-a", nil, &chatGrantRecorder{})
-	if _, err := h.invoke("call-1", "read_file", `{"path":"/tmp/new.txt"}`); err != nil {
+	target := filepath.Clean("/tmp/new.txt")
+	readArgs, _ := json.Marshal(map[string]string{"path": target})
+	if _, err := h.invoke("call-1", "read_file", string(readArgs)); err != nil {
 		t.Fatalf("read setup: %v", err)
 	}
-	messages, err := h.invoke("call-2", "write_file", `{"path":"/tmp/dir/../new.txt","content":"hi"}`)
-	requireChatGrantResult(t, messages, err, "已创建 /tmp/new.txt")
+	writeArgs, _ := json.Marshal(map[string]string{"path": "/tmp/dir/../new.txt", "content": "hi"})
+	messages, err := h.invoke("call-2", "write_file", string(writeArgs))
+	requireChatGrantResult(t, messages, err, "已创建 ")
 	h.transport.files.mu.Lock()
-	_, normalized := h.transport.files.files["/tmp/new.txt"]
+	_, normalized := h.transport.files.files[target]
 	_, raw := h.transport.files.files["/tmp/dir/../new.txt"]
 	h.transport.files.mu.Unlock()
 	if !normalized || raw {
@@ -99,13 +139,16 @@ func TestPersistentRuleCoversNormalizedInTreePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newChatGrantHarness(guard.Config{Mode: guard.ReadWrite}, "asset-a", grants, recorder)
-	if _, err := h.invoke("call-1", "read_file", `{"path":"/var/log/app.log"}`); err != nil {
+	target := filepath.Clean("/var/log/app.log")
+	readArgs, _ := json.Marshal(map[string]string{"path": target})
+	if _, err := h.invoke("call-1", "read_file", string(readArgs)); err != nil {
 		t.Fatalf("read setup: %v", err)
 	}
-	messages, err := h.invoke("call-2", "write_file", `{"path":"/var/log/../log/app.log","content":"hi"}`)
-	requireChatGrantResult(t, messages, err, "已创建 /var/log/app.log")
+	writeArgs, _ := json.Marshal(map[string]string{"path": "/var/log/../log/app.log", "content": "hi"})
+	messages, err := h.invoke("call-2", "write_file", string(writeArgs))
+	requireChatGrantResult(t, messages, err, "已创建 ")
 	h.transport.files.mu.Lock()
-	content := string(h.transport.files.files["/var/log/app.log"])
+	content := string(h.transport.files.files[target])
 	h.transport.files.mu.Unlock()
 	if !strings.Contains(content, "hi") {
 		t.Fatalf("normalized in-tree write missing: %q", content)

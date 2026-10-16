@@ -78,6 +78,7 @@ func TestProbeHostKeyClassifiedFailures(t *testing.T) {
 	_, err := ProbeHostKey(context.Background(), cfg)
 	requireConnectError(t, err, ErrorKindRefused)
 
+	useNXDOMAINResolver(t)
 	cfg = Config{Host: "nonexistent.invalid.", Port: 22, User: "test", HostKeys: store, ConnectTimeout: 5 * time.Second}
 	_, err = ProbeHostKey(context.Background(), cfg)
 	requireConnectError(t, err, ErrorKindDNS)

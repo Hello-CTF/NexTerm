@@ -3,7 +3,7 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -96,9 +96,9 @@ func canonicalPath(name string) string {
 	if name == "" {
 		return ""
 	}
-	clean := path.Clean(name)
-	if strings.HasPrefix(name, "//") && !strings.HasPrefix(clean, "//") {
-		clean = "/" + clean
+	clean := filepath.Clean(name)
+	if strings.HasPrefix(name, "//") && !strings.HasPrefix(filepath.ToSlash(clean), "//") {
+		clean = string(filepath.Separator) + clean
 	}
 	return clean
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -379,20 +380,36 @@ func TestSharePreviewTerminalEndToEnd(t *testing.T) {
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\r")); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	seenAfter := false
-	for time.Now().Before(deadline) && !seenAfter {
-		frame := readPreviewFrame(t, conn, 10*time.Second)
-		if strings.Contains(string(frame.data), "nope-42") {
-			t.Fatalf("viewer input reached terminal output: %q", frame.data)
-		}
-		if frame.kind == websocket.MessageBinary && strings.Contains(string(frame.data), "after-42") {
-			seenAfter = true
+	expectPreviewBinaryMarker(t, conn, "after-42", "nope-42", 10*time.Second)
+}
+
+func TestSharePreviewBinaryMarkerAcrossFrames(t *testing.T) {
+	bound := make(chan string, 1)
+	f := newPreviewFixture(t, func(config *Config) {
+		channels := config.Channels
+		config.Channels = ChannelBinderFunc(func(id string) (ChannelReceiver, error) {
+			receiver, err := channels.BindChannel(id)
+			if err == nil {
+				bound <- id
+			}
+			return receiver, err
+		})
+	})
+	aliceID := f.createUser(t, "alice")
+	alice := f.login(t, "alice", "password-alice")
+	tabID := f.openTab(t, aliceID)
+	_, token := createPreviewViaAPI(t, f, alice, tabID)
+
+	conn := dialPreviewViewer(t, f.http.URL, token)
+	readPreviewJSON(t, conn, 10*time.Second)
+	readPreviewJSON(t, conn, 10*time.Second)
+	channelID := <-bound
+	for _, fragment := range []string{"owner-flow-", "across-", "frames"} {
+		if err := f.manager.Hub().SendBinary(context.Background(), channelID, []byte(fragment)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !seenAfter {
-		t.Fatal("owner output never reached viewer")
-	}
+	expectPreviewBinaryMarker(t, conn, "owner-flow-across-frames", "", 10*time.Second)
 }
 
 func TestSharePreviewRevokeStopsStream(t *testing.T) {
@@ -514,15 +531,19 @@ func awaitPreviewControl(t *testing.T, conn *websocket.Conn, timeout time.Durati
 	return nil
 }
 
-// expectPreviewBinaryMarker reads frames until binary output contains the marker; it fails if forbidden bytes
-// (echo of rejected input) or an error frame appear meanwhile, pinning "rejected input never reaches the terminal and the connection stays open".
+// expectPreviewBinaryMarker reads the binary output stream until it contains the marker, including across frame boundaries;
+// it fails if forbidden bytes (echo of rejected input) or an error frame appear meanwhile, pinning "rejected input never reaches the terminal and the connection stays open".
 func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbidden string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var output []byte
 	for time.Now().Before(deadline) {
 		frame := readPreviewFrame(t, conn, timeout)
-		if forbidden != "" && strings.Contains(string(frame.data), forbidden) {
-			t.Fatalf("rejected input reached terminal output: %q", frame.data)
+		if frame.kind == websocket.MessageBinary {
+			output = append(output, frame.data...)
+		}
+		if forbidden != "" && bytes.Contains(output, []byte(forbidden)) {
+			t.Fatalf("rejected input reached terminal output: %q", output)
 		}
 		if frame.kind == websocket.MessageText {
 			var decoded map[string]any
@@ -533,7 +554,7 @@ func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbi
 				t.Fatalf("unexpected terminal error frame: %v", decoded)
 			}
 		}
-		if frame.kind == websocket.MessageBinary && strings.Contains(string(frame.data), marker) {
+		if frame.kind == websocket.MessageBinary && bytes.Contains(output, []byte(marker)) {
 			return
 		}
 	}

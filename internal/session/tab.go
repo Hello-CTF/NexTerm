@@ -602,18 +602,37 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 	defer tab.unlockFeed()
 
-	m.mu.Lock()
-	if m.closed || m.tabs[tab.ID] != tab {
-		m.mu.Unlock()
-		return TabInfo{}, ErrTabClosed
+	var incarnation uint64
+	reserved := false
+	producer, err := m.bus.Producer(options.ChannelID, func(token uint64, receiverClosed bool) error {
+		incarnation = token
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed || m.tabs[tab.ID] != tab {
+			return ErrTabClosed
+		}
+		if owner := m.channelTabs[options.ChannelID]; owner != "" && owner != tab.ID {
+			return errors.New("channel already attached to another tab")
+		}
+		if receiverClosed {
+			tab.mu.Lock()
+			reject := tab.ephemeral && !tab.retainable
+			tab.mu.Unlock()
+			if reject {
+				return hub.ErrDetached
+			}
+		}
+		m.channelTabs[options.ChannelID] = tab.ID
+		m.channelIncarnations[options.ChannelID] = token
+		reserved = true
+		return nil
+	})
+	if err != nil {
+		if reserved {
+			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
+		}
+		return TabInfo{}, err
 	}
-	if owner := m.channelTabs[options.ChannelID]; owner != "" && owner != tab.ID {
-		m.mu.Unlock()
-		return TabInfo{}, errors.New("channel already attached to another tab")
-	}
-	m.channelTabs[options.ChannelID] = tab.ID
-	m.mu.Unlock()
-
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
@@ -621,11 +640,6 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		tab.releaseOrphanControllerLocked()
 	}
 	tab.mu.Unlock()
-	producer, err := m.bus.Producer(options.ChannelID)
-	if err != nil {
-		m.releaseChannelReservation(tab.ID, options.ChannelID)
-		return TabInfo{}, err
-	}
 	if replaced {
 		old.co.teardown(old.producer)
 		_ = old.producer.Close()
@@ -634,7 +648,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	defer func() {
 		if !attached {
 			_ = producer.Close()
-			m.releaseChannelReservation(tab.ID, options.ChannelID)
+			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
 		}
 	}()
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
@@ -661,7 +675,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	}
 
 	m.mu.Lock()
-	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID {
+	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID || m.channelIncarnations[options.ChannelID] != incarnation {
 		m.mu.Unlock()
 		return TabInfo{}, hub.ErrDetached
 	}
@@ -741,10 +755,11 @@ func (m *Manager) planAttachReplay(tab *Tab, options AttachOptions, clear bool) 
 	return anchor, nil, replay
 }
 
-func (m *Manager) releaseChannelReservation(tabID, channelID string) {
+func (m *Manager) releaseChannelReservation(tabID, channelID string, incarnation uint64) {
 	m.mu.Lock()
-	if m.channelTabs[channelID] == tabID {
+	if m.channelTabs[channelID] == tabID && m.channelIncarnations[channelID] == incarnation {
 		delete(m.channelTabs, channelID)
+		delete(m.channelIncarnations, channelID)
 	}
 	m.mu.Unlock()
 }
@@ -791,26 +806,40 @@ func (t *Tab) ScreenSeq() uint64 {
 	return core.LatestSeq()
 }
 
+func (m *Manager) captureChannelCloser(channelID string) (uint64, func()) {
+	channelCloseBeforeCapture(channelID)
+	incarnation, closeChannel := m.bus.ChannelCloser(channelID)
+	channelCloseAfterCapture(channelID)
+	return incarnation, closeChannel
+}
+
 func (m *Manager) DetachChannel(channelID string) error {
+	incarnation, closeChannel := m.captureChannelCloser(channelID)
 	m.mu.Lock()
-	_, cleanup := m.detachChannelLocked(channelID)
+	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
 	m.mu.Unlock()
 	cleanup()
 	return nil
 }
 
 // detachChannelLocked removes the channel registration under m.mu and returns the cleanup action to run after unlocking
-// (producer close, event emission, ephemeral tab reaping); shared by DetachChannel and kickSlowConsumer,
-// keeping the recheck and the removal atomic.
-func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
-	tab := m.tabs[m.channelTabs[channelID]]
+// (producer close, event emission, ephemeral tab reaping); shared by DetachChannel, onChannelClose, and kickSlowConsumer,
+// keeping the recheck and the removal atomic. closeChannel is captured before m.mu to keep Manager and Hub locks acyclic.
+func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, closeChannel func()) (string, func()) {
+	tabID := m.channelTabs[channelID]
+	if tabID == "" || m.channelIncarnations[channelID] != incarnation {
+		return "", closeChannel
+	}
+	tab := m.tabs[tabID]
 	if tab == nil {
 		delete(m.channelTabs, channelID)
-		return "", func() { _ = m.bus.CloseChannel(channelID) }
+		delete(m.channelIncarnations, channelID)
+		return "", closeChannel
 	}
 	tab.mu.Lock()
 	subscriber, attached := tab.subscribers[channelID]
 	delete(m.channelTabs, channelID)
+	delete(m.channelIncarnations, channelID)
 	delete(tab.subscribers, channelID)
 	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
@@ -818,14 +847,14 @@ func (m *Manager) detachChannelLocked(channelID string) (string, func()) {
 	empty := len(tab.subscribers) == 0
 	ephemeral := tab.ephemeral
 	generation := tab.generation
-	tabID := tab.ID
+	tabID = tab.ID
 	tab.mu.Unlock()
 	return tabID, func() {
 		if attached {
 			subscriber.co.teardown(subscriber.producer)
 			_ = subscriber.producer.Close()
 		} else {
-			_ = m.bus.CloseChannel(channelID)
+			closeChannel()
 		}
 		m.emit(context.Background(), TopicTerminalControl, event)
 		if throttleRecovered {
@@ -920,6 +949,7 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 			detached = append(detached, subscriber)
 			delete(tab.subscribers, channel)
 			delete(m.channelTabs, channel)
+			delete(m.channelIncarnations, channel)
 			if recovered, version := m.clearThrottleChannelLocked(tab.ID, channel); recovered {
 				throttleRecovered = true
 				throttleVersion = version
@@ -1326,6 +1356,7 @@ func (m *Manager) closeTabResources(tab *Tab, afterClose ...func()) error {
 	m.mu.Lock()
 	for channelID := range subscribers {
 		delete(m.channelTabs, channelID)
+		delete(m.channelIncarnations, channelID)
 	}
 	m.mu.Unlock()
 	for _, subscriber := range subscribers {

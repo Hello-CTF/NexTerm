@@ -2,6 +2,7 @@ package takeover
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/app"
@@ -42,6 +43,10 @@ func (m *Manager) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		Token  string `json:"token"`
 		Reason string `json:"reason"`
 	}) (any, error) {
-		return nil, m.Exit(ctx, args.TabID, args.Token, args.Reason)
+		err := m.Exit(ctx, args.TabID, args.Token, args.Reason)
+		if errors.Is(err, ErrStaleOwnership) {
+			return nil, ipc.WrapError(ipc.CodeBadParam, ErrStaleOwnership.Error(), err)
+		}
+		return nil, err
 	})
 }

@@ -146,7 +146,19 @@ jobs:
           files="$(gofmt -l ./cmd ./internal ./scripts)"
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go tests
-        run: go test -mod=readonly ./...
+        id: go-tests
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -mod=readonly -timeout=5m -json ./... | tee "$RUNNER_TEMP/go-tests.json"
+      - name: Upload Go test diagnostics
+        if: ${{ failure() && steps.go-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-diagnostics
+          path: ${{ runner.temp }}/go-tests.json
+          if-no-files-found: error
       - name: Go vet
         run: go vet -mod=readonly ./...
       - name: Wails bindings drift
@@ -225,9 +237,80 @@ jobs:
             exit 1
           fi
 
+  pr-linux-smoke:
+    name: PR Linux amd64 production smoke
+    needs: [frontend, version]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: verified-dist
+      - name: Install Linux WebView prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Build the Linux desktop production smoke
+        run: node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=linux --arch=amd64
+      - name: Build the Linux server production smoke
+        run: node scripts/build.mjs server --release --repro-check --os=linux --arch=amd64
+      - name: Run Go two-process server acceptance
+        run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-linux-amd64 --no-build
+
+  pr-windows-smoke:
+    name: PR Windows amd64 real tests and production smoke
+    needs: [frontend, version]
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    env:
+      NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Verify Windows PowerShell runtimes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("powershell.exe " + $PSVersionTable.PSVersion.ToString())'
+          if ($LASTEXITCODE -ne 0) { throw "powershell.exe version check failed" }
+          & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("pwsh.exe " + $PSVersionTable.PSVersion.ToString())'
+          if ($LASTEXITCODE -ne 0) { throw "pwsh.exe version check failed" }
+      - name: Run real Windows Go and loopback tests
+        shell: powershell
+        timeout-minutes: 45
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./.github/scripts/windows-real-tests.ps1
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: verified-dist
+      - name: Build the Windows desktop production smoke
+        run: node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=windows --arch=amd64
+
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
     needs: [frontend, version]
+    if: github.event_name != 'pull_request'
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     strategy:
@@ -325,22 +408,6 @@ jobs:
           key: gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             gocache-v1-${{ matrix.os }}-${{ matrix.arch }}-
-      - name: Verify Windows PowerShell runtimes
-        if: github.event_name == 'pull_request' && matrix.os == 'windows' && matrix.kind == 'desktop'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("powershell.exe " + $PSVersionTable.PSVersion.ToString())'
-          if ($LASTEXITCODE -ne 0) { throw "powershell.exe version check failed" }
-          & pwsh.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output ("pwsh.exe " + $PSVersionTable.PSVersion.ToString())'
-          if ($LASTEXITCODE -ne 0) { throw "pwsh.exe version check failed" }
-      - name: Run real Windows Go and loopback tests
-        if: github.event_name == 'pull_request' && matrix.os == 'windows' && matrix.kind == 'desktop'
-        shell: powershell
-        timeout-minutes: 45
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & ./.github/scripts/windows-real-tests.ps1
       - name: Install and verify the Windows release tools
         if: github.ref == 'refs/heads/master' && matrix.os == 'windows' && matrix.kind == 'desktop'
         shell: bash
@@ -387,6 +454,7 @@ jobs:
   mobile:
     name: ${{ matrix.platform }} mobile
     needs: [frontend, version]
+    if: github.event_name != 'pull_request'
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     strategy:

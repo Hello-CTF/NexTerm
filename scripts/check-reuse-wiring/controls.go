@@ -12,10 +12,6 @@ type negativeControl struct {
 	mutate   func(ci, release map[string]interface{}, packText string) string
 }
 
-func qualitySteps(ci map[string]interface{}) []interface{} {
-	return asList(asMap(jobsOf(ci)["quality"])["steps"])
-}
-
 func nativeSteps(ci map[string]interface{}) []interface{} {
 	return asList(asMap(jobsOf(ci)["native"])["steps"])
 }
@@ -29,10 +25,6 @@ func popJobIf(release map[string]interface{}, jobKeys ...string) {
 	for _, jobKey := range jobKeys {
 		delete(asMap(jobs[jobKey]), "if")
 	}
-}
-
-func popStepIf(release map[string]interface{}, jobKey, stepNamePart string) {
-	delete(findStep(asMap(jobsOf(release)[jobKey]), stepNamePart), "if")
 }
 
 func insertStepBefore(job map[string]interface{}, namePrefix string, step map[string]interface{}) {
@@ -114,30 +106,11 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"standalone pnpm typecheck re-addition is caught",
-		"quality has no standalone pnpm typecheck step",
+	{"duplicate bounded Go suite is caught",
+		"quality runs the bounded Go suite once",
 		func(ci, release map[string]interface{}, packText string) string {
 			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
-				map[string]interface{}{"name": "Frontend typecheck", "run": "pnpm typecheck"})
-			return packText
-		}},
-	{"plain go test re-addition is caught",
-		"quality runs the Go suite once without -race",
-		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
-				map[string]interface{}{"name": "Go tests", "run": "go test -mod=readonly ./..."})
-			return packText
-		}},
-	{"race re-instrumentation of the quality suite is caught",
-		"quality runs the Go suite once without -race",
-		func(ci, release map[string]interface{}, packText string) string {
-			for _, rawStep := range qualitySteps(ci) {
-				step := asMap(rawStep)
-				if strings.Contains(stepRun(step), "go test -mod=readonly ./...") {
-					step["run"] = strings.Replace(stepRun(step), "go test -mod=readonly ./...", "go test -mod=readonly -race ./...", 1)
-					return packText
-				}
-			}
+				map[string]interface{}{"name": "Duplicate Go tests", "run": "go test -mod=readonly -timeout=5m -json ./..."})
 			return packText
 		}},
 	{"frontend dist download removal is caught",
@@ -168,21 +141,6 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"production-tagged Go suite re-addition is caught",
-		"quality runs no production-tagged Go suite",
-		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "LazyCat manifest injects",
-				map[string]interface{}{"name": "Go production tests with embedded desktop assets",
-					"run": "go test -mod=readonly -tags production ./..."})
-			return packText
-		}},
-	{"build harness unit test re-addition is caught",
-		"quality runs no build harness unit tests",
-		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
-				map[string]interface{}{"name": "Build harness unit tests", "run": "node --test scripts/lib/*.test.mjs"})
-			return packText
-		}},
 	{"minimumReleaseAge env bypass re-addition is caught",
 		"ci.yml carries no pnpm minimumReleaseAge bypass",
 		func(ci, release map[string]interface{}, packText string) string {
@@ -206,24 +164,10 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"duplicate pack evidence report is caught",
-		"pack generates the server archive evidence report exactly once",
+	{"e2e staging reuse-only condition is caught",
+		"server stages and verifies the CI e2e report on every release path",
 		func(ci, release map[string]interface{}, packText string) string {
-			return strings.ReplaceAll(packText,
-				`(cd "$ROOT" && node scripts/build.mjs report "${report_args[@]}")`,
-				`(cd "$ROOT" && node scripts/build.mjs report "${report_args[@]}")`+"\n"+
-					`(cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --os=linux "--arch=$ARCH" "--file=$ARTIFACT")`)
-		}},
-	{"e2e staging if removal is caught",
-		"server stages the reused CI e2e report only on reuse-hit",
-		func(ci, release map[string]interface{}, packText string) string {
-			popStepIf(release, "server", "Stage and verify the reused CI e2e report")
-			return packText
-		}},
-	{"e2e exercise if removal is caught",
-		"server reruns e2e only without reuse",
-		func(ci, release map[string]interface{}, packText string) string {
-			popStepIf(release, "server", "Exercise the packaged server before archiving")
+			findStep(asMap(jobsOf(release)["server"]), "Stage and verify the reused CI e2e report")["if"] = "needs.ci-source.outputs.reused == 'true'"
 			return packText
 		}},
 	{"xargs upload restore is caught",
@@ -233,31 +177,6 @@ var negativeControls = []negativeControl{
 			step["run"] = "printf '%s\\0' candidate/* | xargs -0 -P 8 -n 1 gh release upload \"$GITHUB_REF_NAME\" --clobber"
 			return packText
 		}},
-	{"wails cache order regression is caught",
-		"windows wails cache restores before setup-go",
-		func(ci, release map[string]interface{}, packText string) string {
-			steps := releaseDesktopSteps(release)
-			index := -1
-			for i, rawStep := range steps {
-				if asMap(rawStep)["id"] == "wails-cache" {
-					index = i
-					break
-				}
-			}
-			cacheStep := steps[index]
-			reordered := make([]interface{}, 0, len(steps))
-			for i, rawStep := range steps {
-				if i == index {
-					continue
-				}
-				reordered = append(reordered, rawStep)
-				if strings.HasPrefix(str(asMap(rawStep)["uses"]), "actions/setup-go") {
-					reordered = append(reordered, cacheStep)
-				}
-			}
-			asMap(jobsOf(release)["desktop"])["steps"] = reordered
-			return packText
-		}},
 	{"setup-go cache-hit skip re-addition is caught",
 		"desktop setup-go is never skipped by the wails cache hit",
 		func(ci, release map[string]interface{}, packText string) string {
@@ -265,17 +184,6 @@ var negativeControls = []negativeControl{
 				step := asMap(rawStep)
 				if strings.HasPrefix(str(step["uses"]), "actions/setup-go") {
 					step["if"] = "matrix.os != 'windows' || steps.wails-cache.outputs.cache-hit != 'true'"
-				}
-			}
-			return packText
-		}},
-	{"setup-go module cache re-enable is caught",
-		"desktop setup-go disables the actions module cache",
-		func(ci, release map[string]interface{}, packText string) string {
-			for _, rawStep := range releaseDesktopSteps(release) {
-				step := asMap(rawStep)
-				if strings.HasPrefix(str(step["uses"]), "actions/setup-go") {
-					asMap(step["with"])["cache"] = true
 				}
 			}
 			return packText
@@ -344,13 +252,6 @@ var negativeControls = []negativeControl{
 			asMap(jobsOf(ci)["ios-dist"])["if"] = "${{ !cancelled() && github.event_name == 'push' && vars.NEXTERM_IOS_SIGNING == 'true' }}"
 			return packText
 		}},
-	{"second frontend repro producer is caught",
-		"frontend job is the only build.mjs frontend --repro-check producer",
-		func(ci, release map[string]interface{}, packText string) string {
-			insertStepBefore(asMap(jobsOf(ci)["quality"]), "Wails bindings drift",
-				map[string]interface{}{"name": "Duplicate frontend repro", "run": "node scripts/build.mjs frontend --repro-check"})
-			return packText
-		}},
 	{"frontend dist manifest upload removal is caught",
 		"frontend job is the only frontend-dist uploader",
 		func(ci, release map[string]interface{}, packText string) string {
@@ -359,13 +260,13 @@ var negativeControls = []negativeControl{
 			return packText
 		}},
 	{"frontend-quality lint removal is caught",
-		"frontend-quality runs pnpm lint exactly once",
+		"frontend-quality keeps the full pnpm lint suite",
 		func(ci, release map[string]interface{}, packText string) string {
 			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend lint")["run"] = "true"
 			return packText
 		}},
 	{"frontend-quality test removal is caught",
-		"frontend-quality runs the full pnpm test suite exactly once without maxWorkers",
+		"frontend-quality keeps the full pnpm test suite",
 		func(ci, release map[string]interface{}, packText string) string {
 			findStep(asMap(jobsOf(ci)["frontend-quality"]), "Frontend tests")["run"] = "true"
 			return packText
@@ -453,10 +354,10 @@ var negativeControls = []negativeControl{
 			step["run"] = strings.Replace(stepRun(step), `"/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`, "", 1)
 			return packText
 		}},
-	{"PR Windows real fixture condition removal is caught",
-		"PR Windows desktop runs real Go and loopback fixtures",
+	{"PR Windows job condition removal is caught",
+		"PR Windows smoke is pull-request only",
 		func(ci, release map[string]interface{}, packText string) string {
-			delete(findStep(asMap(jobsOf(ci)["native"]), "Run real Windows Go and loopback tests"), "if")
+			delete(asMap(jobsOf(ci)["pr-windows-smoke"]), "if")
 			return packText
 		}},
 }
@@ -496,6 +397,41 @@ var windowsNegativeControls = []windowsNegativeControl{
 		"real WinRM loopback runs the complete cwd and quoted-path subtest set",
 		func(windowsRealText string) string {
 			return strings.Replace(windowsRealText, " -RunExpression '^TestRealWindowsServer$/^(cwd_persistence|filesystem|relative_read_write_and_backup_after_cwd_change)$'", "", 1)
+		}},
+	{"WinRM temporary listener selector removal is caught",
+		"real WinRM listeners are created with selector sets",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet", "New-WSManInstance -ResourceURI winrm/config/listener -ValueSet", 1)
+		}},
+	{"WinRM restoration listener selector removal is caught",
+		"real WinRM listeners are created with selector sets",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet $selectorSet -ValueSet $valueSet", "New-WSManInstance -ResourceURI winrm/config/listener -ValueSet $valueSet", 1)
+		}},
+	{"OpenSSH config array parenthesis removal is caught",
+		"real OpenSSH fixture writes multiline configuration",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "('Port ' + $sshPort),", "'Port ' + $sshPort,", 1)
+		}},
+	{"OpenSSH host key inheritance protection removal is caught",
+		"real OpenSSH fixture restricts the host key ACL",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, " /inheritance:r", "", 1)
+		}},
+	{"OpenSSH host key creator ACE removal is caught",
+		"real OpenSSH fixture restricts the host key ACL",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, " /remove:g ('*' + $currentUserSid)", "", 1)
+		}},
+	{"OpenSSH service startup removal is caught",
+		"real OpenSSH fixture runs under a LocalSystem service",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "$null = New-Service -Name $serviceName -BinaryPathName $binaryPath -StartupType Manual", "", 1)
+		}},
+	{"Windows Git Bash and System32 PATH order reversal is caught",
+		"real Windows Go tests select Git Bash and System32 whoami",
+		func(windowsRealText string) string {
+			return strings.Replace(windowsRealText, "$env:PATH = $gitBin + ';' + $system32 + ';' + $env:PATH", "$env:PATH = $system32 + ';' + $gitBin + ';' + $env:PATH", 1)
 		}},
 }
 

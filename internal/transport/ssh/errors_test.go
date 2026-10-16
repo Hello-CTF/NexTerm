@@ -111,7 +111,54 @@ func TestConnectErrorClassificationRefused(t *testing.T) {
 	}
 }
 
+func useNXDOMAINResolver(t *testing.T) {
+	t.Helper()
+	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queried := make(chan struct{}, 1)
+	previous := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, packet.LocalAddr().String())
+		},
+	}
+	t.Cleanup(func() {
+		net.DefaultResolver = previous
+		packet.Close()
+		select {
+		case <-queried:
+		default:
+			t.Error("local DNS fixture received no query")
+		}
+	})
+	go func() {
+		buffer := make([]byte, 4096)
+		for {
+			n, address, err := packet.ReadFrom(buffer)
+			if err != nil {
+				return
+			}
+			if n < 12 {
+				continue
+			}
+			response := append([]byte(nil), buffer[:n]...)
+			response[2], response[3] = 0x81, 0x83
+			clear(response[6:10])
+			if _, err := packet.WriteTo(response, address); err == nil {
+				select {
+				case queried <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+}
+
 func TestConnectErrorClassificationDNS(t *testing.T) {
+	useNXDOMAINResolver(t)
 	cfg := Config{
 		Host: "nonexistent.invalid.", Port: 22, User: "test",
 		Auth:     AuthConfig{Method: AuthPassword, Password: "secret"},

@@ -21,12 +21,41 @@ func testPreferences(t *testing.T) *Preferences {
 
 func TestPreferenceKeysWhitelist(t *testing.T) {
 	keys := PreferenceKeys()
-	if len(keys) != 18 {
-		t.Fatalf("declared preference keys=%d want 18: %v", len(keys), keys)
-	}
+	declared := make(map[string]bool, len(keys))
 	for _, key := range keys {
+		if key == "" {
+			t.Fatal("empty preference key must not be declared")
+		}
+		if declared[key] {
+			t.Fatalf("duplicate preference key %q", key)
+		}
+		declared[key] = true
 		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") {
 			t.Fatalf("unexpected preference key %q", key)
+		}
+	}
+	for _, key := range []string{
+		"appearance.uiFontPreset",
+		"appearance.uiFontScale",
+		"appearance.terminalFontSize",
+		"appearance.terminalTheme",
+		"appearance.themeMode",
+		"input.selectionAutoCopy",
+		"terminal.closeAction",
+		"keybinding.commandPalette",
+		"keybinding.quickConnect",
+		"keybinding.newTerminal",
+		"keybinding.toggleSidebar",
+		"keybinding.toggleAiSidebar",
+		"keybinding.closeTab",
+		"keybinding.toggleSplit",
+		"keybinding.switchTab",
+		"keybinding.terminalSearch",
+		"keybinding.reclaimTakeover",
+		"keybinding.lockVault",
+	} {
+		if !declared[key] {
+			t.Errorf("required preference key %q is not declared", key)
 		}
 	}
 	for _, banned := range []string{"dek", "password", "credential", "secret", "token"} {

@@ -29,6 +29,7 @@ type Manager struct {
 	byAsset                map[assetOwnerKey]string
 	tabs                   map[string]*Tab
 	channelTabs            map[string]string
+	channelIncarnations    map[string]uint64
 	channelOwners          map[string]channelOwnerRegistration
 	channelOwnerGeneration uint64
 	sessionOwners          map[string]string
@@ -76,33 +77,34 @@ type Manager struct {
 func NewManager(config Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
-		sessions:         make(map[string]*Session),
-		byAsset:          make(map[assetOwnerKey]string),
-		tabs:             make(map[string]*Tab),
-		channelTabs:      make(map[string]string),
-		channelOwners:    make(map[string]channelOwnerRegistration),
-		sessionOwners:    make(map[string]string),
-		tabOwners:        make(map[string]string),
-		controlOwners:    make(map[*recordingControlQueue]string),
-		throttleVersions: make(map[string]uint64),
-		throttleChannels: make(map[string]map[string]bool),
-		slowKicks:        make(map[string]*time.Timer),
-		connector:        config.Connector,
-		terminals:        config.Terminals,
-		durable:          config.Durable,
-		resolver:         config.DurableResolver,
-		emitter:          config.Emitter,
-		transcripts:      config.Transcripts,
-		commands:         config.Commands,
-		idleTimeout:      config.IdleTimeout,
-		sweepInterval:    config.SweepInterval,
-		reconnectMax:     config.ReconnectMax,
-		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
-		defaultReplay:    config.DefaultReplay,
-		openAccess:       config.OpenAccess,
-		ctx:              ctx,
-		cancel:           cancel,
-		closeDone:        make(chan struct{}),
+		sessions:            make(map[string]*Session),
+		byAsset:             make(map[assetOwnerKey]string),
+		tabs:                make(map[string]*Tab),
+		channelTabs:         make(map[string]string),
+		channelIncarnations: make(map[string]uint64),
+		channelOwners:       make(map[string]channelOwnerRegistration),
+		sessionOwners:       make(map[string]string),
+		tabOwners:           make(map[string]string),
+		controlOwners:       make(map[*recordingControlQueue]string),
+		throttleVersions:    make(map[string]uint64),
+		throttleChannels:    make(map[string]map[string]bool),
+		slowKicks:           make(map[string]*time.Timer),
+		connector:           config.Connector,
+		terminals:           config.Terminals,
+		durable:             config.Durable,
+		resolver:            config.DurableResolver,
+		emitter:             config.Emitter,
+		transcripts:         config.Transcripts,
+		commands:            config.Commands,
+		idleTimeout:         config.IdleTimeout,
+		sweepInterval:       config.SweepInterval,
+		reconnectMax:        config.ReconnectMax,
+		reconnectBackoff:    append([]time.Duration(nil), config.ReconnectBackoff...),
+		defaultReplay:       config.DefaultReplay,
+		openAccess:          config.OpenAccess,
+		ctx:                 ctx,
+		cancel:              cancel,
+		closeDone:           make(chan struct{}),
 	}
 	if manager.terminals == nil {
 		manager.terminals = terminalFactory{}
@@ -128,6 +130,7 @@ func NewManager(config Config) *Manager {
 	}
 	if config.Hub == nil {
 		manager.bus = hub.New(hub.Options{
+			OnChannelClose: manager.onChannelClose,
 			OnBackpressure: manager.onBackpressure,
 			OnDrain:        manager.onDrain,
 		})
@@ -165,6 +168,39 @@ func (m *Manager) Hub() *hub.Hub {
 
 func (m *Manager) Bind(channelID string) (*hub.Receiver, error) {
 	return m.bus.Bind(channelID)
+}
+
+var channelCloseAfterCheck = func() {}
+var channelCloseBeforeCapture = func(string) {}
+var channelCloseAfterCapture = func(string) {}
+
+func (m *Manager) onChannelClose(channelID string, incarnation uint64, closeChannel func()) {
+	channelCloseAfterCapture(channelID)
+	m.mu.Lock()
+	tabID := m.channelTabs[channelID]
+	if tabID == "" {
+		m.mu.Unlock()
+		return
+	}
+	if m.channelIncarnations[channelID] != incarnation {
+		m.mu.Unlock()
+		closeChannel()
+		return
+	}
+	tab := m.tabs[tabID]
+	if tab != nil {
+		tab.mu.Lock()
+		reap := tab.ephemeral && !tab.retainable
+		tab.mu.Unlock()
+		if !reap {
+			m.mu.Unlock()
+			return
+		}
+	}
+	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
+	m.mu.Unlock()
+	channelCloseAfterCheck()
+	cleanup()
 }
 
 func (m *Manager) CheckChannelOwner(channelID, ownerID string) error {
@@ -895,8 +931,9 @@ func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
 	set[channelID] = true
 	m.throttleVersions[tabID]++
 	version := m.throttleVersions[tabID]
+	incarnation := m.channelIncarnations[channelID]
 	if m.slowKicks[channelID] == nil {
-		m.slowKicks[channelID] = time.AfterFunc(m.slowConsumerGrace, func() { m.kickSlowConsumer(channelID) })
+		m.slowKicks[channelID] = time.AfterFunc(m.slowConsumerGrace, func() { m.kickSlowConsumer(channelID, incarnation) })
 	}
 	m.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, ChannelID: channelID, InflightBytes: queuedBytes, Version: version})
@@ -906,7 +943,11 @@ func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
 // under the same m.mu (no recheck-drain race window); after producer.Close the client recovers via the existing reconnect +
 // DiscardPending + replay path, and other subscribers' queues are unaffected. Channels that drained or detached during the grace
 // are stopped by the recheck (no slowKicks entry or the backpressure mark already cleared).
-func (m *Manager) kickSlowConsumer(channelID string) {
+func (m *Manager) kickSlowConsumer(channelID string, incarnation uint64) {
+	currentIncarnation, closeChannel := m.captureChannelCloser(channelID)
+	if currentIncarnation != incarnation {
+		return
+	}
 	m.mu.Lock()
 	if m.slowKicks[channelID] == nil {
 		m.mu.Unlock()
@@ -918,7 +959,7 @@ func (m *Manager) kickSlowConsumer(channelID string) {
 		m.mu.Unlock()
 		return
 	}
-	_, cleanup := m.detachChannelLocked(channelID)
+	_, cleanup := m.detachChannelLocked(channelID, incarnation, closeChannel)
 	m.mu.Unlock()
 	m.logger.Warn("slow terminal consumer kicked after backpressure grace", "channel", channelID, "tab", tabID, "grace", m.slowConsumerGrace)
 	cleanup()

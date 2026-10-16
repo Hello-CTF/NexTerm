@@ -79,6 +79,16 @@ function Invoke-CleanupStep {
 }
 
 try {
+    $gitBin = Join-Path $env:ProgramFiles 'Git\bin'
+    $system32 = Join-Path $env:WINDIR 'System32'
+    $env:PATH = $gitBin + ';' + $system32 + ';' + $env:PATH
+    if ((Get-Command bash.exe -CommandType Application | Select-Object -First 1).Source -ne (Join-Path $gitBin 'bash.exe')) {
+        throw 'Git Bash must precede any WSL bash on PATH'
+    }
+    if ((Get-Command whoami.exe -CommandType Application | Select-Object -First 1).Source -ne (Join-Path $system32 'whoami.exe')) {
+        throw 'Windows System32 whoami must precede Unix whoami on PATH'
+    }
+
     & go.exe test -mod=readonly -count=1 ./...
     if ($LASTEXITCODE -ne 0) {
         throw "Windows Go test suite failed with exit code $LASTEXITCODE"
@@ -178,7 +188,7 @@ try {
     foreach ($listener in $listeners) {
         Remove-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{ Transport = $listener.Transport; Address = $listener.Address }
     }
-    $null = New-WSManInstance -ResourceURI winrm/config/listener -ValueSet @{ Transport = 'HTTP'; Address = 'IP:127.0.0.1'; Port = '5985' }
+    $null = New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{ Transport = 'HTTP'; Address = 'IP:127.0.0.1' } -ValueSet @{ Port = '5985' }
     $loopbackListeners = @(Get-WSManInstance -ResourceURI winrm/config/listener -Enumerate)
     if ($loopbackListeners.Count -ne 1 -or
         $loopbackListeners[0].Transport -ne 'HTTP' -or
@@ -230,6 +240,15 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "ssh-keygen failed with exit code $LASTEXITCODE"
     }
+    $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls.exe $hostKey /inheritance:r /remove:g ('*' + $currentUserSid) /grant '*S-1-5-18:F' /grant '*S-1-5-32-544:F' /Q | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to secure the SSH host key with exit code $LASTEXITCODE"
+    }
+    & icacls.exe $hostKey /setowner '*S-1-5-18' /Q | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to set the SSH host-key owner with exit code $LASTEXITCODE"
+    }
     $fingerprintLine = & $sshKeygen -lf ($hostKey + '.pub') -E sha256
     if ($LASTEXITCODE -ne 0) {
         throw "SSH host-key fingerprint failed with exit code $LASTEXITCODE"
@@ -245,15 +264,15 @@ try {
     $portListener.Stop()
     $sshConfig = Join-Path $sshConfigRoot 'sshd_config'
     @(
-        'Port ' + $sshPort,
+        ('Port ' + $sshPort),
         'ListenAddress 127.0.0.1',
-        'HostKey ' + $hostKey.Replace('\', '/'),
+        ('HostKey ' + $hostKey.Replace('\', '/')),
         'PasswordAuthentication yes',
         'PubkeyAuthentication no',
         'PermitEmptyPasswords no',
-        'AllowUsers ' + $userName,
+        ('AllowUsers ' + $userName),
         'UseDNS no',
-        'Subsystem sftp ' + $sftpServer.Replace('\', '/'),
+        ('Subsystem sftp ' + $sftpServer.Replace('\', '/')),
         'LogLevel VERBOSE'
     ) | Set-Content -Path $sshConfig -Encoding ASCII
     $serviceName = 'NexTermSSHD' + $PID
@@ -380,9 +399,11 @@ try {
             }
             foreach ($savedListener in $winRMListeners) {
                 Invoke-CleanupStep "restore WinRM $($savedListener.Transport) listener $($savedListener.Address)" {
-                    $valueSet = @{
+                    $selectorSet = @{
                         Transport = $savedListener.Transport
                         Address = $savedListener.Address
+                    }
+                    $valueSet = @{
                         Port = $savedListener.Port
                     }
                     if ($savedListener.Hostname -ne '') {
@@ -397,7 +418,7 @@ try {
                     if ($savedListener.CertificateThumbprint -ne '') {
                         $valueSet.CertificateThumbprint = $savedListener.CertificateThumbprint
                     }
-                    $null = New-WSManInstance -ResourceURI winrm/config/listener -ValueSet $valueSet
+                    $null = New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet $selectorSet -ValueSet $valueSet
                 }
             }
             Invoke-CleanupStep 'verify WinRM listener restoration' {

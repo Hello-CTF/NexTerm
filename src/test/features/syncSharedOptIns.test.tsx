@@ -94,12 +94,24 @@ describe("Shared SyncOptInSection toggles", () => {
 });
 
 describe("Both consoles render identical toggle copy without divergence", () => {
+  const desktopSyncConsoleSource = syncCardSource.slice(
+    syncCardSource.indexOf("function DesktopSyncConsole()"),
+    syncCardSource.indexOf("// ---------- Web: account sync ----------"),
+  );
+  const webSyncConsoleSource = syncCardSource.slice(syncCardSource.indexOf("function WebSyncConsole()"));
+  const consoleSources = [
+    ["DesktopSyncConsole", desktopSyncConsoleSource],
+    ["WebSyncConsole", webSyncConsoleSource],
+  ] as const;
+
   it("uses the shared component and shared status-line constants in both SyncCard consoles", () => {
-    expect(syncCardSource.match(/<SyncOptInSection/g)?.length).toBe(2);
-    expect(syncCardSource.match(/\{SYNC_CONSOLE_TITLE\}/g)?.length).toBe(2);
-    expect(syncCardSource.match(/\{SYNC_AUTO_BADGE\}/g)?.length).toBe(2);
-    expect(syncCardSource.match(/\{SYNC_INTERVAL_LABEL\}/g)?.length).toBe(2);
-    expect(syncCardSource.match(/\{SYNC_MERGE_GUIDE\}/g)?.length).toBe(2);
+    for (const [name, source] of consoleSources) {
+      expect(source, name).toContain("<SyncOptInSection");
+      expect(source, name).toContain("{SYNC_CONSOLE_TITLE}");
+      expect(source, name).toContain("{SYNC_AUTO_BADGE}");
+      expect(source, name).toContain("{SYNC_INTERVAL_LABEL}");
+      expect(source, name).toContain("{SYNC_MERGE_GUIDE}");
+    }
   });
 
   it("hardcodes no toggle copy in SyncCard and removes the legacy sync console title", () => {
@@ -118,12 +130,16 @@ describe("Both consoles render identical toggle copy without divergence", () => 
   });
 
   it("distinguishes content-type opt-out from per-transcript cloud deletion in both consoles", () => {
-    expect(syncCardSource.match(/关闭上方内容类型开关不会删除云端已有副本/g)?.length).toBe(2);
-    expect(syncCardSource.match(/关闭单条录像同步会删除其云端副本，本机记录保留/g)?.length).toBe(2);
+    for (const [name, source] of consoleSources) {
+      expect(source, name).toContain("关闭上方内容类型开关不会删除云端已有副本");
+      expect(source, name).toContain("关闭单条录像同步会删除其云端副本，本机记录保留");
+    }
   });
 
   it("uses identical cloud object count copy on web and desktop, with desktop obtaining the count through sync_compare", () => {
-    expect(syncCardSource.match(/云端 \{/g)?.length).toBe(2);
-    expect(syncCardSource.match(/个对象/g)?.length).toBe(2);
+    for (const [name, source] of consoleSources) {
+      expect(source, name).toContain("云端 {");
+      expect(source, name).toContain("个对象");
+    }
   });
 });

@@ -153,7 +153,7 @@ func TestRealWindowsServer(t *testing.T) {
 	t.Run("filesystem", func(t *testing.T) {
 		temp := realExec(t, ctx, transport, "Write-Output $env:TEMP")
 		requireRealSuccess(t, temp)
-		root := fmt.Sprintf(`%s\NexTerm-WinRM-'-%d-%d`, strings.TrimRight(temp.Stdout, `\`), os.Getpid(), time.Now().UnixNano())
+		root := fmt.Sprintf(`%s\NexTerm-WinRM-'-%d-%d`, strings.TrimRight(strings.TrimSpace(temp.Stdout), `\`), os.Getpid(), time.Now().UnixNano())
 		filesystem, err := transport.FileSystem(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -247,7 +247,7 @@ func TestRealWindowsServer(t *testing.T) {
 		processCWD := realExec(t, ctx, transport, "[Console]::Out.Write([Environment]::CurrentDirectory)")
 		requireRealSuccess(t, processCWD)
 		unique := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
-		root := fmt.Sprintf(`%s\NexTerm-WinRM-relative-%s`, strings.TrimRight(temp.Stdout, `\`), unique)
+		root := fmt.Sprintf(`%s\NexTerm-WinRM-relative-%s`, strings.TrimRight(strings.TrimSpace(temp.Stdout), `\`), unique)
 		name := "relative-'" + unique + ".txt"
 		decoy := fmt.Sprintf(`%s\%s`, strings.TrimRight(processCWD.Stdout, `\`), name)
 		filesystem, err := transport.FileSystem(ctx)

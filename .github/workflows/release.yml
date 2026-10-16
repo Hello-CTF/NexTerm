@@ -255,7 +255,6 @@ jobs:
       - name: Re-assert the reused binary evidence
         run: node scripts/build.mjs report --kind=server --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Stage and verify the reused CI e2e report
-        if: needs.ci-source.outputs.reused == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -268,9 +267,6 @@ jobs:
           [ "$actual" = "$expected" ] || { echo "staged server binary sha256 $actual does not match the CI manifest $expected that produced the e2e report" >&2; exit 1; }
           mkdir -p target/e2e-sync
           cp -R reused-native/e2e-sync/. target/e2e-sync/
-      - name: Exercise the packaged server before archiving
-        if: needs.ci-source.outputs.reused != 'true'
-        run: go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports

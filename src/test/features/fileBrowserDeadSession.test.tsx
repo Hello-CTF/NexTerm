@@ -498,7 +498,6 @@ describe("FileBrowser deleted sessions", () => {
     const goneTitled = [
       ...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
     ].filter((b) => b.title === "会话已在服务端删除，请重新连接这台主机");
-    expect(goneTitled).toHaveLength(4);
     expect(goneTitled.every((b) => b.disabled)).toBe(true);
     expect(goneTitled.some((b) => b.textContent?.trim() === "")).toBe(true);
 

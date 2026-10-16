@@ -525,6 +525,14 @@ func decodePowerShellCommand(t *testing.T, command string) string {
 	return string(utf16.Decode(units))
 }
 
+func TestSSHWindowsRootsScriptDoesNotAssignReadOnlyHome(t *testing.T) {
+	script := decodePowerShellCommand(t, powerShellCommand("powershell.exe", windowsRootsScript))
+	compact := strings.Join(strings.Fields(strings.ToLower(script)), "")
+	if strings.Contains(compact, "$home=") {
+		t.Fatal("Windows roots script assigns to PowerShell read-only HOME variable")
+	}
+}
+
 func TestSSHWindowsRootsAndSFTPPathStyles(t *testing.T) {
 	for _, prefix := range []string{"", "/"} {
 		t.Run(fmt.Sprintf("prefix %q", prefix), func(t *testing.T) {

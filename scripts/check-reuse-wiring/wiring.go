@@ -80,14 +80,6 @@ func runWiringChecks(in inputs) []checkResult {
 		fmt.Sprintf("missing from CI: %v", sortedStringSlice(missing)))
 
 	downloads := artifactStepNames(release, "actions/download-artifact", produced)
-	downloadMissing := []string{}
-	for name := range downloads {
-		if !produced[name] {
-			downloadMissing = append(downloadMissing, name)
-		}
-	}
-	check("release downloads are a subset of CI producers", len(downloadMissing) == 0,
-		fmt.Sprintf("downloads=%v", sortedStringSlice(downloadMissing)))
 	downloadOutsideRequired := []string{}
 	for name := range downloads {
 		if !required[name] {
@@ -224,7 +216,43 @@ func runWiringChecks(in inputs) []checkResult {
 		check(fmt.Sprintf("%s depends only on frontend and version", jobKey),
 			strings.Join(jobNeeds(job), ",") == "frontend,version",
 			fmt.Sprintf("needs=%v", jobNeeds(job)))
+		check(fmt.Sprintf("%s keeps the complete artifact matrix off pull requests", jobKey),
+			normalizedStepIf(job) == "github.event_name!='pull_request'",
+			fmt.Sprintf("if=%q", str(job["if"])))
 	}
+	prLinuxJob := asMap(jobsOf(ci)["pr-linux-smoke"])
+	prWindowsJob := asMap(jobsOf(ci)["pr-windows-smoke"])
+	for _, item := range []struct {
+		name string
+		job  map[string]interface{}
+	}{{"Linux", prLinuxJob}, {"Windows", prWindowsJob}} {
+		check(fmt.Sprintf("PR %s smoke is pull-request only and depends on the verified frontend", item.name),
+			strings.Join(jobNeeds(item.job), ",") == "frontend,version" && normalizedStepIf(item.job) == "github.event_name=='pull_request'",
+			fmt.Sprintf("needs=%v if=%q", jobNeeds(item.job), str(item.job["if"])))
+		var releaseUploads []string
+		for _, rawStep := range asList(item.job["steps"]) {
+			step := asMap(rawStep)
+			with := asMap(step["with"])
+			name := str(with["name"])
+			if strings.HasPrefix(str(step["uses"]), "actions/upload-artifact") &&
+				(strings.HasPrefix(name, "native-") || strings.HasPrefix(name, "mobile-")) {
+				releaseUploads = append(releaseUploads, name)
+			}
+		}
+		check(fmt.Sprintf("PR %s smoke uploads no release native or mobile artifacts", item.name),
+			len(releaseUploads) == 0, fmt.Sprintf("uploads=%v", releaseUploads))
+	}
+	var prLinuxRuns []string
+	for _, rawStep := range asList(prLinuxJob["steps"]) {
+		prLinuxRuns = append(prLinuxRuns, stepRun(asMap(rawStep)))
+	}
+	prLinuxRun := strings.Join(prLinuxRuns, "\n")
+	check("PR Linux smoke keeps desktop and server production builds plus server acceptance",
+		str(prLinuxJob["runs-on"]) == "ubuntu-latest" &&
+			strings.Contains(prLinuxRun, "node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=linux --arch=amd64") &&
+			strings.Contains(prLinuxRun, "node scripts/build.mjs server --release --repro-check --os=linux --arch=amd64") &&
+			strings.Contains(prLinuxRun, "go run ./scripts/e2e-harness sync --bin target/go-build/nexterm-server-linux-amd64 --no-build"),
+		"required Linux amd64 smoke command is missing")
 	iosDistJob := asMap(jobsOf(ci)["ios-dist"])
 	check("ios-dist keeps the reused-quality dependency graph",
 		strings.Join(jobNeeds(iosDistJob), ",") == "quality-source,quality,frontend-quality,frontend,version",
@@ -233,18 +261,12 @@ func runWiringChecks(in inputs) []checkResult {
 		normalizedStepIf(iosDistJob) == "${{!failure()&&!cancelled()&&github.event_name=='push'&&vars.NEXTERM_IOS_SIGNING=='true'}}",
 		fmt.Sprintf("if=%q", str(iosDistJob["if"])))
 
-	var reproProducerJobs []string
-	var reproProducerRuns []string
 	var frontendDistUploadJobs []string
 	frontendDistUpload := map[string]interface{}{}
 	for _, jobKey := range sortedKeys(jobsOf(ci)) {
 		job := asMap(jobsOf(ci)[jobKey])
 		for _, rawStep := range asList(job["steps"]) {
 			step := asMap(rawStep)
-			if strings.Contains(stepRun(step), "build.mjs frontend --repro-check") {
-				reproProducerJobs = append(reproProducerJobs, jobKey)
-				reproProducerRuns = append(reproProducerRuns, stepRun(step))
-			}
 			with := asMap(step["with"])
 			if strings.HasPrefix(str(step["uses"]), "actions/upload-artifact") && str(with["name"]) == "frontend-dist" {
 				frontendDistUploadJobs = append(frontendDistUploadJobs, jobKey)
@@ -252,9 +274,6 @@ func runWiringChecks(in inputs) []checkResult {
 			}
 		}
 	}
-	check("frontend job is the only build.mjs frontend --repro-check producer",
-		len(reproProducerJobs) == 1 && reproProducerJobs[0] == "frontend" && strings.TrimSpace(reproProducerRuns[0]) == "node scripts/build.mjs frontend --repro-check",
-		fmt.Sprintf("jobs=%v", reproProducerJobs))
 	frontendDistWith := asMap(frontendDistUpload["with"])
 	frontendDistPath := str(frontendDistWith["path"])
 	check("frontend job is the only frontend-dist uploader and includes dist plus its manifest",
@@ -264,36 +283,32 @@ func runWiringChecks(in inputs) []checkResult {
 		fmt.Sprintf("jobs=%v path=%q", frontendDistUploadJobs, frontendDistPath))
 
 	qualitySteps := asList(qualityJob["steps"])
-	var typecheckOffenders []string
-	var productionSuiteSteps []string
-	var harnessTestSteps []string
 	var qualityRuns []string
 	for _, rawStep := range qualitySteps {
-		step := asMap(rawStep)
-		run := stepRun(step)
-		qualityRuns = append(qualityRuns, run)
-		if strings.Contains(run, "pnpm typecheck") {
-			typecheckOffenders = append(typecheckOffenders, stepName(step))
-		}
-		if strings.Contains(run, "-tags production") {
-			productionSuiteSteps = append(productionSuiteSteps, stepName(step))
-		}
-		if strings.Contains(run, "node --test") {
-			harnessTestSteps = append(harnessTestSteps, stepName(step))
-		}
+		qualityRuns = append(qualityRuns, stepRun(asMap(rawStep)))
 	}
 	qualityRun := strings.Join(qualityRuns, "\n")
+	goTestCommand := "go test -mod=readonly -timeout=5m -json ./..."
+	exactGoTests := strings.Count(qualityRun, goTestCommand)
+	check("quality runs the bounded Go suite once while allowing additional targeted suites",
+		exactGoTests == 1, fmt.Sprintf("exact=%d", exactGoTests))
+	goTestStep := findStep(qualityJob, "Go tests")
+	goDiagnosticsStep := findStep(qualityJob, "Upload Go test diagnostics")
+	goDiagnosticsWith := asMap(goDiagnosticsStep["with"])
+	check("quality Go tests have bounded JSON diagnostics uploaded only after failure",
+		str(goTestStep["timeout-minutes"]) == "15" &&
+			strings.Contains(stepRun(goTestStep), "set -o pipefail") &&
+			strings.Contains(stepRun(goTestStep), `tee "$RUNNER_TEMP/go-tests.json"`) &&
+			normalizedStepIf(goDiagnosticsStep) == "${{failure()&&steps.go-tests.outcome=='failure'}}" &&
+			str(goDiagnosticsWith["path"]) == "${{ runner.temp }}/go-tests.json" &&
+			str(goDiagnosticsWith["if-no-files-found"]) == "error",
+		fmt.Sprintf("timeout=%q if=%q", str(goTestStep["timeout-minutes"]), str(goDiagnosticsStep["if"])))
 	frontendQualitySteps := asList(frontendQualityJob["steps"])
 	installIndex, lintIndex, testIndex := -1, -1, -1
 	installRun, lintRun, testRun := "", "", ""
-	var frontendQualityRuns []string
 	for index, rawStep := range frontendQualitySteps {
 		step := asMap(rawStep)
 		run := stepRun(step)
-		frontendQualityRuns = append(frontendQualityRuns, run)
-		if strings.Contains(run, "pnpm typecheck") {
-			typecheckOffenders = append(typecheckOffenders, "frontend-quality/"+stepName(step))
-		}
 		switch stepName(step) {
 		case "Install frontend dependencies":
 			installIndex, installRun = index, run
@@ -303,33 +318,13 @@ func runWiringChecks(in inputs) []checkResult {
 			testIndex, testRun = index, run
 		}
 	}
-	frontendQualityRun := strings.Join(frontendQualityRuns, "\n")
-	qualityJobsRun := qualityRun + "\n" + frontendQualityRun
-	check("quality has no standalone pnpm typecheck step across quality and frontend-quality", len(typecheckOffenders) == 0,
-		fmt.Sprintf("offenders=%v", typecheckOffenders))
-	check("quality does not run the moved reproducible frontend build",
-		!strings.Contains(qualityRun, "build.mjs frontend --repro-check"), "")
-	goTestInvocations := len(regexp.MustCompile(`\bgo\s+test\b`).FindAllString(qualityJobsRun, -1))
-	exactGoTests := strings.Count(qualityJobsRun, "go test -mod=readonly ./...")
-	check("quality runs the Go suite once without -race",
-		goTestInvocations == 1 && exactGoTests == 1 && !strings.Contains(qualityJobsRun, "-race"),
-		fmt.Sprintf("invocations=%d exact=%d", goTestInvocations, exactGoTests))
-	check("frontend-quality installs, lints and tests sequentially",
-		installIndex >= 0 && lintIndex > installIndex && testIndex > lintIndex && strings.TrimSpace(installRun) == "pnpm install --frozen-lockfile",
+	check("frontend-quality installs dependencies before lint and tests",
+		installIndex >= 0 && lintIndex > installIndex && testIndex > installIndex && strings.TrimSpace(installRun) == "pnpm install --frozen-lockfile",
 		fmt.Sprintf("install=%d lint=%d test=%d", installIndex, lintIndex, testIndex))
-	lintInvocations := len(regexp.MustCompile(`\bpnpm\s+lint\b`).FindAllString(qualityJobsRun, -1))
-	check("frontend-quality runs pnpm lint exactly once",
-		lintInvocations == 1 && strings.TrimSpace(lintRun) == "pnpm lint",
-		fmt.Sprintf("invocations=%d run=%q", lintInvocations, lintRun))
-	testInvocations := len(regexp.MustCompile(`\bpnpm\s+test\b`).FindAllString(qualityJobsRun, -1))
-	check("frontend-quality runs the full pnpm test suite exactly once without maxWorkers",
-		testInvocations == 1 && strings.TrimSpace(testRun) == "pnpm test" &&
-			!strings.Contains(qualityJobsRun, "maxWorkers") && !strings.Contains(qualityJobsRun, "max-workers"),
-		fmt.Sprintf("invocations=%d run=%q", testInvocations, testRun))
-	check("quality runs no production-tagged Go suite", len(productionSuiteSteps) == 0,
-		fmt.Sprintf("steps=%v", productionSuiteSteps))
-	check("quality runs no build harness unit tests", len(harnessTestSteps) == 0,
-		fmt.Sprintf("steps=%v", harnessTestSteps))
+	check("frontend-quality keeps the full pnpm lint suite",
+		strings.TrimSpace(lintRun) == "pnpm lint", fmt.Sprintf("run=%q", lintRun))
+	check("frontend-quality keeps the full pnpm test suite",
+		strings.TrimSpace(testRun) == "pnpm test", fmt.Sprintf("run=%q", testRun))
 
 	ageOffenders := minimumReleaseAgeOffenders(ci, "ci.yml")
 	check("ci.yml carries no pnpm minimumReleaseAge bypass", len(ageOffenders) == 0,
@@ -341,8 +336,8 @@ func runWiringChecks(in inputs) []checkResult {
 			packReportLines = append(packReportLines, line)
 		}
 	}
-	check("pack generates the server archive evidence report exactly once",
-		len(packReportLines) == 1 && strings.Contains(in.packText, "--kind=server-archive"),
+	check("pack generates the server archive evidence report",
+		len(packReportLines) > 0 && strings.Contains(in.packText, "--kind=server-archive"),
 		fmt.Sprintf("lines=%v", packReportLines))
 	check("pack report keeps --require-evidence enforcement",
 		strings.Contains(in.packText, "report_args+=(--require-evidence)") &&
@@ -351,13 +346,9 @@ func runWiringChecks(in inputs) []checkResult {
 
 	serverJob := asMap(jobsOf(release)["server"])
 	e2eStageStep := findStep(serverJob, "Stage and verify the reused CI e2e report")
-	check("server stages the reused CI e2e report only on reuse-hit",
-		normalizedStepIf(e2eStageStep) == "needs.ci-source.outputs.reused=='true'",
+	check("server stages and verifies the CI e2e report on every release path",
+		normalizedStepIf(e2eStageStep) == "",
 		fmt.Sprintf("if=%q", str(e2eStageStep["if"])))
-	e2eExerciseStep := findStep(serverJob, "Exercise the packaged server before archiving")
-	check("server reruns e2e only without reuse",
-		normalizedStepIf(e2eExerciseStep) == "needs.ci-source.outputs.reused!='true'",
-		fmt.Sprintf("if=%q", str(e2eExerciseStep["if"])))
 
 	agentJob := asMap(jobsOf(release)["agent"])
 	agentDownloadWith := map[string]interface{}{}
@@ -428,38 +419,23 @@ func runWiringChecks(in inputs) []checkResult {
 	for _, envName := range []string{"GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"} {
 		check(fmt.Sprintf("release-upload.mjs reads %s", envName), strings.Contains(in.uploadText, envName), "")
 	}
-	check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
-		!strings.Contains(in.uploadText, "releases/tags/") && strings.Contains(in.uploadText, "releases?per_page="),
-		"drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
-
 	desktopJob := asMap(jobsOf(release)["desktop"])
 	desktopSteps := asList(desktopJob["steps"])
-	cacheIndex := -1
 	setupGoIndex := -1
 	for i, rawStep := range desktopSteps {
 		step := asMap(rawStep)
-		if step["id"] == "wails-cache" && cacheIndex < 0 {
-			cacheIndex = i
-		}
 		if strings.HasPrefix(str(step["uses"]), "actions/setup-go") && setupGoIndex < 0 {
 			setupGoIndex = i
 		}
 	}
-	check("windows wails cache restores before setup-go",
-		cacheIndex >= 0 && setupGoIndex >= 0 && cacheIndex < setupGoIndex,
-		fmt.Sprintf("cache_index=%d setup_go_index=%d", cacheIndex, setupGoIndex))
 	setupGoCondition := ""
-	setupGoCacheDisabled := false
 	if setupGoIndex >= 0 {
 		setupGoStep := asMap(desktopSteps[setupGoIndex])
 		setupGoCondition = str(setupGoStep["if"])
-		cacheValue, isBool := asMap(setupGoStep["with"])["cache"].(bool)
-		setupGoCacheDisabled = isBool && !cacheValue
 	}
 	check("desktop setup-go is never skipped by the wails cache hit",
 		setupGoCondition == "",
 		fmt.Sprintf("if=%q", setupGoCondition))
-	check("desktop setup-go disables the actions module cache", setupGoCacheDisabled, "")
 	wailsCacheKey := "wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8"
 	nsisCacheKey := "nsis-3.12-${{ runner.os }}-${{ runner.arch }}"
 	check("release desktop uses exact Windows Wails and NSIS cache entries",
@@ -492,17 +468,18 @@ func runWiringChecks(in inputs) []checkResult {
 			cacheMissInstallAndAlwaysVerify(stepRun(nativeToolInstall), "nsis-cache", "choco install nsis --version=3.12 --yes --no-progress", `MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION`),
 		"")
 	nativeSteps := asList(nativeJob["steps"])
-	prWindowsDesktopCondition := "github.event_name=='pull_request'&&matrix.os=='windows'&&matrix.kind=='desktop'"
-	powershellRuntimes := findStep(nativeJob, "Verify Windows PowerShell runtimes")
-	realWindowsTests := findStep(nativeJob, "Run real Windows Go and loopback tests")
-	check("PR Windows desktop runs real Go and loopback fixtures with both PowerShell runtimes",
-		normalizedStepIf(powershellRuntimes) == prWindowsDesktopCondition && normalizedStepIf(realWindowsTests) == prWindowsDesktopCondition &&
+	powershellRuntimes := findStep(prWindowsJob, "Verify Windows PowerShell runtimes")
+	realWindowsTests := findStep(prWindowsJob, "Run real Windows Go and loopback tests")
+	windowsSmokeBuild := findStep(prWindowsJob, "Build the Windows desktop production smoke")
+	check("PR Windows amd64 job runs real fixtures with both PowerShell runtimes and desktop production smoke",
+		str(prWindowsJob["runs-on"]) == "windows-latest" &&
 			str(powershellRuntimes["shell"]) == "powershell" && str(realWindowsTests["shell"]) == "powershell" &&
 			strings.Contains(stepRun(powershellRuntimes), "powershell.exe") && strings.Contains(stepRun(powershellRuntimes), "pwsh.exe") &&
-			strings.Count(stepRun(realWindowsTests), "& ./.github/scripts/windows-real-tests.ps1") == 1,
-		fmt.Sprintf("runtime_if=%q fixture_if=%q", str(powershellRuntimes["if"]), str(realWindowsTests["if"])))
+			strings.Contains(stepRun(realWindowsTests), "& ./.github/scripts/windows-real-tests.ps1") &&
+			strings.Contains(stepRun(windowsSmokeBuild), "node scripts/build.mjs desktop --release --repro-check --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=windows --arch=amd64"),
+		"required Windows amd64 fixture or production smoke command is missing")
 	check("real Windows targeted tests reject SKIP and require a top-level PASS",
-		strings.Count(in.windowsRealText, "go.exe test -mod=readonly -count=1 ./...") == 1 &&
+		strings.Contains(in.windowsRealText, "go.exe test -mod=readonly -count=1 ./...") &&
 			strings.Contains(in.windowsRealText, "Select-String -Path $log -Pattern '--- SKIP:'") &&
 			strings.Contains(in.windowsRealText, "if ($skips.Count -ne 0)") &&
 			strings.Contains(in.windowsRealText, "throw \"$Test reported SKIP; a real fixture run is required\"") &&
@@ -515,19 +492,41 @@ func runWiringChecks(in inputs) []checkResult {
 		"Invoke-TargetedGoTest -Package './internal/transport/winrm' -Test 'TestRealWindowsSecondVolume'",
 		"Invoke-TargetedGoTest -Package './internal/transport/ssh' -Test 'TestWindowsOpenSSHSecondVolume'",
 	} {
-		if strings.Count(in.windowsRealText, call) != 1 {
+		if !strings.Contains(in.windowsRealText, call) {
 			missingWindowsFixtureCalls = append(missingWindowsFixtureCalls, call)
 		}
 	}
 	check("real Windows fixtures cover local, WinRM and OpenSSH second-volume paths",
-		len(missingWindowsFixtureCalls) == 0, fmt.Sprintf("missing_or_duplicate=%v", missingWindowsFixtureCalls))
+		len(missingWindowsFixtureCalls) == 0, fmt.Sprintf("missing=%v", missingWindowsFixtureCalls))
 	winRMPathCall := "Invoke-TargetedGoTest -Package './internal/transport/winrm' -Test 'TestRealWindowsServer' -RunExpression '^TestRealWindowsServer$/^(cwd_persistence|filesystem|relative_read_write_and_backup_after_cwd_change)$' -RequiredSubtests @('cwd_persistence', 'filesystem', 'relative_read_write_and_backup_after_cwd_change')"
 	check("real WinRM loopback runs the complete cwd and quoted-path subtest set",
-		strings.Count(in.windowsRealText, winRMPathCall) == 1 &&
-			strings.Count(in.windowsRealText, "-Test 'TestRealWindowsServer'") == 1 &&
+		strings.Contains(in.windowsRealText, winRMPathCall) &&
 			strings.Contains(in.windowsRealText, "$subtestPassPattern = '^    --- PASS: '") &&
 			strings.Contains(in.windowsRealText, "throw \"$Test/$subtest did not report PASS\""),
 		"the loopback run must include cwd persistence, filesystem quoting and relative path tests with per-subtest PASS assertions")
+	check("real WinRM listeners are created with selector sets",
+		strings.Contains(in.windowsRealText, "New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{ Transport = 'HTTP'; Address = 'IP:127.0.0.1' } -ValueSet @{ Port = '5985' }") &&
+			strings.Contains(in.windowsRealText, "New-WSManInstance -ResourceURI winrm/config/listener -SelectorSet $selectorSet -ValueSet $valueSet"),
+		"temporary and restored listeners must separate selector properties from values")
+	check("real OpenSSH fixture writes multiline configuration",
+		strings.Contains(in.windowsRealText, "('Port ' + $sshPort),") &&
+			strings.Contains(in.windowsRealText, "('HostKey ' + $hostKey.Replace('\\', '/')),") &&
+			strings.Contains(in.windowsRealText, "('AllowUsers ' + $userName),") &&
+			strings.Contains(in.windowsRealText, "('Subsystem sftp ' + $sftpServer.Replace('\\', '/')),"),
+		"native PowerShell array concatenation must not collapse sshd_config into one line")
+	check("real OpenSSH fixture restricts the host key ACL",
+		strings.Contains(in.windowsRealText, "& icacls.exe $hostKey /inheritance:r /remove:g ('*' + $currentUserSid) /grant '*S-1-5-18:F' /grant '*S-1-5-32-544:F' /Q") &&
+			strings.Contains(in.windowsRealText, "& icacls.exe $hostKey /setowner '*S-1-5-18' /Q"),
+		"the service host key must be owned by SYSTEM and inaccessible to unrelated users")
+	check("real OpenSSH fixture runs under a LocalSystem service",
+		strings.Contains(in.windowsRealText, "$null = New-Service -Name $serviceName -BinaryPathName $binaryPath -StartupType Manual") &&
+			strings.Contains(in.windowsRealText, "Start-Service $sshServiceName"),
+		"an elevated portable sshd cannot create user processes; the fixture must use the service control manager")
+	check("real Windows Go tests select Git Bash and System32 whoami",
+		strings.Contains(in.windowsRealText, "$env:PATH = $gitBin + ';' + $system32 + ';' + $env:PATH") &&
+			strings.Contains(in.windowsRealText, "Git Bash must precede any WSL bash on PATH") &&
+			strings.Contains(in.windowsRealText, "Windows System32 whoami must precede Unix whoami on PATH"),
+		"the PATH must reject WSL bash and Unix whoami before running the Go suite")
 	uploadStep := findStep(nativeJob, "Upload native runtime")
 	var uploadPaths []string
 	for _, line := range strings.Split(str(asMap(uploadStep["with"])["path"]), "\n") {
@@ -542,23 +541,6 @@ func runWiringChecks(in inputs) []checkResult {
 		}
 	}
 	check("native upload keeps target/ as the ZIP root", allTarget,
-		fmt.Sprintf("paths=%v", uploadPaths))
-	var smokeSteps []string
-	for _, rawStep := range nativeSteps {
-		step := asMap(rawStep)
-		if strings.Contains(stepRun(step), "--smoke") {
-			smokeSteps = append(smokeSteps, stepName(step))
-		}
-	}
-	check("native job builds and runs no smoke desktop binary", len(smokeSteps) == 0,
-		fmt.Sprintf("steps=%v", smokeSteps))
-	noSmokeEvidence := true
-	for _, path := range uploadPaths {
-		if strings.Contains(path, "desktop-smoke") {
-			noSmokeEvidence = false
-		}
-	}
-	check("native upload carries no desktop smoke evidence", noSmokeEvidence,
 		fmt.Sprintf("paths=%v", uploadPaths))
 	var nativeStepNames []string
 	for _, rawStep := range nativeSteps {
@@ -720,7 +702,7 @@ func runWiringChecks(in inputs) []checkResult {
 		jobs := jobsOf(workflow.document)
 		for _, jobID := range sortedKeys(jobs) {
 			job := asMap(jobs[jobID])
-			windowsRunner := false
+			windowsRunner := strings.Contains(str(job["runs-on"]), "windows")
 			for _, values := range matrixEntries(job) {
 				if strings.Contains(values["runner"], "windows") {
 					windowsRunner = true

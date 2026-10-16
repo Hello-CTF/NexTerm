@@ -14,6 +14,22 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   fsList: vi.fn(),
   toast: vi.fn(),
+  fleetDevices: vi.fn(),
+  fleetAccount: vi.fn(),
+}));
+
+vi.mock("../../features/fleet/clients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/fleet/clients")>()),
+  fleetClient: () => ({ devices: mocks.fleetDevices }),
+}));
+vi.mock("../../features/fleet/useFleetAccount", () => ({ useFleetAccount: mocks.fleetAccount }));
+vi.mock("../../ipc/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/events")>()),
+  listenEvent: () => Promise.resolve(() => {}),
+}));
+vi.mock("../../ipc/webTransport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/webTransport")>()),
+  onEventsResync: () => () => {},
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -196,6 +212,8 @@ beforeEach(() => {
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.listCredentials.mockResolvedValue([]);
+  mocks.fleetAccount.mockReturnValue({ loading: false, userId: null, isAdmin: false });
+  mocks.fleetDevices.mockResolvedValue({ devices: [] });
   mocks.connect.mockResolvedValue({
     id: "s-new",
     assetId: "a1",
@@ -426,30 +444,63 @@ describe("AssetTree keyboard navigation", () => {
     expect(target.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
   });
 
-  it.each([39, 40])("preserves the direct DOM at 40 entries and windows at 41: %s assets", async (assetCount) => {
-    const assets = Array.from({ length: assetCount }, (_, index) => ({
-      ...ASSET_UNGROUPED,
-      id: `boundary-${index}`,
-      name: `boundary-${index}`,
-    }));
-    mocks.assetList.mockResolvedValue(assets);
-    mocks.groupList.mockResolvedValue([]);
-    mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("boundary-0"));
+  it.each([
+    { assetCount: 39, visibleRowCount: 40 },
+    { assetCount: 40, visibleRowCount: 41 },
+  ])(
+    "preserves direct DOM at 40 visible rows and windows at 41, counting the device row: $assetCount assets + 1 device = $visibleRowCount rows",
+    async ({ assetCount, visibleRowCount }) => {
+      const assets = Array.from({ length: assetCount }, (_, index) => ({
+        ...ASSET_UNGROUPED,
+        id: `boundary-${index}`,
+        name: `boundary-${index}`,
+      }));
+      const now = Date.now();
+      mocks.assetList.mockResolvedValue(assets);
+      mocks.groupList.mockResolvedValue([]);
+      mocks.fleetAccount.mockReturnValue({ loading: false, userId: "u-boundary", isAdmin: false });
+      mocks.fleetDevices.mockResolvedValue({
+        devices: [
+          {
+            id: "d-boundary",
+            name: "boundary-device",
+            kind: "agent",
+            created_at: 1,
+            last_seen_at: now,
+            revoked_at: 0,
+            agent: {
+              platform: "linux",
+              app_version: "0.0.0",
+              desired_autostart: true,
+              terminal_enabled: true,
+              current_url: "",
+              service_state: { installed: true, enabled: true, active: true, last_reconcile_at: now },
+              last_seen_at: now,
+            },
+          },
+        ],
+      });
+      mounted = mountWithClient(createElement(AssetTree));
+      await waitFor(() => expect(mounted!.container.textContent).toContain("boundary-0"));
+      await waitFor(() => expect(mounted!.container.textContent).toContain("boundary-device"));
 
-    const tree = mounted!.container.querySelector<HTMLElement>("[role='tree']");
-    if (!tree) throw new Error("Asset tree not found");
-    const rows = treeitems(tree).filter((row) => row.hasAttribute("title"));
-    if (assetCount === 39) {
-      expect(rows).toHaveLength(assetCount);
-      expect(rows.every((row) => row.parentElement === tree)).toBe(true);
-      expect(rows.every((row) => !row.hasAttribute("data-asset-id"))).toBe(true);
-      expect(tree.querySelector("[data-index]")).toBeNull();
-    } else {
-      expect(rows.length).toBeLessThan(assetCount);
-      expect(tree.querySelector("[data-index]")).not.toBeNull();
-    }
-  });
+      const tree = mounted!.container.querySelector<HTMLElement>("[role='tree']");
+      if (!tree) throw new Error("Asset tree not found");
+      const rows = treeitems(tree);
+      const assetRows = rows.filter((row) => row.querySelector(".nx-asset-row-name") !== null);
+      if (visibleRowCount === 40) {
+        expect(rows).toHaveLength(visibleRowCount);
+        expect(rows.every((row) => row.parentElement === tree)).toBe(true);
+        expect(assetRows).toHaveLength(assetCount);
+        expect(assetRows.every((row) => !row.hasAttribute("data-asset-id"))).toBe(true);
+        expect(tree.querySelector("[data-index]")).toBeNull();
+      } else {
+        expect(rows.length).toBeLessThan(visibleRowCount);
+        expect(assetRows.length).toBeLessThan(assetCount);
+        expect(tree.querySelector("[data-index]")).not.toBeNull();
+      }
+    },
+  );
 });
 
 describe("FileTree keyboard navigation", () => {

@@ -577,6 +577,549 @@ func TestCreateTabLocalAttachDetachReaps(t *testing.T) {
 	}
 }
 
+func TestChannelReceiverCloseReapsUnretainableEphemeralTab(t *testing.T) {
+	manager, connector, _, connected := openTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "receiver-local"}); err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := manager.Bind("receiver-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("ephemeral tab after receiver close: err=%v", err)
+	}
+	if err := manager.DetachChannel("receiver-local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := connector.transport(0).channel(0).closeCount.Load(); got != 1 {
+		t.Fatalf("PTY close count = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseBeforeAttach(t *testing.T) {
+	t.Run("unretainable ephemeral", func(t *testing.T) {
+		manager, _, _, connected := openTestSession(t, KindLocal)
+		const channelID = "pre-attach-ephemeral"
+		info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); !errors.Is(err, hub.ErrDetached) {
+			t.Fatalf("attach after receiver close error = %v, want hub.ErrDetached", err)
+		}
+		tab, err := manager.Tab(info.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tab.Info().Subscribers; got != 0 {
+			t.Fatalf("subscribers after rejected attach = %d", got)
+		}
+	})
+
+	t.Run("retainable", func(t *testing.T) {
+		manager, _, _, connected := openTestSession(t, KindLocal)
+		const channelID = "pre-attach-retainable"
+		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true, Ephemeral: true, Retainable: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		attached, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attached.Subscribers != 1 {
+			t.Fatalf("retainable attach subscribers = %d", attached.Subscribers)
+		}
+		rebound, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rebound.Close() })
+		if got := manager.Hub().Stats().LiveChannels; got != 1 {
+			t.Fatalf("retainable rebind live channels = %d, want 1", got)
+		}
+	})
+
+	t.Run("raw", func(t *testing.T) {
+		manager := NewManager(Config{})
+		t.Cleanup(func() { _ = manager.Close() })
+		const channelID = "pre-attach-raw"
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		producer, err := manager.Hub().Producer(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = producer.Close() })
+		rebound, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rebound.Close() })
+		data := []byte("raw-after-close")
+		if err := producer.SendBinary(context.Background(), data); err != nil {
+			t.Fatal(err)
+		}
+		assertFrameData(t, rebound, data)
+	})
+}
+
+func TestChannelReceiverCloseRejectedReattachRollback(t *testing.T) {
+	tests := []struct {
+		name   string
+		attach func(*Manager, string, string) error
+	}{
+		{name: "attach", attach: func(manager *Manager, tabID, channelID string) error {
+			_, err := manager.AttachTab(context.Background(), tabID, AttachOptions{ClientID: "client-a", ChannelID: channelID})
+			return err
+		}},
+		{name: "spectate", attach: func(manager *Manager, tabID, channelID string) error {
+			_, err := manager.AttachSpectator(context.Background(), tabID, SpectateOptions{ClientID: "client-a", ChannelID: channelID})
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, connector, _, connected := openTestSession(t, KindLocal)
+			const channelID = "rejected-reattach"
+			info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.attach(manager, info.ID, channelID); err != nil {
+				t.Fatal(err)
+			}
+			receiver, err := manager.Bind(channelID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			previous := channelCloseAfterCapture
+			channelCloseAfterCapture = func(string) {
+				close(entered)
+				<-release
+			}
+			var releaseOnce sync.Once
+			releaseBarrier := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			t.Cleanup(func() {
+				releaseBarrier()
+				channelCloseAfterCapture = previous
+			})
+			closed := make(chan error, 1)
+			go func() { closed <- receiver.Close() }()
+			<-entered
+			if err := test.attach(manager, info.ID, channelID); !errors.Is(err, hub.ErrDetached) {
+				t.Fatalf("rejected reattach error = %v, want hub.ErrDetached", err)
+			}
+			releaseBarrier()
+			if err := waitForLifecycleResult(t, closed); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+				t.Fatalf("original tab after rejected reattach and close: err=%v", err)
+			}
+			if got := connector.transport(0).channel(0).closeCount.Load(); got != 1 {
+				t.Fatalf("PTY close count = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestChannelReceiverCloseDoesNotDetachReplacementEphemeralIncarnation(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-ephemeral"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := channelCloseAfterCapture
+	channelCloseAfterCapture = func(string) {
+		select {
+		case <-entered:
+			return
+		default:
+		}
+		close(entered)
+		<-release
+	}
+	var releaseOnce sync.Once
+	releaseBarrier := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	t.Cleanup(func() {
+		releaseBarrier()
+		channelCloseAfterCapture = previous
+	})
+	closed := make(chan error, 1)
+	go func() { closed <- receiver.Close() }()
+	<-entered
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), replacement.ID, AttachOptions{ClientID: "client-b", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	replacementReceiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacementReceiver.Close() })
+	releaseBarrier()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	tab, err := manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale receiver close detached replacement ephemeral tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement ephemeral tab state = %+v", info)
+	}
+	if got := manager.Hub().Stats().LiveChannels; got != 1 {
+		t.Fatalf("live channels after stale receiver close = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseDoesNotDetachReusedRetainableTab(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-retainable"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	release, closed := pauseChannelReceiverCloseAfterCheck(t, manager, channelID)
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-b", ChannelID: channelID, Cols: 80, Rows: 24,
+		Ephemeral: true, Retainable: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	tab, err := manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale receiver close detached replacement tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement tab state = %+v", info)
+	}
+}
+
+func TestChannelReceiverCloseDoesNotCloseReusedRawChannel(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-raw"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	release, closed := pauseChannelReceiverCloseAfterCheck(t, manager, channelID)
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	producer, err := manager.Hub().Producer(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = producer.Close() })
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = receiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	data := []byte("after-reuse")
+	if err := producer.SendBinary(context.Background(), data); err != nil {
+		t.Fatalf("stale receiver close closed replacement raw channel: %v", err)
+	}
+	assertFrameData(t, receiver, data)
+}
+
+func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRetainableTab(t *testing.T) {
+	const channelID = "attach-reused-retainable"
+	fixture, receiver := newBlockedChannelAttach(t, channelID)
+	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	if err := fixture.manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, fixture.attached); err == nil {
+		t.Fatal("attach succeeded after receiver close")
+	}
+	replacement, err := fixture.manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: fixture.session.ID, ClientID: "client-b", ChannelID: channelID, Cols: 80, Rows: 24,
+		Ephemeral: true, Retainable: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementReceiver, err := fixture.manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacementReceiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := fixture.manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale attach cleanup detached replacement tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement tab state = %+v", info)
+	}
+	if got := fixture.manager.Hub().Stats().LiveChannels; got != 1 {
+		t.Fatalf("live channels after stale attach cleanup = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRawChannel(t *testing.T) {
+	const channelID = "attach-reused-raw"
+	fixture, receiver := newBlockedChannelAttach(t, channelID)
+	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	if err := fixture.manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, fixture.attached); err == nil {
+		t.Fatal("attach succeeded after receiver close")
+	}
+	producer, err := fixture.manager.Hub().Producer(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = producer.Close() })
+	rawReceiver, err := fixture.manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawReceiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("after-attach-reuse")
+	if err := producer.SendBinary(context.Background(), data); err != nil {
+		t.Fatalf("stale attach cleanup closed replacement raw channel: %v", err)
+	}
+	assertFrameData(t, rawReceiver, data)
+}
+
+func TestChannelDetachCleanupsDoNotDeadlockWithBackpressure(t *testing.T) {
+	const backpressureID = "backpressure-cleanup"
+	const otherID = "other-cleanup"
+	captureStarted := make(chan struct{})
+	previous := channelCloseBeforeCapture
+	channelCloseBeforeCapture = func(channelID string) {
+		if channelID == otherID {
+			close(captureStarted)
+		}
+	}
+	t.Cleanup(func() { channelCloseBeforeCapture = previous })
+	backpressured := make(chan struct{})
+	drainEntered := make(chan struct{})
+	var manager *Manager
+	bus := hub.New(hub.Options{
+		QueueFrames: 1,
+		OnBackpressure: func(string, int) {
+			close(backpressured)
+		},
+		OnDrain: func(channelID string, queuedBytes int) {
+			if channelID == backpressureID {
+				close(drainEntered)
+				<-captureStarted
+			}
+			manager.onDrain(channelID, queuedBytes)
+		},
+	})
+	manager = NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Hub: bus})
+	connected, err := manager.Connect(context.Background(), Asset{ID: "cleanup-deadlock", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", backpressureID)
+	tab.mu.Lock()
+	producer := tab.subscribers[backpressureID].producer
+	tab.mu.Unlock()
+	if err := producer.SendBinary(context.Background(), []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- producer.SendBinary(context.Background(), []byte("blocked")) }()
+	<-backpressured
+	if _, err := bus.Producer(otherID); err != nil {
+		t.Fatal(err)
+	}
+	firstCleanup := make(chan error, 1)
+	go func() { firstCleanup <- manager.DetachChannel(backpressureID) }()
+	<-drainEntered
+	secondCleanup := make(chan error, 1)
+	go func() { secondCleanup <- manager.DetachChannel(otherID) }()
+	if err := waitForLifecycleResult(t, firstCleanup); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, secondCleanup); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sendResult; !errors.Is(err, hub.ErrClosed) {
+		t.Fatalf("blocked send error = %v, want hub.ErrClosed", err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pauseChannelReceiverCloseAfterCheck(t *testing.T, manager *Manager, channelID string) (func(), <-chan error) {
+	t.Helper()
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pauseReceiverCloseAfterCheck(t, receiver)
+}
+
+func pauseReceiverCloseAfterCheck(t *testing.T, receiver *hub.Receiver) (func(), <-chan error) {
+	t.Helper()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := channelCloseAfterCheck
+	channelCloseAfterCheck = func() {
+		close(entered)
+		<-release
+	}
+	var releaseOnce sync.Once
+	releaseBarrier := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	t.Cleanup(func() {
+		releaseBarrier()
+		channelCloseAfterCheck = previous
+	})
+	closed := make(chan error, 1)
+	go func() { closed <- receiver.Close() }()
+	<-entered
+	return releaseBarrier, closed
+}
+
+type blockedChannelAttachFixture struct {
+	manager  *Manager
+	session  *Session
+	attached chan error
+}
+
+func newBlockedChannelAttach(t *testing.T, channelID string) (*blockedChannelAttachFixture, *hub.Receiver) {
+	t.Helper()
+	var manager *Manager
+	bus := hub.New(hub.Options{
+		QueueFrames: 1,
+		OnChannelClose: func(channelID string, incarnation uint64, closeChannel func()) {
+			manager.onChannelClose(channelID, incarnation, closeChannel)
+		},
+	})
+	t.Cleanup(func() { _ = bus.Close() })
+	manager = NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Hub: bus})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "blocked-attach", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.terminal.Feed(make([]byte, 256<<10))
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := make(chan error, 1)
+	go func() {
+		_, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{
+			ClientID: "client-a", ChannelID: channelID, ReplayBytes: -1,
+		})
+		attached <- err
+	}()
+	waitFor(t, func() bool { return bus.Stats().QueuedFrames == 1 })
+	return &blockedChannelAttachFixture{manager: manager, session: connected, attached: attached}, receiver
+}
+
 func TestCreateTabDeviceDurableAttach(t *testing.T) {
 	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
 	manager := NewManager(Config{

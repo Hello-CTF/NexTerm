@@ -249,28 +249,41 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 		waitForWindowsOwnedConsoleHostExit(t, ownership, 15*time.Second)
 	}()
 	exercise(true)
-	baselineSamples := sampleWindowsResources(t, ownership)
-	baseline := windowsResourceSample{}
-	for _, sample := range baselineSamples {
-		baseline.handles = max(baseline.handles, sample.handles)
-		baseline.openConsole = max(baseline.openConsole, sample.openConsole)
-		baseline.conhost = max(baseline.conhost, sample.conhost)
-	}
-	for iteration := 0; iteration < 100; iteration++ {
-		exercise(iteration%2 == 0)
-	}
-	samples := sampleWindowsResources(t, ownership)
-	for index, sample := range samples {
-		if sample.handles > baseline.handles+4 {
-			t.Fatalf("handle sample %d = %d, baseline = %d; want <= %d (all samples %v)", index, sample.handles, baseline.handles, baseline.handles+4, samples)
+	var baselineSamples, samples [3]windowsResourceSample
+	for attempt := 0; attempt < 3; attempt++ {
+		for iteration := 0; iteration < 100; iteration++ {
+			exercise(iteration%2 == 0)
 		}
-		if sample.openConsole > baseline.openConsole || sample.conhost > baseline.conhost {
-			t.Fatalf("owned console hosts sample %d = OpenConsole:%d conhost:%d, baseline = OpenConsole:%d conhost:%d", index, sample.openConsole, sample.conhost, baseline.openConsole, baseline.conhost)
+		baselineSamples = sampleWindowsResources(t, ownership)
+		baseline := windowsResourceSample{}
+		for _, sample := range baselineSamples {
+			baseline.handles = max(baseline.handles, sample.handles)
+			baseline.openConsole = max(baseline.openConsole, sample.openConsole)
+			baseline.conhost = max(baseline.conhost, sample.conhost)
 		}
+		t.Logf("baseline resource samples = %v", baselineSamples)
+		for iteration := 0; iteration < 100; iteration++ {
+			exercise(iteration%2 == 0)
+		}
+		samples = sampleWindowsResources(t, ownership)
+		t.Logf("final resource samples = %v", samples)
+		for index, sample := range samples {
+			if sample.openConsole > baseline.openConsole || sample.conhost > baseline.conhost {
+				t.Fatalf("owned console hosts sample %d = OpenConsole:%d conhost:%d, baseline = OpenConsole:%d conhost:%d", index, sample.openConsole, sample.conhost, baseline.openConsole, baseline.conhost)
+			}
+		}
+		if baselineSamples[0].threads != samples[len(samples)-1].threads {
+			t.Logf("runtime thread count changed during resource measurement attempt %d; rebaselining", attempt+1)
+			continue
+		}
+		for index, sample := range samples {
+			if sample.handles > baseline.handles+4 {
+				t.Fatalf("handle sample %d = %d, baseline = %d; want <= %d (all samples %v)", index, sample.handles, baseline.handles, baseline.handles+4, samples)
+			}
+		}
+		return
 	}
-	if samples[0].handles < samples[1].handles && samples[1].handles < samples[2].handles {
-		t.Fatalf("handle samples grew monotonically after settling: %v", samples)
-	}
+	t.Fatalf("runtime thread count did not stabilize during resource measurement: baseline samples %v, final samples %v", baselineSamples, samples)
 }
 
 func windowsPayloadFixture(t *testing.T, size int) ([]byte, string) {
@@ -368,6 +381,7 @@ func waitForWindowsTestFile(t *testing.T, path string, timeout time.Duration) {
 
 type windowsResourceSample struct {
 	handles     int
+	threads     int
 	openConsole int
 	conhost     int
 }
@@ -379,6 +393,7 @@ func sampleWindowsResources(t *testing.T, ownership *windowsConsoleHostOwnership
 	var samples [3]windowsResourceSample
 	for index := range samples {
 		samples[index].handles = windowsCurrentHandleCount(t)
+		samples[index].threads, _ = runtime.ThreadCreateProfile(nil)
 		openConsole, conhost, err := windowsConsoleHostCounts(t, ownership)
 		if err != nil {
 			t.Fatal(err)
@@ -425,13 +440,53 @@ func windowsConsoleHostCounts(t *testing.T, ownership *windowsConsoleHostOwnersh
 			parentPID: entry.ParentProcessID,
 			name:      windows.UTF16ToString(entry.ExeFile[:]),
 		}
-		if strings.EqualFold(process.name, "OpenConsole.exe") || strings.EqualFold(process.name, "conhost.exe") {
+		_, owned := ownership.owned[entry.ProcessID]
+		if owned || strings.EqualFold(process.name, "OpenConsole.exe") || strings.EqualFold(process.name, "conhost.exe") {
 			process.creationTime = windowsProcessCreationTime(entry.ProcessID)
 		}
 		processes[entry.ProcessID] = process
 		err = windows.Process32Next(snapshot, &entry)
 	}
+	if err := windowsValidateNewConsoleHostChains(ownership, processes); err != nil {
+		return 0, 0, err
+	}
 	return ownership.counts(processes)
+}
+
+func windowsValidateNewConsoleHostChains(ownership *windowsConsoleHostOwnership, processes map[uint32]windowsProcessRecord) error {
+	for pid, process := range processes {
+		if _, owned := ownership.owned[pid]; owned {
+			continue
+		}
+		if !strings.EqualFold(process.name, "OpenConsole.exe") && !strings.EqualFold(process.name, "conhost.exe") {
+			continue
+		}
+		if !windowsProcessDescendsFrom(pid, ownership.leaderPID, processes) {
+			continue
+		}
+		current := pid
+		for current != ownership.leaderPID {
+			process = processes[current]
+			parent := processes[process.parentPID]
+			if process.creationTime == 0 {
+				process.creationTime = windowsProcessCreationTime(current)
+				processes[current] = process
+			}
+			if parent.creationTime == 0 {
+				parent.creationTime = windowsProcessCreationTime(process.parentPID)
+				processes[process.parentPID] = parent
+			}
+			if process.creationTime == 0 || parent.creationTime == 0 {
+				return fmt.Errorf("verify console host ancestry for pid %d: process creation time is unavailable", pid)
+			}
+			if parent.creationTime > process.creationTime {
+				delete(processes, pid)
+				break
+			}
+			current = process.parentPID
+		}
+	}
+	return nil
 }
 
 func windowsProcessCreationTime(pid uint32) uint64 {
@@ -459,13 +514,13 @@ func waitForWindowsOwnedConsoleHost(t *testing.T, ownership *windowsConsoleHostO
 	deadline := time.Now().Add(timeout)
 	for {
 		openConsole, conhost, err := windowsConsoleHostCounts(t, ownership)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if openConsole+conhost > 0 {
+		if err == nil && openConsole+conhost > 0 {
 			return openConsole, conhost
 		}
 		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("active PTY console hosts were not confirmed within %s: %v", timeout, err)
+			}
 			t.Fatalf("active PTY has no OpenConsole/conhost descendant of test leader %d after %s", ownership.leaderPID, timeout)
 		}
 		time.Sleep(50 * time.Millisecond)

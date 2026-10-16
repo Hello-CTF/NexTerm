@@ -268,6 +268,9 @@ func TestRootsUsesTargetFileSystemDrives(t *testing.T) {
 	if len(executor.scripts) != 1 || !strings.Contains(executor.scripts[0], "Get-PSDrive -PSProvider FileSystem") {
 		t.Fatalf("roots command = %v", executor.scripts)
 	}
+	if strings.Contains(strings.ToLower(executor.scripts[0]), "$home=") {
+		t.Fatal("roots command writes to the read-only HOME variable")
+	}
 }
 
 func TestRootsRejectsDriveRelativeAndReportsUnsupported(t *testing.T) {
