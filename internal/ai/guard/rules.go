@@ -49,24 +49,28 @@ func RuleActionNeedsPath(action string) bool {
 // sub-content (/var/log/app.log -> /var/log/**). Root-level and directory-less paths degrade to
 // exact matching, avoiding accidental widening to the whole disk.
 func DirPattern(path string) string {
-	path = strings.TrimSpace(path)
+	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 	if path == "" {
 		return ""
 	}
 	index := strings.LastIndex(path, "/")
-	if index <= 0 {
+	if index <= 0 || index == 2 && path[1] == ':' {
 		return path
 	}
 	return path[:index] + "/**"
 }
 
 // NormalizePath returns the normalized path shared by rule matching and execution: trims surrounding
-// whitespace and applies path.Clean. The second return value false means the normalized path still
-// contains a .. segment (out of bounds); the caller must reject it outright.
+// whitespace, converts backslashes to slashes, and applies path.Clean. The second return value false
+// means the normalized path still contains a .. segment (out of bounds); the caller must reject it outright.
 func NormalizePath(p string) (string, bool) {
-	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
 	if p == "" {
 		return "", true
+	}
+	volume := ""
+	if len(p) >= 3 && p[1] == ':' && p[2] == '/' {
+		volume, p = p[:2], p[2:]
 	}
 	cleaned := path.Clean(p)
 	for _, segment := range strings.Split(cleaned, "/") {
@@ -74,7 +78,7 @@ func NormalizePath(p string) (string, bool) {
 			return "", false
 		}
 	}
-	return cleaned, true
+	return volume + cleaned, true
 }
 
 // MatchPath matches a path pattern segment by segment: whole segments match exactly, * and ? are

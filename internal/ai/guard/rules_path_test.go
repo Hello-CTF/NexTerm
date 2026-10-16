@@ -21,10 +21,16 @@ func TestNormalizePath(t *testing.T) {
 		{"/var/log/../etc/cron.d/x", "/var/etc/cron.d/x", true},
 		{"/var/log/../../etc/cron.d/x", "/etc/cron.d/x", true},
 		{"/ok/../..", "/", true},
+		{"C:\\work\\logs\\app.log", "C:/work/logs/app.log", true},
+		{" C:\\work\\\\logs\\.\\app.log ", "C:/work/logs/app.log", true},
+		{"C:\\work\\logs\\..\\other\\app.log", "C:/work/other/app.log", true},
+		{"C:\\ok\\..\\..", "C:/", true},
 		{"~", "~", true},
 		{"~/a/../b", "~/b", true},
 		{"../escape", "", false},
 		{"a/../../escape", "", false},
+		{"..\\escape", "", false},
+		{"logs\\..\\..\\escape", "", false},
 		{"..", "", false},
 	}
 	for _, tc := range cases {
@@ -50,6 +56,12 @@ func TestMatchPathParentTraversal(t *testing.T) {
 		{"/var/log/*", "/var/log/..", false},
 		{"**", "/var/log/../etc/cron.d/x", true},
 		{"**", "../../etc/x", false},
+		{"C:/work/logs/**", "C:\\work\\logs\\second.log", true},
+		{"C:/work/logs/**", "C:\\work\\logs\\nested\\b.log", true},
+		{"C:/work/logs/**", "C:\\work\\other\\b.log", false},
+		{"C:/work/logs/**", "C:\\work\\logs\\..\\other\\b.log", false},
+		{"C:/work/logs/**", "C:\\work\\logs\\..\\logs\\b.log", true},
+		{"**", "..\\..\\etc\\x", false},
 	}
 	for _, tc := range cases {
 		if got := MatchPath(tc.pattern, tc.value); got != tc.want {

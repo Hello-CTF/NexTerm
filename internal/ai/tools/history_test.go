@@ -12,6 +12,14 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 )
 
+func shellHistoryTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 func writeHistoryFile(t *testing.T, home, name, content string) {
 	t.Helper()
 	path := filepath.Join(home, name)
@@ -29,8 +37,7 @@ func shellHistoryCall(limit int) Call {
 }
 
 func TestShellHistoryParsesZshNewestFirst(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;ls -la\n: 1700000001:0;git status\n: 1700000002:0;make test\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -49,8 +56,7 @@ func TestShellHistoryParsesZshNewestFirst(t *testing.T) {
 }
 
 func TestShellHistoryParsesPlainZshLines(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", "ls -la\ngit status\nmake test\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -72,8 +78,7 @@ func TestShellHistoryParsesPlainZshLines(t *testing.T) {
 }
 
 func TestShellHistoryZshExtendedSkipsContinuationLines(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;for i in 1 2; do\nplain-continuation\n: 1700000001:0;done\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -89,8 +94,7 @@ func TestShellHistoryZshExtendedSkipsContinuationLines(t *testing.T) {
 }
 
 func TestShellHistoryParsesBashSkippingTimestamps(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "#1700000000\nls\necho hi\n#1700000001\ngit status\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -106,8 +110,7 @@ func TestShellHistoryParsesBashSkippingTimestamps(t *testing.T) {
 }
 
 func TestShellHistoryParsesFishCmdLines(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".local/share/fish/fish_history", "- cmd: ls\n  when: 1700000000\n- cmd: make test\n  when: 1700000001\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -123,8 +126,7 @@ func TestShellHistoryParsesFishCmdLines(t *testing.T) {
 }
 
 func TestShellHistoryPrefersFirstExistingShell(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;zsh-command\n")
 	writeHistoryFile(t, home, ".bash_history", "bash-command\n")
 	registry := NewRegistry(Dependencies{})
@@ -135,8 +137,7 @@ func TestShellHistoryPrefersFirstExistingShell(t *testing.T) {
 }
 
 func TestShellHistoryLimitClampsToNewest(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "one\ntwo\nthree\nfour\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(2), nil)
@@ -154,8 +155,7 @@ func TestShellHistoryLimitClampsToNewest(t *testing.T) {
 }
 
 func TestShellHistoryRedactsSecrets(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "curl -H \"Authorization: Bearer tok-123\" https://x\nmysql -psecretpw db\nexport password=hunter2\n")
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
@@ -173,8 +173,7 @@ func TestShellHistoryRedactsSecrets(t *testing.T) {
 }
 
 func TestShellHistoryMissingFilesListsAttemptedPaths(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	shellHistoryTestHome(t)
 	registry := NewRegistry(Dependencies{})
 	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
 	if result.OK || !strings.Contains(result.Text, "未找到本机 shell 历史文件") ||
@@ -184,8 +183,7 @@ func TestShellHistoryMissingFilesListsAttemptedPaths(t *testing.T) {
 }
 
 func TestShellHistoryReadsOnlyTailOfLargeFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	var builder strings.Builder
 	builder.WriteString("ancient-command\n")
 	for i := 0; i < 300000; i++ {
@@ -207,8 +205,7 @@ func TestShellHistoryReadsOnlyTailOfLargeFile(t *testing.T) {
 }
 
 func TestShellHistoryLabelsRemoteScope(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	registry := NewRegistry(Dependencies{ListAssets: func(context.Context) ([]Asset, error) {
 		return []Asset{{ID: "a1", Kind: "ssh"}, {ID: "local-1", Kind: "local"}}, nil
@@ -229,8 +226,7 @@ func TestShellHistoryLabelsRemoteScope(t *testing.T) {
 }
 
 func TestShellHistoryRequiresConfirmation(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{}})
 	readWrite := &Execution{
@@ -260,8 +256,7 @@ func TestShellHistoryRequiresConfirmation(t *testing.T) {
 }
 
 func TestShellHistoryRemoteScopeForcesConfirmEvenWhenRemembered(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	registry := NewRegistry(Dependencies{ListAssets: func(context.Context) ([]Asset, error) {
 		return []Asset{{ID: "a1", Kind: "ssh"}}, nil
@@ -280,8 +275,7 @@ func TestShellHistoryRemoteScopeForcesConfirmEvenWhenRemembered(t *testing.T) {
 
 func TestShellHistoryRemoteSessionForcesConfirmWithoutAssetID(t *testing.T) {
 	// The real sidebar passes only sessionId/tabId: remote detection must go through the server-side session asset kind.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	terminal := &fakeTerminal{assetKind: "ssh"}
 	registry := NewRegistry(Dependencies{Terminal: terminal})
@@ -316,8 +310,7 @@ func TestShellHistoryRemoteSessionForcesConfirmWithoutAssetID(t *testing.T) {
 }
 
 func TestShellHistoryKindResolutionFailsClosed(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	// Kind resolution failure is treated as remote
 	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKindErr: errors.New("boom")}})
@@ -339,8 +332,7 @@ func TestShellHistoryKindResolutionFailsClosed(t *testing.T) {
 }
 
 func TestShellHistoryLocalSessionUsesRememberedApproval(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := shellHistoryTestHome(t)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKind: "local"}})
 	execution := &Execution{

@@ -38,11 +38,14 @@ func TestMatchPathSegments(t *testing.T) {
 func TestDirPattern(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/var/log/app.log": "/var/log/**",
-		"/app.log":         "/app.log",
-		"app.log":          "app.log",
-		"/var/log/":        "/var/log/**",
-		"":                 "",
+		"/var/log/app.log":        "/var/log/**",
+		"/app.log":                "/app.log",
+		"app.log":                 "app.log",
+		"/var/log/":               "/var/log/**",
+		"C:\\work\\logs\\app.log": "C:/work/logs/**",
+		"C:\\app.log":             "C:/app.log",
+		"logs\\app.log":           "logs/**",
+		"":                        "",
 	}
 	for input, want := range cases {
 		if got := DirPattern(input); got != want {
