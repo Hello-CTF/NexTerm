@@ -26,40 +26,56 @@ import (
 type fakeHost struct {
 	mu sync.Mutex
 
-	discovery    string
-	pathBinary   string
-	probeVersion string
-	spawn        func()
-	socketPath   string
-	running      bool
+	discovery     string
+	pathBinary    string
+	probeVersion  string
+	probeVersions map[string]string
+	spawn         func()
+	socketPath    string
+	running       bool
 
 	shared       *sharedTarget
 	uploadDigest string
+	uploadErr    error
 
-	exists   map[string]bool
-	digests  map[string]string
-	commands []string
-	mkdirs   []string
-	chmods   map[string]fs.FileMode
-	uploads  []string
-	renames  [][2]string
+	exists       map[string]bool
+	digests      map[string]string
+	commands     []string
+	mkdirs       []string
+	chmods       map[string]fs.FileMode
+	uploads      []string
+	localUploads []string
+	renames      [][2]string
+	deletions    []deleteCall
+}
+
+type deleteCall struct {
+	path       string
+	directory  bool
+	contextErr error
 }
 
 // sharedTarget models one remote host reached by several independent SSH
 // clients: the daemon socket, the uploaded files, and the spawn state are
 // shared while command traces stay per client.
 type sharedTarget struct {
-	mu         sync.Mutex
-	running    bool
-	socketPath string
-	files      map[string]string
-	uploads    []string
-	renames    [][2]string
-	spawns     int
+	mu               sync.Mutex
+	running          bool
+	socketPath       string
+	files            map[string]string
+	dirs             map[string]bool
+	uploads          []string
+	renames          [][2]string
+	spawns           int
+	uploadStarted    chan struct{}
+	uploadRelease    chan struct{}
+	installContended chan struct{}
+	uploadOnce       sync.Once
+	contentionOnce   sync.Once
 }
 
 func newSharedTarget(socketPath string) *sharedTarget {
-	return &sharedTarget{socketPath: socketPath, files: make(map[string]string)}
+	return &sharedTarget{socketPath: socketPath, files: make(map[string]string), dirs: make(map[string]bool)}
 }
 
 func (s *sharedTarget) spawn() {
@@ -78,15 +94,37 @@ func (s *sharedTarget) state() (bool, string) {
 func (s *sharedTarget) exists(path string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.files[path]
-	return ok
+	_, file := s.files[path]
+	return file || s.dirs[path]
+}
+
+func (s *sharedTarget) mkdir(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dirs[path] {
+		if strings.HasSuffix(path, ".install") && s.installContended != nil {
+			s.contentionOnce.Do(func() { close(s.installContended) })
+		}
+		return fs.ErrExist
+	}
+	if _, exists := s.files[path]; exists {
+		return fs.ErrExist
+	}
+	s.dirs[path] = true
+	return nil
 }
 
 func (s *sharedTarget) upload(path, digest string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.files[path] = digest
 	s.uploads = append(s.uploads, path)
+	s.mu.Unlock()
+	if s.uploadStarted != nil {
+		s.uploadOnce.Do(func() { close(s.uploadStarted) })
+	}
+	if s.uploadRelease != nil {
+		<-s.uploadRelease
+	}
 }
 
 func (s *sharedTarget) rename(from, to string) {
@@ -95,6 +133,22 @@ func (s *sharedTarget) rename(from, to string) {
 	s.files[to] = s.files[from]
 	delete(s.files, from)
 	s.renames = append(s.renames, [2]string{from, to})
+}
+
+func (s *sharedTarget) delete(path string, directory bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if directory && s.dirs[path] {
+		delete(s.dirs, path)
+		return nil
+	}
+	if !directory {
+		if _, exists := s.files[path]; exists {
+			delete(s.files, path)
+			return nil
+		}
+	}
+	return fs.ErrNotExist
 }
 
 func (s *sharedTarget) digest(path string) (string, bool) {
@@ -135,6 +189,14 @@ func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (stri
 		}
 		return h.pathBinary + "\n", 0, nil
 	case strings.Contains(command, "--probe"):
+		for binary, version := range h.probeVersions {
+			if strings.Contains(command, quoteShell(binary)) {
+				if version == "" {
+					return "unknown command supervisor-helper\n", 2, nil
+				}
+				return version + "\n", 0, nil
+			}
+		}
 		if h.probeVersion == "" {
 			return "unknown command supervisor-helper\n", 2, nil
 		}
@@ -163,8 +225,11 @@ func (h *fakeHost) Exists(_ context.Context, path string) (bool, error) {
 
 func (h *fakeHost) Mkdir(_ context.Context, path string) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.mkdirs = append(h.mkdirs, path)
+	h.mu.Unlock()
+	if h.shared != nil {
+		return h.shared.mkdir(path)
+	}
 	return nil
 }
 
@@ -181,9 +246,18 @@ func (h *fakeHost) Chmod(_ context.Context, path string, mode fs.FileMode) error
 func (h *fakeHost) Upload(_ context.Context, localPath, remotePath string) (int64, error) {
 	h.mu.Lock()
 	h.uploads = append(h.uploads, remotePath)
+	h.localUploads = append(h.localUploads, localPath)
+	if h.digests == nil {
+		h.digests = make(map[string]string)
+	}
+	h.digests[remotePath] = h.uploadDigest
+	err := h.uploadErr
 	h.mu.Unlock()
 	if h.shared != nil {
 		h.shared.upload(remotePath, h.uploadDigest)
+	}
+	if err != nil {
+		return 0, err
 	}
 	return 1, nil
 }
@@ -191,9 +265,25 @@ func (h *fakeHost) Upload(_ context.Context, localPath, remotePath string) (int6
 func (h *fakeHost) Rename(_ context.Context, from, to string) error {
 	h.mu.Lock()
 	h.renames = append(h.renames, [2]string{from, to})
+	if digest, ok := h.digests[from]; ok {
+		h.digests[to] = digest
+		delete(h.digests, from)
+	}
 	h.mu.Unlock()
 	if h.shared != nil {
 		h.shared.rename(from, to)
+	}
+	return nil
+}
+
+func (h *fakeHost) Delete(ctx context.Context, path string, directory bool) error {
+	h.mu.Lock()
+	h.deletions = append(h.deletions, deleteCall{path: path, directory: directory, contextErr: ctx.Err()})
+	delete(h.digests, path)
+	delete(h.exists, path)
+	h.mu.Unlock()
+	if h.shared != nil {
+		return h.shared.delete(path, directory)
 	}
 	return nil
 }
@@ -340,6 +430,33 @@ func TestEnsureDaemonConnectsToRunningDaemon(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonProbesAllPathCandidates(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	const helper = "/usr/local/bin/nexterm-helper"
+	const legacy = "/usr/bin/nexterm-server"
+	host := &fakeHost{
+		discovery:  testDiscovery(t, dataRoot),
+		pathBinary: helper + "\n" + legacy,
+		probeVersions: map[string]string{
+			helper: "1",
+			legacy: strconv.Itoa(supervisor.ProtocolVersion),
+		},
+		socketPath: fixture.socketPath,
+		running:    true,
+	}
+	daemon, err := testResolver(host, "").EnsureDaemon(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Binary != legacy {
+		t.Fatalf("daemon binary = %q; want later compatible legacy candidate %q", daemon.Binary, legacy)
+	}
+	if !host.sawCommand(quoteShell(helper)+" "+supervisor.HelperCommand+" --probe") || !host.sawCommand(quoteShell(legacy)+" "+supervisor.HelperCommand+" --probe") {
+		t.Fatalf("not every PATH candidate was probed: %v", host.commands)
+	}
+}
+
 func TestEnsureDaemonStartsStoppedDaemon(t *testing.T) {
 	dataRoot := t.TempDir()
 	fixture := newDaemonFixture(t, dataRoot)
@@ -402,9 +519,10 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
 	host := &fakeHost{
-		discovery:  testDiscovery(t, dataRoot),
-		socketPath: fixture.socketPath,
-		digests:    map[string]string{target: digest},
+		discovery:    testDiscovery(t, dataRoot),
+		socketPath:   fixture.socketPath,
+		digests:      map[string]string{target: digest},
+		uploadDigest: digest,
 	}
 	host.spawn = func() {
 		host.mu.Lock()
@@ -478,6 +596,22 @@ func TestEnsureDaemonRejectsMismatchedUpload(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonRejectsDesktopForRemoteOS(t *testing.T) {
+	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
+	resolver := testResolver(host, "")
+	resolver.HelperExecutable = "/local/nexterm-desktop"
+	resolver.inspect = func(path string) (UploadSource, error) {
+		return UploadSource{Path: path, GOOS: "darwin", GOARCH: runtime.GOARCH, Digest: strings.Repeat("ab", 32)}, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("EnsureDaemon error = %v; want ErrUnsupported", err)
+	}
+	if len(host.uploads) != 0 {
+		t.Fatalf("desktop binary was uploaded to a Linux target: %v", host.localUploads)
+	}
+}
+
 func TestEnsureDaemonRejectsCGOUpload(t *testing.T) {
 	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
 	resolver := testResolver(host, "/local/nexterm")
@@ -511,6 +645,7 @@ func TestEnsureDaemonUsesCachedUploadWithoutReuploading(t *testing.T) {
 		socketPath:   fixture.socketPath,
 		running:      true,
 		exists:       map[string]bool{cached: true},
+		digests:      map[string]string{cached: digest},
 	}
 	resolver := testResolver(host, "/local/nexterm")
 	resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
@@ -523,6 +658,387 @@ func TestEnsureDaemonUsesCachedUploadWithoutReuploading(t *testing.T) {
 	}
 	if len(host.uploads) != 0 {
 		t.Fatalf("cached binary was re-uploaded: %v", host.uploads)
+	}
+}
+
+func TestEnsureDaemonInstallsOfflineHelper(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	digest := strings.Repeat("ab", 32)
+	helperPath := "/offline/nexterm-helper-linux-" + runtime.GOARCH
+	target := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
+	host := &fakeHost{
+		discovery:    testDiscovery(t, dataRoot),
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		socketPath:   fixture.socketPath,
+		uploadDigest: digest,
+	}
+	host.spawn = func() {
+		host.mu.Lock()
+		host.running = true
+		host.mu.Unlock()
+	}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.HelperExecutable = helperPath
+	resolver.inspect = func(path string) (UploadSource, error) {
+		if path != helperPath {
+			t.Fatalf("inspected %q instead of the explicit offline helper", path)
+		}
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	daemon, err := resolver.EnsureDaemon(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Binary != target {
+		t.Fatalf("daemon binary = %q; want content-addressed helper %q", daemon.Binary, target)
+	}
+	if len(host.localUploads) != 1 || host.localUploads[0] != helperPath {
+		t.Fatalf("uploaded local paths = %v; want only %q", host.localUploads, helperPath)
+	}
+	if len(host.uploads) != 1 {
+		t.Fatalf("uploads = %v; want one staged helper", host.uploads)
+	}
+	staging := host.uploads[0]
+	if !strings.HasPrefix(staging, dataRoot+"/nexterm/bin/.nexterm-helper-"+digest+".") || !strings.HasSuffix(staging, ".partial") {
+		t.Fatalf("helper staging path = %q", staging)
+	}
+	if len(host.renames) != 1 || host.renames[0] != [2]string{staging, target} {
+		t.Fatalf("renames = %v; want %q -> %q", host.renames, staging, target)
+	}
+	if !host.sawCommand(quoteShell(staging) + " " + supervisor.HelperCommand + " --probe") {
+		t.Fatalf("staged helper was not probed before use: %v", host.commands)
+	}
+	if _, exists := host.digests[staging]; exists {
+		t.Fatal("committed helper left its staging file behind")
+	}
+	for _, dir := range []string{dataRoot + "/nexterm", dataRoot + "/nexterm/bin"} {
+		if host.chmods[dir] != 0o700 {
+			t.Fatalf("remote dir %s mode = %v; want 0700", dir, host.chmods[dir])
+		}
+	}
+}
+
+func TestEnsureDaemonFindsTargetHelperBesideDesktop(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	digest := strings.Repeat("cd", 32)
+	helperPath := "/local/nexterm-helper-linux-" + runtime.GOARCH
+	host := &fakeHost{
+		discovery:    testDiscovery(t, dataRoot),
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		socketPath:   fixture.socketPath,
+		uploadDigest: digest,
+	}
+	host.spawn = func() {
+		host.mu.Lock()
+		host.running = true
+		host.mu.Unlock()
+	}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.inspect = func(path string) (UploadSource, error) {
+		if path != helperPath {
+			t.Fatalf("inspected %q; want target helper %q", path, helperPath)
+		}
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	if _, err := resolver.EnsureDaemon(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.localUploads) != 1 || host.localUploads[0] != helperPath {
+		t.Fatalf("uploaded local paths = %v; want target helper %q", host.localUploads, helperPath)
+	}
+}
+
+func TestUploadSourceFindsHelperForInstalledAppName(t *testing.T) {
+	executable := "/Applications/NexTerm.app/Contents/MacOS/NexTerm"
+	helperPath := filepath.Join(filepath.Dir(executable), "nexterm-helper-linux-arm64")
+	resolver := &Resolver{Executable: executable}
+	resolver.inspect = func(path string) (UploadSource, error) {
+		if path != helperPath {
+			t.Fatalf("inspected %q; want installed App sibling %q", path, helperPath)
+		}
+		return UploadSource{Path: path, GOOS: "linux", GOARCH: "arm64", Digest: strings.Repeat("ab", 32)}, nil
+	}
+	upload, standalone, err := resolver.uploadSource(targetInfo{goos: "linux", goarch: "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !standalone || upload.Path != helperPath {
+		t.Fatalf("uploadSource = %+v, %t; want standalone %q", upload, standalone, helperPath)
+	}
+}
+
+func TestEnsureDaemonAutoInstallDisabled(t *testing.T) {
+	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.HelperExecutable = "/offline/nexterm-helper"
+	resolver.DisableAutoInstall = true
+	resolver.inspect = func(path string) (UploadSource, error) {
+		source := fakeUploadSource(strings.Repeat("ef", 32))
+		source.Path = path
+		return source, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "automatic helper installation is disabled") {
+		t.Fatalf("EnsureDaemon error = %v; want explicit disabled installation", err)
+	}
+	if len(host.uploads) != 0 {
+		t.Fatalf("disabled automatic installation uploaded %v", host.uploads)
+	}
+}
+
+func TestEnsureDaemonAutoInstallDisabledPrecedesDesktopValidation(t *testing.T) {
+	host := &fakeHost{discovery: testDiscovery(t, t.TempDir())}
+	resolver := testResolver(host, "/local/nexterm-desktop")
+	resolver.DisableAutoInstall = true
+	resolver.inspect = func(path string) (UploadSource, error) {
+		if filepath.Base(path) != "nexterm-desktop" {
+			return UploadSource{}, fs.ErrNotExist
+		}
+		return UploadSource{Path: path, GOOS: "darwin", GOARCH: runtime.GOARCH, Digest: strings.Repeat("ab", 32)}, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "automatic helper installation is disabled") {
+		t.Fatalf("EnsureDaemon error = %v; want disabled installation to dominate validation", err)
+	}
+	if errors.Is(err, base.ErrUnsupported) || strings.Contains(err.Error(), "targets darwin") {
+		t.Fatalf("disabled installation exposed the local desktop validation error: %v", err)
+	}
+	if len(host.uploads) != 0 {
+		t.Fatalf("disabled automatic installation uploaded %v", host.uploads)
+	}
+}
+
+func TestEnsureDaemonAutoInstallDisabledKeepsPreinstalledHelper(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	host := &fakeHost{
+		discovery:    testDiscovery(t, dataRoot),
+		pathBinary:   "/usr/bin/nexterm-helper",
+		probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+		socketPath:   fixture.socketPath,
+		running:      true,
+	}
+	resolver := testResolver(host, "")
+	resolver.DisableAutoInstall = true
+	daemon, err := resolver.EnsureDaemon(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Binary != "/usr/bin/nexterm-helper" {
+		t.Fatalf("daemon binary = %q", daemon.Binary)
+	}
+}
+
+func TestEnsureDaemonHelperDigestMismatchDoesNotCommit(t *testing.T) {
+	dataRoot := t.TempDir()
+	digest := strings.Repeat("12", 32)
+	host := &fakeHost{discovery: testDiscovery(t, dataRoot), uploadDigest: strings.Repeat("ff", 32)}
+	resolver := testResolver(host, "")
+	resolver.HelperExecutable = "/offline/nexterm-helper"
+	resolver.inspect = func(path string) (UploadSource, error) {
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("EnsureDaemon error = %v; want digest mismatch", err)
+	}
+	if len(host.renames) != 0 {
+		t.Fatalf("digest mismatch was committed: %v", host.renames)
+	}
+	if len(host.deletions) == 0 {
+		t.Fatal("digest mismatch left its partial upload behind")
+	}
+}
+
+func TestEnsureDaemonHelperProbeFailureDoesNotCommit(t *testing.T) {
+	dataRoot := t.TempDir()
+	digest := strings.Repeat("34", 32)
+	host := &fakeHost{discovery: testDiscovery(t, dataRoot), uploadDigest: digest}
+	resolver := testResolver(host, "")
+	resolver.HelperExecutable = "/offline/nexterm-helper"
+	resolver.inspect = func(path string) (UploadSource, error) {
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, durable.ErrUnavailable) || !strings.Contains(err.Error(), "probe") {
+		t.Fatalf("EnsureDaemon error = %v; want helper probe failure", err)
+	}
+	if len(host.renames) != 0 {
+		t.Fatalf("failed helper probe was committed: %v", host.renames)
+	}
+	if len(host.deletions) == 0 {
+		t.Fatal("failed helper probe left its partial upload behind")
+	}
+}
+
+func TestEnsureDaemonHelperUploadCancellationCleansPartial(t *testing.T) {
+	dataRoot := t.TempDir()
+	digest := strings.Repeat("56", 32)
+	host := &fakeHost{discovery: testDiscovery(t, dataRoot), uploadDigest: digest, uploadErr: context.Canceled}
+	resolver := testResolver(host, "")
+	resolver.HelperExecutable = "/offline/nexterm-helper"
+	resolver.inspect = func(path string) (UploadSource, error) {
+		source := fakeUploadSource(digest)
+		source.Path = path
+		return source, nil
+	}
+	_, err := resolver.EnsureDaemon(context.Background(), nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnsureDaemon error = %v; want canceled upload", err)
+	}
+	if len(host.renames) != 0 {
+		t.Fatalf("canceled upload was committed: %v", host.renames)
+	}
+	if len(host.uploads) != 1 {
+		t.Fatalf("canceled uploads = %v; want one partial path", host.uploads)
+	}
+	stagingDeleted := false
+	for _, deletion := range host.deletions {
+		if deletion.path == host.uploads[0] && !deletion.directory && deletion.contextErr == nil {
+			stagingDeleted = true
+		}
+	}
+	if !stagingDeleted {
+		t.Fatalf("canceled upload did not clean its partial file with a live context: %v", host.deletions)
+	}
+}
+
+func TestEnsureDaemonConcurrentHelperInstallsUploadOnce(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	shared := newSharedTarget(fixture.socketPath)
+	shared.uploadStarted = make(chan struct{})
+	shared.uploadRelease = make(chan struct{})
+	shared.installContended = make(chan struct{})
+	digest := strings.Repeat("78", 32)
+	target := dataRoot + "/nexterm/bin/nexterm-helper-" + digest
+
+	const clients = 4
+	daemons := make([]*Daemon, clients)
+	errs := make([]error, clients)
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	for index := 0; index < clients; index++ {
+		done.Add(1)
+		go func(index int) {
+			defer done.Done()
+			start.Wait()
+			host := &fakeHost{
+				discovery:    testDiscovery(t, dataRoot),
+				probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+				shared:       shared,
+				uploadDigest: digest,
+			}
+			resolver := testResolver(host, "")
+			resolver.HelperExecutable = "/offline/nexterm-helper"
+			resolver.inspect = func(path string) (UploadSource, error) {
+				source := fakeUploadSource(digest)
+				source.Path = path
+				return source, nil
+			}
+			daemons[index], errs[index] = resolver.EnsureDaemon(context.Background(), nil)
+		}(index)
+	}
+	var releaseOnce sync.Once
+	releaseUpload := func() { releaseOnce.Do(func() { close(shared.uploadRelease) }) }
+	defer releaseUpload()
+	start.Done()
+	select {
+	case <-shared.uploadStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first helper upload did not start")
+	}
+	select {
+	case <-shared.installContended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no concurrent client contended for the helper installation lock")
+	}
+	releaseUpload()
+	done.Wait()
+	for index, err := range errs {
+		if err != nil {
+			t.Fatalf("ensure %d: %v", index, err)
+		}
+		if daemons[index].Binary != target {
+			t.Fatalf("daemon %d binary = %q; want %q", index, daemons[index].Binary, target)
+		}
+	}
+	uploads, renames, _ := shared.counts()
+	if uploads != 1 || renames != 1 {
+		t.Fatalf("concurrent helper installation saw %d uploads and %d renames; want one each", uploads, renames)
+	}
+}
+
+func TestEnsureDaemonConcurrentLegacyUploadsShareDigestLock(t *testing.T) {
+	dataRoot := t.TempDir()
+	fixture := newDaemonFixture(t, dataRoot)
+	shared := newSharedTarget(fixture.socketPath)
+	shared.uploadStarted = make(chan struct{})
+	shared.uploadRelease = make(chan struct{})
+	shared.installContended = make(chan struct{})
+	digest := strings.Repeat("90", 32)
+	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
+
+	const clients = 4
+	daemons := make([]*Daemon, clients)
+	errs := make([]error, clients)
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	for index := 0; index < clients; index++ {
+		done.Add(1)
+		go func(index int) {
+			defer done.Done()
+			start.Wait()
+			host := &fakeHost{
+				discovery:    testDiscovery(t, dataRoot),
+				probeVersion: strconv.Itoa(supervisor.ProtocolVersion),
+				shared:       shared,
+				uploadDigest: digest,
+			}
+			resolver := testResolver(host, "/local/nexterm")
+			resolver.inspect = func(string) (UploadSource, error) { return fakeUploadSource(digest), nil }
+			daemons[index], errs[index] = resolver.EnsureDaemon(context.Background(), nil)
+		}(index)
+	}
+	var releaseOnce sync.Once
+	releaseUpload := func() { releaseOnce.Do(func() { close(shared.uploadRelease) }) }
+	defer releaseUpload()
+	start.Done()
+	select {
+	case <-shared.uploadStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first legacy upload did not start")
+	}
+	select {
+	case <-shared.installContended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no concurrent client contended for the legacy digest lock")
+	}
+	releaseUpload()
+	done.Wait()
+	for index, err := range errs {
+		if err != nil {
+			t.Fatalf("ensure %d: %v", index, err)
+		}
+		if daemons[index].Binary != target {
+			t.Fatalf("daemon %d binary = %q; want legacy target %q", index, daemons[index].Binary, target)
+		}
+	}
+	uploads, renames, _ := shared.counts()
+	if uploads != 1 || renames != 1 {
+		t.Fatalf("concurrent legacy installation saw %d uploads and %d renames; want one each", uploads, renames)
 	}
 }
 

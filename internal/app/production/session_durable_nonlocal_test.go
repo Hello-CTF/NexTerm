@@ -97,8 +97,7 @@ func TestProductionTerminalAttachStaysVolatile(t *testing.T) {
 	requireStoreTestResponse(t, connectedResponse, &connected)
 
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "ssh-channel", "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	if tabID == "" {
 		t.Fatal("ssh terminal_attach returned no tab")
 	}
@@ -107,8 +106,7 @@ func TestProductionTerminalAttachStaysVolatile(t *testing.T) {
 	var local sessionInfoDTO
 	requireStoreTestResponse(t, localResponse, &local)
 	localAttach := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+local.ID+`","cols":80,"rows":24}`, "local-channel", "client-a")
-	var localTabID string
-	requireStoreTestResponse(t, localAttach, &localTabID)
+	localTabID := requireAttachedTabID(t, localAttach)
 	if localTabID == "" {
 		t.Fatal("local attach returned no tab")
 	}

@@ -9,9 +9,10 @@ import (
 
 type transportHandle struct {
 	base.Transport
-	closed atomic.Bool
-	once   sync.Once
-	err    error
+	closed   atomic.Bool
+	mu       sync.Mutex
+	complete bool
+	err      error
 }
 
 func newTransportHandle(transport base.Transport) *transportHandle {
@@ -19,10 +20,14 @@ func newTransportHandle(transport base.Transport) *transportHandle {
 }
 
 func (t *transportHandle) Close() error {
-	t.once.Do(func() {
-		t.closed.Store(true)
-		t.err = t.Transport.Close()
-	})
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.complete {
+		return t.err
+	}
+	t.closed.Store(true)
+	t.err = t.Transport.Close()
+	t.complete = t.err == nil
 	return t.err
 }
 
@@ -32,8 +37,9 @@ func (t *transportHandle) IsAlive() bool {
 
 type channelHandle struct {
 	base.Channel
-	once sync.Once
-	err  error
+	mu       sync.Mutex
+	complete bool
+	err      error
 }
 
 func newChannelHandle(channel base.Channel) *channelHandle {
@@ -41,6 +47,12 @@ func newChannelHandle(channel base.Channel) *channelHandle {
 }
 
 func (c *channelHandle) Close() error {
-	c.once.Do(func() { c.err = c.Channel.Close() })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.complete {
+		return c.err
+	}
+	c.err = c.Channel.Close()
+	c.complete = c.err == nil
 	return c.err
 }

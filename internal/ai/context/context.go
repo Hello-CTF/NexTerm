@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 const BudgetBytes = 64 << 10
@@ -49,7 +50,12 @@ type Dependencies struct {
 type Builder struct {
 	deps  Dependencies
 	mu    sync.Mutex
-	recon map[string]*reconEntry
+	recon map[reconCacheKey]*reconEntry
+}
+
+type reconCacheKey struct {
+	sessionID  string
+	ownerScope string
 }
 
 type reconEntry struct {
@@ -65,7 +71,7 @@ func NewBuilder(deps Dependencies) *Builder {
 	if deps.ReconTTL <= 0 {
 		deps.ReconTTL = time.Minute
 	}
-	return &Builder{deps: deps, recon: make(map[string]*reconEntry)}
+	return &Builder{deps: deps, recon: make(map[reconCacheKey]*reconEntry)}
 }
 
 type Prompt struct {
@@ -82,11 +88,30 @@ func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string
 		}
 	}
 	tabAllowed := scope.TabID != ""
+	var screen tools.Screen
+	screenRead := false
+	_, authenticated := ipc.UserIDFromContext(ctx)
+	if tabAllowed && authenticated && b.deps.TabSession != nil {
+		if b.deps.Screen == nil {
+			tabAllowed = false
+		} else {
+			var err error
+			screen, err = b.deps.Screen(ctx, scope.TabID)
+			screenRead = true
+			tabAllowed = err == nil
+		}
+	}
 	if tabAllowed && scope.SessionID != "" && b.deps.TabSession != nil {
 		tabAllowed = b.deps.TabSession(scope.TabID) == scope.SessionID
 	}
 	if b.deps.Screen != nil && tabAllowed {
-		if screen, err := b.deps.Screen(ctx, scope.TabID); err == nil {
+		if !screenRead {
+			var err error
+			screen, err = b.deps.Screen(ctx, scope.TabID)
+			screenRead = true
+			tabAllowed = err == nil
+		}
+		if tabAllowed {
 			bundle.Screen = screen.Text
 			if len(screen.Tail) != 0 {
 				bundle.Tail = append([]string(nil), screen.Tail...)

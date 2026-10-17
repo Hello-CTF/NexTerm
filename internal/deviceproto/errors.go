@@ -22,6 +22,7 @@ const (
 	CodeInvalid     = "invalid_input"
 	CodeProtocol    = "protocol"
 	CodeUnsupported = "unsupported"
+	CodeNoMedia     = "no_media"
 )
 
 // ErrorCode maps a server-side failure to its wire code, preserving the
@@ -34,6 +35,8 @@ func ErrorCode(err error) string {
 		return CodeInvalid
 	case errors.Is(err, base.ErrUnsupported):
 		return CodeUnsupported
+	case errors.Is(err, base.ErrNoMedia):
+		return CodeNoMedia
 	case errors.Is(err, fs.ErrNotExist):
 		return CodeNotFound
 	case errors.Is(err, fs.ErrPermission):
@@ -65,6 +68,8 @@ func errorSentinel(code string) error {
 		return ErrProtocol
 	case CodeUnsupported:
 		return base.ErrUnsupported
+	case CodeNoMedia:
+		return base.ErrNoMedia
 	default:
 		return fmt.Errorf("%w (%s)", ErrProtocol, code)
 	}

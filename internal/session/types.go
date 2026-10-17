@@ -155,6 +155,7 @@ type Config struct {
 	ReconnectBackoff  []time.Duration
 	DefaultReplay     int
 	SlowConsumerGrace time.Duration
+	OpenAccess        bool
 }
 
 type SessionInfo struct {
@@ -168,6 +169,15 @@ type SessionInfo struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
+type Shell string
+
+const (
+	ShellUnknown    Shell = "unknown"
+	ShellPowerShell Shell = "powershell"
+	ShellCmd        Shell = "cmd"
+	ShellPOSIX      Shell = "posix"
+)
+
 type TabInfo struct {
 	ID           string `json:"id"`
 	SessionID    string `json:"sessionId"`
@@ -178,11 +188,13 @@ type TabInfo struct {
 	Subscribers  int    `json:"subscribers"`
 	Viewers      int    `json:"viewers"`
 	Exited       bool   `json:"exited"`
+	Retainable   bool   `json:"retainable"`
 	Ephemeral    bool   `json:"ephemeral,omitempty"`
 	Durable      bool   `json:"durable,omitempty"`
 	Cwd          string `json:"cwd,omitempty"`
 	Encoding     string `json:"encoding,omitempty"`
 	Title        string `json:"title,omitempty"`
+	Shell        Shell  `json:"shell"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -261,6 +273,7 @@ type Session struct {
 	tabs            map[string]*Tab
 	idleSince       time.Time
 	closed          bool
+	reapRetry       bool
 	connectDone     chan struct{}
 	connectErr      error
 	connectFinished bool
@@ -277,6 +290,15 @@ type Session struct {
 	// operation time, remoteFeeds is the active feed connection count (reaping suspends while >0); unused by normal sessions.
 	remoteActivity time.Time
 	remoteFeeds    int
+}
+
+type assetOwnerKey struct {
+	assetID    string
+	ownerScope string
+}
+
+func (s *Session) assetOwnerKey() assetOwnerKey {
+	return assetOwnerKey{assetID: s.asset.ID, ownerScope: s.userID}
 }
 
 func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {
@@ -307,15 +329,16 @@ func (s *Session) Asset() Asset {
 }
 
 type OpenTabOptions struct {
-	TabID     string
-	SessionID string
-	ClientID  string
-	ChannelID string
-	Cols      uint32
-	Rows      uint32
-	Term      string
-	Ephemeral bool
-	Durable   *DurableTabOptions
+	TabID      string
+	SessionID  string
+	ClientID   string
+	ChannelID  string
+	Cols       uint32
+	Rows       uint32
+	Term       string
+	Ephemeral  bool
+	Retainable bool
+	Durable    *DurableTabOptions
 	// Detached opens the tab without attaching a channel: ChannelID must be
 	// empty, the tab starts with no subscribers, and clients attach later via
 	// AttachTab. Used by CreateTab.
@@ -323,10 +346,25 @@ type OpenTabOptions struct {
 }
 
 type DurableTabOptions struct {
-	Command []string
-	Dir     string
-	Env     []string
-	Recover bool
+	Command           []string
+	Dir               string
+	Env               []string
+	Recover           bool
+	Identity          *base.DurableIdentity
+	Title             string
+	MetadataRevision  uint64
+	CanonicalMetadata bool
+}
+
+type durableRenameAttempt struct {
+	requestID                string
+	incarnation              string
+	expectedMetadataRevision uint64
+	title                    string
+	completed                bool
+	resultTitle              string
+	resultMetadataRevision   uint64
+	err                      error
 }
 
 type AttachOptions struct {
@@ -402,6 +440,17 @@ func clientID(id string) string {
 	return id
 }
 
+type openAccessContextKey struct{}
+
+func WithOpenAccess(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAccessContextKey{}, true)
+}
+
+func openAccessFromContext(ctx context.Context) bool {
+	open, _ := ctx.Value(openAccessContextKey{}).(bool)
+	return open
+}
+
 // userIDFromContext captures the account user that opened a session, when the
 // call chain carries one (server account sessions); desktop and background
 // callers yield "" and the command log stores NULL.
@@ -418,4 +467,13 @@ func sessionOwnerAllowed(session *Session, requester string) bool {
 		return true
 	}
 	return session.userID == "" || requester == "" || session.userID == requester
+}
+
+// sessionRequestAllowed applies account ownership at request-aware entry points.
+// Empty requesters require an explicit open deployment scope or trusted marker.
+func sessionRequestAllowed(session *Session, requester string, openAccess bool) bool {
+	if requester == "" {
+		return openAccess
+	}
+	return session.userID != "" && session.userID == requester
 }

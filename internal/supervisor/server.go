@@ -181,7 +181,7 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.clientFeatures = hello.Features
-	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec}}); err != nil {
+	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion, Features: []string{featureExec, featureMetadata}}); err != nil {
 		return
 	}
 	for {
@@ -194,6 +194,8 @@ func (c *serverConn) serve() {
 			c.handleCreate(payload)
 		case frameList:
 			c.handleList()
+		case frameRename:
+			c.handleRename(payload)
 		case frameAttach:
 			if !c.handleAttach(payload) {
 				return
@@ -251,7 +253,7 @@ func (c *serverConn) handleCreate(payload []byte) {
 		c.exec = session
 		c.sessionMu.Unlock()
 	}
-	if err := c.reply(frameCreated, session.Info()); err != nil {
+	if err := c.reply(frameCreated, session.canonicalInfo()); err != nil {
 		if !usePTY {
 			// Without a stream consumer the pipes would never drain and execWait would never reap;
 			// drain first so the kill below completes instead of leaking the session.
@@ -270,12 +272,30 @@ func (c *serverConn) handleCreate(payload []byte) {
 }
 
 func (c *serverConn) handleList() {
-	infos, err := c.server.supervisor.List(context.Background())
+	infos, err := c.server.supervisor.listCanonical(context.Background())
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameListed, infos)
+}
+
+func (c *serverConn) handleRename(payload []byte) {
+	if !slices.Contains(c.clientFeatures, featureMetadata) {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "client does not support session metadata"})
+		return
+	}
+	var msg RenameRequest
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	info, err := c.server.supervisor.Rename(context.Background(), msg)
+	if err != nil {
+		c.replyOperationError(err)
+		return
+	}
+	_ = c.reply(frameRenamed, info)
 }
 
 func (c *serverConn) attached() *Attachment {
@@ -294,27 +314,19 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
 		return true
 	}
-	session, err := c.server.supervisor.resolveSession(msg.ID)
-	if err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
-		return true
-	}
+	var expected *Identity
 	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
-		expected := Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
-		if !sameIdentity(expected, session.Identity()) {
-			c.replyError(frameError, errorMsg{Code: codeIdentity, Message: fmt.Sprintf("%s: %s", ErrIdentity, msg.ID)})
-			return true
-		}
+		expected = &Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
 	}
-	attachment, err := session.attach(msg.Offset)
+	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, msg.Offset, expected)
 	if err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		c.replyOperationError(err)
 		return true
 	}
 	c.sessionMu.Lock()
 	c.attachment = attachment
 	c.sessionMu.Unlock()
-	if err := c.reply(frameAttached, attachment.Info()); err != nil {
+	if err := c.reply(frameAttached, attachment.session.canonicalInfo()); err != nil {
 		_ = attachment.Detach()
 		return false
 	}
@@ -348,7 +360,7 @@ func (c *serverConn) handleKillSession(payload []byte) {
 	}
 	if msg.Attempt != "" {
 		if err := c.server.supervisor.killByAttempt(context.Background(), msg.ID, msg.Attempt); err != nil {
-			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+			c.replyOperationError(err)
 			return
 		}
 		_ = c.reply(frameOK, struct{}{})
@@ -360,7 +372,7 @@ func (c *serverConn) handleKillSession(payload []byte) {
 		expected = &identity
 	}
 	if err := c.server.supervisor.kill(context.Background(), msg.ID, expected); err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		c.replyOperationError(err)
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
@@ -402,7 +414,7 @@ func (c *serverConn) handleKill() {
 		return
 	}
 	if err := attachment.Kill(context.Background()); err != nil {
-		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		c.replyOperationError(err)
 		return
 	}
 	_ = c.reply(frameOK, struct{}{})
@@ -526,6 +538,14 @@ func (c *serverConn) replyRaw(kind frameType, payload []byte) error {
 
 func (c *serverConn) replyError(kind frameType, msg errorMsg) {
 	_ = c.reply(kind, msg)
+}
+
+func (c *serverConn) replyOperationError(err error) {
+	msg := errorMessage(err)
+	if errors.Is(err, ErrIdentity) && slices.Contains(c.clientFeatures, featureMetadata) {
+		msg.Code = codeIdentityChanged
+	}
+	c.replyError(frameError, msg)
 }
 
 func (c *serverConn) close() {

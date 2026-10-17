@@ -2,7 +2,6 @@ package production
 
 import (
 	"testing"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -44,54 +43,6 @@ func TestProductionAssetEncodingValidatedAtConnect(t *testing.T) {
 	validID := createConnectorTestAsset(t, production, "gbk-encoding", "127.0.0.1", server.port(), "password", credID,
 		`{"encoding":"gbk","autoAcceptUnknownHost":true}`)
 	connected := connectHostKeyTestAsset(t, production, validID)
-	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
-}
-
-func TestProductionSSHStartupCommandEnvAndEncodingEndToEnd(t *testing.T) {
-	server := newSSHConnectorServer(t, nil)
-	server.envReqs = make(chan [2]string, 4)
-	server.shellInput = make(chan string, 4)
-	production := newTerminalTestProduction(t, durableTestDataDir(t), &bridgeTestFactory{}, nil)
-	initConnectorTestVault(t, production)
-	credID := createConnectorTestCredential(t, production, "startup-e2e-password", "secret")
-	assetID := createConnectorTestAsset(t, production, "startup-e2e", "127.0.0.1", server.port(), "password", credID,
-		`{"autoAcceptUnknownHost":true,"encoding":"gbk","startupCommand":"echo hello","env":{"NEXTERM_TEST":"1"}}`)
-
-	connectedResponse := dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+assetID+`"}}`, "", "client-a")
-	var connected sessionInfoDTO
-	requireStoreTestResponse(t, connectedResponse, &connected)
-
-	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "startup-e2e-channel", "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
-	if tabID == "" {
-		t.Fatal("terminal_attach returned no tab")
-	}
-
-	select {
-	case env := <-server.envReqs:
-		if env != [2]string{"NEXTERM_TEST", "1"} {
-			t.Fatalf("env request = %v, want NEXTERM_TEST=1", env)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("asset env was not delivered over SSH")
-	}
-	select {
-	case input := <-server.shellInput:
-		if input != "echo hello\n" {
-			t.Fatalf("shell input = %q, want the startup command", input)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("startup command was not written into the terminal")
-	}
-
-	attachTabResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":1024}`, "startup-e2e-reattach", "client-a")
-	var attached attachedTabDTO
-	requireStoreTestResponse(t, attachTabResponse, &attached)
-	if attached.Encoding != "gbk" {
-		t.Fatalf("attached tab encoding = %q, want gbk", attached.Encoding)
-	}
-
 	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
 }
 

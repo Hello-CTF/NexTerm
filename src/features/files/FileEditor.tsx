@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { indentWithTab, redo, undo } from "@codemirror/commands";
 import { openSearchPanel, search } from "@codemirror/search";
 import { ask, askChoice } from "../../ui/dialogs";
@@ -22,7 +23,21 @@ import {
 } from "../../ui/icons";
 import { fileVisual } from "./fileTypes";
 import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
-import { isActiveFileEditor, setFileEditorDirty, shouldClearEditorDirty, shouldHandleEditorSave } from "./editorGuards";
+import {
+  beginFileEditorLoad,
+  beginFileEditorSave,
+  endFileEditorOperation,
+  fileEditorCaseInsensitive,
+  fileEditorLocatorKey,
+  fileEditorRenamePending,
+  isActiveFileEditor,
+  setFileEditorDirty,
+  shouldClearEditorDirty,
+  shouldHandleEditorSave,
+  unknownFileEditorRename,
+  unknownFileEditorRenameByToken,
+  unknownFileEditorRenameConflict,
+} from "./editorGuards";
 
 import { StreamLanguage } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
@@ -64,7 +79,11 @@ const ENC_LABEL: Record<EncChoice, string> = {
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
 export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
-  const { pushToast } = useUi();
+  const qc = useQueryClient();
+  const pushToast = useUi((state) => state.pushToast);
+  const caseInsensitive = useUi((state) =>
+    fileEditorCaseInsensitive(state.sessions.find((session) => session.id === sessionId)?.kind ?? ""),
+  );
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<{ encoding: string; size: number } | null>(null);
@@ -79,10 +98,22 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const saveInFlightRef = useRef(false);
   const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const locatorRef = useRef({ sessionId, path });
+  const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
+  const language = useRef(new Compartment()).current;
+  locatorRef.current = { sessionId, path };
   dirtyRef.current = dirty;
 
   useEffect(() => {
-    setFileEditorDirty(sessionId, path, dirty);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setFileEditorDirty(sessionId, path, dirty, caseInsensitive);
     if (!dirty) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -90,19 +121,39 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [sessionId, path, dirty]);
+  }, [sessionId, path, dirty, caseInsensitive]);
 
   useEffect(() => {
-    return () => setFileEditorDirty(sessionId, path, false);
-  }, [sessionId, path]);
+    return () => setFileEditorDirty(sessionId, path, false, caseInsensitive);
+  }, [sessionId, path, caseInsensitive]);
 
   useEffect(() => {
     let cancelled = false;
+    const initialLocator = locatorRef.current;
+    const lockKey = fileEditorLocatorKey(
+      initialLocator.sessionId,
+      initialLocator.path,
+      caseInsensitive,
+    );
+    let lock = loadLocksRef.current.get(lockKey);
+    if (!lock) {
+      const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, caseInsensitive);
+      if (token === null) {
+        pushToast("info", "文件读取或重命名进行中，完成后请重新读取");
+        onClose?.();
+        return;
+      }
+      lock = { token, users: 0 };
+      loadLocksRef.current.set(lockKey, lock);
+    }
+    lock.users += 1;
+    const token = lock.token;
     void (async () => {
       try {
         let probedSize: number | null = null;
         try {
-          const probe = await fsApi.readRange(sessionId, path, 0, 1);
+          const probeLocator = locatorRef.current;
+          const probe = await fsApi.readRange(probeLocator.sessionId, probeLocator.path, 0, 1);
           probedSize = probe.size;
         } catch {
           probedSize = null;
@@ -125,7 +176,8 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           });
           if (cancelled) return;
           if (choice === "view") {
-            openLogTab(sessionId, path);
+            const current = locatorRef.current;
+            openLogTab(current.sessionId, current.path);
             onClose?.();
             return;
           }
@@ -136,7 +188,8 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           largeEditConfirmed = true;
         }
         const readMaxBytes = probedSize === null ? undefined : probedSize + 1024;
-        const res = await fsApi.read(sessionId, path, readMaxBytes);
+        const readLocator = locatorRef.current;
+        const res = await fsApi.read(readLocator.sessionId, readLocator.path, readMaxBytes);
         if (cancelled) return;
         if (
           !largeEditConfirmed &&
@@ -152,26 +205,28 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         setMeta({ encoding, size: res.size });
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
         dirtyRef.current = false;
-        setFileEditorDirty(sessionId, path, false);
+        const current = locatorRef.current;
+        setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
         setDirty(false);
         if (hostRef.current) {
           viewRef.current?.destroy();
           viewRef.current = null;
-          const mode = modeFor(path);
+          const mode = modeFor(locatorRef.current.path);
           viewRef.current = new EditorView({
             state: EditorState.create({
               doc: text,
               extensions: [
                 basicSetup,
                 search({ top: true }),
-                ...(mode ? [mode] : []),
+                language.of(mode ? [mode] : []),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
                   if (u.docChanged) {
                     editVersionRef.current += 1;
                     dirtyRef.current = true;
-                    setFileEditorDirty(sessionId, path, true);
+                    const latest = locatorRef.current;
+                    setFileEditorDirty(latest.sessionId, latest.path, true, caseInsensitive);
                     setDirty(true);
                     const s = u.state.doc.toString();
                     setEol(s.includes("\r\n") ? "CRLF" : "LF");
@@ -183,8 +238,19 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           });
         }
       } catch (e) {
-        pushToast("error", `打开失败：${describeError(e)}`);
-        onClose?.();
+        if (!cancelled) {
+          pushToast("error", `打开失败：${describeError(e)}`);
+          onClose?.();
+        }
+      } finally {
+        const current = loadLocksRef.current.get(lockKey);
+        if (current?.token === token) {
+          current.users -= 1;
+          if (current.users === 0) {
+            endFileEditorOperation(token);
+            loadLocksRef.current.delete(lockKey);
+          }
+        }
       }
     })();
     return () => {
@@ -192,11 +258,81 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, path, reloadEnc, reloadKey]);
+  }, [sessionId, reloadEnc, reloadKey, language]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const mode = modeFor(path);
+    view.dispatch({ effects: language.reconfigure(mode ? [mode] : []) });
+  }, [path, language]);
 
   const save = async () => {
     const view = viewRef.current;
     if (!view || !dirtyRef.current || saveInFlightRef.current) return;
+    const initialLocator = locatorRef.current;
+    const guard = beginFileEditorSave(initialLocator.sessionId, initialLocator.path, caseInsensitive);
+    if (typeof guard === "string") {
+      if (guard === "unknown") {
+        const operation = unknownFileEditorRename(initialLocator.sessionId, initialLocator.path);
+        if (!operation) return;
+        pushToast("error", "重命名结果未知，已阻止向旧路径保存；请先确认远端文件位置。");
+        saveInFlightRef.current = true;
+        setSaving(true);
+        try {
+          const choice = await askChoice(
+            `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前标签路径：${initialLocator.path}`,
+            {
+              title: "确认文件位置",
+              level: "warning",
+              choices: [
+                {
+                  key: "not-renamed",
+                  label: "重命名未发生",
+                  hint: "确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存",
+                },
+                {
+                  key: "renamed",
+                  label: "重命名已发生",
+                  hint: "确认服务端已完成重命名，迁移匹配的标签和草稿，不重复执行重命名",
+                },
+              ],
+            },
+          );
+          if (choice === "not-renamed" || choice === "renamed") {
+            const current = unknownFileEditorRenameByToken(operation.token);
+            if (!current) return;
+            if (choice === "renamed") {
+              const state = useUi.getState();
+              const target = unknownFileEditorRenameConflict(state, current);
+              if (target) {
+                state.setActiveTab(target.id);
+                pushToast(
+                  "error",
+                  `无法确认重命名已发生：目标 ${target.path} 已有打开的编辑器，请先处理该标签，未迁移或合并草稿。`,
+                );
+                return;
+              }
+            }
+            useUi.getState().resolveUnknownFileEditorRename(
+              current.sessionId,
+              current.from,
+              choice === "renamed",
+            );
+            void qc.invalidateQueries({ queryKey: ["fs", current.sessionId] });
+          }
+        } finally {
+          saveInFlightRef.current = false;
+          if (mountedRef.current) setSaving(false);
+        }
+      } else {
+        pushToast(
+          "info",
+          guard === "rename" ? "重命名进行中，完成后请再次保存" : "另一个读取或保存操作进行中，请等待完成",
+        );
+      }
+      return;
+    }
     saveInFlightRef.current = true;
     setSaving(true);
     try {
@@ -211,20 +347,27 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       const savedVersion = editVersionRef.current;
       const bytes = new TextEncoder().encode(text);
       const b64 = bytesToBase64(bytes);
-      await fsApi.write(sessionId, path, b64, true);
-      setMeta({ encoding: "utf-8", size: bytes.length });
-      if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
+      const writeLocator = locatorRef.current;
+      await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+      if (mountedRef.current) {
+        setMeta({ encoding: "utf-8", size: bytes.length });
+        if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
+      }
       if (shouldClearEditorDirty(savedVersion, editVersionRef.current)) {
         dirtyRef.current = false;
-        setFileEditorDirty(sessionId, path, false);
-        setDirty(false);
+        if (mountedRef.current) {
+          const current = locatorRef.current;
+          setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
+          setDirty(false);
+        }
       }
-      pushToast("success", `已保存 ${path}（远端已备份 .nexterm-bak）`);
+      pushToast("success", `已保存 ${writeLocator.path}（远端已备份 .nexterm-bak）`);
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
     } finally {
+      endFileEditorOperation(guard);
       saveInFlightRef.current = false;
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   };
   saveRef.current = () => void save();
@@ -233,15 +376,24 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return;
       const state = useUi.getState();
-      if (!isActiveFileEditor(state, sessionId, path)) return;
+      if (!isActiveFileEditor(state, sessionId, path, caseInsensitive)) return;
       e.preventDefault();
-      if (shouldHandleEditorSave(state, sessionId, path, dirtyRef.current, saveInFlightRef.current)) {
+      if (
+        shouldHandleEditorSave(
+          state,
+          sessionId,
+          path,
+          dirtyRef.current,
+          saveInFlightRef.current,
+          caseInsensitive,
+        )
+      ) {
         saveRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sessionId, path]);
+  }, [sessionId, path, caseInsensitive]);
 
   const withView = (fn: (v: EditorView) => void) => {
     const v = viewRef.current;
@@ -263,6 +415,10 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       pushToast("info", "保存进行中，完成后才能重新读取文件");
       return;
     }
+    if (fileEditorRenamePending(sessionId, path)) {
+      pushToast("info", "重命名进行中，完成后才能重新读取文件");
+      return;
+    }
     setReloadEnc(enc);
     setReloadKey((k) => k + 1);
   };
@@ -270,6 +426,10 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const switchEnc = async (next: EncChoice) => {
     if (saveInFlightRef.current) {
       pushToast("info", "保存进行中，完成后才能切换编码");
+      return;
+    }
+    if (fileEditorRenamePending(sessionId, path)) {
+      pushToast("info", "重命名进行中，完成后才能切换编码");
       return;
     }
     if (
@@ -280,6 +440,10 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     }
     if (saveInFlightRef.current) {
       pushToast("info", "保存进行中，完成后才能切换编码");
+      return;
+    }
+    if (fileEditorRenamePending(sessionId, path)) {
+      pushToast("info", "重命名进行中，完成后才能切换编码");
       return;
     }
     setEnc(next);

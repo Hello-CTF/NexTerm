@@ -1,17 +1,20 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -28,8 +31,8 @@ type previewFixture struct {
 	previews *sharing.Service
 }
 
-// newPreviewFixture assembles a full server with read-only previews: a real session Manager (local sh)
-// providing output channels via a hub adapter, and a real sharing.Service.
+// newPreviewFixture assembles a full server with read-only previews: a real session Manager using a platform
+// local shell, output channels via a hub adapter, and a real sharing.Service.
 func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
@@ -42,13 +45,18 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	shell := "/bin/sh"
+	if runtime.GOOS == "windows" {
+		shell = "powershell.exe"
+	}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
-		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+		return local.NewWithConfig(local.Config{Shell: shell}), nil
 	})
-	manager := session.NewManager(session.Config{Connector: connector})
+	config := testConfig(t, false)
+	config.Events = NewEventBroker()
+	manager := session.NewManager(session.Config{Connector: connector, Emitter: session.AdaptEmitter(config.Events)})
 	t.Cleanup(func() { _ = manager.Close() })
 
-	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
 	config.Accounts = accounts
 	config.Previews = previews
@@ -68,7 +76,7 @@ func newPreviewFixture(t *testing.T, mutate ...func(*Config)) *previewFixture {
 	}
 }
 
-// openTab opens a real terminal tab (local sh) with the given owner, returning the tab ID.
+// openTab opens a real terminal tab with the platform local shell, returning the tab ID.
 func (f *previewFixture) openTab(t *testing.T, ownerID string) string {
 	t.Helper()
 	tabID, _ := f.openTabWithChannel(t, ownerID)
@@ -135,6 +143,9 @@ func TestPreviewManagementEndpoints(t *testing.T) {
 	linkID, _ := call.body["id"].(string)
 	if token == "" || linkID == "" {
 		t.Fatalf("create body missing token/id: %v", call.body)
+	}
+	if guest := f.call(t, http.MethodPost, "/rpc?token="+token, map[string]any{"cmd": "app_info", "args": map[string]any{}}, nil, "", nil); guest.status != http.StatusUnauthorized {
+		t.Fatalf("preview token RPC status = %d, want 401", guest.status)
 	}
 	if call.body["session_id"] != tabID {
 		t.Fatalf("create body = %v", call.body)
@@ -362,27 +373,43 @@ func TestSharePreviewTerminalEndToEnd(t *testing.T) {
 	_ = lines
 
 	// Viewer upstream input: dropped at the protocol layer, never reaching the terminal.
-	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("echo nope-42\n")); err != nil {
+	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte("echo nope-42\r")); err != nil {
 		t.Fatal(err)
 	}
 	// The owner's normal output should keep arriving at the viewer.
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-42\r")); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	seenAfter := false
-	for time.Now().Before(deadline) && !seenAfter {
-		frame := readPreviewFrame(t, conn, 10*time.Second)
-		if strings.Contains(string(frame.data), "nope-42") {
-			t.Fatalf("viewer input reached terminal output: %q", frame.data)
-		}
-		if frame.kind == websocket.MessageBinary && strings.Contains(string(frame.data), "after-42") {
-			seenAfter = true
+	expectPreviewBinaryMarker(t, conn, "after-42", "nope-42", 10*time.Second)
+}
+
+func TestSharePreviewBinaryMarkerAcrossFrames(t *testing.T) {
+	bound := make(chan string, 1)
+	f := newPreviewFixture(t, func(config *Config) {
+		channels := config.Channels
+		config.Channels = ChannelBinderFunc(func(id string) (ChannelReceiver, error) {
+			receiver, err := channels.BindChannel(id)
+			if err == nil {
+				bound <- id
+			}
+			return receiver, err
+		})
+	})
+	aliceID := f.createUser(t, "alice")
+	alice := f.login(t, "alice", "password-alice")
+	tabID := f.openTab(t, aliceID)
+	_, token := createPreviewViaAPI(t, f, alice, tabID)
+
+	conn := dialPreviewViewer(t, f.http.URL, token)
+	readPreviewJSON(t, conn, 10*time.Second)
+	readPreviewJSON(t, conn, 10*time.Second)
+	channelID := <-bound
+	for _, fragment := range []string{"owner-flow-", "across-", "frames"} {
+		if err := f.manager.Hub().SendBinary(context.Background(), channelID, []byte(fragment)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !seenAfter {
-		t.Fatal("owner output never reached viewer")
-	}
+	expectPreviewBinaryMarker(t, conn, "owner-flow-across-frames", "", 10*time.Second)
 }
 
 func TestSharePreviewRevokeStopsStream(t *testing.T) {
@@ -504,15 +531,19 @@ func awaitPreviewControl(t *testing.T, conn *websocket.Conn, timeout time.Durati
 	return nil
 }
 
-// expectPreviewBinaryMarker reads frames until binary output contains the marker; it fails if forbidden bytes
-// (echo of rejected input) or an error frame appear meanwhile, pinning "rejected input never reaches the terminal and the connection stays open".
+// expectPreviewBinaryMarker reads the binary output stream until it contains the marker, including across frame boundaries;
+// it fails if forbidden bytes (echo of rejected input) or an error frame appear meanwhile, pinning "rejected input never reaches the terminal and the connection stays open".
 func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbidden string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var output []byte
 	for time.Now().Before(deadline) {
 		frame := readPreviewFrame(t, conn, timeout)
-		if forbidden != "" && strings.Contains(string(frame.data), forbidden) {
-			t.Fatalf("rejected input reached terminal output: %q", frame.data)
+		if frame.kind == websocket.MessageBinary {
+			output = append(output, frame.data...)
+		}
+		if forbidden != "" && bytes.Contains(output, []byte(forbidden)) {
+			t.Fatalf("rejected input reached terminal output: %q", output)
 		}
 		if frame.kind == websocket.MessageText {
 			var decoded map[string]any
@@ -523,7 +554,7 @@ func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbi
 				t.Fatalf("unexpected terminal error frame: %v", decoded)
 			}
 		}
-		if frame.kind == websocket.MessageBinary && strings.Contains(string(frame.data), marker) {
+		if frame.kind == websocket.MessageBinary && bytes.Contains(output, []byte(marker)) {
 			return
 		}
 	}
@@ -571,7 +602,7 @@ func TestSharePreviewWriteInputReachesTerminal(t *testing.T) {
 		t.Fatalf("second frame = %v, want snapshot", snapshot)
 	}
 
-	writePreviewInput(t, conn, "echo guest-rw-42\n")
+	writePreviewInput(t, conn, "echo guest-rw-42\r")
 	control := awaitPreviewControl(t, conn, 10*time.Second)
 	if control["state"] != "guest" {
 		t.Fatalf("control frame = %v, want guest", control)
@@ -599,22 +630,22 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	readPreviewJSON(t, conn, 10*time.Second)
 	readPreviewJSON(t, conn, 10*time.Second)
 
-	writePreviewInput(t, conn, "echo denied-ow-1\n")
+	writePreviewInput(t, conn, "echo denied-ow-1\r")
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "owner" {
 		t.Fatalf("control frame = %v, want owner", control)
 	}
 	if controller := previewTabController(t, f, tabID); controller != "owner" {
 		t.Fatalf("controller = %q, want owner", controller)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "owner-flow-1", "denied-ow-1", 10*time.Second)
 }
 
-// TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration: while another guest's lease is still within the disconnect
-// grace window (controller orphan-cleaned but lease not expired), guest input is turned back with ErrGuestControlBusy
-// (busy control frame), and bytes never reach the terminal.
+// TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration feedback at the preview protocol: while another guest's
+// lease is still within the disconnect grace window (controller orphan-cleaned but lease not expired), guest input is
+// turned back with a busy control frame.
 func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -633,7 +664,7 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.WriteGuest(context.Background(), tabID, "preview-"+linkA, []byte("a\n"), time.Hour); err != nil {
+	if err := f.manager.WriteGuest(context.Background(), tabID, "preview-"+linkA, []byte("a\r"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.manager.DetachChannel("spec-a"); err != nil {
@@ -646,17 +677,10 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	conn := dialPreviewViewer(t, f.http.URL, tokenB)
 	readPreviewJSON(t, conn, 10*time.Second)
 	readPreviewJSON(t, conn, 10*time.Second)
-	writePreviewInput(t, conn, "echo denied-b-1\n")
+	writePreviewInput(t, conn, "echo denied-b-1\r")
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "busy" {
 		t.Fatalf("control frame = %v, want busy", control)
 	}
-	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-2\n")); err != nil {
-		t.Fatal(err)
-	}
-	expectPreviewBinaryMarker(t, conn, "owner-flow-2", "denied-b-1", 10*time.Second)
 }
 
 // TestSharePreviewShrinkToReadRejectsInput pins permission shrink taking effect on the input side: after a read_write
@@ -681,22 +705,21 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 	if _, err := f.db.ExecContext(context.Background(), "UPDATE share_preview_link SET permission = 'read'"); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo denied-ro-1\n")
+	writePreviewInput(t, conn, "echo denied-ro-1\r")
 	expectPreviewErrorFrame(t, conn, "read_only", "预览当前为只读", 10*time.Second)
 
 	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-ro-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-ro-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-ro-1", "denied-ro-1", 10*time.Second)
 }
 
 // TestSharePreviewDisconnectReleasesGuest pins ReleaseGuest at WS end: after guest A disconnects, its control and lease are
-// explicitly released (rather than left to expire), and guest B on another link can take control immediately
-// (proven by the busy-then-guest probes).
+// explicitly released (rather than left to expire), and guest B on another link can then take control with its first write.
 func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -721,35 +744,22 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	if err := connA.Close(websocket.StatusNormalClosure, ""); err != nil {
 		t.Fatal(err)
 	}
+	// ReleaseGuest clears the controller and lease together before the preview receiver closes.
+	waitFor(t, func() bool {
+		tab, err := f.manager.Tab(tabID)
+		return err == nil && tab.Info().Controller == ""
+	})
 
 	connB := dialPreviewViewer(t, f.http.URL, tokenB)
 	readPreviewJSON(t, connB, 10*time.Second)
 	readPreviewJSON(t, connB, 10*time.Second)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		writePreviewInput(t, connB, "true\n")
-		readCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		kind, data, err := connB.Read(readCtx)
-		cancel()
-		if err != nil || kind != websocket.MessageText {
-			continue
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		if decoded["type"] != "control" {
-			continue
-		}
-		if decoded["state"] == "guest" {
-			if controller := previewTabController(t, f, tabID); controller != "preview-"+linkB {
-				t.Fatalf("controller = %q, want preview-%s", controller, linkB)
-			}
-			return
-		}
-		// busy: A's lease is not yet released; keep probing.
+	writePreviewInput(t, connB, "true\r")
+	if control := awaitPreviewControl(t, connB, 10*time.Second); control["state"] != "guest" {
+		t.Fatalf("guest B control = %v, want guest", control)
 	}
-	t.Fatal("guest B never acquired control after guest A disconnected")
+	if controller := previewTabController(t, f, tabID); controller != "preview-"+linkB {
+		t.Fatalf("controller = %q, want preview-%s", controller, linkB)
+	}
 }
 
 // TestSharePreviewRevokeTerminatesWritable pins revocation terminating a writable connection: the termination frame matches the
@@ -803,7 +813,7 @@ func TestSharePreviewTextFrameDropped(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"input","data":"nope"}`)); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo text-ok-1\n")
+	writePreviewInput(t, conn, "echo text-ok-1\r")
 	// Any response to a text frame would arrive before the control frame of the binary input (the read loop processes in order,
 	// queue is FIFO); awaitPreviewControl fails on error frames, pinning the silent-discard semantics.
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "guest" {
@@ -834,14 +844,14 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 	if call := f.call(t, http.MethodPost, "/share/previews/"+linkID+"/revoke", nil, alice, alice.csrf, nil); call.status != http.StatusOK {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
 	}
-	writePreviewInput(t, conn, "echo denied-rev-1\n")
+	writePreviewInput(t, conn, "echo denied-rev-1\r")
 	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已吊销", 10*time.Second)
 
 	// Non-terminal: the connection continues, the owner's output after taking over keeps arriving, and the rejected input never reached the terminal.
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-rev-1", "denied-rev-1", 10*time.Second)
@@ -868,14 +878,414 @@ func TestSharePreviewExpiredInputFrame(t *testing.T) {
 	if _, err := f.db.ExecContext(context.Background(), "UPDATE share_preview_link SET expires_at = ?", time.Now().UnixMilli()-1000); err != nil {
 		t.Fatal(err)
 	}
-	writePreviewInput(t, conn, "echo denied-exp-1\n")
+	writePreviewInput(t, conn, "echo denied-exp-1\r")
 	expectPreviewErrorFrame(t, conn, "expired", "分享链接已过期", 10*time.Second)
 
 	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-exp-1\n")); err != nil {
+	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-exp-1\r")); err != nil {
 		t.Fatal(err)
 	}
 	expectPreviewBinaryMarker(t, conn, "after-exp-1", "denied-exp-1", 10*time.Second)
+}
+
+func TestAccountChannelOwnerCheckedBeforeUpgrade(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	tabID, channelID := f.openTabWithChannel(t, ownerID)
+	channelURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/channel/" + channelID
+
+	for index, test := range []struct {
+		name    string
+		session *accountTestSession
+	}{
+		{name: "owner", session: owner},
+		{name: "same-account-second-client", session: peer},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			allowedChannelID := channelID + "-" + string(rune('a'+index))
+			if _, err := f.manager.AttachTab(ipc.WithUserID(context.Background(), ownerID), tabID, session.AttachOptions{
+				ChannelID: allowedChannelID, ClientID: "boundary-" + string(rune('a'+index)), ReplayBytes: 4096,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			conn, status := dialAccountWebSocket(t, "ws"+strings.TrimPrefix(f.http.URL, "http")+"/ws/channel/"+allowedChannelID, test.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("handshake status = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+				t.Fatal("owner channel returned an empty first frame")
+			}
+		})
+	}
+
+	t.Run("superadmin-own-channel", func(t *testing.T) {
+		adminID, _ := admin.user["id"].(string)
+		_, adminChannelID := f.openTabWithChannel(t, adminID)
+		conn, status := dialAccountWebSocket(t, "ws"+strings.TrimPrefix(f.http.URL, "http")+"/ws/channel/"+adminChannelID, admin)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("handshake status = %d, want 101", status)
+		}
+		defer conn.CloseNow()
+		if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+			t.Fatal("superadmin channel returned an empty first frame")
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		session *accountTestSession
+		want    int
+	}{
+		{name: "anonymous-known-channel", want: http.StatusUnauthorized},
+		{name: "other-account-known-channel", session: other, want: http.StatusForbidden},
+		{name: "superadmin-known-channel", session: admin, want: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, channelURL, test.session)
+			if conn != nil {
+				_ = conn.CloseNow()
+			}
+			if status != test.want {
+				t.Fatalf("handshake status = %d, want %d", status, test.want)
+			}
+		})
+	}
+
+	_, token := createPreviewViaAPI(t, f, owner, tabID)
+	guest := dialPreviewViewer(t, f.http.URL, token)
+	defer guest.CloseNow()
+	if ready := readPreviewJSON(t, guest, 3*time.Second); ready["type"] != "ready" || ready["session_id"] != tabID {
+		t.Fatalf("legal anonymous preview grant = %v", ready)
+	}
+}
+
+func TestAccountEventOwnerLiveAndReplay(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	tabID := f.openTab(t, ownerID)
+	actors := []struct {
+		name    string
+		session *accountTestSession
+		allow   bool
+	}{
+		{name: "owner", session: owner, allow: true},
+		{name: "same-account-second-client", session: peer, allow: true},
+		{name: "other-account", session: other},
+		{name: "superadmin", session: admin},
+	}
+	eventsURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/events"
+	connections := make(map[string]*websocket.Conn)
+	for _, actor := range actors {
+		conn, status := dialAccountWebSocket(t, eventsURL, actor.session)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("%s events handshake = %d, want 101", actor.name, status)
+		}
+		connections[actor.name] = conn
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == len(actors) })
+
+	const liveTitle = "s1b2-live-owner-title"
+	if _, err := f.manager.RenameTab(context.Background(), tabID, liveTitle); err != nil {
+		t.Fatal(err)
+	}
+	const liveBarrier = "s1b2-live-barrier"
+	if err := f.server.Events().Emit(context.Background(), ipc.Event{Event: ipc.TopicAppError, Payload: ipc.AppErrorEvent{Code: "test", Message: liveBarrier}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range actors {
+		t.Run("live-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], liveBarrier, 2*time.Second)
+			if !found {
+				t.Fatalf("live barrier was not delivered; frames = %q", frames)
+			}
+			foundTitle := false
+			for _, frame := range frames {
+				foundTitle = foundTitle || strings.Contains(string(frame), liveTitle)
+				if strings.Contains(string(frame), "ownerId") || strings.Contains(string(frame), "ownerID") {
+					t.Fatalf("owner metadata leaked on wire: %s", frame)
+				}
+			}
+			if foundTitle != actor.allow {
+				t.Fatalf("live visibility = %v, want %v; frames = %q", foundTitle, actor.allow, frames)
+			}
+		})
+	}
+	const malformedMarker = "s1b2-malformed-sensitive"
+	const unknownMarker = "s1b2-unknown-sensitive"
+	const progressMarker = "s1b2-fs-progress"
+	const publicMarker = "s1b2-public-app-error"
+	if err := f.server.Events().Emit(ipc.WithUserID(context.Background(), ownerID), ipc.Event{
+		Event: ipc.TopicFSProgress, Payload: fslocal.Progress{TaskID: progressMarker},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []ipc.Event{
+		{Event: ipc.TopicTerminalControl, Payload: map[string]any{"tabId": malformedMarker}, OwnerID: ownerID},
+		{Event: ipc.Topic("unknown://sensitive"), Payload: map[string]any{"marker": unknownMarker}, OwnerID: ownerID},
+		{Event: ipc.TopicAppError, Payload: ipc.AppErrorEvent{Code: "test", Message: publicMarker}},
+	} {
+		if err := f.server.Events().Emit(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, actor := range actors {
+		t.Run("allowlist-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], publicMarker, 2*time.Second)
+			if !found {
+				t.Fatalf("public event was not delivered; frames = %q", frames)
+			}
+			foundProgress := false
+			for _, frame := range frames {
+				foundProgress = foundProgress || strings.Contains(string(frame), progressMarker)
+				if strings.Contains(string(frame), malformedMarker) || strings.Contains(string(frame), unknownMarker) {
+					t.Fatalf("malformed or unknown event delivered to %s: %s", actor.name, frame)
+				}
+			}
+			if foundProgress != actor.allow {
+				t.Fatalf("file progress visibility = %v, want %v; frames = %q", foundProgress, actor.allow, frames)
+			}
+		})
+	}
+	for _, conn := range connections {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 0 })
+
+	const ownerlessMarker = "s1b2-ownerless-sensitive"
+	if err := f.server.Events().Emit(context.Background(), ipc.Event{Event: ipc.TopicTerminalControl, Payload: session.ControlEvent{TabID: ownerlessMarker}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.manager.CloseTab(tabID); err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range actors {
+		t.Run("deleted-replay-"+actor.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, eventsURL+"?since=0", actor.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("replay handshake = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			frames, found := readWebSocketUntil(conn, publicMarker, 2*time.Second)
+			if !found {
+				t.Fatalf("public replay was not delivered; frames = %q", frames)
+			}
+			foundTitle := false
+			foundProgress := false
+			for _, frame := range frames {
+				foundTitle = foundTitle || strings.Contains(string(frame), liveTitle)
+				foundProgress = foundProgress || strings.Contains(string(frame), progressMarker)
+				if strings.Contains(string(frame), malformedMarker) || strings.Contains(string(frame), unknownMarker) {
+					t.Fatalf("malformed or unknown replay delivered to %s: %s", actor.name, frame)
+				}
+			}
+			if foundTitle != actor.allow {
+				t.Fatalf("replay visibility before deletion = %v, want %v; frames = %q", foundTitle, actor.allow, frames)
+			}
+			if foundProgress != actor.allow {
+				t.Fatalf("file progress replay visibility = %v, want %v; frames = %q", foundProgress, actor.allow, frames)
+			}
+			frames, found = readWebSocketUntil(conn, tabID, 2*time.Second)
+			if found != actor.allow {
+				t.Fatalf("deleted replay visibility = %v, want %v; frames = %q", found, actor.allow, frames)
+			}
+			for _, frame := range frames {
+				if strings.Contains(string(frame), ownerlessMarker) {
+					t.Fatalf("ownerless sensitive event delivered to %s: %s", actor.name, frame)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenEventAndChannelAccessRemainAvailable(t *testing.T) {
+	f := newPreviewFixture(t, func(config *Config) { config.Options.Auth = AuthOff })
+	tabID, channelID := f.openTabWithChannel(t, "")
+	baseURL := "ws" + strings.TrimPrefix(f.http.URL, "http")
+	conn, status := dialAccountWebSocket(t, baseURL+"/ws/channel/"+channelID, nil)
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("open channel handshake = %d, want 101", status)
+	}
+	if frame := readPreviewFrame(t, conn, 3*time.Second); len(frame.data) == 0 {
+		t.Fatal("open channel returned an empty first frame")
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+
+	events, status := dialAccountWebSocket(t, baseURL+"/ws/events", nil)
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("open events handshake = %d, want 101", status)
+	}
+	defer events.CloseNow()
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 1 })
+	const title = "s1b2-open-ownerless"
+	if _, err := f.manager.RenameTab(context.Background(), tabID, title); err != nil {
+		t.Fatal(err)
+	}
+	if frames, found := readWebSocketUntil(events, title, 2*time.Second); !found {
+		t.Fatalf("open deployment filtered ownerless event: %q", frames)
+	}
+}
+
+func TestAccountLayoutAndSyncEventContracts(t *testing.T) {
+	f := newPreviewFixture(t)
+	admin, _ := f.initSuperadmin(t, "admin", "password-admin")
+	ownerID := f.createUser(t, "u1")
+	f.createUser(t, "u2")
+	owner := f.login(t, "u1", "password-u1")
+	peer := f.login(t, "u1", "password-u1")
+	other := f.login(t, "u2", "password-u2")
+	actors := []struct {
+		name    string
+		session *accountTestSession
+		allow   bool
+	}{
+		{name: "owner", session: owner, allow: true},
+		{name: "same-account-second-client", session: peer, allow: true},
+		{name: "other-account", session: other},
+		{name: "superadmin", session: admin},
+	}
+	eventsURL := "ws" + strings.TrimPrefix(f.http.URL, "http") + "/ws/events"
+	connections := make(map[string]*websocket.Conn)
+	for _, actor := range actors {
+		conn, status := dialAccountWebSocket(t, eventsURL, actor.session)
+		if status != http.StatusSwitchingProtocols {
+			t.Fatalf("%s events handshake = %d, want 101", actor.name, status)
+		}
+		connections[actor.name] = conn
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == len(actors) })
+
+	const layoutRevision = 918273
+	const malformedLayout = "s1b2-malformed-layout"
+	const malformedSync = "s1b2-malformed-sync"
+	const malformedRound = "s1b2-malformed-round"
+	for _, event := range []ipc.Event{
+		{Event: ipc.TopicLayoutChanged, Payload: ipc.LayoutChangedEvent{Revision: layoutRevision}, OwnerID: ownerID},
+		{Event: ipc.TopicLayoutChanged, Payload: map[string]any{"marker": malformedLayout}, OwnerID: ownerID},
+		{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{OwnerID: ownerID}},
+		{Event: ipc.TopicSyncStatus, Payload: ipc.SyncStatusEvent{}},
+		{Event: ipc.TopicSyncStatus, Payload: map[string]any{"marker": malformedSync}},
+		{Event: ipc.Topic("sync://round-complete"), Payload: map[string]any{"marker": malformedRound}},
+		{Event: ipc.TopicSyncStatus, Payload: struct{}{}},
+		{Event: ipc.Topic("sync://round-complete"), Payload: struct{}{}},
+	} {
+		if err := f.server.Events().Emit(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertFrames := func(t *testing.T, actorName string, allow bool, frames [][]byte) {
+		t.Helper()
+		layoutVisible := false
+		syncStatuses := 0
+		roundCompletes := 0
+		for _, frame := range frames {
+			text := string(frame)
+			if strings.Contains(text, malformedLayout) || strings.Contains(text, malformedSync) || strings.Contains(text, malformedRound) {
+				t.Fatalf("%s received malformed event: %s", actorName, frame)
+			}
+			if strings.Contains(text, `"event":"layout://changed"`) && strings.Contains(text, `"revision":918273`) {
+				layoutVisible = true
+			}
+			if strings.Contains(text, `"event":"sync://status"`) {
+				syncStatuses++
+			}
+			if strings.Contains(text, `"event":"sync://round-complete"`) {
+				roundCompletes++
+			}
+		}
+		if layoutVisible != allow {
+			t.Fatalf("%s layout visibility = %v, want %v; frames = %q", actorName, layoutVisible, allow, frames)
+		}
+		wantSyncStatuses := 1
+		if allow {
+			wantSyncStatuses = 2
+		}
+		if syncStatuses != wantSyncStatuses {
+			t.Fatalf("%s sync status count = %d, want %d; frames = %q", actorName, syncStatuses, wantSyncStatuses, frames)
+		}
+		if roundCompletes != 1 {
+			t.Fatalf("%s round-complete count = %d, want 1; frames = %q", actorName, roundCompletes, frames)
+		}
+	}
+	for _, actor := range actors {
+		t.Run("live-"+actor.name, func(t *testing.T) {
+			frames, found := readWebSocketUntil(connections[actor.name], `"event":"sync://round-complete"`, 2*time.Second)
+			if !found {
+				t.Fatalf("round-complete was not delivered; frames = %q", frames)
+			}
+			assertFrames(t, actor.name, actor.allow, frames)
+		})
+	}
+	for _, conn := range connections {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+	waitFor(t, func() bool { return f.server.Events().SubscriberCount() == 0 })
+
+	for _, actor := range actors {
+		t.Run("replay-"+actor.name, func(t *testing.T) {
+			conn, status := dialAccountWebSocket(t, eventsURL+"?since=0", actor.session)
+			if status != http.StatusSwitchingProtocols {
+				t.Fatalf("replay handshake = %d, want 101", status)
+			}
+			defer conn.CloseNow()
+			frames, found := readWebSocketUntil(conn, `"event":"sync://round-complete"`, 2*time.Second)
+			if !found {
+				t.Fatalf("round-complete replay was not delivered; frames = %q", frames)
+			}
+			assertFrames(t, actor.name, actor.allow, frames)
+		})
+	}
+}
+
+func dialAccountWebSocket(t *testing.T, url string, session *accountTestSession) (*websocket.Conn, int) {
+	t.Helper()
+	options := &websocket.DialOptions{}
+	if session != nil {
+		options.HTTPHeader = http.Header{"Cookie": []string{sessionCookieName + "=" + session.cookie.Value}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, response, err := websocket.Dial(ctx, url, options)
+	if err != nil {
+		if response == nil {
+			t.Fatalf("websocket dial: %v", err)
+		}
+		response.Body.Close()
+		return nil, response.StatusCode
+	}
+	return conn, http.StatusSwitchingProtocols
+}
+
+func readWebSocketUntil(conn *websocket.Conn, marker string, timeout time.Duration) ([][]byte, bool) {
+	deadline := time.Now().Add(timeout)
+	var frames [][]byte
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return frames, false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		_, data, err := conn.Read(ctx)
+		cancel()
+		if err != nil {
+			return frames, false
+		}
+		frames = append(frames, data)
+		if strings.Contains(string(data), marker) {
+			return frames, true
+		}
+	}
 }

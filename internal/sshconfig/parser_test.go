@@ -135,14 +135,62 @@ func TestExpandPath(t *testing.T) {
 	if err != nil {
 		t.Skip("no home dir")
 	}
-	if got := expandPath("~/x"); got != filepath.Join(home, "x") {
-		t.Errorf("expandPath(~/x) = %q", got)
+	want := filepath.Join(home, "x")
+	for _, path := range []string{"~/x", "%d/x", filepath.Join("~", "x"), filepath.Join("%d", "x"), `"~/x"`} {
+		if got := expandPath(path); got != want {
+			t.Errorf("expandPath(%q) = %q, want %q", path, got, want)
+		}
 	}
-	if got := expandPath("%d/x"); got != filepath.Join(home, "x") {
-		t.Errorf("expandPath(%%d/x) = %q", got)
+}
+
+func TestExpandPathUnixPreservesExpandedForm(t *testing.T) {
+	if filepath.Separator == '\\' {
+		t.Skip("requires Unix-style path separators")
 	}
-	if got := expandPath(`"~/x"`); got != filepath.Join(home, "x") {
-		t.Errorf("expandPath quoted = %q", got)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{"%d/./x", home + "/./x"},
+		{"%d//x", home + "//x"},
+		{"%d/../x", home + "/../x"},
+		{"%d/link/../x", home + "/link/../x"},
+		{`~\x`, `~\x`},
+	} {
+		if got := expandPath(test.path); got != test.want {
+			t.Errorf("expandPath(%q) = %q, want original expanded form %q", test.path, got, test.want)
+		}
+	}
+}
+
+func TestExpandPathWindowsNormalizesOnlySeparators(t *testing.T) {
+	if filepath.Separator != '\\' {
+		t.Skip("requires Windows path separators")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	normalizedHome := filepath.FromSlash(home)
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{"%d/x", normalizedHome + `\x`},
+		{"%d/./x", normalizedHome + `\.\x`},
+		{"%d//x", normalizedHome + `\\x`},
+		{"%d/../x", normalizedHome + `\..\x`},
+		{"%d/link/../x", normalizedHome + `\link\..\x`},
+		{`~\x`, filepath.Join(home, "x")},
+		{`"~\x"`, filepath.Join(home, "x")},
+	} {
+		if got := expandPath(test.path); got != test.want {
+			t.Errorf("expandPath(%q) = %q, want separator-only normalization %q", test.path, got, test.want)
+		}
 	}
 }
 

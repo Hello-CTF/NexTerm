@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -236,12 +236,13 @@ func assertProcessGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		err := syscall.Kill(pid, 0)
-		if errors.Is(err, syscall.ESRCH) {
+		output, err := osexec.Command("ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
+		if err != nil {
 			return
 		}
-		if err != nil && !errors.Is(err, syscall.EPERM) {
-			t.Fatal(err)
+		state := strings.TrimSpace(string(output))
+		if state == "" || state[0] == 'Z' {
+			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

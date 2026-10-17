@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   crumbsOf,
+  directoryCommandFor,
   isRoot,
   joinPath,
   normalizeTypedPath,
@@ -80,5 +81,82 @@ describe("UNC path handling", () => {
       { label: "/", path: "/" },
       { label: "server", path: "/server" },
     ]);
+  });
+});
+
+describe("target-aware path normalization", () => {
+  it("treats a bare drive as a root only for a Windows target", () => {
+    expect(normalizeTypedPath("D:", "windows")).toBe("D:/");
+    expect(normalizeTypedPath("d:\\", "windows")).toBe("d:/");
+    expect(normalizeTypedPath("D:", "posix")).toBe("D:");
+    expect(normalizeTypedPath("D:", "unknown")).toBe("D:");
+  });
+
+  it("does not disguise drive-relative input as an absolute path", () => {
+    expect(normalizeTypedPath("D:relative", "windows")).toBeNull();
+    expect(resolveRemotePath("C:/", "D:relative", "windows")).toBe("D:relative");
+    expect(resolveRemotePath("C:/", "D:", "windows")).toBe("D:/");
+    expect(normalizeTypedPath("D:relative", "posix")).toBe("D:relative");
+    expect(resolveRemotePath("/home/user", "D:relative", "posix")).toBe(
+      "/home/user/D:relative",
+    );
+  });
+
+  it("preserves spaces, quotes, Unicode, brackets, UNC, and home paths", () => {
+    const unc = String.raw`\\server\share\空间 ' (盘)`;
+    expect(normalizeTypedPath(unc, "windows")).toBe("//server/share/空间 ' (盘)");
+    expect(crumbsOf("//server/share/空间 ' (盘)")).toEqual([
+      { label: "//server/share", path: "//server/share" },
+      { label: "空间 ' (盘)", path: "//server/share/空间 ' (盘)" },
+    ]);
+    expect(crumbsOf("D:/Project .run/temp '中文' (x)")).toEqual([
+      { label: "D:", path: "D:/" },
+      { label: "Project .run", path: "D:/Project .run" },
+      { label: "temp '中文' (x)", path: "D:/Project .run/temp '中文' (x)" },
+    ]);
+    expect(resolveRemotePath("D:/", "~/ child's (文件)", "windows")).toBe(
+      "~/ child's (文件)",
+    );
+  });
+});
+
+describe("directory command generation", () => {
+  it("uses literal PowerShell paths for wildcard-like names, quotes, and UNC", () => {
+    expect(directoryCommandFor("D:/Project [x]/child's dir", "powershell")).toEqual({
+      command: "Set-Location -LiteralPath 'D:/Project [x]/child''s dir'",
+      failure: null,
+    });
+    expect(directoryCommandFor("//server/share/child's [x]", "powershell")).toEqual({
+      command: "Set-Location -LiteralPath '//server/share/child''s [x]'",
+      failure: null,
+    });
+  });
+
+  it("preserves POSIX single-quote escaping", () => {
+    expect(directoryCommandFor("/tmp/child's [x]", "posix")).toEqual({
+      command: String.raw`cd '/tmp/child'\''s [x]'`,
+      failure: null,
+    });
+  });
+
+  it("does not generate commands for cmd or unknown shells", () => {
+    for (const path of ["C:/Users/test", "//server/share/dir"]) {
+      expect(directoryCommandFor(path, "cmd")).toEqual({ command: null, failure: "unsupported" });
+    }
+    expect(directoryCommandFor("D:/Project", "unknown")).toEqual({
+      command: null,
+      failure: "unknown",
+    });
+  });
+
+  it("rejects control characters before any shell can inject a command", () => {
+    for (const control of ["\n", "\r", "\0", "\t", "\x1b"]) {
+      for (const shell of ["powershell", "posix", "cmd", "unknown"] as const) {
+        expect(directoryCommandFor(`D:/safe${control}unsafe`, shell)).toEqual({
+          command: null,
+          failure: "control",
+        });
+      }
+    }
   });
 });

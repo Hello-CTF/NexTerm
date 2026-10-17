@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, mount, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -12,14 +12,40 @@ const mocks = vi.hoisted(() => ({
   connectAsset: vi.fn(),
   connectLocal: vi.fn(),
   dbConnect: vi.fn(),
+  updateCheck: vi.fn(),
+  closeWindow: vi.fn(),
+  minimiseWindow: vi.fn(),
+  toggleMaximiseWindow: vi.fn(),
+  banners: { takeover: false, update: false, dek: false },
   aiSidebarProps: [] as { sessionId?: string }[],
   backgroundProps: [] as { workspaceId?: string; sessionId?: string }[],
   historyProps: [] as { workspaceId?: string; assetId?: string }[],
+  renameTab: vi.fn(),
+}));
+
+const envState = vi.hoisted(() => ({
+  transport: "web" as "desktop" | "web",
 }));
 
 vi.mock("../app/store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../app/store")>();
   return { ...actual, connectAsset: mocks.connectAsset };
+});
+
+vi.mock("../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/env")>();
+  return {
+    ...actual,
+    get TRANSPORT() {
+      return envState.transport;
+    },
+    get WEB() {
+      return envState.transport === "web";
+    },
+    get DESKTOP() {
+      return envState.transport === "desktop";
+    },
+  };
 });
 
 vi.mock("../ipc/commands", () => ({
@@ -47,20 +73,24 @@ vi.mock("../ipc/commands", () => ({
       lastError: null,
     }),
   },
-  terminalApi: {},
+  terminalApi: { renameTab: mocks.renameTab },
   dbApi: { connect: mocks.dbConnect },
 }));
 vi.mock("../ipc/wails", () => ({
-  closeWindow: vi.fn(),
-  minimiseWindow: vi.fn(),
-  toggleMaximiseWindow: vi.fn(),
+  closeWindow: mocks.closeWindow,
+  minimiseWindow: mocks.minimiseWindow,
+  toggleMaximiseWindow: mocks.toggleMaximiseWindow,
 }));
 vi.mock("../app/layout", () => ({
   layoutBootstrapped: Promise.resolve(),
   startLayoutSync: () => {},
 }));
 vi.mock("../app/useUpdate", () => ({
-  getUpdateState: () => ({ check: vi.fn() }),
+  getUpdateState: () => ({ check: mocks.updateCheck }),
+}));
+vi.mock("../features/settings/useWebAutoSync", () => ({
+  useDesktopAutoSync: () => {},
+  useWebAutoSync: () => {},
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
@@ -105,11 +135,20 @@ vi.mock("../app/CommandPalette", () => ({
 vi.mock("../app/QuickConnect", () => ({
   QuickConnect: () => <div data-testid="quick-connect" />,
 }));
-vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
-vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
+vi.mock("../app/TakeoverBanner", () => ({
+  TakeoverBanner: () =>
+    mocks.banners.takeover ? <div data-testid="takeover-banner" /> : null,
+}));
+vi.mock("../app/UpdateBanner", () => ({
+  UpdateBanner: () => (mocks.banners.update ? <div data-testid="update-banner" /> : null),
+}));
+vi.mock("../app/DekUnlockBanner", () => ({
+  DekUnlockBanner: () => (mocks.banners.dek ? <div data-testid="dek-banner" /> : null),
+}));
 
 import App from "../app/App";
 import { resetAllKeybindings, setKeybinding } from "../app/keybindings";
+import { setMacPlatform } from "../app/platform";
 import { useUi, type AppTab, type Workspace } from "../app/store";
 import type { Asset, SessionInfo } from "../ipc/commands";
 
@@ -153,10 +192,43 @@ function workspaceOf(sessionId?: string, tabs: AppTab[] = []): Workspace {
 }
 
 let mounted: MountedView | undefined;
+let client: QueryClient | undefined;
+
+function appElement(queryClient: QueryClient) {
+  return createElement(QueryClientProvider, { client: queryClient }, createElement(App));
+}
 
 function mountApp(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return mount(createElement(QueryClientProvider, { client }, createElement(App)));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(appElement(client));
+}
+
+function setBanners(patch: Partial<typeof mocks.banners>): void {
+  Object.assign(mocks.banners, patch);
+  if (!mounted || !client) throw new Error("App is not mounted");
+  const root = mounted.root;
+  const queryClient = client;
+  act(() => root.render(appElement(queryClient)));
+}
+
+function expectShellOrder(expected: string[]): void {
+  const container = mounted?.container;
+  if (!container) throw new Error("App is not mounted");
+  const elements = [
+    ...container.querySelectorAll<HTMLElement>(
+      ".nx-app-header, [data-testid='takeover-banner'], [data-testid='update-banner'], [data-testid='dek-banner'], .nx-workspace-body",
+    ),
+  ];
+  const actual = elements.map((element) => {
+    if (element.classList.contains("nx-app-header")) return "header";
+    if (element.classList.contains("nx-workspace-body")) return "workspace-body";
+    return element.dataset.testid?.replace("-banner", "") ?? "unknown";
+  });
+  expect(actual).toEqual(expected);
+
+  const column = container.querySelector(".nx-app-header")?.parentElement;
+  expect(column).not.toBeNull();
+  for (const element of elements) expect(element.parentElement).toBe(column);
 }
 
 async function openPaletteFiles(): Promise<void> {
@@ -175,6 +247,9 @@ beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   Element.prototype.scrollIntoView = vi.fn();
+  envState.transport = "web";
+  setMacPlatform(false);
+  Object.assign(mocks.banners, { takeover: false, update: false, dek: false });
   mocks.aiSidebarProps.length = 0;
   mocks.backgroundProps.length = 0;
   mocks.historyProps.length = 0;
@@ -183,6 +258,7 @@ beforeEach(() => {
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
   mocks.connectAsset.mockResolvedValue({ ok: true });
   mocks.dbConnect.mockResolvedValue({ connId: "db-conn" });
+  mocks.updateCheck.mockResolvedValue(undefined);
   useUi.setState({
     sessions: [],
     toasts: [],
@@ -201,6 +277,55 @@ afterEach(() => {
   resetAllKeybindings();
 });
 
+function hostWorkspace(id: string, sessionId: string, assetId?: string): Workspace {
+  const paneId = `${id}-pane`;
+  return {
+    id,
+    kind: "session",
+    title: id,
+    sessionId,
+    assetId,
+    panes: [{ id: paneId, tabs: [], activeTabId: null }],
+    activePaneId: paneId,
+    splitRatio: 0.5,
+    closable: true,
+  };
+}
+
+function nonHostWorkspace(kind: "tools" | "db"): Workspace {
+  const id = `ws-${kind}`;
+  const paneId = `${id}-pane`;
+  return {
+    id,
+    kind,
+    title: kind,
+    connId: kind === "db" ? "db-conn" : undefined,
+    panes: [{ id: paneId, tabs: [], activeTabId: null }],
+    activePaneId: paneId,
+    splitRatio: 0.5,
+    closable: true,
+  };
+}
+
+function railButton(label: string): HTMLButtonElement {
+  const button = mounted?.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`Rail button not found: ${label}`);
+  return button;
+}
+
+async function clickRail(label: string): Promise<void> {
+  click(railButton(label));
+  await flush();
+}
+
+function allTabs(): AppTab[] {
+  return useUi.getState().workspaces.flatMap((workspace) =>
+    workspace.panes.flatMap((pane) => pane.tabs),
+  );
+}
+
+const needSessionText = "先连接一台主机（双击左侧资产）";
+
 describe("App workspace actions", () => {
   it("openFiles does not fall back to the first session without an explicit workspace", async () => {
     useUi.setState({ sessions: [sessionOf("s1")] });
@@ -210,9 +335,7 @@ describe("App workspace actions", () => {
     await openPaletteFiles();
 
     expect(useUi.getState().workspaces).toEqual([]);
-    expect(
-      useUi.getState().toasts.some((toast) => toast.text === "先连接一台主机（双击左侧资产）"),
-    ).toBe(true);
+    expect(useUi.getState().toasts.some((toast) => toast.text === needSessionText)).toBe(true);
   });
 
   it("openFiles uses the explicit workspace session", async () => {
@@ -228,6 +351,130 @@ describe("App workspace actions", () => {
 
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     expect(tabs.some((tab) => tab.kind === "files" && tab.sessionId === "s2")).toBe(true);
+  });
+
+  it.each([
+    { name: "no workspace", workspace: null },
+    { name: "tools workspace", workspace: nonHostWorkspace("tools") },
+    { name: "database workspace", workspace: nonHostWorkspace("db") },
+  ])("host actions require an explicit host: $name", async ({ workspace }) => {
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: workspace ? [workspace] : [],
+      activeWorkspaceId: workspace?.id ?? null,
+    });
+    mounted = mountApp();
+    await flush();
+
+    for (const label of ["容器", "磁盘挂载", "端口转发", "后台会话"]) {
+      await clickRail(label);
+    }
+
+    expect(allTabs().filter((tab) => ["docker", "mount", "forward", "background"].includes(tab.kind))).toEqual([]);
+    expect(useUi.getState().workspaces).toHaveLength(workspace ? 1 : 0);
+    expect(useUi.getState().toasts.some((toast) => toast.text === needSessionText)).toBe(true);
+  });
+
+  it("opens mount, docker, and forward in the explicit current host", async () => {
+    const first = hostWorkspace("ws-a", "s1");
+    const second = hostWorkspace("ws-b", "s2");
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [first, second],
+      activeWorkspaceId: second.id,
+    });
+    mounted = mountApp();
+    await flush();
+
+    for (const label of ["磁盘挂载", "容器", "端口转发"]) {
+      await clickRail(label);
+    }
+
+    const secondTabs = useUi
+      .getState()
+      .workspaces.find((workspace) => workspace.id === second.id)
+      ?.panes.flatMap((pane) => pane.tabs);
+    expect(secondTabs).toEqual([
+      expect.objectContaining({ kind: "mount", sessionId: "s2" }),
+      expect.objectContaining({ kind: "docker", sessionId: "s2" }),
+      expect.objectContaining({ kind: "forward", sessionId: "s2" }),
+    ]);
+    expect(
+      useUi
+        .getState()
+        .workspaces.find((workspace) => workspace.id === first.id)
+        ?.panes.flatMap((pane) => pane.tabs),
+    ).toEqual([]);
+  });
+
+  it("keeps one background tab per owning host across A/B and repeated opens", async () => {
+    const first = hostWorkspace("ws-a", "s1", "asset-1");
+    const second = hostWorkspace("ws-b", "s2", "asset-2");
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [first, second],
+      activeWorkspaceId: first.id,
+    });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("后台会话");
+    act(() => useUi.getState().setActiveWorkspace(second.id));
+    await flush();
+    await clickRail("后台会话");
+    await clickRail("后台会话");
+
+    for (const [workspaceId, sessionId, assetId] of [
+      [first.id, "s1", "asset-1"],
+      [second.id, "s2", "asset-2"],
+    ] as const) {
+      const backgrounds = useUi
+        .getState()
+        .workspaces.find((workspace) => workspace.id === workspaceId)
+        ?.panes.flatMap((pane) => pane.tabs)
+        .filter((tab) => tab.kind === "background");
+      expect(backgrounds).toHaveLength(1);
+      expect(backgrounds?.[0]).toMatchObject({
+        id: `background-${workspaceId}`,
+        sessionId,
+        assetId,
+      });
+    }
+    expect(useUi.getState().workspaces.some((workspace) => workspace.kind === "tools")).toBe(false);
+    expect(useUi.getState().activeWorkspaceId).toBe(second.id);
+  });
+
+  it("ordinary history opens preserve the existing filter", async () => {
+    const tools = nonHostWorkspace("tools");
+    tools.panes[0] = {
+      ...tools.panes[0],
+      tabs: [
+        {
+          id: "history",
+          kind: "history",
+          title: "终端历史",
+          assetId: "asset-user",
+          closable: true,
+        },
+      ],
+      activeTabId: "history",
+    };
+    const host = hostWorkspace("ws-b", "s2", "asset-2");
+    useUi.setState({
+      sessions: [sessionOf("s2")],
+      workspaces: [tools, host],
+      activeWorkspaceId: host.id,
+    });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("终端历史");
+
+    const histories = allTabs().filter((tab) => tab.kind === "history");
+    expect(histories).toHaveLength(1);
+    expect(histories[0]).toMatchObject({ assetId: "asset-user" });
+    expect(histories[0].sessionId).toBeUndefined();
   });
 
   it("a single database asset uses the standard connectAsset flow", async () => {
@@ -359,7 +606,7 @@ describe("App workspace scope", () => {
     expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBeUndefined();
   });
 
-  it("binds the AI sidebar to the workspace session and falls back to the first session without a workspace", async () => {
+  it("binds the AI sidebar only to an explicit workspace session", async () => {
     mocks.sessionList.mockResolvedValue([sessionOf("s1"), sessionOf("s2")]);
     useUi.setState({
       sessions: [sessionOf("s1"), sessionOf("s2")],
@@ -376,7 +623,21 @@ describe("App workspace scope", () => {
     useUi.setState({ sessions: [sessionOf("s1")], workspaces: [], activeWorkspaceId: null });
     mounted = mountApp();
     await flush();
-    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBe("s1");
+    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBeUndefined();
+  });
+
+  it("does not bind the AI sidebar to the first session in a tools workspace", async () => {
+    const tools = nonHostWorkspace("tools");
+    mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
+    useUi.setState({
+      sessions: [sessionOf("s1")],
+      workspaces: [tools],
+      activeWorkspaceId: tools.id,
+    });
+    mounted = mountApp();
+    await flush();
+
+    expect(mocks.aiSidebarProps[mocks.aiSidebarProps.length - 1]?.sessionId).toBeUndefined();
   });
 });
 
@@ -535,5 +796,160 @@ describe("App tab markers", () => {
     expect(tabEl?.getAttribute("title")).toContain("上次关闭失败：资源不存在：tab not found");
     expect(tabEl?.querySelector('[role="img"][aria-label="有新输出"]')).not.toBeNull();
     expect(tabEl?.querySelector('[role="img"][aria-label="关闭失败：资源不存在：tab not found"]')).not.toBeNull();
+  });
+});
+
+async function submitRenameDraft(draft: string): Promise<void> {
+  useUi.setState({
+    sessions: [sessionOf("s1")],
+    workspaces: [
+      workspaceOf("s1", [
+        {
+          id: "t1",
+          kind: "terminal",
+          title: "original",
+          sessionId: "s1",
+          tabId: "T1",
+          closable: true,
+        },
+      ]),
+    ],
+    activeWorkspaceId: "ws",
+  });
+  mounted = mountApp();
+  await flush();
+  const tab = mounted.container.querySelector('[data-tab-id="t1"]');
+  if (!tab) throw new Error("terminal tab not found");
+  act(() => {
+    tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 12, clientY: 12 }));
+  });
+  await flush();
+  clickButton(mounted.container, "重命名");
+  await flush();
+  const input = mounted.container.querySelector<HTMLInputElement>(".nx-modal input");
+  if (!input) throw new Error("rename input not found");
+  setInputValue(input, draft);
+  clickButton(mounted.container, "确定");
+  await flush();
+}
+
+describe("App terminal rename", () => {
+  it("uses the remotely confirmed canonical title", async () => {
+    mocks.renameTab.mockResolvedValue({ title: "remote-canonical" });
+    await submitRenameDraft("draft-title");
+    expect(mocks.renameTab).toHaveBeenCalledWith("T1", "draft-title");
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs[0]?.title).toBe("remote-canonical");
+    expect(tabs[0]?.renamedByUser).toBe(true);
+  });
+
+  it("keeps the edit draft and shows the conflict instead of swallowing it", async () => {
+    mocks.renameTab.mockRejectedValue({
+      code: "metadata_conflict",
+      message: "metadata changed",
+      detail: { title: "remote-current", metadataRevision: 4 },
+    });
+    await submitRenameDraft("draft-title");
+    await flush();
+    const modal = mounted?.container.querySelector(".nx-modal");
+    expect(modal?.textContent).toContain("metadata changed");
+    const input = modal?.querySelector<HTMLInputElement>("input");
+    expect(input?.value).toBe("draft-title");
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs[0]?.title).toBe("original");
+  });
+});
+
+describe("App shell notification layout", () => {
+  it("keeps the header first and preserves notification order as each one disappears", async () => {
+    const resize = async (width: number, height: number): Promise<void> => {
+      Object.defineProperty(window, "innerWidth", {
+        value: width,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: height,
+        configurable: true,
+        writable: true,
+      });
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 0);
+        });
+      });
+    };
+
+    Object.assign(mocks.banners, { takeover: true, update: true, dek: true });
+    mounted = mountApp();
+    await flush();
+
+    expectShellOrder(["header", "takeover", "update", "dek", "workspace-body"]);
+    await resize(960, 600);
+    expectShellOrder(["header", "takeover", "update", "dek", "workspace-body"]);
+
+    setBanners({ takeover: false });
+    expectShellOrder(["header", "update", "dek", "workspace-body"]);
+    await resize(1280, 720);
+    expectShellOrder(["header", "update", "dek", "workspace-body"]);
+
+    setBanners({ update: false });
+    expectShellOrder(["header", "dek", "workspace-body"]);
+    await resize(800, 500);
+    expectShellOrder(["header", "dek", "workspace-body"]);
+
+    setBanners({ dek: false });
+    expectShellOrder(["header", "workspace-body"]);
+    await resize(1024, 768);
+    expectShellOrder(["header", "workspace-body"]);
+  });
+
+  it("keeps desktop window controls interactive and outside notification hit regions", async () => {
+    envState.transport = "desktop";
+    Object.assign(mocks.banners, { takeover: true, update: true, dek: true });
+    mounted = mountApp();
+    await flush();
+
+    const header = mounted.container.querySelector<HTMLElement>(".nx-app-header");
+    const workspaceBody = mounted.container.querySelector<HTMLElement>(".nx-workspace-body");
+    expect(header).not.toBeNull();
+    expect(workspaceBody).not.toBeNull();
+    expect(header?.style.getPropertyValue("--wails-draggable")).toBe("drag");
+
+    const controls = [
+      ["最小化窗口", mocks.minimiseWindow],
+      ["最大化或还原窗口", mocks.toggleMaximiseWindow],
+      ["关闭窗口", mocks.closeWindow],
+    ] as const;
+    for (const [label, action] of controls) {
+      const button = header?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      expect(button).not.toBeNull();
+      expect(button?.disabled).toBe(false);
+      expect(button?.style.getPropertyValue("--wails-draggable")).toBe("no-drag");
+      if (!button) throw new Error(`Window control not found: ${label}`);
+      click(button);
+      expect(action).toHaveBeenCalledTimes(1);
+    }
+
+    mocks.toggleMaximiseWindow.mockClear();
+    const dragRegion = header?.querySelector<HTMLElement>(
+      '.nx-spacer[data-wails-drag-region]',
+    );
+    expect(dragRegion).not.toBeNull();
+    if (!dragRegion) throw new Error("Header drag region not found");
+    act(() => {
+      dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(mocks.toggleMaximiseWindow).toHaveBeenCalledTimes(1);
+
+    for (const testId of ["takeover-banner", "update-banner", "dek-banner"]) {
+      const banner = mounted.container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+      if (!banner) throw new Error(`Banner not found: ${testId}`);
+      act(() => {
+        banner.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      });
+    }
+    expect(mocks.toggleMaximiseWindow).toHaveBeenCalledTimes(1);
   });
 });

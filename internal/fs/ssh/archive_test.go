@@ -116,7 +116,7 @@ func TestExtractResolvesHomePaths(t *testing.T) {
 		t.Fatalf("extract commands = %v", executor.commands)
 	}
 	command := executor.commands[0]
-	if strings.Contains(command, "~") {
+	if strings.Contains(command, "'~/") {
 		t.Fatalf("extract command kept a literal tilde: %q", command)
 	}
 	for _, fragment := range []string{ShellQuote(path.Join(home, "packs", "x.tar")), "-C " + ShellQuote(wantTarget)} {

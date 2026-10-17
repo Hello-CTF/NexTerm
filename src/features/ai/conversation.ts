@@ -124,6 +124,7 @@ export interface ConversationState {
   attempts: AiRunAttempt[];
   status: StatusLine | null;
   usage: AiUsage | null;
+  usageCallIds?: ReadonlySet<string>;
   todos: TodoRow[];
   seq: number;
 }
@@ -474,6 +475,33 @@ export function safeTokenCount(value: unknown): number {
   return Math.min(Math.floor(parsed), Number.MAX_SAFE_INTEGER);
 }
 
+export type AiUsageChannel = "main" | "summary" | "tool-subagent";
+
+export function usageChannelOf(ev: Record<string, unknown>): AiUsageChannel {
+  if (ev.channel === "main" || ev.channel === "summary" || ev.channel === "tool-subagent") {
+    return ev.channel;
+  }
+  return typeof ev.callId === "string" && ev.callId.startsWith("summary:") ? "summary" : "main";
+}
+
+export function hasAgentOwnedUsageID(ev: Record<string, unknown>): boolean {
+  const channel = ev.channel;
+  const callID = typeof ev.callId === "string" ? ev.callId : "";
+  return (
+    (channel === "main" || channel === "summary" || channel === "tool-subagent") &&
+    callID.startsWith(`${channel}:`)
+  );
+}
+
+export function usageSnapshotOf(ev: Record<string, unknown>): AiUsage {
+  return {
+    promptTokens: safeTokenCount(ev.promptTokens),
+    completionTokens: safeTokenCount(ev.completionTokens),
+    cachedTokens: safeTokenCount(ev.cachedTokens),
+    contextWindow: safeTokenCount(ev.contextWindow),
+  };
+}
+
 export function applyAiEvent(
   state: ConversationState,
   generation: number,
@@ -700,16 +728,32 @@ export function applyAiEvent(
         ],
       });
     }
-    case "usage":
-      return accepted({
-        ...state,
-        usage: {
-          promptTokens: safeTokenCount(ev.promptTokens),
-          completionTokens: safeTokenCount(ev.completionTokens),
-          cachedTokens: safeTokenCount(ev.cachedTokens),
-          contextWindow: safeTokenCount(ev.contextWindow),
-        },
-      });
+    case "usage": {
+      const channel = usageChannelOf(ev);
+      if (channel === "tool-subagent") return accepted(state);
+      const callID = typeof ev.callId === "string" ? ev.callId : "";
+      const eventKey = hasAgentOwnedUsageID(ev) ? `${generation}:${channel}:${callID}` : "";
+      if (eventKey && state.usageCallIds?.has(eventKey)) return rejected(state);
+      let nextCallIds = state.usageCallIds;
+      if (eventKey) {
+        const mutable = new Set<string>(state.usageCallIds);
+        mutable.add(eventKey);
+        nextCallIds = mutable;
+      }
+      const current = state.usage ?? { promptTokens: 0, completionTokens: 0, cachedTokens: 0, contextWindow: 0 };
+      if (channel === "summary") {
+        return accepted({
+          ...state,
+          usageCallIds: nextCallIds,
+          usage: {
+            ...current,
+            summaryPromptTokens: safeTokenCount((current.summaryPromptTokens ?? 0) + safeTokenCount(ev.promptTokens)),
+            summaryCompletionTokens: safeTokenCount((current.summaryCompletionTokens ?? 0) + safeTokenCount(ev.completionTokens)),
+          },
+        });
+      }
+      return accepted({ ...state, usageCallIds: nextCallIds, usage: { ...current, ...usageSnapshotOf(ev) } });
+    }
     case "todos":
       return accepted({ ...state, todos: (ev.items as TodoRow[]) ?? [] });
     case "planSubmitted":
@@ -970,6 +1014,7 @@ export function truncateItemsAfter(state: ConversationState, itemId: string): Co
     status: null,
     todos: [],
     usage: null,
+    usageCallIds: undefined,
   };
 }
 

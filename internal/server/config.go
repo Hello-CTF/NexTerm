@@ -55,8 +55,8 @@ func ResolveDBPassword(passwordFile string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("database password file %s is not a regular file", passwordFile)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("database password file %s must have 0600 permissions (got %04o)", passwordFile, info.Mode().Perm())
+	if err := validateDBPasswordFilePermissions(passwordFile, info); err != nil {
+		return "", err
 	}
 	data, err := os.ReadFile(passwordFile)
 	if err != nil {

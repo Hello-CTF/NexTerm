@@ -31,17 +31,61 @@ describe("desktop command envelopes", () => {
   });
 
   it("promotes channel/clientId while preserving flat parameters", async () => {
-    runtime.Call.ByName.mockResolvedValue({ ok: true, data: "tab-1" });
+    runtime.Call.ByName.mockResolvedValue({
+      ok: true,
+      data: { tabId: "tab-1", sessionId: "session-1", cols: 120, rows: 40, shell: "powershell" },
+    });
     const { terminalApi } = await import("../ipc/commands");
     const channel = { toJSON: () => "pty-1" };
 
-    await terminalApi.attach("session-1", 120, 40, channel);
+    await expect(terminalApi.attach("session-1", 120, 40, channel)).resolves.toMatchObject({
+      tabId: "tab-1",
+      shell: "powershell",
+    });
     const request = requestAt();
     expect(JSON.parse(JSON.stringify(request))).toEqual({
       cmd: "terminal_attach",
       args: { sessionId: "session-1", cols: 120, rows: 40 },
       channel: "pty-1",
       clientId: expect.any(String),
+    });
+  });
+
+  it("passes an optional host session when attaching a discovered durable tab", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { tabId: "tab-remote", sessionId: "host-b" } });
+    const { terminalApi } = await import("../ipc/commands");
+    const channel = { toJSON: () => "pty-remote" };
+
+    await terminalApi.attachTab("tab-remote", channel, 1024, undefined, "host-b");
+    expect(JSON.parse(JSON.stringify(requestAt()))).toEqual({
+      cmd: "terminal_attach_tab",
+      args: { tabId: "tab-remote", replayBytes: 1024, sessionId: "host-b" },
+      channel: "pty-remote",
+      clientId: expect.any(String),
+    });
+  });
+
+  it("uses the same stable client identity when opening and executing a line tab", async () => {
+    runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: "tab-1" });
+    runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: null });
+    const { sessionApi } = await import("../ipc/commands");
+    const channel = { toJSON: () => "line-1" };
+
+    await sessionApi.openLineTab("session-1", 120, 40, channel);
+    await sessionApi.lineExec("tab-1", "Set-Location -LiteralPath 'D:/Project'");
+    const openRequest = JSON.parse(JSON.stringify(requestAt(0))) as Record<string, unknown>;
+    const execRequest = JSON.parse(JSON.stringify(requestAt(1))) as Record<string, unknown>;
+
+    expect(openRequest).toEqual({
+      cmd: "session_open_line_tab",
+      args: { sessionId: "session-1", cols: 120, rows: 40 },
+      channel: "line-1",
+      clientId: expect.any(String),
+    });
+    expect(execRequest).toEqual({
+      cmd: "session_line_exec",
+      args: { tabId: "tab-1", line: "Set-Location -LiteralPath 'D:/Project'" },
+      clientId: openRequest.clientId,
     });
   });
 
@@ -76,6 +120,26 @@ describe("desktop command envelopes", () => {
       cmd: "terminal_create_tab",
       args: { sessionId: "session-1", title: "Deploy", command: "make" },
     });
+  });
+
+  it("queries recording status while keeping stop as a number", async () => {
+    const status = {
+      tabId: "tab-1",
+      state: "failed",
+      bytes: 23,
+      path: "/tmp/recording.log",
+      safeError: "disk full",
+      generation: 4,
+    };
+    runtime.Call.ByName
+      .mockResolvedValueOnce({ ok: true, data: status })
+      .mockResolvedValueOnce({ ok: true, data: 23 });
+    const { terminalApi } = await import("../ipc/commands");
+
+    await expect(terminalApi.recordingStatus("tab-1")).resolves.toEqual(status);
+    expect(requestAt(0)).toEqual({ cmd: "terminal_record_status", args: { tabId: "tab-1" } });
+    await expect(terminalApi.recordStop("tab-1")).resolves.toBe(23);
+    expect(requestAt(1)).toEqual({ cmd: "terminal_record_stop", args: { tabId: "tab-1" } });
   });
 
   it("uses nested args for SSH diagnostic commands", async () => {
@@ -223,6 +287,73 @@ describe("desktop command envelopes", () => {
       { path: "C:/Users/test/file.txt" },
     ]);
   });
+
+  it("keeps desktop TypeErrors on the existing internal fallback", async () => {
+    runtime.Call.ByName.mockRejectedValue(new TypeError("Failed to fetch"));
+    const { systemApi } = await import("../ipc/commands");
+
+    await expect(systemApi.platform()).rejects.toEqual({
+      code: "internal",
+      message: "Failed to fetch",
+    });
+  });
+
+  it("normalizes Windows roots without changing their capability metadata", async () => {
+    runtime.Call.ByName.mockResolvedValue({
+      ok: true,
+      data: {
+        pathStyle: "windows",
+        roots: [
+          { path: "C:\\", label: "C:" },
+          { path: "D:\\", label: "D:" },
+        ],
+        homePath: "C:\\Users\\test",
+        supported: true,
+      },
+    });
+    const { fsApi } = await import("../ipc/commands");
+
+    await expect(fsApi.roots("session-1")).resolves.toEqual({
+      pathStyle: "windows",
+      roots: [
+        { path: "C:/", label: "C:" },
+        { path: "D:/", label: "D:" },
+      ],
+      homePath: "C:/Users/test",
+      supported: true,
+    });
+    expect(requestAt()).toEqual({ cmd: "fs_roots", args: { sessionId: "session-1" } });
+  });
+
+  it("keeps unsupported roots distinct from a supported empty result", async () => {
+    runtime.Call.ByName.mockResolvedValueOnce({
+      ok: true,
+      data: { pathStyle: "unknown", roots: [], homePath: null, supported: false },
+    });
+    runtime.Call.ByName.mockResolvedValueOnce({
+      ok: true,
+      data: { pathStyle: "posix", roots: [], homePath: null, supported: true },
+    });
+    const { fsApi } = await import("../ipc/commands");
+
+    await expect(fsApi.roots("session-unsupported")).resolves.toEqual({
+      pathStyle: "unknown",
+      roots: [],
+      homePath: null,
+      supported: false,
+    });
+    await expect(fsApi.roots("session-empty")).resolves.toEqual({
+      pathStyle: "posix",
+      roots: [],
+      homePath: null,
+      supported: true,
+    });
+    expect(requestAt(0)).toEqual({
+      cmd: "fs_roots",
+      args: { sessionId: "session-unsupported" },
+    });
+    expect(requestAt(1)).toEqual({ cmd: "fs_roots", args: { sessionId: "session-empty" } });
+  });
 });
 
 describe("web command behavior compatibility", () => {
@@ -277,6 +408,41 @@ describe("web command behavior compatibility", () => {
     });
   });
 
+  it("uses the same stable client identity for web line tab open and exec", async () => {
+    useWebTransport();
+    Object.assign(window, {
+      localStorage: {
+        getItem: vi.fn().mockReturnValue("web-client"),
+        setItem: vi.fn(),
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, data: null }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { sessionApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
+
+    await sessionApi.openLineTab("session-1", 120, 40, { toJSON: () => "line-1" });
+    await sessionApi.lineExec("tab-1", "Set-Location -LiteralPath 'D:/Project'");
+    const openRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const execRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
+
+    expect(openRequest).toEqual({
+      cmd: "session_open_line_tab",
+      args: { sessionId: "session-1", cols: 120, rows: 40 },
+      channel: "line-1",
+      clientId: "web-client",
+    });
+    expect(execRequest).toEqual({
+      cmd: "session_line_exec",
+      args: { tabId: "tab-1", line: "Set-Location -LiteralPath 'D:/Project'" },
+      clientId: "web-client",
+    });
+  });
+
   it("preserves code/detail for business errors returned with HTTP 200", async () => {
     useWebTransport();
     const error = { code: "not_controller", message: "Observer only", detail: null };
@@ -292,5 +458,76 @@ describe("web command behavior compatibility", () => {
     setCsrfToken("csrf-1");
 
     await expect(terminalApi.write("tab-1", new Uint8Array([1]))).rejects.toEqual(error);
+  });
+
+  it("classifies a browser fetch TypeError as disconnected without retrying the query", async () => {
+    useWebTransport();
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { dbApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
+
+    await expect(dbApi.query("c1", "UPDATE orders SET paid = true")).rejects.toEqual({
+      code: "disconnected",
+      message: "Failed to fetch",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies a response body TypeError as disconnected", async () => {
+    useWebTransport();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 200,
+        text: async () => Promise.reject(new TypeError("Response body terminated")),
+      }),
+    );
+    const { dbApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
+
+    await expect(dbApi.query("c1", "INSERT INTO orders VALUES (1)")).rejects.toEqual({
+      code: "disconnected",
+      message: "Response body terminated",
+    });
+  });
+
+  it("does not infer disconnection from network-like text on an ordinary Error", async () => {
+    useWebTransport();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
+    const { dbApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
+
+    await expect(dbApi.query("c1", "SELECT 1")).rejects.toEqual({
+      code: "internal",
+      message: "Failed to fetch",
+    });
+  });
+
+  it("preserves HTTP error envelopes and non-JSON protocol errors", async () => {
+    useWebTransport();
+    const error = { code: "unavailable", message: "Service unavailable" };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 503,
+          text: async () => JSON.stringify({ ok: false, error }),
+        })
+        .mockResolvedValueOnce({ status: 502, text: async () => "<html>Bad Gateway</html>" }),
+    );
+    const { systemApi } = await import("../ipc/commands");
+    const { setCsrfToken } = await import("../ipc/authApi");
+    setCsrfToken("csrf-1");
+
+    await expect(systemApi.platform()).rejects.toEqual(error);
+    await expect(systemApi.platform()).rejects.toMatchObject({
+      code: "internal",
+      message: expect.stringContaining("HTTP 502"),
+    });
   });
 });

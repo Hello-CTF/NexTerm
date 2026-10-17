@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,6 +315,208 @@ func TestRegistryRecoveryAfterGracefulClose(t *testing.T) {
 	}
 	if err := restarted.Kill(context.Background(), id); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRegistryWithoutMetadataLoadsAndPersistsRename(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	id := ids.New()
+	incarnation := ids.New()
+	createdAt := time.Now().UTC().Truncate(time.Nanosecond)
+	if err := os.MkdirAll(sessionDir(stateDir, id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := fmt.Sprintf(`{"id":%q,"created_at":%q,"incarnation":%q,"cols":80,"rows":24,"running":false}`, id, createdAt.Format(time.RFC3339Nano), incarnation)
+	if err := os.WriteFile(entryPath(stateDir, id), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	provider := NewProvider(supervisor)
+	descriptors, err := requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	if err != nil || len(descriptors) != 1 || descriptors[0].Title != "" || descriptors[0].MetadataRevision != 0 {
+		t.Fatal("unexpected registry result")
+	}
+
+	request := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), Title: "recovered-title"}
+	result, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	if err != nil || result.Title != request.Title || result.MetadataRevision != 1 {
+		t.Fatal("unexpected registry result")
+	}
+	entry, err := readEntry(sessionsRoot(stateDir), id)
+	if err != nil || entry.Title != request.Title || entry.MetadataRevision != 1 {
+		t.Fatal("unexpected registry result")
+	}
+	if err := supervisor.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	provider = NewProvider(restarted)
+	descriptors, err = requireDurableDescriptorLister(t, provider).ListDurableDescriptors(context.Background())
+	if err != nil || len(descriptors) != 1 || descriptors[0].Title != request.Title || descriptors[0].MetadataRevision != 1 {
+		t.Fatal("unexpected registry result")
+	}
+	retry, err := requireDurableMetadataProvider(t, provider).RenameDurable(context.Background(), request)
+	if err != nil || retry != result {
+		t.Fatal("unexpected registry result")
+	}
+}
+
+func TestCanonicalMetadataConsistentAcrossInfoSurfaces(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	id := ids.New()
+	session, err := supervisor.Create(context.Background(), CreateOptions{
+		ID:      id,
+		Command: []string{"/bin/sh", "-c", "sleep 30"},
+		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnation := session.Identity().Incarnation
+	const title = "consistent-title"
+	const revision = uint64(1)
+	if _, err := supervisor.Rename(context.Background(), RenameRequest{
+		ID: id, Incarnation: incarnation, RequestID: ids.New(), Title: title,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertConsistent := func(currentSession *Session, currentSupervisor *Supervisor, currentClient *Client) {
+		t.Helper()
+		checkInfo := func(surface string, info Info) {
+			t.Helper()
+			if info.ID != id || info.Incarnation != incarnation || info.Title != title || info.MetadataRevision != revision {
+				t.Fatalf("%s = %+v, want title %q revision %d", surface, info, title, revision)
+			}
+		}
+		checkInfo("Session.Info", currentSession.Info())
+		supervisorInfos, err := currentSupervisor.List(context.Background())
+		if err != nil || len(supervisorInfos) != 1 {
+			t.Fatalf("Supervisor.List = %+v, %v", supervisorInfos, err)
+		}
+		checkInfo("Supervisor.List", supervisorInfos[0])
+		wireInfos, err := currentClient.List(context.Background())
+		if err != nil || len(wireInfos) != 1 {
+			t.Fatalf("wire List = %+v, %v", wireInfos, err)
+		}
+		checkInfo("wire List", wireInfos[0])
+		descriptors, err := NewRemoteProvider(currentClient).ListDurableDescriptors(context.Background())
+		if err != nil || len(descriptors) != 1 {
+			t.Fatalf("durable descriptors = %+v, %v", descriptors, err)
+		}
+		descriptor := descriptors[0]
+		if descriptor.ID != id || descriptor.Incarnation != incarnation || descriptor.Title != title || descriptor.MetadataRevision != revision {
+			t.Fatalf("durable descriptor = %+v, want title %q revision %d", descriptor, title, revision)
+		}
+	}
+	assertConsistent(session, supervisor, client)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	if err := supervisor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	restartedServer := testServer(t, restarted)
+	restartedClient := testClient(t, restartedServer)
+	recovered, err := restarted.resolveSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertConsistent(recovered, restarted, restartedClient)
+}
+
+func TestRenameConcurrentAttachmentIDAndVersions(t *testing.T) {
+	supervisor := testSupervisor(t)
+	session := testScriptSession(t, supervisor, `sleep 30`)
+	attachment, err := session.attach(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Close() }()
+	id := session.ID()
+	incarnation := session.Identity().Incarnation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	var readers sync.WaitGroup
+	ready.Add(2)
+	readers.Add(2)
+	errs := make(chan error, 2)
+	for _, checkVersions := range []bool{false, true} {
+		go func() {
+			defer readers.Done()
+			ready.Done()
+			<-start
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				if attachment.ID() != id {
+					errs <- fmt.Errorf("attachment ID changed from %q to %q", id, attachment.ID())
+					return
+				}
+				if checkVersions {
+					if _, _, err := attachment.Versions(); err != nil {
+						errs <- err
+						return
+					}
+				}
+			}
+		}()
+	}
+	ready.Wait()
+	close(start)
+	var renameErr error
+	for revision := uint64(0); revision < 200; revision++ {
+		_, err := supervisor.Rename(context.Background(), RenameRequest{
+			ID:                       id,
+			Incarnation:              incarnation,
+			RequestID:                ids.New(),
+			ExpectedMetadataRevision: revision,
+			Title:                    fmt.Sprintf("title-%d", revision),
+		})
+		if err != nil {
+			renameErr = err
+			break
+		}
+	}
+	cancel()
+	readers.Wait()
+	if renameErr != nil {
+		t.Fatal(renameErr)
+	}
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
 	}
 }
 

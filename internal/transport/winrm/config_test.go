@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/Azure/go-ntlmssp"
 )
 
 func TestConfigDefaultsAndDomainPrincipal(t *testing.T) {
@@ -67,7 +65,7 @@ func TestAuthenticationTransportIsConsumed(t *testing.T) {
 		}
 		switch auth {
 		case AuthNTLM:
-			if _, ok := runner.httpClient.Transport.(*ntlmssp.Negotiator); !ok {
+			if _, ok := runner.httpClient.Transport.(*ntlmSealingTransport); !ok {
 				t.Fatalf("NTLM config produced %T", runner.httpClient.Transport)
 			}
 		case AuthBasic:

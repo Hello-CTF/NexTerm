@@ -6,8 +6,9 @@
 // The metrics panel lives in ./MetricsPanel (with the CPU 24h trend line in ./MetricsChart), reused directly here;
 // no separate chart logic is implemented.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { type FleetBaseURLEntry, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { connectDevice, useUi } from "../../app/store";
@@ -16,7 +17,6 @@ import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { GlobalScopeBadge } from "../../ui/GlobalScopeBadge";
 import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
@@ -68,7 +68,6 @@ function FleetUnsupported() {
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
-        <GlobalScopeBadge />
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
         <div className="flex w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -341,6 +340,9 @@ export function DevicesView() {
   // accountEpoch bumps only on account switch (manual refresh leaves it alone), isolating in-flight issuance
   // then/catch/finally: late completions from an old account never write into the new account's view.
   const accountEpoch = useRef(0);
+  const deviceScrollRef = useRef<HTMLDivElement>(null);
+  const deviceListRef = useRef<HTMLDivElement>(null);
+  const [deviceListScrollMargin, setDeviceListScrollMargin] = useState(0);
 
   const isAdmin = account.isAdmin;
   const userId = account.userId;
@@ -489,13 +491,48 @@ export function DevicesView() {
     return () => clearInterval(timer);
   }, []);
 
+  const normalizedDeviceQuery = deviceQuery.trim().toLowerCase();
+  const matchesDeviceQuery = (d: FleetDevice) => {
+    if (!normalizedDeviceQuery) return true;
+    return [d.name, d.id, d.kind, d.owner?.username, d.agent?.platform, d.agent?.current_url]
+      .map((value) => value?.toLowerCase() ?? "")
+      .some((value) => value.includes(normalizedDeviceQuery));
+  };
+  const visibleDevices = devices?.filter((d) => {
+    const revoked = d.revoked_at !== 0;
+    if (deviceFilter === "revoked") return revoked && matchesDeviceQuery(d);
+    if (revoked) return false;
+    if (deviceFilter === "online" && !onlineOf(d)) return false;
+    if (deviceFilter === "offline" && onlineOf(d)) return false;
+    return matchesDeviceQuery(d);
+  });
+  const devicesVirtualized = (visibleDevices?.length ?? 0) > 40;
+  const deviceVirtualizer = useVirtualizer({
+    count: visibleDevices?.length ?? 0,
+    getScrollElement: () => deviceScrollRef.current,
+    estimateSize: () => 152,
+    overscan: 4,
+    gap: 12,
+    enabled: devicesVirtualized,
+    getItemKey: (index) => visibleDevices?.[index]?.id ?? index,
+    scrollMargin: deviceListScrollMargin,
+    initialRect: { width: 800, height: 600 },
+  });
+
+  useLayoutEffect(() => {
+    const list = deviceListRef.current;
+    const scroller = deviceScrollRef.current;
+    if (!list || !scroller) return;
+    const next = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    setDeviceListScrollMargin((current) => (Math.abs(current - next) < 1 ? current : next));
+  });
+
   if (account.loading) {
     return (
       <div className="nx-pane">
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">设备管理</span>
-          <GlobalScopeBadge />
           <span className="nx-hint">账号状态读取中…</span>
         </div>
       </div>
@@ -513,7 +550,6 @@ export function DevicesView() {
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
           <span className="nx-toolbar-title">设备管理</span>
-          <GlobalScopeBadge />
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6">
           <div className="flex w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -595,29 +631,27 @@ export function DevicesView() {
         )
       : null;
   const installRow = issued ? copyCommandRow("install", installCommand(), "安装命令") : null;
-  const normalizedDeviceQuery = deviceQuery.trim().toLowerCase();
-  const matchesDeviceQuery = (d: FleetDevice) => {
-    if (!normalizedDeviceQuery) return true;
-    return [d.name, d.id, d.kind, d.owner?.username, d.agent?.platform, d.agent?.current_url]
-      .map((value) => value?.toLowerCase() ?? "")
-      .some((value) => value.includes(normalizedDeviceQuery));
-  };
   const hiddenRevokedCount = devices?.filter((d) => d.revoked_at !== 0).length ?? 0;
-  const visibleDevices = devices?.filter((d) => {
-    const revoked = d.revoked_at !== 0;
-    if (deviceFilter === "revoked") return revoked && matchesDeviceQuery(d);
-    if (revoked) return false;
-    if (deviceFilter === "online" && !onlineOf(d)) return false;
-    if (deviceFilter === "offline" && onlineOf(d)) return false;
-    return matchesDeviceQuery(d);
-  });
+  const renderDeviceCard = (d: FleetDevice) => (
+    <DeviceCard
+      key={d.id}
+      device={d}
+      now={now}
+      online={onlineOf(d)}
+      isAdmin={Boolean(isAdmin)}
+      onPatch={patchDevice}
+      onRevoked={(id) => {
+        patchDevice(id, { revoked_at: Date.now() });
+        void load();
+      }}
+    />
+  );
 
   return (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
-        <GlobalScopeBadge />
         <span className="nx-hint">
           {error && devices === null ? "设备列表加载失败" : devices === null ? "加载中…" : `共 ${devices.length} 台`}
         </span>
@@ -639,7 +673,7 @@ export function DevicesView() {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div ref={deviceScrollRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
         {devices !== null && devices.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -830,19 +864,26 @@ export function DevicesView() {
           <div className="nx-hint py-2 text-center text-[12px]">没有符合当前搜索或过滤条件的设备。</div>
         )}
 
-        {visibleDevices?.map((d) => (
-          <DeviceCard
-            key={d.id}
-            device={d}
-            now={now}
-            online={onlineOf(d)}
-            isAdmin={Boolean(isAdmin)}
-            onPatch={patchDevice}
-            onRevoked={(id) => {
-              patchDevice(id, { revoked_at: Date.now() });
-              void load();
-            }}
-          />
+        {visibleDevices && visibleDevices.length > 0 && (devicesVirtualized ? (
+          <div
+            ref={deviceListRef}
+            className="relative shrink-0"
+            style={{ height: deviceVirtualizer.getTotalSize() }}
+          >
+            {deviceVirtualizer.getVirtualItems().map((virtualItem) => (
+              <div
+                key={virtualItem.key}
+                ref={deviceVirtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute left-0 right-0 top-0"
+                style={{ transform: `translateY(${virtualItem.start - deviceListScrollMargin}px)` }}
+              >
+                {renderDeviceCard(visibleDevices[virtualItem.index])}
+              </div>
+            ))}
+          </div>
+        ) : (
+          visibleDevices.map(renderDeviceCard)
         ))}
 
         <div id="fleet-base-urls">

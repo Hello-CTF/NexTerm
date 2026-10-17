@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -100,32 +103,105 @@ func TestResolveDBPassword(t *testing.T) {
 	}
 	dir := t.TempDir()
 	passwordFile := filepath.Join(dir, "pg.password")
-	if err := os.WriteFile(passwordFile, []byte("file-secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDBPasswordFileForTest(t, passwordFile, "file-secret\n", 0o600, "")
 	password, err = ResolveDBPassword(passwordFile)
-	if err != nil || password != "file-secret" {
-		t.Fatalf("file password = %q, %v", password, err)
+	if err != nil {
+		t.Fatalf("resolve file password: %v", err)
+	}
+	if password != "file-secret" {
+		t.Fatal("file password mismatch")
 	}
 	looseFile := filepath.Join(dir, "loose.password")
-	if err := os.WriteFile(looseFile, []byte("file-secret\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeDBPasswordFileForTest(t, looseFile, "file-secret\n", 0o644, "S-1-1-0")
 	if _, err := ResolveDBPassword(looseFile); err == nil {
-		t.Fatal("0644 password file was accepted")
+		t.Fatal("loose password file was accepted")
+	} else if runtime.GOOS == "windows" {
+		requireDBPasswordBroadACLError(t, err, "S-1-1-0")
+	}
+	if runtime.GOOS == "windows" {
+		for _, principal := range []struct {
+			name string
+			sid  string
+		}{
+			{"authenticated-users", "S-1-5-11"},
+			{"builtin-users", "S-1-5-32-545"},
+		} {
+			t.Run(principal.name, func(t *testing.T) {
+				broadFile := filepath.Join(dir, principal.name+".password")
+				writeDBPasswordFileForTest(t, broadFile, "file-secret\n", 0o600, principal.sid)
+				_, err := ResolveDBPassword(broadFile)
+				requireDBPasswordBroadACLError(t, err, principal.sid)
+			})
+		}
 	}
 	if _, err := ResolveDBPassword(dir); err == nil {
 		t.Fatal("directory password file was accepted")
 	}
 	emptyFile := filepath.Join(dir, "empty.password")
-	if err := os.WriteFile(emptyFile, []byte(" \n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDBPasswordFileForTest(t, emptyFile, " \n", 0o600, "")
 	if _, err := ResolveDBPassword(emptyFile); err == nil {
 		t.Fatal("empty password file was accepted")
 	}
 	if _, err := ResolveDBPassword(filepath.Join(dir, "missing.password")); err == nil {
 		t.Fatal("missing password file was accepted")
+	}
+}
+
+func writeDBPasswordFileForTest(t *testing.T, path, contents string, mode os.FileMode, broadSID string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		setDBPasswordACLForTest(t, path, broadSID)
+	}
+}
+
+func setDBPasswordACLForTest(t *testing.T, path, broadSID string) {
+	t.Helper()
+	output, err := exec.Command("whoami", "/user", "/fo", "csv", "/nh").CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve current user SID: %v\n%s", err, output)
+	}
+	record, err := csv.NewReader(bytes.NewReader(output)).Read()
+	if err != nil {
+		t.Fatalf("parse current user SID: %v", err)
+	}
+	if len(record) != 2 || !strings.HasPrefix(record[1], "S-1-") {
+		t.Fatalf("unexpected whoami output: %q", output)
+	}
+	args := []string{
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*" + record[1] + ":(F)",
+		"*S-1-5-18:(F)",
+		"*S-1-5-32-544:(F)",
+	}
+	if broadSID != "" {
+		args = append(args, "*"+broadSID+":(R)")
+	}
+	output, err = exec.Command("icacls", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("set password file ACL: %v\n%s", err, output)
+	}
+	expectedSIDs := []string{record[1], "S-1-5-18", "S-1-5-32-544"}
+	if broadSID != "" {
+		expectedSIDs = append(expectedSIDs, broadSID)
+	}
+	requireDBPasswordACLForTest(t, path, expectedSIDs)
+}
+
+func requireDBPasswordBroadACLError(t *testing.T, err error, sid string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("password file with broad ACL was accepted")
+	}
+	if strings.Contains(err.Error(), "file-secret") {
+		t.Fatal("ACL error contains password content")
+	}
+	if !strings.Contains(err.Error(), sid) {
+		t.Fatalf("ACL error = %v, want SID %s", err, sid)
 	}
 }
 

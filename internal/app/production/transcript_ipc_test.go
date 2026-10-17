@@ -257,6 +257,31 @@ func TestTranscriptHostsCommandIncludesDeletedAssets(t *testing.T) {
 	}
 }
 
+func TestTranscriptHostsCommandAcceptsDevicePseudoAsset(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := transcriptDispatcher(t, database, session.NewManager(session.Config{}))
+	deviceAssetID := "device/01JDEVICE00000000000000001"
+	id := seedTranscript(t, database, deviceAssetID, 1000, "output\r\n")
+	if err := database.TranscriptEnd(ctx, id, 2000, false); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchStoreTest(dispatcher, "transcript_hosts", `{}`)
+	var hosts []transcriptHostDTO
+	requireStoreTestResponse(t, response, &hosts)
+	if len(hosts) != 1 {
+		t.Fatalf("expected one host, got %+v", hosts)
+	}
+	if hosts[0].AssetID != deviceAssetID || hosts[0].AssetDeleted || hosts[0].Transcripts != 1 {
+		t.Fatalf("device pseudo asset must not be marked deleted: %+v", hosts[0])
+	}
+}
+
 func TestTranscriptReadReturnsChunkKinds(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 type blockingControlEmitter struct {
@@ -55,8 +57,8 @@ func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *test
 	if err := <-attached; err != nil {
 		t.Fatal(err)
 	}
-	newer := <-emitter.events
 	older := <-emitter.events
+	newer := <-emitter.events
 	if newer.Version != 3 || newer.Controller != "client-b" {
 		t.Fatalf("new event = %+v, want versioned client-b", newer)
 	}
@@ -71,6 +73,86 @@ func TestBlockingEmitterCannotMakeControllerSnapshotAuthoritativelyStale(t *test
 	}
 	if latest.Controller != "client-b" || tab.Info().Controller != "client-b" {
 		t.Fatalf("version-filtered controller = %q backend = %q", latest.Controller, tab.Info().Controller)
+	}
+}
+
+func TestControlEventVersionAndEnqueueAreSerialized(t *testing.T) {
+	events := make(chan ControlEvent, 2)
+	manager := NewManager(Config{Emitter: EmitterFunc(func(_ context.Context, event Event) error {
+		if event.Topic == TopicTerminalControl {
+			events <- event.Payload.(ControlEvent)
+		}
+		return nil
+	})})
+	t.Cleanup(func() { _ = manager.Close() })
+	tab := &Tab{ID: "ordered-control", session: &Session{}, subscribers: make(map[string]subscriber), terminal: &fakeTerminal{}}
+	first := tab.controlEventLocked()
+	secondDone := make(chan ControlEvent, 1)
+	go func() {
+		secondDone <- tab.controlEventLocked()
+	}()
+	second := <-secondDone
+	manager.emit(context.Background(), TopicTerminalControl, second)
+	manager.emit(context.Background(), TopicTerminalControl, first)
+	firstEmitted := <-events
+	secondEmitted := <-events
+	if firstEmitted.Version != 1 || secondEmitted.Version != 2 {
+		t.Fatalf("control events = %+v, %+v, want versions 1,2", firstEmitted, secondEmitted)
+	}
+}
+
+func TestClosedControlOwnerCleanupUsesTabIncarnation(t *testing.T) {
+	oldStarted := make(chan struct{})
+	releaseOld := make(chan struct{})
+	manager := NewManager(Config{Emitter: EmitterFunc(func(ctx context.Context, event Event) error {
+		if ipc.EventOwnerID(ctx) == "old-owner" {
+			close(oldStarted)
+			<-releaseOld
+		}
+		return nil
+	})})
+	t.Cleanup(func() { _ = manager.Close() })
+	oldTab := &Tab{ID: "owner-aba", session: &Session{userID: "old-owner"}, subscribers: make(map[string]subscriber), terminal: &fakeTerminal{}, closed: true, exited: true}
+	oldEvent := oldTab.controlEventLocked()
+	oldQueue := recordingControlOrderForTab(oldTab)
+	newTab := &Tab{ID: oldTab.ID, session: &Session{userID: "new-owner"}, subscribers: make(map[string]subscriber), terminal: &fakeTerminal{}}
+	newOpen := newTab.controlEventLocked()
+	newQueue := recordingControlOrderForTab(newTab)
+	manager.emit(context.Background(), TopicTerminalControl, newOpen)
+	if got := manager.tabOwners[oldTab.ID]; got != "new-owner" {
+		t.Fatalf("owner after reopen = %q, want new-owner", got)
+	}
+	oldDone := make(chan struct{})
+	go func() {
+		manager.emit(context.Background(), TopicTerminalControl, oldEvent)
+		close(oldDone)
+	}()
+	select {
+	case <-oldStarted:
+	case <-time.After(time.Second):
+		t.Fatal("old close did not reach the emitter")
+	}
+	if got := manager.tabOwners[oldTab.ID]; got != "new-owner" {
+		t.Fatalf("old close removed the new owner before new close: %q", got)
+	}
+	newTab.closed = true
+	newTab.exited = true
+	newClose := newTab.controlEventLocked()
+	manager.emit(context.Background(), TopicTerminalControl, newClose)
+	if _, ok := manager.controlOwners[newQueue]; ok {
+		t.Fatal("new owner was not cleaned after new close")
+	}
+	if got := manager.controlOwners[oldQueue]; got != "old-owner" {
+		t.Fatalf("old owner before final drain = %q, want old-owner", got)
+	}
+	close(releaseOld)
+	select {
+	case <-oldDone:
+	case <-time.After(time.Second):
+		t.Fatal("old close did not finish")
+	}
+	if _, ok := manager.controlOwners[oldQueue]; ok {
+		t.Fatal("old owner was not cleaned after old close drained")
 	}
 }
 

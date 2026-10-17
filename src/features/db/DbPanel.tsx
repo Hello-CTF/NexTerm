@@ -7,12 +7,24 @@ import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
 import { dbApi, type QueryResult, type TableDescribe } from "../../ipc/commands";
-import { useUi, type DbKind } from "../../app/store";
+import {
+  DB_KIND_LABEL,
+  getWorkspaceProblemResetGeneration,
+  sanitizeWorkspaceProblemText,
+  useUi,
+  type DbKind,
+  type SqlExecutionOutcome,
+  type SqlExecutionRecord,
+  type WorkspaceProblem,
+  type WorkspaceProblemInput,
+} from "../../app/store";
+import { WorkspaceProblems } from "../problems/WorkspaceProblems";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
 import {
   IconChevronUp,
   IconDatabase,
+  IconHistory,
   IconLayers,
   IconList,
   IconLoader,
@@ -25,8 +37,20 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-export function DbPanel({ connId, kind }: { connId: string; kind: DbKind }) {
-  return kind === "redis" ? <RedisView connId={connId} /> : <SqlView connId={connId} dialect={kind} />;
+export function DbPanel({
+  connId,
+  kind,
+  workspaceId,
+}: {
+  connId: string;
+  kind: DbKind;
+  workspaceId?: string;
+}) {
+  return kind === "redis" ? (
+    <RedisView connId={connId} />
+  ) : (
+    <SqlView connId={connId} dialect={kind} workspaceId={workspaceId} />
+  );
 }
 
 const SQL_SYSTEM_SCHEMAS: Record<string, string[]> = {
@@ -34,8 +58,39 @@ const SQL_SYSTEM_SCHEMAS: Record<string, string[]> = {
   postgres: ["information_schema", "pg_catalog", "pg_toast"],
 };
 
-function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "postgres" }) {
+const UNKNOWN_SQL_RESULT = "结果未知，请先确认数据库状态";
+
+function isUnknownSqlExecutionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error) || !("message" in error)) {
+    return false;
+  }
+  return (
+    typeof error.message === "string" &&
+    (error.code === "timeout" || error.code === "disconnected")
+  );
+}
+
+function unknownSqlResultText(error: unknown): string {
+  const detail = describeError(error);
+  return detail.includes(UNKNOWN_SQL_RESULT) ? detail : `${UNKNOWN_SQL_RESULT}：${detail}`;
+}
+
+function SqlView({
+  connId,
+  dialect,
+  workspaceId,
+}: {
+  connId: string;
+  dialect: "mysql" | "postgres";
+  workspaceId?: string;
+}) {
   const { pushToast } = useUi();
+  const executionHistory = useUi((state) =>
+    workspaceId ? state.workspaceRuntime[workspaceId]?.sqlExecutionHistory : undefined,
+  );
+  const workspaceProblems = useUi((state) =>
+    workspaceId ? state.workspaceRuntime[workspaceId]?.problems : undefined,
+  );
   const [schema, setSchema] = useState("");
   const [schemas, setSchemas] = useState<string[]>([]);
   const [schemasStatus, setSchemasStatus] = useState<"loading" | "error" | "ready">("loading");
@@ -46,10 +101,16 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
   const [tableFilter, setTableFilter] = useState("");
   const [tablesExpanded, setTablesExpanded] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [unknownResult, setUnknownResult] = useState<string | null>(null);
+  const [transportError, setTransportError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [problemsOpen, setProblemsOpen] = useState(false);
   const [structure, setStructure] = useState<(TableDescribe & { table: string }) | null>(null);
-  const [running, setRunning] = useState(false);
+  const [runningToken, setRunningToken] = useState<{ connId: string; seq: number } | null>(null);
   const [browse, setBrowse] = useState<"tables" | "columns">("tables");
   const [activeTable, setActiveTable] = useState<string | null>(null);
+  const historyPanelId = useId();
+  const problemPanelId = useId();
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const schemaRef = useRef("");
@@ -57,14 +118,93 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
   const tablesRequestRef = useRef(0);
   const contentRequestRef = useRef(0);
   const runSeqRef = useRef(0);
+  const activeRunsRef = useRef(new Map<string, number>());
+  const aliveRef = useRef(false);
+  const draftGenerationRef = useRef<number | undefined>(undefined);
+  const generatedQueryRef = useRef<string | null>(null);
+  const restoredSchemaRef = useRef<string | null>(null);
+  const connIdRef = useRef(connId);
+  const dialectRef = useRef(dialect);
+  connIdRef.current = connId;
+  dialectRef.current = dialect;
+  const running = runningToken?.connId === connId;
+
+  const captureTarget = () => {
+    const targetWorkspace = workspaceId
+      ? useUi.getState().workspaces.find((workspace) => workspace.id === workspaceId)
+      : undefined;
+    return {
+      connId,
+      dbKind: dialect,
+      title: targetWorkspace?.title ?? connId,
+      ...(targetWorkspace?.assetId !== undefined ? { assetId: targetWorkspace.assetId } : {}),
+    };
+  };
+
+  const problemGeneration = () => {
+    const runtime = workspaceId
+      ? useUi.getState().ensureWorkspaceRuntime(workspaceId)
+      : undefined;
+    return runtime
+      ? { generation: runtime.generation, resetGeneration: getWorkspaceProblemResetGeneration() }
+      : undefined;
+  };
+
+  const recordProblem = (
+    generation: { generation: number; resetGeneration: number } | undefined,
+    problem: Omit<WorkspaceProblemInput, "generation" | "resetGeneration">,
+  ) => {
+    if (!workspaceId || generation === undefined) return;
+    useUi.getState().recordWorkspaceProblem(workspaceId, { ...problem, ...generation });
+  };
+
+  const copyProblemDetail = async (detail: string) => {
+    try {
+      await copyText(sanitizeWorkspaceProblemText(detail));
+      pushToast("success", "问题详情已复制");
+    } catch (error) {
+      pushToast("error", `复制失败：${describeError(error)}`);
+    }
+  };
+
+  const problemTargetAvailable = (problem: WorkspaceProblem): boolean => {
+    if (problem.target.connId !== undefined && problem.target.connId !== connId) return false;
+    if (problem.source === "sql-tables" && problem.target.schema !== schemaRef.current) return false;
+    return true;
+  };
+
+  const retryProblemRead = (problem: WorkspaceProblem) => {
+    if (problem.source === "sql-schemas") void loadSchemas();
+    if (problem.source === "sql-tables") void loadTables(problem.target.schema ?? "");
+  };
+
+  const persistDraft = (state: EditorState, targetWorkspaceId = workspaceId) => {
+    const generation = draftGenerationRef.current;
+    if (!targetWorkspaceId || generation === undefined) return;
+    const selection = state.selection.main;
+    const draft = {
+      text: state.doc.toString(),
+      selection: { from: selection.from, to: selection.to },
+      schema: schemaRef.current,
+      connId: connIdRef.current,
+      dbKind: dialectRef.current,
+    };
+    queueMicrotask(() => {
+      useUi.getState().updateSqlDraft(targetWorkspaceId, draft, generation);
+    });
+  };
 
   const SYSTEM_SCHEMAS = SQL_SYSTEM_SCHEMAS[dialect];
 
   const loadTables = async (next: string) => {
     const request = ++tablesRequestRef.current;
+    const generation = problemGeneration();
+    const target = captureTarget();
     const changed = schemaRef.current !== next;
     schemaRef.current = next;
     setSchema(next);
+    const view = viewRef.current;
+    if (view) persistDraft(view.state);
     if (changed) {
       setActiveTable(null);
       setStructure(null);
@@ -80,6 +220,20 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
       setTablesStatus("ready");
     } catch (e) {
       if (request !== tablesRequestRef.current) return;
+      recordProblem(generation, {
+        createdAt: Date.now(),
+        source: "sql-tables",
+        operation: "读取表列表",
+        target: {
+          ...target,
+          identity: `${target.title} · ${target.connId}`,
+          kind: target.dbKind,
+          schema: next,
+        },
+        summary: describeError(e),
+        detail: describeError(e),
+        canRetryRead: true,
+      });
       setTablesStatus("error");
       setTablesError(describeError(e));
     }
@@ -87,6 +241,8 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
 
   const loadSchemas = async () => {
     const request = ++schemasRequestRef.current;
+    const generation = problemGeneration();
+    const target = captureTarget();
     const tableRequest = tablesRequestRef.current;
     setSchemasStatus("loading");
     setSchemasError(null);
@@ -96,44 +252,99 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
       setSchemas(list);
       setSchemasStatus("ready");
       if (tableRequest !== tablesRequestRef.current) return;
-      const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
+      const preferred = restoredSchemaRef.current ?? schemaRef.current;
+      const pick = list.includes(preferred)
+        ? preferred
+        : (list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "");
+      restoredSchemaRef.current = null;
       if (pick) {
         await loadTables(pick);
       } else {
         schemaRef.current = "";
         setSchema("");
+        const view = viewRef.current;
+        if (view) persistDraft(view.state);
         setTables([]);
         setTablesStatus("ready");
       }
     } catch (e) {
       if (request !== schemasRequestRef.current) return;
+      recordProblem(generation, {
+        createdAt: Date.now(),
+        source: "sql-schemas",
+        operation: "读取 schema 列表",
+        target: {
+          ...target,
+          identity: `${target.title} · ${target.connId}`,
+          kind: target.dbKind,
+          schema: "",
+        },
+        summary: describeError(e),
+        detail: describeError(e),
+        canRetryRead: true,
+      });
       setSchemasStatus("error");
       setSchemasError(describeError(e));
     }
   };
 
   useEffect(() => {
+    aliveRef.current = true;
+    const activeRun = activeRunsRef.current.get(connId);
+    setRunningToken(activeRun === undefined ? null : { connId, seq: activeRun });
     void loadSchemas();
     return () => {
+      aliveRef.current = false;
       schemasRequestRef.current += 1;
       tablesRequestRef.current += 1;
       contentRequestRef.current += 1;
-      runSeqRef.current += 1;
-      setRunning(false);
     };
-  }, [connId]);
+  }, [connId, workspaceId]);
 
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return;
+    const runtime = workspaceId
+      ? useUi.getState().getWorkspaceRuntime(workspaceId)
+      : undefined;
+    const draft = runtime?.sqlDraft;
+    if (workspaceId && !runtime) {
+      useUi.getState().updateSqlDraft(workspaceId, {
+        text: "",
+        selection: { from: 0, to: 0 },
+        schema: "",
+        connId,
+        dbKind: dialect,
+      });
+    }
+    draftGenerationRef.current = workspaceId
+      ? useUi.getState().getWorkspaceRuntime(workspaceId)?.generation
+      : undefined;
+    generatedQueryRef.current = null;
+    restoredSchemaRef.current = draft?.schema ?? null;
+    schemaRef.current = draft?.schema ?? "";
+    setSchema(schemaRef.current);
     const view = new EditorView({
       state: EditorState.create({
-        doc: "",
+        doc: draft?.text ?? "",
+        selection: draft
+          ? { anchor: draft.selection.from, head: draft.selection.to }
+          : undefined,
         extensions: [
           basicSetup,
           sqlLang(),
           nxHighlight,
           EditorView.contentAttributes.of({ "aria-label": "SQL 编辑器" }),
-          placeholder("输入 SQL"),
+          placeholder("输入 SQL；草稿仅保留到当前工作区关闭或应用退出"),
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged && !update.selectionSet) return;
+            if (
+              update.docChanged &&
+              update.state.doc.toString() !== generatedQueryRef.current
+            ) {
+              generatedQueryRef.current = null;
+            }
+            persistDraft(update.state);
+          }),
         ],
       }),
       parent: hostRef.current,
@@ -141,48 +352,176 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
     viewRef.current = view;
     return () => {
       view.destroy();
-      viewRef.current = null;
+      if (viewRef.current === view) viewRef.current = null;
     };
-  }, []);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) persistDraft(view.state);
+  }, [connId, dialect, workspaceId]);
 
   const run = async () => {
     const view = viewRef.current;
-    if (!view) return;
+    if (!view || activeRunsRef.current.has(connId)) return;
+    const runSeq = ++runSeqRef.current;
+    activeRunsRef.current.set(connId, runSeq);
     const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
     const text = sel.trim() || view.state.doc.toString();
+    const targetWorkspaceId = workspaceId;
+    const generation = draftGenerationRef.current;
+    const problemContext = problemGeneration();
+    const targetSchema = schemaRef.current;
+    const target = captureTarget();
+    const startedAt = Date.now();
     const request = ++contentRequestRef.current;
-    const runSeq = ++runSeqRef.current;
-    setRunning(true);
+    const finish = (
+      outcome: SqlExecutionOutcome,
+      endedAt: number,
+      durationMs: number,
+      rowsAffected: number | null,
+      error: string | null,
+    ) => {
+      if (!targetWorkspaceId || generation === undefined) return;
+      useUi.getState().recordSqlExecution(targetWorkspaceId, {
+        generation,
+        target,
+        sql: text,
+        schema: targetSchema,
+        startedAt,
+        endedAt,
+        durationMs,
+        rowsAffected,
+        error,
+        outcome,
+      });
+      if (outcome !== "success" && error !== null) {
+        recordProblem(problemContext, {
+          createdAt: endedAt,
+          source: "sql-query",
+          operation: "执行 SQL",
+          target: {
+            ...target,
+            identity: `${target.title} · ${target.connId}`,
+            kind: target.dbKind,
+            schema: targetSchema,
+          },
+          summary: error,
+          detail: error,
+          canRetryRead: false,
+          sql: text,
+          outcome,
+        });
+      }
+    };
+    setRunningToken({ connId, seq: runSeq });
     setStructure(null);
+    setUnknownResult(null);
+    setTransportError(null);
     try {
       const nextResult = await dbApi.query(connId, text);
+      const endedAt = Date.now();
+      const resultError = nextResult.error || null;
+      const unknown = resultError !== null && isUnknownSqlExecutionError(resultError);
+      const outcome: SqlExecutionOutcome =
+        resultError === null ? "success" : unknown ? "unknown" : "error";
+      finish(
+        outcome,
+        endedAt,
+        nextResult.durationMs,
+        unknown ? null : nextResult.rowsAffected,
+        resultError === null ? null : unknown ? unknownSqlResultText(resultError) : resultError,
+      );
       if (contentRequestRef.current !== request) return;
-      setResult(nextResult);
-      if (!nextResult.error && schemaRef.current) await loadTables(schemaRef.current);
+      if (unknown) {
+        setResult(null);
+        setUnknownResult(unknownSqlResultText(resultError));
+      } else {
+        setResult(nextResult);
+        if (resultError === null && schemaRef.current) await loadTables(schemaRef.current);
+      }
     } catch (e) {
-      if (contentRequestRef.current === request) pushToast("error", describeError(e));
+      const endedAt = Date.now();
+      const unknown = isUnknownSqlExecutionError(e);
+      const message = unknown ? unknownSqlResultText(e) : describeError(e);
+      finish(
+        unknown ? "unknown" : "error",
+        endedAt,
+        Math.max(0, endedAt - startedAt),
+        null,
+        message,
+      );
+      if (contentRequestRef.current === request) {
+        if (unknown) {
+          setResult(null);
+          setTransportError(null);
+          setUnknownResult(message);
+        } else {
+          setTransportError(message);
+        }
+        pushToast("error", message);
+      }
     } finally {
-      if (runSeq === runSeqRef.current) setRunning(false);
+      if (activeRunsRef.current.get(connId) === runSeq) {
+        activeRunsRef.current.delete(connId);
+        if (aliveRef.current) {
+          setRunningToken((current) =>
+            current?.connId === connId && current.seq === runSeq ? null : current,
+          );
+        }
+      }
     }
   };
 
-  const fillQuery = (t: string) => {
+  const replaceDraft = async (sql: string, generated: boolean, incomplete = false): Promise<boolean> => {
     const view = viewRef.current;
-    if (!view) return;
+    if (!view) return false;
+    const current = view.state.doc.toString();
+    const replacing = current.trim() !== "" && current !== generatedQueryRef.current;
+    if (incomplete || replacing) {
+      const replace = await ask(
+        incomplete
+          ? `此历史 SQL 已截断，载入的只是不完整副本，不是原始完整 SQL。${
+              replacing ? "\n\n当前 SQL 草稿也会被覆盖。" : ""
+            }\n\n取消：保留当前草稿\n确定：载入不完整副本`
+          : "当前 SQL 草稿会被覆盖。\n\n取消：保留草稿并取消\n确定：替换查询",
+        { title: incomplete ? "载入不完整 SQL 副本？" : "替换 SQL 草稿？", kind: "warning" },
+      );
+      if (
+        !replace ||
+        viewRef.current !== view ||
+        view.state.doc.toString() !== current ||
+        connIdRef.current !== connId ||
+        dialectRef.current !== dialect ||
+        schemaRef.current !== schema
+      ) {
+        return false;
+      }
+    }
+    generatedQueryRef.current = generated ? sql : null;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: sql } });
+    view.focus();
+    return true;
+  };
+
+  const fillQuery = async (t: string) => {
     const quote = dialect === "postgres" ? '"' : "`";
     const table = [schema, t]
       .map((part) => `${quote}${part.replaceAll(quote, quote + quote)}${quote}`)
       .join(".");
-    const sql = `SELECT * FROM ${table} LIMIT 200;`;
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: sql } });
-    view.focus();
+    await replaceDraft(`SELECT * FROM ${table} LIMIT 200;`, true);
+  };
+
+  const loadProblemSql = async (problem: WorkspaceProblem) => {
+    if (problem.sql === undefined) return;
+    if (await replaceDraft(problem.sql, false, problem.sqlTruncated)) setProblemsOpen(false);
   };
 
   const showColumns = async (t: string) => {
     const request = ++contentRequestRef.current;
-    runSeqRef.current += 1;
-    setRunning(false);
     setActiveTable(t);
+    setUnknownResult(null);
+    setTransportError(null);
     try {
       const description = await dbApi.columns(connId, t, schema);
       if (contentRequestRef.current !== request) return;
@@ -199,6 +538,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
     : tables;
   const visibleTables =
     tablesExpanded || normalizedFilter ? filteredTables : filteredTables.slice(0, 60);
+  const showingProblems = problemsOpen && (workspaceProblems?.length ?? 0) > 0;
 
   return (
     <div className="nx-pane">
@@ -222,6 +562,35 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
           {dialect === "postgres" ? "个对象" : "张表"}
         </span>
         <div className="nx-spacer" />
+        {(workspaceProblems?.length ?? 0) > 0 && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            aria-label="打开问题列表"
+            aria-expanded={showingProblems}
+            aria-controls={problemPanelId}
+            onClick={() => {
+              setHistoryOpen(false);
+              setProblemsOpen((open) => !open);
+            }}
+          >
+            问题
+          </button>
+        )}
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-sm"
+          aria-expanded={historyOpen}
+          aria-controls={historyPanelId}
+          onClick={() => {
+            setProblemsOpen(false);
+            setHistoryOpen((open) => !open);
+          }}
+          title="查看执行历史；点击记录只载入 SQL 草稿"
+        >
+          <IconHistory size={12} />
+          历史
+        </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
@@ -246,11 +615,46 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
         }}
       />
 
-      <div className="min-h-[48px] flex-1 overflow-auto" role="status">
-        {structure ? (
+      <div
+        id={showingProblems ? problemPanelId : historyPanelId}
+        className="min-h-[48px] flex-1 overflow-auto"
+        role={showingProblems || historyOpen ? "region" : "status"}
+        aria-label={showingProblems ? "本次问题" : historyOpen ? "SQL 执行历史" : undefined}
+      >
+        {showingProblems && workspaceId ? (
+          <WorkspaceProblems
+            workspaceId={workspaceId}
+            onRetryRead={retryProblemRead}
+            onLoadSql={loadProblemSql}
+            targetAvailable={problemTargetAvailable}
+          />
+        ) : historyOpen ? (
+          <SqlExecutionHistory
+            records={executionHistory ?? []}
+            onLoad={(record) => void replaceDraft(record.sql, false, record.sqlTruncated)}
+          />
+        ) : structure ? (
           <StructureView structure={structure} />
+        ) : unknownResult ? (
+          <SqlErrorView
+            label="结果未知"
+            error={unknownResult}
+            onCopy={() => void copyProblemDetail(unknownResult)}
+            onShowProblems={() => setProblemsOpen(true)}
+          />
+        ) : transportError ? (
+          <SqlErrorView
+            label="连接错误"
+            error={transportError}
+            onCopy={() => void copyProblemDetail(transportError)}
+            onShowProblems={() => setProblemsOpen(true)}
+          />
         ) : result ? (
-          <ResultTable result={result} />
+          <ResultTable
+            result={result}
+            onCopyError={(error) => void copyProblemDetail(error)}
+            onShowProblems={() => setProblemsOpen(true)}
+          />
         ) : (
           <div className="nx-empty">按 Ctrl+Enter 运行，一次只执行一条语句</div>
         )}
@@ -336,7 +740,7 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
                   className={`nx-chip shrink-0 font-mono ${
                     activeTable === t && browse === "columns" ? "nx-chip-accent" : ""
                   }`}
-                  onClick={() => (browse === "tables" ? fillQuery(t) : void showColumns(t))}
+                  onClick={() => (browse === "tables" ? void fillQuery(t) : void showColumns(t))}
                   title={browse === "tables" ? `填入 SELECT * FROM ${t}` : `查看 ${t} 的字段`}
                 >
                   {t}
@@ -355,6 +759,80 @@ function SqlView({ connId, dialect }: { connId: string; dialect: "mysql" | "post
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SqlExecutionHistory({
+  records,
+  onLoad,
+}: {
+  records: SqlExecutionRecord[];
+  onLoad: (record: SqlExecutionRecord) => void;
+}) {
+  return (
+    <div>
+      <div className="border-b border-neutral-800/60 px-3 py-2 text-[11px] text-neutral-500">
+        仅保留最近 50 条；工作区关闭或应用退出后清理
+      </div>
+      {records.length === 0 ? (
+        <div className="nx-empty">暂无执行记录</div>
+      ) : (
+        <ul aria-label="执行记录" className="divide-y divide-neutral-800/60">
+          {records.map((record) => {
+            const startedAt = new Date(record.startedAt);
+            const outcomeLabel =
+              record.outcome === "success" ? "成功" : record.outcome === "unknown" ? "结果未知" : "SQL 错误";
+            const outcomeClass =
+              record.outcome === "success"
+                ? "text-green-300"
+                : record.outcome === "unknown"
+                  ? "text-amber-300"
+                  : "text-red-300";
+            return (
+              <li key={record.id}>
+                <button
+                  type="button"
+                  className="flex w-full min-w-0 flex-col gap-1 px-3 py-2 text-left hover:bg-neutral-800/40"
+                  onClick={() => onLoad(record)}
+                  title={
+                    record.sqlTruncated
+                      ? "只载入不完整的 SQL 副本，不会自动执行"
+                      : "只载入 SQL 草稿，不会自动执行"
+                  }
+                >
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-neutral-400">
+                    <time dateTime={startedAt.toISOString()}>{startedAt.toLocaleString()}</time>
+                    <span>
+                      {record.target.title} · {record.target.connId} · {DB_KIND_LABEL[record.target.dbKind]}
+                      {record.target.assetId !== undefined ? ` · ${record.target.assetId}` : ""}
+                    </span>
+                    <span className={outcomeClass}>{outcomeLabel}</span>
+                  </span>
+                  <span className="text-[11px] text-neutral-500">
+                    schema {record.schema || "默认"} · 耗时 {record.durationMs}ms ·{" "}
+                    {record.rowsAffected === null ? "影响行数未知" : `${record.rowsAffected} 行受影响`}
+                  </span>
+                  <span className="w-full truncate font-mono text-xs text-neutral-300" title={record.sql}>
+                    {record.sql}
+                  </span>
+                  {record.sqlTruncated && (
+                    <span className="text-[11px] text-amber-300">SQL 已截断；载入的只是不完整副本</span>
+                  )}
+                  {record.errorTruncated && (
+                    <span className="text-[11px] text-amber-300">错误已截断</span>
+                  )}
+                  {record.error && (
+                    <span className={`max-h-10 overflow-hidden break-all text-xs ${outcomeClass}`}>
+                      {record.error}
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -417,14 +895,54 @@ function StructureView({ structure }: { structure: TableDescribe & { table: stri
   );
 }
 
-function ResultTable({ result }: { result: QueryResult }) {
+function SqlErrorView({
+  label,
+  error,
+  onCopy,
+  onShowProblems,
+}: {
+  label: string;
+  error: string;
+  onCopy: () => void;
+  onShowProblems: () => void;
+}) {
+  const unknown = label === "结果未知";
+  return (
+    <div className={`p-3 font-mono text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
+      <div>
+        <span className={`nx-badge ${unknown ? "" : "nx-badge-red"} mr-2`}>{label}</span>
+        {error}
+      </div>
+      <div className="mt-2 flex items-center gap-2 font-sans">
+        <button type="button" className="nx-link" onClick={onCopy}>
+          复制
+        </button>
+        <button type="button" className="nx-link" onClick={onShowProblems}>
+          查看问题
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ResultTable({
+  result,
+  onCopyError,
+  onShowProblems,
+}: {
+  result: QueryResult;
+  onCopyError: (error: string) => void;
+  onShowProblems: () => void;
+}) {
   const { pushToast } = useUi();
   if (result.error) {
     return (
-      <div className="p-3 font-mono text-xs leading-relaxed text-red-300">
-        <span className="nx-badge nx-badge-red mr-2">SQL 错误</span>
-        {result.error}
-      </div>
+      <SqlErrorView
+        label="SQL 错误"
+        error={result.error}
+        onCopy={() => onCopyError(result.error as string)}
+        onShowProblems={onShowProblems}
+      />
     );
   }
   if (!result.columns.length) {

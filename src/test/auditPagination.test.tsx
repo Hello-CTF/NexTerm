@@ -83,15 +83,15 @@ afterEach(() => {
 });
 
 describe("AuditView pagination", () => {
-  it("shows the global scope badge in the toolbar", async () => {
+  it("does not label the tool's UI ownership as global", async () => {
     mocks.auditCount.mockResolvedValue({ total: 0 });
     mocks.auditQuery.mockResolvedValue([]);
     mounted = mount(createElement(AuditView));
     await flush();
-    const badge = mounted.container.querySelector(
-      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
-    );
-    expect(badge?.textContent).toBe("全局");
+    expect(mounted.container.querySelector(".nx-toolbar")?.textContent).toContain("审计日志");
+    expect(
+      mounted.container.querySelector('.nx-toolbar span[title="全局面板：内容不随工作区切换"]'),
+    ).toBeNull();
   });
 
   it("loads the first page and appends by offset until all rows are loaded", async () => {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -73,6 +74,49 @@ func TestFileSystemMetadataAndRecursiveOperations(t *testing.T) {
 	exists, err = filesystem.Exists(ctx, renamed)
 	if err != nil || exists {
 		t.Fatalf("recursive delete left target: %v, %v", exists, err)
+	}
+}
+
+func TestListReturnsAbsoluteRoundTripPaths(t *testing.T) {
+	ctx := context.Background()
+	filesystem := New()
+	root := filepath.Join(t.TempDir(), "root with space ' 中文 (括号)")
+	dir := filepath.Join(root, "child ' 中文 (x)")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "note ' 中文 (1).txt")
+	if err := os.WriteFile(file, []byte("round trip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Dir(root))
+	relativeRoot := filepath.Base(root)
+	absoluteRoot, err := filepath.Abs(relativeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absoluteDir := filepath.Join(absoluteRoot, filepath.Base(dir))
+	absoluteFile := filepath.Join(absoluteDir, filepath.Base(file))
+	entries, err := filesystem.List(ctx, relativeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != filepath.Base(dir) {
+		t.Fatalf("List(root) = %+v", entries)
+	}
+	if !filepath.IsAbs(entries[0].Path) || entries[0].Path != absoluteDir {
+		t.Fatalf("directory entry path = %q, want absolute %q", entries[0].Path, absoluteDir)
+	}
+	entries, err = filesystem.List(ctx, entries[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !filepath.IsAbs(entries[0].Path) || entries[0].Path != absoluteFile {
+		t.Fatalf("List(entry.path) = %+v, want absolute %q", entries, absoluteFile)
+	}
+	content, err := filesystem.ReadFile(ctx, entries[0].Path, 100)
+	if err != nil || string(content) != "round trip" {
+		t.Fatalf("ReadFile(entry.path) = %q, %v", content, err)
 	}
 }
 
@@ -205,6 +249,93 @@ func TestChecksumAndStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileContent(t, path, "z")
+}
+
+func TestRootsWithoutHomePOSIX(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+		t.Skip("requires HOME-based home directory lookup")
+	}
+	t.Setenv("HOME", "")
+	if _, err := os.UserHomeDir(); err == nil {
+		t.Skip("platform provides a default home directory")
+	}
+	got, err := New().Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := base.FileSystemRoots{
+		PathStyle: base.PathStylePOSIX,
+		Roots:     []base.FileRoot{{Path: "/", Label: "/"}},
+		Supported: true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Roots() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRootsWithoutHomeWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("requires Windows")
+	}
+	t.Setenv("USERPROFILE", "")
+	want, err := platformRoots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := New().Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Roots() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRealWindowsSecondVolume(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("requires Windows")
+	}
+	if os.Getenv("NEXTERM_WINDOWS_LOCAL_INTEGRATION") != "1" {
+		t.Skip("opt-in real Windows second-volume test skipped: set NEXTERM_WINDOWS_LOCAL_INTEGRATION=1 and the Windows fixture paths")
+	}
+	secondRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_SECOND_ROOT"))
+	workRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_WORK_ROOT"))
+	if secondRoot == "" || workRoot == "" {
+		t.Fatal("real Windows test requires NEXTERM_WINDOWS_TEST_SECOND_ROOT and NEXTERM_WINDOWS_TEST_WORK_ROOT")
+	}
+	filesystem := New()
+	roots, err := filesystem.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStyleWindows || !roots.Supported {
+		t.Fatalf("Windows roots environment = %+v", roots)
+	}
+	seenSystem, seenSecond := false, false
+	for _, root := range roots.Roots {
+		seenSystem = seenSystem || strings.EqualFold(root.Path, `C:\`)
+		seenSecond = seenSecond || strings.EqualFold(root.Path, secondRoot)
+	}
+	if !seenSystem || !seenSecond {
+		t.Fatalf("Windows roots do not contain C: and %s: %+v", secondRoot, roots.Roots)
+	}
+	root := filepath.Join(workRoot, "local")
+	if err := filesystem.Mkdir(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = filesystem.Delete(context.Background(), root, true) })
+	file := filepath.Join(root, "volume.txt")
+	if err := filesystem.WriteFile(context.Background(), file, []byte("local-second-volume"), false); err != nil {
+		t.Fatal(err)
+	}
+	content, err := filesystem.ReadFile(context.Background(), file, 100)
+	if err != nil || string(content) != "local-second-volume" {
+		t.Fatalf("second-volume ReadFile = %q, %v", content, err)
+	}
+	entries, err := filesystem.List(context.Background(), root)
+	if err != nil || len(entries) != 1 || !strings.EqualFold(entries[0].Path, file) {
+		t.Fatalf("second-volume List = %+v, %v", entries, err)
+	}
 }
 
 func TestHomeExpansion(t *testing.T) {

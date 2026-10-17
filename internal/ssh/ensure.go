@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,46 +37,99 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 	if err != nil {
 		return nil, err
 	}
-	var upload *UploadSource
-	if r.Executable != "" {
-		inspect := r.inspect
-		if inspect == nil {
-			inspect = InspectExecutable
+	for _, binary := range lookupPathBinaries(ctx, host) {
+		if !compatible(ctx, host, binary) {
+			continue
 		}
-		source, err := inspect(r.Executable)
-		if err != nil {
-			return nil, err
-		}
-		upload = &source
-		if len(upload.Digest) >= 12 {
-			cached := binDir + "/nexterm-" + upload.Digest[:12]
-			if exists, err := host.Exists(ctx, cached); err == nil && exists && compatible(ctx, host, cached) {
-				if daemon, err := r.startOrConnect(ctx, host, cached, stateDir, digest); err == nil {
-					return daemon, nil
-				} else if daemonRefusal(err) {
-					return nil, err
-				}
-			}
-		}
-	}
-	if binary := lookupPathBinary(ctx, host); binary != "" && compatible(ctx, host, binary) {
 		if daemon, err := r.startOrConnect(ctx, host, binary, stateDir, digest); err == nil {
 			return daemon, nil
 		} else if daemonRefusal(err) {
 			return nil, err
 		}
 	}
+	upload, standalone, sourceErr := r.uploadSource(info)
+	if sourceErr != nil && !r.DisableAutoInstall {
+		return nil, sourceErr
+	}
 	if upload == nil {
-		return nil, fmt.Errorf("%w: no supervisor-capable binary on the target and uploads are disabled", durable.ErrUnavailable)
+		if r.DisableAutoInstall {
+			return nil, fmt.Errorf("%w: no compatible helper is installed and automatic helper installation is disabled", durable.ErrUnavailable)
+		}
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		return nil, fmt.Errorf("%w: no supervisor-capable binary on the target and no helper source is configured", durable.ErrUnavailable)
 	}
-	if err := validateUpload(upload, info); err != nil {
-		return nil, err
+	validationErr := validateUpload(upload, info)
+	if validationErr != nil && !r.DisableAutoInstall {
+		return nil, validationErr
 	}
-	binary, err := r.upload(ctx, host, binDir, upload)
+	if validationErr == nil {
+		cached := uploadPath(binDir, upload, standalone)
+		if exists, err := host.Exists(ctx, cached); err != nil {
+			if !r.DisableAutoInstall {
+				return nil, fmt.Errorf("%w: check cached helper %s: %v", durable.ErrUnavailable, cached, err)
+			}
+		} else if exists {
+			if err := verifyRemoteBinary(ctx, host, cached, upload.Digest); err != nil {
+				if standalone && !r.DisableAutoInstall {
+					return nil, err
+				}
+			} else if daemon, err := r.startOrConnect(ctx, host, cached, stateDir, digest); err == nil {
+				return daemon, nil
+			} else if daemonRefusal(err) {
+				return nil, err
+			}
+		}
+	}
+	if r.DisableAutoInstall {
+		return nil, fmt.Errorf("%w: no compatible helper is installed and automatic helper installation is disabled", durable.ErrUnavailable)
+	}
+	binary, err := r.install(ctx, host, binDir, upload, standalone)
 	if err != nil {
 		return nil, err
 	}
 	return r.startOrConnect(ctx, host, binary, stateDir, digest)
+}
+
+func (r *Resolver) uploadSource(info targetInfo) (*UploadSource, bool, error) {
+	inspect := r.inspect
+	if inspect == nil {
+		inspect = InspectExecutable
+	}
+	if r.HelperExecutable != "" {
+		source, err := inspect(r.HelperExecutable)
+		if err != nil {
+			return nil, true, fmt.Errorf("inspect offline helper %s: %w", r.HelperExecutable, err)
+		}
+		return &source, true, nil
+	}
+	if r.Executable == "" {
+		return nil, false, nil
+	}
+	name := strings.ToLower(filepath.Base(r.Executable))
+	if strings.HasPrefix(name, "nexterm") {
+		candidate := filepath.Join(filepath.Dir(r.Executable), "nexterm-helper-"+info.goos+"-"+info.goarch)
+		source, err := inspect(candidate)
+		if err == nil && filepath.Clean(source.Path) == filepath.Clean(candidate) {
+			return &source, true, nil
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, true, fmt.Errorf("inspect target helper %s: %w", candidate, err)
+		}
+	}
+	source, err := inspect(r.Executable)
+	if err != nil {
+		return nil, false, err
+	}
+	return &source, false, nil
+}
+
+func uploadPath(binDir string, upload *UploadSource, standalone bool) string {
+	if standalone {
+		return binDir + "/nexterm-helper-" + upload.Digest
+	}
+	return binDir + "/nexterm-" + upload.Digest[:12]
 }
 
 func discoverTarget(ctx context.Context, host Host) (targetInfo, error) {
@@ -124,24 +179,41 @@ func nonEmptyLines(output string) []string {
 	return lines
 }
 
-func lookupPathBinary(ctx context.Context, host Host) string {
-	stdout, _, err := host.Run(ctx, "command -v nexterm-server nexterm-desktop nexterm 2>/dev/null; true", probeTimeout)
+func lookupPathBinaries(ctx context.Context, host Host) []string {
+	stdout, _, err := host.Run(ctx, "command -v nexterm-helper nexterm-server nexterm-desktop nexterm 2>/dev/null; true", probeTimeout)
 	if err != nil {
-		return ""
+		return nil
 	}
-	lines := nonEmptyLines(stdout)
-	if len(lines) == 0 {
-		return ""
-	}
-	return lines[0]
+	return nonEmptyLines(stdout)
 }
 
 func compatible(ctx context.Context, host Host, binary string) bool {
-	stdout, exitCode, err := host.Run(ctx, quoteShell(binary)+" "+supervisor.HelperCommand+" --probe", probeTimeout)
-	if err != nil || exitCode != 0 {
-		return false
+	return probeBinary(ctx, host, binary) == nil
+}
+
+func verifyRemoteBinary(ctx context.Context, host Host, binary, expectedDigest string) error {
+	actualDigest, err := host.ChecksumSHA256(ctx, binary)
+	if err != nil {
+		return fmt.Errorf("%w: digest cached helper %s: %v", durable.ErrUnavailable, binary, err)
 	}
-	return strings.TrimSpace(stdout) == strconv.Itoa(supervisor.ProtocolVersion)
+	if !strings.EqualFold(actualDigest, expectedDigest) {
+		return fmt.Errorf("%w: cached helper digest mismatch for %s: expected %s, got %s", durable.ErrUnavailable, binary, expectedDigest, actualDigest)
+	}
+	return probeBinary(ctx, host, binary)
+}
+
+func probeBinary(ctx context.Context, host Host, binary string) error {
+	stdout, exitCode, err := host.Run(ctx, quoteShell(binary)+" "+supervisor.HelperCommand+" --probe", probeTimeout)
+	if err != nil {
+		return fmt.Errorf("%w: execute helper probe %s: %v", durable.ErrUnavailable, binary, err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("%w: helper probe %s exited with %d; check user-directory execute permission and noexec mount policy", durable.ErrUnavailable, binary, exitCode)
+	}
+	if actual := strings.TrimSpace(stdout); actual != strconv.Itoa(supervisor.ProtocolVersion) {
+		return fmt.Errorf("%w: helper probe %s reported protocol %q, want %d", durable.ErrUnavailable, binary, actual, supervisor.ProtocolVersion)
+	}
+	return nil
 }
 
 func (r *Resolver) startOrConnect(ctx context.Context, host Host, binary, stateDir, digest string) (*Daemon, error) {
@@ -206,6 +278,9 @@ func validateUpload(upload *UploadSource, info targetInfo) error {
 	if len(upload.Digest) != 64 {
 		return fmt.Errorf("%w: the local binary digest is malformed", durable.ErrUnavailable)
 	}
+	if _, err := hex.DecodeString(upload.Digest); err != nil {
+		return fmt.Errorf("%w: the local binary digest is malformed: %v", durable.ErrUnavailable, err)
+	}
 	if upload.GOOS != info.goos || upload.GOARCH != info.goarch {
 		return fmt.Errorf("%w: the local binary targets %s/%s but the remote host is %s/%s; install a matching nexterm binary on the target instead", base.ErrUnsupported, upload.GOOS, upload.GOARCH, info.goos, info.goarch)
 	}
@@ -215,42 +290,137 @@ func validateUpload(upload *UploadSource, info targetInfo) error {
 	return nil
 }
 
-func (r *Resolver) upload(ctx context.Context, host Host, binDir string, upload *UploadSource) (string, error) {
-	timeout := r.UploadTimeout
-	if timeout <= 0 {
-		timeout = defaultUploadTimeout
-	}
-	uploadCtx, cancel := context.WithTimeout(ctx, timeout)
+func (r *Resolver) install(ctx context.Context, host Host, binDir string, upload *UploadSource, standalone bool) (target string, retErr error) {
+	uploadCtx, cancel := context.WithTimeout(ctx, r.uploadTimeout())
 	defer cancel()
 	for _, dir := range []string{path.Dir(binDir), binDir} {
 		if err := ensureRemoteDir(uploadCtx, host, dir); err != nil {
 			return "", err
 		}
 	}
-	name := "nexterm-" + upload.Digest[:12]
-	target := binDir + "/" + name
+	target = uploadPath(binDir, upload, standalone)
+	lock := binDir + "/.nexterm-" + upload.Digest + ".install"
+	for {
+		ready, err := cachedBinary(uploadCtx, host, target, upload.Digest)
+		if err != nil {
+			if standalone {
+				return "", err
+			}
+		} else if ready {
+			return target, nil
+		}
+		err = host.Mkdir(uploadCtx, lock)
+		if err == nil {
+			break
+		}
+		exists, existsErr := host.Exists(uploadCtx, lock)
+		if existsErr != nil {
+			return "", fmt.Errorf("%w: inspect helper installation lock %s: %v", durable.ErrUnavailable, lock, existsErr)
+		}
+		if !exists {
+			return "", fmt.Errorf("%w: create helper installation lock %s: %v", durable.ErrUnavailable, lock, err)
+		}
+		select {
+		case <-uploadCtx.Done():
+			return "", fmt.Errorf("%w: wait for concurrent helper installation: %w", durable.ErrUnavailable, context.Cause(uploadCtx))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer cancel()
+		if err := host.Delete(cleanupCtx, lock, true); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			retErr = errors.Join(retErr, fmt.Errorf("%w: remove helper installation lock %s: %v", durable.ErrUnavailable, lock, err))
+		}
+	}()
+	ready, err := cachedBinary(uploadCtx, host, target, upload.Digest)
+	if err != nil {
+		if standalone {
+			return "", err
+		}
+	} else if ready {
+		return target, nil
+	}
+	return uploadStaged(uploadCtx, host, binDir, target, upload, standalone)
+}
+
+func (r *Resolver) uploadTimeout() time.Duration {
+	if r.UploadTimeout > 0 {
+		return r.UploadTimeout
+	}
+	return defaultUploadTimeout
+}
+
+func cachedBinary(ctx context.Context, host Host, target, digest string) (bool, error) {
+	exists, err := host.Exists(ctx, target)
+	if err != nil {
+		return false, fmt.Errorf("%w: check cached helper %s: %v", durable.ErrUnavailable, target, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	if err := verifyRemoteBinary(ctx, host, target, digest); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func uploadStaged(ctx context.Context, host Host, binDir, target string, upload *UploadSource, probe bool) (result string, retErr error) {
+	name := path.Base(target)
 	var nonce [4]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("%w: stage supervisor binary: %v", durable.ErrUnavailable, err)
+		return "", fmt.Errorf("%w: stage helper binary: %v", durable.ErrUnavailable, err)
 	}
 	staging := binDir + "/." + name + "." + hex.EncodeToString(nonce[:]) + ".partial"
-	if _, err := host.Upload(uploadCtx, upload.Path, staging); err != nil {
-		return "", fmt.Errorf("%w: upload supervisor binary: %v", durable.ErrUnavailable, err)
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer cancel()
+		if err := host.Delete(cleanupCtx, staging, false); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			retErr = errors.Join(retErr, fmt.Errorf("%w: remove partial helper upload %s: %v", durable.ErrUnavailable, staging, err))
+		}
+	}()
+	if _, err := host.Upload(ctx, upload.Path, staging); err != nil {
+		return "", fmt.Errorf("%w: upload helper binary: %w", durable.ErrUnavailable, err)
 	}
-	if err := host.Chmod(uploadCtx, staging, 0o700); err != nil {
-		return "", fmt.Errorf("%w: mark uploaded binary executable: %v", durable.ErrUnavailable, err)
+	if err := host.Chmod(ctx, staging, 0o700); err != nil {
+		return "", fmt.Errorf("%w: mark uploaded helper executable: %v", durable.ErrUnavailable, err)
 	}
-	if err := host.Rename(uploadCtx, staging, target); err != nil {
-		return "", fmt.Errorf("%w: commit uploaded binary: %v", durable.ErrUnavailable, err)
-	}
-	digest, err := host.ChecksumSHA256(uploadCtx, target)
+	digest, err := host.ChecksumSHA256(ctx, staging)
 	if err != nil {
-		return "", fmt.Errorf("%w: digest uploaded binary: %v", durable.ErrUnavailable, err)
+		return "", fmt.Errorf("%w: digest staged helper %s: %v", durable.ErrUnavailable, staging, err)
 	}
-	if digest != upload.Digest {
-		return "", fmt.Errorf("%w: uploaded binary digest mismatch", durable.ErrUnavailable)
+	if !strings.EqualFold(digest, upload.Digest) {
+		return "", fmt.Errorf("%w: uploaded helper digest mismatch: expected %s, got %s", durable.ErrUnavailable, upload.Digest, digest)
+	}
+	if probe {
+		if err := probeBinary(ctx, host, staging); err != nil {
+			return "", err
+		}
+	}
+	if err := host.Rename(ctx, staging, target); err != nil {
+		return "", fmt.Errorf("%w: commit uploaded helper: %v", durable.ErrUnavailable, err)
+	}
+	committed = true
+	digest, err = host.ChecksumSHA256(ctx, target)
+	if err != nil {
+		return "", fmt.Errorf("%w: digest installed helper %s: %v", durable.ErrUnavailable, target, err)
+	}
+	if !strings.EqualFold(digest, upload.Digest) {
+		return "", fmt.Errorf("%w: installed helper digest mismatch: expected %s, got %s", durable.ErrUnavailable, upload.Digest, digest)
 	}
 	return target, nil
+}
+
+func (h *clientHost) Delete(ctx context.Context, path string, directory bool) error {
+	filesystem, err := h.filesystem(ctx)
+	if err != nil {
+		return err
+	}
+	return filesystem.Delete(ctx, path, directory)
 }
 
 func ensureRemoteDir(ctx context.Context, host Host, dir string) error {

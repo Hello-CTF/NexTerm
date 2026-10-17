@@ -415,7 +415,7 @@ func TestSSHImportConflictKeySkippedUnbinds(t *testing.T) {
 
 	body := `{"args":{"source":"ssh-config","path":` + strconvQuote(configPath) + `,` +
 		`"hosts":[{"id":"` + hostID + `","action":"import"}],` +
-		`"keys":[{"id":"` + key.ID + `","action":"skip"}]}}`
+		`"keys":[{"id":` + strconvQuote(key.ID) + `,"action":"skip"}]}}`
 	result, response := sshImportApply(t, dispatcher, body)
 	if !response.OK {
 		t.Fatalf("apply failed: %+v", response.Error)
@@ -1408,6 +1408,7 @@ func TestSSHImportHomeApplyRequiresUnlockedVault(t *testing.T) {
 func TestSSHImportServerAssemblyRestrictsPathsToSSHHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		t.Fatal(err)

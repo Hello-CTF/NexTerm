@@ -218,3 +218,169 @@ func startServerEcho(t *testing.T) string {
 	}()
 	return listener.Addr().String()
 }
+
+type serverAccountForwardTransport struct {
+	dialer     *serverEchoDialer
+	generation uint64
+}
+
+func (t *serverAccountForwardTransport) Kind() string       { return session.KindSSH }
+func (t *serverAccountForwardTransport) Generation() uint64 { return t.generation }
+func (t *serverAccountForwardTransport) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+	return base.ExecResult{}, nil
+}
+func (t *serverAccountForwardTransport) Ping(context.Context) (time.Duration, error) {
+	return 0, nil
+}
+func (t *serverAccountForwardTransport) IsAlive() bool { return true }
+func (t *serverAccountForwardTransport) Close() error  { return nil }
+func (t *serverAccountForwardTransport) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return t.dialer.DialContext(ctx, network, address)
+}
+
+func TestForwardAccountOwnershipThroughRealHTTP(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	upstream := startServerEcho(t)
+	_, portText, err := net.SplitHostPort(upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager(session.Config{
+		Connector: session.ConnectorFunc(func(_ context.Context, _ session.Asset, generation uint64) (base.Transport, error) {
+			return &serverAccountForwardTransport{dialer: &serverEchoDialer{upstream: upstream}, generation: generation}, nil
+		}),
+		IdleTimeout: -1,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	forwardService := forward.NewService(forward.Config{
+		Provider: manager, Policy: forward.Policy{Desktop: true}, Reconnect: forward.ReconnectPolicy{Attempts: 1},
+	})
+	t.Cleanup(func() { _ = forwardService.Close() })
+	if err := forwardService.RegisterCommands(fixture.server.dispatcher); err != nil {
+		t.Fatal(err)
+	}
+
+	aliceID, err := fixture.accounts.CreateUser(context.Background(), "alice", "", "password-alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobID, err := fixture.accounts.CreateUser(context.Background(), "bob", "", "password-bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := fixture.login(t, "alice", "password-alice")
+	bob := fixture.login(t, "bob", "password-bob")
+	aliceSession, err := manager.Connect(ipc.WithUserID(context.Background(), aliceID.ID), session.Asset{ID: "alice-forward", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobSession, err := manager.Connect(ipc.WithUserID(context.Background(), bobID.ID), session.Asset{ID: "bob-forward", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rpc := func(actor *accountTestSession, command string, input any) accountCall {
+		t.Helper()
+		return fixture.call(t, http.MethodPost, "/rpc", map[string]any{"cmd": command, "args": input}, actor, actor.csrf, nil)
+	}
+	errorCode := func(call accountCall) ipc.Code {
+		body, _ := call.body["error"].(map[string]any)
+		code, _ := body["code"].(string)
+		return ipc.Code(code)
+	}
+	decodeSpec := func(call accountCall) forward.Spec {
+		t.Helper()
+		encoded, err := json.Marshal(call.body["data"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var spec forward.Spec
+		if err := json.Unmarshal(encoded, &spec); err != nil {
+			t.Fatal(err)
+		}
+		return spec
+	}
+	decodeSpecs := func(call accountCall) []forward.Spec {
+		t.Helper()
+		encoded, err := json.Marshal(call.body["data"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var specs []forward.Spec
+		if err := json.Unmarshal(encoded, &specs); err != nil {
+			t.Fatal(err)
+		}
+		return specs
+	}
+	createArgs := func(sessionID string) forward.CreateLocalArgs {
+		return forward.CreateLocalArgs{SessionID: sessionID, TargetHost: "127.0.0.1", TargetPort: uint16(port)}
+	}
+
+	call := rpc(alice, "forward_create", createArgs(aliceSession.ID))
+	if call.status != http.StatusOK || call.body["ok"] != true {
+		t.Fatalf("owner create = %d %v", call.status, call.body)
+	}
+	aliceSpec := decodeSpec(call)
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(aliceSpec.ListenPort))), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Write([]byte("owner-echo")); err != nil {
+		t.Fatal(err)
+	}
+	echo := make([]byte, len("owner-echo"))
+	if _, err := io.ReadFull(connection, echo); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	if string(echo) != "owner-echo" {
+		t.Fatalf("owner echo = %q", echo)
+	}
+
+	call = rpc(bob, "forward_create", createArgs(aliceSession.ID))
+	if call.body["ok"] != false || errorCode(call) != ipc.CodeForbidden {
+		t.Errorf("cross-account create = %v, want forbidden", call.body)
+		if call.body["ok"] == true {
+			_ = forwardService.Remove(decodeSpec(call).ID)
+		}
+	}
+	call = rpc(bob, "forward_create", createArgs(bobSession.ID))
+	if call.status != http.StatusOK || call.body["ok"] != true {
+		t.Fatalf("second owner create = %d %v", call.status, call.body)
+	}
+	bobSpec := decodeSpec(call)
+
+	if listed := decodeSpecs(rpc(alice, "forward_list", struct{}{})); len(listed) != 1 || listed[0].ID != aliceSpec.ID {
+		t.Errorf("alice list = %+v, want only %s", listed, aliceSpec.ID)
+	}
+	if listed := decodeSpecs(rpc(bob, "forward_list", struct{}{})); len(listed) != 1 || listed[0].ID != bobSpec.ID {
+		t.Errorf("bob list = %+v, want only %s", listed, bobSpec.ID)
+	}
+
+	removedByBob := false
+	call = rpc(bob, "forward_remove", map[string]string{"id": aliceSpec.ID})
+	if call.body["ok"] != false || errorCode(call) != ipc.CodeForbidden {
+		t.Errorf("cross-account remove = %v, want forbidden", call.body)
+		removedByBob = call.body["ok"] == true
+	}
+	if removedByBob {
+		call = rpc(alice, "forward_create", createArgs(aliceSession.ID))
+		if call.body["ok"] != true {
+			t.Fatalf("recreate after cross-account removal = %v", call.body)
+		}
+		aliceSpec = decodeSpec(call)
+	}
+	if call = rpc(alice, "forward_remove", map[string]string{"id": aliceSpec.ID}); call.body["ok"] != true {
+		t.Errorf("owner remove = %v", call.body)
+	}
+	if call = rpc(bob, "forward_remove", map[string]string{"id": bobSpec.ID}); call.body["ok"] != true {
+		t.Errorf("second owner remove = %v", call.body)
+	}
+}

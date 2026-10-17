@@ -61,6 +61,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     sessionApi: {},
   };
 });
+vi.mock("../../features/ai/runOwnership", () => ({
+  aiTabBusyIds: new Set<string>(),
+  aiTabRunControls: new Map<string, () => Promise<boolean>>(),
+  confirmAiRunCancellation: vi.fn(),
+  runningAiTabs: vi.fn(() => []),
+  clearAiTabRuns: vi.fn(),
+}));
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
   return {
@@ -77,7 +84,8 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-import { useUi } from "../../app/store";
+import { openFileTab, useUi, type AppTab } from "../../app/store";
+import { setWindowsPlatform } from "../../app/platform";
 import type { FileEntryDto } from "../../ipc/types";
 import { FileBrowser } from "../../features/files/FileBrowser";
 
@@ -232,6 +240,54 @@ describe("FileBrowser keyboard accessibility", () => {
       const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
       expect(tabs.some((t) => t.kind === "files" && t.path === "~/a.txt")).toBe(true);
     });
+  });
+
+  it("keeps the editor instance on rename and deduplicates the new normalized locator", async () => {
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            id: "ws",
+            kind: "session",
+            title: "w",
+            sessionId: SID,
+            panes: [{ id: "p", tabs: [], activeTabId: null }],
+            activePaneId: "p",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws",
+      });
+    });
+    const a = itemByName(mounted!.container, "a.txt");
+    act(() => a.focus());
+    keyDown(a, "Enter");
+    await waitFor(() => {
+      const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+      expect(tabs.some((t) => t.kind === "files" && t.path === "~/a.txt")).toBe(true);
+    });
+    const editorId = useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.id;
+
+    mocks.promptText.mockResolvedValue("c.txt");
+    act(() => {
+      a.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
+    expect(useUi.getState().workspaces[0]?.panes[0]).toMatchObject({ activeTabId: editorId });
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]).toMatchObject({
+      id: editorId,
+      path: "~/c.txt",
+      title: "c.txt",
+    });
+
+    act(() => openFileTab(SID, "~\\c.txt"));
+    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.id).toBe(editorId);
   });
 
   it("enters a directory and loads its listing with Enter", async () => {
@@ -394,5 +450,96 @@ describe("useFileOps dialog copy (plain text)", () => {
     expect(message).toContain("~/a.txt");
     expect(message).toContain("新权限会移除所有者的读取或写入权限");
     expect(confirm![1]).toEqual(expect.objectContaining({ kind: "warning" }));
+  });
+});
+
+describe("session filesystem locator semantics", () => {
+  function seedWorkspace(kind: string, tabs: AppTab[] = []): void {
+    act(() => {
+      useUi.setState({
+        sessions: [
+          { id: SID, assetId: null, name: "h", kind, status: "connected", tabs: [], createdAt: 1 },
+        ],
+        workspaces: [
+          {
+            id: "ws",
+            kind: "session",
+            title: "w",
+            sessionId: SID,
+            assetKind: kind,
+            panes: [{ id: "p", tabs, activeTabId: tabs[0]?.id ?? null }],
+            activePaneId: "p",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws",
+      });
+    });
+  }
+
+  function fileTabs(): AppTab[] {
+    return (useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).filter(
+      (tab) => tab.kind === "files",
+    );
+  }
+
+  it("deduplicates WinRM open locators by case without lowercasing the displayed path", () => {
+    seedWorkspace("winrm");
+    act(() => {
+      openFileTab(SID, "C:/Work/Draft.TXT");
+      openFileTab(SID, "c:/work/draft.txt");
+    });
+    expect(fileTabs()).toHaveLength(1);
+    expect(fileTabs()[0]?.path).toBe("c:/work/draft.txt");
+  });
+
+  it("deduplicates local Windows open locators by case", () => {
+    setWindowsPlatform(true);
+    try {
+      seedWorkspace("local");
+      act(() => {
+        openFileTab(SID, "C:/Work/Draft.TXT");
+        openFileTab(SID, "c:/work/draft.txt");
+      });
+      expect(fileTabs()).toHaveLength(1);
+    } finally {
+      setWindowsPlatform(false);
+    }
+  });
+
+  it("keeps POSIX open locators case-sensitive", () => {
+    seedWorkspace("ssh");
+    act(() => {
+      openFileTab(SID, "/tmp/Draft.TXT");
+      openFileTab(SID, "/tmp/draft.txt");
+    });
+    expect(fileTabs()).toHaveLength(2);
+  });
+
+  it("migrates a WinRM locator whose case differs from the rename source", () => {
+    const tab: AppTab = {
+      id: "windows-editor",
+      kind: "files",
+      title: "Draft.TXT",
+      sessionId: SID,
+      path: "C:\\Work\\Draft.TXT",
+      closable: true,
+    };
+    seedWorkspace("winrm", [tab]);
+    act(() => {
+      useUi.getState().migrateFileEditorLocators(
+        SID,
+        "c:/work/draft.txt",
+        "D:/Next/Final.TxT",
+        "file",
+      );
+    });
+    expect(fileTabs()).toHaveLength(1);
+    expect(fileTabs()[0]).toMatchObject({
+      id: tab.id,
+      path: "D:/Next/Final.TxT",
+      title: "Final.TxT",
+    });
   });
 });

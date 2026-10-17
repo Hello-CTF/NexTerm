@@ -107,7 +107,7 @@ func TestSessionManagerReconnectReplacementAndBoundedRetry(t *testing.T) {
 		HandshakeTimeout: time.Second,
 	})
 	t.Cleanup(func() { _ = service.Close() })
-	spec, err := service.CreateLocal(t.Context(), CreateLocalArgs{
+	spec, err := service.CreateLocal(session.WithOpenAccess(t.Context()), CreateLocalArgs{
 		SessionID:  connectedSession.ID,
 		TargetHost: "remote.internal",
 		TargetPort: 22,

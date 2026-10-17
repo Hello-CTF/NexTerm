@@ -6,7 +6,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
-import { clientId, WEB } from "../../ipc/env";
+import { WEB } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
@@ -63,8 +63,10 @@ export interface XtermViewProps {
     subscribers: number;
     viewers: number;
     exited: boolean;
+    retainable?: boolean;
     encoding?: string;
     title?: string;
+    shell?: "powershell" | "cmd" | "posix" | "unknown";
   }) => void;
   canResize?: boolean;
   remoteGrid?: { cols: number; rows: number; revision: number };
@@ -303,6 +305,8 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             encoding: info.encoding,
             title: info.title,
+            shell: info.shell,
+            retainable: info.retainable,
           });
         } else if (props.containerId) {
           if (!dimensions) return;
@@ -319,6 +323,8 @@ export function XtermView(props: XtermViewProps) {
             subscribers: 1,
             viewers: 1,
             exited: false,
+            shell: "unknown",
+            retainable: false,
           });
         } else if (props.winrm) {
           if (!dimensions) return;
@@ -331,16 +337,23 @@ export function XtermView(props: XtermViewProps) {
             subscribers: 1,
             viewers: 1,
             exited: false,
+            shell: "unknown",
+            retainable: false,
           });
         } else {
           if (!dimensions) return;
-          id = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
+          const info = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
+          id = info.tabId;
           onAttachInfoRef.current?.({
-            tabId: id,
-            controller: clientId(),
-            subscribers: 1,
-            viewers: 1,
-            exited: false,
+            tabId: info.tabId,
+            controller: info.controller,
+            subscribers: info.subscribers,
+            viewers: info.viewers,
+            exited: info.exited,
+            encoding: info.encoding,
+            title: info.title,
+            shell: info.shell,
+            retainable: info.retainable,
           });
         }
         if (disposed) {
@@ -391,6 +404,8 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
             encoding: info.encoding,
             title: info.title,
+            shell: info.shell,
+            retainable: info.retainable,
           });
         } catch (e) {
           if (disposed) return;

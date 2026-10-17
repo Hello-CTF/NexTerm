@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -96,8 +97,16 @@ func TestAssetProbeBatchKeepsOriginalCauseInLog(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
+	port := closedTCPPort(t)
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("closed TCP port accepted a connection")
+	}
+	originalCause := err.Error()
+
 	production := newHostKeyTestProduction(t)
-	assetID := createHostKeyTestAsset(t, production, closedTCPPort(t))
+	assetID := createHostKeyTestAsset(t, production, port)
 
 	response := dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":{"assetIds":["`+assetID+`"],"timeoutMs":2000}}`)
 	var batch assetProbeBatchDTO
@@ -112,8 +121,8 @@ func TestAssetProbeBatchKeepsOriginalCauseInLog(t *testing.T) {
 	if !strings.Contains(result.Error, "拒绝连接") {
 		t.Fatalf("probe error = %q, want actionable Chinese message", result.Error)
 	}
-	if output := logs.String(); !strings.Contains(output, "connection refused") || !strings.Contains(output, assetID) {
-		t.Fatalf("original cause missing from probe log: %q", output)
+	if output := logs.String(); !strings.Contains(output, originalCause) || !strings.Contains(output, assetID) {
+		t.Fatalf("original cause %q missing from probe log: %q", originalCause, output)
 	}
 }
 

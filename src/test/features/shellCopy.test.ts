@@ -6,17 +6,19 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoice: vi.fn(),
   closeTab: vi.fn(),
+  sessionList: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice }));
 vi.mock("../../ipc/commands", () => ({
   assetApi: {},
   dbApi: {},
-  sessionApi: {},
+  sessionApi: { list: mocks.sessionList },
   terminalApi: { closeTab: mocks.closeTab },
   vaultApi: {},
 }));
 
 import { modHint, setMacPlatform } from "../../app/platform";
+import { setTerminalCloseAction } from "../../app/preferences";
 import { connectProgressText, connectStageText, sessionStatusText, useUi, type AppTab, type Pane, type Workspace } from "../../app/store";
 import { setFileEditorDirty } from "../../features/files/editorGuards";
 import { describeError } from "../../ui/errorText";
@@ -24,7 +26,7 @@ import type { SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
 
 function terminal(id = "terminal", sessionId = "s"): AppTab {
-  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true };
+  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true, retainable: true };
 }
 
 function sessionInfo(kind: string, id = "s"): SessionInfo {
@@ -162,17 +164,29 @@ describe("closeWorkspace batch close", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ask.mockResolvedValue(true);
+    setTerminalCloseAction("detach");
   });
 
-  it("summarizes close failures in one toast with Chinese diagnostic labels", async () => {
-    const tab = terminal();
+  it("keeps failed terminals and runtime while removing successful tabs", async () => {
+    const succeeded = terminal("succeeded");
+    const failed = terminal("failed");
     useUi.setState({
-      workspaces: [ws([{ id: "p", tabs: [tab], activeTabId: tab.id }])],
+      workspaces: [ws([{ id: "p", tabs: [succeeded, failed], activeTabId: succeeded.id }])],
       activeWorkspaceId: "ws",
       sessions: [sessionInfo("ssh")],
       toasts: [],
     });
-    mocks.closeTab.mockRejectedValue({ code: "not_found", message: "tab not found" });
+    useUi.getState().updateSqlDraft("ws", {
+      text: "SELECT 1",
+      selection: { from: 0, to: 8 },
+      schema: "public",
+      connId: "conn-1",
+      dbKind: "mysql",
+    });
+    useUi.getState().ensureAiBoard("ws");
+    mocks.closeTab.mockImplementation(async (id: string) => {
+      if (id === failed.tabId) throw { code: "not_found", message: "tab not found" };
+    });
 
     await useUi.getState().closeWorkspace("ws");
 
@@ -180,8 +194,12 @@ describe("closeWorkspace batch close", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].kind).toBe("error");
     expect(toasts[0].text).toContain("1 个终端操作失败：资源不存在：tab not found");
-    // Paths other than cancel also send only one: the workspace is still closed, no second "moved to background" toast follows
-    expect(useUi.getState().workspaces).toHaveLength(0);
+    expect(useUi.getState().workspaces).toHaveLength(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([
+      { ...failed, closeError: "资源不存在：tab not found" },
+    ]);
+    expect(useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft?.text).toBe("SELECT 1");
+    expect(useUi.getState().aiBoards["ws"]).toBeDefined();
   });
 
   it("performs no IPC or closes when the summary confirmation is canceled", async () => {

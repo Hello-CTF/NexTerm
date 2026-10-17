@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -81,5 +82,41 @@ func TestCurrentDialerRejectsUnknownUnsupportedAndCanceled(t *testing.T) {
 	cancel()
 	if _, err := manager.CurrentDialer(ctx, session.ID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled resolver error = %v", err)
+	}
+}
+
+func TestTransportEnforcesDeviceSessionOwner(t *testing.T) {
+	manager := NewManager(Config{Connector: newFakeConnector()})
+	t.Cleanup(func() { _ = manager.Close() })
+	alice := ipc.WithUserID(context.Background(), "alice")
+	bob := ipc.WithUserID(context.Background(), "bob")
+
+	owned, err := manager.Connect(alice, Asset{ID: "device/owned", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Transport(bob, owned.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("foreign device transport error = %v, want ErrForbidden", err)
+	}
+	if _, err := manager.Transport(alice, owned.ID); err != nil {
+		t.Fatalf("owner device transport error = %v", err)
+	}
+	if _, err := manager.Transport(context.Background(), owned.ID); err != nil {
+		t.Fatalf("trusted device transport error = %v", err)
+	}
+
+	unowned, err := manager.Connect(context.Background(), Asset{ID: "device/open", Kind: KindDevice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Transport(bob, unowned.ID); err != nil {
+		t.Fatalf("open device transport error = %v", err)
+	}
+	local, err := manager.Connect(alice, Asset{ID: "local", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Transport(bob, local.ID); err != nil {
+		t.Fatalf("non-device transport error = %v", err)
 	}
 }

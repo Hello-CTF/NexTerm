@@ -20,7 +20,6 @@ import { SyncBundleCard } from "./SyncBundleCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { describeError } from "../../ui/errorText";
-import { GlobalScopeBadge } from "../../ui/GlobalScopeBadge";
 import { DESKTOP } from "../../ipc/env";
 import {
   IconArchive,
@@ -354,7 +353,6 @@ export function SettingsView() {
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设置</span>
-        <GlobalScopeBadge />
         <div className="nx-spacer" />
       </div>
 
@@ -478,6 +476,9 @@ export function SettingsView() {
                 "每次关闭前询问：转到后台运行（可在「后台会话」接管）或直接关闭结束进程。弹窗里勾选「以后都按此选择」会记住你的决定。"}
               {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签，不再询问。"}
               {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可在「后台会话」中随时接管。"}
+            </p>
+            <p className="nx-hint mt-1.5">
+              以上策略适用于支持后台的交互终端；本机后台终端仅在宿主应用运行期间保留，不是 durable SSH。
             </p>
           </div>
         </section>

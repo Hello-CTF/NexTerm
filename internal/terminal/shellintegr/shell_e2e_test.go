@@ -150,7 +150,7 @@ func TestWrappedShellsReportCWD(t *testing.T) {
 			if !bytes.Contains(full, []byte("\x1b]7;file://")) {
 				t.Fatalf("wrapper emitted no OSC 7 report, output:\n%s", full)
 			}
-			if got := tracker.CWD(); got != target {
+			if got := tracker.CWD(); filepath.Clean(got) != filepath.Clean(target) {
 				t.Fatalf("CWD() = %q; want %q", got, target)
 			}
 		})

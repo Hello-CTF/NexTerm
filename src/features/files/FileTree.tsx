@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
-import { fsApi, terminalApi } from "../../ipc/commands";
+import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
   ask,
   discardStaged,
@@ -13,9 +13,9 @@ import {
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
 import "../../ui/skeleton.css";
 import {
-  cdCommandFor,
   findWritableTerminal,
   openFileTab,
   openFileTabInSplit,
@@ -30,6 +30,10 @@ import {
   HOME,
   baseName,
   crumbsOf,
+  directoryCommandFor,
+  type DirectoryCommandFailure,
+  fsErrorResource,
+  isRoot,
   joinPath,
   norm,
   normalizeTypedPath,
@@ -49,6 +53,7 @@ import {
   IconChevronRight,
   IconClose,
   IconDownload,
+  IconDrive,
   IconEdit,
   IconEye,
   IconFilePlus,
@@ -94,11 +99,8 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
-  const homeSupported = sessionKind !== "winrm";
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
-  const [root, setRoot] = useState(() =>
-    useUi.getState().sessions.find((s) => s.id === sessionId)?.kind === "winrm" ? "/" : HOME,
-  );
+  const [rootChoice, setRoot] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -107,7 +109,24 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const crumbRef = useRef<HTMLDivElement>(null);
   const fileOps = useFileOps(sessionId);
   const coarse = useCoarsePointer();
-  const follow = useCwdFollow(sessionId, root, (next) => {
+  const rootsQuery = useQuery({
+    queryKey: ["fsRoots", sessionId],
+    queryFn: () => fsApi.roots(sessionId),
+    enabled: typeof fsApi.roots === "function",
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const rootsData = rootsQuery.data;
+  const pathStyle = rootsData?.pathStyle ?? "unknown";
+  const windowsComputer = rootsData?.supported === true && pathStyle === "windows";
+  const environmentSettled =
+    typeof fsApi.roots !== "function" || rootsQuery.isSuccess || rootsQuery.isError;
+  const rootsSessionGone = fsErrorResource(rootsQuery.error) === "session";
+  const root = rootChoice ?? (windowsComputer ? null : sessionKind === "winrm" ? "/" : HOME);
+  const computer = root === null && windowsComputer;
+  const homeTarget = rootsData?.homePath ?? HOME;
+  const homeSupported = sessionKind !== "winrm" || rootsData?.homePath != null;
+  const follow = useCwdFollow(sessionId, root ?? "\u0000", (next) => {
     setExpanded([]);
     setSelected(null);
     setRoot(next);
@@ -119,11 +138,11 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   }, [root, editing]);
 
   useEffect(() => {
-    if (sessionKind !== "winrm" || root !== HOME) return;
+    if (sessionKind !== "winrm" || root !== HOME || windowsComputer) return;
     setExpanded([]);
     setSelected(null);
     setRoot("/");
-  }, [sessionKind, root]);
+  }, [sessionKind, root, windowsComputer]);
 
   useEffect(
     () =>
@@ -135,23 +154,32 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   );
 
   const beginEdit = () => {
-    setDraft(root);
+    setDraft(root ?? "");
     setEditing(true);
   };
 
   const commitEdit = () => {
+    const next = normalizeTypedPath(draft, pathStyle);
+    if (!next) {
+      if (draft.trim()) {
+        pushToast("error", "Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）");
+      }
+      setEditing(false);
+      return;
+    }
     setEditing(false);
-    const next = normalizeTypedPath(draft);
-    if (!next || next === root) return;
+    if (next === root) return;
     setExpanded([]);
     setSelected(null);
     setRoot(next);
   };
 
-  const dirs = useMemo(
-    () => [root, ...expanded.filter((d) => d !== root)],
-    [root, expanded],
-  );
+  const dirs = useMemo(() => {
+    if (!environmentSettled || rootsSessionGone) return [];
+    if (computer) return expanded;
+    if (!root) return [];
+    return [root, ...expanded.filter((d) => d !== root)];
+  }, [computer, environmentSettled, expanded, root, rootsSessionGone]);
 
   const results = useQueries({
     queries: dirs.map((dir) => ({
@@ -172,22 +200,27 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   }, [dirs, results]);
 
   const dirErrors = useMemo(() => {
-    const map = new Map<string, { message: string; gone: boolean }>();
+    const map = new Map<string, { message: string; gone: boolean; legacy: boolean }>();
     dirs.forEach((dir, i) => {
       const err = results[i]?.error;
       if (err) {
+        const resource = fsErrorResource(err);
         map.set(dir, {
           message: describeError(err),
-          gone: (err as { code?: string } | null)?.code === "not_found",
+          gone: resource === "session",
+          legacy: resource === null && (err as { code?: string }).code === "not_found",
         });
       }
     });
     return map;
   }, [dirs, results]);
 
-  const sessionGone = results.some(
-    (r) => (r.error as { code?: string } | null)?.code === "not_found",
-  );
+  const sessionGone =
+    rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
+  const legacyRootsNotFound =
+    rootsQuery.isError &&
+    fsErrorResource(rootsQuery.error) === null &&
+    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -205,7 +238,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         return;
       }
       const list = useUi.getState().sessions;
-      useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
+      useUi.getState().setSessions([
+        ...list.filter((x) => x.id !== sessionId && x.id !== s.id),
+        s,
+      ]);
       useUi.getState().updateWorkspaceSession(ws.id, s.id);
       pushToast("info", "已重新连接，正在重新加载文件列表");
     } catch (e) {
@@ -230,8 +266,9 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     const out: {
       entry?: FileEntryDto;
       depth: number;
-      error?: { message: string; gone: boolean };
+      error?: { message: string; gone: boolean; legacy: boolean };
       dir: string;
+      rootEntry?: boolean;
     }[] = [];
     const walk = (dir: string, depth: number) => {
       for (const entry of dirMap.get(dir) ?? []) {
@@ -243,9 +280,27 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       const err = dirErrors.get(dir);
       if (err) out.push({ depth, error: err, dir });
     };
-    walk(root, 0);
+    if (computer) {
+      for (const realRoot of rootsData?.roots ?? []) {
+        const entry: FileEntryDto = {
+          name: realRoot.label || realRoot.path,
+          path: realRoot.path,
+          kind: "dir",
+          size: 0,
+          mode: "",
+          owner: null,
+          group: null,
+          mtime: 0,
+          symlinkTarget: null,
+        };
+        out.push({ entry, depth: 0, dir: realRoot.path, rootEntry: true });
+        if (expanded.includes(realRoot.path)) walk(realRoot.path, 1);
+      }
+    } else if (root) {
+      walk(root, 0);
+    }
     return out;
-  }, [dirMap, root, expanded, dirErrors]);
+  }, [computer, dirMap, root, expanded, dirErrors, rootsData]);
 
   const retryDir = (dir: string) => {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
@@ -261,10 +316,15 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   const selectedEntry = selected ? findEntry(selected) : undefined;
 
-  const navigateRoot = (next: string) => {
+  const navigateRoot = (next: string | null) => {
+    setSelected(null);
+    if (next === null) {
+      setExpanded([]);
+      setRoot(null);
+      return;
+    }
     const normalized = norm(next);
     const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
-    setSelected(null);
     setExpanded((prev) =>
       prev.filter((path) => {
         const candidate = norm(path);
@@ -274,7 +334,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     setRoot(next);
   };
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId] });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["fsRoots", sessionId] });
+    void qc.invalidateQueries({ queryKey: ["fs", sessionId] });
+  };
 
   const toggle = (path: string) =>
     setExpanded((prev) =>
@@ -292,9 +355,9 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
   const targetDir = (): string => {
     if (selectedEntry) {
       if (selectedEntry.kind === "dir") return selectedEntry.path;
-      return parentOf(selectedEntry.path) ?? root;
+      return parentOf(selectedEntry.path) ?? root ?? "";
     }
-    return root;
+    return root ?? "";
   };
 
   const treeDropRef = useRef<HTMLDivElement>(null);
@@ -385,6 +448,10 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     noteHtml5Drop();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? targetDir();
+    if (!dir) {
+      pushToast("info", "请先选择实际目录再上传");
+      return;
+    }
     void dropFolderUpload({
       sessionId,
       dir,
@@ -437,7 +504,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     pushToast("info", "正在解压…");
     try {
       const target = await fsApi.extract(sessionId, archive);
-      const parent = parentOf(target) ?? root;
+      const parent = parentOf(target) ?? root ?? HOME;
       if (parent !== root) {
         setExpanded((prev) => (prev.includes(parent) ? prev : [...prev, parent]));
       }
@@ -449,24 +516,117 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const notifyDirectoryFailure = (dir: string, failure: DirectoryCommandFailure | null) => {
+    const reason =
+      failure === "control"
+        ? "目录包含控制字符"
+        : failure === "unsupported"
+          ? "当前终端 Shell 暂不支持自动切换目录"
+          : "无法确认当前终端 Shell";
+    void copyText(dir)
+      .then(() => {
+        pushToast(
+          failure === "control" ? "error" : "info",
+          `${reason}，未发送命令；路径已复制，请手动切换`,
+        );
+      })
+      .catch((e) => {
+        pushToast(
+          "error",
+          `${reason}，未发送命令；复制路径失败：${describeError(e)}。路径：${dir}`,
+        );
+      });
+  };
+
   const openTerminalAt = (dir: string) => {
     const session = useUi.getState().sessions.find((s) => s.id === sessionId);
     if (!session) {
       pushToast("error", "当前会话已断开，无法打开终端");
       return;
     }
-    void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
+    if (sessionKind !== "winrm") {
+      void openTerminalTab(session, undefined, undefined, { directory: dir });
+      return;
+    }
+    const { command, failure } = directoryCommandFor(dir, "powershell");
+    if (!command) {
+      notifyDirectoryFailure(dir, failure);
+      return;
+    }
+    const previous = new Set(
+      useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .filter((tab) => tab.kind === "terminal" && tab.sessionId === sessionId)
+        .map((tab) => tab.id),
+    );
+    void openTerminalTab(session)
+      .then(() => {
+        const created = useUi
+          .getState()
+          .workspaces.flatMap((workspace) => workspace.panes)
+          .flatMap((pane) => pane.tabs)
+          .find(
+            (tab) =>
+              tab.kind === "terminal" && tab.sessionId === sessionId && !previous.has(tab.id),
+          );
+        if (!created) {
+          pushToast("error", "新终端创建失败，无法切换目录");
+          return;
+        }
+        let finished = false;
+        let unsubscribe = () => {};
+        const execute = () => {
+          if (finished) return;
+          const tab = useUi
+            .getState()
+            .workspaces.flatMap((workspace) => workspace.panes)
+            .flatMap((pane) => pane.tabs)
+            .find((candidate) => candidate.id === created.id);
+          if (!tab?.tabId) return;
+          finished = true;
+          window.clearTimeout(timeout);
+          unsubscribe();
+          void sessionApi
+            .lineExec(tab.tabId, command)
+            .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+        };
+        const timeout = window.setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          unsubscribe();
+          pushToast("error", "新终端尚未就绪，无法切换目录");
+        }, 10000);
+        unsubscribe = useUi.subscribe(execute);
+        execute();
+      })
+      .catch((e) => pushToast("error", `打开终端失败：${describeError(e)}`));
   };
 
   const cdTerminalTo = (dir: string) => {
-    const kernelTabId = findWritableTerminal(sessionId);
-    if (!kernelTabId) {
+    const target = findWritableTerminal(sessionId);
+    if (!target) {
       pushToast("info", "当前工作区没有可用终端，已新建一个");
       openTerminalAt(dir);
       return;
     }
+    const { command, failure } = directoryCommandFor(
+      dir,
+      sessionKind === "winrm" ? "powershell" : target.shell,
+    );
+    if (!command) {
+      notifyDirectoryFailure(dir, failure);
+      return;
+    }
+    if (sessionKind === "winrm") {
+      void sessionApi
+        .lineExec(target.tabId, command)
+        .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+      return;
+    }
     void terminalApi
-      .write(kernelTabId, new TextEncoder().encode(`${cdCommandFor(dir)}\n`))
+      .write(target.tabId, new TextEncoder().encode(`${command}\n`))
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
@@ -483,15 +643,35 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     };
     setSelected((cur) => (cur ? remap(cur) : cur));
     setExpanded((prev) => prev.map(remap));
-    if (norm(root) === fromN || norm(root).startsWith(`${fromN}/`)) setRoot(remap(root));
+    if (root && (norm(root) === fromN || norm(root).startsWith(`${fromN}/`))) {
+      setRoot(remap(root));
+    }
   };
 
   const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
-  const openRowMenuAt = (entry: FileEntryDto, listKey: string, x: number, y: number) => {
+  const openRowMenuAt = (
+    entry: FileEntryDto,
+    listKey: string,
+    x: number,
+    y: number,
+    rootEntry = false,
+  ) => {
     setSelected(entry.path);
+    if (rootEntry) {
+      setMenu({
+        x,
+        y,
+        title: entry.path,
+        items: [
+          { kind: "group", label: "磁盘" },
+          { kind: "item", label: "打开此磁盘", onSelect: () => enterDir(entry.path) },
+        ],
+      });
+      return;
+    }
     const isDir = entry.kind === "dir";
-    const dir = isDir ? entry.path : (parentOf(entry.path) ?? root);
+    const dir = isDir ? entry.path : (parentOf(entry.path) ?? root ?? HOME);
     const items: MenuItem[] = [
       { kind: "group", label: "终端" },
       {
@@ -599,14 +779,32 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
     e: ReactMouseEvent<HTMLDivElement>,
     entry: FileEntryDto,
     listKey: string,
+    rootEntry = false,
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    openRowMenuAt(entry, listKey, e.clientX, e.clientY);
+    openRowMenuAt(entry, listKey, e.clientX, e.clientY, rootEntry);
   };
 
   const openBlankMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
+    if (root === null) {
+      setMenu({
+        x: e.clientX,
+        y: e.clientY,
+        title: windowsComputer ? "此电脑" : "文件",
+        items: [
+          { kind: "group", label: windowsComputer ? "此电脑" : "文件" },
+          {
+            kind: "item",
+            label: "刷新",
+            icon: <IconRefresh size={13} />,
+            onSelect: refresh,
+          },
+        ],
+      });
+      return;
+    }
     const gone = sessionGone
       ? { hint: "会话已删除" as const, disabled: true }
       : { hint: undefined, disabled: false };
@@ -658,9 +856,11 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
 
   if (!leftOpen) return null;
 
-  const crumbs = crumbsOf(root);
-  const up = parentOf(root);
-  const loading = dirs.some((_, i) => results[i]?.isLoading);
+  const crumbs = root ? crumbsOf(root) : [];
+  const parent = root ? parentOf(root) : null;
+  const upToComputer = root !== null && parent === null && windowsComputer && isRoot(root);
+  const up = parent ?? (upToComputer ? "此电脑" : null);
+  const loading = !environmentSettled || dirs.some((_, i) => results[i]?.isLoading);
 
   return (
     <aside
@@ -673,18 +873,18 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         </span>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "新建文件"}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "新建文件"}
           aria-label="新建文件"
-          disabled={sessionGone}
+          disabled={sessionGone || computer}
           onClick={() => void newFileIn(targetDir())}
         >
           <IconFilePlus size={14} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "新建目录"}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "新建目录"}
           aria-label="新建目录"
-          disabled={sessionGone}
+          disabled={sessionGone || computer}
           onClick={() => void newDirIn(targetDir())}
         >
           <IconFolderPlus size={14} />
@@ -727,18 +927,18 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "上传到当前目录"}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传到当前目录"}
           aria-label="上传到当前目录"
-          disabled={sessionGone}
+          disabled={sessionGone || computer}
           onClick={() => void uploadTo(targetDir())}
         >
           <IconUpload size={14} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "上传文件夹到当前目录"}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传文件夹到当前目录"}
           aria-label="上传文件夹到当前目录"
-          disabled={sessionGone}
+          disabled={sessionGone || computer}
           onClick={() => void uploadFolderTo(targetDir())}
         >
           <IconFolderPlus size={14} />
@@ -766,10 +966,13 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
       <div className="nx-pathbar">
         <button
           className="nx-tree-caret"
-          title={up ? `上级：${up}` : "已经在根目录"}
-          aria-label={up ? `上级目录 ${up}` : "已经在根目录"}
+          title={up ? `上级：${up}` : computer ? "已经在此电脑" : "已经在根目录"}
+          aria-label={up ? `上级目录 ${up}` : computer ? "已经在此电脑" : "已经在根目录"}
           disabled={!up}
-          onClick={() => up && navigateRoot(up)}
+          onClick={() => {
+            if (parent) navigateRoot(parent);
+            else if (upToComputer) navigateRoot(null);
+          }}
         >
           <IconArrowUp size={12} />
         </button>
@@ -801,21 +1004,37 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
             }}
             title="点空白处可直接输入路径"
           >
-            {crumbs.map((c, i) => (
-              <span key={c.path} className="flex shrink-0 items-center gap-0.5">
-                {i > 0 && crumbs[i - 1].label !== "/" && (
-                  <span className="text-neutral-600">/</span>
-                )}
-                <button
-                  className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
-                  aria-current={i === crumbs.length - 1 ? "location" : undefined}
-                  onClick={() => navigateRoot(c.path)}
-                  title={c.path}
-                >
-                  {c.label}
-                </button>
+            {computer ? (
+              <span className="nx-path-crumb is-current" aria-current="location">
+                此电脑
               </span>
-            ))}
+            ) : (
+              <>
+                {windowsComputer && (
+                  <span className="flex shrink-0 items-center gap-0.5">
+                    <button className="nx-path-crumb" onClick={() => navigateRoot(null)}>
+                      此电脑
+                    </button>
+                    <span className="text-neutral-600">/</span>
+                  </span>
+                )}
+                {crumbs.map((c, i) => (
+                  <span key={c.path} className="flex shrink-0 items-center gap-0.5">
+                    {i > 0 && crumbs[i - 1].label !== "/" && (
+                      <span className="text-neutral-600">/</span>
+                    )}
+                    <button
+                      className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
+                      aria-current={i === crumbs.length - 1 ? "location" : undefined}
+                      onClick={() => navigateRoot(c.path)}
+                      title={c.path}
+                    >
+                      {c.label}
+                    </button>
+                  </span>
+                ))}
+              </>
+            )}
           </div>
         )}
         <button
@@ -830,9 +1049,9 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
           className="nx-tree-caret"
           title={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
           aria-label={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
-          disabled={!homeSupported || root === HOME}
+          disabled={!homeSupported || root === homeTarget}
           onClick={() => {
-            if (homeSupported) navigateRoot(HOME);
+            if (homeSupported) navigateRoot(homeTarget);
           }}
         >
           <IconHome size={12} />
@@ -844,16 +1063,47 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
         aria-label="文件"
         ref={treeDropRef}
         className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
-        data-file-drop-target=""
+        data-file-drop-target={computer ? undefined : ""}
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
+          if (computer || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
         }}
         onDrop={dropUpload}
       >
-        {rows.map(({ entry, depth, error, dir }) => {
+        {rootsQuery.isError && (
+          <div className="mx-1 my-0.5 flex items-start gap-1.5 rounded border border-red-500/30 bg-red-950/30 px-2 py-1.5">
+            <IconXCircle size={12} className="mt-0.5 shrink-0 text-red-300" />
+            <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
+              <div className="break-words">
+                {rootsSessionGone
+                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
+                  : `无法读取磁盘根信息：${describeError(rootsQuery.error)}`}
+              </div>
+              <div className="flex gap-2">
+                {!rootsSessionGone && (
+                  <button
+                    className="nx-link mt-0.5 text-[11px]"
+                    onClick={() => void qc.invalidateQueries({ queryKey: ["fsRoots", sessionId] })}
+                  >
+                    重试
+                  </button>
+                )}
+                {(rootsSessionGone || legacyRootsNotFound) && (
+                  <button
+                    className="nx-link mt-0.5 text-[11px]"
+                    disabled={reconnecting}
+                    onClick={() => void reconnectHost()}
+                  >
+                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {rows.map(({ entry, depth, error, dir, rootEntry }) => {
           if (error) {
             return (
               <div
@@ -868,22 +1118,22 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                       ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
                       : error.message}
                   </div>
-                  {error.gone ? (
-                    <button
-                      className="nx-link mt-0.5 text-[11px]"
-                      disabled={reconnecting}
-                      onClick={() => void reconnectHost()}
-                    >
-                      {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
-                    </button>
-                  ) : (
-                    <button
-                      className="nx-link mt-0.5 text-[11px]"
-                      onClick={() => retryDir(dir)}
-                    >
-                      重试
-                    </button>
-                  )}
+                  <div className="flex gap-2">
+                    {!error.gone && (
+                      <button className="nx-link mt-0.5 text-[11px]" onClick={() => retryDir(dir)}>
+                        重试
+                      </button>
+                    )}
+                    {(error.gone || error.legacy) && (
+                      <button
+                        className="nx-link mt-0.5 text-[11px]"
+                        disabled={reconnecting}
+                        onClick={() => void reconnectHost()}
+                      >
+                        {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -926,7 +1176,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                 if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
                   e.preventDefault();
                   const r = e.currentTarget.getBoundingClientRect();
-                  openRowMenuAt(entry, dir, r.left, r.bottom);
+                  openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
                   return;
                 }
                 if (e.key === "ArrowRight" && isDir && !open) {
@@ -941,7 +1191,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                 }
                 treeRowKeyDown(e);
               }}
-              onContextMenu={(e) => openRowMenu(e, entry, dir)}
+              onContextMenu={(e) => openRowMenu(e, entry, dir, rootEntry)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
               {isDir ? (
@@ -960,7 +1210,11 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
               ) : (
                 <span className="w-[14px] shrink-0" />
               )}
-              <Icon size={13} className={`shrink-0 ${tone}`} />
+              {rootEntry ? (
+                <IconDrive size={13} className={`shrink-0 ${tone}`} />
+              ) : (
+                <Icon size={13} className={`shrink-0 ${tone}`} />
+              )}
               <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
               {coarse ? (
                 <button
@@ -970,7 +1224,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                   onClick={(e) => {
                     e.stopPropagation();
                     const r = e.currentTarget.getBoundingClientRect();
-                    openRowMenuAt(entry, dir, r.left, r.bottom);
+                    openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
                   }}
                   onDoubleClick={(e) => e.stopPropagation()}
                 >
@@ -991,17 +1245,19 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                       <IconDownload size={11} />
                     </button>
                   )}
-                  <button
-                    className="nx-icon-btn nx-icon-btn-sm is-danger"
-                    title="删除"
-                    aria-label={`删除 ${entry.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void remove(entry.path);
-                    }}
-                  >
-                    <IconTrash size={11} />
-                  </button>
+                  {!rootEntry && (
+                    <button
+                      className="nx-icon-btn nx-icon-btn-sm is-danger"
+                      title="删除"
+                      aria-label={`删除 ${entry.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void remove(entry.path);
+                      }}
+                    >
+                      <IconTrash size={11} />
+                    </button>
+                  )}
                   <button
                     className="nx-icon-btn nx-icon-btn-sm"
                     title={`更多操作 ${entry.name}`}
@@ -1009,7 +1265,7 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
                     onClick={(e) => {
                       e.stopPropagation();
                       const r = e.currentTarget.getBoundingClientRect();
-                      openRowMenuAt(entry, dir, r.left, r.bottom);
+                      openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
                     }}
                   >
                     ⋯
@@ -1031,8 +1287,8 @@ function FileTreeInner({ sessionId }: { sessionId: string }) {
             <span className="nx-sr-only">加载中…</span>
           </div>
         )}
-        {!loading && rows.length === 0 && dirErrors.size === 0 && (
-          <div className="nx-hint px-2 py-6 text-center">这个目录是空的</div>
+        {!loading && rows.length === 0 && dirErrors.size === 0 && !rootsQuery.isError && (
+          <div className="nx-hint px-2 py-6 text-center">{computer ? "没有可用磁盘" : "这个目录是空的"}</div>
         )}
       </div>
 

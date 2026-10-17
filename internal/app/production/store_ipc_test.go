@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 	response = dispatchStoreTest(dispatcher, "asset_save_key_file", `{"content":"PRIVATE KEY"}`)
 	var savedFile map[string]string
 	requireStoreTestResponse(t, response, &savedFile)
-	response = dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":"`+savedFile["path"]+`"}`)
+	response = dispatchStoreTest(dispatcher, "asset_read_key_file", `{"path":`+strconvQuote(savedFile["path"])+`}`)
 	var content string
 	requireStoreTestResponse(t, response, &content)
 	if content != "PRIVATE KEY" {
@@ -94,7 +95,7 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %o", info.Mode().Perm())
 	}
 }

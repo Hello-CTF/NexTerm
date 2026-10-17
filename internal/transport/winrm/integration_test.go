@@ -153,7 +153,7 @@ func TestRealWindowsServer(t *testing.T) {
 	t.Run("filesystem", func(t *testing.T) {
 		temp := realExec(t, ctx, transport, "Write-Output $env:TEMP")
 		requireRealSuccess(t, temp)
-		root := fmt.Sprintf(`%s\NexTerm-WinRM-'-%d-%d`, strings.TrimRight(temp.Stdout, `\`), os.Getpid(), time.Now().UnixNano())
+		root := fmt.Sprintf(`%s\NexTerm-WinRM-'-%d-%d`, strings.TrimRight(strings.TrimSpace(temp.Stdout), `\`), os.Getpid(), time.Now().UnixNano())
 		filesystem, err := transport.FileSystem(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -247,7 +247,7 @@ func TestRealWindowsServer(t *testing.T) {
 		processCWD := realExec(t, ctx, transport, "[Console]::Out.Write([Environment]::CurrentDirectory)")
 		requireRealSuccess(t, processCWD)
 		unique := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
-		root := fmt.Sprintf(`%s\NexTerm-WinRM-relative-%s`, strings.TrimRight(temp.Stdout, `\`), unique)
+		root := fmt.Sprintf(`%s\NexTerm-WinRM-relative-%s`, strings.TrimRight(strings.TrimSpace(temp.Stdout), `\`), unique)
 		name := "relative-'" + unique + ".txt"
 		decoy := fmt.Sprintf(`%s\%s`, strings.TrimRight(processCWD.Stdout, `\`), name)
 		filesystem, err := transport.FileSystem(ctx)
@@ -287,4 +287,64 @@ func TestRealWindowsServer(t *testing.T) {
 			t.Fatalf("relative I/O touched the .NET process-cwd file: %q, %v", decoyContent, err)
 		}
 	})
+}
+
+func TestRealWindowsSecondVolume(t *testing.T) {
+	config := integrationConfig(t)
+	secondRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_SECOND_ROOT"))
+	workRoot := strings.TrimSpace(os.Getenv("NEXTERM_WINDOWS_TEST_WORK_ROOT"))
+	if secondRoot == "" || workRoot == "" {
+		t.Fatal("real WinRM test requires NEXTERM_WINDOWS_TEST_SECOND_ROOT and NEXTERM_WINDOWS_TEST_WORK_ROOT")
+	}
+	transport, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	filesystem, err := transport.FileSystem(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := filesystem.(base.RootsProvider)
+	if !ok {
+		t.Fatal("WinRM filesystem does not provide roots")
+	}
+	roots, err := provider.Roots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStyleWindows || !roots.Supported {
+		t.Fatalf("WinRM roots environment = %+v", roots)
+	}
+	seenSystem, seenSecond := false, false
+	for _, root := range roots.Roots {
+		seenSystem = seenSystem || strings.EqualFold(root.Path, `C:\`)
+		seenSecond = seenSecond || strings.EqualFold(root.Path, secondRoot)
+	}
+	if !seenSystem || !seenSecond {
+		t.Fatalf("WinRM roots do not contain C: and %s: %+v", secondRoot, roots.Roots)
+	}
+	root := strings.TrimRight(workRoot, `\/`) + `\winrm`
+	if err := filesystem.Mkdir(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cleanupCancel()
+		_ = filesystem.Delete(cleanupCtx, root, true)
+	})
+	path := root + `\volume.txt`
+	if err := filesystem.WriteFile(ctx, path, []byte("winrm-second-volume"), false); err != nil {
+		t.Fatal(err)
+	}
+	content, err := filesystem.ReadFile(ctx, path, 100)
+	if err != nil || string(content) != "winrm-second-volume" {
+		t.Fatalf("WinRM second-volume ReadFile = %q, %v", content, err)
+	}
+	entries, err := filesystem.List(ctx, root)
+	if err != nil || len(entries) != 1 || !strings.EqualFold(entries[0].Path, path) {
+		t.Fatalf("WinRM second-volume List = %+v, %v", entries, err)
+	}
 }

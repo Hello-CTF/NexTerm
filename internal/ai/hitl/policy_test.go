@@ -390,68 +390,83 @@ func TestRestoreRunningRunWithoutPendingFailsHonestly(t *testing.T) {
 }
 
 func TestExpiryRacingAnswersAndCancelStaysConsistent(t *testing.T) {
-	for iteration := range 30 {
-		t.Run(fmt.Sprintf("iteration-%d", iteration), func(t *testing.T) {
-			store := newFakeCheckpoints()
-			store.put("checkpoint", []byte("checkpoint-one"))
-			manager, err := NewManager(Config{Checkpoints: store, TTL: 10 * time.Millisecond, NewNonce: func() (string, error) { return "nonce", nil }})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = manager.Close() })
-			if _, err := manager.RegisterRun(context.Background(), "run", "checkpoint"); err != nil {
-				t.Fatal(err)
-			}
-			request, err := manager.Interrupt(context.Background(), &adk.InterruptCtx{ID: "target-one"}, InterruptInput{
-				RunID: "run", CheckpointID: "checkpoint", CallID: "call-one", Tool: "exec_commands", Kind: KindConfirm,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			resumer := &fakeResumer{}
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			for range 4 {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					<-start
-					_, _, _ = manager.Resume(context.Background(), resumer, answerFor("answer", request))
-				}()
-			}
-			for range 2 {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					<-start
-					_, _ = manager.Cancel("run")
-				}()
-			}
-			close(start)
-			wg.Wait()
-			if resumer.count() > 1 {
-				t.Fatalf("resume calls = %d", resumer.count())
-			}
-			snapshot, err := manager.Snapshot("run")
-			if err != nil {
-				t.Fatal(err)
-			}
-			events, err := manager.Events("run", 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			terminals := 0
-			for _, event := range events {
-				if event.Kind == EventTerminal {
-					terminals++
-				}
-			}
-			if terminals > 1 {
-				t.Fatalf("terminal events = %d, events = %+v", terminals, events)
-			}
-			if snapshot.Terminal != nil && terminals != 1 {
-				t.Fatalf("snapshot terminal without event: %+v", snapshot)
-			}
-		})
+	store := newFakeCheckpoints()
+	store.put("checkpoint", []byte("checkpoint-one"))
+	clock := newTestClock(time.Unix(1000, 0))
+	manager, err := NewManager(Config{Checkpoints: store, TTL: time.Hour, Now: clock.Now, NewNonce: func() (string, error) { return "nonce", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	if _, err := manager.RegisterRun(context.Background(), "run", "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	request, err := manager.Interrupt(context.Background(), &adk.InterruptCtx{ID: "target-one"}, InterruptInput{
+		RunID: "run", CheckpointID: "checkpoint", CallID: "call-one", Tool: "exec_commands", Kind: KindConfirm,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Hour)
+	resumer := &fakeResumer{}
+	start := make(chan struct{})
+	const answerRacers = 4
+	const cancelRacers = 2
+	var ready sync.WaitGroup
+	ready.Add(answerRacers + cancelRacers + 1)
+	var wg sync.WaitGroup
+	for range answerRacers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ready.Done()
+			<-start
+			_, _, _ = manager.Resume(context.Background(), resumer, answerFor("answer", request))
+		}()
+	}
+	for range cancelRacers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ready.Done()
+			<-start
+			_, _ = manager.Cancel("run")
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ready.Done()
+		<-start
+		manager.expire("run", request.ID)
+	}()
+	ready.Wait()
+	close(start)
+	wg.Wait()
+	if resumer.count() != 0 {
+		t.Fatalf("resume calls = %d", resumer.count())
+	}
+	snapshot, err := manager.Snapshot("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := manager.Events("run", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminals := 0
+	for _, event := range events {
+		if event.Kind == EventTerminal {
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("terminal events = %d, events = %+v", terminals, events)
+	}
+	if snapshot.Terminal == nil {
+		t.Fatalf("terminal event without snapshot terminal: %+v", snapshot)
+	}
+	if snapshot.Terminal.Reason != TerminalExpired && snapshot.Terminal.Reason != TerminalCanceled {
+		t.Fatalf("terminal reason = %q", snapshot.Terminal.Reason)
 	}
 }

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, mount, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mountWithClient, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -38,7 +38,16 @@ vi.mock("@codemirror/state", () => {
       return this.text.length;
     }
   }
+  class Compartment {
+    of(extension: unknown) {
+      return { compartment: this, extension };
+    }
+    reconfigure(extension: unknown) {
+      return { compartment: this, extension };
+    }
+  }
   return {
+    Compartment,
     EditorState: {
       create: ({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
         doc: new Doc(doc),
@@ -71,7 +80,13 @@ vi.mock("@codemirror/view", () => {
       visit(this.state.extensions);
       editors.views.push(this);
     }
-    dispatch({ changes }: { changes: { from: number; to: number; insert: string } }) {
+    dispatch({
+      changes,
+    }: {
+      changes?: { from: number; to: number; insert: string };
+      effects?: unknown;
+    }) {
+      if (!changes) return;
       const current = this.state.doc.toString() as string;
       const next = `${current.slice(0, changes.from)}${changes.insert}${current.slice(changes.to)}`;
       this.state = { ...this.state, doc: { toString: () => next, length: next.length } };
@@ -109,7 +124,7 @@ function originalDoc(): { path: string; size: number; contentBase64: string } {
 }
 
 async function mountEditor(): Promise<MountedView> {
-  const mounted = mount(createElement(FileEditor, { sessionId: "s", path: "/a.txt" }));
+  const mounted = mountWithClient(createElement(FileEditor, { sessionId: "s", path: "/a.txt" }));
   await waitFor(() => expect(editors.views).toHaveLength(1));
   return mounted;
 }
@@ -235,7 +250,7 @@ describe("FileEditor read and save error messages", () => {
   it("uses a full-width colon prefix for open failures and closes the editor", async () => {
     mocks.read.mockRejectedValueOnce(new Error("permission denied"));
     const onClose = vi.fn();
-    mounted = mount(createElement(FileEditor, { sessionId: "s", path: "/a.txt", onClose }));
+    mounted = mountWithClient(createElement(FileEditor, { sessionId: "s", path: "/a.txt", onClose }));
     await waitFor(() =>
       expect(mocks.toast).toHaveBeenCalledWith("error", "打开失败：permission denied"),
     );

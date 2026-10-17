@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1385,7 +1386,7 @@ func isCriticalRoot(value string) bool {
 		return true
 	}
 	if strings.HasPrefix(value, "/") {
-		value = filepath.Clean(value)
+		value = path.Clean(value)
 	}
 	switch value {
 	case "/", "/*", "/~", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/home", "/sbin", "/sys", "/usr", "/var", "/Users", "C:", "c:":
@@ -1401,7 +1402,7 @@ func isCriticalWriteTarget(value string) bool {
 		return false
 	}
 	if strings.HasPrefix(target, "/") {
-		target = filepath.Clean(target)
+		target = path.Clean(target)
 	}
 	for _, prefix := range []string{
 		"/etc/cron", "/var/spool/cron", "/etc/sudoers", "/etc/shadow", "/etc/passwd", "/etc/ssh", "/etc/ld.so.preload",
@@ -1415,7 +1416,7 @@ func isCriticalWriteTarget(value string) bool {
 }
 
 func isBlockDevice(value string) bool {
-	value = filepath.Clean(strings.Trim(value, "'\""))
+	value = path.Clean(strings.Trim(value, "'\""))
 	for _, prefix := range []string{"/dev/sd", "/dev/hd", "/dev/nvme", "/dev/mapper/", "/dev/vd", "/dev/xvd", "/dev/disk", "/dev/rdisk"} {
 		if strings.HasPrefix(value, prefix) {
 			return true

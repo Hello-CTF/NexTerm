@@ -10,6 +10,7 @@ import {
   setInputValue,
   type MountedView,
 } from "./features/reactTestUtils";
+import { VIRTUAL_ITEM_ESTIMATE_PX, VIRTUAL_ITEM_GAP_PX } from "../features/ai/conversationVirtual";
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
@@ -94,15 +95,21 @@ function rect(top: number, height: number): DOMRect {
   } as DOMRect;
 }
 
+const STEP = VIRTUAL_ITEM_ESTIMATE_PX + VIRTUAL_ITEM_GAP_PX;
+const VIEWPORT = 400;
+
 let currentScrollTop = 0;
 let topOf: (index: number) => number = (i) => 200 + i * 150;
 let heightOf: (index: number) => number = (i) => (i === 2 || i === 70 ? 300 : 30);
 
-function stubGeometry(view: MountedView, scrollHeight = Number.MAX_SAFE_INTEGER): HTMLDivElement {
+function stubGeometry(view: MountedView, scrollHeight: number | (() => number) = Number.MAX_SAFE_INTEGER): HTMLDivElement {
   const log = view.container.querySelector<HTMLDivElement>('div[role="log"]');
   if (!log) throw new Error("log container not found");
-  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 400 });
-  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => scrollHeight });
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => VIEWPORT });
+  Object.defineProperty(log, "scrollHeight", {
+    configurable: true,
+    get: () => (typeof scrollHeight === "function" ? scrollHeight() : scrollHeight),
+  });
   Object.defineProperty(log, "scrollTop", {
     configurable: true,
     get: () => currentScrollTop,
@@ -111,6 +118,9 @@ function stubGeometry(view: MountedView, scrollHeight = Number.MAX_SAFE_INTEGER)
       currentScrollTop = Math.min(Math.max(0, value), max);
     },
   });
+  log.scrollTo = (options?: ScrollToOptions | number) => {
+    if (typeof options === "object" && options) log.scrollTop = options.top ?? 0;
+  };
   log.getBoundingClientRect = () => rect(0, 0);
   return log;
 }
@@ -119,9 +129,16 @@ function wrapperOf(view: MountedView, index: number): HTMLElement | null {
   return view.container.querySelector<HTMLElement>(`[data-conversation-index="${index}"]`);
 }
 
+function dispatchScroll(log: HTMLDivElement) {
+  act(() => {
+    log.dispatchEvent(new Event("scroll"));
+  });
+}
+
 describe("AiSidebar search jump", () => {
   let view: MountedView | null = null;
   let rectSpy: MockInstance | null = null;
+  let offsetSpy: MockInstance | null = null;
 
   beforeEach(async () => {
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
@@ -159,6 +176,14 @@ describe("AiSidebar search jump", () => {
         }
         return rect(0, 0);
       });
+    offsetSpy = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        const index = this.getAttribute("data-conversation-index");
+        if (index !== null) return heightOf(Number(index));
+        if (this.getAttribute("role") === "log") return VIEWPORT;
+        return 0;
+      });
     useUi.setState({
       rightOpen: true,
       aiBusy: false,
@@ -182,8 +207,30 @@ describe("AiSidebar search jump", () => {
     view = null;
     rectSpy?.mockRestore();
     rectSpy = null;
+    offsetSpy?.mockRestore();
+    offsetSpy = null;
     vi.unstubAllGlobals();
   });
+
+  function conversationWith(rows: ReturnType<typeof message>[]) {
+    mocks.messages.mockResolvedValue(rows);
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+  }
+
+  async function search(query: string) {
+    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await flush();
+    setInputValue(
+      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
+      query,
+    );
+    await flush();
+  }
+
+  function clickNext() {
+    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+  }
 
   it("centers matches using real geometry: short and tall bubbles never use an index*88 estimate", async () => {
     const text = () => view!.container.textContent ?? "";
@@ -198,15 +245,9 @@ describe("AiSidebar search jump", () => {
     await flushUntil(() => text().includes("delta"));
     const log = stubGeometry(view!);
 
-    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
-    await flush();
-    setInputValue(
-      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
-      "目标短语",
-    );
-    await flush();
+    await search("目标短语");
 
-    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+    clickNext();
     await flush();
     expect(log.scrollTop).toBe(topOf(2) - (400 - heightOf(2)) / 2);
     expect(log.scrollTop).not.toBe(2 * 88);
@@ -219,134 +260,162 @@ describe("AiSidebar search jump", () => {
     expect(wrapperOf(view!, 1)?.className).toContain("ring-amber");
   });
 
-  it("match outside the virtualization window: mount the estimated window first, then correct using the real position", async () => {
+  it("match outside the rendered window: jump centers the virtual index, then the target mounts", async () => {
     const text = () => view!.container.textContent ?? "";
-    const rows = Array.from({ length: 80 }, (_, i) =>
-      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    heightOf = () => VIRTUAL_ITEM_ESTIMATE_PX;
+    topOf = (i) => VIEWPORT + i * STEP;
+    conversationWith(
+      Array.from({ length: 80 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+      ),
     );
-    mocks.messages.mockResolvedValue(rows);
-    view?.unmount();
-    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flushUntil(() => text().includes("词1 回答"));
     const log = stubGeometry(view!);
     expect(wrapperOf(view!, 70)).toBeNull();
 
-    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await search("词70");
+    clickNext();
     await flush();
-    setInputValue(
-      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
-      "词70",
-    );
-    await flush();
-
-    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
-    await flush();
-    expect(log.scrollTop).toBe(70 * 88);
+    const estimated = VIEWPORT + 70 * STEP - (VIEWPORT - VIRTUAL_ITEM_ESTIMATE_PX) / 2;
+    expect(log.scrollTop).toBe(estimated);
+    expect(log.scrollTop).not.toBe(70 * VIRTUAL_ITEM_ESTIMATE_PX);
     expect(wrapperOf(view!, 70)).toBeNull();
 
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
+    dispatchScroll(log);
     await flush();
+    const centered = topOf(70) - (VIEWPORT - heightOf(70)) / 2;
     expect(wrapperOf(view!, 70)).not.toBeNull();
-    const expected = topOf(70) - (400 - heightOf(70)) / 2;
-    expect(log.scrollTop).toBe(expected);
-    expect(log.scrollTop).not.toBe(70 * 88);
     expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+    expect(log.scrollTop).toBe(centered);
 
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
+    dispatchScroll(log);
     await flush();
     expect(wrapperOf(view!, 70)).not.toBeNull();
-    expect(log.scrollTop).toBe(expected);
-    expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+    expect(log.scrollTop).toBe(centered);
   });
 
-  it("reviewer scenario: match row 50 of 100 after six 300px bubbles; the corrected second scroll no longer unmounts the target", async () => {
-    const text = () => view!.container.textContent ?? "";
-    topOf = (i) => (i <= 44 ? i * 88 : 3872 + (i - 44) * 300);
-    heightOf = (i) => (i >= 44 && i <= 49 ? 300 : 30);
-    const rows = Array.from({ length: 100 }, (_, i) =>
-      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
-    );
-    mocks.messages.mockResolvedValue(rows);
+  it("keeps following the real bottom as measured heights replace estimates", async () => {
+    let resolveMessages!: (rows: ReturnType<typeof message>[]) => void;
+    mocks.messages.mockReturnValue(new Promise((resolve) => { resolveMessages = resolve; }));
     view?.unmount();
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    heightOf = (i) => (i % 12 === 2 ? 300 : VIRTUAL_ITEM_ESTIMATE_PX);
+    const log = stubGeometry(view!, () =>
+      24 + [...log.children].reduce((total, child) => {
+        const element = child as HTMLElement;
+        const index = element.getAttribute("data-conversation-index");
+        const height = index === null ? Number.parseFloat(element.style.height) || 0 : heightOf(Number(index));
+        return total + (Number.parseFloat(element.style.marginTop) || 0) + height;
+      }, 0),
+    );
+
+    resolveMessages(Array.from({ length: 100 }, (_, i) =>
+      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i}`),
+    ));
+    await flushUntil(() => view!.container.querySelector("[data-conversation-index]") !== null);
+    dispatchScroll(log);
+    for (let i = 0; i < 8; i++) await flush();
+
+    expect(wrapperOf(view!, 99)).not.toBeNull();
+    expect(log.scrollTop).toBe(log.scrollHeight - VIEWPORT);
+  });
+
+  it("centers a virtual match again with real container geometry after it mounts", async () => {
+    const text = () => view!.container.textContent ?? "";
+    heightOf = () => VIRTUAL_ITEM_ESTIMATE_PX;
+    topOf = (i) => VIEWPORT + 12 + i * STEP;
+    conversationWith(
+      Array.from({ length: 80 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+      ),
+    );
     await flushUntil(() => text().includes("词1 回答"));
     const log = stubGeometry(view!);
+    const estimated = VIEWPORT + 70 * STEP - (VIEWPORT - VIRTUAL_ITEM_ESTIMATE_PX) / 2;
 
-    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await search("词70");
+    clickNext();
     await flush();
-    setInputValue(
-      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
-      "词50",
+    expect(log.scrollTop).toBe(estimated);
+
+    dispatchScroll(log);
+    await flush();
+    expect(wrapperOf(view!, 70)).not.toBeNull();
+    expect(log.scrollTop).toBe(estimated + 12);
+
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(estimated + 12);
+  });
+
+  it("tall bubbles ahead of the match: the window corrects to measured heights and does not rebound", async () => {
+    const text = () => view!.container.textContent ?? "";
+    heightOf = (i) => (i >= 44 && i <= 49 ? 300 : VIRTUAL_ITEM_ESTIMATE_PX);
+    topOf = (i) => {
+      let start = VIEWPORT;
+      for (let j = 0; j < i; j++) start += heightOf(j) + VIRTUAL_ITEM_GAP_PX;
+      return start;
+    };
+    conversationWith(
+      Array.from({ length: 100 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+      ),
     );
-    await flush();
+    await flushUntil(() => text().includes("词1 回答"));
+    const log = stubGeometry(view!);
+    expect(wrapperOf(view!, 50)).toBeNull();
 
-    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+    await search("词50");
+    clickNext();
     await flush();
-    expect(log.scrollTop).toBe(50 * 88);
+    const estimatedJump = VIEWPORT + 50 * STEP - (VIEWPORT - VIRTUAL_ITEM_ESTIMATE_PX) / 2;
+    expect(log.scrollTop).toBe(estimatedJump);
 
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
-    await flush();
+    for (let i = 0; i < 5; i++) {
+      dispatchScroll(log);
+      await flush();
+    }
     expect(wrapperOf(view!, 50)).not.toBeNull();
-    const centered = 5672 - (400 - 30) / 2;
-    expect(log.scrollTop).toBe(centered);
-
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
-    await flush();
-    expect(wrapperOf(view!, 50)).not.toBeNull();
-    expect(log.scrollTop).toBe(centered);
     expect(wrapperOf(view!, 50)?.className).toContain("ring-amber");
+    const startOfMatch = VIEWPORT + 44 * STEP + 6 * (300 + VIRTUAL_ITEM_GAP_PX);
+    const settledCenter = startOfMatch - (VIEWPORT - VIRTUAL_ITEM_ESTIMATE_PX) / 2;
+    const settled = log.scrollTop;
+    expect(settled).toBe(settledCenter);
+    expect(settled).toBeGreaterThan(estimatedJump);
 
+    dispatchScroll(log);
     await flush();
-    expect(log.scrollTop).toBe(centered);
+    expect(log.scrollTop).toBe(settled);
+    expect(wrapperOf(view!, 50)).not.toBeNull();
   });
 
-  it("bottom boundary: a short last item clamps to the real maximum offset and settles; manual scrolling away does not snap back or leave frozen state", async () => {
+  it("bottom boundary: a short last item clamps to the real maximum offset; manual scrolling away does not snap back", async () => {
     const text = () => view!.container.textContent ?? "";
-    topOf = (i) => i * 88;
-    heightOf = (i) => (i === 99 ? 30 : 88);
-    const rows = Array.from({ length: 100 }, (_, i) =>
-      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    heightOf = (i) => (i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    conversationWith(
+      Array.from({ length: 100 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+      ),
     );
-    mocks.messages.mockResolvedValue(rows);
-    view?.unmount();
-    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flushUntil(() => text().includes("词1 回答"));
-    const maxScroll = 99 * 88 + 30 - 400;
-    const log = stubGeometry(view!, 99 * 88 + 30);
+    const totalSize = 99 * STEP + 30;
+    const maxScroll = totalSize - VIEWPORT;
+    const log = stubGeometry(view!, totalSize);
 
-    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
-    await flush();
-    setInputValue(
-      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
-      "词99",
-    );
-    await flush();
-
-    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+    await search("词99");
+    clickNext();
     await flush();
     expect(log.scrollTop).toBe(maxScroll);
 
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
+    dispatchScroll(log);
     await flush();
     expect(wrapperOf(view!, 99)).not.toBeNull();
     expect(log.scrollTop).toBe(maxScroll);
-    expect(log.scrollTop).not.toBe(99 * 88 - (400 - 30) / 2);
     expect(wrapperOf(view!, 99)?.className).toContain("ring-amber");
 
+    log.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
     log.scrollTop = 100;
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
+    dispatchScroll(log);
     await flush();
     expect(log.scrollTop).toBe(100);
     expect(wrapperOf(view!, 0)).not.toBeNull();
@@ -354,29 +423,233 @@ describe("AiSidebar search jump", () => {
   });
 
   it("reveals the first match immediately after entering a query, without clicking next first", async () => {
-    const rows = Array.from({ length: 80 }, (_, i) =>
-      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    const text = () => view!.container.textContent ?? "";
+    heightOf = () => VIRTUAL_ITEM_ESTIMATE_PX;
+    topOf = (i) => VIEWPORT + i * STEP;
+    conversationWith(
+      Array.from({ length: 80 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+      ),
     );
-    mocks.messages.mockResolvedValue(rows);
-    view?.unmount();
-    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    await flushUntil(() => (view!.container.textContent ?? "").includes("词1 回答"));
+    await flushUntil(() => text().includes("词1 回答"));
     const log = stubGeometry(view!);
 
-    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
-    await flush();
-    setInputValue(
-      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
-      "词70",
-    );
-    await flush();
-    expect(log.scrollTop).toBe(70 * 88);
+    await search("词70");
+    expect(log.scrollTop).toBe(VIEWPORT + 70 * STEP - (VIEWPORT - VIRTUAL_ITEM_ESTIMATE_PX) / 2);
 
-    act(() => {
-      log.dispatchEvent(new Event("scroll"));
-    });
+    dispatchScroll(log);
     await flush();
     expect(wrapperOf(view!, 70)).not.toBeNull();
     expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+  });
+
+  it("keeps index 99 and wrapped middle centered after font changes and streaming", async () => {
+    const text = () => view!.container.textContent ?? "";
+    const observers: { callback: ResizeObserverCallback; targets: Set<Element> }[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      readonly targets = new Set<Element>();
+      constructor(readonly callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(target: Element) {
+        this.targets.add(target);
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
+    });
+    heightOf = (i) => (i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    topOf = (i) => {
+      let start = VIEWPORT;
+      for (let j = 0; j < i; j++) start += heightOf(j) + VIRTUAL_ITEM_GAP_PX;
+      return start;
+    };
+    conversationWith(
+      Array.from({ length: 100 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", i === 0 || i === 50 || i === 99 ? `needle ${i}` : `其他 ${i}`),
+      ),
+    );
+    await flushUntil(() => text().includes("其他 1"));
+    let conversationCount = 100;
+    const log = stubGeometry(
+      view!,
+      () => 24 + 2 * VIEWPORT + Array.from({ length: conversationCount }, (_, i) => heightOf(i)).reduce((sum, height) => sum + height + VIRTUAL_ITEM_GAP_PX, 0),
+    );
+
+    mocks.chat.mockResolvedValue({ jobId: "job-live", conversationId: "conv-1" });
+    setInputValue(view!.container.querySelector('textarea[aria-label="消息输入"]')!, "stream");
+    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flush();
+    act(() => mocks.channels.at(-1)!.onEvent({ type: "delta", text: "more" }));
+    await flush();
+    act(() => mocks.channels.at(-1)!.onEvent({ type: "done", answer: "finished" }));
+    conversationCount = 102;
+    await flush();
+
+    document.documentElement.style.fontSize = "20px";
+    heightOf = (i) => (i === 50 || i === 90 ? 98 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    dispatchScroll(log);
+    await flush();
+    const centered = (index: number) => topOf(index) - (VIEWPORT - heightOf(index)) / 2;
+
+    await search("needle");
+    await flush();
+    expect(log.scrollTop).toBe(centered(0));
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(wrapperOf(view!, 50)).not.toBeNull();
+    expect(log.scrollTop).toBe(centered(50));
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(wrapperOf(view!, 99)).not.toBeNull();
+    expect(log.scrollTop).toBe(centered(99));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    });
+    heightOf = (i) => (i === 50 || i === 90 ? 98 : i === 95 ? 108 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    const above = wrapperOf(view!, 95)!;
+    const observing = observers.filter((observer) => observer.targets.has(above));
+    expect(observing).not.toHaveLength(0);
+    for (const observer of observing) {
+      act(() => observer.callback([{ target: above } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+    }
+    await flush();
+    expect(log.scrollTop).toBe(centered(99));
+    const correctedLast = log.scrollTop;
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(correctedLast);
+
+    click(view!.container.querySelector('button[aria-label="上一个匹配"]')!);
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(50));
+    const settledMiddle = log.scrollTop;
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(settledMiddle);
+    expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeGreaterThan(0);
+
+    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await flush();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    });
+    const restoredAbove = [...view!.container.querySelectorAll<HTMLElement>("[data-conversation-index]")].find(
+      (element) =>
+        topOf(Number(element.dataset.conversationIndex)) + heightOf(Number(element.dataset.conversationIndex)) <= log.scrollTop &&
+        observers.some((observer) => observer.targets.has(element)),
+    );
+    if (!restoredAbove) throw new Error("no observed item above the viewport");
+    const restoredIndex = Number(restoredAbove.dataset.conversationIndex);
+    const beforeRestore = log.scrollTop;
+    heightOf = (i) =>
+      i === restoredIndex || i === 95 ? 108 : i === 50 || i === 90 ? 98 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX;
+    for (const observer of observers) {
+      if (observer.targets.has(restoredAbove)) {
+        act(() => observer.callback([{ target: restoredAbove } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+      }
+    }
+    await flush();
+    expect(log.scrollTop).toBe(beforeRestore + 20);
+  });
+
+  it("keeps wrapped index 73 centered when late font measurements move its spacer", async () => {
+    const text = () => view!.container.textContent ?? "";
+    const observers: { callback: ResizeObserverCallback; targets: Set<Element> }[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      readonly targets = new Set<Element>();
+      constructor(readonly callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(target: Element) {
+        this.targets.add(target);
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
+    });
+    heightOf = (i) => (i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    topOf = (i) => {
+      let start = VIEWPORT;
+      for (let j = 0; j < i; j++) start += heightOf(j) + VIRTUAL_ITEM_GAP_PX;
+      return start;
+    };
+    conversationWith(
+      Array.from({ length: 100 }, (_, i) =>
+        message(`m${i}`, i % 2 === 0 ? "user" : "assistant", i === 73 || i === 99 ? `needle ${i}` : `其他 ${i}`),
+      ),
+    );
+    await flushUntil(() => text().includes("其他 1"));
+    const log = stubGeometry(
+      view!,
+      () => 24 + 2 * VIEWPORT + Array.from({ length: 100 }, (_, i) => heightOf(i)).reduce((sum, height) => sum + height + VIRTUAL_ITEM_GAP_PX, 0),
+    );
+    const centered = (index: number) => topOf(index) - (VIEWPORT - heightOf(index)) / 2;
+
+    await search("needle");
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(73));
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(99));
+
+    log.scrollTop = log.scrollHeight;
+    dispatchScroll(log);
+    await flush();
+    document.documentElement.style.fontSize = "22px";
+    heightOf = (i) => (i === 72 ? 98 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    dispatchScroll(log);
+    await flush();
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(73));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    });
+    heightOf = (i) => (i === 72 ? 108 : i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    const above = wrapperOf(view!, 72)!;
+    const observing = observers.filter((observer) => observer.targets.has(above));
+    expect(observing).not.toHaveLength(0);
+    for (const observer of observing) {
+      act(() => observer.callback([{ target: above } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+    }
+    await flush();
+    expect(log.scrollTop).toBe(centered(73));
+    const corrected = log.scrollTop;
+    for (let i = 0; i < 3; i++) {
+      dispatchScroll(log);
+      await flush();
+      expect(log.scrollTop).toBe(corrected);
+    }
+
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(99));
+    log.scrollTop = log.scrollHeight;
+    dispatchScroll(log);
+    await flush();
+    document.documentElement.style.fontSize = "16px";
+    heightOf = (i) => (i === 99 ? 30 : VIRTUAL_ITEM_ESTIMATE_PX);
+    dispatchScroll(log);
+    await flush();
+    clickNext();
+    dispatchScroll(log);
+    await flush();
+    expect(log.scrollTop).toBe(centered(73));
   });
 });

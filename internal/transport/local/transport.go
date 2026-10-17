@@ -24,18 +24,20 @@ type Config struct {
 }
 
 type Transport struct {
-	shell      string
-	loginShell bool
-	cwd        string
-	env        map[string]string
-	generation uint64
-	filesystem *fslocal.FileSystem
-	done       chan struct{}
-	closeOnce  sync.Once
-	closeErr   error
-	nextID     atomic.Uint64
-	mu         sync.Mutex
-	channels   map[string]io.Closer
+	shell         string
+	loginShell    bool
+	cwd           string
+	env           map[string]string
+	generation    uint64
+	filesystem    *fslocal.FileSystem
+	done          chan struct{}
+	closeMu       sync.Mutex
+	closeComplete bool
+	doneClosed    bool
+	closeErr      error
+	nextID        atomic.Uint64
+	mu            sync.Mutex
+	channels      map[string]io.Closer
 }
 
 func NewWithConfig(config Config) *Transport {
@@ -68,6 +70,25 @@ func (t *Transport) Kind() string {
 	return "local"
 }
 
+func (t *Transport) Shell() string {
+	executable := t.shell
+	if index := strings.LastIndexAny(executable, "/\\"); index >= 0 {
+		executable = executable[index+1:]
+	}
+	switch strings.ToLower(executable) {
+	case "powershell", "powershell.exe", "pwsh", "pwsh.exe":
+		return "powershell"
+	case "cmd", "cmd.exe":
+		return "cmd"
+	}
+	switch executable {
+	case "sh", "bash", "zsh", "dash", "ksh":
+		return "posix"
+	default:
+		return "unknown"
+	}
+}
+
 func (t *Transport) Generation() uint64 {
 	return t.generation
 }
@@ -94,22 +115,29 @@ func (t *Transport) FileSystem(ctx context.Context) (base.FileSystem, error) {
 }
 
 func (t *Transport) Close() error {
-	t.closeOnce.Do(func() {
+	t.closeMu.Lock()
+	defer t.closeMu.Unlock()
+	if t.closeComplete {
+		return t.closeErr
+	}
+	if !t.doneClosed {
 		close(t.done)
-		t.mu.Lock()
-		channels := make([]io.Closer, 0, len(t.channels))
-		for _, channel := range t.channels {
-			channels = append(channels, channel)
+		t.doneClosed = true
+	}
+	t.mu.Lock()
+	channels := make([]io.Closer, 0, len(t.channels))
+	for _, channel := range t.channels {
+		channels = append(channels, channel)
+	}
+	t.mu.Unlock()
+	errs := make([]error, 0, len(channels))
+	for _, channel := range channels {
+		if err := channel.Close(); err != nil {
+			errs = append(errs, err)
 		}
-		t.mu.Unlock()
-		errs := make([]error, 0, len(channels))
-		for _, channel := range channels {
-			if err := channel.Close(); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		t.closeErr = errors.Join(errs...)
-	})
+	}
+	t.closeErr = errors.Join(errs...)
+	t.closeComplete = t.closeErr == nil
 	return t.closeErr
 }
 
@@ -155,12 +183,13 @@ func (t *Transport) track(ctx context.Context, channel base.Channel) (base.Chann
 
 type trackedChannel struct {
 	base.Channel
-	closeOnce sync.Once
-	closeErr  error
-	onClose   func()
-	mu        sync.Mutex
-	stop      func() bool
-	closed    bool
+	closeMu       sync.Mutex
+	closeComplete bool
+	closeErr      error
+	onClose       func()
+	mu            sync.Mutex
+	stop          func() bool
+	closed        bool
 }
 
 func (c *trackedChannel) setStop(stop func() bool) {
@@ -175,19 +204,25 @@ func (c *trackedChannel) setStop(stop func() bool) {
 }
 
 func (c *trackedChannel) Close() error {
-	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		c.closed = true
-		stop := c.stop
-		c.mu.Unlock()
-		if stop != nil {
-			stop()
-		}
-		c.closeErr = c.Channel.Close()
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+	if c.closeComplete {
+		return c.closeErr
+	}
+	c.mu.Lock()
+	c.closed = true
+	stop := c.stop
+	c.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	c.closeErr = c.Channel.Close()
+	if c.closeErr == nil {
+		c.closeComplete = true
 		if c.onClose != nil {
 			c.onClose()
 		}
-	})
+	}
 	return c.closeErr
 }
 

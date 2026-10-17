@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { mount, waitFor, type MountedView } from "./reactTestUtils";
+import { mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -14,6 +14,22 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   fsList: vi.fn(),
   toast: vi.fn(),
+  fleetDevices: vi.fn(),
+  fleetAccount: vi.fn(),
+}));
+
+vi.mock("../../features/fleet/clients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/fleet/clients")>()),
+  fleetClient: () => ({ devices: mocks.fleetDevices }),
+}));
+vi.mock("../../features/fleet/useFleetAccount", () => ({ useFleetAccount: mocks.fleetAccount }));
+vi.mock("../../ipc/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/events")>()),
+  listenEvent: () => Promise.resolve(() => {}),
+}));
+vi.mock("../../ipc/webTransport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/webTransport")>()),
+  onEventsResync: () => () => {},
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -64,6 +80,25 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     dbApi: {},
   };
 });
+vi.mock("@tanstack/react-virtual", () => ({
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
+    Array.from({ length: range.endIndex - range.startIndex + 1 }, (_, index) => range.startIndex + index),
+  useVirtualizer: ({
+    count,
+    rangeExtractor,
+  }: {
+    count: number;
+    rangeExtractor: (range: { startIndex: number; endIndex: number; overscan: number; count: number }) => number[];
+  }) => {
+    const indexes = count === 0 ? [] : rangeExtractor({ startIndex: 0, endIndex: Math.min(count - 1, 7), overscan: 0, count });
+    return {
+      getVirtualItems: () => indexes.map((index) => ({ index, start: index * 62, size: 62, key: index })),
+      getTotalSize: () => count * 62,
+      measureElement: () => {},
+      scrollToIndex: () => {},
+    };
+  },
+}));
 
 import { AssetTree } from "../../features/explorer/AssetTree";
 import { FileTree } from "../../features/files/FileTree";
@@ -177,6 +212,8 @@ beforeEach(() => {
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.listCredentials.mockResolvedValue([]);
+  mocks.fleetAccount.mockReturnValue({ loading: false, userId: null, isAdmin: false });
+  mocks.fleetDevices.mockResolvedValue({ devices: [] });
   mocks.connect.mockResolvedValue({
     id: "s-new",
     assetId: "a1",
@@ -307,6 +344,163 @@ describe("AssetTree keyboard navigation", () => {
     expect(event.defaultPrevented).toBe(false);
     expect(mocks.connect).not.toHaveBeenCalled();
   });
+
+  it("restores the focused asset after clearing search from the input", async () => {
+    mocks.assetSearch.mockResolvedValue([{ ...ASSET_GROUPED }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("db-1"));
+
+    const search = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="搜索资产 / 主机 / 用户"]',
+    );
+    if (!search) throw new Error("Search input not found");
+    setInputValue(search, "db-1");
+    await waitFor(() => expect(mocks.assetSearch).toHaveBeenCalledWith("db-1"));
+    await waitFor(() => {
+      itemByText(mounted!.container, "db-1");
+    });
+    const asset = itemByText(mounted!.container, "db-1");
+    act(() => asset.focus());
+
+    act(() => search.focus());
+    setInputValue(search, "");
+
+    await waitFor(() => expect(document.activeElement).toBe(itemByText(mounted!.container, "db-1")));
+  });
+
+  it("windows large trees without narrowing full-range search or grouped row actions", async () => {
+    const groups = Array.from({ length: 60 }, (_, index) => ({
+      ...GROUP,
+      id: `g-${index}`,
+      name: `group-${index}`,
+    }));
+    const assets = groups.map((group, index) => ({
+      ...ASSET_GROUPED,
+      id: `a-${index}`,
+      groupId: group.id,
+      name: index === groups.length - 1 ? "needle-59" : `asset-${index}`,
+    }));
+    mocks.assetList.mockResolvedValue(assets);
+    mocks.groupList.mockResolvedValue(groups);
+    mocks.assetSearch.mockImplementation(async (query: string) =>
+      assets.filter((asset) => asset.name.includes(query)),
+    );
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(treeitems(mounted!.container).length).toBeGreaterThan(0));
+    expect(treeitems(mounted!.container).length).toBeLessThan(groups.length);
+
+    const search = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="搜索资产 / 主机 / 用户"]',
+    );
+    if (!search) throw new Error("Search input not found");
+    setInputValue(search, "needle-59");
+    await waitFor(() => expect(mocks.assetSearch).toHaveBeenCalledWith("needle-59"));
+    await waitFor(() => {
+      itemByText(mounted!.container, "needle-59");
+    });
+
+    const target = itemByText(mounted!.container, "needle-59");
+    expect(treeitems(mounted!.container).length).toBeLessThan(groups.length);
+    expect(target.getAttribute("aria-level")).toBe("2");
+    expect(target.closest("[role='group']")).not.toBeNull();
+    expect(
+      [...target.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map((button) =>
+        button.getAttribute("aria-label"),
+      ),
+    ).toEqual(["连接 needle-59", "编辑 needle-59", "删除 needle-59", "更多操作 needle-59"]);
+  });
+
+  it("windows assets inside one large group while preserving search and hierarchy", async () => {
+    const targetName = "needle-99-完整资产名称-ProductionPrimaryClusterWithALongName";
+    const assets = Array.from({ length: 100 }, (_, index) => ({
+      ...ASSET_GROUPED,
+      id: `single-${index}`,
+      name: index === 99 ? targetName : `single-${index}`,
+    }));
+    mocks.assetList.mockResolvedValue(assets);
+    mocks.groupList.mockResolvedValue([{ ...GROUP }]);
+    mocks.assetSearch.mockImplementation(async (query: string) =>
+      assets.filter((asset) => asset.name.includes(query)),
+    );
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("single-0"));
+
+    const assetRows = () => treeitems(mounted!.container).filter((row) => row.getAttribute("aria-level") === "2");
+    expect(assetRows().length).toBeLessThan(assets.length);
+
+    const search = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="搜索资产 / 主机 / 用户"]',
+    );
+    if (!search) throw new Error("Search input not found");
+    setInputValue(search, "needle-99");
+    await waitFor(() => {
+      itemByText(mounted!.container, targetName);
+    });
+    const target = itemByText(mounted!.container, targetName);
+    expect(target.getAttribute("aria-level")).toBe("2");
+    expect(target.closest("[role='group']")).not.toBeNull();
+    expect(target.querySelector(".nx-row-name")?.textContent).toBe(targetName);
+    expect(target.querySelector(".nx-row-name")?.className).not.toContain("truncate");
+    expect(target.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
+  });
+
+  it.each([
+    { assetCount: 39, visibleRowCount: 40 },
+    { assetCount: 40, visibleRowCount: 41 },
+  ])(
+    "preserves direct DOM at 40 visible rows and windows at 41, counting the device row: $assetCount assets + 1 device = $visibleRowCount rows",
+    async ({ assetCount, visibleRowCount }) => {
+      const assets = Array.from({ length: assetCount }, (_, index) => ({
+        ...ASSET_UNGROUPED,
+        id: `boundary-${index}`,
+        name: `boundary-${index}`,
+      }));
+      const now = Date.now();
+      mocks.assetList.mockResolvedValue(assets);
+      mocks.groupList.mockResolvedValue([]);
+      mocks.fleetAccount.mockReturnValue({ loading: false, userId: "u-boundary", isAdmin: false });
+      mocks.fleetDevices.mockResolvedValue({
+        devices: [
+          {
+            id: "d-boundary",
+            name: "boundary-device",
+            kind: "agent",
+            created_at: 1,
+            last_seen_at: now,
+            revoked_at: 0,
+            agent: {
+              platform: "linux",
+              app_version: "0.0.0",
+              desired_autostart: true,
+              terminal_enabled: true,
+              current_url: "",
+              service_state: { installed: true, enabled: true, active: true, last_reconcile_at: now },
+              last_seen_at: now,
+            },
+          },
+        ],
+      });
+      mounted = mountWithClient(createElement(AssetTree));
+      await waitFor(() => expect(mounted!.container.textContent).toContain("boundary-0"));
+      await waitFor(() => expect(mounted!.container.textContent).toContain("boundary-device"));
+
+      const tree = mounted!.container.querySelector<HTMLElement>("[role='tree']");
+      if (!tree) throw new Error("Asset tree not found");
+      const rows = treeitems(tree);
+      const assetRows = rows.filter((row) => row.querySelector(".nx-asset-row-name") !== null);
+      if (visibleRowCount === 40) {
+        expect(rows).toHaveLength(visibleRowCount);
+        expect(rows.every((row) => row.parentElement === tree)).toBe(true);
+        expect(assetRows).toHaveLength(assetCount);
+        expect(assetRows.every((row) => !row.hasAttribute("data-asset-id"))).toBe(true);
+        expect(tree.querySelector("[data-index]")).toBeNull();
+      } else {
+        expect(rows.length).toBeLessThan(visibleRowCount);
+        expect(assetRows.length).toBeLessThan(assetCount);
+        expect(tree.querySelector("[data-index]")).not.toBeNull();
+      }
+    },
+  );
 });
 
 describe("FileTree keyboard navigation", () => {

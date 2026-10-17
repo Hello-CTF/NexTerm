@@ -248,17 +248,28 @@ describe("Device management - desktop logged in", () => {
     expect(mocks.devices.mock.calls.length).toBeGreaterThan(before);
   });
 
-  it("loads and refreshes metrics through remote metrics when expanded", async () => {
+  it("loads independent latest and window metadata through remote metrics", async () => {
     seedLoggedIn();
     seedFleet();
+    mocks.metrics.mockResolvedValue({
+      samples: METRICS_SAMPLES,
+      latest: { ...METRICS_SAMPLES[0], cpu_pct: 99 },
+      windowStart: NOW - 86400_000,
+      windowEnd: NOW,
+      sampleCount: 17280,
+      downsampled: true,
+      sampleIntervalMs: 60_000,
+    });
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = cardOf("web-01") as HTMLElement;
     click([...card.querySelectorAll("button")].find((b) => b.textContent?.trim() === "指标") as HTMLButtonElement);
-    await flushUntil(() => card.textContent?.includes("12.5%") ?? false);
+    await flushUntil(() => card.textContent?.includes("99.0%") ?? false);
     expect(mocks.metrics).toHaveBeenCalledWith("d-1");
     expect(card.textContent).toContain("8.0 GiB / 16.0 GiB");
+    expect(card.textContent).toContain("共 17280 个采样点");
+    expect(card.textContent).toContain("显示 1 个原始点");
 
     click(card.querySelector<HTMLButtonElement>('button[aria-label="刷新指标"]') as HTMLButtonElement);
     await flushUntil(() => mocks.metrics.mock.calls.length === 2);

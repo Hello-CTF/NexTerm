@@ -2,17 +2,20 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -146,6 +149,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Transcripts:       transcriptWriter,
 		Commands:          commandLogSink{database: database, logger: config.Config.Logger},
 		Logger:            config.Config.Logger,
+		OpenAccess:        config.Desktop,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -162,6 +166,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			return emitter.EmitSessionEvent(ctx, event)
 		}),
 	})
+	streams := config.Config.Streams
+	if streams == nil {
+		streams = hub.StreamFactory{Hub: sessionManager.Hub()}
+	}
+	config.Config.Streams = &channelOwnerStreamFactory{factory: streams, sessions: sessionManager}
 	if dockerService == nil {
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
@@ -206,7 +215,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if err != nil {
 		return nil, err
 	}
-	forwardService = forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}})
+	forwardService = forward.NewService(forward.Config{Provider: forward.DialerProviderFunc(sessionManager.CurrentDialerFor), Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}})
 	services = ProductionServices{
 		Store: database, Vault: credentialVault, Sync: syncService, Profiles: profileManager,
 		Tasks:    taskManager,
@@ -221,6 +230,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,
 	}
+	services.channelBridge = newTerminalBridge(sessionManager, streams)
 	services.ScreenInsets = config.ScreenInsets
 	if executableErr == nil {
 		services.Update = &update.Manager{
@@ -245,6 +255,110 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	return production, nil
+}
+
+type channelOwnerStreamFactory struct {
+	mu       sync.Mutex
+	factory  ipc.StreamFactory
+	sessions *session.Manager
+}
+
+type channelOwnerBinaryStream struct {
+	ipc.BinaryStream
+	sessions   *session.Manager
+	channelID  string
+	generation uint64
+}
+
+func (s *channelOwnerBinaryStream) Close() error {
+	err := s.BinaryStream.Close()
+	s.sessions.UnregisterChannelOwner(s.channelID, s.generation)
+	return err
+}
+
+func (s *channelOwnerBinaryStream) CloseGracefully() error {
+	stream, ok := s.BinaryStream.(interface{ CloseGracefully() error })
+	if !ok {
+		return s.Close()
+	}
+	return stream.CloseGracefully()
+}
+
+func (s *channelOwnerBinaryStream) TrySendBinary(ctx context.Context, data []byte) error {
+	if stream, ok := s.BinaryStream.(interface {
+		TrySendBinary(context.Context, []byte) error
+	}); ok {
+		return stream.TrySendBinary(ctx, data)
+	}
+	return s.BinaryStream.SendBinary(ctx, data)
+}
+
+type channelOwnerJSONStream struct {
+	ipc.JSONStream
+	sessions   *session.Manager
+	channelID  string
+	generation uint64
+}
+
+func (s *channelOwnerJSONStream) Close() error {
+	err := s.JSONStream.Close()
+	s.sessions.UnregisterChannelOwner(s.channelID, s.generation)
+	return err
+}
+
+func (s *channelOwnerJSONStream) CloseGracefully() error {
+	stream, ok := s.JSONStream.(interface{ CloseGracefully() error })
+	if !ok {
+		return s.Close()
+	}
+	return stream.CloseGracefully()
+}
+
+func (s *channelOwnerJSONStream) TrySendJSON(ctx context.Context, data json.RawMessage) error {
+	if stream, ok := s.JSONStream.(interface {
+		TrySendJSON(context.Context, json.RawMessage) error
+	}); ok {
+		return stream.TrySendJSON(ctx, data)
+	}
+	return s.JSONStream.SendJSON(ctx, data)
+}
+
+func (f *channelOwnerStreamFactory) OpenBinary(ctx context.Context, channel ipc.ChannelRef) (ipc.BinaryStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ownerID, _ := ipc.UserIDFromContext(ctx)
+	if err := f.sessions.CheckChannelOwner(channel.ID, ownerID); err != nil {
+		return nil, err
+	}
+	stream, err := f.factory.OpenBinary(ctx, channel)
+	if err != nil {
+		return nil, err
+	}
+	generation, err := f.sessions.RegisterChannelOwner(channel.ID, ownerID)
+	if err != nil {
+		_ = stream.Close()
+		return nil, err
+	}
+	return &channelOwnerBinaryStream{BinaryStream: stream, sessions: f.sessions, channelID: channel.ID, generation: generation}, nil
+}
+
+func (f *channelOwnerStreamFactory) OpenJSON(ctx context.Context, channel ipc.ChannelRef) (ipc.JSONStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ownerID, _ := ipc.UserIDFromContext(ctx)
+	if err := f.sessions.CheckChannelOwner(channel.ID, ownerID); err != nil {
+		return nil, err
+	}
+	stream, err := f.factory.OpenJSON(ctx, channel)
+	if err != nil {
+		return nil, err
+	}
+	generation, err := f.sessions.RegisterChannelOwner(channel.ID, ownerID)
+	if err != nil {
+		_ = stream.Close()
+		return nil, err
+	}
+	return &channelOwnerJSONStream{JSONStream: stream, sessions: f.sessions, channelID: channel.ID, generation: generation}, nil
 }
 
 func openProductionStore(ctx context.Context, config ProductionConfig) (*store.Store, error) {

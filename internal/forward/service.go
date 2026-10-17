@@ -191,7 +191,7 @@ func (s *Service) validateSession(ctx context.Context, sessionID string) (base.D
 	if s.provider == nil {
 		return nil, ipc.NewError(ipc.CodeUnsupported, "SSH 会话转发接口未配置")
 	}
-	dialer, err := s.provider.CurrentDialer(ctx, sessionID)
+	dialer, err := s.currentDialer(ctx, sessionID)
 	if err != nil {
 		return nil, session.IPCError(err)
 	}
@@ -199,6 +199,15 @@ func (s *Service) validateSession(ctx context.Context, sessionID string) (base.D
 		return nil, ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH direct-tcpip 的会话")
 	}
 	return dialer, nil
+}
+
+func (s *Service) currentDialer(ctx context.Context, sessionID string) (base.Dialer, error) {
+	if provider, ok := s.provider.(interface {
+		CurrentDialerFor(context.Context, string) (base.Dialer, error)
+	}); ok {
+		return provider.CurrentDialerFor(ctx, sessionID)
+	}
+	return s.provider.CurrentDialer(ctx, sessionID)
 }
 
 func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionID, bindHost string, bindPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
@@ -213,10 +222,10 @@ func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionI
 	if err != nil {
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "远端监听端口失败: "+err.Error(), err)
 	}
-	return s.start(sessionID, KindRemote, listener, bindHost, target, targetHost, targetPort)
+	return s.start(ctx, sessionID, KindRemote, listener, bindHost, target, targetHost, targetPort)
 }
 
-func (s *Service) create(_ context.Context, sessionID, kind string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+func (s *Service) create(ctx context.Context, sessionID, kind string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -229,10 +238,10 @@ func (s *Service) create(_ context.Context, sessionID, kind string, listenPort u
 	if err != nil {
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "监听转发端口失败: "+err.Error(), err)
 	}
-	return s.start(sessionID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
+	return s.start(ctx, sessionID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
 }
 
-func (s *Service) start(sessionID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+func (s *Service) start(requestCtx context.Context, sessionID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		_ = listener.Close()
@@ -245,17 +254,22 @@ func (s *Service) start(sessionID, kind string, listener net.Listener, listenHos
 	}
 
 	id := ids.New()
-	ctx, cancel := context.WithCancel(s.ctx)
+	ctx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
+	stopServiceCancel := context.AfterFunc(s.ctx, cancel)
 	f := &forwarder{
 		id:        id,
 		sessionID: sessionID,
+		owner:     ipc.OwnerID(requestCtx),
 		kind:      kind,
 		target:    target,
 		service:   s,
 		listener:  listener,
 		ctx:       ctx,
-		cancel:    cancel,
-		conns:     make(map[net.Conn]struct{}),
+		cancel: func() {
+			stopServiceCancel()
+			cancel()
+		},
+		conns: make(map[net.Conn]struct{}),
 	}
 	f.spec = Spec{
 		ID:         id,
@@ -284,10 +298,20 @@ func (s *Service) start(sessionID, kind string, listener net.Listener, listenHos
 }
 
 func (s *Service) List() []Spec {
+	return s.list("")
+}
+
+func (s *Service) ListFor(ctx context.Context) []Spec {
+	return s.list(ipc.OwnerID(ctx))
+}
+
+func (s *Service) list(owner string) []Spec {
 	s.mu.Lock()
 	result := make([]Spec, 0, len(s.forwards))
 	for _, f := range s.forwards {
-		result = append(result, f.spec)
+		if owner == "" || f.owner == owner {
+			result = append(result, f.spec)
+		}
 	}
 	s.mu.Unlock()
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
@@ -295,8 +319,20 @@ func (s *Service) List() []Spec {
 }
 
 func (s *Service) Remove(id string) error {
+	return s.remove("", id)
+}
+
+func (s *Service) RemoveFor(ctx context.Context, id string) error {
+	return s.remove(ipc.OwnerID(ctx), id)
+}
+
+func (s *Service) remove(owner, id string) error {
 	s.mu.Lock()
 	f := s.forwards[id]
+	if f != nil && owner != "" && f.owner != owner {
+		s.mu.Unlock()
+		return session.IPCError(session.ErrForbidden)
+	}
 	delete(s.forwards, id)
 	s.mu.Unlock()
 	if f == nil {
@@ -365,7 +401,7 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		dialer, err := s.provider.CurrentDialer(ctx, sessionID)
+		dialer, err := s.currentDialer(ctx, sessionID)
 		if err == nil && dialer == nil {
 			err = errors.New("current session has no SSH dialer")
 		}
@@ -398,6 +434,7 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 type forwarder struct {
 	id        string
 	sessionID string
+	owner     string
 	kind      string
 	target    string
 	service   *Service

@@ -21,6 +21,7 @@ import {
   maxTokensFromInput,
   maxTokensLabel,
   MODEL_PARAM_DEFAULTS,
+  profileKeyUnavailable,
   requestTimeoutLabel,
   sameModelProfile,
   selectModelProfileId,
@@ -472,8 +473,15 @@ export function ModelManager({
                     onChange={(e) => patch({ apiKey: e.target.value })}
                   />
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 absolute top-1/2 right-1 -translate-y-1/2"
-                    title={showKey ? "隐藏密钥" : "显示密钥"}
+                    className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 absolute top-1/2 right-1 -translate-y-1/2 disabled:opacity-40"
+                    title={
+                      profileKeyUnavailable(draft)
+                        ? "已保存的密钥不可查看，只能替换为新密钥"
+                        : showKey
+                          ? "隐藏密钥"
+                          : "显示密钥"
+                    }
+                    disabled={profileKeyUnavailable(draft)}
                     onClick={() => setShowKey((v) => !v)}
                   >
                     {showKey ? <IconEyeOff size={12} /> : <IconEye size={12} />}

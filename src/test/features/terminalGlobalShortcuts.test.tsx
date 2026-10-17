@@ -152,7 +152,17 @@ beforeEach(() => {
   harness.terminals.length = 0;
   harness.frames.clear();
   harness.keyHandler = null;
-  harness.attach.mockReset().mockResolvedValue("tab-new");
+  harness.attach.mockReset().mockResolvedValue({
+    tabId: "tab-new",
+    sessionId: "session",
+    cols: 80,
+    rows: 24,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+    shell: "unknown",
+  });
   harness.attachTab.mockReset().mockResolvedValue({
     tabId: "tab-existing",
     cols: 90,

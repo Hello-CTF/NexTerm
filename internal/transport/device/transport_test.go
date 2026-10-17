@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -64,7 +65,11 @@ func newPurposeRig(t *testing.T) *purposeRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := supervisor.StateDigest(stateDir, strconv.Itoa(os.Geteuid()))
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := supervisor.StateDigest(stateDir, currentUser.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +96,7 @@ func newPurposeRig(t *testing.T) *purposeRig {
 	rig.dial = func(ctx context.Context, purpose string) (net.Conn, error) {
 		switch purpose {
 		case deviceproto.PurposeTerminal:
-			return (&net.Dialer{}).DialContext(ctx, "unix", endpoint)
+			return dialSupervisorEndpoint(ctx, endpoint)
 		case deviceproto.PurposeFile:
 			clientConn, serverConn := net.Pipe()
 			go func() { _ = fileServer.ServeConn(rig.serveCtx, serverConn) }()
@@ -119,6 +124,50 @@ func failingDial(context.Context, string) (net.Conn, error) {
 	return nil, errors.New("bridge unavailable")
 }
 
+type scriptedFileSystem struct {
+	roots       base.FileSystemRoots
+	entries     []base.FileEntry
+	listErr     error
+	legacyRoots bool
+	bridgeErr   error
+}
+
+func (s scriptedFileSystem) dial(context.Context) (net.Conn, error) {
+	if s.bridgeErr != nil {
+		return nil, s.bridgeErr
+	}
+	clientConn, serverConn := net.Pipe()
+	go func() {
+		defer serverConn.Close()
+		kind, _, err := deviceproto.ReadFrame(serverConn)
+		if err != nil {
+			return
+		}
+		switch kind {
+		case deviceproto.FrameRoots:
+			if s.legacyRoots {
+				_ = deviceproto.WriteError(serverConn, fmt.Errorf("%w: unexpected request frame %d", deviceproto.ErrProtocol, deviceproto.FrameRoots))
+				return
+			}
+			_ = deviceproto.WriteMessage(serverConn, deviceproto.FrameRootsReply, s.roots)
+		case deviceproto.FrameList:
+			if s.listErr != nil {
+				_ = deviceproto.WriteError(serverConn, s.listErr)
+				return
+			}
+			_ = deviceproto.WriteMessage(serverConn, deviceproto.FrameListed, deviceproto.ListChunk{Entries: s.entries})
+			_ = deviceproto.WriteFrame(serverConn, deviceproto.FrameEnd, nil)
+		default:
+			_ = deviceproto.WriteError(serverConn, fmt.Errorf("%w: unexpected request frame %d", deviceproto.ErrProtocol, kind))
+		}
+	}()
+	return clientConn, nil
+}
+
+func (s scriptedFileSystem) filesystem() *fileSystem {
+	return &fileSystem{dial: s.dial}
+}
+
 func TestTransportKindGenerationAndLifecycle(t *testing.T) {
 	rig := newPurposeRig(t)
 	transport := New("dev-1", rig.digest, rig.dial, 7)
@@ -144,8 +193,13 @@ func TestTransportKindGenerationAndLifecycle(t *testing.T) {
 
 func TestTransportExecSplitStreamsAndExitCode(t *testing.T) {
 	rig := newPurposeRig(t)
-	transport := New("dev-1", rig.digest, rig.dial, 1)
-	result, err := transport.Exec(context.Background(), `printf out; printf err >&2; exit 42`, base.ExecOptions{})
+	platform, command := "", `printf out; printf err >&2; exit 42`
+	if runtime.GOOS == "windows" {
+		platform = "windows"
+		command = `[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 42`
+	}
+	transport := New("dev-1", rig.digest, rig.dial, 1, platform)
+	result, err := transport.Exec(context.Background(), command, base.ExecOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,13 +250,19 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 	provider := transport.Provider()
 	ctx := context.Background()
 	tabID := ids.New()
+	command := []string{"/bin/sh"}
+	input := "echo device-provider-marker\n"
+	if runtime.GOOS == "windows" {
+		command = []string{"powershell.exe", "-NoLogo", "-NoProfile"}
+		input = "Write-Host device-provider-marker\r\n"
+	}
 	attachment, err := provider.Create(ctx, base.DurableCreateOptions{
-		ID: tabID, Command: []string{"/bin/sh"}, Cols: 80, Rows: 24,
+		ID: tabID, Command: command, Cols: 80, Rows: 24,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attachment.Write([]byte("echo device-provider-marker\n")); err != nil {
+	if _, err := attachment.Write([]byte(input)); err != nil {
 		t.Fatal(err)
 	}
 	readUntilMarker(t, attachment, "device-provider-marker")
@@ -220,6 +280,217 @@ func TestTransportProviderCreateAttachRoundTrip(t *testing.T) {
 	}
 	if err := reattached.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTransportFileSystemRoots(t *testing.T) {
+	rig := newPurposeRig(t)
+	transport := New("dev-1", rig.digest, rig.dial, 1)
+	filesystem, err := transport.FileSystem(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := filesystem.(base.RootsProvider)
+	if !ok {
+		t.Fatal("device filesystem must expose target roots through the file bridge")
+	}
+	roots, err := provider.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !roots.Supported {
+		t.Fatal("current agent must support roots")
+	}
+	if runtime.GOOS == "windows" {
+		if roots.PathStyle != base.PathStyleWindows {
+			t.Fatalf("PathStyle = %q; want windows from the agent", roots.PathStyle)
+		}
+		for _, root := range roots.Roots {
+			if !filepath.IsAbs(root.Path) {
+				t.Fatalf("root path = %q; want an absolute agent path", root.Path)
+			}
+		}
+	} else {
+		if roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
+			t.Fatalf("roots = %+v; want the agent POSIX root", roots)
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHome, err := filepath.Abs(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.HomePath != wantHome {
+		t.Fatalf("HomePath = %q; want agent home %q", roots.HomePath, wantHome)
+	}
+}
+
+func TestFileSystemRootsRemoteWindowsAndUNCPaths(t *testing.T) {
+	wantRoots := base.FileSystemRoots{
+		PathStyle: base.PathStyleWindows,
+		Roots: []base.FileRoot{
+			{Path: `C:\`, Label: "C:"},
+			{Path: `D:\`, Label: "D:"},
+		},
+		HomePath:  `C:\Users\agent`,
+		Supported: true,
+	}
+	wantEntries := []base.FileEntry{
+		{Name: "Project", Path: `D:\Project`, Kind: base.FileDirectory},
+		{Name: "shared", Path: `\\server\share\shared`, Kind: base.FileDirectory},
+	}
+	filesystem := (scriptedFileSystem{roots: wantRoots, entries: wantEntries}).filesystem()
+	roots, err := filesystem.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStyleWindows || roots.HomePath != `C:\Users\agent` || len(roots.Roots) != 2 {
+		t.Fatalf("Roots = %+v; want two Windows drives and the agent home", roots)
+	}
+	for index := range wantRoots.Roots {
+		if roots.Roots[index] != wantRoots.Roots[index] {
+			t.Fatalf("root %d = %+v; want %+v", index, roots.Roots[index], wantRoots.Roots[index])
+		}
+	}
+	entries, err := filesystem.List(context.Background(), `D:\`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != len(wantEntries) {
+		t.Fatalf("List = %+v; want Windows and UNC entries", entries)
+	}
+	for index := range wantEntries {
+		if entries[index] != wantEntries[index] {
+			t.Fatalf("entry %d = %+v; want unchanged absolute path %+v", index, entries[index], wantEntries[index])
+		}
+	}
+}
+
+func TestFileSystemRootsLegacyAgentFallback(t *testing.T) {
+	wantEntry := base.FileEntry{Name: "keep.txt", Path: `D:\keep.txt`, Kind: base.FileFile}
+	filesystem := (scriptedFileSystem{legacyRoots: true, entries: []base.FileEntry{wantEntry}}).filesystem()
+	roots, err := filesystem.Roots(context.Background())
+	if !errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("legacy Roots = %+v, %v; want base.ErrUnsupported", roots, err)
+	}
+	if roots.Supported || len(roots.Roots) != 0 || roots.HomePath != "" {
+		t.Fatalf("legacy Roots = %+v; want no fabricated C drive or home", roots)
+	}
+	entries, err := filesystem.List(context.Background(), `D:\`)
+	if err != nil {
+		t.Fatalf("existing file operation after unsupported Roots = %v", err)
+	}
+	if len(entries) != 1 || entries[0] != wantEntry {
+		t.Fatalf("existing List = %+v; want %+v", entries, wantEntry)
+	}
+}
+
+func TestFileSystemRootsBridgeFailure(t *testing.T) {
+	bridgeErr := errors.New("bridge unavailable")
+	filesystem := (scriptedFileSystem{bridgeErr: bridgeErr}).filesystem()
+	roots, err := filesystem.Roots(context.Background())
+	if !errors.Is(err, bridgeErr) {
+		t.Fatalf("Roots = %+v, %v; want the bridge error", roots, err)
+	}
+	if errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("bridge failure was misclassified as unsupported: %v", err)
+	}
+}
+
+func TestFileSystemRootsDriveErrors(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		err  error
+	}{
+		{name: "permission", err: fs.ErrPermission},
+		{name: "no media", err: base.ErrNoMedia},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			wantRoots := base.FileSystemRoots{
+				PathStyle: base.PathStyleWindows,
+				Roots: []base.FileRoot{
+					{Path: `C:\`, Label: "C:"},
+					{Path: `F:\`, Label: "F:"},
+				},
+				Supported: true,
+			}
+			filesystem := (scriptedFileSystem{
+				roots:   wantRoots,
+				listErr: fmt.Errorf("list F:\\: %w", testCase.err),
+			}).filesystem()
+			if _, err := filesystem.List(context.Background(), `F:\`); !errors.Is(err, testCase.err) {
+				t.Fatalf("List error = %v; want errors.Is %v", err, testCase.err)
+			}
+			roots, err := filesystem.Roots(context.Background())
+			if err != nil {
+				t.Fatalf("Roots after one drive failed = %v", err)
+			}
+			if !roots.Supported || len(roots.Roots) != 2 || roots.Roots[0] != wantRoots.Roots[0] || roots.Roots[1] != wantRoots.Roots[1] {
+				t.Fatalf("Roots after one drive failed = %+v; want both drives retained", roots)
+			}
+		})
+	}
+}
+
+func TestFileSystemRootsNamespaceIsolation(t *testing.T) {
+	testCases := []struct {
+		name       string
+		filesystem *fileSystem
+		wantRoots  base.FileSystemRoots
+		wantEntry  base.FileEntry
+	}{
+		{
+			name: "owner-a-windows",
+			filesystem: (scriptedFileSystem{
+				roots:   base.FileSystemRoots{PathStyle: base.PathStyleWindows, Roots: []base.FileRoot{{Path: `D:\`, Label: "D:"}}, HomePath: `D:\Users\alice`, Supported: true},
+				entries: []base.FileEntry{{Name: "alice.txt", Path: `D:\alice.txt`, Kind: base.FileFile}},
+			}).filesystem(),
+			wantRoots: base.FileSystemRoots{PathStyle: base.PathStyleWindows, Roots: []base.FileRoot{{Path: `D:\`, Label: "D:"}}, HomePath: `D:\Users\alice`, Supported: true},
+			wantEntry: base.FileEntry{Name: "alice.txt", Path: `D:\alice.txt`, Kind: base.FileFile},
+		},
+		{
+			name: "owner-b-posix",
+			filesystem: (scriptedFileSystem{
+				roots:   base.FileSystemRoots{PathStyle: base.PathStylePOSIX, Roots: []base.FileRoot{{Path: "/", Label: "/"}}, HomePath: "/home/bob", Supported: true},
+				entries: []base.FileEntry{{Name: "bob.txt", Path: "/srv/bob/bob.txt", Kind: base.FileFile}},
+			}).filesystem(),
+			wantRoots: base.FileSystemRoots{PathStyle: base.PathStylePOSIX, Roots: []base.FileRoot{{Path: "/", Label: "/"}}, HomePath: "/home/bob", Supported: true},
+			wantEntry: base.FileEntry{Name: "bob.txt", Path: "/srv/bob/bob.txt", Kind: base.FileFile},
+		},
+	}
+	results := make(chan error, len(testCases))
+	for _, testCase := range testCases {
+		go func() {
+			for iteration := 0; iteration < 25; iteration++ {
+				roots, err := testCase.filesystem.Roots(context.Background())
+				if err != nil {
+					results <- fmt.Errorf("%s Roots: %w", testCase.name, err)
+					return
+				}
+				if roots.PathStyle != testCase.wantRoots.PathStyle || roots.HomePath != testCase.wantRoots.HomePath || len(roots.Roots) != 1 || roots.Roots[0] != testCase.wantRoots.Roots[0] {
+					results <- fmt.Errorf("%s Roots = %+v; want %+v", testCase.name, roots, testCase.wantRoots)
+					return
+				}
+				entries, err := testCase.filesystem.List(context.Background(), testCase.wantRoots.Roots[0].Path)
+				if err != nil {
+					results <- fmt.Errorf("%s List: %w", testCase.name, err)
+					return
+				}
+				if len(entries) != 1 || entries[0] != testCase.wantEntry {
+					results <- fmt.Errorf("%s List = %+v; want %+v", testCase.name, entries, testCase.wantEntry)
+					return
+				}
+			}
+			results <- nil
+		}()
+	}
+	for range testCases {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
 	}
 }
 
@@ -286,6 +557,9 @@ func TestTransportFileSystemUnary(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name)
 		kinds[entry.Name] = entry.Kind
+		if !filepath.IsAbs(entry.Path) || entry.Path != filepath.Join(rig.root, entry.Name) {
+			t.Fatalf("entry.path = %q; want the real absolute path under %q", entry.Path, rig.root)
+		}
 	}
 	joined := strings.Join(names, ",")
 	for _, want := range []string{"note.txt", "note.txt.nexterm-bak", "sub"} {

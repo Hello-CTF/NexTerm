@@ -117,12 +117,8 @@ func TestScrubFreeSpaceBusyWithHeldReader(t *testing.T) {
 	}
 	requireFileTokenAbsent(t, path, "busy-token-abc")
 	requireFileTokenAbsent(t, path+"-wal", "busy-token-abc")
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("database file mode = %o, want 600", info.Mode().Perm())
+	if ownerOnlyPermissionsSupported() {
+		requireOwnerOnlyMode(t, path)
 	}
 }
 

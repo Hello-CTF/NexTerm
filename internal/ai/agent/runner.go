@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -192,7 +193,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync()}
+	current := &job{id: jobID, ownerID: ipc.OwnerID(ctx), args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync()}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -244,6 +245,10 @@ func decodedImageSize(image string) (int, error) {
 var cancelTestHook func()
 
 func (r *Runner) Cancel(jobID string) error {
+	return r.CancelContext(WithOpenAccess(context.Background()), jobID)
+}
+
+func (r *Runner) CancelContext(ctx context.Context, jobID string) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -251,6 +256,9 @@ func (r *Runner) Cancel(jobID string) error {
 	}
 	current := r.jobs[jobID]
 	r.mu.Unlock()
+	if err := r.authorizeJob(ctx, jobID, current); err != nil {
+		return err
+	}
 	if current == nil {
 		if snapshot, err := r.hitl.Snapshot(jobID); err == nil && snapshot.Terminal == nil {
 			_, err := r.hitl.Cancel(jobID)
@@ -289,13 +297,23 @@ func (r *Runner) Cancel(jobID string) error {
 }
 
 func (r *Runner) Steer(jobID, message string) error {
+	return r.SteerContext(WithOpenAccess(context.Background()), jobID, message)
+}
+
+func (r *Runner) SteerContext(ctx context.Context, jobID, message string) error {
 	if strings.TrimSpace(message) == "" {
 		return errors.New("AI 补充指令不能为空")
 	}
 	r.mu.Lock()
 	current := r.jobs[jobID]
 	r.mu.Unlock()
-	if current == nil || current.ctx.Err() != nil {
+	if current == nil {
+		return ErrJobNotFound
+	}
+	if err := r.authorizeJob(ctx, jobID, current); err != nil {
+		return err
+	}
+	if current.ctx.Err() != nil {
 		return ErrJobNotFound
 	}
 	if err := current.steer.Push(schema.UserMessage(message)); err != nil {
@@ -328,6 +346,10 @@ func (r *Runner) Confirm(confirmation Confirmation) error {
 }
 
 func (r *Runner) ConfirmStream(ctx context.Context, confirmation Confirmation, factory StreamFactory) error {
+	return r.ConfirmStreamContext(WithOpenAccess(ctx), confirmation, factory)
+}
+
+func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirmation, factory StreamFactory) error {
 	if confirmation.CallID == "" || confirmation.Nonce == "" {
 		return ErrInvalidConfirmation
 	}
@@ -337,6 +359,9 @@ func (r *Runner) ConfirmStream(ctx context.Context, confirmation Confirmation, f
 		return ErrInvalidConfirmation
 	}
 	current := r.lookupJob(confirmation.JobID)
+	if err := r.authorizeJob(ctx, confirmation.JobID, current); err != nil {
+		return err
+	}
 	if current == nil {
 		restored, err := r.restoreJob(ctx, confirmation.JobID, factory)
 		if err != nil {
@@ -370,10 +395,17 @@ func (r *Runner) Answer(answer Answer) error {
 }
 
 func (r *Runner) AnswerStream(ctx context.Context, answer Answer, factory StreamFactory) error {
+	return r.AnswerStreamContext(WithOpenAccess(ctx), answer, factory)
+}
+
+func (r *Runner) AnswerStreamContext(ctx context.Context, answer Answer, factory StreamFactory) error {
 	if answer.CallID == "" || answer.Nonce == "" || strings.TrimSpace(answer.Text) == "" {
 		return ErrInvalidConfirmation
 	}
 	current := r.lookupJob(answer.JobID)
+	if err := r.authorizeJob(ctx, answer.JobID, current); err != nil {
+		return err
+	}
 	if current == nil {
 		restored, err := r.restoreJob(ctx, answer.JobID, factory)
 		if err != nil {
@@ -400,6 +432,33 @@ func (r *Runner) AnswerStream(ctx context.Context, answer Answer, factory Stream
 		Text:         answer.Text,
 	}
 	return r.resumeWithAnswer(current, hitlAnswer)
+}
+
+func (r *Runner) authorizeJob(ctx context.Context, jobID string, current *job) error {
+	if !r.config.ServerMode || openAccessFromContext(ctx) {
+		return nil
+	}
+	requester, ok := ipc.UserIDFromContext(ctx)
+	if !ok {
+		return ErrJobForbidden
+	}
+	ownerID := ""
+	if current != nil {
+		ownerID = current.ownerID
+	} else {
+		if r.runs == nil {
+			return ErrJobNotFound
+		}
+		row, err := r.runs.RunGet(ipc.WithUserID(ctx, ""), jobID)
+		if err != nil {
+			return ErrJobNotFound
+		}
+		ownerID = row.OwnerID
+	}
+	if ownerID == "" || ownerID != requester {
+		return ErrJobForbidden
+	}
+	return nil
 }
 
 func (r *Runner) lookupJob(jobID string) *job {

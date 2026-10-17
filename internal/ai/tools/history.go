@@ -90,8 +90,12 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 // session context (a plain local chat) is treated as local.
 func (r *Registry) remoteAsset(ctx context.Context, scope Scope) bool {
 	sessionID := scope.SessionID
-	if sessionID == "" && scope.TabID != "" && r.deps.TabSession != nil {
-		sessionID = r.deps.TabSession(scope.TabID)
+	if sessionID == "" && scope.TabID != "" {
+		resolved, err := r.tabSession(ctx, scope.TabID)
+		if err != nil || resolved == "" {
+			return true
+		}
+		sessionID = resolved
 	}
 	if sessionID != "" {
 		if terminal, ok := r.deps.Terminal.(AssetKindTerminal); ok {

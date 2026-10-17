@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -115,6 +117,33 @@ func composedMemoryDispatch(t *testing.T, services *ProductionServices, command,
 	return dispatcher.Dispatch(context.Background(), ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
 }
 
+func requireComposedMemoryPermissions(t *testing.T, path string, info os.FileInfo) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("memory.db permissions = %o, want 600", perm)
+		}
+		return
+	}
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
+$acl = Get-Acl -LiteralPath $env:NEXTERM_COMPOSED_MEMORY_PATH -ErrorAction Stop
+$entries = @($acl.Access)
+if ($entries.Count -eq 0) { throw 'memory.db has an empty or null DACL' }
+foreach ($entry in $entries) {
+	$sid = $entry.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+	if ($entry.AccessControlType -ne 'Allow' -or $allowed -notcontains $sid) {
+		throw "memory.db has a disallowed DACL entry for $sid"
+	}
+}`)
+	command.Env = append(os.Environ(), "NEXTERM_COMPOSED_MEMORY_PATH="+path)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("memory.db Windows DACL is not owner-only: %v: %s", err, output)
+	}
+}
+
 func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 	services, _, _, _, dataDir := composeMemoryRuntime(t)
 	path := filepath.Join(dataDir, "memory.db")
@@ -122,9 +151,7 @@ func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("memory.db missing at the platform data path: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("memory.db permissions = %o, want 600", perm)
-	}
+	requireComposedMemoryPermissions(t, path, info)
 
 	scope := `{"tenant":"local","subject":"default"}`
 	created := composedMemoryDispatch(t, services, "memory_create", `{"scope":`+scope+`,"topic":"operations","content":"restart at 02:00"}`)

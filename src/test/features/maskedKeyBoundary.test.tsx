@@ -111,4 +111,16 @@ describe("ModelManager masked key boundary", () => {
     );
     expect(view!.container.textContent).not.toContain("deepseek-reasoner");
   });
+
+  it("disables the reveal button for a saved masked key and re-enables it on a fresh key", async () => {
+    const keyInput = view!.container.querySelector('input[placeholder="sk-..."]') as HTMLInputElement;
+    const eye = () => view!.container.querySelector('button[title*="密钥"]') as HTMLButtonElement;
+    expect(eye().disabled).toBe(true);
+    expect(eye().title).toBe("已保存的密钥不可查看，只能替换为新密钥");
+
+    setInputValue(keyInput, "sk-new-explicit");
+    await flush();
+    expect(eye().disabled).toBe(false);
+    expect(eye().title).toBe("显示密钥");
+  });
 });

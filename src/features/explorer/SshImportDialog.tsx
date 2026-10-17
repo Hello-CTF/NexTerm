@@ -8,6 +8,8 @@ import type {
   SshImportPreviewDto,
 } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
+import { WEB } from "../../ipc/env";
+import { isMobile } from "../../app/platform";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconAlert, IconKey, IconServer, IconXCircle } from "../../ui/icons";
@@ -225,19 +227,23 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     >
                       ~/.ssh 目录
                     </button>
-                    <button
-                      type="button"
-                      className={`nx-segment-item ${source === "termius" ? "is-active" : ""}`}
-                      onClick={() => setSource("termius")}
-                    >
-                      Termius
-                    </button>
+                    {!WEB && !isMobile() && (
+                      <button
+                        type="button"
+                        className={`nx-segment-item ${source === "termius" ? "is-active" : ""}`}
+                        onClick={() => setSource("termius")}
+                      >
+                        Termius
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {source === "ssh-config" && (
                   <div className="nx-form-row">
-                    <label className="nx-label" htmlFor={pathId}>配置文件路径</label>
+                    <label className="nx-label" htmlFor={pathId}>
+                      {WEB ? "服务器 SSH 配置文件路径" : "配置文件路径"}
+                    </label>
                     <input
                       id={pathId}
                       ref={pathInputRef}
@@ -248,7 +254,9 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       autoComplete="off"
                     />
                     <span className="nx-hint mt-1.5 block">
-                      留空使用默认路径。点击「预览」时读取，不做后台扫描；导入时会重新读取并校验。
+                      {WEB
+                        ? "留空使用服务器上的 ~/.ssh/config。点击「预览」时读取服务器文件，不做后台扫描，也不会读取浏览器所在电脑的文件；导入时会重新读取并校验。"
+                        : "留空使用默认路径。点击「预览」时读取，不做后台扫描；导入时会重新读取并校验。"}
                     </span>
                   </div>
                 )}
@@ -256,7 +264,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 {source === "ssh-home" && (
                   <div className="nx-form-row">
                     <span className="nx-hint block">
-                      将扫描 ~/.ssh 目录：自动发现受支持的私钥，并解析 config 把 Host 与
+                      {WEB ? "将扫描服务器上的 ~/.ssh 目录" : "将扫描 ~/.ssh 目录"}
+                      ：自动发现受支持的私钥，并解析 config 把 Host 与
                       IdentityFile 关联到对应密钥。只读取、不修改任何原始文件；跳过 .pub、
                       known_hosts、authorized_keys 等无关文件；私钥内容不会显示或写入日志。
                     </span>

@@ -96,9 +96,15 @@ func TestFrontendFacadeCommandsAreRegisteredInProduction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := server.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
 	desktop, err := NewProduction(t.Context(), ProductionConfig{DataDir: t.TempDir(), Desktop: true})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := desktop.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = desktop.Shutdown(context.Background()) })

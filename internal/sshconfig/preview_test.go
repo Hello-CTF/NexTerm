@@ -335,9 +335,11 @@ func TestPreviewMissingKeys(t *testing.T) {
 }
 
 func TestDedupeIdentityFiles(t *testing.T) {
-	got := DedupeIdentityFiles([]string{"/a/b", "/a/./b", "/a/b", "", "/c"})
-	if strings.Join(got, ",") != "/a/b,/c" {
-		t.Errorf("DedupeIdentityFiles = %v", got)
+	first := filepath.FromSlash("/a/b")
+	second := filepath.FromSlash("/c")
+	got := DedupeIdentityFiles([]string{first, filepath.FromSlash("/a/./b"), first, "", second})
+	if len(got) != 2 || got[0] != first || got[1] != second {
+		t.Errorf("DedupeIdentityFiles = %v, want [%q %q]", got, first, second)
 	}
 }
 

@@ -223,7 +223,18 @@ beforeEach(() => {
   harness.frames.clear();
   harness.reopen = null;
   harness.geometry = { widthPx: 360, heightPx: 400 };
-  harness.attach.mockReset().mockResolvedValue("tab-new");
+  harness.attach.mockReset().mockResolvedValue({
+    tabId: "tab-new",
+    sessionId: "session",
+    cols: 36,
+    rows: 20,
+    controller: "me",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+    shell: "powershell",
+    retainable: true,
+  });
   harness.attachTab.mockReset().mockResolvedValue({
     tabId: "tab-existing",
     cols: 90,
@@ -267,6 +278,27 @@ afterEach(() => {
 });
 
 describe("XtermView production grid lifecycle", () => {
+  it("reports attached shell and background capability before the attach callback", async () => {
+    const events: string[] = [];
+    await show(
+      props({
+        onAttachInfo: (info) => events.push(`info:${String(info.shell)}:${String(info.retainable)}`),
+        onAttach: (id) => events.push(`attach:${id}`),
+      }),
+    );
+
+    expect(events).toEqual(["info:powershell:true", "attach:tab-new"]);
+  });
+
+  it.each([
+    { name: "Docker exec", overrides: { containerId: "container" } },
+    { name: "WinRM line", overrides: { winrm: true } },
+  ])("marks $name as not retainable", async ({ overrides }) => {
+    let retainable: boolean | undefined;
+    await show(props({ ...overrides, onAttachInfo: (info) => { retainable = info.retainable; } }));
+    expect(retainable).toBe(false);
+  });
+
   it("opens a new PTY with measured geometry instead of the terminal default", async () => {
     await show(props());
     expect(harness.attach).toHaveBeenCalledWith(
@@ -347,6 +379,27 @@ describe("XtermView production grid lifecycle", () => {
     expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1);
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
     expect(harness.attach).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["powershell", "posix"] as const)("forwards the %s classification on ordinary channel reopen", async (shell) => {
+    const reported: string[] = [];
+    await show(props({ onAttachInfo: (info) => reported.push(String(info.shell)) }));
+    reported.length = 0;
+    harness.attachTab.mockResolvedValue({
+      tabId: "tab-new",
+      cols: 90,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      shell,
+    });
+
+    harness.reopen?.();
+    await flushWork();
+
+    expect(reported).toEqual([shell]);
   });
 
   it("never touches the disposed terminal when unmounted during a resume attach", async () => {

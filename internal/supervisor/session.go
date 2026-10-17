@@ -148,14 +148,16 @@ func (s *Session) Info() Info {
 
 func (s *Session) infoLocked() Info {
 	info := Info{
-		ID:          s.entry.ID,
-		CreatedAt:   s.entry.CreatedAt,
-		Incarnation: s.identity.Incarnation,
-		Cols:        s.entry.Cols,
-		Rows:        s.entry.Rows,
-		Dead:        s.dead,
-		ExitCode:    s.entry.ExitCode,
-		Signal:      s.entry.Signal,
+		ID:               s.entry.ID,
+		CreatedAt:        s.entry.CreatedAt,
+		Incarnation:      s.identity.Incarnation,
+		Title:            s.entry.Title,
+		MetadataRevision: s.entry.MetadataRevision,
+		Cols:             s.entry.Cols,
+		Rows:             s.entry.Rows,
+		Dead:             s.dead,
+		ExitCode:         s.entry.ExitCode,
+		Signal:           s.entry.Signal,
 	}
 	if s.entry.FinishedAt != nil {
 		finished := *s.entry.FinishedAt

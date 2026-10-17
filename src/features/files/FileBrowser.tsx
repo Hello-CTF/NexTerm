@@ -16,11 +16,10 @@ import {
   pickSavePath,
   promptText,
 } from "../../ui/dialogs";
-import { fsApi, terminalApi } from "../../ipc/commands";
+import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
 import type { FileEntryDto } from "../../ipc/types";
 import {
-  cdCommandFor,
   findWritableTerminal,
   openFileTab,
   openFileTabInSplit,
@@ -37,7 +36,17 @@ import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import "../../ui/skeleton.css";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
-import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
+import {
+  HOME,
+  baseName,
+  directoryCommandFor,
+  type DirectoryCommandFailure,
+  fsErrorResource,
+  isRoot,
+  joinPath,
+  normalizeTypedPath,
+  parentOf,
+} from "./pathUtils";
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
@@ -58,6 +67,7 @@ import {
   IconArrowUp,
   IconCopy,
   IconDownload,
+  IconDrive,
   IconEdit,
   IconEye,
   IconFilePlus,
@@ -86,6 +96,8 @@ function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   rows[next]?.focus();
 }
 
+const fileBrowserReconnects = new Map<string, ReturnType<typeof reconnectDeadHost>>();
+
 export function FileBrowser({ sessionId }: { sessionId: string }) {
   return <FileBrowserInner sessionId={sessionId} />;
 }
@@ -95,27 +107,55 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   const { pushToast } = useUi();
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
-  const [path, setPath] = useState(HOME);
-  const [draft, setDraft] = useState(HOME);
+  const [pathChoice, setPath] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
   const coarse = useCoarsePointer();
-  const follow = useCwdFollow(sessionId, path, (next) => {
+  const rootsQuery = useQuery({
+    queryKey: ["fsRoots", sessionId],
+    queryFn: () => fsApi.roots(sessionId),
+    enabled: typeof fsApi.roots === "function",
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const rootsData = rootsQuery.data;
+  const pathStyle = rootsData?.pathStyle ?? "unknown";
+  const windowsComputer = rootsData?.supported === true && pathStyle === "windows";
+  const environmentSettled =
+    typeof fsApi.roots !== "function" || rootsQuery.isSuccess || rootsQuery.isError;
+  const rootsSessionGone = fsErrorResource(rootsQuery.error) === "session";
+  const path = pathChoice ?? (windowsComputer ? null : HOME);
+  const computer = path === null && windowsComputer;
+  const follow = useCwdFollow(sessionId, path ?? "\u0000", (next) => {
     setPath(next);
     setSelected(null);
   });
 
   const entries = useQuery({
     queryKey: ["fs", sessionId, path],
-    queryFn: () => fsApi.list(sessionId, path),
+    queryFn: () => fsApi.list(sessionId, path as string),
+    enabled: environmentSettled && path !== null && !rootsSessionGone,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) =>
       (error as { code?: string } | null)?.code === "not_found" ? false : failureCount < 1,
   });
 
-  const list = entries.data ?? [];
+  const list: FileEntryDto[] = computer
+    ? (rootsData?.roots ?? []).map((realRoot) => ({
+        name: realRoot.label || realRoot.path,
+        path: realRoot.path,
+        kind: "dir",
+        size: 0,
+        mode: "",
+        owner: null,
+        group: null,
+        mtime: 0,
+        symlinkTarget: null,
+      }))
+    : (entries.data ?? []);
   const virtualizer = useVirtualizer({
     count: list.length,
     getScrollElement: () => parentRef.current,
@@ -147,23 +187,20 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   );
 
   useEffect(() => {
-    setDraft(path);
+    setDraft(path ?? "");
   }, [path]);
 
   const goto = (next: string | null) => {
-    if (!next || next === path) return;
+    if (next === path) return;
     setPath(next);
     setSelected(null);
-  };
-
-  const enter = (name: string, kind: string) => {
-    if (kind !== "dir") return;
-    goto(joinPath(path, name));
+    setMenu(null);
   };
 
   const openEntry = (entry: (typeof list)[number]) => {
     if (entry.kind === "dir") {
-      enter(entry.name, entry.kind);
+      if (computer) goto(entry.path);
+      else if (path) goto(joinPath(path, entry.name));
       return;
     }
     if (!isEditableFile(entry.name)) {
@@ -174,23 +211,36 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   };
 
   const up = () => {
+    if (!path) return;
     const parent = parentOf(path);
     if (parent) goto(parent);
+    else if (windowsComputer && isRoot(path)) goto(null);
   };
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["fsRoots", sessionId] });
+    if (path) void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
+  };
   const refreshDir = (dir: string) =>
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
 
   useNativeFileDrop(sessionId, {
     surface: parentRef,
-    fallbackDir: () => path,
+    fallbackDir: () => path ?? "",
     knownSiblings: (dir) => (dir === path ? entries.data : undefined),
     onSettled: refreshDir,
   });
 
   const sessionGone =
-    entries.isError && (entries.error as { code?: string } | null)?.code === "not_found";
+    rootsSessionGone || (entries.isError && fsErrorResource(entries.error) === "session");
+  const legacyNotFound =
+    entries.isError &&
+    fsErrorResource(entries.error) === null &&
+    (entries.error as { code?: string }).code === "not_found";
+  const legacyRootsNotFound =
+    rootsQuery.isError &&
+    fsErrorResource(rootsQuery.error) === null &&
+    (rootsQuery.error as { code?: string }).code === "not_found";
   const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -210,20 +260,39 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       pushToast("error", "找不到这个文件标签的主机信息，请到左侧资产树里手动连接");
       return;
     }
+    let pending = fileBrowserReconnects.get(sessionId);
+    if (!pending) {
+      pending = reconnectDeadHost(target.ws);
+      fileBrowserReconnects.set(sessionId, pending);
+    }
     setReconnecting(true);
     try {
-      const s = await reconnectDeadHost(target.ws);
+      const s = await pending;
       if (!s) {
         pushToast("info", "已取消重连");
         return;
       }
-      const list = useUi.getState().sessions;
-      useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
-      useUi.getState().updateTab(target.tabId, { sessionId: s.id });
+      const latest = useUi.getState();
+      latest.setSessions([
+        ...latest.sessions.filter((x) => x.id !== sessionId && x.id !== s.id),
+        s,
+      ]);
+      for (const workspace of latest.workspaces) {
+        for (const pane of workspace.panes) {
+          for (const tab of pane.tabs) {
+            if (tab.kind === "files" && !tab.path && tab.sessionId === sessionId) {
+              latest.updateTab(tab.id, { sessionId: s.id });
+            }
+          }
+        }
+      }
       pushToast("info", "已重新连接，正在重新加载文件列表");
     } catch (e) {
       pushToast("error", `重新连接失败：${describeError(e)}`);
     } finally {
+      if (fileBrowserReconnects.get(sessionId) === pending) {
+        fileBrowserReconnects.delete(sessionId);
+      }
       setReconnecting(false);
     }
   };
@@ -281,7 +350,11 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     event.preventDefault();
     noteHtml5Drop();
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
-    const dir = row?.dataset.dropPath ?? path;
+    const dir = row?.dataset.dropPath ?? path ?? "";
+    if (!dir) {
+      pushToast("info", "请先选择实际目录再上传");
+      return;
+    }
     void dropFolderUpload({
       sessionId,
       dir,
@@ -369,11 +442,33 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     pushToast("info", "正在解压…");
     try {
       const target = await fsApi.extract(sessionId, archive);
-      refreshDir(parentOf(target) ?? path);
+      refreshDir(parentOf(target) ?? path ?? HOME);
       pushToast("success", `已解压到 ${target}`);
     } catch (e) {
       pushToast("error", `解压失败：${describeError(e)}`);
     }
+  };
+
+  const notifyDirectoryFailure = (dir: string, failure: DirectoryCommandFailure | null) => {
+    const reason =
+      failure === "control"
+        ? "目录包含控制字符"
+        : failure === "unsupported"
+          ? "当前终端 Shell 暂不支持自动切换目录"
+          : "无法确认当前终端 Shell";
+    void copyText(dir)
+      .then(() => {
+        pushToast(
+          failure === "control" ? "error" : "info",
+          `${reason}，未发送命令；路径已复制，请手动切换`,
+        );
+      })
+      .catch((e) => {
+        pushToast(
+          "error",
+          `${reason}，未发送命令；复制路径失败：${describeError(e)}。路径：${dir}`,
+        );
+      });
   };
 
   const openTerminalAt = (dir: string) => {
@@ -382,25 +477,108 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       pushToast("error", "当前会话已断开，无法打开终端");
       return;
     }
-    void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
+    if (sessionKind !== "winrm") {
+      void openTerminalTab(session, undefined, undefined, { directory: dir });
+      return;
+    }
+    const { command, failure } = directoryCommandFor(dir, "powershell");
+    if (!command) {
+      notifyDirectoryFailure(dir, failure);
+      return;
+    }
+    const previous = new Set(
+      useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .filter((tab) => tab.kind === "terminal" && tab.sessionId === sessionId)
+        .map((tab) => tab.id),
+    );
+    void openTerminalTab(session)
+      .then(() => {
+        const created = useUi
+          .getState()
+          .workspaces.flatMap((workspace) => workspace.panes)
+          .flatMap((pane) => pane.tabs)
+          .find(
+            (tab) =>
+              tab.kind === "terminal" && tab.sessionId === sessionId && !previous.has(tab.id),
+          );
+        if (!created) {
+          pushToast("error", "新终端创建失败，无法切换目录");
+          return;
+        }
+        let finished = false;
+        let unsubscribe = () => {};
+        const execute = () => {
+          if (finished) return;
+          const tab = useUi
+            .getState()
+            .workspaces.flatMap((workspace) => workspace.panes)
+            .flatMap((pane) => pane.tabs)
+            .find((candidate) => candidate.id === created.id);
+          if (!tab?.tabId) return;
+          finished = true;
+          window.clearTimeout(timeout);
+          unsubscribe();
+          void sessionApi
+            .lineExec(tab.tabId, command)
+            .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+        };
+        const timeout = window.setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          unsubscribe();
+          pushToast("error", "新终端尚未就绪，无法切换目录");
+        }, 10000);
+        unsubscribe = useUi.subscribe(execute);
+        execute();
+      })
+      .catch((e) => pushToast("error", `打开终端失败：${describeError(e)}`));
   };
 
   const cdTerminalTo = (dir: string) => {
-    const kernelTabId = findWritableTerminal(sessionId);
-    if (!kernelTabId) {
+    const target = findWritableTerminal(sessionId);
+    if (!target) {
       pushToast("info", "当前工作区没有可用终端，已新建一个");
       openTerminalAt(dir);
       return;
     }
+    const { command, failure } = directoryCommandFor(
+      dir,
+      sessionKind === "winrm" ? "powershell" : target.shell,
+    );
+    if (!command) {
+      notifyDirectoryFailure(dir, failure);
+      return;
+    }
+    if (sessionKind === "winrm") {
+      void sessionApi
+        .lineExec(target.tabId, command)
+        .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+      return;
+    }
     void terminalApi
-      .write(kernelTabId, new TextEncoder().encode(`${cdCommandFor(dir)}\n`))
+      .write(target.tabId, new TextEncoder().encode(`${command}\n`))
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
   const openRowMenuAt = (entry: FileEntryDto, x: number, y: number) => {
     setSelected(entry.path);
+    if (computer) {
+      setMenu({
+        x,
+        y,
+        title: entry.path,
+        items: [
+          { kind: "group", label: "磁盘" },
+          { kind: "item", label: "打开此磁盘", onSelect: () => goto(entry.path) },
+        ],
+      });
+      return;
+    }
     const isDir = entry.kind === "dir";
-    const dir = isDir ? entry.path : (parentOf(entry.path) ?? path);
+    const dir = isDir ? entry.path : (parentOf(entry.path) ?? path ?? HOME);
     const items: MenuItem[] = [
       { kind: "group", label: "终端" },
       {
@@ -498,7 +676,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         icon: <IconEdit size={13} />,
         disabled: fileOps.busy !== null,
         onSelect: () =>
-          void fileOps.renameEntry(entry, list, path, (from, to) =>
+          void fileOps.renameEntry(entry, list, path ?? HOME, (from, to) =>
             setSelected((cur) => (cur === from ? to : cur)),
           ),
       },
@@ -508,7 +686,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         icon: <IconLock size={13} />,
         hint: "chmod",
         disabled: fileOps.busy !== null,
-        onSelect: () => void fileOps.chmodEntry(entry, path),
+        onSelect: () => void fileOps.chmodEntry(entry, path ?? HOME),
       },
     );
     if (!isDir) {
@@ -542,6 +720,23 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
   };
 
   const openBlankMenuAt = (x: number, y: number) => {
+    if (path === null) {
+      setMenu({
+        x,
+        y,
+        title: windowsComputer ? "此电脑" : "文件",
+        items: [
+          { kind: "group", label: windowsComputer ? "此电脑" : "文件" },
+          {
+            kind: "item",
+            label: "刷新",
+            icon: <IconRefresh size={13} />,
+            onSelect: refresh,
+          },
+        ],
+      });
+      return;
+    }
     const items: MenuItem[] = [{ kind: "group", label: "当前目录" }];
     if (!packHidden) {
       items.push({
@@ -619,7 +814,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
     openBlankMenuAt(ev.clientX, ev.clientY);
   };
 
-  const selectedEntry = list.find((e) => e.path === selected);
+  const selectedEntry = computer ? undefined : list.find((e) => e.path === selected);
   const selectedFile = selectedEntry?.kind === "dir" ? undefined : selectedEntry;
   const selectedEditableFile =
     selectedFile && isEditableFile(selectedFile.name) ? selectedFile : undefined;
@@ -635,6 +830,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       : !selectedEditableFile
         ? "非文本文件不能使用日志查看器"
         : "用只读日志查看器打开选中文件（分块读取，不整文件下载）";
+  const canUp = path !== null && (parentOf(path) !== null || (windowsComputer && isRoot(path)));
 
   return (
     <div className="nx-pane">
@@ -642,7 +838,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         <button
           className="nx-icon-btn"
           onClick={up}
-          disabled={!parentOf(path)}
+          disabled={!canUp}
           title="上一级目录"
         >
           <IconArrowUp size={14} />
@@ -659,15 +855,27 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !isImeKeyEvent(e)) {
                 e.preventDefault();
-                const next = normalizeTypedPath(draft);
-                if (next && next !== path) goto(next);
-                else refresh();
+                const next = normalizeTypedPath(draft, pathStyle);
+                if (!next) {
+                  if (draft.trim()) {
+                    pushToast(
+                      "error",
+                      "Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）",
+                    );
+                  } else {
+                    refresh();
+                  }
+                } else if (next !== path) {
+                  goto(next);
+                } else {
+                  refresh();
+                }
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                setDraft(path);
+                setDraft(path ?? "");
               }
             }}
-            onBlur={() => setDraft(path)}
+            onBlur={() => setDraft(path ?? "")}
             placeholder="输入路径后回车，支持 ~ 与 C:/"
             title="直接输入路径后回车跳转"
           />
@@ -698,18 +906,18 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         <span className="nx-divider-v max-[560px]:hidden" />
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          onClick={() => void uploadTo(path)}
-          disabled={sessionGone}
-          title={sessionGone ? goneHint : "上传本地文件到当前目录"}
+          onClick={() => void uploadTo(path ?? "")}
+          disabled={sessionGone || computer}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传本地文件到当前目录"}
         >
           <IconUpload size={13} />
           上传
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          onClick={() => void uploadFolderTo(path)}
-          disabled={sessionGone}
-          title={sessionGone ? goneHint : "上传本地文件夹到当前目录"}
+          onClick={() => void uploadFolderTo(path ?? "")}
+          disabled={sessionGone || computer}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传本地文件夹到当前目录"}
         >
           <IconFolderPlus size={13} />
           文件夹
@@ -734,9 +942,9 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          onClick={() => void mkDirIn(path)}
-          disabled={sessionGone}
-          title={sessionGone ? goneHint : "新建目录"}
+          onClick={() => void mkDirIn(path ?? "")}
+          disabled={sessionGone || computer}
+          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "新建目录"}
         >
           <IconFolder size={13} />
           新建
@@ -786,16 +994,47 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
       <div
         ref={parentRef}
         className="min-h-0 flex-1 overflow-y-auto"
-        data-file-drop-target=""
+        data-file-drop-target={computer ? undefined : ""}
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
+          if (computer || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
         }}
         onDrop={dropUpload}
       >
-        {entries.isLoading ? (
+        {rootsQuery.isError && (
+          <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
+            <IconAlert size={14} className="mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="break-words">
+                {rootsSessionGone
+                  ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在本标签继续浏览"
+                  : `无法读取磁盘根信息：${describeError(rootsQuery.error)}`}
+              </div>
+              <div className="flex gap-2">
+                {!rootsSessionGone && (
+                  <button
+                    className="nx-link mt-1 text-[11px]"
+                    onClick={() => void qc.invalidateQueries({ queryKey: ["fsRoots", sessionId] })}
+                  >
+                    重试
+                  </button>
+                )}
+                {(rootsSessionGone || legacyRootsNotFound) && (
+                  <button
+                    className="nx-link mt-1 text-[11px]"
+                    disabled={reconnecting}
+                    onClick={() => void reconnectHost()}
+                  >
+                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {!environmentSettled || entries.isLoading ? (
           <div role="status" aria-label="加载中">
             {Array.from({ length: 10 }, (_, i) => (
               <div key={i} className="nx-skeleton-row" aria-hidden="true">
@@ -816,23 +1055,26 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                   ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在本标签继续浏览"
                   : describeError(entries.error)}
               </div>
-              {sessionGone ? (
-                <button
-                  className="nx-link mt-1 text-[11px]"
-                  disabled={reconnecting}
-                  onClick={() => void reconnectHost()}
-                >
-                  {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
-                </button>
-              ) : (
-                <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
-                  重试
-                </button>
-              )}
+              <div className="flex gap-2">
+                {!sessionGone && (
+                  <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
+                    重试
+                  </button>
+                )}
+                {(sessionGone || legacyNotFound) && (
+                  <button
+                    className="nx-link mt-1 text-[11px]"
+                    disabled={reconnecting}
+                    onClick={() => void reconnectHost()}
+                  >
+                    {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ) : list.length === 0 ? (
-          <div className="nx-empty">这个目录是空的</div>
+          <div className="nx-empty">{computer ? "没有可用磁盘" : "这个目录是空的"}</div>
         ) : (
           <div className="relative" style={{ height: virtualizer.getTotalSize() }} role="tree" aria-label="文件">
             {virtualizer.getVirtualItems().map((vi) => {
@@ -875,7 +1117,7 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                       openRowMenuAt(e, r.left, r.bottom);
                       return;
                     }
-                    if (ev.key === "Delete" || ev.key === "Backspace") {
+                    if (!computer && (ev.key === "Delete" || ev.key === "Backspace")) {
                       ev.preventDefault();
                       ev.stopPropagation();
                       void removePath(e.path, isDir);
@@ -892,7 +1134,11 @@ function FileBrowserInner({ sessionId }: { sessionId: string }) {
                         : `${e.path} · 非文本文件，不能在线编辑`
                   }
                 >
-                  <Icon size={14} className={`shrink-0 ${tone}`} />
+                  {computer ? (
+                    <IconDrive size={14} className={`shrink-0 ${tone}`} />
+                  ) : (
+                    <Icon size={14} className={`shrink-0 ${tone}`} />
+                  )}
                   <span className={`nx-row-name min-w-0 flex-auto truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>
                     {e.name}
                   </span>

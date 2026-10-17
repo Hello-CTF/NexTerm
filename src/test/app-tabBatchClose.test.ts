@@ -29,7 +29,7 @@ import { setTerminalCloseAction } from "../app/preferences";
 import type { SessionInfo } from "../ipc/commands";
 
 function terminal(id: string): AppTab {
-  return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true };
+  return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true, retainable: true };
 }
 
 function sessionInfo(): SessionInfo {

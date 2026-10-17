@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => {
     login: vi.fn(),
     logout: vi.fn(),
     dekGet: vi.fn(),
+    onRemoteChange: vi.fn(),
+    advanceLayoutAccount: vi.fn(),
   };
 });
 
@@ -75,6 +77,8 @@ vi.mock("../features/auth/crypto", async (importOriginal) => {
 vi.mock("../app/layout", () => ({
   layoutBootstrapped: Promise.resolve(),
   startLayoutSync: vi.fn(),
+  onRemoteChange: mocks.onRemoteChange,
+  advanceLayoutAccount: mocks.advanceLayoutAccount,
 }));
 
 vi.mock("../features/terminal/TerminalPane", () => ({ TerminalPane: () => null }));
@@ -221,6 +225,9 @@ beforeEach(() => {
     sessions: [],
     workspaces: [],
     activeWorkspaceId: null,
+    workspaceRuntime: {},
+    aiBoards: {},
+    aiAccountEpoch: 0,
   });
   useAuth.setState({
     status: null,
@@ -277,26 +284,131 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     expect(toasts.some((t) => t.kind === "info")).toBe(true);
   });
 
-  it("clears account-scoped caches and session/vault state on logout and refetches them after another login", async () => {
+  it("clears account-scoped caches, SQL runtime, and session/vault state on logout and refetches after another login", async () => {
     mounted = mountApp();
     await flushUntil(() => useAuth.getState().gate === "login");
     authed = true;
     await login();
     await flushUntil(() => text().includes("web-01"));
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            id: "ws-account",
+            kind: "session",
+            title: "account workspace",
+            panes: [{ id: "pane-account", tabs: [], activeTabId: null }],
+            activePaneId: "pane-account",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws-account",
+        workspaceRuntime: {},
+      });
+      useUi.getState().updateSqlDraft("ws-account", {
+        text: "SELECT old_account_secret;",
+        selection: { from: 0, to: 0 },
+        schema: "public",
+        connId: "conn-old",
+        dbKind: "postgres",
+      });
+    });
+    expect(useUi.getState().getWorkspaceRuntime("ws-account")?.sqlDraft?.text).toBe(
+      "SELECT old_account_secret;",
+    );
 
     authed = false;
     await logout();
     expect(useAuth.getState().gate).toBe("login");
-    // Account-switch direction: no asset/session/vault state of the old account may linger
+    // Account-switch direction: no asset/session/vault/SQL state of the old account may linger
     await flushUntil(() => text().includes("加载失败："));
     expect(text()).not.toContain("web-01");
     expect(useUi.getState().sessions).toEqual([]);
     expect(vaultStatusText()).not.toContain("凭据库已解锁");
+    expect(useUi.getState().getWorkspaceRuntime("ws-account")?.sqlDraft).toBeUndefined();
 
     authed = true;
     await login();
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
+    expect(useUi.getState().getWorkspaceRuntime("ws-account")?.sqlDraft).toBeUndefined();
+  });
+
+  it("delegates layout account generation through two-stage login and ready identity changes", async () => {
+    mounted = mountApp();
+    await flushUntil(() => useAuth.getState().gate === "login");
+    authed = true;
+    await login();
+    await flushUntil(() => text().includes("web-01"));
+    expect(mocks.advanceLayoutAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.onRemoteChange).toHaveBeenCalledTimes(1);
+    expect(mocks.advanceLayoutAccount.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.onRemoteChange.mock.invocationCallOrder[0],
+    );
+
+    act(() => {
+      useAuth.setState({ user: { ...ADMIN, id: "u-b", username: "account-b" } });
+    });
+    await flush();
+    expect(mocks.advanceLayoutAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.onRemoteChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears AI transient state on logout and direct user identity changes", async () => {
+    mounted = mountApp();
+    await flushUntil(() => useAuth.getState().gate === "login");
+    authed = true;
+    await login();
+    await flushUntil(() => text().includes("web-01"));
+    const seedDraft = (draft: string) => {
+      useUi.setState({
+        aiBoards: {
+          account: {
+            tabs: [{ id: "ai-shared", title: "History", conversationId: "conv-history", draft }],
+            activeTabId: "ai-shared",
+          },
+        },
+        aiBusy: true,
+        takeover: { tabId: "old-tab", token: "old-token", task: "old task", allowWrite: true, startedAt: 1 },
+      });
+    };
+    mocks.onRemoteChange.mockImplementation(() => {
+      useUi.setState({
+        aiBoards: {
+          account: {
+            tabs: [{ id: "ai-shared", title: "History", conversationId: "conv-history" }],
+            activeTabId: "ai-shared",
+          },
+        },
+      });
+    });
+
+    seedDraft("account A secret");
+    const firstEpoch = useUi.getState().aiAccountEpoch;
+    authed = false;
+    await logout();
+    expect(useUi.getState().aiBoards).toEqual({});
+    expect(useUi.getState().aiAccountEpoch).toBe(firstEpoch + 1);
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(useUi.getState().takeover).toBeNull();
+
+    authed = true;
+    await login();
+    await flushUntil(() => text().includes("web-01"));
+    expect(mocks.onRemoteChange).toHaveBeenCalled();
+    expect(useUi.getState().aiBoards.account.tabs[0].conversationId).toBe("conv-history");
+    expect(useUi.getState().aiBoards.account.tabs[0].draft).toBeUndefined();
+
+    seedDraft("account B secret");
+    const secondEpoch = useUi.getState().aiAccountEpoch;
+    act(() => {
+      useAuth.setState({ user: { ...ADMIN, id: "u-b", username: "account-b" } });
+    });
+    await flush();
+    expect(useUi.getState().aiAccountEpoch).toBe(secondEpoch + 1);
+    expect(useUi.getState().aiBoards.account.tabs[0].conversationId).toBe("conv-history");
+    expect(useUi.getState().aiBoards.account.tabs[0].draft).toBeUndefined();
   });
 
   it("does not write back late session-list or vault responses from the old account after logout", async () => {

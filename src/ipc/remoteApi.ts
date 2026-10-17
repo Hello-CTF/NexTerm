@@ -5,7 +5,7 @@
 
 import { call } from "./commands";
 import type { AccountLink } from "./types";
-import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsSample } from "./fleetApi";
+import type { FleetBaseURLEntry, FleetDevice, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView, ShareLinkView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
 
@@ -96,7 +96,7 @@ export const remoteFleetApi = {
     call<{ ok: boolean; desired_autostart: boolean }>("remote_fleet_device_autostart", { args: { deviceId: id, desired } }),
 
   metrics: (id: string, sinceMs?: number) =>
-    call<{ samples: FleetMetricsSample[] }>("remote_fleet_device_metrics", {
+    call<FleetMetricsResponse>("remote_fleet_device_metrics", {
       args: { deviceId: id, ...(sinceMs ? { sinceMs } : {}) },
     }),
 

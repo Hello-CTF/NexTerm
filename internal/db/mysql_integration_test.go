@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -179,10 +180,10 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 	if withService < 2 {
 		t.Fatalf("Threads_connected=%d, want the service connection plus the probe", withService)
 	}
-	if err := service.Disconnect(connID); err != nil {
+	if err := service.Disconnect(context.Background(), connID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
-	if _, err := service.mysqlOf(connID); err == nil {
+	if _, err := service.mysqlOf(context.Background(), connID); err == nil {
 		t.Fatal("MySQL connection handle survived disconnect")
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -196,8 +197,72 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	if err := service.Disconnect(connID); err != nil {
+	if err := service.Disconnect(context.Background(), connID); err != nil {
 		t.Fatalf("idempotent disconnect: %v", err)
+	}
+	assertMySQLTransportDisconnect(t, container, config)
+}
+
+func assertMySQLTransportDisconnect(t *testing.T, container dockerTestContainer, config MySQLConfig) {
+	t.Helper()
+	config.Host = container.host
+	config.Port = container.port
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	connection, err := connectMySQL(ctx, config)
+	cancel()
+	if err != nil {
+		t.Fatalf("disconnect probe connect: %v", err)
+	}
+	defer connection.Close()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	var targetID int64
+	err = connection.db.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&targetID)
+	cancel()
+	if err != nil {
+		t.Fatalf("connection ID: %v", err)
+	}
+
+	statement := "UPDATE m18_types SET txt = 'unknown' WHERE id = 1 AND SLEEP(30) = 0"
+	done := make(chan error, 1)
+	go func() {
+		_, err := queryMySQL(context.Background(), connection.db, statement, 0, 40*time.Second)
+		done <- err
+	}()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	probe, err := connectMySQL(ctx, config)
+	cancel()
+	if err != nil {
+		t.Fatalf("statement probe connect: %v", err)
+	}
+	defer probe.Close()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var active string
+		err = probe.db.QueryRowContext(ctx, "SELECT INFO FROM information_schema.PROCESSLIST WHERE ID = ?", targetID).Scan(&active)
+		if err == nil && strings.Contains(active, "SLEEP(30)") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sleeping statement did not start: %v", err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	output, killErr := exec.CommandContext(killCtx, "docker", "kill", "--signal", "KILL", container.name).CombinedOutput()
+	killCancel()
+	if killErr != nil {
+		t.Fatalf("kill MySQL container: %v: %s", killErr, output)
+	}
+	select {
+	case err := <-done:
+		var ipcErr *ipc.Error
+		if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeDisconnected {
+			t.Fatalf("transport disconnect error=%#v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("query did not observe the transport disconnect")
 	}
 }
 

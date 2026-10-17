@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"time"
@@ -26,6 +27,32 @@ type FileEntry struct {
 	Group         string      `json:"group,omitempty"`
 	ModTime       time.Time   `json:"modTime"`
 	SymlinkTarget string      `json:"symlinkTarget,omitempty"`
+}
+
+type PathStyle string
+
+const (
+	PathStyleUnknown PathStyle = "unknown"
+	PathStyleWindows PathStyle = "windows"
+	PathStylePOSIX   PathStyle = "posix"
+)
+
+var ErrNoMedia = errors.New("filesystem media not ready")
+
+type FileRoot struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+}
+
+type FileSystemRoots struct {
+	PathStyle PathStyle  `json:"pathStyle"`
+	Roots     []FileRoot `json:"roots"`
+	HomePath  string     `json:"homePath"`
+	Supported bool       `json:"supported"`
+}
+
+type RootsProvider interface {
+	Roots(context.Context) (FileSystemRoots, error)
 }
 
 type RemoteReader interface {

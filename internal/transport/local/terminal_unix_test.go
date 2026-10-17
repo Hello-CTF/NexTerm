@@ -4,10 +4,12 @@ package local
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,5 +71,75 @@ func TestOpenInteractivePTY(t *testing.T) {
 	}
 	if err := channel.CloseWrite(); err != base.ErrUnsupported {
 		t.Fatalf("CloseWrite error = %v", err)
+	}
+}
+
+type localRetryChannel struct {
+	base.Channel
+	mu       sync.Mutex
+	failures int
+	err      error
+	calls    int
+}
+
+func (c *localRetryChannel) Close() error {
+	c.mu.Lock()
+	c.calls++
+	if c.failures > 0 {
+		c.failures--
+		err := c.err
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
+	return c.Channel.Close()
+}
+
+func (c *localRetryChannel) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func TestTransportCloseRetriesTrackedChannelFailures(t *testing.T) {
+	transport := unixTransport(t)
+	channel, err := transport.OpenPTY(context.Background(), base.PTYOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := channel.(*trackedChannel)
+	underlying := tracked.Channel
+	injected := errors.New("injected tracked cleanup failure")
+	retry := &localRetryChannel{Channel: underlying, failures: 2, err: injected}
+	tracked.Channel = retry
+	t.Cleanup(func() { _ = underlying.Close() })
+	remaining := func() int {
+		transport.mu.Lock()
+		defer transport.mu.Unlock()
+		return len(transport.channels)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := transport.Close(); !errors.Is(err, injected) {
+			t.Fatalf("Close attempt %d error = %v, want injected failure", attempt, err)
+		}
+		if got := remaining(); got != 1 {
+			t.Errorf("tracked channels after failed Close attempt %d = %d, want retained channel", attempt, got)
+		}
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("third Close error = %v", err)
+	}
+	if got := remaining(); got != 0 {
+		t.Fatalf("tracked channels after successful Close = %d, want 0", got)
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("tracked Close after transport cleanup = %v", err)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("idempotent transport Close = %v", err)
+	}
+	if got := retry.callCount(); got != 3 {
+		t.Fatalf("underlying Close calls = %d, want two failures and one success", got)
 	}
 }

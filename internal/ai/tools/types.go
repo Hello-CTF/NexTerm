@@ -171,6 +171,10 @@ type Terminal interface {
 	Write(context.Context, string, []byte) error
 }
 
+type TabSessionTerminal interface {
+	TabSession(context.Context, string) (string, error)
+}
+
 type CreateTerminalOptions struct {
 	Title   string
 	Command string

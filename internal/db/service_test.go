@@ -40,13 +40,13 @@ func TestInlineConnectDisconnectAndTLS(t *testing.T) {
 	if captured.Host != "db.internal" || captured.Port != 3307 || captured.Username != "user" || captured.Password != "secret" || captured.Database != "app" || captured.TLSConfig == nil || !captured.TLSConfig.InsecureSkipVerify {
 		t.Fatalf("captured config: %+v", captured)
 	}
-	if err := service.Disconnect(result.ConnID); err != nil {
+	if err := service.Disconnect(context.Background(), result.ConnID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
-	if err := service.Disconnect(result.ConnID); err != nil {
+	if err := service.Disconnect(context.Background(), result.ConnID); err != nil {
 		t.Fatalf("idempotent disconnect: %v", err)
 	}
-	_, err = service.mysqlOf(result.ConnID)
+	_, err = service.mysqlOf(context.Background(), result.ConnID)
 	var ipcErr *ipc.Error
 	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeNotFound {
 		t.Fatalf("connection survived disconnect: %#v", err)
@@ -100,7 +100,7 @@ func TestDisconnectFailureIsSurfacedAndHandleReleased(t *testing.T) {
 	service := NewService(nil)
 	service.conns["bad"] = &redisConnection{closeFn: func() error { return errors.New("driver: bad conn") }}
 
-	err := service.Disconnect("bad")
+	err := service.Disconnect(context.Background(), "bad")
 	var ipcErr *ipc.Error
 	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeInternal || !strings.Contains(ipcErr.Message, "关闭数据库连接") {
 		t.Fatalf("disconnect error=%#v", err)
@@ -108,7 +108,7 @@ func TestDisconnectFailureIsSurfacedAndHandleReleased(t *testing.T) {
 	if _, err := service.redisOf("bad"); err == nil {
 		t.Fatal("connection handle survived failed disconnect")
 	}
-	if err := service.Disconnect("bad"); err != nil {
+	if err := service.Disconnect(context.Background(), "bad"); err != nil {
 		t.Fatalf("retry after failed disconnect: %v", err)
 	}
 }
@@ -547,7 +547,7 @@ func TestServiceConnectionResolverAndIPCErrorProjection(t *testing.T) {
 			trigger: func() error {
 				service := NewService(nil)
 				service.conns["bad"] = &redisConnection{closeFn: func() error { return errors.New("close detail") }}
-				return service.Disconnect("bad")
+				return service.Disconnect(context.Background(), "bad")
 			},
 			source: "内部错误: 关闭数据库连接: close detail",
 			want:   "internal error: failed to close database connection: close detail",
@@ -731,13 +731,13 @@ func TestServiceMetadataAndRedisErrorProjection(t *testing.T) {
 		{name: "mysql wrong connection type", tool: "db_list_tables", trigger: func() error {
 			service := NewService(nil)
 			service.conns["conn"] = &postgresConnection{}
-			_, err := service.mysqlOf("conn")
+			_, err := service.mysqlOf(context.Background(), "conn")
 			return err
 		}, source: "参数错误: 该连接不是 MySQL", want: "invalid parameters: the connection is not MySQL", code: ipc.CodeBadParam},
 		{name: "postgres wrong connection type", tool: "db_list_tables", trigger: func() error {
 			service := NewService(nil)
 			service.conns["conn"] = &mysqlConnection{}
-			_, err := service.postgresOf("conn")
+			_, err := service.postgresOf(context.Background(), "conn")
 			return err
 		}, source: "参数错误: 该连接不是 PostgreSQL", want: "invalid parameters: the connection is not PostgreSQL", code: ipc.CodeBadParam},
 		{name: "redis wrong connection type", tool: "redis_scan", trigger: func() error {

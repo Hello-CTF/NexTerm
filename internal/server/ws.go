@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
+	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/coder/websocket"
 )
 
@@ -111,10 +114,9 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 	return value, true, false
 }
 
-// eventFilter filters sensitive events by subscriber identity: identity-less connections (open deployments/gateway) are not
-// filtered; logged-in users only receive their own device://status, session://connect-progress
-// (including bastion host:port), and ai://notification. Failed ownership lookups, malformed payloads, and empty owners
-// are never delivered (fail closed); superadmins likewise only receive their own (mirroring device semantics).
+// eventFilter filters events by subscriber identity: identity-less connections (open deployments/gateway) are not filtered;
+// logged-in users receive owner-scoped resources plus explicitly public and legacy events. Failed ownership lookups,
+// malformed payloads, empty owners, and unknown topics are never delivered (fail closed); superadmins are scoped likewise.
 func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 	if identity == nil {
 		return nil
@@ -122,6 +124,21 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 	userID := identity.UserID
 	return func(event ipc.Event) bool {
 		switch event.Event {
+		case ipc.TopicSessionStatus:
+			_, ok := event.Payload.(session.StatusEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalExit:
+			_, ok := event.Payload.(session.ExitEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalThrottled:
+			_, ok := event.Payload.(session.ThrottleEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalControl:
+			_, ok := event.Payload.(session.ControlEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicFSProgress:
+			_, ok := event.Payload.(fslocal.Progress)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicDeviceStatus:
 			if s.fleet == nil {
 				return false
@@ -145,17 +162,59 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicAINotification:
 			notification, ok := event.Payload.(ipc.AINotificationEvent)
 			return ok && notification.OwnerID != "" && notification.OwnerID == userID
+		case ipc.TopicLayoutChanged:
+			_, ok := event.Payload.(ipc.LayoutChangedEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicSyncStatus:
-			status, ok := event.Payload.(ipc.SyncStatusEvent)
-			return !ok || status.OwnerID == "" || status.OwnerID == userID
-		default:
+			switch status := event.Payload.(type) {
+			case ipc.SyncStatusEvent:
+				return status.OwnerID != "" && status.OwnerID == userID
+			case struct{}:
+				return true
+			default:
+				return false
+			}
+		case ipc.Topic("sync://round-complete"):
+			_, ok := event.Payload.(struct{})
+			return ok
+		case ipc.TopicAppError, ipc.TopicUpdateProgress:
 			return true
+		default:
+			return false
 		}
 	}
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.admitWebSocket(w, r); !ok {
+	identity, ok := s.admitWebSocket(w, r)
+	if !ok {
+		return
+	}
+	channelID := r.PathValue("id")
+	resolver, _ := s.spectator.(channelOwnerResolver)
+	if resolver == nil {
+		resolver, _ = s.channels.(channelOwnerResolver)
+	}
+	var ownerID string
+	var ownerErr error
+	var generation uint64
+	var finalize func()
+	if resolver != nil {
+		if generationResolver, ok := resolver.(interface {
+			ChannelOwnerGeneration(string) (string, uint64, error)
+		}); ok {
+			ownerID, generation, ownerErr = generationResolver.ChannelOwnerGeneration(channelID)
+			if ownerErr == nil && generation != 0 {
+				if unregister, ok := resolver.(interface{ UnregisterChannelOwner(string, uint64) }); ok {
+					finalize = func() { unregister.UnregisterChannelOwner(channelID, generation) }
+				}
+			}
+		} else if identity != nil {
+			ownerID, ownerErr = resolver.ChannelOwner(channelID)
+		}
+	}
+	if identity != nil && (resolver == nil || ownerErr != nil || ownerID == "" || ownerID != identity.UserID) {
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "无权访问该终端通道"))
 		return
 	}
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -172,7 +231,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	receiver, err := s.channels.BindChannel(r.PathValue("id"))
+	receiver, err := s.channels.BindChannel(channelID)
 	if err != nil {
 		_ = connection.CloseNow()
 		return
@@ -181,6 +240,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
 		frame, err := receiver.Next(ctx)
 		if err != nil {
+			if errors.Is(err, hub.ErrClosed) && finalize != nil {
+				finalize()
+			}
 			return 0, nil, nil, err
 		}
 		ack := func() { _ = receiver.Ack(frame.Sequence) }

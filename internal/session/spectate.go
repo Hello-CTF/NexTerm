@@ -51,18 +51,37 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	}
 	defer tab.unlockFeed()
 
-	m.mu.Lock()
-	if m.closed || m.tabs[tab.ID] != tab {
-		m.mu.Unlock()
-		return TabInfo{}, ErrTabClosed
+	var incarnation uint64
+	reserved := false
+	producer, err := m.bus.Producer(options.ChannelID, func(token uint64, receiverClosed bool) error {
+		incarnation = token
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed || m.tabs[tab.ID] != tab {
+			return ErrTabClosed
+		}
+		if owner := m.channelTabs[options.ChannelID]; owner != "" && owner != tab.ID {
+			return errors.New("channel already attached to another tab")
+		}
+		if receiverClosed {
+			tab.mu.Lock()
+			reject := tab.ephemeral && !tab.retainable
+			tab.mu.Unlock()
+			if reject {
+				return hub.ErrDetached
+			}
+		}
+		m.channelTabs[options.ChannelID] = tab.ID
+		m.channelIncarnations[options.ChannelID] = token
+		reserved = true
+		return nil
+	})
+	if err != nil {
+		if reserved {
+			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
+		}
+		return TabInfo{}, err
 	}
-	if owner := m.channelTabs[options.ChannelID]; owner != "" && owner != tab.ID {
-		m.mu.Unlock()
-		return TabInfo{}, errors.New("channel already attached to another tab")
-	}
-	m.channelTabs[options.ChannelID] = tab.ID
-	m.mu.Unlock()
-
 	tab.mu.Lock()
 	old, replaced := tab.subscribers[options.ChannelID]
 	if replaced {
@@ -70,11 +89,6 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 		tab.releaseOrphanControllerLocked()
 	}
 	tab.mu.Unlock()
-	producer, err := m.bus.Producer(options.ChannelID)
-	if err != nil {
-		m.releaseChannelReservation(tab.ID, options.ChannelID)
-		return TabInfo{}, err
-	}
 	if replaced {
 		old.co.teardown(old.producer)
 		_ = old.producer.Close()
@@ -83,7 +97,7 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	defer func() {
 		if !attached {
 			_ = producer.Close()
-			m.releaseChannelReservation(tab.ID, options.ChannelID)
+			m.releaseChannelReservation(tab.ID, options.ChannelID, incarnation)
 		}
 	}()
 	if err := m.bus.DiscardPending(options.ChannelID); err != nil {
@@ -108,7 +122,7 @@ func (m *Manager) AttachSpectator(ctx context.Context, tabID string, options Spe
 	}
 
 	m.mu.Lock()
-	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID {
+	if m.closed || m.tabs[tab.ID] != tab || m.channelTabs[options.ChannelID] != tab.ID || m.channelIncarnations[options.ChannelID] != incarnation {
 		m.mu.Unlock()
 		return TabInfo{}, hub.ErrDetached
 	}

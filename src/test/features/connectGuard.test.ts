@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sessionList: vi.fn(),
   probeHostKey: vi.fn(),
   dbConnect: vi.fn(),
+  dbDisconnect: vi.fn(),
   vaultStatus: vi.fn(),
   vaultUnlock: vi.fn(),
   promptText: vi.fn(),
@@ -33,12 +34,12 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.sessionList,
       probeHostKey: mocks.probeHostKey,
     },
-    dbApi: { connect: mocks.dbConnect },
+    dbApi: { connect: mocks.dbConnect, disconnect: mocks.dbDisconnect },
     vaultApi: { status: mocks.vaultStatus, unlock: mocks.vaultUnlock },
   };
 });
 
-import { connectAsset, useUi, type ConnectOutcome } from "../../app/store";
+import { connectAsset, useUi, type ConnectOutcome, type SqlDraft } from "../../app/store";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { sessionApi, type SessionInfo } from "../../ipc/commands";
 
@@ -62,17 +63,25 @@ beforeEach(() => {
     sessions: [],
     workspaces: [],
     activeWorkspaceId: null,
+    workspaceRuntime: {},
     connectingAssetIds: [],
     connectFocusRevision: 0,
     pushToast: mocks.toast,
     setConnectProgress: mocks.setConnectProgress,
   });
   mocks.sessionConnect.mockResolvedValue(SESSION);
+  mocks.sessionList.mockResolvedValue([]);
+  mocks.dbDisconnect.mockResolvedValue(undefined);
   mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
 });
 
 afterEach(() => {
-  useUi.setState({ workspaces: [], activeWorkspaceId: null, connectingAssetIds: [] });
+  useUi.setState({
+    workspaces: [],
+    activeWorkspaceId: null,
+    workspaceRuntime: {},
+    connectingAssetIds: [],
+  });
 });
 
 describe("connectAsset in-flight guard", () => {
@@ -247,7 +256,7 @@ describe("connectAsset asset workspace deduplication", () => {
     expect(workspaces[0]?.id).not.toBe("ws-1");
   });
 
-  it("reconnecting a database asset with an existing workspace jumps to it without starting a new connection", async () => {
+  function seedDatabaseWorkspace(draft?: SqlDraft): void {
     useUi.setState({
       workspaces: [
         {
@@ -257,20 +266,107 @@ describe("connectAsset asset workspace deduplication", () => {
           dbKind: "mysql" as const,
           title: "db-01 · MySQL",
           assetId: "db-1",
-          panes: [{ id: "p1", tabs: [], activeTabId: null }],
+          panes: [
+            {
+              id: "p1",
+              tabs: [
+                {
+                  id: "db-tab",
+                  kind: "db" as const,
+                  title: "MySQL",
+                  connId: "conn-1",
+                  dbKind: "mysql" as const,
+                  closable: true,
+                },
+              ],
+              activeTabId: "db-tab",
+            },
+          ],
           activePaneId: "p1",
           splitRatio: 0.5,
           closable: true,
         },
       ],
       activeWorkspaceId: null,
+      workspaceRuntime: draft ? { "ws-db": { generation: 7, sqlDraft: draft } } : {},
     });
+  }
+
+  it("reconnecting a database asset with an existing workspace jumps to it without starting a new connection", async () => {
+    seedDatabaseWorkspace();
     const outcome = (await connectAsset({ id: "db-1", name: "db-01", kind: "mysql" })) as ConnectOutcome;
     expect(outcome).toEqual({ ok: true });
     expect(mocks.dbConnect).not.toHaveBeenCalled();
     const { workspaces, activeWorkspaceId } = useUi.getState();
     expect(workspaces).toHaveLength(1);
     expect(activeWorkspaceId).toBe("ws-db");
+  });
+
+  it("restores a closed database tab in its original workspace and rebinds the preserved draft", async () => {
+    const draft: SqlDraft = {
+      text: "SELECT 1;\nSELECT 2;",
+      selection: { from: 10, to: 19 },
+      schema: "analytics",
+      connId: "conn-1",
+      dbKind: "mysql",
+    };
+    seedDatabaseWorkspace(draft);
+    mocks.dbConnect.mockResolvedValue({ connId: "conn-2" });
+
+    await expect(useUi.getState().closeTab("db-tab")).resolves.toBe(true);
+    expect(mocks.dbDisconnect).toHaveBeenCalledWith("conn-1");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(useUi.getState().getWorkspaceRuntime("ws-db")).toEqual({
+      generation: 7,
+      sqlDraft: draft,
+    });
+
+    const outcome = (await connectAsset({ id: "db-1", name: "db-01", kind: "mysql" })) as ConnectOutcome;
+
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.dbConnect).toHaveBeenCalledExactlyOnceWith("db-1");
+    const state = useUi.getState();
+    expect(state.workspaces).toHaveLength(1);
+    expect(state.activeWorkspaceId).toBe("ws-db");
+    const workspace = state.workspaces[0];
+    expect(workspace).toMatchObject({ id: "ws-db", connId: "conn-2", dbKind: "mysql" });
+    expect(workspace?.panes[0]?.id).toBe("p1");
+    expect(workspace?.panes[0]?.tabs).toHaveLength(1);
+    expect(workspace?.panes[0]?.tabs[0]).toMatchObject({
+      kind: "db",
+      connId: "conn-2",
+      dbKind: "mysql",
+    });
+    expect(state.getWorkspaceRuntime("ws-db")).toEqual({
+      generation: 7,
+      sqlDraft: { ...draft, connId: "conn-2" },
+    });
+  });
+
+  it("keeps the empty database workspace and draft when reconnecting fails", async () => {
+    const draft: SqlDraft = {
+      text: "UPDATE orders SET paid = true;",
+      selection: { from: 0, to: 29 },
+      schema: "analytics",
+      connId: "conn-1",
+      dbKind: "mysql",
+    };
+    seedDatabaseWorkspace(draft);
+    await expect(useUi.getState().closeTab("db-tab")).resolves.toBe(true);
+    mocks.dbConnect.mockRejectedValue(new Error("connect failed"));
+
+    const outcome = (await connectAsset({ id: "db-1", name: "db-01", kind: "mysql" })) as ConnectOutcome;
+
+    expect(outcome).toEqual({ ok: false, error: "connect failed" });
+    expect(mocks.dbConnect).toHaveBeenCalledExactlyOnceWith("db-1");
+    const state = useUi.getState();
+    expect(state.workspaces).toHaveLength(1);
+    expect(state.workspaces[0]).toMatchObject({ id: "ws-db", connId: "conn-1" });
+    expect(state.workspaces[0]?.panes[0]?.tabs).toEqual([]);
+    expect(state.getWorkspaceRuntime("ws-db")).toEqual({
+      generation: 7,
+      sqlDraft: draft,
+    });
   });
 });
 

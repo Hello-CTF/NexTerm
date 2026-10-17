@@ -200,6 +200,28 @@ describe("asset row actions on fine pointers", () => {
   });
 });
 
+describe("asset name priority in narrow sidebars", () => {
+  it.each([
+    "生产环境华东核心交易集群主数据库不可中断管理员入口与灾备切换专用节点",
+    "ProductionPrimaryPostgreSQLClusterWithAnExceptionallyLongUnbrokenAssetName0123456789",
+  ])("wraps the full name instead of truncating it: %s", async (name) => {
+    stubPointer(false);
+    mocks.assetList.mockResolvedValue([{ ...WEB, name }]);
+    useUi.setState({ leftWidth: 180 });
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain(name));
+
+    const row = rowByName(mounted!.container, name);
+    const label = row.querySelector(".nx-row-name");
+    expect(label?.textContent).toBe(name);
+    expect(label?.className).toContain("nx-asset-row-name");
+    expect(label?.className).not.toContain("truncate");
+    expect(row.querySelector(".nx-row-target")?.className).toContain("truncate");
+    expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
+    expect((mounted!.container.firstElementChild as HTMLElement).style.width).toBe("180px");
+  });
+});
+
 describe("asset row actions on coarse pointers", () => {
   it("collapses row actions into one overflow button and keeps the name first", async () => {
     stubPointer(true);

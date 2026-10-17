@@ -4,7 +4,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type sessionTerminal struct {
@@ -15,8 +17,16 @@ func SessionTerminal(manager *session.Manager) Terminal {
 	return &sessionTerminal{manager: manager}
 }
 
+func sessionRequestContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
+	}
+	return session.WithOpenAccess(ctx)
+}
+
 func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, error) {
-	snapshot, err := s.manager.TerminalSnapshot(tabID)
+	ctx = sessionRequestContext(ctx)
+	snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID)
 	if err != nil {
 		return Screen{}, err
 	}
@@ -24,11 +34,11 @@ func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, e
 	if snapshot.LastOutputMsAgo <= math.MaxInt64 {
 		idle = int64(snapshot.LastOutputMsAgo)
 	}
-	tail, tailErr := s.manager.TailLines(tabID, 30)
+	tail, tailErr := s.manager.TailLinesFor(ctx, tabID, 30)
 	if tailErr != nil {
 		tail = snapshot.Lines
 	}
-	seq, seqErr := s.manager.ScreenSeq(tabID)
+	seq, seqErr := s.manager.ScreenSeqFor(ctx, tabID)
 	if seqErr != nil {
 		seq = 0
 	}
@@ -36,32 +46,36 @@ func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, e
 }
 
 func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) error {
+	ctx = sessionRequestContext(ctx)
+	if _, err := s.manager.TabFor(ctx, tabID); err != nil {
+		return err
+	}
 	return s.manager.WriteInternal(ctx, tabID, data)
 }
 
-func (s *sessionTerminal) CommandState(_ context.Context, tabID string) (CommandState, error) {
-	tab, err := s.manager.Tab(tabID)
+func (s *sessionTerminal) CommandState(ctx context.Context, tabID string) (CommandState, error) {
+	tab, err := s.manager.TabFor(sessionRequestContext(ctx), tabID)
 	if err != nil {
 		return CommandState{}, err
 	}
 	return tab.CommandState(), nil
 }
 
-func (s *sessionTerminal) OutputSince(_ context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
-	data, start, latest, _, err := s.manager.OutputSince(tabID, seq, maxBytes)
+func (s *sessionTerminal) OutputSince(ctx context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	data, start, latest, _, err := s.manager.OutputSinceFor(sessionRequestContext(ctx), tabID, seq, maxBytes)
 	return data, start, latest, err
 }
 
-func (s *sessionTerminal) SessionAssetKind(_ context.Context, sessionID string) (string, error) {
-	session, err := s.manager.Session(sessionID)
+func (s *sessionTerminal) SessionAssetKind(ctx context.Context, sessionID string) (string, error) {
+	session, err := s.manager.SessionFor(sessionRequestContext(ctx), sessionID)
 	if err != nil {
 		return "", err
 	}
 	return session.Asset().Kind, nil
 }
 
-func (s *sessionTerminal) SessionAssetID(_ context.Context, sessionID string) (string, error) {
-	session, err := s.manager.Session(sessionID)
+func (s *sessionTerminal) SessionAssetID(ctx context.Context, sessionID string) (string, error) {
+	session, err := s.manager.SessionFor(sessionRequestContext(ctx), sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +83,7 @@ func (s *sessionTerminal) SessionAssetID(_ context.Context, sessionID string) (s
 }
 
 func (s *sessionTerminal) Create(ctx context.Context, sessionID string, options CreateTerminalOptions) (CreatedTab, error) {
-	info, err := s.manager.CreateTab(ctx, session.CreateTabOptions{
+	info, err := s.manager.CreateTabFor(sessionRequestContext(ctx), session.CreateTabOptions{
 		SessionID: sessionID, Title: options.Title, Command: options.Command,
 	})
 	if err != nil {
@@ -79,12 +93,14 @@ func (s *sessionTerminal) Create(ctx context.Context, sessionID string, options 
 }
 
 func (s *sessionTerminal) Rename(ctx context.Context, tabID, title string) error {
-	_, err := s.manager.RenameTab(ctx, tabID, title)
+	_, err := s.manager.RenameTabFor(sessionRequestContext(ctx), tabID, title)
 	return err
 }
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
-	deps.Transport = manager.Transport
+	deps.Transport = func(ctx context.Context, sessionID string) (base.Transport, error) {
+		return manager.TransportFor(sessionRequestContext(ctx), sessionID)
+	}
 	deps.Terminal = SessionTerminal(manager)
 	deps.TabSession = func(tabID string) string {
 		tab, err := manager.Tab(tabID)

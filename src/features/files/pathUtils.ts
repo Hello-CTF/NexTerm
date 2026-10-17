@@ -1,8 +1,18 @@
 
 export const HOME = "~";
 
+export type PathStyle = "windows" | "posix" | "unknown";
+
 export function norm(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+export function fsErrorResource(error: unknown): "path" | "session" | null {
+  if (!error || typeof error !== "object") return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const resource = (detail as { resource?: unknown }).resource;
+  return resource === "path" || resource === "session" ? resource : null;
 }
 
 // A UNC share root ("//server/share") is a navigation boundary like "/" or "C:/".
@@ -68,19 +78,30 @@ export function crumbsOf(path: string): { label: string; path: string }[] {
   return out;
 }
 
-export function normalizeTypedPath(input: string): string | null {
+export function normalizeTypedPath(
+  input: string,
+  pathStyle: PathStyle = "unknown",
+): string | null {
   const typed = input.trim();
   if (!typed) return null;
   const normalized = norm(typed);
   const trimmed = normalized.replace(/\/+$/, "");
   if (trimmed === "") return "/";
+  if (pathStyle === "windows" && /^[A-Za-z]:[^/]/.test(trimmed)) return null;
+  if (pathStyle === "windows" && /^[A-Za-z]:$/.test(trimmed)) return `${trimmed}/`;
   return /^[A-Za-z]:$/.test(trimmed) && normalized.includes("/") ? `${trimmed}/` : trimmed;
 }
 
-export function resolveRemotePath(cwd: string | null, input: string): string {
+export function resolveRemotePath(
+  cwd: string | null,
+  input: string,
+  pathStyle: PathStyle = "unknown",
+): string {
   const typed = input.trim();
   const raw = norm(typed);
   if (!raw) return raw;
+  if (pathStyle === "windows" && /^[A-Za-z]:$/.test(raw)) return `${raw}/`;
+  if (pathStyle === "windows" && /^[A-Za-z]:[^/]/.test(raw)) return raw;
   if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:[\\/]/.test(typed)) return raw;
   const normalizedBase = cwd ? norm(cwd) : "";
   const base = /^[A-Za-z]:\/$/.test(normalizedBase)
@@ -97,5 +118,22 @@ export function looksLikePath(text: string): boolean {
   if (t.includes("\n")) return false;
   if (/[\s;|&><`]/.test(t)) return false;
   return true;
+}
+
+export type TerminalShell = "powershell" | "cmd" | "posix" | "unknown";
+export type DirectoryCommandFailure = "control" | "unsupported" | "unknown";
+
+export function directoryCommandFor(
+  path: string,
+  shell: TerminalShell,
+): { command: string | null; failure: DirectoryCommandFailure | null } {
+  if (/[\x00-\x1f\x7f]/.test(path)) return { command: null, failure: "control" };
+  if (shell === "powershell") {
+    return { command: `Set-Location -LiteralPath '${path.replace(/'/g, "''")}'`, failure: null };
+  }
+  if (shell === "posix") {
+    return { command: `cd '${path.replace(/'/g, "'\\''")}'`, failure: null };
+  }
+  return { command: null, failure: shell === "cmd" ? "unsupported" : "unknown" };
 }
 

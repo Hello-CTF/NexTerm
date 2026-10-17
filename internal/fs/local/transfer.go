@@ -1,9 +1,13 @@
 package local
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"strings"
@@ -81,12 +85,26 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 			return 0, err
 		}
 	}
-	if targetExists && offset == total {
-		reportTransferProgress(options, offset, total, true)
-		return offset, nil
-	}
-	if _, err := source.Seek(offset, io.SeekStart); err != nil {
-		return offset, err
+	var digest hash.Hash
+	if options.Resume {
+		digest = sha256.New()
+		if targetExists && offset > 0 {
+			existing, err := destination.OpenRead(ctx, remotePath)
+			if err != nil {
+				return offset, err
+			}
+			verifyErr := verifyResumePrefix(ctx, source, existing, offset, digest)
+			closeErr := existing.Close()
+			if verifyErr != nil {
+				return offset, verifyErr
+			}
+			if closeErr != nil {
+				return offset, closeErr
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return offset, err
+		}
 	}
 	if err := ensureRemoteParent(ctx, destination, remotePath); err != nil {
 		return offset, err
@@ -95,11 +113,48 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	if err != nil {
 		return offset, err
 	}
-	if err := verifyResumeOffset(target, offset); err != nil {
-		_ = target.Close()
-		return offset, err
+	if options.Resume {
+		if err := verifyResumeOffset(target, offset); err != nil {
+			_ = target.Close()
+			return offset, err
+		}
 	}
-	return finishTransfer(ctx, source, target, offset, total, options)
+	var reader io.Reader = source
+	if digest != nil {
+		reader = io.TeeReader(source, digest)
+	}
+	transferred, err = finishTransfer(ctx, reader, target, offset, total, options)
+	if err != nil {
+		return transferred, err
+	}
+	if !options.Resume {
+		reportTransferProgress(options, transferred, total, true)
+		return transferred, nil
+	}
+	current, err := source.Stat()
+	if err != nil {
+		return transferred, err
+	}
+	if !current.Mode().IsRegular() || current.Size() != total || !current.ModTime().Equal(info.ModTime()) {
+		return transferred, errors.New("upload source changed during transfer")
+	}
+	size, err := destination.Size(ctx, remotePath)
+	if err != nil {
+		return transferred, err
+	}
+	if size != total {
+		return transferred, fmt.Errorf("uploaded file size changed during transfer: got %d, want %d", size, total)
+	}
+	if options.Resume {
+		if err := verifyFileChecksum(ctx, destination, remotePath, hex.EncodeToString(digest.Sum(nil))); err != nil {
+			return transferred, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return transferred, err
+	}
+	reportTransferProgress(options, transferred, total, true)
+	return transferred, nil
 }
 
 func ensureRemoteParent(ctx context.Context, destination base.FileSystem, remotePath string) error {
@@ -215,7 +270,16 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 	total = size
 	var offset int64
 	targetExists := false
+	var initialSource base.FileEntry
+	sourceVersioned := false
 	if options.Resume {
+		initialSource, sourceVersioned, err = remoteFileMetadata(ctx, source, remotePath, true)
+		if err != nil {
+			return 0, err
+		}
+		if sourceVersioned && initialSource.Size != total {
+			return 0, errors.New("download source changed during transfer")
+		}
 		info, err := os.Stat(targetPath)
 		switch {
 		case err == nil:
@@ -232,39 +296,91 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 			return 0, err
 		}
 	}
-	if targetExists && offset == total {
-		reportTransferProgress(options, offset, total, true)
-		return offset, nil
-	}
-	if offset > 0 {
-		if seeker, ok := remote.(io.Seeker); ok {
-			if _, err := seeker.Seek(offset, io.SeekStart); err != nil {
+	var digest hash.Hash
+	if options.Resume {
+		digest = sha256.New()
+		if targetExists && offset > 0 {
+			existing, err := os.Open(targetPath)
+			if err != nil {
 				return offset, err
 			}
-		} else {
-			if _, err := io.CopyN(io.Discard, remote, offset); err != nil {
-				if errors.Is(err, io.EOF) {
-					return offset, io.ErrUnexpectedEOF
-				}
-				return offset, err
+			verifyErr := verifyResumePrefix(ctx, remote, existing, offset, digest)
+			closeErr := existing.Close()
+			if verifyErr != nil {
+				return offset, verifyErr
 			}
+			if closeErr != nil {
+				return offset, closeErr
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return offset, err
 		}
 	}
 	local, err := destination.OpenWrite(ctx, localPath, offset > 0)
 	if err != nil {
 		return offset, err
 	}
-	if err := verifyResumeOffset(local, offset); err != nil {
-		_ = local.Close()
-		return offset, err
+	if options.Resume {
+		if err := verifyResumeOffset(local, offset); err != nil {
+			_ = local.Close()
+			return offset, err
+		}
 	}
-	return finishTransfer(ctx, remote, local, offset, total, options)
+	var reader io.Reader = remote
+	if digest != nil {
+		reader = io.TeeReader(remote, digest)
+	}
+	transferred, err = finishTransfer(ctx, reader, local, offset, total, options)
+	if err != nil {
+		return transferred, err
+	}
+	if !options.Resume {
+		reportTransferProgress(options, transferred, total, true)
+		return transferred, nil
+	}
+	currentSize, err := source.Size(ctx, remotePath)
+	if err != nil {
+		return transferred, err
+	}
+	if currentSize != total {
+		return transferred, errors.New("download source changed during transfer")
+	}
+	if sourceVersioned {
+		current, available, err := remoteFileMetadata(ctx, source, remotePath, false)
+		if err != nil {
+			return transferred, err
+		}
+		if !available {
+			return transferred, errors.New("download source metadata became unavailable during transfer")
+		}
+		if current.Size != total || !current.ModTime.Equal(initialSource.ModTime) {
+			return transferred, errors.New("download source changed during transfer")
+		}
+	}
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return transferred, err
+	}
+	if !info.Mode().IsRegular() {
+		return transferred, errors.New("downloaded file is not a regular file")
+	}
+	if info.Size() != total {
+		return transferred, fmt.Errorf("downloaded file size changed during transfer: got %d, want %d", info.Size(), total)
+	}
+	if options.Resume {
+		if err := verifyFileChecksum(ctx, destination, targetPath, hex.EncodeToString(digest.Sum(nil))); err != nil {
+			return transferred, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return transferred, err
+	}
+	reportTransferProgress(options, transferred, total, true)
+	return transferred, nil
 }
 
 func verifyResumeOffset(target base.RemoteWriter, offset int64) error {
-	if offset == 0 {
-		return nil
-	}
 	sizer, ok := target.(currentSizer)
 	if !ok {
 		return nil
@@ -277,6 +393,126 @@ func verifyResumeOffset(target base.RemoteWriter, offset int64) error {
 		return fmt.Errorf("resume offset changed: got %d bytes, expected %d", size, offset)
 	}
 	return nil
+}
+
+func remoteFileMetadata(ctx context.Context, filesystem base.FileSystem, remotePath string, allowUnavailable bool) (base.FileEntry, bool, error) {
+	parent := parentDir(remotePath)
+	if parent == "" {
+		parent = "."
+	}
+	entries, err := filesystem.List(ctx, parent)
+	if err != nil {
+		if allowUnavailable {
+			return base.FileEntry{}, false, nil
+		}
+		return base.FileEntry{}, false, err
+	}
+	name := remotePath[strings.LastIndexAny(remotePath, `/\`)+1:]
+	for _, entry := range entries {
+		if entry.Name != name {
+			continue
+		}
+		if entry.Kind == base.FileSymlink {
+			return entry, false, nil
+		}
+		if entry.Kind != base.FileFile {
+			return base.FileEntry{}, false, fmt.Errorf("download source %s is not a regular file", remotePath)
+		}
+		return entry, true, nil
+	}
+	if allowUnavailable {
+		return base.FileEntry{}, false, nil
+	}
+	return base.FileEntry{}, false, fmt.Errorf("download source %s is missing from its parent directory", remotePath)
+}
+
+func verifyResumePrefix(ctx context.Context, source, target io.Reader, offset int64, digest hash.Hash) error {
+	sourceBuffer := make([]byte, transferChunkSize)
+	targetBuffer := make([]byte, transferChunkSize)
+	remaining := offset
+	for remaining > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunkSize := int64(len(sourceBuffer))
+		if chunkSize > remaining {
+			chunkSize = remaining
+		}
+		sourceChunk := sourceBuffer[:chunkSize]
+		targetChunk := targetBuffer[:chunkSize]
+		if _, err := io.ReadFull(source, sourceChunk); err != nil {
+			if errors.Is(err, io.EOF) {
+				return io.ErrUnexpectedEOF
+			}
+			return err
+		}
+		if _, err := io.ReadFull(target, targetChunk); err != nil {
+			if errors.Is(err, io.EOF) {
+				return io.ErrUnexpectedEOF
+			}
+			return err
+		}
+		if !bytes.Equal(sourceChunk, targetChunk) {
+			return errors.New("resume target content does not match source; restart without resume")
+		}
+		_, _ = digest.Write(sourceChunk)
+		remaining -= chunkSize
+	}
+	return ctx.Err()
+}
+
+func verifyFileChecksum(ctx context.Context, filesystem base.FileSystem, path, expected string) error {
+	actual, err := filesystem.Checksum(ctx, path, "sha256")
+	if errors.Is(err, base.ErrUnsupported) {
+		actual, err = sequentialFileChecksum(ctx, filesystem, path)
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("final checksum mismatch: got %s, want %s", actual, expected)
+	}
+	return nil
+}
+
+func sequentialFileChecksum(ctx context.Context, filesystem base.FileSystem, path string) (sum string, err error) {
+	reader, err := filesystem.OpenRead(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := reader.Close(); err == nil && closeErr != nil {
+			sum = ""
+			err = closeErr
+		}
+	}()
+	digest := sha256.New()
+	buffer := make([]byte, transferChunkSize)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		n, readErr := reader.Read(buffer)
+		if n < 0 || n > len(buffer) {
+			return "", fmt.Errorf("invalid read count %d", n)
+		}
+		if n > 0 {
+			_, _ = digest.Write(buffer[:n])
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return "", readErr
+		}
+		if n == 0 {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWriter, offset, total int64, options TransferOptions) (transferred int64, err error) {
@@ -341,7 +577,6 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		return transferred, err
 	}
 	closed = true
-	reportTransferProgress(options, transferred, total, true)
 	return transferred, nil
 }
 

@@ -8,6 +8,11 @@ const harness = vi.hoisted(() => ({
   listAssets: vi.fn(),
   listLive: vi.fn(),
   switchEncoding: vi.fn(),
+  write: vi.fn(),
+  copy: vi.fn(),
+  attachShell: null as "powershell" | "cmd" | "posix" | "unknown" | "missing" | null,
+  attachRetainable: null as boolean | null,
+  onAttach: null as ((id: string) => void) | null,
   attachInfo: null as
     | ((info: {
         tabId: string;
@@ -36,7 +41,7 @@ vi.mock("../../ipc/commands", () => ({
   sessionApi: { connect: vi.fn(), reconnect: vi.fn(), disconnect: vi.fn() },
   terminalApi: {
     listLive: harness.listLive,
-    write: vi.fn().mockResolvedValue(undefined),
+    write: harness.write,
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
     switchEncoding: harness.switchEncoding,
@@ -66,6 +71,11 @@ vi.mock("../../ui/dialogs", () => ({
   askChoice: vi.fn(),
 }));
 
+vi.mock("../../ui/clipboard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/clipboard")>();
+  return { ...actual, copyText: harness.copy };
+});
+
 vi.mock("../../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));
 vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
@@ -74,7 +84,19 @@ vi.mock("../../features/terminal/XtermView", async () => {
   return {
     XtermView: (props: Record<string, unknown>) => {
       harness.attachInfo = props.onAttachInfo as typeof harness.attachInfo;
+      harness.onAttach = props.onAttach as typeof harness.onAttach;
       useEffect(() => {
+        if (harness.attachShell) {
+          (props.onAttachInfo as ((info: unknown) => void) | undefined)?.({
+            tabId: "kernel-1",
+            controller: "me",
+            subscribers: 1,
+            viewers: 1,
+            exited: false,
+            shell: harness.attachShell === "missing" ? undefined : harness.attachShell,
+            retainable: harness.attachRetainable ?? undefined,
+          });
+        }
         (props.onAttach as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
       return <div className="h-full w-full min-h-0" />;
@@ -98,7 +120,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   harness.attachInfo = null;
+  harness.onAttach = null;
+  harness.attachShell = null;
+  harness.attachRetainable = null;
   harness.listLive.mockResolvedValue([]);
+  harness.write.mockResolvedValue(undefined);
+  harness.copy.mockResolvedValue(undefined);
   harness.switchEncoding.mockResolvedValue(undefined);
   harness.listAssets.mockResolvedValue([
     { id: "a1", kind: "ssh", name: "web-01", options: { encoding: "gbk" } },
@@ -192,5 +219,91 @@ describe("terminal encoding badge", () => {
     });
     await flush();
     expect(badgeText()).toBe("big5");
+  });
+
+  it("stores the attach background capability on the terminal tab", async () => {
+    harness.attachShell = "posix";
+    harness.attachRetainable = true;
+    mountPane();
+    await flush();
+
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.retainable).toBe(true);
+  });
+});
+
+describe("pending directory navigation", () => {
+  it("consumes a PowerShell directory exactly once across repeated attach callbacks", async () => {
+    harness.attachShell = "powershell";
+    useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]/child's dir" });
+    mountPane();
+
+    await waitFor(() => expect(harness.write).toHaveBeenCalledTimes(1));
+    const [, data] = harness.write.mock.calls[0];
+    expect(new TextDecoder().decode(data)).toBe(
+      "Set-Location -LiteralPath 'D:/Project [x]/child''s dir'\n",
+    );
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.pendingDirectory).toBeUndefined();
+
+    act(() => harness.onAttach?.("kernel-1"));
+    await flush();
+    expect(harness.write).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes a pending directory write failure visible", async () => {
+    harness.attachShell = "posix";
+    harness.write.mockRejectedValueOnce(new Error("write denied"));
+    useUi.getState().updateTab("t1", { pendingDirectory: "/tmp/project" });
+    mountPane();
+
+    await waitFor(() => {
+      const text = useUi.getState().toasts.map((toast) => toast.text).join("\n");
+      expect(text).toContain("切换目录失败");
+      expect(text).toContain("write denied");
+    });
+    expect(harness.write).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["cmd", "unknown"] as const)(
+    "does not inject a pending directory into a %s terminal",
+    async (shell) => {
+      harness.attachShell = shell;
+      useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]" });
+      mountPane();
+      await flush();
+
+      expect(harness.write).not.toHaveBeenCalled();
+      expect(harness.copy).toHaveBeenCalledWith("D:/Project [x]");
+      expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.pendingDirectory).toBeUndefined();
+      await waitFor(() => {
+        const text = useUi.getState().toasts.map((toast) => toast.text).join("\n");
+        expect(text).toContain("路径已复制");
+      });
+    },
+  );
+
+  it("surfaces a pending directory copy failure", async () => {
+    harness.attachShell = "cmd";
+    harness.copy.mockRejectedValueOnce(new Error("clipboard denied"));
+    useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]" });
+    mountPane();
+
+    await waitFor(() => {
+      const text = useUi.getState().toasts.map((toast) => toast.text).join("\n");
+      expect(text).toContain("复制路径失败");
+      expect(text).toContain("clipboard denied");
+    });
+    expect(harness.copy).toHaveBeenCalledWith("D:/Project [x]");
+    expect(harness.write).not.toHaveBeenCalled();
+  });
+
+  it("treats missing shell metadata as unknown and does not inject", async () => {
+    harness.attachShell = "missing";
+    useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]" });
+    mountPane();
+    await flush();
+
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.shell).toBe("unknown");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.pendingDirectory).toBeUndefined();
   });
 });

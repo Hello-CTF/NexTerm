@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import {
   click,
+  clickButton,
+  deferred,
   flush,
+  flushUntil,
   mount,
   setInputValue,
   type MountedView,
@@ -199,7 +202,7 @@ describe("AiSidebar multiple tabs", () => {
     expect(textOf(view!)).not.toContain("回答二");
   });
 
-  it("asks for confirmation before closing a running tab: cancel keeps it, confirm stops and closes it", async () => {
+  it("asks before closing and waits for the canceled terminal event instead of treating cancel acceptance as completion", async () => {
     await flush();
     await send(view!, "Long-running task");
     mocks.ask.mockResolvedValue(false);
@@ -218,9 +221,130 @@ describe("AiSidebar multiple tabs", () => {
     click(stripTabs(view!)[0].querySelector("button")!);
     await flush();
     expect(mocks.cancel).toHaveBeenCalledWith("job-1");
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+    expect(useUi.getState().aiBusy).toBe(true);
+    expect(textOf(view!)).toContain("正在停止");
+
+    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    await flush();
     const board = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY];
     expect(board.tabs).toHaveLength(1);
     expect(board.tabs[0].id).not.toBe(before);
     expect(useUi.getState().aiBusy).toBe(false);
+  });
+
+  it("keeps the tab with a retryable unconfirmed state when cancel is rejected", async () => {
+    await flush();
+    await send(view!, "Long-running task");
+    mocks.cancel.mockRejectedValueOnce(new Error("offline"));
+    const before = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
+
+    click(stripTabs(view!)[0].querySelector("button")!);
+    await flush();
+
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+    expect(useUi.getState().aiBusy).toBe(true);
+    expect(textOf(view!)).toContain("停止未确认");
+    clickButton(view!.container, "查看任务");
+    await flush();
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+
+    clickButton(view!.container, "重试");
+    await flush();
+    expect(mocks.cancel).toHaveBeenCalledTimes(2);
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    await flush();
+    expect(useUi.getState().aiBusy).toBe(false);
+  });
+
+  it("records cancel intent while spawn is pending and sends it after the job is bound", async () => {
+    await flush();
+    const pending = deferred<{ jobId: string; conversationId: string }>();
+    mocks.chat.mockReturnValueOnce(pending.promise);
+    await send(view!, "Pending spawn");
+    const before = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
+
+    click(stripTabs(view!)[0].querySelector("button")!);
+    await flush();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+    expect(textOf(view!)).toContain("正在停止");
+
+    pending.resolve({ jobId: "job-pending", conversationId: "conv-pending" });
+    await flushUntil(() => mocks.cancel.mock.calls.length > 0);
+    expect(mocks.cancel).toHaveBeenCalledWith("job-pending");
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
+
+    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    await flush();
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(before);
+    expect(useUi.getState().aiBusy).toBe(false);
+  });
+
+  it("deduplicates repeated close requests and lets a terminal event win over a pending cancel response", async () => {
+    await flush();
+    await send(view!, "Long-running task");
+    const cancelPending = deferred<void>();
+    mocks.cancel.mockReturnValueOnce(cancelPending.promise);
+    const closeButton = stripTabs(view!)[0].querySelector("button")!;
+
+    click(closeButton);
+    click(closeButton);
+    await flush();
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.cancel).toHaveBeenCalledTimes(1);
+    emit({ type: "canceled", message: "已停止本轮" }, 0);
+    await flush();
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(1);
+    expect(textOf(view!)).not.toContain("Long-running task");
+    cancelPending.resolve();
+    await flush();
+  });
+
+  it("closes without canceling when the run completes while the close confirmation is open", async () => {
+    await flush();
+    await send(view!, "Race completion");
+    const confirmation = deferred<boolean>();
+    mocks.ask.mockReturnValueOnce(confirmation.promise);
+    const before = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
+    click(stripTabs(view!)[0].querySelector("button")!);
+    await flush();
+
+    emit({ type: "done", answer: "Completed first" }, 0);
+    confirmation.resolve(true);
+    await flush();
+
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(before);
+    expect(useUi.getState().aiBusy).toBe(false);
+  });
+
+  it("uses the live event target for a created terminal without stealing focus from another AI tab", async () => {
+    await flush();
+    useUi.setState({
+      sessions: [
+        { id: "s-event", assetId: "a-event", name: "event-host", kind: "ssh", status: "connected", tabs: [], createdAt: 1 },
+      ],
+    });
+    await send(view!, "Open terminal");
+    useUi.getState().addAiTab(GLOBAL_AI_BOARD_KEY);
+    await flush();
+    const previousWorkspaceId = useUi.getState().activeWorkspaceId;
+
+    emit({ type: "toolCall", id: "call-bg", name: "terminal_create", display: "terminal_create" }, 0);
+    emit({
+      type: "toolResult",
+      id: "call-bg",
+      ok: true,
+      summary: "created",
+      terminal: { tabId: "tab-bg", sessionId: "s-event", title: "事件终端" },
+    }, 0);
+    await flush();
+
+    const tabs = useUi.getState().workspaces.flatMap((workspace) => workspace.panes).flatMap((pane) => pane.tabs);
+    expect(tabs.find((tab) => tab.tabId === "tab-bg")).toMatchObject({ sessionId: "s-event", title: "事件终端" });
+    expect(useUi.getState().activeWorkspaceId).toBe(previousWorkspaceId);
   });
 });

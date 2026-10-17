@@ -41,6 +41,8 @@ const (
 	FrameListenAck
 	FrameInbound
 	FrameAccept
+	FrameRoots
+	FrameRootsReply
 )
 
 func WriteFrame(writer io.Writer, kind FrameType, payload []byte) error {

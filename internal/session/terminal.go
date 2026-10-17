@@ -2,14 +2,19 @@ package session
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
 )
 
 type coreTerminal struct {
 	*terminal.Tab
-	output *terminal.Output
+	output            *terminal.Output
+	recordingOpMu     sync.Mutex
+	recordingOpActive atomic.Int32
 }
 
 func (t *coreTerminal) Feed(raw []byte) {
@@ -20,6 +25,331 @@ func (t *coreTerminal) Close() {
 	t.StopRecording()
 	t.output.Close()
 	t.Tab.Close()
+}
+
+func (t *coreTerminal) lockRecordingOperation() {
+	t.recordingOpMu.Lock()
+	t.recordingOpActive.Add(1)
+}
+
+func (t *coreTerminal) unlockRecordingOperation() {
+	t.recordingOpActive.Add(-1)
+	t.recordingOpMu.Unlock()
+}
+
+type recordingControlEvent struct {
+	ctx        context.Context
+	event      ControlEvent
+	resourceID string
+	closed     bool
+	publish    bool
+	ready      bool
+}
+
+type recordingControlQueue struct {
+	mu        sync.Mutex
+	id        string
+	tab       *Tab
+	ownerID   string
+	pending   map[uint64]recordingControlEvent
+	scheduled atomic.Bool
+	barrier   bool
+	closed    bool
+	orderHeld atomic.Bool
+}
+
+type recordingControlMarker struct{}
+
+var recordingControlQueues = struct {
+	sync.RWMutex
+	current map[string]*recordingControlQueue
+	all     map[*recordingControlQueue]struct{}
+}{current: make(map[string]*recordingControlQueue), all: make(map[*recordingControlQueue]struct{})}
+
+func newRecordingControlQueue(tab *Tab) *recordingControlQueue {
+	queue := &recordingControlQueue{tab: tab, pending: make(map[uint64]recordingControlEvent)}
+	if tab != nil {
+		queue.id = tab.ID
+		if tab.session != nil {
+			queue.ownerID = tab.session.userID
+		}
+	}
+	return queue
+}
+
+func recordingControlOrderForTab(tab *Tab) *recordingControlQueue {
+	if tab == nil {
+		return nil
+	}
+	recordingControlQueues.Lock()
+	defer recordingControlQueues.Unlock()
+	if current := recordingControlQueues.current[tab.ID]; current != nil && current.tab == tab {
+		return current
+	}
+	queue := newRecordingControlQueue(tab)
+	recordingControlQueues.current[tab.ID] = queue
+	recordingControlQueues.all[queue] = struct{}{}
+	return queue
+}
+
+func recordingControlOrderForEvent(event ControlEvent) *recordingControlQueue {
+	recordingControlQueues.Lock()
+	defer recordingControlQueues.Unlock()
+	for queue := range recordingControlQueues.all {
+		if queue.id != event.TabID {
+			continue
+		}
+		queue.mu.Lock()
+		pending, ok := queue.pending[event.Version]
+		queue.mu.Unlock()
+		if ok && pending.event == event {
+			return queue
+		}
+	}
+	if current := recordingControlQueues.current[event.TabID]; current != nil {
+		return current
+	}
+	queue := &recordingControlQueue{id: event.TabID, pending: make(map[uint64]recordingControlEvent)}
+	recordingControlQueues.current[event.TabID] = queue
+	recordingControlQueues.all[queue] = struct{}{}
+	return queue
+}
+
+func recordingControlQueueCurrent(queue *recordingControlQueue) bool {
+	recordingControlQueues.RLock()
+	defer recordingControlQueues.RUnlock()
+	return recordingControlQueues.current[queue.id] == queue
+}
+
+func removeRecordingControlOrder(queue *recordingControlQueue) {
+	recordingControlQueues.Lock()
+	delete(recordingControlQueues.all, queue)
+	if recordingControlQueues.current[queue.id] == queue {
+		delete(recordingControlQueues.current, queue.id)
+	}
+	recordingControlQueues.Unlock()
+}
+
+func (m *Manager) queueRecordingControl(ctx context.Context, event ControlEvent, force bool) {
+	if event.Version == 0 {
+		ownerID, resourceID, closed := m.eventOwner(TopicTerminalControl, event)
+		if ownerID != "" {
+			ctx = ipc.WithEventOwner(ctx, ownerID)
+		}
+		m.emitRecordingControl(nil, ctx, event, resourceID, closed)
+		return
+	}
+	queue := recordingControlOrderForEvent(event)
+	if queue.tab == nil {
+		ownerID, resourceID, closed := m.eventOwner(TopicTerminalControl, event)
+		if ownerID != "" {
+			ctx = ipc.WithEventOwner(ctx, ownerID)
+		}
+		m.emitRecordingControl(nil, ctx, event, resourceID, closed)
+		return
+	}
+	queue.mu.Lock()
+	if force {
+		queue.barrier = true
+	}
+	item, ok := queue.pending[event.Version]
+	if !ok {
+		item = recordingControlEvent{event: event}
+		queue.pending[event.Version] = item
+	}
+	ownerID := queue.ownerID
+	resourceID := queue.id
+	closed := item.closed || queue.closed
+	if ownerID != "" {
+		ctx = ipc.WithEventOwner(ctx, ownerID)
+	}
+	item.ctx = ctx
+	item.resourceID = resourceID
+	item.closed = closed
+	item.publish = m.emitter != nil
+	item.ready = true
+	queue.pending[event.Version] = item
+	if closed {
+		queue.closed = true
+	}
+	if queue.ownerID == "" {
+		queue.ownerID = ownerID
+	}
+	queue.orderHeld.Store(false)
+	queue.mu.Unlock()
+	m.registerControlOwner(queue, ownerID)
+	m.scheduleRecordingControl(queue)
+}
+
+func (m *Manager) registerControlOwner(queue *recordingControlQueue, ownerID string) {
+	m.mu.Lock()
+	if recordingControlQueueCurrent(queue) {
+		m.tabOwners[queue.id] = ownerID
+	}
+	if m.controlOwners == nil {
+		m.controlOwners = make(map[*recordingControlQueue]string)
+	}
+	m.controlOwners[queue] = ownerID
+	m.mu.Unlock()
+}
+
+func (m *Manager) discardControlEvent(event ControlEvent) {
+	queue := recordingControlOrderForEvent(event)
+	queue.mu.Lock()
+	if pending, ok := queue.pending[event.Version]; ok && !pending.ready {
+		delete(queue.pending, event.Version)
+	}
+	queue.mu.Unlock()
+}
+
+func recordingControlOperationActive(tab *Tab) bool {
+	if tab == nil {
+		return false
+	}
+	if core, ok := tab.terminal.(*coreTerminal); ok && core.recordingOpActive.Load() > 0 {
+		return true
+	}
+	if recorder, ok := tab.terminal.(interface {
+		RecordingStatus() terminal.RecordingStatus
+	}); ok {
+		state := recorder.RecordingStatus().State
+		return state == terminal.RecordingRunning || state == terminal.RecordingFailed
+	}
+	return false
+}
+
+func recordingControlBlocked(tab *Tab) bool {
+	if tab == nil {
+		return false
+	}
+	if len(tab.feedGate) == 0 && tab.feedGate != nil {
+		return true
+	}
+	return recordingControlOperationActive(tab)
+}
+
+func (m *Manager) scheduleRecordingControl(queue *recordingControlQueue) {
+	if queue.orderHeld.Load() || queue.scheduled.Load() {
+		return
+	}
+	if !queue.mu.TryLock() {
+		if queue.scheduled.CompareAndSwap(false, true) {
+			go m.drainRecordingControlQueue(queue, false)
+		}
+		return
+	}
+	if queue.orderHeld.Load() || queue.scheduled.Load() || len(queue.pending) == 0 {
+		queue.mu.Unlock()
+		return
+	}
+	operationActive := recordingControlOperationActive(queue.tab)
+	if operationActive {
+		queue.barrier = true
+	}
+	async := queue.barrier || queue.scheduled.Load() || operationActive
+	queue.scheduled.Store(true)
+	blocked := recordingControlBlocked(queue.tab)
+	if async && blocked {
+		queue.mu.Unlock()
+		go m.drainRecordingControlQueue(queue, false)
+		return
+	}
+	m.drainRecordingControlQueue(queue, true)
+}
+
+func (m *Manager) drainRecordingControlQueue(queue *recordingControlQueue, locked bool) {
+	for {
+		if !locked {
+			queue.mu.Lock()
+			locked = true
+		}
+		if queue.orderHeld.Load() {
+			queue.scheduled.Store(false)
+			queue.mu.Unlock()
+			return
+		}
+		if len(queue.pending) == 0 {
+			queue.scheduled.Store(false)
+			queue.barrier = false
+			remove := queue.closed
+			queue.mu.Unlock()
+			if remove {
+				removeRecordingControlOrder(queue)
+			}
+			return
+		}
+		var version uint64
+		for candidate := range queue.pending {
+			if version == 0 || candidate < version {
+				version = candidate
+			}
+		}
+		event := queue.pending[version]
+		if !event.ready {
+			queue.scheduled.Store(false)
+			queue.mu.Unlock()
+			return
+		}
+		delete(queue.pending, version)
+		barrier := queue.barrier
+		queue.mu.Unlock()
+		locked = false
+
+		if barrier {
+			m.waitRecordingControl(queue.tab)
+		}
+		if event.publish {
+			m.emitRecordingControl(queue, event.ctx, event.event, event.resourceID, event.closed)
+		}
+		if !queue.mu.TryLock() {
+			go m.drainRecordingControlQueue(queue, false)
+			return
+		}
+		locked = true
+	}
+}
+
+func (m *Manager) waitRecordingControl(tab *Tab) {
+	if tab == nil {
+		return
+	}
+	unlockOperation := lockRecordingOperation(tab)
+	if tab.feedGate != nil {
+		if err := tab.lockFeed(context.Background()); err == nil {
+			tab.unlockFeed()
+		}
+	}
+	unlockOperation()
+}
+
+func (m *Manager) emitRecordingControl(queue *recordingControlQueue, ctx context.Context, event ControlEvent, resourceID string, closed bool) {
+	if m.emitter != nil {
+		_ = m.emitter.EmitSessionEvent(ctx, Event{Topic: TopicTerminalControl, Payload: event})
+	}
+	if !closed {
+		return
+	}
+	m.mu.Lock()
+	if queue == nil {
+		delete(m.tabOwners, resourceID)
+	} else {
+		delete(m.controlOwners, queue)
+		if recordingControlQueueCurrent(queue) {
+			delete(m.tabOwners, queue.id)
+		}
+	}
+	m.mu.Unlock()
+}
+
+func lockRecordingOperation(tab *Tab) func() {
+	if locker, ok := tab.terminal.(interface {
+		lockRecordingOperation()
+		unlockRecordingOperation()
+	}); ok {
+		locker.lockRecordingOperation()
+		return locker.unlockRecordingOperation
+	}
+	return func() {}
 }
 
 type terminalFactory struct{}
@@ -194,6 +524,8 @@ func (m *Manager) StartRecording(tabID, path string) error {
 	if err != nil {
 		return err
 	}
+	unlockOperation := lockRecordingOperation(tab)
+	defer unlockOperation()
 	if err := tab.lockFeed(context.Background()); err != nil {
 		return err
 	}
@@ -201,6 +533,17 @@ func (m *Manager) StartRecording(tabID, path string) error {
 	core, ok := tab.terminal.(interface{ StartRecording(string) error })
 	if !ok {
 		return ErrUnsupported
+	}
+	if recorder, ok := tab.terminal.(interface {
+		SetRecordingHandler(func(terminal.RecordingStatus))
+	}); ok {
+		recorder.SetRecordingHandler(func(_ terminal.RecordingStatus) {
+			tab.mu.Lock()
+			event := tab.controlEventLocked()
+			tab.mu.Unlock()
+			ctx := context.WithValue(context.Background(), recordingControlMarker{}, true)
+			m.emit(ctx, TopicTerminalControl, event)
+		})
 	}
 	return core.StartRecording(path)
 }
@@ -210,15 +553,17 @@ func (m *Manager) StopRecording(tabID string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	unlockOperation := lockRecordingOperation(tab)
+	defer unlockOperation()
 	if err := tab.lockFeed(context.Background()); err != nil {
 		return 0, err
 	}
 	defer tab.unlockFeed()
-	core, ok := tab.terminal.(interface{ StopRecording() uint64 })
+	core, ok := tab.terminal.(interface{ StopRecording() (uint64, error) })
 	if !ok {
 		return 0, ErrUnsupported
 	}
-	return core.StopRecording(), nil
+	return core.StopRecording()
 }
 
 func (m *Manager) RecordingBytes(tabID string) (uint64, error) {
@@ -231,6 +576,20 @@ func (m *Manager) RecordingBytes(tabID string) (uint64, error) {
 		return 0, ErrUnsupported
 	}
 	return core.RecordingBytes(), nil
+}
+
+func (m *Manager) RecordingStatus(tabID string) (terminal.RecordingStatus, error) {
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return terminal.RecordingStatus{}, err
+	}
+	core, ok := tab.terminal.(interface {
+		RecordingStatus() terminal.RecordingStatus
+	})
+	if !ok {
+		return terminal.RecordingStatus{}, ErrUnsupported
+	}
+	return core.RecordingStatus(), nil
 }
 
 func (m *Manager) InjectInternal(ctx context.Context, tabID string, data []byte) error {
@@ -288,4 +647,102 @@ func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) 
 	}
 	m.transcriptInput(ctx, tab, data)
 	return nil
+}
+
+func (m *Manager) TerminalSnapshotFor(ctx context.Context, tabID string) (terminal.Snapshot, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return terminal.Snapshot{}, err
+	}
+	return m.TerminalSnapshot(tabID)
+}
+
+func (m *Manager) ScreenTextFor(ctx context.Context, tabID string) (string, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return "", err
+	}
+	return m.ScreenText(tabID)
+}
+
+func (m *Manager) TailLinesFor(ctx context.Context, tabID string, count int) ([]string, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return nil, err
+	}
+	return m.TailLines(tabID, count)
+}
+
+func (m *Manager) RawDumpFor(ctx context.Context, tabID string, maxBytes int) ([]byte, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return nil, err
+	}
+	return m.RawDump(tabID, maxBytes)
+}
+
+func (m *Manager) StartRecordingFor(ctx context.Context, tabID, path string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.StartRecording(tabID, path)
+}
+
+func (m *Manager) StopRecordingFor(ctx context.Context, tabID string) (uint64, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return 0, err
+	}
+	return m.StopRecording(tabID)
+}
+
+func (m *Manager) ScreenSeqFor(ctx context.Context, tabID string) (uint64, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return 0, err
+	}
+	return m.ScreenSeq(tabID)
+}
+
+func (m *Manager) OutputSinceFor(ctx context.Context, tabID string, seq uint64, maxBytes int) (data []byte, start, latest uint64, clamped bool, err error) {
+	if _, err = m.TabFor(ctx, tabID); err != nil {
+		return nil, 0, 0, false, err
+	}
+	return m.OutputSince(tabID, seq, maxBytes)
+}
+
+func (m *Manager) TerminalModeStateFor(ctx context.Context, tabID string) (terminal.State, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return terminal.State{}, err
+	}
+	return m.TerminalModeState(tabID)
+}
+
+func (m *Manager) ExportLogFor(ctx context.Context, tabID, path string, maxBytes int) (uint64, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return 0, err
+	}
+	return m.ExportLog(tabID, path, maxBytes)
+}
+
+func (m *Manager) SwitchEncodingFor(ctx context.Context, tabID, encoding string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.SwitchEncoding(tabID, encoding)
+}
+
+func (m *Manager) SetVisibleFor(ctx context.Context, tabID string, visible bool) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.SetVisible(tabID, visible)
+}
+
+func (m *Manager) RecordingBytesFor(ctx context.Context, tabID string) (uint64, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return 0, err
+	}
+	return m.RecordingBytes(tabID)
+}
+
+func (m *Manager) RecordingStatusFor(ctx context.Context, tabID string) (terminal.RecordingStatus, error) {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return terminal.RecordingStatus{}, err
+	}
+	return m.RecordingStatus(tabID)
 }

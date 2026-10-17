@@ -36,17 +36,26 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { fetchRunEventsAfter, findResumableRun, latestRunUsage, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
+import { fetchRunEventsAfter, findResumableRun, isRunTerminal, latestRunUsage, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
 import { findItemMatches, stepMatch } from "./conversationSearch";
 import { useVirtualWindow } from "./conversationVirtual";
 import {
   aiRunBlocksStart,
+  aiTabBusyIds,
+  aiTabRunControls,
   bindAiRunJob,
-  completeRunCancellation,
+  clearAiTabRun,
+  registerAiRunGeneration,
+  confirmAiRunTerminal,
   createAiRun,
   finishAiRunSpawn,
+  getAiTabBusyVersion,
   isCurrentAiRun,
+  markAiRunCancellationUnconfirmed,
+  requestAiRunCancellation,
+  setAiTabBusy,
   settleAiRun,
+  subscribeAiTabBusy,
   type AiRunSlot,
 } from "./runOwnership";
 import { UsageRing } from "./UsageRing";
@@ -156,36 +165,32 @@ function extractUrls(text: string): string[] {
   return [...new Set(found)];
 }
 
-// Busy-state registry for AI tabs: global aiBusy = any tab busy; tab dots refresh through the same registry.
-const aiTabBusyIds = new Set<string>();
-const aiTabBusyJobIds = new Map<string, string>();
-const aiTabBusyListeners = new Set<() => void>();
-let aiTabBusyVersion = 0;
-
-function setAiTabBusy(tabKey: string, busy: boolean): void {
-  if (!busy) aiTabBusyJobIds.delete(tabKey);
-  if (aiTabBusyIds.has(tabKey) === busy) return;
-  if (busy) aiTabBusyIds.add(tabKey);
-  else aiTabBusyIds.delete(tabKey);
-  aiTabBusyVersion += 1;
-  useUi.getState().setAiBusy(aiTabBusyIds.size > 0);
-  for (const listener of [...aiTabBusyListeners]) listener();
-}
-
-function subscribeAiTabBusy(listener: () => void): () => void {
-  aiTabBusyListeners.add(listener);
-  return () => {
-    aiTabBusyListeners.delete(listener);
-  };
-}
-
-const getAiTabBusyVersion = (): number => aiTabBusyVersion;
-
 const DRAG_AI_TAB = "application/x-nexterm-ai-tab";
 
 export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null {
   if (runs.some((run) => run.status === "running")) return "running";
   if (runs.some((run) => run.status === "interrupted" && run.finishedAt == null)) return "interrupted";
+  return null;
+}
+
+function terminalEventOf(run: AiRunDto): Record<string, unknown> | null {
+  if (run.status === "canceled") return { type: "canceled", message: "已停止本轮" };
+  if (run.status === "completed") {
+    return {
+      type: "done",
+      answer: run.answer,
+      turns: run.turns,
+      tokensIn: run.tokensIn,
+      tokensOut: run.tokensOut,
+      cacheCreationTokens: run.cacheCreationTokens,
+      latencyMs: run.latencyMs,
+    };
+  }
+  if (run.status === "failed") return { type: "error", message: run.error || "AI 任务失败" };
+  if (run.status === "expired") return { type: "error", message: run.error || "AI 任务已过期" };
+  if (run.status === "interrupted" && run.finishedAt != null) {
+    return { type: "error", message: run.error || "AI 任务已中断" };
+  }
   return null;
 }
 
@@ -202,6 +207,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const setActiveAiTab = useUi((s) => s.setActiveAiTab);
   const updateAiTab = useUi((s) => s.updateAiTab);
   const moveAiTab = useUi((s) => s.moveAiTab);
+  const aiAccountEpoch = useUi((s) => s.aiAccountEpoch);
   const bindings = useKeybindings();
   const aiSidebarKeyLabel = formatBinding(bindings.toggleAiSidebar);
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
@@ -228,13 +234,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         conversationId === undefined
           ? { conversationId: undefined, title: "新会话" }
           : { conversationId, ...(title ? { title } : {}) },
+        aiAccountEpoch,
       );
     },
-    [boardKey, updateAiTab],
+    [boardKey, updateAiTab, aiAccountEpoch],
   );
   const handleTitleChange = useCallback(
-    (tabId: string, title: string) => updateAiTab(boardKey, tabId, { title }),
-    [boardKey, updateAiTab],
+    (tabId: string, title: string) => updateAiTab(boardKey, tabId, { title }, aiAccountEpoch),
+    [boardKey, updateAiTab, aiAccountEpoch],
   );
 
   const retitleTab = async (tab: AiDockTab) => {
@@ -242,7 +249,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setRetitlingTabId(tab.id);
     try {
       const title = await aiApi.conversationRetitle(tab.conversationId);
-      updateAiTab(boardKey, tab.id, { title });
+      updateAiTab(boardKey, tab.id, { title }, aiAccountEpoch);
     } catch (e) {
       pushToast("error", `重新生成标题失败：${describeError(e)}`);
     } finally {
@@ -250,18 +257,34 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  const closeTabWithGuard = async (tab: AiDockTab) => {
-    if (aiTabBusyIds.has(tab.id)) {
-      const ok = await ask("这一轮仍在运行，关闭将停止它。关闭这个标签？", {
-        title: "关闭 AI 标签",
-        kind: "warning",
-      });
-      if (!ok) return;
-      const jobId = aiTabBusyJobIds.get(tab.id);
-      if (jobId) await aiApi.cancel(jobId).catch(() => undefined);
-      setAiTabBusy(tab.id, false);
-    }
-    closeAiTab(boardKey, tab.id);
+  const closeRequestsRef = useRef(new Map<string, Promise<boolean>>());
+  const closeTabWithGuard = (tab: AiDockTab): Promise<boolean> => {
+    const existing = closeRequestsRef.current.get(tab.id);
+    if (existing) return existing;
+    const request = (async () => {
+      if (aiTabBusyIds.has(tab.id)) {
+        const ok = await ask("这一轮仍在运行，关闭将停止它。关闭这个标签？", {
+          title: "关闭 AI 标签",
+          kind: "warning",
+        });
+        if (!ok) return false;
+        if (aiTabBusyIds.has(tab.id)) {
+          const cancelAndConfirm = aiTabRunControls.get(tab.id);
+          if (!cancelAndConfirm) {
+            pushToast("error", "停止未确认：运行状态不可用，标签已保留");
+            return false;
+          }
+          if (!(await cancelAndConfirm())) return false;
+        }
+      }
+      closeAiTab(boardKey, tab.id, aiAccountEpoch);
+      return true;
+    })();
+    const tracked = request.finally(() => {
+      if (closeRequestsRef.current.get(tab.id) === tracked) closeRequestsRef.current.delete(tab.id);
+    });
+    closeRequestsRef.current.set(tab.id, tracked);
+    return tracked;
   };
   const requestCloseTab = (tab: AiDockTab) => {
     void closeTabWithGuard(tab);
@@ -269,7 +292,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const closeTabsInOrder = (targets: AiDockTab[]) => {
     void (async () => {
       for (const tab of targets) {
-        await closeTabWithGuard(tab);
+        if (!(await closeTabWithGuard(tab))) break;
       }
     })();
   };
@@ -481,6 +504,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             conversationId={t.conversationId}
             active={t.id === activeTabId}
             tabKey={t.id}
+            draft={t.draft}
+            onDraftChange={(v) => updateAiTab(boardKey, t.id, { draft: v }, aiAccountEpoch)}
             onConversationChange={(id, title) => handleConversationChange(t.id, id, title)}
             onTitleChange={(title) => handleTitleChange(t.id, title)}
           />
@@ -498,6 +523,8 @@ interface AiChatTabProps {
   conversationId?: string;
   active: boolean;
   tabKey: string;
+  draft?: string;
+  onDraftChange: (v: string) => void;
   onConversationChange: (conversationId: string | undefined, title?: string) => void;
   onTitleChange: (title: string) => void;
 }
@@ -508,6 +535,8 @@ function AiChatTab({
   conversationId: boundConversationId,
   active,
   tabKey,
+  draft,
+  onDraftChange,
   onConversationChange,
   onTitleChange,
 }: AiChatTabProps) {
@@ -515,14 +544,18 @@ function AiChatTab({
   const anyAiBusy = useUi((s) => s.aiBusy);
   const pushToast = useUi((s) => s.pushToast);
   const workspaces = useUi((s) => s.workspaces);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
   const setBusy = (v: boolean) => {
-    busyRef.current = v;
-    setBusyState(v);
-    setAiTabBusy(tabKey, v);
+    const run = activeRunRef.current;
+    const cancellationPending = run !== null && run.cancellation !== "idle" && !run.settled;
+    const next = !v && cancellationPending ? true : v;
+    busyRef.current = next;
+    setBusyState(next);
+    setAiTabBusy(tabKey, next);
   };
-  useEffect(() => () => setAiTabBusy(tabKey, false), [tabKey]);
   const bindings = useKeybindings();
   const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   const streamRef = useRef<ConversationStream | null>(null);
@@ -533,7 +566,12 @@ function AiChatTab({
   const conv = useSyncExternalStore(subscribe, getSnapshot);
   useEffect(() => () => stream.flush(), [stream]);
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(draft ?? "");
+  const onDraftChangeRef = useRef(onDraftChange);
+  onDraftChangeRef.current = onDraftChange;
+  useEffect(() => {
+    onDraftChangeRef.current(input);
+  }, [input]);
   const [questionInput, setQuestionInput] = useState("");
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<{
@@ -543,13 +581,14 @@ function AiChatTab({
   } | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
-  const [activeGeneration, setActiveGeneration] = useState<number | null>(null);
+  const [activeRun, setActiveRunState] = useState<AiRunSlot | null>(null);
+  const activeGeneration = activeRun?.generation ?? null;
   const setActiveRun = (run: AiRunSlot) => {
     activeRunRef.current = run;
-    setActiveGeneration(run.generation);
-    if (run.jobId && !run.settled) aiTabBusyJobIds.set(tabKey, run.jobId);
-    else aiTabBusyJobIds.delete(tabKey);
+    setActiveRunState(run);
   };
+  const stopRef = useRef<(closeTab: boolean) => Promise<boolean>>(() => Promise.resolve(false));
+  const runControl = useCallback(() => stopRef.current(true), []);
   const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
   const runChannelRef = useRef<{
     channel: IpcChannel<unknown>;
@@ -568,6 +607,8 @@ function AiChatTab({
   } | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
     const run = createAiRun(++runSequenceRef.current, kind);
+    registerAiRunGeneration(tabKey, run.generation);
+    aiTabRunControls.set(tabKey, runControl);
     setActiveRun(run);
     stream.beginRun(run.generation, kind);
     return run;
@@ -695,7 +736,11 @@ function AiChatTab({
     setMatchCursor(next);
     const target = next >= 0 ? searchMatches[next] : undefined;
     if (target !== undefined) virtual.revealIndex(target);
-  }, [searchMatches, virtual.revealIndex]);
+    else virtual.clearReveal();
+  }, [searchMatches, virtual.revealIndex, virtual.clearReveal]);
+  useEffect(() => {
+    if (!searchOpen) virtual.clearReveal();
+  }, [searchOpen, virtual.clearReveal]);
 
   const permScope = sessionId ? { sessionId, tabId } : undefined;
   const [permDeviceOverride, setPermDeviceOverride] = useState(false);
@@ -828,10 +873,163 @@ function AiChatTab({
     }
   };
 
-  const settleRestoredRun = (generation: number) => {
+  const cancelOperationRef = useRef<{
+    generation: number;
+    jobId: string | null;
+    cancelSent: boolean;
+  } | null>(null);
+  const cancelWaitersRef = useRef(
+    new Set<{
+      generation: number;
+      closeTab: boolean;
+      resolve: (confirmed: boolean) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }>(),
+  );
+  const hasCloseWaiter = (generation: number) =>
+    [...cancelWaitersRef.current].some((waiter) => waiter.generation === generation && waiter.closeTab);
+
+  const confirmCancellation = (generation: number) => {
+    if (cancelOperationRef.current?.generation === generation) cancelOperationRef.current = null;
+    for (const waiter of [...cancelWaitersRef.current]) {
+      if (waiter.generation !== generation) continue;
+      clearTimeout(waiter.timer);
+      cancelWaitersRef.current.delete(waiter);
+      waiter.resolve(true);
+    }
+  };
+
+  const unconfirmCancellation = (generation: number, error?: unknown) => {
     const current = activeRunRef.current;
-    if (isCurrentAiRun(current, generation) && !current.settled) {
-      setActiveRun(settleAiRun(current));
+    if (isCurrentAiRun(current, generation) && current.cancellation !== "idle") {
+      setActiveRun(markAiRunCancellationUnconfirmed(current));
+    }
+    let resolved = 0;
+    for (const waiter of [...cancelWaitersRef.current]) {
+      if (waiter.generation !== generation) continue;
+      clearTimeout(waiter.timer);
+      cancelWaitersRef.current.delete(waiter);
+      waiter.resolve(false);
+      resolved += 1;
+    }
+    if (resolved > 0) {
+      pushToast(
+        "error",
+        error === undefined
+          ? "停止未确认：等待任务结束超时，可重试或查看任务"
+          : `停止未确认：${describeError(error)}`,
+      );
+    }
+  };
+
+  const confirmCancellationFromQuery = async (
+    operation: { generation: number; jobId: string | null },
+  ): Promise<boolean> => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || !operation.jobId) return false;
+    try {
+      const runs = await aiApi.runs(conversationId);
+      if (cancelOperationRef.current?.generation !== operation.generation) return false;
+      const terminalRun = runs.find((run) => run.id === operation.jobId && isRunTerminal(run));
+      if (!terminalRun) return false;
+      if (!hasCloseWaiter(operation.generation)) {
+        await catchUpRunEvents(operation.generation, operation.jobId);
+        const hasOutcome = stream.getState().attempts.some(
+          (attempt) => attempt.generation === operation.generation && attempt.outcome,
+        );
+        if (!hasOutcome) {
+          const terminalEvent = terminalEventOf(terminalRun);
+          if (terminalEvent) {
+            stream.pushEvent(operation.generation, terminalEvent);
+            stream.flush();
+          }
+        }
+      }
+      settleRestoredRun(operation.generation);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const driveCancellation = async () => {
+    const operation = cancelOperationRef.current;
+    const current = activeRunRef.current;
+    if (!operation || !isCurrentAiRun(current, operation.generation)) return;
+    if (current.settled && current.cancellation === "idle") {
+      confirmCancellation(operation.generation);
+      return;
+    }
+    if (current.spawnPending || !current.jobId) return;
+    operation.jobId = current.jobId;
+    if (!operation.cancelSent) {
+      operation.cancelSent = true;
+      try {
+        await aiApi.cancel(current.jobId);
+      } catch (error) {
+        if (cancelOperationRef.current !== operation) return;
+        operation.cancelSent = false;
+        if (await confirmCancellationFromQuery(operation)) return;
+        if (cancelOperationRef.current !== operation) return;
+        unconfirmCancellation(operation.generation, error);
+        return;
+      }
+      if (cancelOperationRef.current !== operation) return;
+      for (const item of stream.getState().items) {
+        if (item.attempt === operation.generation && item.role === "user" && item.steer === "pending") {
+          stream.resolveSteer(operation.generation, item.id, "dropped");
+        }
+      }
+      pushToast("info", current.kind === "takeover" ? "已请求停止接管，等待终端退出" : "已请求停止，等待任务结束");
+    }
+    await confirmCancellationFromQuery(operation);
+  };
+
+  const requestCancellation = (closeTab: boolean): Promise<boolean> => {
+    const current = activeRunRef.current;
+    if (!current || (current.settled && current.cancellation === "idle")) return Promise.resolve(true);
+    const retry = current.cancellation === "unconfirmed";
+    setActiveRun(requestAiRunCancellation(current));
+    if (cancelOperationRef.current?.generation !== current.generation) {
+      cancelOperationRef.current = {
+        generation: current.generation,
+        jobId: null,
+        cancelSent: false,
+      };
+    } else if (retry) {
+      cancelOperationRef.current.cancelSent = false;
+    }
+    const generation = current.generation;
+    const promise = new Promise<boolean>((resolve) => {
+      const waiter = {
+        generation,
+        closeTab,
+        resolve,
+        timer: setTimeout(() => {
+          if (!cancelWaitersRef.current.delete(waiter)) return;
+          const latest = activeRunRef.current;
+          if (isCurrentAiRun(latest, generation) && latest.cancellation !== "idle") {
+            setActiveRun(markAiRunCancellationUnconfirmed(latest));
+          }
+          pushToast("error", "停止未确认：等待任务结束超时，可重试或查看任务");
+          resolve(false);
+        }, 5000),
+      };
+      cancelWaitersRef.current.add(waiter);
+    });
+    void driveCancellation();
+    return promise;
+  };
+
+  const settleRestoredRun = (generation: number, confirmed = true) => {
+    const current = activeRunRef.current;
+    if (!confirmed && isCurrentAiRun(current, generation) && current.cancellation !== "idle") return;
+    if (isCurrentAiRun(current, generation)) {
+      const next = confirmed ? confirmAiRunTerminal(current) : settleAiRun(current);
+      if (confirmed && current.cancellation === "unconfirmed" && !hasCloseWaiter(generation)) {
+        next.cancellation = "unconfirmed";
+      }
+      setActiveRun(next);
       if (!current.spawnPending) setBusy(false);
     }
     const live = runChannelRef.current;
@@ -839,6 +1037,10 @@ function AiChatTab({
     const restored = restoredChannelRef.current;
     if (restored && restored.generation === generation) disposeRestoredChannel();
     clearResyncState(generation);
+    if (confirmed) {
+      confirmCancellation(generation);
+      if (activeRunRef.current?.generation === generation) clearAiTabRun(tabKey);
+    }
   };
 
   // maybeOpenAiCreatedTerminal opens a terminal_create foreground tab in the
@@ -853,6 +1055,9 @@ function AiChatTab({
       if (!terminal) continue;
       const st = useUi.getState();
       const session = st.sessions.find((s) => s.id === terminal.sessionId);
+      const activate = activeRef.current && st.rightOpen;
+      const previousActiveWorkspaceId = st.activeWorkspaceId;
+      const previousWorkspaces = st.workspaces;
       st.addTab({
         id: nextTabId(`term-${terminal.sessionId}`),
         kind: "terminal",
@@ -862,6 +1067,23 @@ function AiChatTab({
         tabId: terminal.tabId,
         closable: true,
       });
+      if (activate) continue;
+      const previousById = new Map(previousWorkspaces.map((workspace) => [workspace.id, workspace]));
+      useUi.setState((state) => ({
+        activeWorkspaceId: previousActiveWorkspaceId,
+        workspaces: state.workspaces.map((workspace) => {
+          const previous = previousById.get(workspace.id);
+          if (!previous) return workspace;
+          return {
+            ...workspace,
+            activePaneId: previous.activePaneId,
+            panes: workspace.panes.map((pane) => {
+              const previousPane = previous.panes.find((candidatePane) => candidatePane.id === pane.id);
+              return previousPane ? { ...pane, activeTabId: previousPane.activeTabId } : pane;
+            }),
+          };
+        }),
+      }));
     }
   };
 
@@ -913,8 +1135,10 @@ function AiChatTab({
       if (!isCurrentAiRun(current, generation) || current.settled) return;
       if (attempt >= RESYNC_MAX_ATTEMPTS) {
         markSyncFailed(generation);
-        setActiveRun(settleAiRun(current));
-        setBusy(false);
+        if (current.cancellation === "idle") {
+          setActiveRun(settleAiRun(current));
+          setBusy(false);
+        }
         return;
       }
       clearResyncTimer(generation);
@@ -936,7 +1160,7 @@ function AiChatTab({
     const restored = restoredChannelRef.current;
     if (!restored || restored.jobId !== jobId) return;
     if (restored.expiryRetries <= 0) {
-      settleRestoredRun(restored.generation);
+      settleRestoredRun(restored.generation, false);
       return;
     }
     restored.expiryRetries -= 1;
@@ -1022,7 +1246,7 @@ function AiChatTab({
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       const current = activeRunRef.current;
-      if (!isCurrentAiRun(current, generation) || current.settled) {
+      if (!isCurrentAiRun(current, generation) || (current.settled && current.cancellation === "idle")) {
         if (type === "done" || type === "error" || type === "canceled") {
           const restored = restoredChannelRef.current;
           if (restored && restored.generation === generation) disposeRestoredChannel();
@@ -1050,7 +1274,7 @@ function AiChatTab({
       expiryTimer: scheduleExpiryWatch(resumable.snapshot),
       expiryRetries: 8,
     };
-    setActiveRun({ generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false });
+    setActiveRun(bindAiRunJob(createAiRun(generation), resumable.run.id));
     setBusy(true);
     void replayHitl(generation, resumable.run.id);
   };
@@ -1130,6 +1354,7 @@ function AiChatTab({
     if (
       (!message && sentImages.length === 0) ||
       busyRef.current ||
+      aiTabBusyIds.has(tabKey) ||
       aiRunBlocksStart(activeRunRef.current)
     ) {
       return;
@@ -1152,7 +1377,7 @@ function AiChatTab({
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       const current = activeRunRef.current;
-      if (!isCurrentAiRun(current, run.generation) || current.settled) {
+      if (!isCurrentAiRun(current, run.generation) || (current.settled && current.cancellation === "idle")) {
         if (type === "done" || type === "error" || type === "canceled") {
           clearResyncState(run.generation);
           dispose();
@@ -1204,13 +1429,14 @@ function AiChatTab({
       if (!deletedConversationIdsRef.current.has(res.conversationId)) {
         updateConversationId(res.conversationId);
       }
-      if (current.settled) {
+      if (current.settled && current.cancellation === "idle") {
         setActiveRun(finishAiRunSpawn(current));
         setBusy(false);
         return;
       }
       setActiveRun(bindAiRunJob(current, res.jobId));
       stream.bindJob(run.generation, res.jobId);
+      void driveCancellation();
       if (stream.hasGap(run.generation)) resyncRun(run.generation, res.jobId);
       void hydrateMessageIds(res.conversationId);
     } catch (e) {
@@ -1223,6 +1449,7 @@ function AiChatTab({
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
         setActiveRun(settleAiRun(finishAiRunSpawn(current)));
         setBusy(false);
+        if (current.cancellation !== "idle") unconfirmCancellation(run.generation, e);
         clearResyncState(run.generation);
       }
       dispose();
@@ -1435,33 +1662,27 @@ function AiChatTab({
     }
   };
 
-  const stop = async () => {
-    const run = activeRunRef.current;
-    const id = run?.jobId;
-    if (!run || !id) {
-      pushToast("info", "当前任务正在启动，请稍后重试。");
-      return;
-    }
-    try {
-      await aiApi.cancel(id);
-      const current = activeRunRef.current;
-      if (!isCurrentAiRun(current, run.generation)) return;
-      const cancellation = completeRunCancellation(current);
-      setActiveRun(cancellation.run);
-      stream.cancelRun(run.generation, !cancellation.waitForTerminal);
-      if (!cancellation.waitForTerminal) setBusy(false);
-      const restored = restoredChannelRef.current;
-      if (restored && restored.generation === run.generation) disposeRestoredChannel();
-      clearResyncState(run.generation);
-      pushToast(
-        "info",
-        cancellation.waitForTerminal ? "已请求停止接管，等待终端退出" : "已停止本轮",
-      );
-    } catch (e) {
-      pushToast("error", `停止失败：${describeError(e)}`);
-      replayRestoredIfBound(id);
-    }
+  const stop = () => {
+    void requestCancellation(false);
   };
+  stopRef.current = requestCancellation;
+  useEffect(() => {
+    if (!aiTabBusyIds.has(tabKey) || !aiTabRunControls.has(tabKey)) {
+      aiTabRunControls.set(tabKey, runControl);
+    }
+    return () => {
+      if (aiTabRunControls.get(tabKey) !== runControl) return;
+      if (activeRunRef.current && !activeRunRef.current.settled) return;
+      setAiTabBusy(tabKey, false);
+      clearAiTabRun(tabKey);
+      for (const waiter of cancelWaitersRef.current) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(false);
+      }
+      cancelWaitersRef.current.clear();
+      cancelOperationRef.current = null;
+    };
+  }, [tabKey, runControl]);
 
   const loadRunStatuses = async (ids: string[]) => {
     const entries = await Promise.all(
@@ -1689,7 +1910,7 @@ function AiChatTab({
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       const current = activeRunRef.current;
-      if (!isCurrentAiRun(current, run.generation) || current.settled) {
+      if (!isCurrentAiRun(current, run.generation) || (current.settled && current.cancellation === "idle")) {
         if (type === "done" || type === "error" || type === "canceled") disposeChannel(channel);
         return;
       }
@@ -1719,13 +1940,14 @@ function AiChatTab({
         disposeChannel(channel);
         return;
       }
-      if (current.settled || holder.settled) {
+      if ((current.settled && current.cancellation === "idle") || holder.settled) {
         setActiveRun(finishAiRunSpawn(current));
         setBusy(false);
         return;
       }
       setActiveRun(bindAiRunJob(current, result.jobId));
       stream.bindJob(run.generation, result.jobId);
+      void driveCancellation();
       banner = {
         tabId,
         jobId: result.jobId,
@@ -1754,6 +1976,7 @@ function AiChatTab({
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
         setActiveRun(settleAiRun(finishAiRunSpawn(current)));
         setBusy(false);
+        if (current.cancellation !== "idle") unconfirmCancellation(run.generation, e);
         clearTakeover();
       }
       disposeChannel(channel);
@@ -2031,7 +2254,7 @@ function AiChatTab({
           ref={setScrollEl}
           role="log"
           aria-label="AI 对话记录"
-          className="h-full space-y-2.5 overflow-y-auto p-3"
+          className="h-full overflow-y-auto p-3"
         >
           {conv.items.length === 0 && conversationError && (
             <div className="flex flex-col items-center gap-3 px-2 pt-10 text-center">
@@ -2071,8 +2294,15 @@ function AiChatTab({
               <div
                 key={item.id}
                 data-conversation-index={index}
+                data-index={index}
+                ref={virtual.measureRef}
                 className={
-                  index === activeMatchIndex ? "rounded-xl ring-2 ring-amber-400/70" : undefined
+                  [
+                    i > 0 ? "mt-2.5" : null,
+                    index === activeMatchIndex ? "rounded-xl ring-2 ring-amber-400/70" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
                 }
               >
                 <ChatBubble
@@ -2093,7 +2323,7 @@ function AiChatTab({
             <div
               ref={confirmCardRef}
               tabIndex={-1}
-              className="nx-alert outline-none"
+              className="nx-alert mt-2.5 outline-none"
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
@@ -2168,7 +2398,7 @@ function AiChatTab({
 
           {questionCard && (
             <form
-              className="nx-alert"
+              className="nx-alert mt-2.5"
               onSubmit={(event) => {
                 event.preventDefault();
                 void answer();
@@ -2217,7 +2447,7 @@ function AiChatTab({
           )}
 
           {conv.todos.length > 0 && (
-            <div className="rounded-lg border border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
+            <div className="mt-2.5 rounded-lg border border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
               <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
                 <IconList size={11} />
                 任务清单
@@ -2293,6 +2523,28 @@ function AiChatTab({
             >
               取消
             </button>
+          </div>
+        )}
+        {activeRun && activeRun.cancellation !== "idle" && (
+          <div
+            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300"
+            role="status"
+            aria-live="polite"
+          >
+            <IconAlert size={10} className="shrink-0" />
+            <span className="truncate">
+              {activeRun.cancellation === "cancelling" ? "正在停止，等待任务结束…" : "停止未确认"}
+            </span>
+            {activeRun.cancellation === "unconfirmed" && !activeRun.settled && (
+              <button className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={stop}>
+                重试
+              </button>
+            )}
+            {activeRun.cancellation === "unconfirmed" && (
+              <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={follow.jumpToLatest}>
+                查看任务
+              </button>
+            )}
           </div>
         )}
         {syncNotice && syncNotice.generation === activeGeneration && (
@@ -2494,7 +2746,14 @@ function AiChatTab({
           {busy ? (
             <button
               className="nx-send-btn nx-send-btn-stop"
-              title="停止当前任务（保留已完成的输出）"
+              title={
+                activeRun?.cancellation === "cancelling"
+                  ? "停止当前任务：已受理，等待终态"
+                  : activeRun?.cancellation === "unconfirmed"
+                    ? "停止当前任务：停止未确认，点击重试"
+                    : "停止当前任务（保留已完成的输出）"
+              }
+              disabled={activeRun?.cancellation === "cancelling"}
               onClick={() => void stop()}
             >
               <IconStopSquare />

@@ -140,8 +140,8 @@ export function modelParamsAtDefaults(profile: ModelProfile): boolean {
   );
 }
 
-export function profileKeyUnavailable(profile: ModelProfile): boolean {
-  const trimmed = profile.apiKey.trim();
+export function profileKeyUnavailable(profile: { apiKey?: string }): boolean {
+  const trimmed = (profile.apiKey ?? "").trim();
   return trimmed !== "" && /^[*•●·…]+$/.test(trimmed);
 }
 

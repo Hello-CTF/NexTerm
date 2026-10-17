@@ -49,18 +49,27 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "docker_overview", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				value, err := s.docker.Overview(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_ps", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				value, err := s.docker.PS(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_logs_attach", func(ctx context.Context, call *ipc.Call, input dockerLogsRequest) (string, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return "", terminalIPCError(err)
+				}
 				stream, sink, err := s.openDockerSink(ctx, call)
 				if err != nil {
 					return "", err
@@ -78,6 +87,9 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "docker_exec_attach", func(ctx context.Context, call *ipc.Call, input dockerExecRequest) (string, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return "", terminalIPCError(err)
+				}
 				stream, sink, err := s.openDockerSink(ctx, call)
 				if err != nil {
 					return "", err
@@ -103,24 +115,30 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "docker_action", func(ctx context.Context, _ *ipc.Call, input dockerActionRequest) (any, error) {
-				assetID := ""
-				if connected, err := s.sessions.Session(input.SessionID); err == nil {
-					assetID = connected.Asset().ID
+				connected, err := s.authorizeDockerSession(ctx, input.SessionID)
+				if err != nil {
+					return nil, terminalIPCError(err)
 				}
 				return nil, terminalIPCError(s.docker.Action(ctx, docker.ActionRequest{
-					SessionID: input.SessionID, AssetID: assetID, Source: "user",
+					SessionID: input.SessionID, AssetID: connected.Asset().ID, Source: "user",
 					Options: docker.ActionOptions{Container: input.ContainerID, Action: docker.Action(input.Action), NewName: input.NewName},
 				}))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_images", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				value, err := s.docker.Images(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_image_pull", func(ctx context.Context, _ *ipc.Call, input dockerImageRequest) (string, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return "", terminalIPCError(err)
+				}
 				if strings.TrimSpace(input.Image) == "" {
 					return "", ipc.BadParam(fmt.Errorf("镜像引用不能为空"))
 				}
@@ -130,6 +148,9 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_image_remove", func(ctx context.Context, _ *ipc.Call, input dockerImageRequest) (any, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				if strings.TrimSpace(input.Image) == "" {
 					return nil, ipc.BadParam(fmt.Errorf("镜像引用不能为空"))
 				}
@@ -138,18 +159,27 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_inspect", func(ctx context.Context, _ *ipc.Call, input dockerContainerRequest) (json.RawMessage, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				value, err := s.docker.Inspect(ctx, input.SessionID, input.ContainerID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_stats", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (string, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return "", terminalIPCError(err)
+				}
 				value, err := s.docker.Stats(ctx, input.SessionID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_container_list_dir", func(ctx context.Context, _ *ipc.Call, input dockerContainerRequest) ([]string, error) {
+				if _, err := s.authorizeDockerSession(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				value, err := s.docker.ContainerListDir(ctx, input.SessionID, input.ContainerID, input.Path)
 				return value, terminalIPCError(err)
 			})
@@ -161,6 +191,10 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		}
 	}
 	return nil
+}
+
+func (s *terminalCommandService) authorizeDockerSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	return s.sessions.SessionFor(productionSessionRequestContext(ctx), sessionID)
 }
 
 func (s *terminalCommandService) openDockerSink(ctx context.Context, call *ipc.Call) (ipc.BinaryStream, docker.FrameSink, error) {
@@ -219,6 +253,7 @@ func (s *terminalCommandService) attachDocker(ctx context.Context, call *ipc.Cal
 	info := attachedTabDTO{
 		TabID: id, SessionID: meta.sessionID, Cols: uint32(meta.cols), Rows: uint32(meta.rows),
 		Controller: nullableProductionString(meta.controller), Subscribers: 1, Viewers: 1,
+		Shell: string(session.ShellUnknown),
 	}
 	s.mu.Unlock()
 	if status, completed, err := s.docker.StreamStatus(id); err == nil {

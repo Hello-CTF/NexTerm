@@ -67,7 +67,7 @@ tasks:
       - go run ./scripts/check-conflict-columns
 
   verify:wiring:
-    summary: Check CI/release reuse wiring, resolver scenarios and negative controls
+    summary: Run resolver, release upload/notes and desktop evidence behavior checks
     cmds:
       - go run ./scripts/check-reuse-wiring
 

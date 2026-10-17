@@ -390,7 +390,11 @@ func TestOpenAcceptsRelativeDatabasePaths(t *testing.T) {
 
 func TestOpenAcceptsSpecialCharacterPaths(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "mem #1?% dir", "memory #1?%.db")
+	special := "?"
+	if os.PathSeparator == '\\' {
+		special = "!"
+	}
+	path := filepath.Join(t.TempDir(), "mem #1"+special+"% dir", "memory #1"+special+"%.db")
 	store := openMemoryStore(t, path)
 	entry := mustCreate(t, store, testScope, "operations", "special path content")
 	if err := store.Close(); err != nil {

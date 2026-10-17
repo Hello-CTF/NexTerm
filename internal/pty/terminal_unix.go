@@ -24,7 +24,14 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &unixTerminal{master: master, process: newStartedProcess(cmd)}, nil
+	process, err := newStartedProcess(cmd)
+	if err != nil {
+		_ = master.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, err
+	}
+	return &unixTerminal{master: master, process: process}, nil
 }
 
 func (t *unixTerminal) Read(p []byte) (int, error) {

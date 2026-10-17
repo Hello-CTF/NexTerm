@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
-  completeRunCancellation,
+  confirmAiRunTerminal,
   createAiRun,
   finishAiRunSpawn,
   isCurrentAiRun,
+  markAiRunCancellationUnconfirmed,
+  requestAiRunCancellation,
   settleAiRun,
 } from "../../features/ai/runOwnership";
 
@@ -35,16 +37,33 @@ describe("AI run ownership", () => {
     expect(aiRunBlocksStart(settleAiRun(bound))).toBe(false);
   });
 
-  it("waits for takeover terminal cleanup after cancel instead of settling early", () => {
-    const takeover = bindAiRunJob(createAiRun(4, "takeover"), "job-takeover");
-    const cancelled = completeRunCancellation(takeover);
-    expect(cancelled.waitForTerminal).toBe(true);
-    expect(cancelled.run.settled).toBe(false);
-    expect(aiRunBlocksStart(cancelled.run)).toBe(true);
-    expect(aiRunBlocksStart(settleAiRun(cancelled.run))).toBe(false);
+  it("keeps cancellation pending for chat and takeover until a terminal is confirmed", () => {
+    for (const kind of ["chat", "takeover"] as const) {
+      const bound = bindAiRunJob(createAiRun(4, kind), `job-${kind}`);
+      const cancelling = requestAiRunCancellation(bound);
+      expect(cancelling).toMatchObject({ settled: false, cancellation: "cancelling" });
+      expect(aiRunBlocksStart(cancelling)).toBe(true);
 
-    const chat = completeRunCancellation(bindAiRunJob(createAiRun(5), "job-chat"));
-    expect(chat.waitForTerminal).toBe(false);
-    expect(chat.run.settled).toBe(true);
+      const unconfirmed = markAiRunCancellationUnconfirmed(cancelling);
+      expect(unconfirmed).toMatchObject({ settled: false, cancellation: "unconfirmed" });
+      expect(aiRunBlocksStart(unconfirmed)).toBe(true);
+
+      const terminal = confirmAiRunTerminal(unconfirmed);
+      expect(terminal).toMatchObject({ settled: true, cancellation: "idle" });
+      expect(aiRunBlocksStart(terminal)).toBe(false);
+    }
+  });
+
+  it("preserves a local cancel intent while spawn is pending and binds the job later", () => {
+    const pending = requestAiRunCancellation(createAiRun(8));
+    expect(pending).toMatchObject({ jobId: null, spawnPending: true, cancellation: "cancelling" });
+
+    const bound = bindAiRunJob(pending, "job-pending");
+    expect(bound).toMatchObject({
+      jobId: "job-pending",
+      spawnPending: false,
+      settled: false,
+      cancellation: "cancelling",
+    });
   });
 });

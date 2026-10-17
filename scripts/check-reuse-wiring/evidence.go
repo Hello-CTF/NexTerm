@@ -60,8 +60,8 @@ func envWithoutGo(shimDir string) ([]string, error) {
 	return append(env, "PATH="+pathEnv), nil
 }
 
-func buildStubDesktopBinary(directory string) (string, error) {
-	if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+func buildStubBinary(directory, mainSource, goos, goarch, cgo string) (string, error) {
+	if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte(mainSource), 0o644); err != nil {
 		return "", err
 	}
 	initCmd := exec.Command("go", "mod", "init", "stub")
@@ -69,13 +69,14 @@ func buildStubDesktopBinary(directory string) (string, error) {
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go mod init: %v: %s", err, out)
 	}
-	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", "stub-desktop", ".")
+	output := filepath.Join(directory, "stub-binary")
+	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", output, ".")
 	buildCmd.Dir = directory
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+goarch)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %v: %s", err, out)
 	}
-	return filepath.Join(directory, "stub-desktop"), nil
+	return output, nil
 }
 
 type artifactReport struct {
@@ -104,6 +105,30 @@ func readArtifactReport(path string) (artifactReport, map[string]string, bool) {
 		assertions[item.ID] = item.Status
 	}
 	return report, assertions, true
+}
+
+func writeBinaryManifest(binary, kind, goos, goarch, cgo, version, commit string) error {
+	binaryBytes, err := os.ReadFile(binary)
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(binaryBytes)
+	manifest, _ := json.Marshal(map[string]interface{}{
+		"schema_version":    1,
+		"kind":              "go-binary",
+		"id":                fmt.Sprintf("%s-%s-%s", kind, goos, goarch),
+		"platform":          map[string]interface{}{"os": goos, "arch": goarch, "cgo": cgo},
+		"tags":              []string{"production"},
+		"stripped":          true,
+		"version":           version,
+		"commit":            commit,
+		"source_date_epoch": 1,
+		"artifact": map[string]interface{}{
+			"size_bytes": len(binaryBytes),
+			"sha256":     hex.EncodeToString(digest[:]),
+		},
+	})
+	return os.WriteFile(binary+".manifest.json", manifest, 0o644)
 }
 
 func runEvidenceChecks(in inputs) []checkResult {
@@ -147,17 +172,6 @@ func runEvidenceChecks(in inputs) []checkResult {
 		fmt.Sprintf("rc=%d stderr=%q", visible.rc, visible.stderr))
 	os.RemoveAll(base)
 
-	buildText, err := os.ReadFile(filepath.Join(root, "scripts", "build.mjs"))
-	if err != nil {
-		fatalf("%v", err)
-	}
-	buildTextStr := string(buildText)
-	check("embedded dist assertions stay wired into the desktop release report",
-		strings.Contains(buildTextStr, `requireEmbedded: kind === "desktop" && release`) &&
-			strings.Contains(buildTextStr, `assertion("embedded-index"`) &&
-			strings.Contains(buildTextStr, `assertion("embedded-script"`),
-		"build.mjs no longer wires embedded dist assertions into the desktop release report")
-
 	hostGOOS := runtime.GOOS
 	hostGOARCH := runtime.GOARCH
 	if (hostGOOS != "darwin" && hostGOOS != "linux") || (hostGOARCH != "amd64" && hostGOARCH != "arm64") {
@@ -175,7 +189,7 @@ func runEvidenceChecks(in inputs) []checkResult {
 		fatalf("%v", err)
 	}
 	defer os.RemoveAll(base)
-	binary, err := buildStubDesktopBinary(base)
+	binary, err := buildStubBinary(base, "package main\n\nfunc main() {}\n", hostGOOS, hostGOARCH, "1")
 	if err != nil {
 		fatalf("%v", err)
 	}
@@ -245,24 +259,8 @@ func runEvidenceChecks(in inputs) []checkResult {
 		fmt.Sprintf("rc=%d status=%s assertions=%v commit=%s stderr tail=%q",
 			passing.rc, passedReport.Status, assertions, passedReport.Commit, tail(passing.stderr, 300)))
 
-	manifestPath := binary + ".manifest.json"
 	writeManifest := func(commit string) {
-		manifest, _ := json.Marshal(map[string]interface{}{
-			"schema_version":    1,
-			"kind":              "go-binary",
-			"id":                fmt.Sprintf("desktop-%s-%s", hostGOOS, hostGOARCH),
-			"platform":          map[string]interface{}{"os": hostGOOS, "arch": hostGOARCH, "cgo": cgo},
-			"tags":              []string{"production"},
-			"stripped":          true,
-			"version":           version,
-			"commit":            commit,
-			"source_date_epoch": 1,
-			"artifact": map[string]interface{}{
-				"size_bytes": len(binaryBytes),
-				"sha256":     digestHex,
-			},
-		})
-		if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		if err := writeBinaryManifest(binary, "desktop", hostGOOS, hostGOARCH, cgo, version, commit); err != nil {
 			fatalf("%v", err)
 		}
 	}
@@ -283,6 +281,7 @@ func runEvidenceChecks(in inputs) []checkResult {
 	check("verify-reused-binary accepts the byte-identical manifest",
 		accepted.rc == 0, fmt.Sprintf("rc=%d stderr=%q", accepted.rc, accepted.stderr))
 
+	c.results = append(c.results, runDesktopDistChecks(root, version, hostGOOS, hostGOARCH)...)
 	return c.results
 }
 

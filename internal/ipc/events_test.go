@@ -27,6 +27,28 @@ func TestNamedEventEnvelope(t *testing.T) {
 	}
 }
 
+func TestEventOwnerMetadataStaysOffWire(t *testing.T) {
+	var captured Event
+	emitter := EmitterFunc(func(_ context.Context, event Event) error {
+		captured = event
+		return nil
+	})
+	ctx := WithEventOwner(context.Background(), "u-1")
+	if err := Emit(ctx, emitter, TopicSessionStatus, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	if captured.OwnerID != "u-1" {
+		t.Fatalf("event owner = %q, want u-1", captured.OwnerID)
+	}
+	encoded, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(encoded), `{"event":"session://status","payload":{}}`; got != want {
+		t.Fatalf("event = %s, want %s", got, want)
+	}
+}
+
 func TestEventTopicsRemainStable(t *testing.T) {
 	topics := []Topic{
 		TopicSessionStatus,

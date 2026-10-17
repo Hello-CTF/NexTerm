@@ -1,7 +1,7 @@
 package guard
 
 import (
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -48,28 +48,29 @@ func RuleActionNeedsPath(action string) bool {
 // DirPattern derives the grant scope from a file path: the containing directory and all its
 // sub-content (/var/log/app.log -> /var/log/**). Root-level and directory-less paths degrade to
 // exact matching, avoiding accidental widening to the whole disk.
-func DirPattern(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
+func DirPattern(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return ""
 	}
-	index := strings.LastIndex(path, "/")
-	if index <= 0 {
-		return path
+	dir := filepath.Dir(name)
+	if dir == "." || dir == filepath.Dir(dir) {
+		return filepath.ToSlash(name)
 	}
-	return path[:index] + "/**"
+	return filepath.ToSlash(dir) + "/**"
 }
 
-// NormalizePath returns the normalized path shared by rule matching and execution: trims surrounding
-// whitespace and applies path.Clean. The second return value false means the normalized path still
-// contains a .. segment (out of bounds); the caller must reject it outright.
+// NormalizePath returns the platform-native cleaned path used by execution. The second return value
+// false means the cleaned path still contains a .. segment outside its volume root; the caller must
+// reject it outright.
 func NormalizePath(p string) (string, bool) {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return "", true
 	}
-	cleaned := path.Clean(p)
-	for _, segment := range strings.Split(cleaned, "/") {
+	cleaned := filepath.Clean(p)
+	volume := filepath.VolumeName(cleaned)
+	for _, segment := range strings.Split(strings.TrimPrefix(cleaned, volume), string(filepath.Separator)) {
 		if segment == ".." {
 			return "", false
 		}
@@ -79,7 +80,7 @@ func NormalizePath(p string) (string, bool) {
 
 // MatchPath matches a path pattern segment by segment: whole segments match exactly, * and ? are
 // supported within a segment, and ** spans any number of segments (including zero). Pattern and path
-// are both normalized via NormalizePath first; matching uses the same normalized path as execution.
+// are both normalized via NormalizePath first, then matched in their slash-separated form.
 // Out-of-bounds paths still containing .. after normalization match no rule; ** never swallows ...
 // An empty pattern matches any path (action-level grant).
 func MatchPath(pattern, value string) bool {
@@ -91,6 +92,8 @@ func MatchPath(pattern, value string) bool {
 	if !patternOK || !valueOK {
 		return false
 	}
+	normalizedPattern = filepath.ToSlash(normalizedPattern)
+	normalizedValue = filepath.ToSlash(normalizedValue)
 	return matchSegments(strings.Split(normalizedPattern, "/"), strings.Split(normalizedValue, "/"))
 }
 

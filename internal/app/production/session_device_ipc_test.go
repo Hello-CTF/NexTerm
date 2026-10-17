@@ -91,8 +91,7 @@ func TestProductionDeviceSessionEndToEnd(t *testing.T) {
 
 	channelID := "device-e2e-channel"
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
+	tabID := requireAttachedTabID(t, attachResponse)
 	tabs := production.Services.Sessions.ListTabs()
 	if len(tabs) != 1 || tabs[0].ID != tabID || !tabs[0].Durable {
 		t.Fatalf("device tabs = %+v, want one durable tab", tabs)

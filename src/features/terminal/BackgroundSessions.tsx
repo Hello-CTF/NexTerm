@@ -49,21 +49,34 @@ export function BackgroundSessions({
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const sessions = useUi((s) => s.sessions);
-  const hostSessionId = useUi((s) => {
-    if (sessionId !== undefined) return sessionId;
-    const id = workspaceId ?? s.activeWorkspaceId;
-    const w = s.workspaces.find((x) => x.id === id);
-    return w?.kind === "session" ? (w.sessionId ?? null) : null;
+  const ownerWorkspace = useUi((s) => {
+    const id = workspaceId ?? (sessionId === undefined ? s.activeWorkspaceId : undefined);
+    return id === undefined ? undefined : s.workspaces.find((workspace) => workspace.id === id);
   });
-  const [scope, setScope] = useState<string | null>(null);
+  const workspaceSessionId =
+    ownerWorkspace?.kind === "session" ? (ownerWorkspace.sessionId ?? null) : null;
+  const hostSessionId = workspaceSessionId ?? sessionId ?? null;
+  const missingOwner =
+    workspaceId !== undefined && ownerWorkspace === undefined && sessionId === undefined;
+  const showAll = hostSessionId === null && !missingOwner;
+  const hostName = hostSessionId
+    ? (sessions.find((s) => s.id === hostSessionId)?.name ?? ownerWorkspace?.title ?? hostSessionId)
+    : null;
   const [items, setItems] = useState<LiveTabInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<Record<string, "takeover" | "kill">>({});
   const loadGenerationRef = useRef(0);
+  const ownerGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
+    if (!hostSessionId && !showAll) {
+      setItems(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const list = await terminalApi.listLive();
@@ -75,22 +88,34 @@ export function BackgroundSessions({
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, []);
+  }, [hostSessionId, showAll]);
 
   useEffect(() => {
-    if (!visible) return;
+    ownerGenerationRef.current += 1;
+    setItems(null);
+    setError(null);
+    setBusy({});
+    return () => {
+      ownerGenerationRef.current += 1;
+    };
+  }, [workspaceId, hostSessionId, showAll]);
+
+  useEffect(() => {
+    if (!visible || (!hostSessionId && !showAll)) return;
     void load();
     const timer = window.setInterval(() => void load(), POLL_MS);
     return () => {
       window.clearInterval(timer);
       loadGenerationRef.current += 1;
     };
-  }, [visible, load]);
+  }, [visible, hostSessionId, showAll, load]);
 
   const takeOver = async (info: LiveTabInfo) => {
+    const ownerGeneration = ownerGenerationRef.current;
     setBusy((b) => ({ ...b, [info.tabId]: "takeover" }));
     try {
       const list = await sessionApi.list();
+      if (ownerGeneration !== ownerGenerationRef.current) return;
       const st = useUi.getState();
       st.setSessions(list);
       const session = list.find((s) => s.id === info.sessionId);
@@ -106,85 +131,83 @@ export function BackgroundSessions({
       setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
       pushToast("info", `已接管「${session?.name ?? info.sessionName}」的终端`);
     } catch (e) {
-      pushToast("error", `接管失败：${describeError(e)}`);
+      if (ownerGeneration === ownerGenerationRef.current) {
+        pushToast("error", `接管失败：${describeError(e)}`);
+      }
     } finally {
-      setBusy((b) => {
-        const next = { ...b };
-        delete next[info.tabId];
-        return next;
-      });
+      if (ownerGeneration === ownerGenerationRef.current) {
+        setBusy((b) => {
+          const next = { ...b };
+          delete next[info.tabId];
+          return next;
+        });
+      }
     }
   };
 
   const kill = async (info: LiveTabInfo) => {
+    const ownerGeneration = ownerGenerationRef.current;
     const ok = await ask(
       `结束「${info.sessionName}」的后台终端？\n\n其中的进程将终止，且无法恢复`,
       { title: "结束进程", kind: "warning" },
     );
-    if (!ok) return;
+    if (!ok || ownerGeneration !== ownerGenerationRef.current) return;
     setBusy((b) => ({ ...b, [info.tabId]: "kill" }));
-    const snapshot = items;
     setItems((prev) => (prev ? prev.filter((t) => t.tabId !== info.tabId) : prev));
     try {
       await terminalApi.closeTab(info.tabId, "kill");
-      void useUi.getState().resyncSessions({ silent: true });
-      pushToast("success", "已结束进程");
+      if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束进程");
     } catch (e) {
-      setItems(snapshot);
-      pushToast("error", `结束进程失败：${describeError(e)}`);
+      if (ownerGeneration === ownerGenerationRef.current) {
+        setItems((prev) => {
+          if (prev?.some((t) => t.tabId === info.tabId)) return prev;
+          return [...(prev ?? []), info];
+        });
+        pushToast("error", `结束进程失败：${describeError(e)}`);
+      }
     } finally {
-      setBusy((b) => {
-        const next = { ...b };
-        delete next[info.tabId];
-        return next;
-      });
+      void useUi.getState().resyncSessions({ silent: true });
+      if (ownerGeneration === ownerGenerationRef.current) {
+        setBusy((b) => {
+          const next = { ...b };
+          delete next[info.tabId];
+          return next;
+        });
+      }
     }
   };
 
-  const hostSessionKnown =
-    hostSessionId !== null &&
-    (sessionId !== undefined || sessions.some((s) => s.id === hostSessionId));
-  const effectiveScope = scope ?? (hostSessionKnown ? hostSessionId : "");
-  const options: [string, string][] = [];
-  const seen = new Set<string>();
-  for (const s of sessions) {
-    if (seen.has(s.id)) continue;
-    seen.add(s.id);
-    options.push([s.id, s.name]);
-  }
-  for (const t of items ?? []) {
-    if (seen.has(t.sessionId)) continue;
-    seen.add(t.sessionId);
-    options.push([t.sessionId, t.sessionName]);
-  }
-  if (effectiveScope && !seen.has(effectiveScope)) {
-    options.push([effectiveScope, effectiveScope.slice(0, 8)]);
+  if (!hostSessionId && !showAll) {
+    return (
+      <div className="nx-pane" data-background-view="local">
+        <div className="nx-toolbar">
+          <IconActivity size={14} className="text-neutral-500" />
+          <span className="nx-toolbar-title">后台会话</span>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-neutral-500">
+          无法确定后台会话所属主机，请从目标主机重新打开
+        </div>
+      </div>
+    );
   }
 
+  const effectiveScope = hostSessionId ?? "";
   const all = items ?? [];
   const list = effectiveScope ? all.filter((t) => t.sessionId === effectiveScope) : all;
   const count = list.length;
 
   return (
-    <div className="nx-pane">
+    <div className="nx-pane" data-background-view="local">
       <div className="nx-toolbar">
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
-        <select
-          className="nx-select max-w-[200px]"
-          aria-label="选择会话"
-          value={effectiveScope}
-          onChange={(event) => setScope(event.target.value)}
-        >
-          <option value="">全部</option>
-          {options.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </select>
+        {hostSessionId && (
+          <span className="nx-hint" data-testid="background-host">
+            主机：{hostName}
+          </span>
+        )}
         <span className="nx-hint">
-          {items === null ? "加载中…" : runningCopy(count)}
+          {items === null ? (error ? "读取失败" : "加载中…") : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
@@ -279,9 +302,7 @@ export function BackgroundSessions({
             {!error && items !== null && list.length === 0 && (
               <tr>
                 <td colSpan={4} className="nx-table-empty">
-                  {effectiveScope && all.length > 0
-                    ? "当前会话没有在后台运行的终端"
-                    : "没有在后台运行的终端"}
+                  当前主机没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
                     关闭运行中的 SSH 终端标签不会终止进程；AI 以后台方式创建的终端（含本机）也会列在这里，之后可在此接管
                   </div>

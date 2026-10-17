@@ -207,8 +207,12 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("staged mode = %v", info.Mode().Perm())
+	wantMode := os.FileMode(0o755)
+	if runtime.GOOS == "windows" {
+		wantMode = 0o666
+	}
+	if got := info.Mode().Perm(); got != wantMode {
+		t.Fatalf("staged mode = %v, want %v", got, wantMode)
 	}
 	oldContent, err := os.ReadFile(target)
 	if err != nil || string(oldContent) != "old-binary" {

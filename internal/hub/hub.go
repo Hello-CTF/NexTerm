@@ -35,16 +35,17 @@ type Frame struct {
 type Options struct {
 	QueueFrames    int
 	QueueBytes     int
-	OnChannelClose func(channelID string)
+	OnChannelClose func(channelID string, incarnation uint64, closeChannel func())
 	OnBackpressure func(channelID string, queuedBytes int)
 	OnDrain        func(channelID string, queuedBytes int)
 }
 
 type Hub struct {
-	mu       sync.Mutex
-	channels map[string]*channel
-	closed   bool
-	options  Options
+	mu              sync.Mutex
+	channels        map[string]*channel
+	nextIncarnation uint64
+	closed          bool
+	options         Options
 }
 
 type Stats struct {
@@ -108,7 +109,7 @@ type Producer struct {
 	gracefulOnce sync.Once
 }
 
-func (h *Hub) Producer(channelID string) (*Producer, error) {
+func (h *Hub) Producer(channelID string, reserve ...func(uint64, bool) error) (*Producer, error) {
 	ch, err := h.channel(channelID)
 	if err != nil {
 		return nil, err
@@ -117,6 +118,12 @@ func (h *Hub) Producer(channelID string) (*Producer, error) {
 	if ch.closed || ch.draining {
 		ch.mu.Unlock()
 		return nil, ErrClosed
+	}
+	if len(reserve) > 0 && reserve[0] != nil {
+		if err := reserve[0](ch.incarnation, ch.receiverClosed); err != nil {
+			ch.mu.Unlock()
+			return nil, err
+		}
 	}
 	ch.producer++
 	generation := ch.producer
@@ -253,6 +260,30 @@ func (h *Hub) CloseChannel(channelID string) error {
 	return nil
 }
 
+func (h *Hub) ChannelCloser(channelID string) (uint64, func()) {
+	h.mu.Lock()
+	ch := h.channels[channelID]
+	h.mu.Unlock()
+	var incarnation uint64
+	if ch != nil {
+		incarnation = ch.incarnation
+	}
+	return incarnation, h.channelCloser(channelID, ch)
+}
+
+func (h *Hub) channelCloser(channelID string, ch *channel) func() {
+	return func() {
+		h.mu.Lock()
+		if ch == nil || h.channels[channelID] != ch {
+			h.mu.Unlock()
+			return
+		}
+		delete(h.channels, channelID)
+		ch.close()
+		h.mu.Unlock()
+	}
+}
+
 func (h *Hub) Close() error {
 	h.mu.Lock()
 	if h.closed {
@@ -303,6 +334,8 @@ func (h *Hub) channel(channelID string) (*channel, error) {
 		return ch, nil
 	}
 	ch := newChannel(channelID, h.options.QueueFrames, h.options.QueueBytes, h.options.OnBackpressure, h.options.OnDrain)
+	h.nextIncarnation++
+	ch.incarnation = h.nextIncarnation
 	h.channels[channelID] = ch
 	return ch, nil
 }
@@ -312,6 +345,7 @@ func (h *Hub) detach(channelID string, ch *channel, generation uint64) bool {
 	detached := ch.bound && ch.generation == generation
 	if detached {
 		ch.bound = false
+		ch.receiverClosed = true
 		ch.generation++
 		ch.signalLocked()
 	}
@@ -346,7 +380,7 @@ func (r *Receiver) Close() error {
 		return nil
 	}
 	if r.hub.detach(r.channelID, r.channel, r.generation) && r.hub.options.OnChannelClose != nil {
-		r.hub.options.OnChannelClose(r.channelID)
+		r.hub.options.OnChannelClose(r.channelID, r.channel.incarnation, r.hub.channelCloser(r.channelID, r.channel))
 	}
 	return nil
 }
@@ -368,9 +402,11 @@ type channel struct {
 	queuedBytes    int
 	nextSeq        uint64
 	inFlight       uint64
+	incarnation    uint64
 	generation     uint64
 	producer       uint64
 	bound          bool
+	receiverClosed bool
 	draining       bool
 	closed         bool
 	backpressured  bool
@@ -502,6 +538,7 @@ func (c *channel) bind() uint64 {
 	}
 	c.generation++
 	c.bound = true
+	c.receiverClosed = false
 	c.signalLocked()
 	return c.generation
 }

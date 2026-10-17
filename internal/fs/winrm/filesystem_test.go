@@ -243,3 +243,97 @@ func TestMissingPathMapsToNotExist(t *testing.T) {
 		t.Fatalf("missing-dir list = %v; want fs.ErrNotExist", err)
 	}
 }
+
+func TestRootsUsesTargetFileSystemDrives(t *testing.T) {
+	executor := &fakeExecutor{handle: func(script string) (base.ExecResult, error) {
+		if strings.Contains(script, "Get-PSDrive") {
+			return success(`{"windows":true,"supported":true,"status":"ok","home":"C:\\Users\\alice","roots":[{"n":"C","r":"C:\\"},{"n":"Z","r":"\\\\server\\share"}]}`), nil
+		}
+		return success(""), nil
+	}}
+	provider, ok := any(New(executor)).(base.RootsProvider)
+	if !ok {
+		t.Fatal("WinRM filesystem does not provide roots")
+	}
+	roots, err := provider.Roots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.PathStyle != base.PathStyleWindows || !roots.Supported || roots.HomePath != `C:\Users\alice` {
+		t.Fatalf("roots environment = %+v", roots)
+	}
+	if len(roots.Roots) != 2 || roots.Roots[0].Path != `C:\` || roots.Roots[0].Label != "C:" || roots.Roots[1].Path != `\\server\share` || roots.Roots[1].Label != "Z:" {
+		t.Fatalf("target roots = %+v", roots.Roots)
+	}
+	if len(executor.scripts) != 1 || !strings.Contains(executor.scripts[0], "Get-PSDrive -PSProvider FileSystem") {
+		t.Fatalf("roots command = %v", executor.scripts)
+	}
+	if strings.Contains(strings.ToLower(executor.scripts[0]), "$home=") {
+		t.Fatal("roots command writes to the read-only HOME variable")
+	}
+}
+
+func TestRootsRejectsDriveRelativeAndReportsUnsupported(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+	}{
+		{name: "unsupported", output: `{"windows":true,"supported":false,"status":"ok","roots":[]}`},
+		{name: "drive relative", output: `{"windows":true,"supported":true,"status":"ok","roots":[{"n":"D","r":"D:relative"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{result: success(test.output)}
+			provider, ok := any(New(executor)).(base.RootsProvider)
+			if !ok {
+				t.Fatal("WinRM filesystem does not provide roots")
+			}
+			roots, err := provider.Roots(context.Background())
+			if test.name == "unsupported" {
+				if !errors.Is(err, base.ErrUnsupported) {
+					t.Fatalf("unsupported roots = %+v, %v", roots, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("drive-relative root succeeded: %+v", roots)
+			}
+		})
+	}
+}
+
+func TestFilesystemErrorsDistinguishPermissionAndNoMedia(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		stderr string
+		want   error
+	}{
+		{name: "permission", stderr: "Get-ChildItem: Access to the path 'D:\\private' is denied.", want: fs.ErrPermission},
+		{name: "no media", stderr: "Get-ChildItem: The device is not ready. There is no media in the drive.", want: base.ErrNoMedia},
+		{name: "structured no media", stderr: "<<NEXTERM_FS_ERROR>>no_media:介质未就绪", want: base.ErrNoMedia},
+		{name: "structured permission", stderr: "<<NEXTERM_FS_ERROR>>permission:拒绝访问", want: fs.ErrPermission},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code := 1
+			executor := &fakeExecutor{result: base.ExecResult{Stderr: test.stderr, ExitCode: &code}}
+			filesystem := New(executor)
+			if _, err := filesystem.List(context.Background(), `D:\`); !errors.Is(err, test.want) {
+				t.Fatalf("List error = %v; want %v", err, test.want)
+			}
+			if !strings.Contains(executor.scripts[0], "$__nextermException.HResult -band 0xFFFF") {
+				t.Fatalf("filesystem errors do not carry structured exception metadata: %s", executor.scripts[0])
+			}
+		})
+	}
+}
+
+func TestRootsEmptyAndStructuredFailure(t *testing.T) {
+	provider := New(&fakeExecutor{result: success(`{"windows":true,"supported":true,"status":"ok","home":"","roots":[]}`)})
+	roots, err := provider.Roots(context.Background())
+	if err != nil || !roots.Supported || len(roots.Roots) != 0 {
+		t.Fatalf("empty roots = %+v, %v", roots, err)
+	}
+	provider = New(&fakeExecutor{result: success(`{"windows":true,"supported":false,"status":"error","kind":"no_media","message":"device is not ready","roots":[]}`)})
+	if _, err := provider.Roots(context.Background()); !errors.Is(err, base.ErrNoMedia) {
+		t.Fatalf("structured roots error = %v", err)
+	}
+}

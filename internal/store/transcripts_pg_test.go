@@ -69,12 +69,30 @@ func TestTranscriptHostsGroupByPostgres(t *testing.T) {
 	if err := db.TranscriptEnd(ctx, row.ID, 2000, false); err != nil {
 		t.Fatal(err)
 	}
+	deviceAssetID := "device/01JDEVICE00000000000000001"
+	device := store.TranscriptRow{ID: "pg-device-hosts-transcript", SessionID: "sess-2", AssetID: deviceAssetID, StartedAt: 3000}
+	if err := db.TranscriptStart(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptEnd(ctx, device.ID, 4000, false); err != nil {
+		t.Fatal(err)
+	}
 	hosts, err := db.TranscriptHosts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hosts) != 1 || hosts[0].AssetID != "asset-1" || !hosts[0].AssetDeleted || hosts[0].Transcripts != 1 {
+	if len(hosts) != 2 {
 		t.Fatalf("hosts = %+v", hosts)
+	}
+	byID := make(map[string]store.TranscriptHostRow, len(hosts))
+	for _, host := range hosts {
+		byID[host.AssetID] = host
+	}
+	if host := byID["asset-1"]; !host.AssetDeleted || host.Transcripts != 1 {
+		t.Fatalf("hard-missing asset must remain deleted: %+v", host)
+	}
+	if host, ok := byID[deviceAssetID]; !ok || host.AssetDeleted || host.Transcripts != 1 {
+		t.Fatalf("device pseudo asset must not be marked deleted: %+v", host)
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 
 func TestRealHubPendingReplayLiveAndReceiverClose(t *testing.T) {
 	var closed atomic.Int32
-	shared := hub.New(hub.Options{OnChannelClose: func(string) { closed.Add(1) }})
+	shared := hub.New(hub.Options{OnChannelClose: func(string, uint64, func()) { closed.Add(1) }})
 	t.Cleanup(func() { _ = shared.Close() })
 	adapter := NewHubAdapter(shared)
 	config := testConfig(t, false)

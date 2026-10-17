@@ -115,3 +115,30 @@ func TestEnvironmentKeepsExplicitTermForExec(t *testing.T) {
 		t.Fatalf("TERM = %q, want vt100", got)
 	}
 }
+
+func TestShellClassificationUsesExecutableWhitelist(t *testing.T) {
+	for _, test := range []struct {
+		executable string
+		want       string
+	}{
+		{executable: "powershell.exe", want: "powershell"},
+		{executable: `C:\Program Files\PowerShell\7\pwsh.exe`, want: "powershell"},
+		{executable: "/usr/bin/pwsh", want: "powershell"},
+		{executable: "CMD.EXE", want: "cmd"},
+		{executable: "/bin/sh", want: "posix"},
+		{executable: "/bin/bash", want: "posix"},
+		{executable: "/usr/bin/zsh", want: "posix"},
+		{executable: "/bin/dash", want: "posix"},
+		{executable: "/bin/ksh", want: "posix"},
+		{executable: "fish", want: "unknown"},
+		{executable: "pwsh-preview", want: "unknown"},
+		{executable: "python3", want: "unknown"},
+	} {
+		t.Run(test.executable, func(t *testing.T) {
+			transport := NewWithConfig(Config{Shell: test.executable})
+			if got := transport.Shell(); got != test.want {
+				t.Fatalf("Shell() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

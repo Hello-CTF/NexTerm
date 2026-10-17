@@ -46,15 +46,28 @@ function isCsrfRejection(status: number, text: string): boolean {
   }
 }
 
+async function webTransport<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw { code: "disconnected", message: describeError(e) } satisfies AppError;
+    }
+    throw e;
+  }
+}
+
 function postRpc(payload: string, csrf: string | null): Promise<Response> {
-  return authedFetch(httpUrl("/rpc"), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(csrf ? { [CSRF_HEADER]: csrf } : {}),
-    },
-    body: payload,
-  });
+  return webTransport(
+    authedFetch(httpUrl("/rpc"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(csrf ? { [CSRF_HEADER]: csrf } : {}),
+      },
+      body: payload,
+    }),
+  );
 }
 
 // On cold start, before the csrf_token is fetched via /auth/me, concurrent first /rpc calls would all 403 if sent bare and then each recover.
@@ -85,13 +98,13 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
     await bootstrapCsrfToken();
   }
   let res = await postRpc(requestPayload, getCsrfToken());
-  let text = await res.text();
+  let text = await webTransport(res.text());
   if (isCsrfRejection(res.status, text)) {
     // The session may have rotated and invalidated the old token: refresh via /auth/me and retry the same request, only once.
     // CSRF rejection happens in middleware before the command handler, so retrying has no duplicate side effects.
     await authApi.me();
     res = await postRpc(requestPayload, getCsrfToken());
-    text = await res.text();
+    text = await webTransport(res.text());
   }
   let body: { ok?: boolean; data?: unknown; error?: unknown } | null = null;
   try {
@@ -190,10 +203,12 @@ export const sessionApi = {
       clientId: clientId(),
     }),
   lineExec: (tabId: string, line: string) =>
-    call<void>("session_line_exec", { tabId, line }),
+    call<void>("session_line_exec", { tabId, line, clientId: clientId() }),
   cwd: (sessionId: string) =>
     call<string | null>("session_cwd", { sessionId }),
 };
+
+export type TerminalShell = "powershell" | "cmd" | "posix" | "unknown";
 
 export interface AttachedTabInfo {
   tabId: string;
@@ -204,8 +219,10 @@ export interface AttachedTabInfo {
   subscribers: number;
   viewers: number;
   exited: boolean;
+  retainable?: boolean;
   encoding?: string;
   title?: string;
+  shell?: TerminalShell;
 }
 
 export interface LiveTabInfo {
@@ -223,21 +240,65 @@ export interface LiveTabInfo {
   title?: string;
 }
 
+export type RecordingState = "never-started" | "running" | "stopped" | "failed";
+
+export interface RecordingStatus {
+  tabId: string;
+  state: RecordingState;
+  bytes: number;
+  path?: string;
+  safeError?: string;
+  generation: number;
+}
+
+export interface DurableDescriptor {
+  id: string;
+  incarnation: string;
+  createdAt: number;
+  title?: string;
+  metadataRevision: number;
+  cols: number;
+  rows: number;
+  dead: boolean;
+  exitCode: number | null;
+  signal?: string;
+  finishedAt: number | null;
+}
+
 export interface StreamResumeAnchor {
   seq: number;
   epoch: string;
 }
 
+function listTerminal<T>(sessionId?: string, durable?: boolean): Promise<T> {
+  const args =
+    sessionId === undefined && durable === undefined
+      ? undefined
+      : {
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ...(durable === undefined ? {} : { durable }),
+        };
+  return call<T>("terminal_list", args);
+}
+
 export const terminalApi = {
-  attach: (sessionId: string, cols: number, rows: number, channel: unknown) =>
-    call<string>("terminal_attach", { sessionId, cols, rows, channel, clientId: clientId() }),
-  attachTab: (tabId: string, channel: unknown, replayBytes?: number, resume?: StreamResumeAnchor) =>
+  attach: (sessionId: string, cols: number, rows: number, channel: unknown, durable?: boolean) =>
+    call<AttachedTabInfo>("terminal_attach", {
+      sessionId,
+      cols,
+      rows,
+      channel,
+      clientId: clientId(),
+      ...(durable === undefined ? {} : { durable }),
+    }),
+  attachTab: (tabId: string, channel: unknown, replayBytes?: number, resume?: StreamResumeAnchor, sessionId?: string) =>
     call<AttachedTabInfo>("terminal_attach_tab", {
       tabId,
       replayBytes,
       channel,
       clientId: clientId(),
       ...(resume ? { fromSeq: resume.seq, fromEpoch: resume.epoch } : {}),
+      ...(sessionId === undefined ? {} : { sessionId }),
     }),
   write: (tabId: string, data: Uint8Array) =>
     call<void>("terminal_write", {
@@ -253,7 +314,8 @@ export const terminalApi = {
     call<string | null>("terminal_claim", { tabId, clientId: clientId() }),
   release: (tabId: string) =>
     call<boolean>("terminal_release", { tabId, clientId: clientId() }),
-  listLive: () => call<LiveTabInfo[]>("terminal_list"),
+  listLive: () => listTerminal<LiveTabInfo[]>(),
+  listDurable: (sessionId: string) => listTerminal<DurableDescriptor[]>(sessionId, true),
   screenText: (tabId: string) => call<string>("terminal_screen_text", { tabId }),
   snapshot: (tabId: string) =>
     call<import("./types").ScreenSnapshotDto>("terminal_snapshot", { tabId }),
@@ -268,6 +330,8 @@ export const terminalApi = {
   recordStart: (tabId: string, path: string) =>
     call<void>("terminal_record_start", { tabId, path }),
   recordStop: (tabId: string) => call<number>("terminal_record_stop", { tabId }),
+  recordingStatus: (tabId: string) =>
+    call<RecordingStatus>("terminal_record_status", { tabId }),
   exportLog: (tabId: string, path: string, maxBytes?: number) =>
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
   closeTab: (tabId: string, mode?: "kill" | "detach") =>
@@ -445,7 +509,27 @@ function normEntryPath<T extends { path: string }>(e: T): T {
   return { ...e, path: e.path.replace(/\\/g, "/") };
 }
 
+export interface FileRootDto {
+  path: string;
+  label: string;
+}
+
+export interface FileRootsDto {
+  pathStyle: "windows" | "posix" | "unknown";
+  roots: FileRootDto[];
+  homePath: string | null;
+  supported: boolean;
+}
+
 export const fsApi = {
+  roots: async (sessionId: string) => {
+    const result = await call<FileRootsDto>("fs_roots", { sessionId });
+    return {
+      ...result,
+      roots: result.roots.map(normEntryPath),
+      homePath: result.homePath?.replace(/\\/g, "/") ?? null,
+    };
+  },
   list: async (sessionId: string, path: string) => {
     const list = await call<import("./types").FileEntryDto[]>("fs_list", {
       sessionId,

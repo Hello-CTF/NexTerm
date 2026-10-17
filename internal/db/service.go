@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	redisDriver "github.com/redis/go-redis/v9"
 )
 
 type managedConnection interface {
@@ -24,6 +25,7 @@ type Service struct {
 
 	mu     sync.RWMutex
 	conns  map[string]managedConnection
+	owners map[string]string
 	closed bool
 
 	openMySQL    func(context.Context, MySQLConfig) (*mysqlConnection, error)
@@ -36,6 +38,7 @@ func NewService(resolver AssetResolver) *Service {
 	return &Service{
 		resolver:     resolver,
 		conns:        make(map[string]managedConnection),
+		owners:       make(map[string]string),
 		openMySQL:    connectMySQL,
 		openPostgres: connectPostgres,
 		openRedis:    connectRedis,
@@ -62,6 +65,7 @@ func (s *Service) Close() error {
 	for id, connection := range s.conns {
 		connections = append(connections, connection)
 		delete(s.conns, id)
+		delete(s.owners, id)
 	}
 	s.mu.Unlock()
 
@@ -151,18 +155,26 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 		return ConnectResult{}, ipc.NewError(ipc.CodeDisconnected, "连接已断开：数据库服务已关闭，请重新连接")
 	}
 	s.conns[id] = connection
+	s.owners[id] = ipc.OwnerID(ctx)
 	s.mu.Unlock()
 	return ConnectResult{ConnID: id}, nil
 }
 
-func (s *Service) Disconnect(id string) error {
+func (s *Service) Disconnect(ctx context.Context, id string) error {
 	s.mu.Lock()
 	connection := s.conns[id]
-	delete(s.conns, id)
-	s.mu.Unlock()
 	if connection == nil {
+		delete(s.owners, id)
+		s.mu.Unlock()
 		return nil
 	}
+	if !connectionRequestAllowed(ctx, s.owners[id]) {
+		s.mu.Unlock()
+		return forbiddenConnection()
+	}
+	delete(s.conns, id)
+	delete(s.owners, id)
+	s.mu.Unlock()
 	if err := connection.Close(); err != nil {
 		return internalError("关闭数据库连接", err)
 	}
@@ -215,18 +227,47 @@ func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineC
 	return inline, nil
 }
 
-func (s *Service) connOf(id string) (managedConnection, error) {
+type openAccessContextKey struct{}
+
+func withOpenAccess(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAccessContextKey{}, true)
+}
+
+func openAccessFromContext(ctx context.Context) bool {
+	open, _ := ctx.Value(openAccessContextKey{}).(bool)
+	return open
+}
+
+func connectionRequestAllowed(ctx context.Context, owner string) bool {
+	if requester, ok := ipc.UserIDFromContext(ctx); ok {
+		return owner != "" && owner == requester
+	}
+	if openAccessFromContext(ctx) {
+		return true
+	}
+	return owner == ""
+}
+
+func forbiddenConnection() *ipc.Error {
+	return ipc.NewError(ipc.CodeForbidden, "没有权限访问该数据库连接")
+}
+
+func (s *Service) connOf(ctx context.Context, id string) (managedConnection, error) {
 	s.mu.RLock()
 	connection := s.conns[id]
+	owner := s.owners[id]
 	s.mu.RUnlock()
 	if connection == nil {
 		return nil, notFound(id)
+	}
+	if !connectionRequestAllowed(ctx, owner) {
+		return nil, forbiddenConnection()
 	}
 	return connection, nil
 }
 
 func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) {
-	connection, err := s.connOf(connID)
+	connection, err := s.connOf(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +282,7 @@ func (s *Service) Schemas(ctx context.Context, connID string) ([]string, error) 
 }
 
 func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, error) {
-	connection, err := s.connOf(connID)
+	connection, err := s.connOf(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +297,7 @@ func (s *Service) Tables(ctx context.Context, connID, schema string) ([]string, 
 }
 
 func (s *Service) Describe(ctx context.Context, connID, schema, table string) (TableDescribe, error) {
-	connection, err := s.connOf(connID)
+	connection, err := s.connOf(ctx, connID)
 	if err != nil {
 		return TableDescribe{}, err
 	}
@@ -271,7 +312,7 @@ func (s *Service) Describe(ctx context.Context, connID, schema, table string) (T
 }
 
 func (s *Service) Query(ctx context.Context, connID, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
-	connection, err := s.connOf(connID)
+	connection, err := s.connOf(ctx, connID)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -285,8 +326,8 @@ func (s *Service) Query(ctx context.Context, connID, statement string, limit uin
 	}
 }
 
-func (s *Service) mysqlOf(id string) (*mysqlConnection, error) {
-	connection, err := s.connOf(id)
+func (s *Service) mysqlOf(ctx context.Context, id string) (*mysqlConnection, error) {
+	connection, err := s.connOf(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -297,8 +338,8 @@ func (s *Service) mysqlOf(id string) (*mysqlConnection, error) {
 	return mysql, nil
 }
 
-func (s *Service) postgresOf(id string) (*postgresConnection, error) {
-	connection, err := s.connOf(id)
+func (s *Service) postgresOf(ctx context.Context, id string) (*postgresConnection, error) {
+	connection, err := s.connOf(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -310,15 +351,124 @@ func (s *Service) postgresOf(id string) (*postgresConnection, error) {
 }
 
 func (s *Service) redisOf(id string) (*redisConnection, error) {
-	connection, err := s.connOf(id)
-	if err != nil {
-		return nil, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	connection := s.conns[id]
+	if connection == nil {
+		return nil, notFound(id)
 	}
 	redis, ok := connection.(*redisConnection)
 	if !ok {
 		return nil, badParam(errors.New("该连接不是 Redis"))
 	}
+	if _, ok := redis.client.(*requestRedisAPI); !ok {
+		redis.client = &requestRedisAPI{service: s, connID: id, next: redis.client}
+	}
+	if _, ok := redis.console.(*requestRedisAPI); !ok {
+		redis.console = &requestRedisAPI{service: s, connID: id, next: redis.console}
+	}
 	return redis, nil
+}
+
+type requestRedisAPI struct {
+	service *Service
+	connID  string
+	next    redisAPI
+}
+
+func (r *requestRedisAPI) authorize(ctx context.Context) error {
+	_, err := r.service.connOf(ctx, r.connID)
+	return err
+}
+
+func (r *requestRedisAPI) Scan(ctx context.Context, cursor uint64, match string, count int64) *redisDriver.ScanCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewScanCmd(ctx, nil)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.Scan(ctx, cursor, match, count)
+}
+
+func (r *requestRedisAPI) Type(ctx context.Context, key string) *redisDriver.StatusCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewStatusCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.Type(ctx, key)
+}
+
+func (r *requestRedisAPI) TTL(ctx context.Context, key string) *redisDriver.DurationCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewDurationCmd(ctx, time.Second)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.TTL(ctx, key)
+}
+
+func (r *requestRedisAPI) Get(ctx context.Context, key string) *redisDriver.StringCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewStringCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.Get(ctx, key)
+}
+
+func (r *requestRedisAPI) HGetAll(ctx context.Context, key string) *redisDriver.MapStringStringCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewMapStringStringCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.HGetAll(ctx, key)
+}
+
+func (r *requestRedisAPI) LRange(ctx context.Context, key string, start, stop int64) *redisDriver.StringSliceCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewStringSliceCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.LRange(ctx, key, start, stop)
+}
+
+func (r *requestRedisAPI) SMembers(ctx context.Context, key string) *redisDriver.StringSliceCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewStringSliceCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.SMembers(ctx, key)
+}
+
+func (r *requestRedisAPI) ZRangeWithScores(ctx context.Context, key string, start, stop int64) *redisDriver.ZSliceCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewZSliceCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.ZRangeWithScores(ctx, key, start, stop)
+}
+
+func (r *requestRedisAPI) XRangeN(ctx context.Context, key, start, end string, count int64) *redisDriver.XMessageSliceCmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewXMessageSliceCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.XRangeN(ctx, key, start, end, count)
+}
+
+func (r *requestRedisAPI) Do(ctx context.Context, args ...any) *redisDriver.Cmd {
+	if err := r.authorize(ctx); err != nil {
+		cmd := redisDriver.NewCmd(ctx)
+		cmd.SetErr(err)
+		return cmd
+	}
+	return r.next.Do(ctx, args...)
 }
 
 func randomID() (string, error) {
@@ -338,5 +488,9 @@ func notFound(id string) *ipc.Error {
 }
 
 func internalError(action string, err error) *ipc.Error {
+	var ipcErr *ipc.Error
+	if errors.As(err, &ipcErr) && ipcErr.Code == ipc.CodeForbidden {
+		return ipcErr
+	}
 	return ipc.WrapError(ipc.CodeInternal, fmt.Sprintf("内部错误: %s: %v", action, err), err)
 }

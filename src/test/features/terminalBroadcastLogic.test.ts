@@ -12,6 +12,7 @@ import {
   quickBroadcastIds,
 } from "../../features/terminal/broadcast";
 import { useUi } from "../../app/store";
+import { setTerminalCloseAction } from "../../app/preferences";
 
 vi.mock("../../ipc/commands", () => ({
   assetApi: {},
@@ -32,7 +33,7 @@ function session(id: string, kind: string): SessionInfo {
 }
 
 function termTab(id: string, sessionId: string, patch: Partial<AppTab> = {}): AppTab {
-  return { id, kind: "terminal", title: id, sessionId, tabId: `k-${id}`, closable: true, ...patch };
+  return { id, kind: "terminal", title: id, sessionId, tabId: `k-${id}`, closable: true, retainable: true, ...patch };
 }
 
 function workspace(panes: { id: string; tabs: AppTab[] }[]): Workspace {
@@ -227,6 +228,7 @@ describe("broadcast store cleanup", () => {
   });
 
   it("clears the broadcast set when its workspace closes", async () => {
+    setTerminalCloseAction("detach");
     useUi.getState().setBroadcast({ workspaceId: "ws1", targetIds: ["t1", "t2"] });
     await useUi.getState().closeWorkspace("ws1");
     expect(useUi.getState().broadcast).toBeNull();

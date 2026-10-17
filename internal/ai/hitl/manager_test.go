@@ -473,7 +473,6 @@ func TestConcurrentDuplicateAnswersConsumeOnce(t *testing.T) {
 	}
 	close(start)
 	<-h.resumer.entered
-	time.Sleep(10 * time.Millisecond)
 	close(h.resumer.release)
 	wg.Wait()
 	close(errorsSeen)
@@ -496,58 +495,48 @@ func TestConcurrentDuplicateAnswersConsumeOnce(t *testing.T) {
 }
 
 func TestCancelAndResumeRaceHasOneTerminalAndAtMostOneResume(t *testing.T) {
-	for iteration := range 40 {
-		t.Run(fmt.Sprintf("iteration-%d", iteration), func(t *testing.T) {
-			h := newHarness(t)
-			request := h.interrupt(t, "target-one", "call-one", `{}`)
-			answer := answerFor("answer", request)
-			start := make(chan struct{})
-			var resumeErr error
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				<-start
-				_, _, resumeErr = h.manager.Resume(context.Background(), h.resumer, answer)
-			}()
-			var cancelErr error
-			go func() {
-				defer wg.Done()
-				<-start
-				_, cancelErr = h.manager.Cancel("run")
-			}()
-			close(start)
-			wg.Wait()
-			if cancelErr != nil {
-				t.Fatalf("cancel error = %v", cancelErr)
+	h := newHarness(t)
+	h.resumer.entered = make(chan struct{})
+	h.resumer.release = make(chan struct{})
+	request := h.interrupt(t, "target-one", "call-one", `{}`)
+	answer := answerFor("answer", request)
+	resumeReturned := make(chan error, 1)
+	go func() {
+		_, _, err := h.manager.Resume(context.Background(), h.resumer, answer)
+		resumeReturned <- err
+	}()
+	<-h.resumer.entered
+	_, cancelErr := h.manager.Cancel("run")
+	close(h.resumer.release)
+	resumeErr := <-resumeReturned
+	if cancelErr != nil {
+		t.Fatalf("cancel error = %v", cancelErr)
+	}
+	if resumeErr != nil {
+		t.Fatalf("resume error = %v", resumeErr)
+	}
+	if h.resumer.count() != 1 {
+		t.Fatalf("resume calls = %d", h.resumer.count())
+	}
+	snapshot, err := h.manager.Snapshot("run")
+	if err != nil || snapshot.Status != RunStatusCanceled || snapshot.Terminal == nil {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+	events, err := h.manager.Events("run", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminals := 0
+	for _, event := range events {
+		if event.Kind == EventTerminal {
+			terminals++
+			if event.Reason != TerminalCanceled {
+				t.Fatalf("terminal = %+v", event)
 			}
-			if resumeErr != nil && !errors.Is(resumeErr, ErrRunFinished) {
-				t.Fatalf("resume error = %v", resumeErr)
-			}
-			if resumeErr == nil && h.resumer.count() != 1 || resumeErr != nil && h.resumer.count() != 0 {
-				t.Fatalf("resume error=%v calls=%d", resumeErr, h.resumer.count())
-			}
-			snapshot, err := h.manager.Snapshot("run")
-			if err != nil || snapshot.Status != RunStatusCanceled || snapshot.Terminal == nil {
-				t.Fatalf("snapshot = %+v, %v", snapshot, err)
-			}
-			events, err := h.manager.Events("run", 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			terminals := 0
-			for _, event := range events {
-				if event.Kind == EventTerminal {
-					terminals++
-					if event.Reason != TerminalCanceled {
-						t.Fatalf("terminal = %+v", event)
-					}
-				}
-			}
-			if terminals != 1 {
-				t.Fatalf("terminal count = %d events = %+v", terminals, events)
-			}
-		})
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("terminal count = %d events = %+v", terminals, events)
 	}
 }
 

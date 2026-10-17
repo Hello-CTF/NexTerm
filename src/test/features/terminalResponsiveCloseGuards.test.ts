@@ -5,9 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   askChoice: vi.fn(),
+  askChoiceRemember: vi.fn(),
   closeTab: vi.fn(),
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice }));
+vi.mock("../../ui/dialogs", () => ({
+  ask: mocks.ask,
+  askChoice: mocks.askChoice,
+  askChoiceRemember: mocks.askChoiceRemember,
+}));
 vi.mock("../../ipc/commands", () => ({
   dbApi: {},
   sessionApi: {},
@@ -28,7 +33,7 @@ import {
 import type { SessionInfo } from "../../ipc/commands";
 
 function terminal(id = "terminal", sessionId = "s"): AppTab {
-  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true };
+  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true, retainable: true };
 }
 function execTerminal(id = "exec"): AppTab {
   return { ...terminal(id), containerId: "container-1" };
@@ -276,6 +281,139 @@ describe("close = detach (M111)", () => {
   });
 });
 
+describe("workspace and pane reclaim follow terminal close preferences", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ask.mockResolvedValue(true);
+  });
+
+  it("uses saved kill without dialogs for retainable local tabs on workspace close", async () => {
+    const tabs = [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }];
+    seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
+    setTerminalCloseAction("kill");
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledTimes(2);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("uses saved kill without an extra warning for a mixed workspace", async () => {
+    const tabs = [{ ...terminal("t1"), retainable: true }, execTerminal("e1")];
+    seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
+    setTerminalCloseAction("kill");
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("uses one ask choice to detach retainable local tabs on workspace close", async () => {
+    const tabs = [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }];
+    seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
+    setTerminalCloseAction("ask");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach");
+    expect(toastText()).toContain("2 个终端转入后台");
+  });
+
+  it("confirms the destructive ask choice before killing workspace terminals", async () => {
+    const tab = { ...terminal("t1"), retainable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: "t1" }], "local");
+    setTerminalCloseAction("ask");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill");
+    expect(toastText()).not.toContain("转入后台");
+  });
+
+  it("uses saved kill without dialogs for a retainable local tab on unsplit", async () => {
+    const panes = [
+      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
+      { id: "p2", tabs: [{ ...terminal("gone"), retainable: true }], activeTabId: "gone" },
+    ];
+    seed(panes, "local");
+    setTerminalCloseAction("kill");
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "kill");
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("keeps the split and issues no terminal IPC when the ask choice is cancelled on unsplit", async () => {
+    const panes = [
+      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
+      { id: "p2", tabs: [{ ...terminal("gone"), retainable: true }], activeTabId: "gone" },
+    ];
+    seed(panes, "local");
+    setTerminalCloseAction("ask");
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+  });
+
+  it("keeps failed workspace tabs with closeError and removes only successful detach operations", async () => {
+    const tabs = [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }];
+    seed([{ id: "p", tabs, activeTabId: "t1" }], "local");
+    setTerminalCloseAction("detach");
+    mocks.closeTab.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+
+    await useUi.getState().closeWorkspace("ws");
+
+    const remaining = useUi.getState().workspaces[0]?.panes[0]?.tabs;
+    expect(remaining).toHaveLength(1);
+    expect(remaining?.[0]).toMatchObject({ id: "t2", closeError: "boom" });
+    expect(toastText()).not.toContain("转入后台");
+  });
+
+  it("keeps a failed pane tab with closeError while removing successful unsplit operations", async () => {
+    const panes = [
+      { id: "p1", tabs: [{ ...terminal("keep"), retainable: true }], activeTabId: "keep" },
+      {
+        id: "p2",
+        tabs: [{ ...terminal("t1"), retainable: true }, { ...terminal("t2"), retainable: true }],
+        activeTabId: "t1",
+      },
+    ];
+    seed(panes, "local");
+    setTerminalCloseAction("detach");
+    mocks.closeTab.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+    const remaining = useUi.getState().workspaces[0].panes[1].tabs;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ id: "t2", closeError: "boom" });
+    expect(toastText()).not.toContain("转入后台");
+  });
+});
+
 describe("kill danger actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -323,6 +461,21 @@ describe("kill danger actions", () => {
     const remaining = useUi.getState().workspaces[0].panes[0].tabs;
     expect(remaining).toHaveLength(3);
     expect(remaining.every((t) => t.exited === true)).toBe(true);
+  });
+
+  it("requestKillWorkspaceTerminals keeps failures with closeError and no success toast", async () => {
+    const tabs = [terminal("t1"), terminal("t2")];
+    seed([{ id: "p", tabs, activeTabId: "t1" }]);
+    mocks.closeTab.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+
+    await requestKillWorkspaceTerminals("ws");
+
+    const remaining = useUi.getState().workspaces[0].panes[0].tabs;
+    expect(remaining[0]).toMatchObject({ id: "t1", exited: true });
+    expect(remaining[1]).toMatchObject({ id: "t2", closeError: "boom" });
+    expect(remaining[1].exited).not.toBe(true);
+    expect(toastText()).toContain("1/2 个终端结束失败");
+    expect(toastText()).not.toContain("已结束 2 个终端进程");
   });
 
   it("requestKillWorkspaceTerminals with nothing running only toasts", async () => {
@@ -496,7 +649,7 @@ describe("detach capability without session metadata", () => {
   });
 
   it("unknown terminal type never promises background — confirm+kill with an explicit hint", async () => {
-    const tab = terminal();
+    const tab = { ...terminal(), retainable: undefined };
     seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], undefined);
 
     expect(closeActionHint(tab)).toBe("结束进程");

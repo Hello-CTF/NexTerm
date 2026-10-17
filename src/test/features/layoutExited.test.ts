@@ -30,7 +30,7 @@ import { setTerminalCloseAction } from "../../app/preferences";
 import { requestCloseTab, useUi, type AppTab, type Workspace } from "../../app/store";
 
 function terminal(id = "terminal"): AppTab {
-  return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true };
+  return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true, retainable: true };
 }
 function workspace(panes: { id: string; tabs: AppTab[] }[]): Workspace {
   return {
@@ -59,6 +59,12 @@ async function flushAsync() {
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
+function applyAttachedCapabilities() {
+  const st = useUi.getState();
+  for (const tab of st.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs)) {
+    if (tab.kind === "terminal") st.updateTab(tab.id, { retainable: true });
+  }
+}
 
 describe("remote layout preserves exited terminal state", () => {
   beforeEach(() => {
@@ -75,6 +81,27 @@ describe("remote layout preserves exited terminal state", () => {
     expect(dto).not.toBeNull();
     const persisted = dto as PersistedLayout;
     expect(persisted.workspaces[0].panes[0].tabs[0].exited).toBe(true);
+  });
+
+  it("serializeLayout drops runtime shell, background capability, and pending directory state", () => {
+    seed([
+      {
+        id: "pane",
+        tabs: [
+          {
+            ...terminal(),
+            shell: "powershell",
+            pendingDirectory: "D:/Project [x]/child's dir",
+          },
+        ],
+      },
+    ]);
+
+    const dto = serializeLayout(useUi.getState());
+    const persistedTab = dto?.workspaces[0]?.panes[0]?.tabs[0];
+    expect(persistedTab).not.toHaveProperty("shell");
+    expect(persistedTab).not.toHaveProperty("retainable");
+    expect(persistedTab).not.toHaveProperty("pendingDirectory");
   });
 
   it("mergeExitedTabs keeps local exited over a stale remote copy and leaves clean layouts untouched", () => {
@@ -108,6 +135,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     const after = useUi.getState().workspaces[0].panes[0].tabs[0];
     expect(after.exited).toBe(true);
@@ -130,6 +158,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     await useUi.getState().closeWorkspace("ws");
 
@@ -150,6 +179,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
@@ -178,6 +208,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     const after = useUi.getState().workspaces[0].panes[0].tabs[0];
     expect(after.tabId).toBe("kernel-new");
@@ -216,6 +247,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     await useUi.getState().closeWorkspace("ws");
 
@@ -252,6 +284,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     onRemoteChange({ revision: 1 });
     await flushAsync();
+    applyAttachedCapabilities();
 
     await useUi.getState().unsplitWorkspace("p2", "ws");
 
@@ -259,5 +292,80 @@ describe("remote layout preserves exited terminal state", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("preserves runtime only for the same backend tab across remote layout moves", async () => {
+    const attached: AppTab = {
+      ...terminal("attached"),
+      shell: "posix",
+      pendingDirectory: "/tmp/project",
+      unread: true,
+      closeError: "close failed",
+    };
+    const removed: AppTab = {
+      ...terminal("removed"),
+      shell: "powershell",
+      pendingDirectory: "D:/removed",
+    };
+    const reconnected: AppTab = {
+      ...terminal("shared"),
+      tabId: "kernel-old",
+      shell: "posix",
+      pendingDirectory: "/tmp/old",
+    };
+    seed([
+      { id: "p1", tabs: [removed, attached] },
+      { id: "p2", tabs: [reconnected] },
+    ]);
+    const moved = {
+      ...workspace([
+        {
+          id: "moved",
+          tabs: [
+            terminal("restored"),
+            terminal("attached"),
+            { ...terminal("shared"), tabId: "kernel-new" },
+          ],
+        },
+      ]),
+      id: "moved-ws",
+    };
+    const remoteDto: PersistedLayout = {
+      v: 2,
+      leftOpen: true,
+      leftMode: "assets",
+      rightOpen: true,
+      leftWidth: 248,
+      rightWidth: 352,
+      workspaces: [moved],
+      activeWorkspaceId: "moved-ws",
+      aiBoards: {},
+    };
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
+
+    onRemoteChange({ revision: 1 });
+    await flushAsync();
+
+    const state = useUi.getState();
+    expect(state.workspaces.map((w) => w.id)).toEqual(["moved-ws"]);
+    expect(state.activeWorkspaceId).toBe("moved-ws");
+    const tabs = state.workspaces[0].panes[0].tabs;
+    expect(tabs.map((tab) => tab.id)).toEqual(["restored", "attached", "shared"]);
+    expect(tabs[1]).toMatchObject({
+      tabId: "kernel-attached",
+      shell: "posix",
+      retainable: true,
+      pendingDirectory: "/tmp/project",
+      unread: true,
+      closeError: "close failed",
+    });
+    for (const restored of [tabs[0], tabs[2]]) {
+      expect(restored).not.toHaveProperty("shell");
+      expect(restored).not.toHaveProperty("retainable");
+      expect(restored).not.toHaveProperty("pendingDirectory");
+      expect(restored).not.toHaveProperty("unread");
+      expect(restored).not.toHaveProperty("closeError");
+    }
+    expect(tabs[2].tabId).toBe("kernel-new");
   });
 });

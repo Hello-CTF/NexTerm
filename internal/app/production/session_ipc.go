@@ -2,7 +2,6 @@ package production
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +16,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 )
 
@@ -25,7 +26,6 @@ type terminalCommandService struct {
 	sessions     *session.Manager
 	docker       *docker.Service
 	bridge       *terminalBridge
-	grid         *ipc.Dispatcher
 	hostKeys     *productionHostKeyStore
 	sshConnector *productionConnector
 	events       ipc.Emitter
@@ -84,10 +84,31 @@ type openTerminalRequest struct {
 	SessionID string `json:"sessionId"`
 	Cols      uint32 `json:"cols"`
 	Rows      uint32 `json:"rows"`
+	Durable   bool   `json:"durable,omitempty"`
+}
+
+type durableDescriptorDTO struct {
+	ID               string `json:"id"`
+	Incarnation      string `json:"incarnation"`
+	CreatedAt        int64  `json:"createdAt"`
+	Title            string `json:"title,omitempty"`
+	MetadataRevision uint64 `json:"metadataRevision"`
+	Cols             uint32 `json:"cols"`
+	Rows             uint32 `json:"rows"`
+	Dead             bool   `json:"dead"`
+	ExitCode         *int   `json:"exitCode"`
+	Signal           string `json:"signal,omitempty"`
+	FinishedAt       *int64 `json:"finishedAt"`
+}
+
+type terminalListRequest struct {
+	SessionID string `json:"sessionId,omitempty"`
+	Durable   bool   `json:"durable,omitempty"`
 }
 
 type attachTerminalRequest struct {
 	TabID       string `json:"tabId"`
+	SessionID   string `json:"sessionId,omitempty"`
 	ReplayBytes int    `json:"replayBytes"`
 	FromSeq     uint64 `json:"fromSeq,omitempty"`
 	FromEpoch   string `json:"fromEpoch,omitempty"`
@@ -102,8 +123,10 @@ type attachedTabDTO struct {
 	Subscribers int     `json:"subscribers"`
 	Viewers     int     `json:"viewers"`
 	Exited      bool    `json:"exited"`
+	Retainable  bool    `json:"retainable"`
 	Encoding    string  `json:"encoding,omitempty"`
 	Title       string  `json:"title,omitempty"`
+	Shell       string  `json:"shell"`
 }
 
 type renameTerminalRequest struct {
@@ -123,6 +146,13 @@ type terminalWriteRequest struct {
 	TabID    string `json:"tabId"`
 	Data     []int  `json:"data"`
 	ClientID string `json:"clientId"`
+}
+
+type terminalResizeRequest struct {
+	TabID    string `json:"tabId"`
+	ClientID string `json:"clientId"`
+	Cols     uint32 `json:"cols"`
+	Rows     uint32 `json:"rows"`
 }
 
 type terminalIDRequest struct {
@@ -161,13 +191,10 @@ func newTerminalCommandService(database *store.Store, sessions *session.Manager,
 }
 
 func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) error {
-	s.grid = ipc.NewDispatcher()
-	if err := s.sessions.RegisterGridCommands(s.grid); err != nil {
-		return err
-	}
 	registrations := []func() error{
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect", func(ctx context.Context, _ *ipc.Call, input sessionConnectRequest) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
 				row, err := s.database.AssetGet(ctx, input.AssetID)
 				if err != nil {
 					return sessionInfoDTO{}, err
@@ -176,7 +203,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err != nil {
 					return sessionInfoDTO{}, err
 				}
-				connected, err := s.sessions.Connect(ctx, asset)
+				connected, err := s.sessions.ConnectFor(ctx, asset)
 				if err != nil {
 					return sessionInfoDTO{}, terminalIPCError(err)
 				}
@@ -198,6 +225,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		// The authenticated user is written into options: reconnects run in a background ctx, and authorization falls back to reading it.
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect_device", func(ctx context.Context, _ *ipc.Call, input sessionConnectDeviceRequest) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
 				if input.DeviceID == "" {
 					return sessionInfoDTO{}, ipc.BadParam(errors.New("deviceId 不能为空"))
 				}
@@ -212,7 +240,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					Kind:    session.KindDevice,
 					Options: map[string]any{"deviceId": input.DeviceID, "userId": userID},
 				}
-				connected, err := s.sessions.Connect(ctx, asset)
+				connected, err := s.sessions.ConnectFor(ctx, asset)
 				if err != nil {
 					return sessionInfoDTO{}, terminalIPCError(err)
 				}
@@ -229,6 +257,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_connect_local", func(ctx context.Context, _ *ipc.Call, _ struct{}) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
 				connected, err := s.connectLocal(ctx)
 				if err != nil {
 					return sessionInfoDTO{}, terminalIPCError(err)
@@ -238,15 +267,20 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_disconnect", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				if err := s.sessions.DisconnectFor(ctx, input.SessionID); err != nil {
+					return nil, terminalIPCError(err)
+				}
 				if s.docker != nil {
 					s.closeDockerSession(ctx, input.SessionID)
 				}
-				return nil, terminalIPCError(s.sessions.Disconnect(input.SessionID))
+				return nil, nil
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_reconnect", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (bool, error) {
-				if err := s.sessions.StartReconnect(input.SessionID); err != nil {
+				ctx = productionSessionRequestContext(ctx)
+				if err := s.sessions.StartReconnectFor(ctx, input.SessionID); err != nil {
 					return false, terminalIPCError(err)
 				}
 				if s.docker != nil {
@@ -256,8 +290,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "session_list", func(_ context.Context, _ *ipc.Call, _ struct{}) ([]sessionInfoDTO, error) {
-				infos := s.sessions.ListSessions()
+			return ipc.Register(dispatcher, "session_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				infos, err := s.sessions.ListSessionsFor(ctx)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
 				result := make([]sessionInfoDTO, len(infos))
 				for index, info := range infos {
 					result[index] = productionSessionInfo(info)
@@ -283,10 +321,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_open_line_tab", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
+				ctx = productionSessionRequestContext(ctx)
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
 					return "", terminalIPCError(err)
 				}
-				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
+				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID,
 					Cols: input.Cols, Rows: input.Rows, Ephemeral: true,
 				})
@@ -298,13 +337,15 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_line_exec", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (any, error) {
-				_, err := s.sessions.ExecLine(ctx, input.TabID, call.ClientID, input.Line)
+				ctx = productionSessionRequestContext(ctx)
+				_, err := s.sessions.ExecLineFor(ctx, input.TabID, call.ClientID, input.Line)
 				return nil, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_cwd", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (*string, error) {
-				transport, err := s.sessions.Transport(ctx, input.SessionID)
+				ctx = productionSessionRequestContext(ctx)
+				transport, err := s.sessions.TransportFor(ctx, input.SessionID)
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
@@ -317,58 +358,71 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_attach", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
-				ephemeral := false
+			return ipc.Register(dispatcher, "terminal_attach", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (attachedTabDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				connected, err := s.sessions.SessionFor(ctx, input.SessionID)
+				if err != nil {
+					return attachedTabDTO{}, terminalIPCError(err)
+				}
+				kind := connected.Asset().Kind
+				ephemeral := kind == session.KindLocal
+				retainable := ephemeral
 				var durable *session.DurableTabOptions
-				if connected, err := s.sessions.Session(input.SessionID); err == nil {
-					ephemeral = connected.Asset().Kind == session.KindLocal
-					// Device channels have no raw PTY: terminal tabs always land on the device daemon's durable
-					// sessions, restored by id on reconnect/reopen.
-					if connected.Asset().Kind == session.KindDevice {
-						durable = &session.DurableTabOptions{}
-					}
+				// Device channels have no raw PTY: terminal tabs always land on the device daemon's durable
+				// sessions, restored by id on reconnect/reopen.
+				if kind == session.KindDevice || kind == session.KindSSH && input.Durable {
+					durable = &session.DurableTabOptions{}
 				}
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
-					return "", terminalIPCError(err)
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
-				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
+				info, err := s.sessions.OpenTabFor(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
-					Ephemeral: ephemeral, Durable: durable,
+					Ephemeral: ephemeral, Retainable: retainable, Durable: durable,
 				})
 				if err != nil {
 					s.bridge.Unbridge(call.Channel.ID)
+					return attachedTabDTO{}, terminalIPCError(err)
 				}
-				return info.ID, terminalIPCError(err)
+				return attachedSessionTab(info), nil
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_attach_tab", func(ctx context.Context, call *ipc.Call, input attachTerminalRequest) (attachedTabDTO, error) {
-				if _, err := s.sessions.Tab(input.TabID); err == nil {
+				ctx = productionSessionRequestContext(ctx)
+				tab, lookupErr := s.sessions.TabFor(ctx, input.TabID)
+				if lookupErr != nil && !errors.Is(lookupErr, session.ErrTabNotFound) {
+					return attachedTabDTO{}, terminalIPCError(lookupErr)
+				}
+				if lookupErr == nil && (input.SessionID == "" || tab.SessionID == input.SessionID) {
 					if err := s.bridge.Bridge(call.Channel.ID); err != nil {
 						return attachedTabDTO{}, terminalIPCError(err)
 					}
+					replayBytes := input.ReplayBytes
+					if replayBytes == 0 {
+						replayBytes = -1
+					}
+					info, err := s.sessions.AttachTabFor(ctx, input.TabID, session.AttachOptions{
+						ClientID: call.ClientID, ChannelID: call.Channel.ID, ReplayBytes: replayBytes,
+						FromSeq: input.FromSeq, FromEpoch: input.FromEpoch,
+					})
+					if err == nil {
+						return attachedSessionTab(info), nil
+					}
+					if !errors.Is(err, session.ErrTabNotFound) {
+						return attachedTabDTO{}, terminalIPCError(err)
+					}
 				}
-				replayBytes := input.ReplayBytes
-				if replayBytes == 0 {
-					replayBytes = -1
-				}
-				info, err := s.sessions.AttachTab(ctx, input.TabID, session.AttachOptions{
-					ClientID: call.ClientID, ChannelID: call.Channel.ID, ReplayBytes: replayBytes,
-					FromSeq: input.FromSeq, FromEpoch: input.FromEpoch,
-				})
-				if err == nil {
-					return attachedSessionTab(info), nil
-				}
-				if !errors.Is(err, session.ErrTabNotFound) {
-					return attachedTabDTO{}, terminalIPCError(err)
-				}
-				if s.docker != nil {
+				if input.SessionID == "" && s.docker != nil {
 					if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
+						if err := s.authorizeDockerTab(ctx, input.TabID); err != nil {
+							return attachedTabDTO{}, terminalIPCError(err)
+						}
 						return s.attachDocker(ctx, call, input.TabID)
 					}
 				}
 				if ids.Valid(input.TabID) {
-					recovered, recoveryErr := s.recoverRemoteDurable(ctx, call, input.TabID)
+					recovered, recoveryErr := s.recoverRemoteDurable(ctx, call, input.TabID, input.SessionID)
 					if recoveryErr == nil {
 						return recovered, nil
 					}
@@ -385,69 +439,133 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "terminal_write", func(ctx context.Context, call *ipc.Call, input terminalWriteRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
 				data, err := productionBytes(input.Data)
 				if err != nil {
 					return nil, err
 				}
 				client := gridRequestClient(call.ClientID, input.ClientID)
-				err = s.sessions.Write(ctx, input.TabID, client, data)
+				err = s.sessions.WriteFor(ctx, input.TabID, client, data)
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					err = s.writeDocker(ctx, input.TabID, client, data)
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						err = authErr
+					} else {
+						err = s.writeDocker(ctx, input.TabID, client, data)
+					}
 				}
 				return nil, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return dispatcher.RegisterRaw(session.CommandTerminalResize, s.dispatchGrid)
+			return ipc.Register(dispatcher, session.CommandTerminalResize, func(ctx context.Context, call *ipc.Call, input terminalResizeRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				err := s.sessions.ResizeFor(ctx, input.TabID, client, input.Cols, input.Rows)
+				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						err = authErr
+					} else {
+						err = s.resizeDocker(ctx, input.TabID, client, uint(input.Cols), uint(input.Rows))
+					}
+				}
+				return nil, terminalIPCError(err)
+			})
 		},
 		func() error {
-			return dispatcher.RegisterRaw(session.CommandTerminalResizeFlush, s.dispatchGrid)
+			return ipc.Register(dispatcher, session.CommandTerminalResizeFlush, func(ctx context.Context, call *ipc.Call, input terminalResizeRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				return nil, terminalIPCError(s.sessions.FlushResizeFor(ctx, input.TabID, client))
+			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_detach", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_detach", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
 				var err error
 				if input.ChannelID != "" {
-					err = s.sessions.DetachChannel(input.ChannelID)
+					err = s.sessions.DetachChannelFor(ctx, input.ChannelID)
+					if errors.Is(err, session.ErrForbidden) {
+						return nil, terminalIPCError(err)
+					}
 					s.bridge.Unbridge(input.ChannelID)
 				} else {
-					err = s.sessions.DetachAll(input.TabID)
+					err = s.sessions.DetachAllFor(ctx, input.TabID)
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					err = s.detachDocker(input.TabID, input.ChannelID)
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						err = authErr
+					} else {
+						err = s.detachDocker(input.TabID, input.ChannelID)
+					}
 				}
 				return nil, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_claim", func(_ context.Context, call *ipc.Call, input terminalIDRequest) (*string, error) {
-				previous, err := s.sessions.Claim(input.TabID, call.ClientID)
+			return ipc.Register(dispatcher, "terminal_claim", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (*string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				previous, err := s.sessions.ClaimFor(ctx, input.TabID, call.ClientID)
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						return nil, terminalIPCError(authErr)
+					}
 					return s.claimDocker(input.TabID, call.ClientID)
 				}
 				return nullableProductionString(previous), terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_release", func(_ context.Context, call *ipc.Call, input terminalIDRequest) (bool, error) {
-				released, err := s.sessions.Release(input.TabID, call.ClientID)
+			return ipc.Register(dispatcher, "terminal_release", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (bool, error) {
+				ctx = productionSessionRequestContext(ctx)
+				released, err := s.sessions.ReleaseFor(ctx, input.TabID, call.ClientID)
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						return false, terminalIPCError(authErr)
+					}
 					return s.releaseDocker(input.TabID, call.ClientID)
 				}
 				return released, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_list", func(_ context.Context, _ *ipc.Call, _ struct{}) ([]liveTabDTO, error) {
-				infos := s.sessions.ListTabs()
+			return ipc.Register(dispatcher, "terminal_list", func(ctx context.Context, _ *ipc.Call, input terminalListRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				if input.Durable {
+					if _, err := s.sessions.SessionFor(ctx, input.SessionID); err != nil {
+						return nil, terminalIPCError(err)
+					}
+					descriptors, err := s.sessions.ListRemoteDurable(ctx, input.SessionID)
+					if err != nil {
+						return nil, terminalIPCError(err)
+					}
+					result := make([]durableDescriptorDTO, 0, len(descriptors))
+					for _, descriptor := range descriptors {
+						item := durableDescriptorDTO{
+							ID: descriptor.ID, Incarnation: descriptor.Incarnation, CreatedAt: descriptor.CreatedAt.UnixMilli(),
+							Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
+							Cols: descriptor.Cols, Rows: descriptor.Rows, Dead: descriptor.Dead, ExitCode: descriptor.ExitCode, Signal: descriptor.Signal,
+						}
+						if descriptor.FinishedAt != nil {
+							finishedAt := descriptor.FinishedAt.UnixMilli()
+							item.FinishedAt = &finishedAt
+						}
+						result = append(result, item)
+					}
+					return result, nil
+				}
+				infos, err := s.sessions.ListTabsFor(ctx)
+				if err != nil {
+					return nil, terminalIPCError(err)
+				}
 				result := make([]liveTabDTO, 0, len(infos))
 				for _, info := range infos {
-					connected, err := s.sessions.Session(info.SessionID)
+					connected, err := s.sessions.SessionFor(ctx, info.SessionID)
 					if err != nil {
 						continue
 					}
 					sessionInfo := connected.Info()
 					var lastOutputMSAgo int64
-					if snapshot, snapshotErr := s.sessions.TerminalSnapshot(info.ID); snapshotErr == nil {
+					if snapshot, snapshotErr := s.sessions.TerminalSnapshotFor(ctx, info.ID); snapshotErr == nil {
 						lastOutputMSAgo = int64(snapshot.LastOutputMsAgo)
 					}
 					result = append(result, liveTabDTO{
@@ -461,74 +579,93 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_screen_text", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (string, error) {
-				value, err := s.sessions.ScreenText(input.TabID)
+			return ipc.Register(dispatcher, "terminal_screen_text", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.ScreenTextFor(ctx, input.TabID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_snapshot", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
-				value, err := s.sessions.TerminalSnapshot(input.TabID)
+			return ipc.Register(dispatcher, "terminal_snapshot", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.TerminalSnapshotFor(ctx, input.TabID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_tail", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) ([]string, error) {
-				value, err := s.sessions.TailLines(input.TabID, input.N)
+			return ipc.Register(dispatcher, "terminal_tail", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) ([]string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.TailLinesFor(ctx, input.TabID, input.N)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_set_visible", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
-				return nil, terminalIPCError(s.sessions.SetVisible(input.TabID, input.Visible))
+			return ipc.Register(dispatcher, "terminal_set_visible", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				return nil, terminalIPCError(s.sessions.SetVisibleFor(ctx, input.TabID, input.Visible))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_dump", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (string, error) {
-				value, err := s.sessions.RawDump(input.TabID, input.MaxBytes)
+			return ipc.Register(dispatcher, "terminal_dump", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (string, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.RawDumpFor(ctx, input.TabID, input.MaxBytes)
 				return string(value), terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_switch_encoding", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
-				return nil, terminalIPCError(s.sessions.SwitchEncoding(input.TabID, input.Encoding))
+			return ipc.Register(dispatcher, "terminal_switch_encoding", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				return nil, terminalIPCError(s.sessions.SwitchEncodingFor(ctx, input.TabID, input.Encoding))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_record_start", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
 				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return nil, err
 				}
-				return nil, terminalIPCError(s.sessions.StartRecording(input.TabID, path))
+				return nil, terminalIPCError(s.sessions.StartRecordingFor(ctx, input.TabID, path))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_record_stop", func(_ context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
-				value, err := s.sessions.StopRecording(input.TabID)
+			return ipc.Register(dispatcher, "terminal_record_stop", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.StopRecordingFor(ctx, input.TabID)
+				return value, terminalIPCError(err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "terminal_record_status", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (terminal.RecordingStatus, error) {
+				ctx = productionSessionRequestContext(ctx)
+				value, err := s.sessions.RecordingStatusFor(ctx, input.TabID)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_export_log", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
+				ctx = productionSessionRequestContext(ctx)
 				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return 0, err
 				}
-				value, err := s.sessions.ExportLog(input.TabID, path, input.MaxBytes)
+				value, err := s.sessions.ExportLogFor(ctx, input.TabID, path, input.MaxBytes)
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "terminal_close_tab", func(_ context.Context, call *ipc.Call, input terminalIDRequest) (any, error) {
+			return ipc.Register(dispatcher, "terminal_close_tab", func(ctx context.Context, call *ipc.Call, input terminalIDRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
 				var err error
 				if input.Mode == "detach" {
-					err = s.sessions.DetachClient(input.TabID, call.ClientID)
+					err = s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 				} else {
-					err = s.sessions.CloseTab(input.TabID)
+					err = s.sessions.CloseTabFor(ctx, input.TabID)
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
-					if input.Mode == "detach" {
+					if authErr := s.authorizeDockerTab(ctx, input.TabID); authErr != nil {
+						err = authErr
+					} else if input.Mode == "detach" {
 						err = s.detachDocker(input.TabID, call.Channel.ID)
 					} else {
 						err = s.closeDocker(input.TabID)
@@ -539,7 +676,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_rename_tab", func(ctx context.Context, _ *ipc.Call, input renameTerminalRequest) (attachedTabDTO, error) {
-				info, err := s.sessions.RenameTab(ctx, input.TabID, input.Title)
+				ctx = productionSessionRequestContext(ctx)
+				info, err := s.sessions.RenameTabFor(ctx, input.TabID, input.Title)
 				if err != nil {
 					return attachedTabDTO{}, terminalIPCError(err)
 				}
@@ -548,7 +686,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_create_tab", func(ctx context.Context, _ *ipc.Call, input createTerminalRequest) (attachedTabDTO, error) {
-				info, err := s.sessions.CreateTab(context.WithoutCancel(ctx), session.CreateTabOptions{
+				ctx = productionSessionRequestContext(ctx)
+				info, err := s.sessions.CreateTabFor(context.WithoutCancel(ctx), session.CreateTabOptions{
 					SessionID: input.SessionID, Cols: input.Cols, Rows: input.Rows, Title: input.Title, Command: input.Command,
 				})
 				if err != nil {
@@ -575,18 +714,49 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	return registerLocalFolderCommands(dispatcher)
 }
 
-func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {
-	if err := s.bridge.Bridge(call.Channel.ID); err != nil {
-		return attachedTabDTO{}, err
+func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID, sessionID string) (attachedTabDTO, error) {
+	sessionIDs := []string{sessionID}
+	if sessionID != "" {
+		if _, err := s.sessions.SessionFor(ctx, sessionID); err != nil {
+			return attachedTabDTO{}, err
+		}
+	} else {
+		infos, err := s.sessions.ListSessionsFor(ctx)
+		if err != nil {
+			return attachedTabDTO{}, err
+		}
+		sessionIDs = make([]string, 0, len(infos))
+		for _, info := range infos {
+			if (info.Kind != session.KindSSH && info.Kind != session.KindDevice) || info.Status != session.StatusConnected {
+				continue
+			}
+			sessionIDs = append(sessionIDs, info.ID)
+		}
 	}
-	info, err := s.sessions.RecoverRemoteDurable(context.WithoutCancel(ctx), tabID, session.OpenTabOptions{
-		ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: 80, Rows: 24,
-	})
-	if err != nil {
+
+	var searchErrs []error
+	for _, currentSessionID := range sessionIDs {
+		if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+			return attachedTabDTO{}, err
+		}
+		info, err := s.sessions.RecoverRemoteDurable(context.WithoutCancel(ctx), tabID, session.OpenTabOptions{
+			SessionID: currentSessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: 80, Rows: 24,
+		})
+		if err == nil {
+			return attachedSessionTab(info), nil
+		}
 		s.bridge.Unbridge(call.Channel.ID)
-		return attachedTabDTO{}, err
+		if errors.Is(err, session.ErrForbidden) {
+			return attachedTabDTO{}, err
+		}
+		if !errors.Is(err, session.ErrTabNotFound) {
+			searchErrs = append(searchErrs, err)
+		}
 	}
-	return attachedSessionTab(info), nil
+	if len(searchErrs) > 0 {
+		return attachedTabDTO{}, errors.Join(searchErrs...)
+	}
+	return attachedTabDTO{}, session.ErrTabNotFound
 }
 
 func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Session, error) {
@@ -598,30 +768,25 @@ func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Ses
 	if err != nil {
 		return nil, err
 	}
-	return s.sessions.Connect(ctx, asset)
+	return s.sessions.ConnectFor(ctx, asset)
 }
 
-func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Call) (any, error) {
-	response := s.grid.Dispatch(ctx, ipc.Request{
-		Command: call.Command, Args: call.Args, Channel: call.Channel, ClientID: call.ClientID,
-	}, ipc.Environment{ClientID: call.ClientID, Events: call.Events, Streams: call.Streams})
-	if response.OK {
-		return response.Data, nil
+func (s *terminalCommandService) authorizeDockerTab(ctx context.Context, tabID string) error {
+	sessionID, err := s.docker.StreamSession(tabID)
+	if err != nil {
+		return err
 	}
-	if call.Command == session.CommandTerminalResize && response.Error != nil && response.Error.Code == ipc.CodeNotFound && s.docker != nil {
-		var input struct {
-			TabID    string `json:"tabId"`
-			ClientID string `json:"clientId"`
-			Cols     uint   `json:"cols"`
-			Rows     uint   `json:"rows"`
-		}
-		if err := json.Unmarshal(call.Args, &input); err != nil {
-			return nil, ipc.BadParam(fmt.Errorf("终端调整大小参数无效: %w", err))
-		}
-		client := gridRequestClient(call.ClientID, input.ClientID)
-		return nil, terminalIPCError(s.resizeDocker(ctx, input.TabID, client, input.Cols, input.Rows))
+	_, err = s.sessions.SessionFor(ctx, sessionID)
+	return err
+}
+
+// Account admission adds a user ID to the request context. An identity-less IPC
+// request is an already-admitted desktop, open, or gateway request.
+func productionSessionRequestContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
 	}
-	return nil, response.Error
+	return session.WithOpenAccess(ctx)
 }
 
 func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Asset, error) {
@@ -652,7 +817,7 @@ func attachedSessionTab(info session.TabInfo) attachedTabDTO {
 	return attachedTabDTO{
 		TabID: info.ID, SessionID: info.SessionID, Cols: info.Cols, Rows: info.Rows,
 		Controller: nullableProductionString(info.Controller), Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-		Encoding: info.Encoding, Title: info.Title,
+		Retainable: info.Retainable, Encoding: info.Encoding, Title: info.Title, Shell: string(info.Shell),
 	}
 }
 
@@ -717,7 +882,16 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, durable.ErrNotFound) {
 		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
 	}
-	if errors.Is(err, durable.ErrNotOwned) || errors.Is(err, durable.ErrIdentity) {
+	var conflict *base.DurableMetadataConflictError
+	if errors.As(err, &conflict) {
+		return ipc.WrapError(ipc.Code("metadata_conflict"), err.Error(), err).WithDetail(map[string]any{
+			"title": conflict.CurrentTitle, "metadataRevision": conflict.CurrentMetadataRevision,
+		})
+	}
+	if errors.Is(err, durable.ErrIdentity) {
+		return ipc.WrapError(ipc.Code("identity_changed"), err.Error(), err)
+	}
+	if errors.Is(err, durable.ErrNotOwned) {
 		return ipc.WrapError(ipc.CodeForbidden, err.Error(), err)
 	}
 	if errors.Is(err, durable.ErrExited) || errors.Is(err, durable.ErrClosed) {

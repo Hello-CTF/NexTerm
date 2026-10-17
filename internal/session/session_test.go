@@ -302,6 +302,7 @@ func TestIdleSweepRechecksTabStateAndDisconnectsExactlyOnce(t *testing.T) {
 	if got := session.Info().Status; got != StatusConnected {
 		t.Fatalf("stale idle candidate disconnected active tab: %s", got)
 	}
+	waitFor(t, func() bool { return time.Now().After(oldIdle) })
 	if err := manager.CloseTab(tab.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -576,6 +577,549 @@ func TestCreateTabLocalAttachDetachReaps(t *testing.T) {
 	}
 }
 
+func TestChannelReceiverCloseReapsUnretainableEphemeralTab(t *testing.T) {
+	manager, connector, _, connected := openTestSession(t, KindLocal)
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "receiver-local"}); err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := manager.Bind("receiver-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("ephemeral tab after receiver close: err=%v", err)
+	}
+	if err := manager.DetachChannel("receiver-local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := connector.transport(0).channel(0).closeCount.Load(); got != 1 {
+		t.Fatalf("PTY close count = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseBeforeAttach(t *testing.T) {
+	t.Run("unretainable ephemeral", func(t *testing.T) {
+		manager, _, _, connected := openTestSession(t, KindLocal)
+		const channelID = "pre-attach-ephemeral"
+		info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); !errors.Is(err, hub.ErrDetached) {
+			t.Fatalf("attach after receiver close error = %v, want hub.ErrDetached", err)
+		}
+		tab, err := manager.Tab(info.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tab.Info().Subscribers; got != 0 {
+			t.Fatalf("subscribers after rejected attach = %d", got)
+		}
+	})
+
+	t.Run("retainable", func(t *testing.T) {
+		manager, _, _, connected := openTestSession(t, KindLocal)
+		const channelID = "pre-attach-retainable"
+		info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			SessionID: connected.ID, Cols: 80, Rows: 24, Detached: true, Ephemeral: true, Retainable: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		attached, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attached.Subscribers != 1 {
+			t.Fatalf("retainable attach subscribers = %d", attached.Subscribers)
+		}
+		rebound, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rebound.Close() })
+		if got := manager.Hub().Stats().LiveChannels; got != 1 {
+			t.Fatalf("retainable rebind live channels = %d, want 1", got)
+		}
+	})
+
+	t.Run("raw", func(t *testing.T) {
+		manager := NewManager(Config{})
+		t.Cleanup(func() { _ = manager.Close() })
+		const channelID = "pre-attach-raw"
+		receiver, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.Close(); err != nil {
+			t.Fatal(err)
+		}
+		producer, err := manager.Hub().Producer(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = producer.Close() })
+		rebound, err := manager.Bind(channelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rebound.Close() })
+		data := []byte("raw-after-close")
+		if err := producer.SendBinary(context.Background(), data); err != nil {
+			t.Fatal(err)
+		}
+		assertFrameData(t, rebound, data)
+	})
+}
+
+func TestChannelReceiverCloseRejectedReattachRollback(t *testing.T) {
+	tests := []struct {
+		name   string
+		attach func(*Manager, string, string) error
+	}{
+		{name: "attach", attach: func(manager *Manager, tabID, channelID string) error {
+			_, err := manager.AttachTab(context.Background(), tabID, AttachOptions{ClientID: "client-a", ChannelID: channelID})
+			return err
+		}},
+		{name: "spectate", attach: func(manager *Manager, tabID, channelID string) error {
+			_, err := manager.AttachSpectator(context.Background(), tabID, SpectateOptions{ClientID: "client-a", ChannelID: channelID})
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, connector, _, connected := openTestSession(t, KindLocal)
+			const channelID = "rejected-reattach"
+			info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.attach(manager, info.ID, channelID); err != nil {
+				t.Fatal(err)
+			}
+			receiver, err := manager.Bind(channelID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			previous := channelCloseAfterCapture
+			channelCloseAfterCapture = func(string) {
+				close(entered)
+				<-release
+			}
+			var releaseOnce sync.Once
+			releaseBarrier := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			t.Cleanup(func() {
+				releaseBarrier()
+				channelCloseAfterCapture = previous
+			})
+			closed := make(chan error, 1)
+			go func() { closed <- receiver.Close() }()
+			<-entered
+			if err := test.attach(manager, info.ID, channelID); !errors.Is(err, hub.ErrDetached) {
+				t.Fatalf("rejected reattach error = %v, want hub.ErrDetached", err)
+			}
+			releaseBarrier()
+			if err := waitForLifecycleResult(t, closed); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Tab(info.ID); !errors.Is(err, ErrTabNotFound) {
+				t.Fatalf("original tab after rejected reattach and close: err=%v", err)
+			}
+			if got := connector.transport(0).channel(0).closeCount.Load(); got != 1 {
+				t.Fatalf("PTY close count = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestChannelReceiverCloseDoesNotDetachReplacementEphemeralIncarnation(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-ephemeral"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := channelCloseAfterCapture
+	channelCloseAfterCapture = func(string) {
+		select {
+		case <-entered:
+			return
+		default:
+		}
+		close(entered)
+		<-release
+	}
+	var releaseOnce sync.Once
+	releaseBarrier := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	t.Cleanup(func() {
+		releaseBarrier()
+		channelCloseAfterCapture = previous
+	})
+	closed := make(chan error, 1)
+	go func() { closed <- receiver.Close() }()
+	<-entered
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), replacement.ID, AttachOptions{ClientID: "client-b", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	replacementReceiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacementReceiver.Close() })
+	releaseBarrier()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	tab, err := manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale receiver close detached replacement ephemeral tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement ephemeral tab state = %+v", info)
+	}
+	if got := manager.Hub().Stats().LiveChannels; got != 1 {
+		t.Fatalf("live channels after stale receiver close = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseDoesNotDetachReusedRetainableTab(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-retainable"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	release, closed := pauseChannelReceiverCloseAfterCheck(t, manager, channelID)
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-b", ChannelID: channelID, Cols: 80, Rows: 24,
+		Ephemeral: true, Retainable: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	tab, err := manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale receiver close detached replacement tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement tab state = %+v", info)
+	}
+}
+
+func TestChannelReceiverCloseDoesNotCloseReusedRawChannel(t *testing.T) {
+	manager, _, _, connected := openTestSession(t, KindLocal)
+	const channelID = "receiver-reused-raw"
+	original, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.AttachTab(context.Background(), original.ID, AttachOptions{ClientID: "client-a", ChannelID: channelID}); err != nil {
+		t.Fatal(err)
+	}
+	release, closed := pauseChannelReceiverCloseAfterCheck(t, manager, channelID)
+	if err := manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	producer, err := manager.Hub().Producer(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = producer.Close() })
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = receiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Tab(original.ID); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("original ephemeral tab after receiver close: err=%v", err)
+	}
+	data := []byte("after-reuse")
+	if err := producer.SendBinary(context.Background(), data); err != nil {
+		t.Fatalf("stale receiver close closed replacement raw channel: %v", err)
+	}
+	assertFrameData(t, receiver, data)
+}
+
+func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRetainableTab(t *testing.T) {
+	const channelID = "attach-reused-retainable"
+	fixture, receiver := newBlockedChannelAttach(t, channelID)
+	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	if err := fixture.manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, fixture.attached); err == nil {
+		t.Fatal("attach succeeded after receiver close")
+	}
+	replacement, err := fixture.manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: fixture.session.ID, ClientID: "client-b", ChannelID: channelID, Cols: 80, Rows: 24,
+		Ephemeral: true, Retainable: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementReceiver, err := fixture.manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacementReceiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := fixture.manager.Tab(replacement.ID)
+	if err != nil {
+		t.Fatalf("stale attach cleanup detached replacement tab: %v", err)
+	}
+	if info := tab.Info(); info.Subscribers != 1 || info.Controller != "client-b" {
+		t.Fatalf("replacement tab state = %+v", info)
+	}
+	if got := fixture.manager.Hub().Stats().LiveChannels; got != 1 {
+		t.Fatalf("live channels after stale attach cleanup = %d, want 1", got)
+	}
+}
+
+func TestChannelReceiverCloseDuringAttachDoesNotCloseReusedRawChannel(t *testing.T) {
+	const channelID = "attach-reused-raw"
+	fixture, receiver := newBlockedChannelAttach(t, channelID)
+	release, closed := pauseReceiverCloseAfterCheck(t, receiver)
+	if err := fixture.manager.DetachChannel(channelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, fixture.attached); err == nil {
+		t.Fatal("attach succeeded after receiver close")
+	}
+	producer, err := fixture.manager.Hub().Producer(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = producer.Close() })
+	rawReceiver, err := fixture.manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawReceiver.Close() })
+	release()
+	if err := waitForLifecycleResult(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("after-attach-reuse")
+	if err := producer.SendBinary(context.Background(), data); err != nil {
+		t.Fatalf("stale attach cleanup closed replacement raw channel: %v", err)
+	}
+	assertFrameData(t, rawReceiver, data)
+}
+
+func TestChannelDetachCleanupsDoNotDeadlockWithBackpressure(t *testing.T) {
+	const backpressureID = "backpressure-cleanup"
+	const otherID = "other-cleanup"
+	captureStarted := make(chan struct{})
+	previous := channelCloseBeforeCapture
+	channelCloseBeforeCapture = func(channelID string) {
+		if channelID == otherID {
+			close(captureStarted)
+		}
+	}
+	t.Cleanup(func() { channelCloseBeforeCapture = previous })
+	backpressured := make(chan struct{})
+	drainEntered := make(chan struct{})
+	var manager *Manager
+	bus := hub.New(hub.Options{
+		QueueFrames: 1,
+		OnBackpressure: func(string, int) {
+			close(backpressured)
+		},
+		OnDrain: func(channelID string, queuedBytes int) {
+			if channelID == backpressureID {
+				close(drainEntered)
+				<-captureStarted
+			}
+			manager.onDrain(channelID, queuedBytes)
+		},
+	})
+	manager = NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Hub: bus})
+	connected, err := manager.Connect(context.Background(), Asset{ID: "cleanup-deadlock", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, connected, "client-a", backpressureID)
+	tab.mu.Lock()
+	producer := tab.subscribers[backpressureID].producer
+	tab.mu.Unlock()
+	if err := producer.SendBinary(context.Background(), []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- producer.SendBinary(context.Background(), []byte("blocked")) }()
+	<-backpressured
+	if _, err := bus.Producer(otherID); err != nil {
+		t.Fatal(err)
+	}
+	firstCleanup := make(chan error, 1)
+	go func() { firstCleanup <- manager.DetachChannel(backpressureID) }()
+	<-drainEntered
+	secondCleanup := make(chan error, 1)
+	go func() { secondCleanup <- manager.DetachChannel(otherID) }()
+	if err := waitForLifecycleResult(t, firstCleanup); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForLifecycleResult(t, secondCleanup); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sendResult; !errors.Is(err, hub.ErrClosed) {
+		t.Fatalf("blocked send error = %v, want hub.ErrClosed", err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pauseChannelReceiverCloseAfterCheck(t *testing.T, manager *Manager, channelID string) (func(), <-chan error) {
+	t.Helper()
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pauseReceiverCloseAfterCheck(t, receiver)
+}
+
+func pauseReceiverCloseAfterCheck(t *testing.T, receiver *hub.Receiver) (func(), <-chan error) {
+	t.Helper()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := channelCloseAfterCheck
+	channelCloseAfterCheck = func() {
+		close(entered)
+		<-release
+	}
+	var releaseOnce sync.Once
+	releaseBarrier := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	t.Cleanup(func() {
+		releaseBarrier()
+		channelCloseAfterCheck = previous
+	})
+	closed := make(chan error, 1)
+	go func() { closed <- receiver.Close() }()
+	<-entered
+	return releaseBarrier, closed
+}
+
+type blockedChannelAttachFixture struct {
+	manager  *Manager
+	session  *Session
+	attached chan error
+}
+
+func newBlockedChannelAttach(t *testing.T, channelID string) (*blockedChannelAttachFixture, *hub.Receiver) {
+	t.Helper()
+	var manager *Manager
+	bus := hub.New(hub.Options{
+		QueueFrames: 1,
+		OnChannelClose: func(channelID string, incarnation uint64, closeChannel func()) {
+			manager.onChannelClose(channelID, incarnation, closeChannel)
+		},
+	})
+	t.Cleanup(func() { _ = bus.Close() })
+	manager = NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Hub: bus})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "blocked-attach", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.CreateTab(context.Background(), CreateTabOptions{SessionID: connected.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.terminal.Feed(make([]byte, 256<<10))
+	receiver, err := manager.Bind(channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := make(chan error, 1)
+	go func() {
+		_, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{
+			ClientID: "client-a", ChannelID: channelID, ReplayBytes: -1,
+		})
+		attached <- err
+	}()
+	waitFor(t, func() bool { return bus.Stats().QueuedFrames == 1 })
+	return &blockedChannelAttachFixture{manager: manager, session: connected, attached: attached}, receiver
+}
+
 func TestCreateTabDeviceDurableAttach(t *testing.T) {
 	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
 	manager := NewManager(Config{
@@ -610,6 +1154,83 @@ func TestCreateTabDeviceDurableAttach(t *testing.T) {
 	}
 	if got := tab.Info().Subscribers; got != 0 {
 		t.Fatalf("subscribers after detach = %d", got)
+	}
+}
+
+type shellTestTransport struct {
+	*fakeTransport
+	shell string
+}
+
+func (t *shellTestTransport) Shell() string { return t.shell }
+
+func TestTabShellPreservedAcrossAttach(t *testing.T) {
+	transport := &shellTestTransport{fakeTransport: newFakeTransport(KindLocal, 1), shell: "powershell"}
+	manager := NewManager(Config{
+		Connector: ConnectorFunc(func(context.Context, Asset, uint64) (base.Transport, error) {
+			return transport, nil
+		}),
+		Terminals: newFakeTerminalFactory(),
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(context.Background(), Asset{ID: "local-shell", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "shell-a", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Shell != ShellPowerShell {
+		t.Fatalf("created shell = %q, want powershell", info.Shell)
+	}
+	transport.shell = "cmd"
+	attached, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "shell-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attached.Shell != ShellPowerShell {
+		t.Fatalf("reattached shell = %q, want creation classification preserved", attached.Shell)
+	}
+}
+
+func TestInteractiveTabShellDefaultsUnknown(t *testing.T) {
+	for _, kind := range []string{KindSSH, KindDocker} {
+		t.Run(kind, func(t *testing.T) {
+			manager, _, _, connected := openTestSession(t, kind)
+			info := openTestTab(t, manager, connected, "client-a", "unknown-shell").Info()
+			if info.Shell != ShellUnknown {
+				t.Fatalf("shell = %q, want unknown", info.Shell)
+			}
+		})
+	}
+}
+
+func TestDurableRecoveryShellUnknown(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(context.Background(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{provider: provider},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	if _, err := manager.Connect(context.Background(), Asset{ID: "ssh-recovery", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.RecoverRemoteDurable(context.Background(), tabID, OpenTabOptions{
+		ClientID: "client-a", ChannelID: "recover-shell", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Shell != ShellUnknown {
+		t.Fatalf("recovered shell = %q, want unknown", info.Shell)
 	}
 }
 
@@ -719,11 +1340,15 @@ func TestDeviceSessionOwnerEnforcedAcrossUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Connect(bob, asset); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("cross-user connect = %v, want ErrForbidden", err)
+	other, err := manager.Connect(bob, asset)
+	if err != nil {
+		t.Fatalf("second owner connect = %v", err)
 	}
-	if _, err := manager.Connect(alice, asset); err != nil {
-		t.Fatalf("owner re-connect = %v", err)
+	if other == session {
+		t.Fatal("second owner reused the first owner's device session")
+	}
+	if reused, err := manager.Connect(alice, asset); err != nil || reused != session {
+		t.Fatalf("owner re-connect = %p, %v", reused, err)
 	}
 	if _, err := manager.OpenTab(bob, OpenTabOptions{SessionID: session.ID, ClientID: "bob", ChannelID: "ch-b", Cols: 80, Rows: 24}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-user open tab = %v, want ErrForbidden", err)
@@ -749,5 +1374,348 @@ func TestCreateTabRejectsRemoteKind(t *testing.T) {
 	}
 	if _, err := manager.OpenTab(context.Background(), OpenTabOptions{SessionID: session.ID, ChannelID: "c-1", Cols: 80, Rows: 24}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("OpenTab on remote = %v; want ErrUnsupported", err)
+	}
+}
+
+func requestTestUser(userID string) context.Context {
+	return ipc.WithUserID(context.Background(), userID)
+}
+
+func requestTestAdmin(userID string) context.Context {
+	return ipc.WithRole(requestTestUser(userID), "superadmin")
+}
+
+func assertRequestResult(t *testing.T, err error, allowed bool) {
+	t.Helper()
+	if allowed && err != nil {
+		t.Fatalf("requester was denied: %v", err)
+	}
+	if !allowed && !errors.Is(err, ErrForbidden) {
+		t.Fatalf("requester error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestRequestListAndLookupFilterBySessionOwner(t *testing.T) {
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	ownerA := requestTestUser("owner-a")
+	ownerB := requestTestUser("owner-b")
+	open := WithOpenAccess(context.Background())
+
+	sessionA, err := manager.Connect(ownerA, Asset{ID: "asset-a", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabA := openTestTab(t, manager, sessionA, "client-a", "channel-a")
+	sessionB, err := manager.Connect(ownerB, Asset{ID: "asset-b", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabB := openTestTab(t, manager, sessionB, "client-b", "channel-b")
+	sessionOpen, err := manager.Connect(open, Asset{ID: "asset-open", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabOpen := openTestTab(t, manager, sessionOpen, "client-open", "channel-open")
+
+	targets := []struct {
+		name    string
+		session *Session
+		tab     *Tab
+	}{
+		{name: "a", session: sessionA, tab: tabA},
+		{name: "b", session: sessionB, tab: tabB},
+		{name: "ownerless", session: sessionOpen, tab: tabOpen},
+	}
+	actors := []struct {
+		name   string
+		ctx    context.Context
+		access map[string]bool
+		closed bool
+	}{
+		{name: "owner-a", ctx: ownerA, access: map[string]bool{"a": true}},
+		{name: "owner-b", ctx: ownerB, access: map[string]bool{"b": true}},
+		{name: "superadmin", ctx: requestTestAdmin("admin"), access: map[string]bool{}},
+		{name: "open", ctx: open, access: map[string]bool{"a": true, "b": true, "ownerless": true}},
+		{name: "closed", ctx: context.Background(), access: map[string]bool{}, closed: true},
+		{name: "same-account-second-client", ctx: requestTestUser("owner-a"), access: map[string]bool{"a": true}},
+	}
+	for _, actor := range actors {
+		t.Run(actor.name, func(t *testing.T) {
+			wantSessions := make(map[string]bool)
+			wantTabs := make(map[string]bool)
+			for _, target := range targets {
+				if actor.access[target.name] {
+					wantSessions[target.session.ID] = true
+					wantTabs[target.tab.ID] = true
+				}
+			}
+			sessions, err := manager.ListSessionsFor(actor.ctx)
+			if actor.closed {
+				assertRequestResult(t, err, false)
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(sessions) != len(wantSessions) {
+					t.Fatalf("visible sessions = %+v, want IDs %+v", sessions, wantSessions)
+				}
+				for _, info := range sessions {
+					if !wantSessions[info.ID] {
+						t.Fatalf("visible session %q was not authorized", info.ID)
+					}
+				}
+			}
+			tabs, err := manager.ListTabsFor(actor.ctx)
+			if actor.closed {
+				assertRequestResult(t, err, false)
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(tabs) != len(wantTabs) {
+					t.Fatalf("visible tabs = %+v, want IDs %+v", tabs, wantTabs)
+				}
+				for _, info := range tabs {
+					if !wantTabs[info.ID] {
+						t.Fatalf("visible tab %q was not authorized", info.ID)
+					}
+				}
+			}
+			for _, target := range targets {
+				allowed := actor.access[target.name]
+				t.Run("lookup-"+target.name, func(t *testing.T) {
+					_, err := manager.SessionFor(actor.ctx, target.session.ID)
+					assertRequestResult(t, err, allowed)
+					_, err = manager.TabFor(actor.ctx, target.tab.ID)
+					assertRequestResult(t, err, allowed)
+				})
+			}
+		})
+	}
+
+	forged := &Tab{ID: "forged-parent", SessionID: sessionB.ID, session: sessionA}
+	manager.mu.Lock()
+	manager.tabs[forged.ID] = forged
+	manager.mu.Unlock()
+	if _, err := manager.TabFor(ownerA, forged.ID); err != nil {
+		t.Fatalf("tab was not authorized by its parent session: %v", err)
+	}
+	if _, err := manager.TabFor(ownerB, forged.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("tab SessionID overrode parent ownership: %v", err)
+	}
+	manager.mu.Lock()
+	delete(manager.tabs, forged.ID)
+	manager.mu.Unlock()
+
+	if _, err := manager.SessionFor(ownerA, "missing-session"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("missing session error = %v", err)
+	}
+	if _, err := manager.TabFor(ownerA, "missing-tab"); !errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("missing tab error = %v", err)
+	}
+	if got := len(manager.ListSessions()); got != len(targets) {
+		t.Fatalf("trusted session list length = %d, want %d", got, len(targets))
+	}
+	if got := len(manager.ListTabs()); got != len(targets) {
+		t.Fatalf("trusted tab list length = %d, want %d", got, len(targets))
+	}
+}
+
+func TestRequestOpenAccessConfiguration(t *testing.T) {
+	newManager := func(t *testing.T, open bool) *Manager {
+		t.Helper()
+		manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), OpenAccess: open})
+		t.Cleanup(func() { _ = manager.Close() })
+		if _, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "asset", Kind: KindSSH}); err != nil {
+			t.Fatal(err)
+		}
+		return manager
+	}
+
+	closed := newManager(t, false)
+	if _, err := closed.ListSessionsFor(context.Background()); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed list error = %v, want ErrForbidden", err)
+	}
+	if _, err := closed.SessionFor(context.Background(), closed.ListSessions()[0].ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed lookup error = %v, want ErrForbidden", err)
+	}
+	if _, err := closed.SessionFor(context.Background(), "missing-session"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed missing session error = %v, want ErrForbidden", err)
+	}
+	if _, err := closed.TabFor(context.Background(), "missing-tab"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed missing tab error = %v, want ErrForbidden", err)
+	}
+	if err := closed.CloseTabFor(context.Background(), "missing-tab"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed close error = %v, want ErrForbidden", err)
+	}
+	if infos, err := closed.ListSessionsFor(WithOpenAccess(context.Background())); err != nil || len(infos) != 1 {
+		t.Fatalf("explicit marker list = %+v, %v", infos, err)
+	}
+
+	open := newManager(t, true)
+	if infos, err := open.ListSessionsFor(context.Background()); err != nil || len(infos) != 1 {
+		t.Fatalf("configured open list = %+v, %v", infos, err)
+	}
+	if _, err := open.SessionFor(context.Background(), open.ListSessions()[0].ID); err != nil {
+		t.Fatalf("configured open lookup: %v", err)
+	}
+}
+
+func TestConnectForAccessScope(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	asset := Asset{ID: "asset", Kind: KindSSH}
+	if _, err := manager.ConnectFor(context.Background(), asset); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("closed connect error = %v, want ErrForbidden", err)
+	}
+	if got := connector.callCount(); got != 0 {
+		t.Fatalf("closed connect called connector %d times", got)
+	}
+	if _, err := manager.ConnectFor(WithOpenAccess(context.Background()), asset); err != nil {
+		t.Fatalf("open marker connect: %v", err)
+	}
+	if _, err := manager.ConnectFor(requestTestUser("owner-a"), Asset{ID: "owned", Kind: KindSSH}); err != nil {
+		t.Fatalf("account connect: %v", err)
+	}
+}
+
+func TestConnectScopesAssetReuseByOwner(t *testing.T) {
+	for _, kind := range []string{KindSSH, KindLocal, KindDocker, KindWinRM, KindDevice} {
+		t.Run(kind, func(t *testing.T) {
+			connector := newFakeConnector()
+			manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory(), ReconnectBackoff: []time.Duration{0}})
+			t.Cleanup(func() { _ = manager.Close() })
+			ownerA := requestTestUser("owner-a")
+			ownerB := requestTestUser("owner-b")
+			asset := Asset{ID: "shared-asset", Kind: kind}
+			first, err := manager.Connect(ownerA, asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := manager.Connect(ownerB, asset)
+			if err != nil {
+				t.Fatalf("second owner connect = %v", err)
+			}
+			if first == second {
+				t.Fatal("two owners share one session for the same asset ID")
+			}
+			if got := connector.callCount(); got != 2 {
+				t.Fatalf("connector calls = %d, want 2", got)
+			}
+			if first.Asset().ID != asset.ID || first.Info().AssetID != asset.ID {
+				t.Fatalf("asset ID was changed by owner scoping: asset=%q info=%q", first.Asset().ID, first.Info().AssetID)
+			}
+			if reused, err := manager.Connect(requestTestUser("owner-a"), asset); err != nil || reused != first {
+				t.Fatalf("first owner reuse = %p, %v", reused, err)
+			}
+			if reused, err := manager.Connect(ownerB, asset); err != nil || reused != second {
+				t.Fatalf("second owner reuse = %p, %v", reused, err)
+			}
+			wantCalls := 2
+			if kind != KindLocal {
+				if err := manager.Reconnect(ownerA, first.ID); err != nil {
+					t.Fatalf("first owner reconnect = %v", err)
+				}
+				if err := manager.Reconnect(ownerB, second.ID); err != nil {
+					t.Fatalf("second owner reconnect = %v", err)
+				}
+				wantCalls += 2
+			}
+			if got := connector.callCount(); got != wantCalls {
+				t.Fatalf("connector calls after reconnect = %d, want %d", got, wantCalls)
+			}
+			if err := manager.Disconnect(first.ID); err != nil {
+				t.Fatal(err)
+			}
+			if reused, err := manager.Connect(ownerB, asset); err != nil || reused != second {
+				t.Fatalf("second owner was affected by first disconnect: %p, %v", reused, err)
+			}
+			if got := connector.callCount(); got != wantCalls {
+				t.Fatalf("second owner reconnect after peer disconnect = %d, want %d", got, wantCalls)
+			}
+			replacement, err := manager.Connect(ownerA, asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replacement == first || replacement == second {
+				t.Fatal("disconnect cleanup reused the wrong owner scope")
+			}
+			if got := connector.callCount(); got != wantCalls+1 {
+				t.Fatalf("connector calls after owner-scoped cleanup = %d, want %d", got, wantCalls+1)
+			}
+		})
+	}
+}
+
+func TestConnectDoesNotReuseOwnerlessSessionForAccount(t *testing.T) {
+	connector := newFakeConnector()
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	open := WithOpenAccess(context.Background())
+	ownerA := requestTestUser("owner-a")
+	asset := Asset{ID: "shared-asset", Kind: KindSSH}
+	openSession, err := manager.Connect(open, asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedSession, err := manager.Connect(ownerA, asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ownedSession == openSession {
+		t.Fatal("authenticated request reused an ownerless session")
+	}
+	if got := connector.callCount(); got != 2 {
+		t.Fatalf("connector calls = %d, want 2", got)
+	}
+	if reused, err := manager.Connect(open, asset); err != nil || reused != openSession {
+		t.Fatalf("open reuse = %p, %v", reused, err)
+	}
+	if reused, err := manager.Connect(ownerA, asset); err != nil || reused != ownedSession {
+		t.Fatalf("account reuse = %p, %v", reused, err)
+	}
+	if got := connector.callCount(); got != 2 {
+		t.Fatalf("connector calls after owner-scoped reuse = %d, want 2", got)
+	}
+}
+
+func TestConnectFailureCleanupIsOwnerScoped(t *testing.T) {
+	connector := newFakeConnector()
+	connectBoom := errors.New("connect failed")
+	connector.connect = func(_ context.Context, asset Asset, _ uint64, call int) (base.Transport, error) {
+		if call == 2 {
+			return nil, connectBoom
+		}
+		return newFakeTransport(asset.Kind, uint64(call)+1000), nil
+	}
+	manager := NewManager(Config{Connector: connector, Terminals: newFakeTerminalFactory()})
+	t.Cleanup(func() { _ = manager.Close() })
+	ownerA := requestTestUser("owner-a")
+	ownerB := requestTestUser("owner-b")
+	asset := Asset{ID: "shared-asset", Kind: KindSSH}
+	first, err := manager.Connect(ownerA, asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Connect(ownerB, asset); !errors.Is(err, connectBoom) {
+		t.Fatalf("second owner connect error = %v, want %v", err, connectBoom)
+	}
+	if reused, err := manager.Connect(ownerA, asset); err != nil || reused != first {
+		t.Fatalf("first owner after peer failure = %p, %v", reused, err)
+	}
+	second, err := manager.Connect(ownerB, asset)
+	if err != nil {
+		t.Fatalf("second owner retry = %v", err)
+	}
+	if second == first {
+		t.Fatal("failed owner scope reused the first owner's session")
+	}
+	if reused, err := manager.Connect(ownerA, asset); err != nil || reused != first {
+		t.Fatalf("first owner after peer retry = %p, %v", reused, err)
+	}
+	if got := connector.callCount(); got != 3 {
+		t.Fatalf("connector calls = %d, want 3", got)
 	}
 }

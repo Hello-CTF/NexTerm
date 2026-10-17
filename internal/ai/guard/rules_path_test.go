@@ -2,6 +2,8 @@ package guard
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -29,8 +31,122 @@ func TestNormalizePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got, ok := NormalizePath(tc.input)
+		want := tc.want
+		if tc.wantOK && want != "" {
+			want = filepath.Clean(want)
+		}
+		if got != want || ok != tc.wantOK {
+			t.Fatalf("NormalizePath(%q) = (%q, %v), want (%q, %v)", tc.input, got, ok, want, tc.wantOK)
+		}
+	}
+}
+
+func TestUnixBackslashPathSemantics(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix path semantics")
+	}
+	const name = `/tmp/a\b`
+	if got, ok := NormalizePath(name); !ok || got != name {
+		t.Fatalf("NormalizePath(%q) = (%q, %v), want unchanged path", name, got, ok)
+	}
+	if got := DirPattern(name); got != "/tmp/**" {
+		t.Fatalf("DirPattern(%q) = %q, want /tmp/**", name, got)
+	}
+	if MatchPath("/tmp/a/**", name) {
+		t.Fatal("Unix backslash was treated as a path separator")
+	}
+	if !MatchPath("/tmp/**", name) {
+		t.Fatal("Unix file with backslash is outside its parent rule")
+	}
+}
+
+func TestWindowsDriveRelativeParentRejected(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	for _, name := range []string{`C:..\escape`, `..\..\etc\x`} {
+		if got, ok := NormalizePath(name); ok {
+			t.Fatalf("NormalizePath(%q) = (%q, true), want rejection", name, got)
+		}
+		if MatchPath("**", name) {
+			t.Fatalf("MatchPath matched out-of-bounds path %q", name)
+		}
+	}
+}
+
+func TestWindowsUNCPathSemantics(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	const name = `\\server\share\dir\file.txt`
+	if got, ok := NormalizePath(name); !ok || got != name {
+		t.Fatalf("NormalizePath(%q) = (%q, %v), want unchanged UNC path", name, got, ok)
+	}
+	if got := DirPattern(name); got != `//server/share/dir/**` {
+		t.Fatalf("DirPattern(%q) = %q, want //server/share/dir/**", name, got)
+	}
+	if !MatchPath(`//server/share/dir/**`, name) {
+		t.Fatal("UNC directory rule does not cover its file")
+	}
+	if MatchPath(`/server/share/**`, name) {
+		t.Fatal("UNC path was collapsed to a drive-rooted path")
+	}
+	const rootFile = `\\server\share\file.txt`
+	if got := DirPattern(rootFile); got != `//server/share/file.txt` {
+		t.Fatalf("DirPattern(%q) = %q, want exact share-root file", rootFile, got)
+	}
+}
+
+func TestWindowsLocalPathSemantics(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	cases := []struct {
+		input  string
+		want   string
+		wantOK bool
+	}{
+		{`C:\work\logs\app.log`, `C:\work\logs\app.log`, true},
+		{` C:\work\\logs\.\app.log `, `C:\work\logs\app.log`, true},
+		{`C:\work\logs\..\other\app.log`, `C:\work\other\app.log`, true},
+		{`C:\ok\..\..`, `C:\`, true},
+		{`..\escape`, "", false},
+		{`logs\..\..\escape`, "", false},
+	}
+	for _, tc := range cases {
+		got, ok := NormalizePath(tc.input)
 		if got != tc.want || ok != tc.wantOK {
 			t.Fatalf("NormalizePath(%q) = (%q, %v), want (%q, %v)", tc.input, got, ok, tc.want, tc.wantOK)
+		}
+	}
+	patterns := map[string]string{
+		`C:\work\logs\app.log`: "C:/work/logs/**",
+		`C:\app.log`:           "C:/app.log",
+		`logs\app.log`:         "logs/**",
+	}
+	for input, want := range patterns {
+		if got := DirPattern(input); got != want {
+			t.Fatalf("DirPattern(%q) = %q, want %q", input, got, want)
+		}
+	}
+	matches := []struct {
+		pattern string
+		value   string
+		want    bool
+	}{
+		{"C:/work/logs/**", `C:\work\logs\second.log`, true},
+		{"C:/work/logs/**", `C:\work\logs\nested\b.log`, true},
+		{"C:/work/logs/**", `C:\work\other\b.log`, false},
+		{"C:/work/logs/**", `C:\work\logs\..\other\b.log`, false},
+		{"C:/work/logs/**", `C:\work\logs\..\logs\b.log`, true},
+	}
+	for _, tc := range matches {
+		if got := MatchPath(tc.pattern, tc.value); got != tc.want {
+			t.Fatalf("MatchPath(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
 		}
 	}
 }

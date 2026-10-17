@@ -19,11 +19,14 @@ const (
 )
 
 type EventBroker struct {
+	dispatchMu  sync.Mutex
 	mu          sync.Mutex
 	nextID      uint64
 	nextEventID uint64
 	subscribers map[uint64]*eventSubscription
 	buffer      []bufferedEvent
+	bufferHead  int
+	bufferCount int
 	closed      bool
 
 	QueueSize        int
@@ -73,10 +76,22 @@ func parsePositiveEnv(getenv func(string) string, key string) (int, error) {
 }
 
 func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
+	if ownerID := ipc.EventOwnerID(ctx); ownerID != "" {
+		event.OwnerID = ownerID
+	} else if ownerID, ok := ipc.UserIDFromContext(ctx); ok {
+		event.OwnerID = ownerID
+	}
+	b.dispatchMu.Lock()
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
+		b.dispatchMu.Unlock()
 		return ErrEventBrokerClosed
+	}
+	if err := ctx.Err(); err != nil {
+		b.mu.Unlock()
+		b.dispatchMu.Unlock()
+		return err
 	}
 	b.nextEventID++
 	id := b.nextEventID
@@ -88,6 +103,7 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 	if err != nil {
 		b.nextEventID--
 		b.mu.Unlock()
+		b.dispatchMu.Unlock()
 		return err
 	}
 	b.appendBufferLocked(id, event, data)
@@ -97,22 +113,46 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 	}
 	b.mu.Unlock()
 
+	var dropped []*eventSubscription
+	var result error
 	for _, subscriber := range subscribers {
 		if subscriber.filter != nil && !subscriber.filter(event) {
+			continue
+		}
+		b.mu.Lock()
+		if b.closed {
+			b.mu.Unlock()
+			result = ErrEventBrokerClosed
+			break
+		}
+		if b.subscribers[subscriber.id] != subscriber {
+			b.mu.Unlock()
 			continue
 		}
 		select {
 		case subscriber.queue <- data:
 		case <-subscriber.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			result = ctx.Err()
 		default:
-			if b.drop(subscriber) && b.OnSlowSubscriber != nil {
-				b.OnSlowSubscriber()
-			}
+			delete(b.subscribers, subscriber.id)
+			dropped = append(dropped, subscriber)
+		}
+		b.mu.Unlock()
+		if result != nil {
+			break
 		}
 	}
-	return nil
+	b.dispatchMu.Unlock()
+	for _, subscriber := range dropped {
+		b.drop(subscriber)
+	}
+	for range dropped {
+		if b.OnSlowSubscriber != nil {
+			b.OnSlowSubscriber()
+		}
+	}
+	return result
 }
 
 func (b *EventBroker) appendBufferLocked(id uint64, event ipc.Event, data []byte) {
@@ -120,10 +160,26 @@ func (b *EventBroker) appendBufferLocked(id uint64, event ipc.Event, data []byte
 	if size <= 0 {
 		size = DefaultEventBufferSize
 	}
-	b.buffer = append(b.buffer, bufferedEvent{id: id, data: data, event: event})
-	if len(b.buffer) > size {
-		b.buffer = append([]bufferedEvent(nil), b.buffer[len(b.buffer)-size:]...)
+	if len(b.buffer) != size {
+		retained := b.bufferCount
+		if retained > size {
+			retained = size
+		}
+		buffer := make([]bufferedEvent, size)
+		for i := 0; i < retained; i++ {
+			buffer[i] = b.buffer[(b.bufferHead+b.bufferCount-retained+i)%len(b.buffer)]
+		}
+		b.buffer = buffer
+		b.bufferHead = 0
+		b.bufferCount = retained
 	}
+	index := (b.bufferHead + b.bufferCount) % size
+	if b.bufferCount == size {
+		b.bufferHead = (b.bufferHead + 1) % size
+	} else {
+		b.bufferCount++
+	}
+	b.buffer[index] = bufferedEvent{id: id, data: data, event: event}
 }
 
 func (b *EventBroker) SubscriberCount() int {
@@ -133,9 +189,11 @@ func (b *EventBroker) SubscriberCount() int {
 }
 
 func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(ipc.Event) bool) (*eventSubscription, func(), error) {
+	b.dispatchMu.Lock()
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.closed {
+		b.mu.Unlock()
+		b.dispatchMu.Unlock()
 		return nil, nil, ErrEventBrokerClosed
 	}
 	b.nextID++
@@ -146,27 +204,55 @@ func (b *EventBroker) subscribe(since uint64, present, resync bool, filter func(
 	}
 	subscriber := &eventSubscription{id: id, queue: make(chan []byte, size), done: make(chan struct{}), filter: filter}
 	b.subscribers[id] = subscriber
-	if resync {
-		subscriber.queue <- b.resyncMarkerLocked()
-		return subscriber, func() { b.drop(subscriber) }, nil
-	}
-	if present {
+	markedResync := resync
+	var replay []bufferedEvent
+	if !markedResync && present {
 		switch {
 		case since > b.nextEventID:
-			subscriber.queue <- b.resyncMarkerLocked()
+			markedResync = true
 		case since < b.nextEventID:
 			missed := b.nextEventID - since
-			if missed > uint64(len(b.buffer)) || b.buffer[0].id > since+1 || missed > uint64(size) {
-				subscriber.queue <- b.resyncMarkerLocked()
-				break
-			}
-			for _, event := range b.buffer {
-				if event.id > since && (filter == nil || filter(event.event)) {
-					subscriber.queue <- event.data
+			if missed > uint64(b.bufferCount) || b.buffer[b.bufferHead].id > since+1 || missed > uint64(size) {
+				markedResync = true
+			} else {
+				for i := 0; i < b.bufferCount; i++ {
+					event := b.buffer[(b.bufferHead+i)%len(b.buffer)]
+					if event.id > since {
+						replay = append(replay, event)
+					}
 				}
 			}
 		}
 	}
+	if markedResync {
+		subscriber.queue <- b.resyncMarkerLocked()
+	}
+	b.mu.Unlock()
+	if markedResync {
+		b.dispatchMu.Unlock()
+		return subscriber, func() { b.drop(subscriber) }, nil
+	}
+	if filter != nil {
+		filtered := replay[:0]
+		for _, event := range replay {
+			if filter(event.event) {
+				filtered = append(filtered, event)
+			}
+		}
+		replay = filtered
+	}
+	b.mu.Lock()
+	if b.closed || b.subscribers[id] != subscriber {
+		b.mu.Unlock()
+		b.drop(subscriber)
+		b.dispatchMu.Unlock()
+		return nil, nil, ErrEventBrokerClosed
+	}
+	for _, event := range replay {
+		subscriber.queue <- event.data
+	}
+	b.mu.Unlock()
+	b.dispatchMu.Unlock()
 	return subscriber, func() { b.drop(subscriber) }, nil
 }
 

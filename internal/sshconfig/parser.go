@@ -360,12 +360,18 @@ func expandPath(p string) string {
 	p = strings.Trim(p, `"'`)
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		p = strings.ReplaceAll(p, "%d", home)
+		expanded := strings.Contains(p, "%d")
+		if expanded {
+			p = strings.ReplaceAll(p, "%d", home)
+		}
 		if p == "~" {
 			return home
 		}
-		if strings.HasPrefix(p, "~/") {
+		if strings.HasPrefix(p, "~/") || filepath.Separator == '\\' && strings.HasPrefix(p, `~\`) {
 			return filepath.Join(home, p[2:])
+		}
+		if expanded && filepath.Separator == '\\' {
+			return filepath.FromSlash(p)
 		}
 	}
 	return p

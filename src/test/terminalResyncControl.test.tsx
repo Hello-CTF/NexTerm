@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, deferred, type MountedView } from "./features/reactTestUtils";
+import { click, flush, mount, deferred, type MountedView } from "./features/reactTestUtils";
 import type { LiveTabInfo } from "../ipc/commands";
 
 const harness = vi.hoisted(() => ({
@@ -10,6 +10,10 @@ const harness = vi.hoisted(() => ({
   resyncSubs: new Set<() => void>(),
   xtermProps: null as Record<string, unknown> | null,
   listLive: vi.fn(),
+  recordingStatus: vi.fn(),
+  recordStart: vi.fn(),
+  recordStop: vi.fn(),
+  copyText: vi.fn(),
 }));
 
 vi.mock("../app/platform", () => ({
@@ -31,6 +35,9 @@ vi.mock("../ipc/commands", () => ({
     write: vi.fn().mockResolvedValue(undefined),
     detach: vi.fn().mockResolvedValue(undefined),
     setVisible: vi.fn().mockResolvedValue(undefined),
+    recordingStatus: harness.recordingStatus,
+    recordStart: harness.recordStart,
+    recordStop: harness.recordStop,
   },
 }));
 
@@ -72,6 +79,11 @@ vi.mock("../ui/dialogs", () => ({
   ask: vi.fn(),
 }));
 
+vi.mock("../ui/clipboard", () => ({
+  copyText: harness.copyText,
+  readText: vi.fn(),
+}));
+
 vi.mock("../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));
 vi.mock("../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
 
@@ -101,6 +113,7 @@ vi.mock("../features/terminal/XtermView", async () => {
 
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { useUi } from "../app/store";
+import { pickSavePath } from "../ui/dialogs";
 
 let mounted: MountedView | undefined;
 
@@ -135,6 +148,30 @@ function mountPane(): MountedView {
   );
 }
 
+function recording(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tabId: "kernel-1",
+    state: "running",
+    bytes: 12,
+    path: "/tmp/recording.log",
+    generation: 1,
+    ...patch,
+  };
+}
+
+function clickTerminalMenuItem(label: string): void {
+  const overflow = mounted?.container.querySelector<HTMLButtonElement>(
+    'button[aria-label="更多终端操作"]',
+  );
+  if (!overflow) throw new Error("toolbar overflow button not found");
+  click(overflow);
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) =>
+    candidate.textContent?.includes(label),
+  );
+  if (!item) throw new Error(`menu item not found: ${label}`);
+  click(item);
+}
+
 function fireResync(): void {
   act(() => {
     for (const cb of [...harness.resyncSubs]) cb();
@@ -155,7 +192,18 @@ beforeEach(() => {
   harness.resyncSubs.clear();
   document.body.replaceChildren();
   harness.listLive.mockResolvedValue([]);
+  harness.recordingStatus.mockResolvedValue({
+    tabId: "kernel-1",
+    state: "never-started",
+    bytes: 0,
+    generation: 0,
+  });
+  harness.recordStart.mockResolvedValue(undefined);
+  harness.recordStop.mockResolvedValue(0);
+  harness.copyText.mockResolvedValue(undefined);
+  vi.mocked(pickSavePath).mockResolvedValue(null);
   useUi.setState({
+    recordings: {},
     sessions: [
       {
         id: "s1",
@@ -331,5 +379,103 @@ describe("terminal control resync compensation", () => {
       .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
     expect(tab?.title).toBe("构建机");
     expect(tab?.renamedByUser).toBe(true);
+  });
+
+  it("clears the recording badge and preserves a copyable failure and path after a real-time event", async () => {
+    harness.recordingStatus.mockResolvedValue(recording());
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    expect(overlayText("录制中")).not.toBeNull();
+
+    harness.recordingStatus.mockResolvedValue(
+      recording({ state: "failed", bytes: 7, safeError: "disk full", generation: 1 }),
+    );
+    deliverControl({
+      tabId: "kernel-1",
+      version: 2,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("录制中")).toBeNull();
+    expect(mounted.container.textContent).toContain("disk full");
+    expect(mounted.container.textContent).toContain("/tmp/recording.log");
+    expect(harness.recordStart).not.toHaveBeenCalled();
+    const copyError = mounted.container.querySelector<HTMLButtonElement>(
+      'button[title="复制录制错误"]',
+    );
+    const copyPath = mounted.container.querySelector<HTMLButtonElement>(
+      'button[title="复制录制路径"]',
+    );
+    expect(copyError).not.toBeNull();
+    expect(copyPath).not.toBeNull();
+    click(copyError!);
+    click(copyPath!);
+    expect(harness.copyText).toHaveBeenNthCalledWith(1, "disk full");
+    expect(harness.copyText).toHaveBeenNthCalledWith(2, "/tmp/recording.log");
+  });
+
+  it("recovers a missed recording failure through resync", async () => {
+    harness.recordingStatus.mockResolvedValue(recording());
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    expect(harness.recordingStatus).toHaveBeenCalledTimes(1);
+    expect(overlayText("录制中")).not.toBeNull();
+
+    harness.recordingStatus.mockResolvedValue(
+      recording({ state: "failed", bytes: 9, safeError: "write failed", generation: 1 }),
+    );
+    fireResync();
+    await act(async () => {
+      await flush();
+    });
+
+    expect(harness.recordingStatus).toHaveBeenCalledTimes(2);
+    expect(overlayText("录制中")).toBeNull();
+    expect(mounted.container.textContent).toContain("write failed");
+    expect(mounted.container.textContent).toContain("/tmp/recording.log");
+  });
+
+  it("clears an old failure only after the user explicitly restarts recording", async () => {
+    harness.recordingStatus.mockResolvedValue(
+      recording({ state: "failed", bytes: 9, safeError: "old failure", generation: 1 }),
+    );
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    expect(overlayText("录制中")).toBeNull();
+    expect(mounted.container.textContent).toContain("old failure");
+    expect(harness.recordStart).not.toHaveBeenCalled();
+
+    vi.mocked(pickSavePath).mockResolvedValue("/tmp/restarted.log");
+    harness.recordStart.mockImplementation(async () => {
+      harness.recordingStatus.mockResolvedValue(
+        recording({ state: "running", bytes: 0, path: "/tmp/restarted.log", generation: 2 }),
+      );
+    });
+    clickTerminalMenuItem("重新开始录制…");
+    await act(async () => {
+      await flush();
+    });
+
+    expect(harness.recordStart).toHaveBeenCalledWith("kernel-1", "/tmp/restarted.log");
+    expect(overlayText("录制中")).not.toBeNull();
+    expect(mounted.container.textContent).not.toContain("old failure");
+    expect(
+      mounted.container.querySelector('.nx-toolbar .nx-badge[title="/tmp/restarted.log"]'),
+    ).not.toBeNull();
   });
 });

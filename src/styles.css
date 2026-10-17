@@ -1276,6 +1276,10 @@
     min-width: 0;
     flex: 1 1 auto;
   }
+  .nx-asset-row-name {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
   .nx-row-target {
     max-width: 42%;
     flex: 0 1 auto;

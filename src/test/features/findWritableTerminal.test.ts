@@ -49,10 +49,10 @@ describe("findWritableTerminal", () => {
     seed([
       terminal("dead", { dead: true }),
       terminal("exited", { exited: true }),
-      terminal("live"),
+      terminal("live", { shell: "powershell" }),
     ]);
 
-    expect(findWritableTerminal("s1")).toBe("kernel-live");
+    expect(findWritableTerminal("s1")).toEqual({ tabId: "kernel-live", shell: "powershell" });
   });
 
   it("returns null when every terminal is dead or exited", () => {

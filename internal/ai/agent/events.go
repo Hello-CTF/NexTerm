@@ -50,6 +50,7 @@ type Event struct {
 	Model               string
 	RunID               string
 	CallID              string
+	Channel             string
 	Items               []tools.TodoItem
 	Plan                string
 	Answer              string
@@ -120,6 +121,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		}
 		if e.CallID != "" {
 			payload["callId"] = e.CallID
+		}
+		if e.Channel != "" {
+			payload["channel"] = e.Channel
 		}
 	case "todos":
 		if e.Items == nil {

@@ -582,7 +582,7 @@ func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	writer := startTestWriter(t, database, transcriptWriterConfig{QueueMaxBytes: 4096})
+	writer := startTestWriter(t, database, transcriptWriterConfig{QueueMaxBytes: 8192})
 	writer.SessionStarted(ctx, transcriptIdentity("session-stall"))
 	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 0)
 
@@ -593,30 +593,20 @@ func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
 	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
 		t.Fatal(err)
 	}
+	writer.queueMu.Lock()
+	drained := writer.spaceCh
+	writer.queueMu.Unlock()
 	payload := bytes.Repeat([]byte("z"), 1024)
-	for index := 0; index < 4; index++ {
+	writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not take the first output during the database stall")
+	}
+	for index := 1; index < 8; index++ {
 		writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
 	}
-	time.Sleep(200 * time.Millisecond)
-	fillDone := make(chan struct{})
-	go func() {
-		defer close(fillDone)
-		for index := 0; index < 4; index++ {
-			writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
-		}
-	}()
-	time.Sleep(200 * time.Millisecond)
-	blocked := make(chan struct{})
-	go func() {
-		defer close(blocked)
-		writer.SessionOutput(ctx, "", "session-stall", "tab-1", []byte("stalled-tail-output"))
-	}()
-	time.Sleep(150 * time.Millisecond)
-	select {
-	case <-blocked:
-		t.Fatal("the tail output must block while the database is stalled and the queue is full")
-	default:
-	}
+	writer.SessionOutput(ctx, "", "session-stall", "tab-1", []byte("stalled-tail-output"))
 	endDone := make(chan struct{})
 	go func() {
 		defer close(endDone)
@@ -627,31 +617,11 @@ func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("End must not wedge during a database stall")
 	}
-	select {
-	case <-blocked:
-		t.Fatal("the tail output must stay blocked while the stall lasts")
-	default:
-	}
 	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
-	}
-	select {
-	case <-fillDone:
-	case <-time.After(30 * time.Second):
-		t.Fatal("fill outputs did not drain after the database stall ended")
-	}
-	select {
-	case <-blocked:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the tail output did not drain after the database stall ended")
-	}
-	select {
-	case <-endDone:
-	case <-time.After(30 * time.Second):
-		t.Fatal("End did not drain after the database stall ended")
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

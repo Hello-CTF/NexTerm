@@ -14,9 +14,9 @@ func TestControllerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T)
 	}{
 		{
 			name:     "tab info",
-			empty:    TabInfo{ID: "tab", SessionID: "session", Controller: "", Subscribers: 0, Viewers: 0, Exited: true},
-			occupied: TabInfo{ID: "tab", SessionID: "session", Controller: "client-a", Subscribers: 1, Viewers: 1},
-			required: []string{"id", "sessionId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited"},
+			empty:    TabInfo{ID: "tab", SessionID: "session", Controller: "", Subscribers: 0, Viewers: 0, Exited: true, Shell: ShellUnknown},
+			occupied: TabInfo{ID: "tab", SessionID: "session", Controller: "client-a", Subscribers: 1, Viewers: 1, Retainable: true, Shell: ShellPowerShell},
+			required: []string{"id", "sessionId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited", "retainable", "shell"},
 		},
 		{
 			name:     "control event",

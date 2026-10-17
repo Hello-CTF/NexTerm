@@ -53,6 +53,15 @@ func (f *fileSystem) client(ctx context.Context) (*deviceproto.Client, func(), e
 	return deviceproto.NewClient(conn), func() { _ = conn.Close() }, nil
 }
 
+func (f *fileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
+	client, done, err := f.client(ctx)
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	defer done()
+	return client.Roots(ctx)
+}
+
 func (f *fileSystem) List(ctx context.Context, path string) ([]base.FileEntry, error) {
 	client, done, err := f.client(ctx)
 	if err != nil {

@@ -3,6 +3,7 @@ package terminal
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -35,9 +36,31 @@ type Snapshot struct {
 	LastOutputMsAgo uint64   `json:"lastOutputMsAgo"`
 }
 
+type RecordingState string
+
+const (
+	RecordingNeverStarted RecordingState = "never-started"
+	RecordingRunning      RecordingState = "running"
+	RecordingStopped      RecordingState = "stopped"
+	RecordingFailed       RecordingState = "failed"
+)
+
+type RecordingStatus struct {
+	TabID      string         `json:"tabId"`
+	State      RecordingState `json:"state"`
+	Bytes      uint64         `json:"bytes"`
+	Path       string         `json:"path,omitempty"`
+	SafeError  string         `json:"safeError,omitempty"`
+	Generation uint64         `json:"generation"`
+}
+
 type recording struct {
-	file  *os.File
-	bytes uint64
+	file            io.WriteCloser
+	bytes           uint64
+	err             error
+	path            string
+	generation      uint64
+	failureNotified bool
 }
 
 type Tab struct {
@@ -58,8 +81,11 @@ type Tab struct {
 	scr   *screen
 	state State
 
-	recMu sync.Mutex
-	rec   *recording
+	recMu            sync.Mutex
+	rec              *recording
+	recGeneration    uint64
+	recStopped       RecordingStatus
+	recordingHandler func(RecordingStatus)
 
 	resizeMu        sync.Mutex
 	responseHandler atomic.Value
@@ -182,7 +208,9 @@ func (t *Tab) Feed(raw []byte) {
 		if h, _ := t.responseHandler.Load().(responseHandler); h.fn != nil {
 			h.fn(responses)
 		}
+
 	}
+
 }
 
 func (t *Tab) State() State {
@@ -344,26 +372,94 @@ func (t *Tab) StartRecording(path string) error {
 		return fmt.Errorf("terminal: record %s: %w", path, err)
 	}
 	t.recMu.Lock()
-	defer t.recMu.Unlock()
-	t.stopRecordingLocked()
-	t.rec = &recording{file: file}
+	var notifications []RecordingStatus
+	if t.rec != nil && t.rec.err == nil {
+		_, err, notification := t.stopRecordingLocked()
+		if notification != nil {
+			notifications = append(notifications, *notification)
+		}
+		if err != nil {
+			handler := t.recordingHandler
+			t.recMu.Unlock()
+			_ = file.Close()
+			t.emitRecording(handler, notifications...)
+			return err
+		}
+	}
+	t.recGeneration++
+	t.rec = &recording{file: file, path: path, generation: t.recGeneration}
+	notifications = append(notifications, t.recordingStatusLocked())
+	handler := t.recordingHandler
+	t.recMu.Unlock()
+	t.emitRecording(handler, notifications...)
 	return nil
 }
 
-func (t *Tab) StopRecording() uint64 {
+func (t *Tab) StopRecording() (uint64, error) {
 	t.recMu.Lock()
-	defer t.recMu.Unlock()
-	return t.stopRecordingLocked()
+	n, err, notification := t.stopRecordingLocked()
+	handler := t.recordingHandler
+	t.recMu.Unlock()
+	if notification != nil {
+		t.emitRecording(handler, *notification)
+	}
+	return n, err
 }
 
-func (t *Tab) stopRecordingLocked() uint64 {
+func (t *Tab) stopRecordingLocked() (uint64, error, *RecordingStatus) {
 	if t.rec == nil {
-		return 0
+		return 0, nil, nil
 	}
-	_ = t.rec.file.Close()
+	if t.rec.err != nil {
+		if t.rec.failureNotified {
+			return t.rec.bytes, t.rec.err, nil
+		}
+		t.rec.failureNotified = true
+		status := t.recordingStatusLocked()
+		return t.rec.bytes, t.rec.err, &status
+	}
+	if err := t.rec.file.Close(); err != nil {
+		t.rec.err = err
+		t.rec.failureNotified = true
+		status := t.recordingStatusLocked()
+		return t.rec.bytes, err, &status
+	}
 	n := t.rec.bytes
+	status := t.recordingStatusLocked()
+	status.State = RecordingStopped
+	t.recStopped = status
 	t.rec = nil
-	return n
+	return n, nil, &status
+}
+
+func (t *Tab) RecordingStatus() RecordingStatus {
+	t.recMu.Lock()
+	defer t.recMu.Unlock()
+	return t.recordingStatusLocked()
+}
+
+func (t *Tab) recordingStatusLocked() RecordingStatus {
+	if t.rec != nil {
+		status := RecordingStatus{
+			TabID: t.id, State: RecordingRunning, Bytes: t.rec.bytes,
+			Path: t.rec.path, Generation: t.rec.generation,
+		}
+		if t.rec.err != nil {
+			status.State = RecordingFailed
+			status.SafeError = t.rec.err.Error()
+		}
+		return status
+	}
+	if t.recStopped.State == RecordingStopped {
+		return t.recStopped
+	}
+	return RecordingStatus{TabID: t.id, State: RecordingNeverStarted}
+}
+
+func (t *Tab) SetRecordingHandler(handler func(RecordingStatus)) {
+	t.recMu.Lock()
+	t.recordingHandler = handler
+	t.recMu.Unlock()
 }
 
 func (t *Tab) RecordingBytes() uint64 {
@@ -377,11 +473,33 @@ func (t *Tab) RecordingBytes() uint64 {
 
 func (t *Tab) recordChunk(p []byte) {
 	t.recMu.Lock()
-	defer t.recMu.Unlock()
-	if t.rec == nil || len(p) == 0 {
+	if t.rec == nil || t.rec.err != nil || len(p) == 0 {
+		t.recMu.Unlock()
 		return
 	}
-	if _, err := t.rec.file.Write(p); err == nil {
-		t.rec.bytes += uint64(len(p))
+	n, err := t.rec.file.Write(p)
+	t.rec.bytes += uint64(n)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		t.recMu.Unlock()
+		return
+	}
+	t.rec.err = err
+	_ = t.rec.file.Close()
+	t.rec.failureNotified = true
+	status := t.recordingStatusLocked()
+	handler := t.recordingHandler
+	t.recMu.Unlock()
+	t.emitRecording(handler, status)
+}
+
+func (t *Tab) emitRecording(handler func(RecordingStatus), statuses ...RecordingStatus) {
+	if handler == nil {
+		return
+	}
+	for _, status := range statuses {
+		handler(status)
 	}
 }

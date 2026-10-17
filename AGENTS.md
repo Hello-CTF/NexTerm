@@ -52,6 +52,8 @@ Toolchain: Go 1.26, Node 24+, pnpm.
 - Small duplication beats premature abstraction: similar code stays duplicated until its third occurrence. Single-parameter internal methods are not turned into options objects. Functions split only along abstraction levels; wrappers that add no new level (especially single-call-site ones) are inlined, not extracted.
 - No gratuitous docstrings or type annotations; no error handling for impossible branches - states guaranteed by the caller or excluded by the type system are not defended.
 - Tests go into the module's existing test file first; new test files are not created lightly. When tests fail because of an intended behavior change, fix the tests first; change the implementation only for a real bug.
+- Test assertions pin observable behavior and explicit contracts, not incidental totals, ordering, platform error text, or environment-specific values. Prefer required sets, uniqueness, and input/output outcomes; use exact numeric assertions only for documented contracts such as security surfaces, release artifact sets, threshold boundaries, and measured performance or resource budgets.
+- Acceptance tests are deterministic and single-run. Do not use `-count=N`, stress loops, or repeated CI reruns to make a test pass; remove intermittent tests that cannot be made deterministic instead of keeping them as recurring failures.
 - Data layer is GORM + GORM Gen: models in `internal/store/model/`, generated queries in `internal/store/query/*.gen.go` (no hand edits; regenerate with `go run ./scripts/gen-gorm` and commit with the change). Schema comes from `Store.migrate` AutoMigrate at startup - no SQL migration files, no old-database compatibility; a legacy SQLite database containing `schema_migrations` is renamed to `<db>.legacy-<timestamp>` (including -wal/-shm sidecars) on open and started fresh. Business queries go through `query.Use(db).<Model>`; a missing record is `errors.Is(err, gorm.ErrRecordNotFound)`. SQLite via the pure-Go `github.com/glebarez/sqlite`; PostgreSQL via `gorm.io/driver/postgres`; the same models and query code serve both dialects.
 
 ## Generated Bindings
@@ -61,14 +63,17 @@ Toolchain: Go 1.26, Node 24+, pnpm.
 
 ## Quality Gates and Test Cadence
 
-Must be all green before committing; CI runs the same set:
+Must be all green locally before committing; remote CI does not repeat the full Go test suite:
 
 - Go: `gofmt -l ./cmd ./internal ./scripts` (no output), `go vet -mod=readonly ./...`, `go test -mod=readonly ./...`.
 - Frontend: `pnpm typecheck`, `pnpm lint`, `pnpm test`.
 - Reproducible artifacts: `node scripts/build.mjs frontend --repro-check`.
-- Static contracts: `go run ./scripts/verify-manifest-injects`; `SOURCE_DATE_EPOCH=1 go run ./scripts/check-reuse-wiring`; `go run ./scripts/check-conflict-columns`.
-- `task check` runs the routine set in one go (`verify-manifest-injects` included; the wiring check is not - run `task verify:wiring` when those files change). `-race` and `-tags production` are in neither `task check` nor CI; run the corresponding `go test` locally for concurrency or production-tag changes.
+- Static contracts: `go run ./scripts/verify-manifest-injects`; `go run ./scripts/check-conflict-columns`.
+- Release behavior: `SOURCE_DATE_EPOCH=1 go run ./scripts/check-reuse-wiring` runs resolver same-SHA/ref/artifact scenarios and the release upload, release notes and desktop evidence stubs.
+- `task check` runs the routine set in one go (`verify-manifest-injects` included; the wiring check is not - run `task verify:wiring` when those files change). Full Go tests, `-race`, and the production-tagged Go test suite are local-only gates; CI runs vet, Wails bindings, static/release behavior checks, and native smoke without repeating them.
+- CI coverage: pull requests run the quality gates and Linux/Windows amd64 smoke jobs; master, tags, and `workflow_call` run the full 13-native + 2-mobile artifact matrix. Release evidence always requires the complete matrix.
 - Cadence: focused tests during implementation (related Go packages / frontend tests plus `pnpm typecheck` and `pnpm lint`); high-risk changes (concurrency, protocols, persistence, security, database) immediately add integration tests and `go test -race ./...`; after a large task is integrated and rebased, one full `task check` + `task verify` on the final tree (verify = all gates plus a reproducible host desktop production binary build; it does not run a native WebView smoke). When producing release artifacts, `node .github/scripts/release-evidence.mjs <artifact dir>` validates the set and generates `SHA256SUMS`.
+- Batching: accumulate related fixes and review follow-ups into one coherent work package. Run focused tests as fixes land, but run full gates and push/refresh PR CI once for the integrated batch, not once per small fix; merge only after the final head passes full gates and independent review.
 - PostgreSQL-gated tests (`internal/dbtest`, `internal/store`, `internal/account`, `internal/sync`, `internal/ai/cron`, `internal/fleet/server`) read `NEXTERM_TEST_PG_DSN` through the `internal/dbtest` harness; when unset each test SKIPs, and SKIP never counts as verified. Local rerun: `NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`. The CI `postgres` job runs them against a real server and fails on any harness SKIP in the log; the DSN is masked via `add-mask`. Adding a gated package means updating the harness, the CI postgres job, and this bullet together.
 
 ## Session State Hot Paths
@@ -96,6 +101,7 @@ Must be all green before committing; CI runs the same set:
 
 - Parallel background agents are the default execution mode for any non-trivial work - never opt-in. The main thread only splits work into non-overlapping scopes, dispatches agents, makes merge decisions, and does final confirmation; it does not implement or investigate inline when an agent can do it.
 - Create and resume agents only through the dedicated Agent tool. Never spawn an AI agent through Bash, a CLI, a script, or a nested noninteractive AI process (including `kimi` or `kimi -p`); if a subagent has no Agent tool, it must do its assigned work directly instead of bypassing the boundary.
+- Tool availability is proven by calling, not by reading the tool list: the dedicated Agent tool is named `Agent`. Never claim a tool is missing or "not exposed in this session" based on your impression of the available tools; invoke it once, and only a returned error counts as evidence of absence. A phantom "no Agent tool" claim blocks all delegated work - verify by an actual call before reporting such a blocker.
 - Agent scopes never overlap - one file is never assigned to two agents. Independent tasks always run concurrently; dependent tasks are explicitly sequenced.
 - Implementation and review are separate agents; authors never review their own work. Rebase onto the latest `master` before implementing, and once more before the single final integration.
 - Before resuming, check the task state and working tree, resume only the intended unfinished agent, and repeat only work whose result was never observed. After cancellation, check for CLI-spawned child AI processes because task cancellation may not cover them.

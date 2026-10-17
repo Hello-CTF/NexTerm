@@ -60,8 +60,8 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
-	if err := registerCommand(dispatcher, "db_disconnect", false, func(_ context.Context, input connectionRequest) (any, error) {
-		return nil, s.Disconnect(input.ConnID)
+	if err := registerCommand(dispatcher, "db_disconnect", false, func(ctx context.Context, input connectionRequest) (any, error) {
+		return nil, s.Disconnect(ctx, input.ConnID)
 	}); err != nil {
 		return err
 	}
@@ -127,9 +127,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	})
 }
 
+func dbRequestContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
+	}
+	return withOpenAccess(ctx)
+}
+
 func registerCommand[In, Out any](dispatcher *ipc.Dispatcher, name string, nested bool, handler func(context.Context, In) (Out, error)) error {
 	command := func(ctx context.Context, _ *ipc.Call, input In) (Out, error) {
-		return handler(ctx, input)
+		return handler(dbRequestContext(ctx), input)
 	}
 	if nested {
 		return ipc.RegisterNested(dispatcher, name, command)

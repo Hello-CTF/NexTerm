@@ -27,7 +27,7 @@ type Supervisor struct {
 
 	mu         sync.Mutex
 	sessions   map[string]*Session
-	killed     map[string]struct{}
+	killed     map[string]string
 	closing    bool
 	finishErrs []error
 
@@ -67,7 +67,7 @@ func New(config Config) (*Supervisor, error) {
 		ctx:            ctx,
 		cancel:         cancel,
 		sessions:       make(map[string]*Session),
-		killed:         make(map[string]struct{}),
+		killed:         make(map[string]string),
 	}
 	for _, entry := range entries {
 		supervisor.sessions[entry.ID] = newRecoveredSession(supervisor, entry)
@@ -302,10 +302,13 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 	defer s.killMu.Unlock()
 	s.mu.Lock()
 	session, exists := s.sessions[id]
-	_, killed := s.killed[id]
+	killedIncarnation, killed := s.killed[id]
 	s.mu.Unlock()
 	if !exists {
 		if killed {
+			if expected != nil && expected.Incarnation != killedIncarnation {
+				return fmt.Errorf("%w: %s", ErrIdentity, id)
+			}
 			return nil
 		}
 		present, err := s.artifactsPresent(id)
@@ -315,17 +318,15 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 		if !present {
 			return fmt.Errorf("%w: %s", ErrNotFound, id)
 		}
-		if expected != nil {
-			entry, err := readEntry(sessionsRoot(s.stateDir), id)
-			if err != nil || !sameIdentity(*expected, Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation}) {
-				return fmt.Errorf("%w: leftover artifacts for %s cannot be proven to belong to the expected identity", ErrIdentity, id)
-			}
+		entry, entryErr := readEntry(sessionsRoot(s.stateDir), id)
+		if expected != nil && (entryErr != nil || !sameIdentity(*expected, Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation})) {
+			return fmt.Errorf("%w: leftover artifacts for %s cannot be proven to belong to the expected identity", ErrIdentity, id)
 		}
 		if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
 			return fmt.Errorf("clean up leftover supervisor artifacts for %s: %w", id, err)
 		}
 		s.mu.Lock()
-		s.killed[id] = struct{}{}
+		s.killed[id] = entry.Incarnation
 		s.mu.Unlock()
 		return nil
 	}
@@ -341,7 +342,7 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 	}
 	s.mu.Lock()
 	delete(s.sessions, id)
-	s.killed[id] = struct{}{}
+	s.killed[id] = session.Identity().Incarnation
 	s.mu.Unlock()
 	return nil
 }
@@ -378,7 +379,7 @@ func (s *Supervisor) killByAttempt(ctx context.Context, id, attempt string) erro
 			return fmt.Errorf("clean up leftover supervisor artifacts for %s: %w", id, err)
 		}
 		s.mu.Lock()
-		s.killed[id] = struct{}{}
+		s.killed[id] = entry.Incarnation
 		s.mu.Unlock()
 		return nil
 	}
@@ -394,7 +395,7 @@ func (s *Supervisor) killByAttempt(ctx context.Context, id, attempt string) erro
 	}
 	s.mu.Lock()
 	delete(s.sessions, id)
-	s.killed[id] = struct{}{}
+	s.killed[id] = session.Identity().Incarnation
 	s.mu.Unlock()
 	return nil
 }

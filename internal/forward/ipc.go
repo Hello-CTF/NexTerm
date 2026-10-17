@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
 type removeRequest struct {
@@ -17,26 +18,33 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		return err
 	}
 	if err := ipc.Register(dispatcher, "forward_create", func(ctx context.Context, _ *ipc.Call, input CreateLocalArgs) (Spec, error) {
-		return s.CreateLocal(ctx, input)
+		return s.CreateLocal(forwardRequestContext(ctx), input)
 	}); err != nil {
 		return err
 	}
 	if err := ipc.Register(dispatcher, "forward_create_socks", func(ctx context.Context, _ *ipc.Call, input CreateSocksArgs) (Spec, error) {
-		return s.CreateSocks(ctx, input)
+		return s.CreateSocks(forwardRequestContext(ctx), input)
 	}); err != nil {
 		return err
 	}
 	if err := ipc.Register(dispatcher, "forward_create_remote", func(ctx context.Context, _ *ipc.Call, input CreateRemoteArgs) (Spec, error) {
-		return s.CreateRemote(ctx, input)
+		return s.CreateRemote(forwardRequestContext(ctx), input)
 	}); err != nil {
 		return err
 	}
-	if err := ipc.Register(dispatcher, "forward_list", func(context.Context, *ipc.Call, struct{}) ([]Spec, error) {
-		return s.List(), nil
+	if err := ipc.Register(dispatcher, "forward_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]Spec, error) {
+		return s.ListFor(forwardRequestContext(ctx)), nil
 	}); err != nil {
 		return err
 	}
-	return ipc.Register(dispatcher, "forward_remove", func(_ context.Context, _ *ipc.Call, input removeRequest) (any, error) {
-		return nil, s.Remove(input.ID)
+	return ipc.Register(dispatcher, "forward_remove", func(ctx context.Context, _ *ipc.Call, input removeRequest) (any, error) {
+		return nil, s.RemoveFor(forwardRequestContext(ctx), input.ID)
 	})
+}
+
+func forwardRequestContext(ctx context.Context) context.Context {
+	if _, ok := ipc.UserIDFromContext(ctx); ok {
+		return ctx
+	}
+	return session.WithOpenAccess(ctx)
 }

@@ -21,8 +21,24 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
   listenEvent: mocks.listenEvent,
 }));
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getVirtualItems: () =>
+      Array.from({ length: Math.min(count, 8) }, (_, index) => ({
+        index,
+        start: index * 164,
+        size: 152,
+        key: index,
+      })),
+    getTotalSize: () => count * 164,
+    measureElement: () => {},
+  }),
+}));
 
 import { DevicesView } from "../../features/fleet/DevicesView";
+import { MetricsPanel } from "../../features/fleet/MetricsPanel";
+import { metricsGapThreshold } from "../../features/fleet/MetricsChart";
+import { formatTime } from "../../features/fleet/format";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
 
@@ -111,6 +127,20 @@ const METRICS_SAMPLES = [
   },
 ];
 
+interface MockResponse {
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+}
+
+function jsonResponse(payload: unknown): MockResponse {
+  return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+}
+
+function metricAt(ts: number, cpuPct: number) {
+  return { ts, cpu_pct: cpuPct, mem_used: 100, mem_total: 200, disk_used: 300, disk_total: 400, uptime_s: 5000 };
+}
+
 interface RecordedCall {
   url: string;
   method: string;
@@ -171,6 +201,11 @@ function fleetHandler(overrides?: {
 
 let mounted: MountedView | undefined;
 
+function mountMetrics(deviceId = "d-1", online = true): HTMLDivElement {
+  mounted = mountWithClient(createElement(MetricsPanel, { deviceId, online }));
+  return mounted.container;
+}
+
 function seedUser(user: typeof SUPERADMIN | typeof PLAIN_USER) {
   useAuth.setState({
     status: { initialized: true, registration_open: false, auth: "on" },
@@ -199,15 +234,15 @@ afterEach(() => {
 });
 
 describe("Device management view - role differences", () => {
-  it("shows the global scope badge in the toolbar", async () => {
+  it("does not label the tool's UI ownership as global", async () => {
     route(fleetHandler());
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-    const badge = document.querySelector(
-      '.nx-toolbar span[title="全局面板：内容不随工作区切换"]',
-    );
-    expect(badge?.textContent).toBe("全局");
+    expect(document.querySelector(".nx-toolbar")?.textContent).toContain("设备管理");
+    expect(
+      document.querySelector('.nx-toolbar span[title="全局面板：内容不随工作区切换"]'),
+    ).toBeNull();
   });
 
   it("shows the owner badge and base URL editor to superadmins", async () => {
@@ -293,6 +328,238 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => calls.filter((c) => c.url === "/fleet/devices/d-1/metrics").length === 2);
   });
 
+  it("uses the fallback freshness threshold for missing and invalid intervals", () => {
+    expect(metricsGapThreshold(undefined)).toBe(180_000);
+    expect(metricsGapThreshold(0)).toBe(180_000);
+    expect(metricsGapThreshold(-1)).toBe(180_000);
+    expect(metricsGapThreshold(Number.NaN)).toBe(180_000);
+    expect(metricsGapThreshold(Number.POSITIVE_INFINITY)).toBe(180_000);
+  });
+
+  it("breaks a four-minute gap and expires latest when the interval is unknown", async () => {
+    const start = NOW - 600_000;
+    const samples = [
+      metricAt(start, 1),
+      metricAt(start + 60_000, 2),
+      metricAt(start + 300_000, 3),
+      metricAt(start + 360_000, 4),
+    ];
+    route(() => ({
+      payload: {
+        samples,
+        latest: samples[samples.length - 1],
+        windowStart: start,
+        windowEnd: NOW,
+        sampleCount: samples.length,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("polyline") !== null);
+
+    expect(container.querySelectorAll("polyline")).toHaveLength(2);
+    expect(container.textContent).toContain("指标过期");
+  });
+
+  it("ages latest with the local clock and keeps late responses from reverting freshness", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(NOW);
+      route(() => ({
+        payload: {
+          samples: [metricAt(NOW - 170_000, 11)],
+          latest: metricAt(NOW - 170_000, 11),
+          windowStart: NOW - 2 * 3600_000,
+          windowEnd: NOW - 3600_000,
+          sampleCount: 1,
+          sampleIntervalMs: 60_000,
+        },
+      }));
+      const container = mountMetrics();
+      await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
+      expect(container.textContent).not.toContain("指标过期");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11_000);
+      });
+      expect(container.textContent).toContain("指标过期");
+
+      const oldRequest = deferred<MockResponse>();
+      mocks.fetch.mockImplementation(() => oldRequest.promise);
+      click(container.querySelector('button[aria-label="刷新指标"]') as HTMLButtonElement);
+      const nextRequest = deferred<MockResponse>();
+      mocks.fetch.mockImplementation(() => nextRequest.promise);
+      act(() => {
+        mounted?.root.render(createElement(MetricsPanel, { deviceId: "d-2", online: true }));
+      });
+      nextRequest.resolve(jsonResponse({
+        samples: [metricAt(NOW + 11_000 - 30_000, 22)],
+        latest: metricAt(NOW + 11_000 - 30_000, 22),
+        windowStart: NOW - 2 * 3600_000,
+        windowEnd: NOW - 3600_000,
+        sampleCount: 1,
+        sampleIntervalMs: 60_000,
+      }));
+      await flushUntil(() => container.textContent?.includes("22.0%") ?? false);
+      expect(container.textContent).not.toContain("指标过期");
+
+      oldRequest.resolve(jsonResponse({
+        samples: [metricAt(NOW - 600_000, 33)],
+        latest: metricAt(NOW - 600_000, 33),
+        windowStart: NOW - 2 * 3600_000,
+        windowEnd: NOW - 3600_000,
+        sampleCount: 1,
+        sampleIntervalMs: 60_000,
+      }));
+      await flush();
+      expect(container.textContent).toContain("22.0%");
+      expect(container.textContent).not.toContain("33.0%");
+      expect(container.textContent).not.toContain("指标过期");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses independent latest and reports the actual window, raw count, and stale state", async () => {
+    const start = NOW - 24 * 3600_000;
+    const latest = metricAt(NOW - 600_000, 99);
+    route(() => ({
+      payload: {
+        samples: [metricAt(start, 1), metricAt(start + 60_000, 2)],
+        latest,
+        windowStart: start,
+        windowEnd: NOW,
+        sampleCount: 17280,
+        downsampled: true,
+        sampleIntervalMs: 60_000,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes("个采样点") ?? false);
+
+    expect(container.textContent).toContain("99.0%");
+    expect(container.textContent).toContain(`趋势窗口 ${formatTime(start)} - ${formatTime(NOW)}`);
+    expect(container.textContent).toContain("共 17280 个采样点");
+    expect(container.textContent).toContain("显示 2 个原始点");
+    expect(container.textContent).toContain("指标过期");
+    expect(container.textContent).toContain("过期阈值");
+    expect(container.textContent).toContain(formatTime(latest.ts));
+  });
+
+  it("keeps independent latest visible when the trend fails", async () => {
+    route(() => ({
+      payload: {
+        samples: [],
+        latest: metricAt(NOW - 60_000, 66),
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+        seriesError: "context deadline exceeded",
+      },
+    }));
+    const container = mountMetrics("d-1", false);
+    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("趋势加载失败") || false);
+
+    expect(container.textContent).toContain("66.0%");
+    expect(container.textContent).toContain("趋势加载失败");
+    expect(container.textContent).toContain("context deadline exceeded");
+    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+    expect(container.textContent).not.toContain("共 0 个采样点");
+  });
+
+  it("does not confuse a trend failure without latest with an empty device", async () => {
+    route(() => ({
+      payload: {
+        samples: [],
+        windowStart: NOW - 3600_000,
+        windowEnd: NOW,
+        seriesError: "database unavailable",
+      },
+    }));
+    const container = mountMetrics("d-1", false);
+    await flushUntil(() => container.textContent?.includes("趋势加载失败") ?? false);
+
+    expect(container.textContent).toContain("database unavailable");
+    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+  });
+
+  it("uses the requested window for a single sample time axis", async () => {
+    route(() => ({
+      payload: {
+        samples: [metricAt(NOW - 3600_000, 12.5)],
+        latest: metricAt(NOW - 3600_000, 12.5),
+        windowStart: NOW - 2 * 3600_000,
+        windowEnd: NOW,
+        sampleCount: 1,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("circle") !== null);
+
+    expect(container.querySelector("circle")?.getAttribute("cx")).toBe("160");
+  });
+
+  it("breaks the trend line across missing intervals", async () => {
+    const start = NOW - 1000_000;
+    const samples = [
+      metricAt(start, 1),
+      metricAt(start + 60_000, 2),
+      metricAt(start + 660_000, 3),
+      metricAt(start + 720_000, 4),
+    ];
+    route(() => ({
+      payload: {
+        samples,
+        latest: samples[samples.length - 1],
+        windowStart: start,
+        windowEnd: samples[samples.length - 1].ts,
+        sampleCount: samples.length,
+        sampleIntervalMs: 60_000,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("polyline") !== null);
+
+    expect(container.querySelectorAll("polyline")).toHaveLength(2);
+  });
+
+  it("does not show a previous device sample while switching or resolving out of order", async () => {
+    route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 11)] } }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes("11.0%") ?? false);
+
+    const oldRequest = deferred<MockResponse>();
+    mocks.fetch.mockImplementation(() => oldRequest.promise);
+    click(container.querySelector('button[aria-label="刷新指标"]') as HTMLButtonElement);
+    const nextRequest = deferred<MockResponse>();
+    mocks.fetch.mockImplementation(() => nextRequest.promise);
+    act(() => {
+      mounted?.root.render(createElement(MetricsPanel, { deviceId: "d-2", online: true }));
+    });
+
+    expect(container.textContent).not.toContain("11.0%");
+    nextRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 30_000, 22)] }));
+    await flushUntil(() => container.textContent?.includes("22.0%") ?? false);
+    oldRequest.resolve(jsonResponse({ samples: [metricAt(NOW - 10_000, 33)] }));
+    await flush();
+    expect(container.textContent).toContain("22.0%");
+    expect(container.textContent).not.toContain("33.0%");
+  });
+
+  it("marks legacy responses as having an unverified window", async () => {
+    route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 12.5)] } }));
+    const container = mountMetrics();
+    await flushUntil(() => container.textContent?.includes("12.5%") ?? false);
+
+    expect(container.textContent).toContain("窗口完整性未知");
+  });
+
+  it("keeps the offline empty state distinct from a trend error", async () => {
+    route(() => ({ payload: { samples: [], windowStart: NOW - 3600_000, windowEnd: NOW } }));
+    const container = mountMetrics("d-1", false);
+    await flushUntil(() => container.textContent?.includes("设备离线，没有近期指标") ?? false);
+
+    expect(container.textContent).not.toContain("趋势加载失败");
+  });
+
   it("filters the current list locally by search and all/online/offline/revoked status without new requests", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
@@ -338,6 +605,70 @@ describe("Device management view - device list and metrics", () => {
     expect(cardOf("old-laptop")).toBeFalsy();
     expect(document.body.textContent).toContain("已隐藏 1 台已吊销设备");
     expect(calls).toHaveLength(requestCount);
+  });
+
+  it("windows large lists without narrowing local search or removing owner and card actions", async () => {
+    const devices = Array.from({ length: 60 }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `d-${index}`,
+      name: index === 59 ? "needle-device" : `device-${index}`,
+      owner: { id: `owner-${index}`, username: `owner-${index}` },
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("device-0") ?? false);
+    const cardOf = (name: string) => [...document.querySelectorAll("section.nx-card")].find((card) => card.textContent?.includes(name));
+    expect(document.querySelectorAll("section.nx-card").length).toBeLessThan(devices.length);
+
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索设备"]');
+    if (!search) throw new Error("Device search input not found");
+    act(() => search.focus());
+    setInputValue(search, "needle-device");
+    await flushUntil(() => cardOf("needle-device") !== undefined);
+
+    const target = cardOf("needle-device");
+    expect(target?.textContent).toContain("owner-59");
+    expect([...(target?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim())).toEqual(
+      expect.arrayContaining(["终端", "指标", "吊销"]),
+    );
+    expect(document.activeElement).toBe(search);
+
+    setInputValue(search, "");
+    expect(document.activeElement).toBe(search);
+    expect(document.querySelectorAll("section.nx-card").length).toBeLessThan(devices.length);
+  });
+
+  it.each([40, 41])("keeps direct cards at 40 and windows at 41: %s devices", async (deviceCount) => {
+    const devices = Array.from({ length: deviceCount }, (_, index) => ({
+      ...AGENT_DEVICE,
+      id: `boundary-${index}`,
+      name: `boundary-${index}`,
+      agent: {
+        ...AGENT_DEVICE.agent,
+        service_state: { ...AGENT_DEVICE.agent.service_state },
+      },
+    }));
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("boundary-0") ?? false);
+
+    const scroller = document.querySelector(".nx-pane > div.overflow-auto");
+    const firstCard = [...document.querySelectorAll("section.nx-card")].find((card) => card.textContent?.includes("boundary-0"));
+    expect(firstCard).not.toBeUndefined();
+    if (deviceCount === 40) {
+      expect(firstCard?.parentElement).toBe(scroller);
+      expect(scroller?.querySelector("[data-index]")).toBeNull();
+    } else {
+      expect(firstCard?.parentElement).not.toBe(scroller);
+      expect(scroller?.querySelector("[data-index]")).not.toBeNull();
+      expect(document.querySelectorAll("section.nx-card").length).toBeLessThan(deviceCount);
+    }
   });
 
   it("shows offline badges and offline autostart hints for offline devices", async () => {

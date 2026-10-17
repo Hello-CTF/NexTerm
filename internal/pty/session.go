@@ -36,17 +36,18 @@ type terminal interface {
 }
 
 type Session struct {
-	terminal   terminal
-	ctx        context.Context
-	cancel     context.CancelFunc
-	id         string
-	generation uint64
-	writeMu    sync.Mutex
-	closeOnce  sync.Once
-	closeErr   error
-	stopMu     sync.Mutex
-	stop       func() bool
-	closed     bool
+	terminal      terminal
+	ctx           context.Context
+	cancel        context.CancelFunc
+	id            string
+	generation    uint64
+	writeMu       sync.Mutex
+	closeMu       sync.Mutex
+	closeComplete bool
+	closeErr      error
+	stopMu        sync.Mutex
+	stop          func() bool
+	closed        bool
 }
 
 func Start(ctx context.Context, config Config) (*Session, error) {
@@ -146,31 +147,35 @@ func (s *Session) Generation() uint64 {
 }
 
 func (s *Session) Close() error {
-	s.closeOnce.Do(func() {
-		s.stopMu.Lock()
-		s.closed = true
-		stop := s.stop
-		s.stopMu.Unlock()
-		if stop != nil {
-			stop()
-		}
-		s.cancel()
-		killErr := s.terminal.Kill()
-		closeErr := s.terminal.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		waitErr := s.terminal.Wait(ctx)
-		cancel()
-		var exitErr *base.ExitError
-		if errors.As(waitErr, &exitErr) {
-			waitErr = nil
-		}
-		s.closeErr = errors.Join(
-			normalizeCloseError(killErr),
-			normalizeCloseError(closeErr),
-			normalizeCloseError(waitErr),
-			s.terminal.CleanupError(),
-		)
-	})
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closeComplete {
+		return s.closeErr
+	}
+	s.stopMu.Lock()
+	s.closed = true
+	stop := s.stop
+	s.stopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	s.cancel()
+	killErr := s.terminal.Kill()
+	closeErr := s.terminal.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	waitErr := s.terminal.Wait(ctx)
+	cancel()
+	var exitErr *base.ExitError
+	if errors.As(waitErr, &exitErr) {
+		waitErr = nil
+	}
+	s.closeErr = errors.Join(
+		normalizeCloseError(killErr),
+		normalizeCloseError(closeErr),
+		normalizeCloseError(waitErr),
+		s.terminal.CleanupError(),
+	)
+	s.closeComplete = s.closeErr == nil
 	return s.closeErr
 }
 

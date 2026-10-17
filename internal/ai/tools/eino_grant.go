@@ -30,8 +30,12 @@ func ResolveGrantDeviceID(ctx context.Context, registry *Registry, scope Scope) 
 		return ""
 	}
 	sessionID := scope.SessionID
-	if sessionID == "" && scope.TabID != "" && registry.deps.TabSession != nil {
-		sessionID = registry.deps.TabSession(scope.TabID)
+	if sessionID == "" && scope.TabID != "" {
+		resolved, err := registry.tabSession(ctx, scope.TabID)
+		if err != nil || resolved == "" {
+			return ""
+		}
+		sessionID = resolved
 	}
 	if sessionID == "" {
 		return ""

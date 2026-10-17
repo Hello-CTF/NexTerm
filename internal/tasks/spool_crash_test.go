@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+func closeSpoolHandles(t *testing.T, s *spool) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var firstErr error
+	for _, f := range []*os.File{s.head, s.tail} {
+		if f != nil {
+			if err := f.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	s.head, s.tail = nil, nil
+	s.closed = true
+	if firstErr != nil {
+		t.Fatal(firstErr)
+	}
+}
+
 func crashAt(t *testing.T, s *spool, stage string, p []byte) {
 	t.Helper()
 	s.crashHook = func(got string) {
@@ -24,6 +43,7 @@ func crashAt(t *testing.T, s *spool, stage string, p []byte) {
 		_, _ = s.Write(p)
 	}()
 	s.crashHook = nil
+	closeSpoolHandles(t, s)
 	if !panicked {
 		t.Fatalf("compaction never reached stage %q", stage)
 	}

@@ -63,12 +63,18 @@ import { AiSidebar } from "../../features/ai/AiSidebar";
 import { ModelManager } from "../../features/ai/ModelPanel";
 import { ModelSelector } from "../../features/ai/ModelSelector";
 import { createConversationStream } from "../../features/ai/conversationStream";
+import { aiTabBusyIds, aiTabRunControls } from "../../features/ai/runOwnership";
 import { useUi } from "../../app/store";
 
 function emit(ev: Record<string, unknown>) {
   const channel = mocks.channels.at(-1);
   if (!channel) throw new Error("no fake channel");
   act(() => channel.onEvent(ev));
+}
+
+function AccountAiSidebar(props: { sessionId: string; tabId: string }) {
+  const epoch = useUi((s) => s.aiAccountEpoch);
+  return createElement(AiSidebar, { ...props, key: epoch });
 }
 
 describe("M134 AI copy", () => {
@@ -110,7 +116,7 @@ describe("M134 AI copy", () => {
       aiBoards: {},
       sessions: [],
     });
-    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    view = mount(createElement(AccountAiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
   });
 
@@ -208,5 +214,102 @@ describe("M134 AI copy", () => {
     await flush();
     expect(selector.container.textContent).toContain("公司 DeepSeek");
     selector.unmount();
+  });
+
+  it("keeps the composer draft when switching away and back to a workspace", async () => {
+    const wsA = {
+      id: "ws-a",
+      kind: "session" as const,
+      title: "A",
+      sessionId: "s1",
+      panes: [],
+      activePaneId: "p",
+      splitRatio: 0.5,
+      closable: true,
+    };
+    const wsB = { ...wsA, id: "ws-b", title: "B", sessionId: "s2" };
+    act(() => {
+      useUi.setState({ workspaces: [wsA, wsB], activeWorkspaceId: "ws-a" });
+    });
+    await flush();
+
+    setInputValue(composer(), "帮我看看 nginx 日志");
+    await flush();
+
+    act(() => {
+      useUi.setState({ activeWorkspaceId: "ws-b" });
+    });
+    await flush();
+    expect(composer().value).toBe("");
+
+    act(() => {
+      useUi.setState({ activeWorkspaceId: "ws-a" });
+    });
+    await flush();
+    expect(composer().value).toBe("帮我看看 nginx 日志");
+  });
+
+  it("clears drafts and hides running work across account reset without cancelling the backend run", async () => {
+    const wsA = {
+      id: "ws-a",
+      kind: "session" as const,
+      title: "A",
+      sessionId: "s1",
+      panes: [],
+      activePaneId: "p",
+      splitRatio: 0.5,
+      closable: true,
+    };
+    const wsB = { ...wsA, id: "ws-b", title: "B", sessionId: "s2" };
+    act(() => {
+      useUi.setState({ workspaces: [wsA, wsB], activeWorkspaceId: "ws-a" });
+    });
+    await flush();
+    setInputValue(composer(), "A 运行任务");
+    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flush();
+    setInputValue(composer(), "A 未发送秘密");
+    await flush();
+    const oldTabId = useUi.getState().aiBoards["ws-a"].tabs[0].id;
+    const oldEpoch = useUi.getState().aiAccountEpoch;
+    const oldRunControl = aiTabRunControls.get(oldTabId);
+    expect(aiTabBusyIds.has(oldTabId)).toBe(true);
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "A", updatedAt: 0 }]);
+
+    act(() => {
+      useUi.getState().resetAiAccount();
+    });
+    act(() => {
+      useUi.setState({
+        workspaces: [wsA, wsB],
+        activeWorkspaceId: "ws-a",
+        aiBoards: {
+          "ws-a": {
+            tabs: [{ id: oldTabId, title: "A", conversationId: "conv-1" }],
+            activeTabId: oldTabId,
+          },
+        },
+      });
+    });
+    await flush();
+
+    expect(composer().value).toBe("");
+    expect(useUi.getState().aiBoards["ws-a"].tabs[0].draft).toBeFalsy();
+    expect(useUi.getState().aiBoards["ws-a"].tabs[0].conversationId).toBe("conv-1");
+    expect(aiTabRunControls.get(oldTabId)).not.toBe(oldRunControl);
+    expect(aiTabBusyIds.has(oldTabId)).toBe(false);
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(mocks.cancel).not.toHaveBeenCalled();
+
+    useUi.getState().updateAiTab("ws-a", oldTabId, { draft: "late old draft" }, oldEpoch);
+    emit({ type: "delta", text: "旧账号增量" });
+    await flush();
+    expect(aiTabBusyIds.has(oldTabId)).toBe(false);
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(view!.container.textContent).not.toContain("旧账号增量");
+    emit({ type: "done", answer: "旧账号任务结果" });
+    await flush();
+    expect(useUi.getState().aiBoards["ws-a"].tabs[0].draft).toBeFalsy();
+    expect(view!.container.textContent).not.toContain("旧账号任务结果");
   });
 });

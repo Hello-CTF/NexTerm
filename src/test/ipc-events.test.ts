@@ -68,14 +68,17 @@ describe("Wails events and channels", () => {
     runtime.Call.ByName.mockImplementation(async () => {
       push?.({ data: [1, 2] });
       push?.({ data: [3] });
-      return { ok: true, data: "tab-1" };
+      return { ok: true, data: { tabId: "tab-1", shell: "unknown" } };
     });
     const { createBinaryChannel, channelIdOf } = await import("../ipc/events");
     const { terminalApi } = await import("../ipc/commands");
     const frames: number[][] = [];
     const channel = createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
 
-    await expect(terminalApi.attach("session-1", 80, 24, channel)).resolves.toBe("tab-1");
+    await expect(terminalApi.attach("session-1", 80, 24, channel)).resolves.toEqual({
+      tabId: "tab-1",
+      shell: "unknown",
+    });
     expect(frames).toEqual([[1, 2], [3]]);
     expect(runtime.Events.On.mock.calls[0][0]).toBe(`channel://${channelIdOf(channel)}`);
     expect(runtime.Events.On.mock.invocationCallOrder[0]).toBeLessThan(

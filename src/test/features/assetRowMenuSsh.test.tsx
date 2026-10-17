@@ -142,7 +142,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   localStorage.clear();
-  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: mocks.writeText } });
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    clipboard: {
+      writeText: mocks.writeText,
+      readText: () => Promise.resolve(mocks.writeText.mock.calls.at(-1)?.[0] ?? ""),
+    },
+  });
   useAssetVisibility.setState({ hiddenIds: [], showHidden: false });
   mocks.list.mockResolvedValue([{ ...WEB }, { ...EDGE }, { ...WINRM }]);
   mocks.search.mockResolvedValue([]);

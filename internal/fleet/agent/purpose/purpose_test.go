@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type fileHarness struct {
@@ -44,6 +45,53 @@ func (h *fileHarness) run(t *testing.T, op func(*deviceproto.Client) error) {
 	defer done()
 	if err := op(client); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFileServerRoots(t *testing.T) {
+	h := newFileHarness(t)
+	clientConn, serverConn := net.Pipe()
+	go func() { _ = h.server.ServeConn(h.ctx, serverConn) }()
+	defer clientConn.Close()
+	if err := deviceproto.WriteMessage(clientConn, deviceproto.FrameRoots, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	kind, payload, err := deviceproto.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != deviceproto.FrameRootsReply {
+		t.Fatalf("roots reply frame = %d; want FrameRootsReply", kind)
+	}
+	var roots base.FileSystemRoots
+	if err := deviceproto.UnmarshalPayload(payload, &roots); err != nil {
+		t.Fatal(err)
+	}
+	if !roots.Supported {
+		t.Fatal("local agent filesystem must support roots")
+	}
+	if runtime.GOOS == "windows" {
+		if roots.PathStyle != base.PathStyleWindows {
+			t.Fatalf("PathStyle = %q; want windows", roots.PathStyle)
+		}
+		for _, root := range roots.Roots {
+			if !filepath.IsAbs(root.Path) {
+				t.Fatalf("root path = %q; want an absolute path", root.Path)
+			}
+		}
+	} else if roots.PathStyle != base.PathStylePOSIX || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" {
+		t.Fatalf("roots = %+v; want the POSIX root", roots)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHome, err := filepath.Abs(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots.HomePath != wantHome {
+		t.Fatalf("HomePath = %q; want %q", roots.HomePath, wantHome)
 	}
 }
 

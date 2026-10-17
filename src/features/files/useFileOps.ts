@@ -5,8 +5,7 @@ import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { useUi, type AppTab } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
-import { isDirtyFileEditor } from "./editorGuards";
-import { joinPath, norm, parentOf } from "./pathUtils";
+import { joinPath, parentOf } from "./pathUtils";
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
@@ -16,6 +15,15 @@ import {
   parseOctalMode,
   validateEntryName,
 } from "./fileOps";
+import {
+  beginFileEditorRename,
+  fileEditorCaseInsensitive,
+  fileEditorPathMatches,
+  finishFileEditorRename,
+  unknownFileEditorRenameByToken,
+  unknownFileEditorRenameConflict,
+  unknownFileEditorRenameForRename,
+} from "./editorGuards";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 
 export type FileOpKind = "rename" | "chmod" | "checksum";
@@ -26,23 +34,48 @@ const OP_LABEL: Record<FileOpKind, string> = {
   checksum: "计算校验值",
 };
 
-function editorTabsOf(sessionId: string, path: string, kind: string): AppTab[] {
-  const target = norm(path);
-  const hit = (p: string) => {
-    const pn = norm(p);
-    return kind === "dir" ? pn === target || pn.startsWith(`${target}/`) : pn === target;
-  };
+function editorTabsOf(
+  sessionId: string,
+  path: string,
+  kind: string,
+  caseInsensitive: boolean,
+): AppTab[] {
   const out: AppTab[] = [];
   for (const w of useUi.getState().workspaces) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind === "files" && t.sessionId === sessionId && t.path && hit(t.path)) {
+        if (
+          t.kind === "files" &&
+          t.sessionId === sessionId &&
+          t.path &&
+          fileEditorPathMatches(t.path, path, kind, caseInsensitive)
+        ) {
           out.push(t);
         }
       }
     }
   }
   return out;
+}
+
+const DEFINITE_RENAME_CODES = new Set(["forbidden", "not_found", "conflict", "already_exists"]);
+const UNKNOWN_RENAME_CODES = new Set(["disconnected", "timeout"]);
+const UNKNOWN_RENAME_MESSAGE =
+  /\beof\b|unexpected\s+eof|fetch|http\s*\d{3}|网络|连接(?:中断|重置|关闭|丢失)|断开|断流|响应|broken pipe|socket|transport|stream/i;
+const DEFINITE_RENAME_MESSAGE =
+  /permission denied|access denied|not permitted|no such file|not found|does not exist|already exists|file exists|target exists|权限不足|没有权限|拒绝访问|不存在|已存在|冲突/i;
+
+function renameResultUnknown(error: unknown): boolean {
+  const code =
+    error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "";
+  if (UNKNOWN_RENAME_CODES.has(code)) return true;
+  if (DEFINITE_RENAME_CODES.has(code)) return false;
+  const message = describeError(error);
+  if (UNKNOWN_RENAME_MESSAGE.test(message)) return true;
+  if (DEFINITE_RENAME_MESSAGE.test(message)) return false;
+  return true;
 }
 
 export function useFileOps(sessionId: string) {
@@ -84,6 +117,51 @@ export function useFileOps(sessionId: string) {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, from] });
   };
 
+  const confirmUnknownRename = async (token: number, path: string) => {
+    const operation = unknownFileEditorRenameByToken(token);
+    if (!operation) return null;
+    const choice = await askChoice(
+      `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前文件路径：${path}`,
+      {
+        title: "确认文件位置",
+        level: "warning",
+        choices: [
+          {
+            key: "not-renamed",
+            label: "重命名未发生",
+            hint: "确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存",
+          },
+          {
+            key: "renamed",
+            label: "重命名已发生",
+            hint: "确认服务端已完成重命名，迁移匹配的标签和草稿，不重复执行重命名",
+          },
+        ],
+      },
+    );
+    if (choice !== "not-renamed" && choice !== "renamed") return null;
+    const current = unknownFileEditorRenameByToken(token);
+    if (!current) return null;
+    if (choice === "renamed") {
+      const target = unknownFileEditorRenameConflict(useUi.getState(), current);
+      if (target) {
+        useUi.getState().setActiveTab(target.id);
+        pushToast(
+          "error",
+          `无法确认重命名已发生：目标 ${current.to} 已有打开的编辑器，请先处理该标签，未迁移或合并草稿。`,
+        );
+        return null;
+      }
+    }
+    useUi.getState().resolveUnknownFileEditorRename(
+      current.sessionId,
+      current.from,
+      choice === "renamed",
+    );
+    void qc.invalidateQueries({ queryKey: ["fs", current.sessionId] });
+    return { operation: current, renamed: choice === "renamed" };
+  };
+
   const renameEntry = async (
     entry: FileEntryDto,
     siblings: FileEntryDto[],
@@ -92,20 +170,12 @@ export function useFileOps(sessionId: string) {
   ) => {
     const seq = begin("rename", entry.path);
     if (seq === null) return;
+    let renameToken: number | null = null;
     try {
       const notes: string[] = [];
       if (entry.kind === "symlink") {
         notes.push(
           `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。重命名只改链接本身的名字，不影响它指向的目标。`,
-        );
-      }
-      const tabs = editorTabsOf(sessionId, entry.path, entry.kind);
-      const dirty = tabs.some(isDirtyFileEditor);
-      if (dirty) {
-        notes.push(
-          entry.kind === "dir"
-            ? "该目录（含子目录）里有文件正在编辑器中编辑，改动未保存。重命名后，已打开的标签仍指向旧路径，保存时会把改动写回旧文件。"
-            : "该文件正在编辑器中编辑，改动未保存。重命名后，已打开的标签仍指向旧路径，保存时会把改动写回旧文件。",
         );
       }
       if (notes.length) {
@@ -115,8 +185,7 @@ export function useFileOps(sessionId: string) {
         });
         if (!go || !alive(seq)) return;
       }
-      const openNote = tabs.length && !dirty ? "（编辑器中已打开；重命名后标签仍指向旧路径）" : "";
-      const name = await promptText(`重命名 ${entry.path}${openNote}`, entry.name);
+      const name = await promptText(`重命名 ${entry.path}`, entry.name);
       if (name === null || !alive(seq)) return;
       const problem = validateEntryName(name);
       if (problem) {
@@ -125,22 +194,82 @@ export function useFileOps(sessionId: string) {
       }
       if (name === entry.name) return;
       const to = joinPath(parentOf(entry.path) ?? "", name);
-      const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
-      const conflict = findConflict(name, siblings, conflictCaseInsensitive(kind));
+      const sessionKind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+      const caseInsensitive = fileEditorCaseInsensitive(sessionKind);
+      const rejectOpenTarget = (): boolean => {
+        const target = editorTabsOf(sessionId, to, entry.kind, caseInsensitive).find(
+          (tab) =>
+            tab.path !== undefined &&
+            !fileEditorPathMatches(tab.path, entry.path, entry.kind, caseInsensitive),
+        );
+        if (!target) return false;
+        useUi.getState().setActiveTab(target.id);
+        pushToast("error", `无法重命名：目标 ${to} 已有打开的编辑器，请先处理该标签，未执行覆盖或合并。`);
+        return true;
+      };
+      if (rejectOpenTarget()) return;
+      const conflict = findConflict(
+        name,
+        siblings.filter((sibling) => sibling !== entry),
+        conflictCaseInsensitive(sessionKind),
+      );
       if (conflict) {
         const go = await ask(
           `「${name}」已存在。继续将替换原有内容，且无法恢复。\n\n替换「${name}」？`,
           { title: "覆盖确认", kind: "warning" },
         );
         if (!go || !alive(seq)) return;
+        if (rejectOpenTarget()) return;
       }
+      const guard = beginFileEditorRename(sessionId, entry.path, to, entry.kind, caseInsensitive);
+      if (guard === "unknown") {
+        pushToast("error", "无法重命名：上一次重命名结果未知，请先确认远端旧路径和新路径，不会自动重试。");
+        const operation = unknownFileEditorRenameForRename(
+          sessionId,
+          entry.path,
+          to,
+          entry.kind,
+          caseInsensitive,
+        );
+        if (operation) {
+          const resolved = await confirmUnknownRename(operation.token, entry.path);
+          if (resolved?.renamed && alive(seq)) {
+            onRenamed?.(resolved.operation.from, resolved.operation.to);
+          }
+        }
+        return;
+      }
+      if (guard === "busy") {
+        pushToast("error", "无法重命名：相关编辑器正在保存、读取或重命名，请等待完成后重试。");
+        return;
+      }
+      renameToken = guard;
       await fsApi.rename(sessionId, entry.path, to);
-      if (!alive(seq)) return;
+      useUi.getState().migrateFileEditorLocators(sessionId, entry.path, to, entry.kind);
+      finishFileEditorRename(guard, false);
+      renameToken = null;
       invalidateAfterRename(listKey, entry.path);
+      if (!alive(seq)) return;
       onRenamed?.(entry.path, to);
       pushToast("success", `已重命名：${entry.name} → ${name}`);
     } catch (e) {
-      if (alive(seq)) pushToast("error", `重命名失败：${describeError(e)}`);
+      const unknownToken = renameToken !== null && renameResultUnknown(e) ? renameToken : null;
+      if (renameToken !== null) finishFileEditorRename(renameToken, unknownToken !== null);
+      renameToken = null;
+      if (unknownToken !== null) {
+        if (alive(seq)) {
+          pushToast(
+            "error",
+            "重命名结果未知：请重连后确认远端旧路径和新路径；确认前已禁止向旧路径保存，不会自动重试。",
+          );
+        }
+        const resolved = await confirmUnknownRename(unknownToken, entry.path);
+        if (resolved?.renamed && alive(seq)) {
+          onRenamed?.(resolved.operation.from, resolved.operation.to);
+        }
+      } else if (alive(seq)) {
+        pushToast("error", `重命名失败：${describeError(e)}`);
+      }
     } finally {
       end(seq);
     }
