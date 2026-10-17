@@ -469,8 +469,9 @@ func TestSubagentDefaultProfilePinnedAcrossActiveSwitch(t *testing.T) {
 	var pinnedOnce sync.Once
 	runner, storage := subagentPersistenceRunner(t, parent, child, func(config *tools.SubagentConfig) {
 		config.ActiveProfileID = func() string {
+			profile := active.Load().(string)
 			pinnedOnce.Do(func() { close(pinned) })
-			return active.Load().(string)
+			return profile
 		}
 	})
 	stream := &SliceStream{}

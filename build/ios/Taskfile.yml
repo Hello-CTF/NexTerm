@@ -119,6 +119,18 @@ tasks:
       - cp "{{.BIN_DIR}}/{{.APP_NAME | lower}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - cp build/ios/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - |
+        if [ -n "${NEXTERM_RELEASE_VERSION:-}" ] || [ -n "${IOS_BUILD_NUMBER:-}" ]; then
+          version="${NEXTERM_RELEASE_VERSION:-0.0.0}"
+          short_version="$version"
+          if [ -n "${IOS_BUILD_NUMBER:-}" ]; then
+            short_version="${version%%-*}"
+            short_version="${short_version%%+*}"
+          fi
+          build_number="${IOS_BUILD_NUMBER:-$version}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short_version" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Info.plist"
+        fi
+      - |
         # Embed the provisioning profile for device builds when provided
         if [ "{{.IOS_PLATFORM}}" = "device" ] && [ -n "{{.PROVISIONING_PROFILE}}" ]; then
           cp "{{.PROVISIONING_PROFILE}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/embedded.mobileprovision"

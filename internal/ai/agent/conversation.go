@@ -104,7 +104,9 @@ func (r *Runner) maybeGenerateConversationTitle(current *job) {
 			return r.config.ModelForProfile(ctx, profileID)
 		}
 	}
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		defer conversationTitleInFlight.Delete(conversationID)
 		defer func() {
 			if recovered := recover(); recovered != nil {

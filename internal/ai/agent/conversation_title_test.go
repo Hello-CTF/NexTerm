@@ -24,6 +24,17 @@ func (m *titleTestModel) Generate(ctx context.Context, _ []*schema.Message, _ ..
 	return m.generate(ctx)
 }
 
+type shutdownSignalContext struct {
+	context.Context
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (c *shutdownSignalContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.entered) })
+	return c.Context.Done()
+}
+
 func titleTestRunner(t *testing.T, chat model.BaseChatModel) (*Runner, *store.Store) {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())
@@ -155,6 +166,64 @@ func TestTitleGenerationAfterFirstRun(t *testing.T) {
 	}
 	if len(runs) != 0 {
 		t.Fatalf("run list leaked title row: %+v", runs)
+	}
+}
+
+func TestRunnerCloseWaitsForTitleGeneration(t *testing.T) {
+	generateCalled := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	chat := &titleTestModel{
+		fakeModel: fakeModel{stream: answeringStream},
+		generate: func(ctx context.Context) (*schema.Message, error) {
+			close(generateCalled)
+			select {
+			case <-release:
+				return schema.AssistantMessage("生成的标题", nil), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	}
+	runner, storage := titleTestRunner(t, chat)
+	const message = "帮我排查数据库连接失败的问题"
+	conversation, err := storage.ConvCreate(context.Background(), AutoTitle(message), map[string]any{"scope": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.maybeGenerateConversationTitle(&job{args: ChatArgs{ConversationID: conversation.ID, Message: message}})
+	waitChannelClosed(t, generateCalled, "title generation did not start")
+	shutdownCtx := &shutdownSignalContext{Context: context.Background(), entered: make(chan struct{})}
+	closeReturned := make(chan error, 1)
+	go func() {
+		closeReturned <- runner.CloseContext(shutdownCtx)
+	}()
+	waitChannelClosed(t, shutdownCtx.entered, "runner close did not reach shutdown wait")
+	select {
+	case <-runner.Drain():
+		t.Fatal("runner drained before title generation was released")
+	default:
+	}
+	select {
+	case err := <-closeReturned:
+		t.Fatalf("runner close returned before title generation was released: %v", err)
+	default:
+	}
+	close(release)
+	released = true
+	if err := <-closeReturned; err != nil {
+		t.Fatal(err)
+	}
+	if _, active := conversationTitleInFlight.Load(conversation.ID); active {
+		t.Fatal("runner close returned with title generation in flight")
+	}
+	if title := conversationTitleOf(t, storage, conversation.ID); title != "生成的标题" {
+		t.Fatalf("title after runner close = %q", title)
 	}
 }
 
