@@ -802,11 +802,7 @@ function AssetRow({
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
       <span className="nx-row-name nx-asset-row-name min-w-0 flex-auto">{label}</span>
-      {hidden ? (
-        <span className="nx-badge">已隐藏</span>
-      ) : (
-        target && <span className="nx-row-target min-w-0 truncate text-[11px] text-neutral-500">{target}</span>
-      )}
+      {hidden && <span className="nx-badge">已隐藏</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       {coarse ? (
         <button

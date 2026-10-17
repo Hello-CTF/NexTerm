@@ -182,7 +182,8 @@ describe("asset row actions on fine pointers", () => {
     expect(labels).toEqual(["连接 web-1", "编辑 web-1", "删除 web-1", "更多操作 web-1"]);
     expect(row.querySelector(".nx-row-more")).toBeNull();
     expect(row.querySelector(".nx-row-name")?.textContent).toBe("web-1");
-    expect(row.querySelector(".nx-row-target")?.textContent).toBe("10.0.0.8:22");
+    expect(row.querySelector(".nx-row-target")).toBeNull();
+    expect(row.getAttribute("title")).toContain("10.0.0.8:22");
   });
 
   it("keeps the simple clone/hide menu on the strip's more button", async () => {
@@ -204,7 +205,7 @@ describe("asset name priority in narrow sidebars", () => {
   it.each([
     "生产环境华东核心交易集群主数据库不可中断管理员入口与灾备切换专用节点",
     "ProductionPrimaryPostgreSQLClusterWithAnExceptionallyLongUnbrokenAssetName0123456789",
-  ])("wraps the full name instead of truncating it: %s", async (name) => {
+  ])("gives the full name priority over host details without truncation: %s", async (name) => {
     stubPointer(false);
     mocks.assetList.mockResolvedValue([{ ...WEB, name }]);
     useUi.setState({ leftWidth: 180 });
@@ -215,8 +216,9 @@ describe("asset name priority in narrow sidebars", () => {
     const label = row.querySelector(".nx-row-name");
     expect(label?.textContent).toBe(name);
     expect(label?.className).toContain("nx-asset-row-name");
+    expect(label?.className).toContain("flex-auto");
     expect(label?.className).not.toContain("truncate");
-    expect(row.querySelector(".nx-row-target")?.className).toContain("truncate");
+    expect(row.querySelector(".nx-row-target")).toBeNull();
     expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(4);
     expect((mounted!.container.firstElementChild as HTMLElement).style.width).toBe("180px");
   });
@@ -233,7 +235,8 @@ describe("asset row actions on coarse pointers", () => {
     const more = row.querySelector<HTMLButtonElement>(".nx-row-more");
     expect(more?.getAttribute("aria-label")).toBe("更多操作 web-1");
     expect(row.querySelector(".nx-row-name")?.textContent).toBe("web-1");
-    expect(row.querySelector(".nx-row-target")?.textContent).toBe("10.0.0.8:22");
+    expect(row.querySelector(".nx-row-target")).toBeNull();
+    expect(row.getAttribute("title")).toContain("10.0.0.8:22");
     expect(mocks.connect).not.toHaveBeenCalled();
   });
 

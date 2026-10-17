@@ -49,11 +49,12 @@ describe("row action bar geometric stability (CSS mechanics)", () => {
     expect(css).not.toMatch(/\.nx-row:hover \.nx-row-actions/);
   });
 
-  it("wraps long asset names without hiding overflow or applying ellipsis", () => {
+  it("keeps long asset names on one horizontally scrollable line without applying ellipsis", () => {
     const name = ruleBlock(".nx-asset-row-name");
-    expect(name).toMatch(/overflow-wrap:\s*anywhere/);
-    expect(name).toMatch(/white-space:\s*normal/);
-    expect(name).not.toMatch(/overflow:\s*hidden/);
-    expect(name).not.toMatch(/text-overflow:/);
+    expect(name).toMatch(/overflow-x:\s*auto/);
+    expect(name).toMatch(/overflow-y:\s*hidden/);
+    expect(name).toMatch(/white-space:\s*nowrap/);
+    expect(name).not.toMatch(/overflow-wrap:\s*anywhere/);
+    expect(name).not.toMatch(/text-overflow:\s*ellipsis/);
   });
 });
