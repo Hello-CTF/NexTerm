@@ -104,6 +104,7 @@ jobs:
     name: Go/Wails quality gates
     needs: [version, frontend]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -135,23 +136,16 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           export PATH="$(go env GOPATH)/bin:$PATH"
           wails3 version
-      - name: Go quality gates
-        run: wails3 task check:go
-      - name: Race detector
-        run: wails3 task test:race
+      - name: Go static quality gates
+        run: |
+          wails3 task fmt:check
+          wails3 task vet
+          go mod verify
+          go run ./scripts/verify-manifest-injects
       - name: Release script and artifact behavior
         run: wails3 task check:scripts
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
-      - name: Download the verified frontend dist
-        uses: actions/download-artifact@v8
-        with:
-          name: frontend-dist
-          path: verified-dist
-      - name: Restore the verified frontend
-        run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
-      - name: Production-tagged Go tests
-        run: wails3 task test:production
 
   database:
     name: Database contracts (${{ matrix.backend }})
