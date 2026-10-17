@@ -67,9 +67,10 @@ tasks:
       - go run ./scripts/check-conflict-columns
 
   verify:wiring:
-    summary: Run resolver, release upload/notes and desktop evidence behavior checks
+    summary: Run resolver, release upload/notes and desktop/mobile evidence behavior checks
     cmds:
       - go run ./scripts/check-reuse-wiring
+      - node --test .github/scripts/mobile-evidence.test.mjs
 
   bindings:
     summary: Regenerate Wails TypeScript bindings intentionally

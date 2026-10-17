@@ -157,6 +157,8 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "1"
         run: go run ./scripts/check-reuse-wiring
+      - name: Mobile release evidence behavior
+        run: node --test .github/scripts/mobile-evidence.test.mjs
 
   frontend-quality:
     name: Frontend lint and tests
@@ -589,16 +591,6 @@ jobs:
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
-      - name: Stamp the iOS distribution version
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          version="${NEXTERM_RELEASE_VERSION:-0.0.0}"
-          version="${version%%[-+]*}"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" build/ios/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER.$RUN_ATTEMPT" build/ios/Info.plist
       - name: Import and validate iOS App Store signing
         env:
           P12_BASE64: ${{ secrets.NEXTERM_IOS_P12_BASE64 }}
@@ -648,6 +640,7 @@ jobs:
       - name: Build the signed iOS distribution IPA
         env:
           DIST_SOURCE: verified-dist/dist
+          IOS_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           CODESIGN_IDENTITY: Apple Distribution
           PROVISIONING_PROFILE: ${{ runner.temp }}/nexterm.mobileprovision
           ENTITLEMENTS_FILE: ${{ runner.temp }}/nexterm-distribution-entitlements.plist

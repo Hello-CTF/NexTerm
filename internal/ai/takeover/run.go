@@ -20,6 +20,9 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+var takeoverAfterResumeCheck = func() {}
+var takeoverBeforeResumeStart = func() {}
+
 type runResult struct {
 	answer string
 	reason string
@@ -56,10 +59,35 @@ func (m *Manager) runJob(state *runState) {
 			resumePaused = true
 			state.running = true
 			state.installIterationLocked()
-		} else {
-			state.running = false
 		}
 		state.pendingMu.Unlock()
+		takeoverAfterResumeCheck()
+		defer func() {
+			if resumePaused {
+				return
+			}
+			state.finalizeMu.Lock()
+			state.pendingMu.Lock()
+			if state.eino != nil && state.eino.resume != nil && !state.completed && state.ctx.Err() == nil {
+				state.running = true
+				state.installIterationLocked()
+				state.pendingMu.Unlock()
+				takeoverBeforeResumeStart()
+				state.pendingMu.Lock()
+				if !state.completed {
+					state.pendingMu.Unlock()
+					go m.runJob(state)
+				} else {
+					state.running = false
+					state.pendingMu.Unlock()
+				}
+				state.finalizeMu.Unlock()
+				return
+			}
+			state.running = false
+			state.pendingMu.Unlock()
+			state.finalizeMu.Unlock()
+		}()
 		if resumePaused {
 			go m.runJob(state)
 			return
