@@ -106,8 +106,8 @@ var negativeControls = []negativeControl{
 			}
 			return packText
 		}},
-	{"duplicate bounded Go suite is caught",
-		"quality runs the bounded Go suite once",
+	{"duplicate isolated Go group definitions are caught",
+		"quality runs three ordered isolated Go groups",
 		func(ci, release map[string]interface{}, packText string) string {
 			qualityJob := asMap(jobsOf(ci)["quality"])
 			goTest := findStep(qualityJob, "Go tests")

@@ -288,19 +288,37 @@ func runWiringChecks(in inputs) []checkResult {
 		qualityRuns = append(qualityRuns, stepRun(asMap(rawStep)))
 	}
 	qualityRun := strings.Join(qualityRuns, "\n")
-	goTestCommand := "go test -mod=readonly -timeout=5m -p=2 -json ./..."
-	exactGoTests := strings.Count(qualityRun, goTestCommand)
-	check("quality runs the bounded Go suite once while allowing additional targeted suites",
-		exactGoTests == 1, fmt.Sprintf("exact=%d", exactGoTests))
 	goTestStep := findStep(qualityJob, "Go tests")
+	goTestRun := stepRun(goTestStep)
+	goTestCommand := "go test -mod=readonly -timeout=5m -p=1 -json"
+	sharedGoTestCommands := strings.Count(qualityRun, goTestCommand)
+	firstGroup := strings.Index(goTestRun, "run_group app-production ./internal/app/production")
+	secondGroup := strings.Index(goTestRun, "run_group fleet-agent ./internal/fleet/agent")
+	packageList := strings.Index(goTestRun, `packages="$(go list ./...)"`)
+	remainingGroup := strings.Index(goTestRun, `run_group remaining "${remaining[@]}"`)
+	orderedGroups := firstGroup >= 0 && secondGroup > firstGroup && packageList > secondGroup && remainingGroup > packageList
+	partitionParts := []string{
+		`module="$(go list -m)"`,
+		`"$module/internal/app/production") app_count=$((app_count+1))`,
+		`"$module/internal/fleet/agent") agent_count=$((agent_count+1))`,
+		`*) remaining+=("$pkg")`,
+		`[ "$app_count" -ne 1 ] || [ "$agent_count" -ne 1 ]`,
+	}
+	completePartition := true
+	for _, part := range partitionParts {
+		completePartition = completePartition && strings.Contains(goTestRun, part)
+	}
+	check("quality runs three ordered isolated Go groups covering the complete suite",
+		sharedGoTestCommands == 1 && orderedGroups && completePartition,
+		fmt.Sprintf("shared=%d groups=%d,%d,%d,%d partition=%v", sharedGoTestCommands, firstGroup, secondGroup, packageList, remainingGroup, completePartition))
 	goDiagnosticsStep := findStep(qualityJob, "Upload Go test diagnostics")
 	goDiagnosticsWith := asMap(goDiagnosticsStep["with"])
-	check("quality Go tests have bounded JSON diagnostics uploaded only after failure",
+	check("quality Go tests have bounded per-group JSON diagnostics uploaded only after failure",
 		str(goTestStep["timeout-minutes"]) == "15" &&
-			strings.Contains(stepRun(goTestStep), "set -o pipefail") &&
-			strings.Contains(stepRun(goTestStep), `tee "$RUNNER_TEMP/go-tests.json"`) &&
+			strings.Contains(goTestRun, "set -euo pipefail") &&
+			strings.Contains(goTestRun, `tee "$RUNNER_TEMP/go-test-${name}.json"`) &&
 			normalizedStepIf(goDiagnosticsStep) == "${{failure()&&steps.go-tests.outcome=='failure'}}" &&
-			str(goDiagnosticsWith["path"]) == "${{ runner.temp }}/go-tests.json" &&
+			str(goDiagnosticsWith["path"]) == "${{ runner.temp }}/go-test-*.json" &&
 			str(goDiagnosticsWith["if-no-files-found"]) == "error",
 		fmt.Sprintf("timeout=%q if=%q", str(goTestStep["timeout-minutes"]), str(goDiagnosticsStep["if"])))
 	frontendQualitySteps := asList(frontendQualityJob["steps"])
