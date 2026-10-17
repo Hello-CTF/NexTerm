@@ -123,7 +123,10 @@ func (o *objectStore) push(ctx context.Context, userID, knownHead string, object
 			Create(&store.UserSyncHead{UserID: userID, HeadHash: genesisHead(userID)}).Error; err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
-		q := headModel.WithContext(ctx).Where(headModel.UserID.Eq(userID))
+		// Serialize sequence allocation on the per-user head row. Without a row
+		// lock, concurrent transactions can observe the same MAX(seq) and
+		// allocate duplicate sequence numbers on PostgreSQL.
+		q := headModel.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(headModel.UserID.Eq(userID))
 		row, err := q.First()
 		if err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)

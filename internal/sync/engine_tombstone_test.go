@@ -54,8 +54,11 @@ func assertDeviceTombstone(t *testing.T, device *testDevice, id, kind string) {
 	t.Helper()
 	var gotKind string
 	var deletedAt int64
-	err := device.db.DB().QueryRowContext(context.Background(),
-		"SELECT kind, deleted_at FROM sync_tombstone WHERE id=?", id).Scan(&gotKind, &deletedAt)
+	row := device.db.GORM().WithContext(context.Background()).Table("sync_tombstone").Select("kind, deleted_at").Where("id = ?", id).Row()
+	if row == nil {
+		t.Fatalf("sync_tombstone %s: query returned no row", id)
+	}
+	err := row.Scan(&gotKind, &deletedAt)
 	if err != nil {
 		t.Fatalf("sync_tombstone %s: %v", id, err)
 	}
