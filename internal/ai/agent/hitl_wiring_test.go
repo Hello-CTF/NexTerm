@@ -129,7 +129,20 @@ func TestHITLWiringExpiredRequestTerminatesRun(t *testing.T) {
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
-	time.Sleep(200 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, snapshotErr := runner.HITLSnapshot(response.JobID)
+		if snapshotErr != nil {
+			t.Fatal(snapshotErr)
+		}
+		if snapshot.Status == hitl.RunStatusExpired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("request did not expire: %+v", snapshot)
+		}
+		time.Sleep(time.Millisecond)
+	}
 	err = runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 	if err == nil || (!errors.Is(err, ErrConfirmationStale) && !errors.Is(err, ErrJobNotFound)) {
 		t.Fatalf("expired confirmation error = %v", err)
@@ -386,7 +399,9 @@ func TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce(t *testing.T) {
 	var actions atomic.Int64
 	parkEntered := make(chan struct{})
 	releasePark := make(chan struct{})
+	confirmEntered := make(chan struct{})
 	var parkOnce sync.Once
+	var confirmEntryOnce sync.Once
 	parkOrHandoffTestHook = func() {
 		parkOnce.Do(func() { close(parkEntered) })
 		<-releasePark
@@ -398,18 +413,32 @@ func TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce(t *testing.T) {
 		}
 		parkOrHandoffTestHook = nil
 	}()
-	runner, stream, response := confirmRunner(t, dockerConfirmChat(), tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { actions.Add(1); return nil }})
+	runner, _ := testRunner(t, dockerConfirmChat(), tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { actions.Add(1); return nil }}, 0)
+	newID := runner.config.NewID
+	var confirmArmed atomic.Bool
+	runner.config.NewID = func() string {
+		id := newID()
+		if confirmArmed.Load() {
+			confirmEntryOnce.Do(func() { close(confirmEntered) })
+		}
+		return id
+	}
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
 	<-parkEntered
 
+	confirmArmed.Store(true)
 	confirmReturned := make(chan error, 1)
 	go func() {
 		confirmReturned <- runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 	}()
 	select {
+	case <-confirmEntered:
 	case err := <-confirmReturned:
-		t.Fatalf("confirm completed inside the park transition; the handoff is not atomic: %v", err)
-	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("confirm returned before reaching its answer ID: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("confirm did not reach its answer ID")
 	}
 	close(releasePark)
 	released = true

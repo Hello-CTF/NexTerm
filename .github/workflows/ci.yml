@@ -146,42 +146,8 @@ jobs:
           files="$(gofmt -l ./cmd ./internal ./scripts)"
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go tests
-        id: go-tests
         timeout-minutes: 15
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_group() {
-            local name="$1"
-            shift
-            go test -mod=readonly -timeout=5m -p=1 -json "$@" | tee "$RUNNER_TEMP/go-test-${name}.json"
-          }
-          run_group app-production ./internal/app/production
-          run_group fleet-agent ./internal/fleet/agent
-          module="$(go list -m)"
-          packages="$(go list ./...)"
-          app_count=0
-          agent_count=0
-          remaining=()
-          while IFS= read -r pkg; do
-            case "$pkg" in
-              "$module/internal/app/production") app_count=$((app_count+1)) ;;
-              "$module/internal/fleet/agent") agent_count=$((agent_count+1)) ;;
-              *) remaining+=("$pkg") ;;
-            esac
-          done <<< "$packages"
-          if [ "$app_count" -ne 1 ] || [ "$agent_count" -ne 1 ]; then
-            echo "Go package partition must contain each isolated package exactly once" >&2
-            exit 1
-          fi
-          run_group remaining "${remaining[@]}"
-      - name: Upload Go test diagnostics
-        if: ${{ failure() && steps.go-tests.outcome == 'failure' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: go-test-diagnostics
-          path: ${{ runner.temp }}/go-test-*.json
-          if-no-files-found: error
+        run: go test -mod=readonly -timeout=5m ./...
       - name: Go vet
         run: go vet -mod=readonly ./...
       - name: Wails bindings drift
@@ -190,7 +156,7 @@ jobs:
         run: go run ./scripts/verify-manifest-injects
       - name: Upsert conflict column check
         run: go run ./scripts/check-conflict-columns
-      - name: Workflow reuse wiring checks
+      - name: Release behavior checks
         env:
           SOURCE_DATE_EPOCH: "1"
         run: go run ./scripts/check-reuse-wiring

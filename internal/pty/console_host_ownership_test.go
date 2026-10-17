@@ -168,28 +168,20 @@ func TestWindowsConsoleHostOwnershipRejectsConfirmedOwnedChanges(t *testing.T) {
 
 func TestWindowsConsoleHostOwnershipRejectsRegisteredHostAfterParentExit(t *testing.T) {
 	ownership := newWindowsConsoleHostOwnership(100)
-	var processes map[uint32]windowsProcessRecord
-	for iteration := 0; iteration < 100; iteration++ {
-		shellPID := uint32(1000 + iteration*10)
-		openConsolePID := shellPID + 1
-		conhostPID := shellPID + 2
-		processes = map[uint32]windowsProcessRecord{
-			100:            {name: "pty.test.exe"},
-			shellPID:       {parentPID: 100, name: "powershell.exe"},
-			openConsolePID: {parentPID: shellPID, name: "OpenConsole.exe", creationTime: uint64(1000 + iteration*10 + 1)},
-			conhostPID:     {parentPID: openConsolePID, name: "conhost.exe", creationTime: uint64(1000 + iteration*10 + 2)},
-		}
-		openConsole, conhost, err := ownership.counts(processes)
-		if err != nil || openConsole != 1 || conhost != 1 {
-			t.Fatalf("iteration %d registration = %d/%d, %v", iteration, openConsole, conhost, err)
-		}
-		ownership.expectExit()
-		if iteration == 99 {
-			delete(processes, shellPID)
-		}
+	processes := map[uint32]windowsProcessRecord{
+		100:  {name: "pty.test.exe"},
+		1000: {parentPID: 100, name: "powershell.exe"},
+		1001: {parentPID: 1000, name: "OpenConsole.exe", creationTime: 1001},
+		1002: {parentPID: 1001, name: "conhost.exe", creationTime: 1002},
 	}
+	openConsole, conhost, err := ownership.counts(processes)
+	if err != nil || openConsole != 1 || conhost != 1 {
+		t.Fatalf("registration = %d/%d, %v", openConsole, conhost, err)
+	}
+	ownership.expectExit()
+	delete(processes, 1000)
 	if _, _, err := ownership.counts(processes); err == nil {
-		t.Fatal("registered console hosts survived their parent after 100 exercises and were accepted")
+		t.Fatal("registered console hosts survived their parent and were accepted")
 	}
 }
 

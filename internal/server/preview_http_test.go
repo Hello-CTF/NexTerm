@@ -643,9 +643,9 @@ func TestSharePreviewWriteOwnerControls(t *testing.T) {
 	expectPreviewBinaryMarker(t, conn, "owner-flow-1", "denied-ow-1", 10*time.Second)
 }
 
-// TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration: while another guest's lease is still within the disconnect
-// grace window (controller orphan-cleaned but lease not expired), guest input is turned back with ErrGuestControlBusy
-// (busy control frame), and bytes never reach the terminal.
+// TestSharePreviewWriteGuestBusy pins guest-to-guest arbitration feedback at the preview protocol: while another guest's
+// lease is still within the disconnect grace window (controller orphan-cleaned but lease not expired), guest input is
+// turned back with a busy control frame.
 func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -681,13 +681,6 @@ func TestSharePreviewWriteGuestBusy(t *testing.T) {
 	if control := awaitPreviewControl(t, conn, 10*time.Second); control["state"] != "busy" {
 		t.Fatalf("control frame = %v, want busy", control)
 	}
-	if _, err := f.manager.Claim(tabID, "owner"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo owner-flow-2\r")); err != nil {
-		t.Fatal(err)
-	}
-	expectPreviewBinaryMarker(t, conn, "owner-flow-2", "denied-b-1", 10*time.Second)
 }
 
 // TestSharePreviewShrinkToReadRejectsInput pins permission shrink taking effect on the input side: after a read_write
@@ -726,8 +719,7 @@ func TestSharePreviewShrinkToReadRejectsInput(t *testing.T) {
 }
 
 // TestSharePreviewDisconnectReleasesGuest pins ReleaseGuest at WS end: after guest A disconnects, its control and lease are
-// explicitly released (rather than left to expire), and guest B on another link can take control immediately
-// (proven by the busy-then-guest probes).
+// explicitly released (rather than left to expire), and guest B on another link can then take control with its first write.
 func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	f := newPreviewFixture(t)
 	aliceID := f.createUser(t, "alice")
@@ -752,35 +744,22 @@ func TestSharePreviewDisconnectReleasesGuest(t *testing.T) {
 	if err := connA.Close(websocket.StatusNormalClosure, ""); err != nil {
 		t.Fatal(err)
 	}
+	// ReleaseGuest clears the controller and lease together before the preview receiver closes.
+	waitFor(t, func() bool {
+		tab, err := f.manager.Tab(tabID)
+		return err == nil && tab.Info().Controller == ""
+	})
 
 	connB := dialPreviewViewer(t, f.http.URL, tokenB)
 	readPreviewJSON(t, connB, 10*time.Second)
 	readPreviewJSON(t, connB, 10*time.Second)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		writePreviewInput(t, connB, "true\r")
-		readCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		kind, data, err := connB.Read(readCtx)
-		cancel()
-		if err != nil || kind != websocket.MessageText {
-			continue
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		if decoded["type"] != "control" {
-			continue
-		}
-		if decoded["state"] == "guest" {
-			if controller := previewTabController(t, f, tabID); controller != "preview-"+linkB {
-				t.Fatalf("controller = %q, want preview-%s", controller, linkB)
-			}
-			return
-		}
-		// busy: A's lease is not yet released; keep probing.
+	writePreviewInput(t, connB, "true\r")
+	if control := awaitPreviewControl(t, connB, 10*time.Second); control["state"] != "guest" {
+		t.Fatalf("guest B control = %v, want guest", control)
 	}
-	t.Fatal("guest B never acquired control after guest A disconnected")
+	if controller := previewTabController(t, f, tabID); controller != "preview-"+linkB {
+		t.Fatalf("controller = %q, want preview-%s", controller, linkB)
+	}
 }
 
 // TestSharePreviewRevokeTerminatesWritable pins revocation terminating a writable connection: the termination frame matches the

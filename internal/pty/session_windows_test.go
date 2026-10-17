@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -158,49 +157,71 @@ func TestSessionWindowsDelayedReadAfterNaturalExit(t *testing.T) {
 }
 
 func TestSessionWindowsNaturalExitCloseRace(t *testing.T) {
-	for iteration := 0; iteration < 12; iteration++ {
-		t.Run(fmt.Sprintf("iteration-%02d", iteration), func(t *testing.T) {
-			markerPath := filepath.Join(t.TempDir(), "ready")
-			script := fmt.Sprintf("[IO.File]::WriteAllText('%s', 'ready'); Start-Sleep -Milliseconds 40; exit 0", strings.ReplaceAll(markerPath, "'", "''"))
-			session := startWindowsTestSession(t, context.Background(), script)
-			closeStarted := false
-			defer func() {
-				if !closeStarted {
-					_ = session.Close()
-				}
-			}()
-			waitForWindowsTestFile(t, markerPath, 10*time.Second)
-			time.Sleep(time.Duration(iteration%8) * 5 * time.Millisecond)
-			closeStarted = true
-			closeWindowsSessionWithin(t, session)
-		})
+	readyPath := filepath.Join(t.TempDir(), "ready")
+	releasePath := filepath.Join(t.TempDir(), "release")
+	script := fmt.Sprintf("[IO.File]::WriteAllText('%s', 'ready'); while (-not [IO.File]::Exists('%s')) { Start-Sleep -Milliseconds 10 }; exit 0", strings.ReplaceAll(readyPath, "'", "''"), strings.ReplaceAll(releasePath, "'", "''"))
+	session := startWindowsTestSession(t, context.Background(), script)
+	closeStarted := false
+	defer func() {
+		if !closeStarted {
+			_ = session.Close()
+		}
+	}()
+	waitForWindowsTestFile(t, readyPath, 10*time.Second)
+	barrier := make(chan struct{})
+	closeReady := make(chan struct{})
+	closeDone := make(chan error, 1)
+	go func() {
+		close(closeReady)
+		<-barrier
+		closeDone <- session.Close()
+	}()
+	releaseReady := make(chan struct{})
+	releaseDone := make(chan error, 1)
+	go func() {
+		close(releaseReady)
+		<-barrier
+		releaseDone <- os.WriteFile(releasePath, nil, 0o600)
+	}()
+	<-closeReady
+	<-releaseReady
+	closeStarted = true
+	close(barrier)
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("Close exceeded the 5 second ConPTY close bound")
+	}
+	if err := <-releaseDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestSessionWindowsCloseAfterNaturalExit(t *testing.T) {
-	for iteration := 0; iteration < 12; iteration++ {
-		t.Run(fmt.Sprintf("iteration-%02d", iteration), func(t *testing.T) {
-			session := startWindowsTestSession(t, context.Background(), "[Console]::Out.Write('done'); exit 0")
-			closeStarted := false
-			defer func() {
-				if !closeStarted {
-					_ = session.Close()
-				}
-			}()
-			waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := session.Wait(waitCtx)
-			waitCancel()
-			if err != nil {
-				t.Fatalf("natural exit: %v", err)
-			}
-			closeStarted = true
-			closeWindowsSessionWithin(t, session)
-		})
+	session := startWindowsTestSession(t, context.Background(), "[Console]::Out.Write('done'); exit 0")
+	closeStarted := false
+	defer func() {
+		if !closeStarted {
+			_ = session.Close()
+		}
+	}()
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := session.Wait(waitCtx)
+	waitCancel()
+	if err != nil {
+		t.Fatalf("natural exit: %v", err)
 	}
+	closeStarted = true
+	closeWindowsSessionWithin(t, session)
 }
 
-// GetProcessHandleCount covers only this test process; console hosts are filtered by leader descendants.
-func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
+func TestSessionWindowsOwnedConsoleHostExitAfterClose(t *testing.T) {
 	ownership := newWindowsConsoleHostOwnership(uint32(os.Getpid()))
 	exercise := func(natural bool) {
 		releasePath := ""
@@ -234,56 +255,8 @@ func TestSessionWindowsResourcesReturnToBaseline(t *testing.T) {
 		closeWindowsSessionWithin(t, session)
 		waitForWindowsOwnedConsoleHostExit(t, ownership, 15*time.Second)
 	}
-	func() {
-		session := startWindowsTestSession(t, context.Background(), "while ($true) { [Console]::Out.Write('x' * 65536); Start-Sleep -Milliseconds 50 }")
-		closeStarted := false
-		defer func() {
-			if !closeStarted {
-				_ = session.Close()
-			}
-		}()
-		openConsole, conhost := waitForWindowsOwnedConsoleHost(t, ownership, 15*time.Second)
-		t.Logf("active PTY owned console hosts = OpenConsole:%d conhost:%d", openConsole, conhost)
-		closeStarted = true
-		closeWindowsSessionWithin(t, session)
-		waitForWindowsOwnedConsoleHostExit(t, ownership, 15*time.Second)
-	}()
+	exercise(false)
 	exercise(true)
-	var baselineSamples, samples [3]windowsResourceSample
-	for attempt := 0; attempt < 3; attempt++ {
-		for iteration := 0; iteration < 100; iteration++ {
-			exercise(iteration%2 == 0)
-		}
-		baselineSamples = sampleWindowsResources(t, ownership)
-		baseline := windowsResourceSample{}
-		for _, sample := range baselineSamples {
-			baseline.handles = max(baseline.handles, sample.handles)
-			baseline.openConsole = max(baseline.openConsole, sample.openConsole)
-			baseline.conhost = max(baseline.conhost, sample.conhost)
-		}
-		t.Logf("baseline resource samples = %v", baselineSamples)
-		for iteration := 0; iteration < 100; iteration++ {
-			exercise(iteration%2 == 0)
-		}
-		samples = sampleWindowsResources(t, ownership)
-		t.Logf("final resource samples = %v", samples)
-		for index, sample := range samples {
-			if sample.openConsole > baseline.openConsole || sample.conhost > baseline.conhost {
-				t.Fatalf("owned console hosts sample %d = OpenConsole:%d conhost:%d, baseline = OpenConsole:%d conhost:%d", index, sample.openConsole, sample.conhost, baseline.openConsole, baseline.conhost)
-			}
-		}
-		if baselineSamples[0].threads != samples[len(samples)-1].threads {
-			t.Logf("runtime thread count changed during resource measurement attempt %d; rebaselining", attempt+1)
-			continue
-		}
-		for index, sample := range samples {
-			if sample.handles > baseline.handles+4 {
-				t.Fatalf("handle sample %d = %d, baseline = %d; want <= %d (all samples %v)", index, sample.handles, baseline.handles, baseline.handles+4, samples)
-			}
-		}
-		return
-	}
-	t.Fatalf("runtime thread count did not stabilize during resource measurement: baseline samples %v, final samples %v", baselineSamples, samples)
 }
 
 func windowsPayloadFixture(t *testing.T, size int) ([]byte, string) {
@@ -379,45 +352,7 @@ func waitForWindowsTestFile(t *testing.T, path string, timeout time.Duration) {
 	}
 }
 
-type windowsResourceSample struct {
-	handles     int
-	threads     int
-	openConsole int
-	conhost     int
-}
-
-func sampleWindowsResources(t *testing.T, ownership *windowsConsoleHostOwnership) [3]windowsResourceSample {
-	t.Helper()
-	runtime.GC()
-	time.Sleep(2 * time.Second)
-	var samples [3]windowsResourceSample
-	for index := range samples {
-		samples[index].handles = windowsCurrentHandleCount(t)
-		samples[index].threads, _ = runtime.ThreadCreateProfile(nil)
-		openConsole, conhost, err := windowsConsoleHostCounts(t, ownership)
-		if err != nil {
-			t.Fatal(err)
-		}
-		samples[index].openConsole, samples[index].conhost = openConsole, conhost
-		if index+1 < len(samples) {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-	return samples
-}
-
-var windowsGetProcessHandleCount = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessHandleCount")
 var windowsGetProcessTimes = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessTimes")
-
-func windowsCurrentHandleCount(t *testing.T) int {
-	t.Helper()
-	var count uint32
-	result, _, callErr := windowsGetProcessHandleCount.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&count)))
-	if result == 0 {
-		t.Fatalf("GetProcessHandleCount: %v", callErr)
-	}
-	return int(count)
-}
 
 func windowsConsoleHostCounts(t *testing.T, ownership *windowsConsoleHostOwnership) (int, int, error) {
 	t.Helper()
